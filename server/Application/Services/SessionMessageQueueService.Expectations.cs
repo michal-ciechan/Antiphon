@@ -257,7 +257,7 @@ public sealed partial class SessionMessageQueueService
     /// never touches the queue, and never clears operator debt. A session with no hold releases nothing.
     /// </summary>
     public async Task<ExpectationHoldReleaseResult> ReleaseExpectationHoldAsync(
-        Guid sessionId, string? reason, CancellationToken ct)
+        Guid sessionId, string? reason, string releasedBy, CancellationToken ct)
     {
         var why = (reason ?? string.Empty).Trim();
         if (why.Length == 0)

@@ -148,6 +148,8 @@ public sealed class ExpectationDirectDeliveryTests
     {
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var adapter = f.Harness.Adapter;
+        // Claude's composer is readable, so each later nudge goes out only because it is proved empty.
+        adapter.ClaudeComposerChrome = true;
 
         // Transport failure on the body write: the attempt is uncertain, never retried here.
         adapter.ThrowOnSend = new InvalidOperationException("runner socket reset");
@@ -281,8 +283,10 @@ public sealed class ExpectationDirectDeliveryTests
             note.DeliveryAttempts.ShouldBe(0);
         }
 
-        // Proven empty composer releases the hold: the queue may type again.
+        // Proven empty composer releases the hold: the queue may type again. For Claude the proof is
+        // a readable composer box with nothing in it; the bare screen is not proof (review 8adb4cd6).
         adapter.SwallowSubmits = 0;
+        adapter.ClaudeComposerChrome = true;
         adapter.PrimeComposer(string.Empty);
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.SubmittedBodies.ShouldBe(["ordinary caller note"]);
@@ -524,9 +528,9 @@ public sealed class ExpectationDirectDeliveryTests
         adapter.SubmittedBodies.ShouldBe([nudge.Body], "sanity: the echo holds under the whole-screen rule");
 
         await Should.ThrowAsync<ValidationException>(() => f.Harness.Queue.ReleaseExpectationHoldAsync(
-            f.SessionId, "  ", CancellationToken.None));
+            f.SessionId, "  ", Operator, CancellationToken.None));
         var released = await f.Harness.Queue.ReleaseExpectationHoldAsync(
-            f.SessionId, "checked the pane: the nudge was submitted", CancellationToken.None);
+            f.SessionId, "checked the pane: the nudge was submitted", Operator, CancellationToken.None);
         released.ReleasedNudgeIds.ShouldBe([nudge.Id]);
         adapter.Inputs.Count.ShouldBe(writes, "the release types nothing");
 
@@ -537,7 +541,8 @@ public sealed class ExpectationDirectDeliveryTests
         {
             (await db.CardComments.CountAsync(c => c.CardId == f.World.CardId
                 && c.Body.Contains("[expectation-hold-released:" + nudge.Id.ToString("D") + "]")
-                && c.Body.Contains("checked the pane: the nudge was submitted"))).ShouldBe(1);
+                && c.Body.Contains("checked the pane: the nudge was submitted")
+                && c.Body.Contains("Released by " + Operator))).ShouldBe(1, "the audit names who released it");
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Check
                 && e.Detail!.Contains("[expectation-hold-released:" + nudge.Id.ToString("D") + "]"))).ShouldBe(1);
         }
@@ -545,7 +550,7 @@ public sealed class ExpectationDirectDeliveryTests
         // Released, so ordinary input proceeds. A second release finds nothing and records nothing.
         await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         adapter.SubmittedBodies.ShouldBe([nudge.Body, "land note for CARD-0641"]);
-        (await f.Harness.Queue.ReleaseExpectationHoldAsync(f.SessionId, "again", CancellationToken.None))
+        (await f.Harness.Queue.ReleaseExpectationHoldAsync(f.SessionId, "again", Operator, CancellationToken.None))
             .ReleasedNudgeIds.ShouldBeEmpty();
         await using (var db = f.Db())
         {
@@ -553,6 +558,143 @@ public sealed class ExpectationDirectDeliveryTests
         }
         adapter.KillCount.ShouldBe(0);
     }
+
+    [Test]
+    public async Task C650_Unreadable_Claude_composer_keeps_holding_until_it_is_proved_empty()
+    {
+        // Review 8adb4cd6: where Claude's composer cannot be read, looking for the body's head is not
+        // evidence that it left. A long composer shows only its tail, and a dialog, a scrolled view
+        // or a mid-redraw frame hides or fakes the box. Only a transcript record or a readable,
+        // empty composer releases the hold.
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        var adapter = f.Harness.Adapter;
+        adapter.SwallowSubmits = 99;
+        var id = Guid.NewGuid();
+        string[] lines =
+        [
+            $"Expectation nudge {id:D}: the queue is held past its age limit",
+            .. Enumerable.Range(1, 10).Select(i => $"subject {i:D2}: task held 42m with no dispatch and no report"),
+            $"Reply with a line {ExpectationPromptFormatter.AckMarker(id)}",
+        ];
+        var nudge = await f.NudgeAsync(body: string.Join("\n", lines));
+        (await f.DeliverAsync(nudge.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
+        (await f.ReloadAsync(nudge.Id)).AttemptState.ShouldBe(ExpectationAttemptState.Unconfirmed);
+        adapter.SubmittedBodies.ShouldBeEmpty("sanity: every Enter was swallowed, so the body never left the composer");
+        await f.Harness.Queue.EnqueueAsync(f.SessionId, "land note for CARD-0641", MessageSendMode.WhenIdle, CancellationToken.None);
+        // From here the rendered screen is each fixture exactly; the fake draws no composer of its own.
+        adapter.PrimeComposer(string.Empty);
+        var writes = adapter.Inputs.Count;
+
+        foreach (var (name, screen, headHidden) in ClaudeScreensThatDoNotProveTheComposerEmpty(lines))
+        {
+            adapter.RenderedScreenOverride = screen;
+            adapter.SnapshotRenderedScreen().ShouldBe(screen, $"sanity: {name} is the whole rendered screen");
+            if (headHidden)
+            {
+                Antiphon.Agents.Pty.ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(screen, nudge.Body)
+                    .ShouldBeFalse($"sanity: {name} does not show the body's head");
+            }
+            await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+            var refused = await Should.ThrowAsync<ConflictException>(() => f.Harness.Queue.EnqueueAsync(
+                f.SessionId, "operator send now", MessageSendMode.Now, CancellationToken.None));
+            refused.Code.ShouldBe("expectation_prompt_unconfirmed", name);
+            adapter.Inputs.Count.ShouldBe(writes, $"{name}: nothing is typed while the composer is not proved empty");
+        }
+
+        // Control: a readable, empty Claude composer is the proof. The held note goes out once.
+        adapter.SwallowSubmits = 0;
+        adapter.RenderedScreenOverride = ClaudeFrame(120,
+            ["● The queue is moving again."], composer: [], hints: ["  ? for shortcuts"]);
+        Antiphon.Agents.Pty.ClaudeScreen.TryReadComposer(adapter.RenderedScreenOverride, out var empty).ShouldBeTrue();
+        empty.ShouldBeEmpty("sanity: the control's composer is readable and empty");
+        await f.Harness.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
+        adapter.SubmittedBodies.ShouldBe(["land note for CARD-0641"]);
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// Claude screens, shaped like real layouts, on which the standing body's composer cannot be read
+    /// as empty. <c>HeadHidden</c> marks the ones where the body's head is not visible whole, which is
+    /// where a head-search fallback would have released the hold.
+    /// </summary>
+    private static IEnumerable<(string Name, string Screen, bool HeadHidden)> ClaudeScreensThatDoNotProveTheComposerEmpty(
+        string[] body)
+    {
+        const string bypass = "  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+
+        // A 40-column pane: the rules shrink, the body wraps, the hint bar wraps under the box and
+        // the box is taller than the pane, so its top rule and prompt glyph are gone.
+        var wrapped = body.SelectMany(line => line.Chunk(36).Select(c => "  " + new string(c))).ToArray();
+        yield return ("narrow terminal",
+            Lines([.. wrapped[^12..], Rule(40), "  ⏵⏵ bypass permissions on (shift+tab", "  to cycle)"]),
+            true);
+
+        // The canary's tail-only rendering: a composer taller than the 30-row screen shows only the
+        // rows near the cursor, with no top rule and no prompt glyph.
+        yield return ("long input, only its tail visible",
+            Lines([.. body[^4..].Select(l => "  " + l), Rule(120), bypass]),
+            true);
+
+        // The other multi-line rendering: first line plus a paste placeholder. Readable, not empty.
+        yield return ("multi-line input, prefix and paste placeholder",
+            ClaudeFrame(120, ["● Checking the queue."], [body[0], $"[Pasted text #1 +{body.Length - 1} lines]"], [bypass]),
+            false);
+
+        // Scrolled back: the viewport shows an older, empty composer frame with the conversation
+        // that followed it; the live composer holding the body is below the viewport.
+        yield return ("scrolled view, older empty frame then conversation",
+            Lines([
+                "● Landed CARD-0641.", Rule(120), "❯ ", Rule(120), "  ? for shortcuts",
+                "> what is still queued?", "● Three tasks are held.", "  Reading the board…", "● Done."]),
+            true);
+        yield return ("scrolled view, older empty frame then two rows",
+            Lines([
+                "● Landed CARD-0641.", Rule(120), "❯ ", Rule(120), "  ? for shortcuts",
+                "> what is still queued?", "● Three tasks are held."]),
+            true);
+
+        // A permission dialog drawn over the composer: current rule style, and the older rounded box.
+        yield return ("permission dialog over the composer",
+            Lines([
+                "● I'll apply the migration.", Rule(120), " Bash command", "",
+                "   dotnet ef database update", "   Apply pending migrations", "",
+                " Do you want to proceed?", " ❯ 1. Yes",
+                "   2. Yes, and don't ask again for dotnet ef commands in /work/repo",
+                "   3. No, and tell Claude what to do differently (esc)"]),
+            true);
+        yield return ("rounded permission dialog",
+            Lines([
+                "● I'll apply the migration.",
+                "╭" + new string('─', 118) + "╮",
+                "│ Bash command" + new string(' ', 105) + "│",
+                "│ Do you want to proceed?" + new string(' ', 94) + "│",
+                "│ ❯ 1. Yes" + new string(' ', 109) + "│",
+                "│   2. No, and tell Claude what to do differently (esc)" + new string(' ', 65) + "│",
+                "╰" + new string('─', 118) + "╯"]),
+            true);
+
+        // A mid-redraw frame observed on real Claude: a ghost idle row and border inside the wrapped
+        // composer, with the body's last row still under them.
+        yield return ("ghost idle frame over the composer tail",
+            Lines([
+                "  " + body[^2], Rule(120), "❯ Try \"how does <filepath> work?\"", Rule(120),
+                "  " + body[^1], bypass]),
+            true);
+    }
+
+    /// <summary>Current Claude: conversation, the composer between two full-width rules, then hint rows.</summary>
+    private static string ClaudeFrame(int width, string[] conversation, string[] composer, string[] hints) =>
+        Lines([
+            .. conversation, Rule(width),
+            "❯ " + (composer.Length > 0 ? composer[0] : string.Empty),
+            .. composer.Skip(1).Select(l => "  " + l),
+            Rule(width), .. hints]);
+
+    private static string Rule(int width) => new('─', width);
+
+    private static string Lines(params string[] rows) => string.Join("\n", rows);
+
+    private const string Operator = "test operator";
 
     /// <summary>
     /// The watchdog prompt is taken and its echo stays in the conversation, but its transcript record
