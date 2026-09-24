@@ -5466,7 +5466,12 @@ public sealed class AgentTaskDispatcher
 
     private async Task BlockAsync(AgentTask task, string reason, CancellationToken ct)
     {
-        var now = UtcNow();
+        StageBlocked(task, reason);
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private void StageBlocked(AgentTask task, string reason)
+    {
         task.Status = AgentTaskStatus.Blocked;
         task.FailureReason = reason;
         task.ConcurrencyToken = Guid.NewGuid();
@@ -5476,9 +5481,8 @@ public sealed class AgentTaskDispatcher
             AgentTaskId = task.Id,
             Type = AgentTaskEventType.Blocked,
             Detail = reason,
-            At = now,
+            At = UtcNow(),
         });
-        await _db.SaveChangesAsync(ct);
     }
 
     private enum RewalkOutcome
@@ -5491,14 +5495,17 @@ public sealed class AgentTaskDispatcher
     /// <summary>
     /// CARD-0659 D-5. Blocks a runner-bound task on an incompatible kind with the stable
     /// <c>runner_kind_unsupported</c> reason, leaving runner, kind, level and pin untouched. A task
-    /// already Blocked for exactly this reason gets no second event.
+    /// already Blocked for exactly this reason gets no second event. The parent's note is staged in
+    /// the same save as the Blocked state, as every other routing-exhausted Block does: the queued
+    /// message row is the durable outbox, so a crash after the save keeps both and a failed enqueue
+    /// saves neither (review 5de2b154).
     /// </summary>
     private async Task BlockRunnerKindAsync(AgentTask task, string reason, CancellationToken ct)
     {
         if (task.Status == AgentTaskStatus.Blocked && string.Equals(task.FailureReason, reason, StringComparison.Ordinal))
             return;
         task.AgentSessionId = null;
-        await BlockAsync(task, reason, ct);
+        StageBlocked(task, reason);
         await _tasks.EnqueueBlockedParentNoteAsync(task, reason, ct);
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation(
