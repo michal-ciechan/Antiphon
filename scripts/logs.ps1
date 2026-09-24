@@ -18,7 +18,7 @@ function Show-Tail {
         throw "No log files found at $Path."
     }
 
-    $files | ForEach-Object { Write-Output ("--- {0} ---" -f $_.FullName) }
+    Write-Output ("--- {0} ---" -f $files[-1].FullName)
     Get-Content -LiteralPath $files[-1].FullName -Tail $Tail
 }
 
