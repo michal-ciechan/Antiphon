@@ -193,7 +193,7 @@ interactive `--reader-login`. The deploy profile that names the host is untracke
 qualification artifact record the destination only as `sha256(chatId)[..16]`. Names and locations only:
 [nightly-watchdog.md § Custody](nightly-watchdog.md#custody).
 
-### Operator token for runner force-release (CARD-0653)
+### Operator token (CARD-0653, CARD-0658)
 
 `POST /api/session-runners/{runnerId}/slots/.../release` and `.../release-orphans` require the header
 `X-Antiphon-Operator-Token`. The value is 32 random bytes (hex) in an owner-only file the server creates
@@ -202,7 +202,17 @@ rule for the server's own account, same pattern as the key ring), else `$XDG_DAT
 (mode 0600). Override with `PhoneHomeRunner:OperatorTokenPath` (absolute). `scripts/runner-slots.ps1` reads it
 (`ANTIPHON_OPERATOR_TOKEN_FILE` overrides the path) and never prints it; the server compares it in constant
 time and never logs it. Rotate by deleting the file and restarting the server. A loopback client address is not
-a credential: the public vhost reaches Kestrel through Caddy and Vite as loopback.
+a credential: the public vhost reaches Kestrel through Caddy and Vite as loopback, and `X-Forwarded-*` is
+neither trusted nor required.
+
+The same token guards the Hangfire dashboard (CARD-0658). `/hangfire` admits a request carrying the header, or a
+live dashboard session cookie, and nothing else; there is no address check. The browser path is
+`scripts/hangfire-dashboard.ps1`: it sends the header to `POST /api/operator/dashboard-sessions`, which answers a
+one-time login link (`/api/operator/dashboard-login?nonce=...`, single use, two minutes), and opens that link in
+the default browser. Redeeming it sets `antiphon-operator-dashboard` (`HttpOnly`, `SameSite=Strict`,
+`Path=/hangfire`, `Max-Age` 12 hours, `Secure` over HTTPS) and redirects to `/hangfire`. The server keeps only
+SHA-256 hashes of nonces and session ids, in memory; a restart ends every dashboard session. The script prints
+neither the token nor the link.
 
 ### server2 runner credentials (CARD-0604)
 

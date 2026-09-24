@@ -18,7 +18,7 @@ The desktop server was initially unavailable during this verification and later 
 
 ## Hangfire jobs and failures
 
-Hangfire is in-process and uses `Hangfire.InMemory`. Open the local-only dashboard at `http://localhost:17202/hangfire` (or run `scripts/logs.ps1 -Source hangfire`) and inspect **Failed** and **Recurring Jobs**. Job/history expiration is eight days (`Hangfire:HistoryRetentionDays`); a server restart loses it immediately. There is no durable Hangfire file log or supported API export. Correlate a job failure with `desktop-server` while it exists.
+Hangfire is in-process and uses `Hangfire.InMemory`. The dashboard at `http://localhost:17202/hangfire` needs the operator token; open it with `scripts/hangfire-dashboard.ps1` (or check it with `scripts/logs.ps1 -Source hangfire`, which sends the token) and inspect **Failed** and **Recurring Jobs**. Job/history expiration is eight days (`Hangfire:HistoryRetentionDays`); a server restart loses it immediately. There is no durable Hangfire file log or supported API export. Correlate a job failure with `desktop-server` while it exists.
 
 Current verification retrieved the dashboard (HTTP 200). Proposed durability fix: use durable Hangfire storage or export failure summaries if history must survive server restarts.
 
