@@ -72,7 +72,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         Worktrees.Removal = new GuardedWorktreeRemoval(
             Git,
             Services.GetRequiredService<IRepositoryMutationLease>(),
-            Services.GetRequiredService<IWorktreeRemovalEvidence>(), Services.GetRequiredService<WorktreeGuardedCleanup>());
+            Services.GetRequiredService<IWorktreeRemovalEvidence>(), Services.GetRequiredService<WorktreeGuardedCleanup>(),
+            Services.GetRequiredService<WorktreeIgnoredContentGate>());
     }
 
     public async Task RestartServicesAsync()

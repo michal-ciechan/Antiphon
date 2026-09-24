@@ -194,14 +194,51 @@ public sealed class WorktreeGuardedCleanupTests
     {
         await using var h = await RemovalHarness.CreateAsync();
         var reads = 0; var reached = false;
-        var path = Path.Combine(h.H.Fixture.Source, ignored ? "bin-private/keep.txt" : "feature.txt");
+        // CARD-0665: bin-* is disposable now, so the ignored boundary uses a protected path.
+        var path = Path.Combine(h.H.Fixture.Source, ignored ? Path.Combine(".claude", "settings.local.json") : "feature.txt");
         h.OtherCommand = async (repo, args) => {
             if (repo == h.H.Fixture.Source && args[0] == "status" && (retry ? h.Removes == 1 : h.Removes == 0) && ++reads == read)
             { reached = true; Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllTextAsync(path, "new owner bytes"); }
             return null;
         };
-        (await h.RemoveAsync()).IsClean.ShouldBeFalse(); reached.ShouldBeTrue(); reads.ShouldBe(read);
+        var result = await h.RemoveAsync();
+        result.IsClean.ShouldBeFalse(); reached.ShouldBeTrue(); reads.ShouldBe(read);
         h.Removes.ShouldBe(retry ? 1 : 0); (await File.ReadAllTextAsync(path)).ShouldBe("new owner bytes");
+        // The protected-path detail survives the capture/retry path (CARD-0665 D-8).
+        if (ignored) result.Detail.ShouldBe("protected: .claude/settings.local.json");
+    }
+
+    // CARD-0665 V-3: the gate runs inside both readings of the real-git two-slot path.
+    [Test]
+    public async Task C665_DisposableInjectedBetweenReadingsIsRemoved()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var reads = 0;
+        var path = Path.Combine(h.H.Fixture.Source, "bin-private", "keep.txt");
+        h.OtherCommand = async (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            { Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllTextAsync(path, "build output"); }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        result.IsClean.ShouldBeTrue(result.Residue); reads.ShouldBe(2); h.Removes.ShouldBe(1);
+        Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C665_EvidenceInjectedBetweenReadingsIsRefused()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var reads = 0;
+        var path = Path.Combine(h.H.Fixture.Source, ".antiphon", "task-0123abcd.md");
+        h.OtherCommand = async (repo, args) => {
+            if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0 && ++reads == 2)
+            { Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllTextAsync(path, "late report"); }
+            return null;
+        };
+        var result = await h.RemoveAsync();
+        result.Residue.ShouldBe("ignored_content_changed"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
+        (await File.ReadAllTextAsync(path)).ShouldBe("late report");
     }
     [Test]
     public async Task C443_UnregisteredRootPreserved()
