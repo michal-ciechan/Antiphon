@@ -30,19 +30,29 @@ For the usual case, where AppHost may already be running:
 
 ```powershell
 pwsh -NoProfile -File scripts/restart-apphost.ps1
-pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>
+pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedSha <full-intended-head>
 ```
 
 This is the canonical teardown: it stops the AppHost tree and its API, client,
 dashboard and other owned resources, then relaunches and waits for health
-**and** a matching `GET /api/version` SHA (CARD-0495). Default expected SHA is
-source-root HEAD, never the caller's cwd. `-NoBuild` does not skip the identity
+**and** a matching `GET /api/version` SHA (CARD-0495). Admission (CARD-0644) runs
+first, rooted at the script's checkout, never the caller's cwd: source HEAD must
+equal `-ExpectedSha` (full 40/64 hex; `-ExpectedServerSha` is an alias) or, by
+default, the local `refs/remotes/origin/master`, which the script prints and never
+fetches - refresh it (`git fetch`) before an unpinned restart. The admitted SHA is
+frozen and rechecked by `dev-aspire.ps1`. `-NoBuild` does not skip the identity
 check. SHA equality is committed-build provenance, not dirty-file attestation.
 Postgres, the runner on 17204, and live detached pty-host / herdr sessions survive.
 Never run a second bare `dev-aspire.ps1`: the old process can keep the ports and
-the new code never goes live. Linked worktrees refuse by default (exit 3);
-return to the main checkout. `-AllowWorktree` deliberately overrides that guard
-and controls the shared stack.
+the new code never goes live. Main and linked worktrees are admitted alike: a
+linked worktree whose HEAD is the admitted commit restarts the one shared stack
+with no override, and a main checkout whose HEAD is not origin/master is refused
+(exit 3). `-AllowWorktree` admits a linked worktree at its current HEAD with a
+warning; it never overrides an explicit `-ExpectedSha` mismatch, unreadable Git or
+the locks. Launch/restart locks, `apphost.pid`, the dashboard URL file and
+`apphost.log` always live in the main worktree's `logs/`, so every caller on the
+machine contends on the same locks. `dev-aspire.ps1` refuses while a restart is in
+flight unless it is that restart's own child, and refuses a second launcher.
 
 **Job Object rule:** do not launch AppHost as a child of an agent tool job or
 nested shell inside a kill-on-close Windows Job Object. Closing that job can kill
@@ -120,9 +130,9 @@ show a rebuild after the client change before checking the browser. Use
 |---|---|---|
 | 0 | Dashboard URL discovered, API `/health` returned 200, and `/api/version` SHA equals the intended source-root HEAD | Record the printed SHA; probe the required capability/feature (`land-v2` for landing). |
 | 1 | Build failed or health wait timed out (default 150 seconds) | Read logs; after timeout the child may still be launching. Do not immediately rerun. |
-| 3 | Refused: worktree guard, SHA admission (`-ExpectedServerSha` malformed or not equal to HEAD, or HEAD unreadable), or active launch/restart lock; nothing killed | Inspect ownership and both locks; update the canonical checkout if the expected SHA is wrong; wait for the existing launch. |
+| 3 | Refused: unverifiable root or SHA admission (HEAD unreadable, `-ExpectedSha` malformed or not equal to HEAD, or HEAD not equal to local origin/master / origin/master unresolved), or active launch/restart lock; nothing killed | Read the printed root, expected ref/SHA and HEAD; update the checkout or pass the intended `-ExpectedSha`; inspect ownership and both locks; wait for the existing launch. |
 | 4 | Aspire DCP dependency-check timeout | Inspect Docker and lock/log evidence before retrying; podman text does not establish a missing runtime. |
-| 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedServerSha <full-intended-head>`. |
+| 5 | Server build unverified: health succeeded but `/api/version` SHA mismatched, was unavailable/malformed, or the checkout moved during observation. Restart lock retained; launched child left running. | Inspect the printed expected/observed SHAs, source root, `logs/apphost.restart.lock` and `logs/apphost.log`. Do not treat the stack as the intended build. Fix the checkout if needed, then restart with `-ExpectedSha <full-intended-head>`. |
 
 | Lock | Lifetime |
 |---|---|
@@ -154,7 +164,7 @@ Before relying on newly landed server behavior:
 2. Confirm the canonical checkout contains it (`git pull --rebase` in
    `C:\src\Antiphon` after out-of-band publication).
 3. From an independent operator shell in the canonical checkout, run
-   `pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedServerSha <full-intended-head>`.
+   `pwsh -NoProfile -File scripts/restart-apphost.ps1 -ExpectedSha <full-intended-head>`.
 4. Require exit 0 and a fresh `GET /api/version` showing that exact SHA and
    `capabilities` containing `land-v2`. Probe the required feature directly when
    the checkout has tracked edits. `restart-apphost.ps1` also prints a NOTE when

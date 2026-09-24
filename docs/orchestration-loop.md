@@ -118,7 +118,7 @@ running API's `GET /api/version`. A client that expects `land-v2` POSTs only
 `/api/agent-tasks/{id}/land/v2` and refuses (exit 1, zero land POSTs) when the
 marker is absent; it never falls back to `/land`. If the build does not demonstrably
 include the required change, restart from the canonical checkout with the intended
-full HEAD as `-ExpectedServerSha`, then confirm the reported SHA and a direct
+full HEAD as `-ExpectedSha`, then confirm the reported SHA and a direct
 capability/feature probe. Do not treat `/health`, a runner SHA, a pushed branch, or
 a succeeded delegate as activation evidence. Use the landing receipt's post-rebase
 identity, not an assumption that the Code worktree SHA survived landing unchanged.
