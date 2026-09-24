@@ -23,6 +23,11 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeDefaultContinuationTests
 {
+    // The 120s budget is the continuation, not the first shared-database migration.
+    // A cold container on a busy host otherwise cancels FrozenTip before its assertion.
+    [Before(Class)]
+    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
+
     [Test]
     [Timeout(120_000)]
     public async Task RetiredWorktreeCutsAtPriorTip()
