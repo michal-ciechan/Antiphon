@@ -694,4 +694,47 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", "refs/heads/master")).Trim().ShouldBe(op.VerifiedSourceSha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
+
+    [Test]
+    public async Task C642_TargetSwitchedIntoExistingWorktreeMidLandIsSeenBeforeUpdateRef()
+    {
+        // CARD-0642 R1 repair: switching an EXISTING worktree onto the target moves only that worktree's
+        // HEAD file, not the <common>/worktrees stamp. The checkout decision behind update-ref must be
+        // a fresh listing, never the land's cached one.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "checkout", "--detach");
+        var other = Path.Combine(h.Fixture.Root, "trees", "other");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", other, h.Fixture.TargetRef);
+        var targetBefore = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim();
+        await using (var db = h.CreateContext())
+        {
+            // A filter forces the verifier (no base_unchanged skip), which is the mid-land window.
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.LandVerifyFilter = "/*/*/Fixture/*";
+            await db.SaveChangesAsync();
+        }
+        // Another process: an independent Git instance, so the land's own-mutation invalidation never sees it.
+        var outsider = new LandingGitFixture.FixtureGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId);
+        h.Verifier.Barrier = async () =>
+            (await outsider.RunAsync(other, ["checkout", "master"], CancellationToken.None)).Succeeded.ShouldBeTrue();
+        h.Fixture.Git.Trace.Clear();
+
+        await h.RunAsync();
+
+        h.Verifier.Calls.ShouldBe(1);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef),
+            "update-ref must never move a target another worktree has checked out");
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(targetBefore);
+        (await outsider.RunAsync(other, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None)).Output.Trim().ShouldBe(h.Fixture.TargetRef);
+        (await outsider.RunAsync(other, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], CancellationToken.None))
+            .Output.ShouldBeEmpty("the other worktree's index and tree must not be left behind a moved branch");
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.LastReason.ShouldBe("target_checkout_changed");
+        op.LocalTargetAfterSha.ShouldBeNull();
+        op.RemoteConfirmedAt.ShouldBeNull();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "push");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
 }
