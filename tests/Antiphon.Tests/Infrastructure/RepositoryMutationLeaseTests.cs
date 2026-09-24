@@ -418,6 +418,59 @@ public sealed class RepositoryMutationLeaseTests
         }
     }
 
+    // CARD-0661. A fast child's owner saw its exact handle exit before reading a start identity and
+    // saved Completed=true with no StartTicks; the owner then crashed before draining its output.
+    // The server keeps the record fencing admission (a restart cannot prove descendant exit), and
+    // the explicit script recovers it only after -Execute -ConfirmDescendantsExited. It must never
+    // look up the recorded PID's start time: that PID may be reused and Linux start times are
+    // unstable across readers (CARD-0668). Incomplete or foreign completed records stay retained.
+    [Test]
+    [Arguments("completed")]
+    [Arguments("completed-without-pid")]
+    [Arguments("completed-wrong-repository")]
+    public async Task C661_CompletedRecordIsRecoveredOnlyUnderExplicitConfirmation(string state)
+    {
+        using var repo = new ScratchGitRepo("antiphon-journal-completed");
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        await RepositoryChildJournal.BeginAsync(repo.Path, CancellationToken.None);
+        var start = new ProcessStartInfo("git") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        start.ArgumentList.Add("--version");
+        int exitedId;
+        using (var exited = Process.Start(start)!)
+        {
+            await exited.StandardOutput.ReadToEndAsync();
+            await exited.WaitForExitAsync();
+            exitedId = exited.Id;
+        }
+        var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(new RepositoryChildJournal.ChildRecord(1,
+            state == "completed-wrong-repository" ? repo.WorktreeRoot : common,
+            state == "completed-without-pid" ? null : exitedId, null, Completed: true)));
+
+        // Server path: every fresh provider (as after a restart) stays fenced and names the recovery.
+        foreach (var provider in new[] { new RepositoryMutationLease(git), new RepositoryMutationLease(git) })
+        {
+            await using (var fenced = await provider.TryAcquireAsync(repo.Path, CancellationToken.None))
+                fenced.ShouldBeNull("a completed root cannot prove its descendants exited");
+            (await provider.DescribeUnavailableAsync(repo.Path, CancellationToken.None))
+                .ShouldNotBeNull().ShouldContain("recover-repository-children.ps1");
+        }
+        File.Exists(path).ShouldBeTrue("the server never clears a child record on its own");
+
+        // Script path: preview and unconfirmed execution retain it.
+        await RecoverChildrenAsync(repo.Path, 3);
+        await RecoverChildrenAsync(repo.Path, 3, "-Execute");
+        File.Exists(path).ShouldBeTrue("recovery requires explicit descendant confirmation");
+
+        var recoverable = state == "completed";
+        await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
+        File.Exists(path).ShouldBe(!recoverable);
+        await using var admission = await new RepositoryMutationLease(git).TryAcquireAsync(repo.Path, CancellationToken.None);
+        if (recoverable) admission.ShouldNotBeNull("a confirmed completed record no longer fences the repository");
+        else admission.ShouldBeNull("an incomplete or foreign completed record stays retained");
+    }
+
     private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
