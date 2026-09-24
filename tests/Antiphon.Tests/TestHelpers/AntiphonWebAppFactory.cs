@@ -58,6 +58,13 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
         Path.Combine(Path.GetTempPath(), "antiphon-waf", Guid.NewGuid().ToString("N"));
 
     /// <summary>
+    /// CARD-0658: this host's own operator token file, under its scratch directory. Without it
+    /// every Program boot here read or created the machine's real token. Tests that need the
+    /// credential read it from this path; the value is never printed.
+    /// </summary>
+    public string OperatorTokenPath => Path.Combine(_workspacePath, "operator-token");
+
+    /// <summary>
     /// CARD-0204: the session-runner this host talks to. It refuses every launch and records the
     /// attempt, so a test can assert that booting the host started nothing anywhere. Replaces the
     /// HTTP client that used to reach the always-on production runner on 17204 — through which
@@ -112,6 +119,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
                 ["Delegation:OutputDistillerEnabled"] = "false",
                 ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),
                 ["Hangfire:ServerEnabled"] = "false",
+                ["PhoneHomeRunner:OperatorTokenPath"] = OperatorTokenPath,
             });
         });
 

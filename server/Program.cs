@@ -265,6 +265,8 @@ try
         .Bind(builder.Configuration.GetSection("PhoneHomeRunner"))
         .ValidateOnStart();
     builder.Services.AddSingleton<PhoneHomeLaunchPolicy>();
+    // CARD-0658: one-time dashboard login links and the dashboard sessions they create.
+    builder.Services.AddSingleton<OperatorDashboardSessions>();
     // CARD-0604 D-15/G-21: the remote mirror seam and the spill courier. Both singletons: the
     // courier holds a one-shot body per live session, and the workspace service is stateless.
     builder.Services.AddSingleton<RemoteSpillCourier>();
@@ -919,6 +921,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
     app.MapSessionRunnerEndpoints();
+    app.MapOperatorEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();

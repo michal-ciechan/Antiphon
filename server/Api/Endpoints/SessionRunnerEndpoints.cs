@@ -130,15 +130,9 @@ public static class SessionRunnerEndpoints
     /// CARD-0653: force-release needs the operator credential. The client address proves nothing:
     /// the public vhost arrives through Caddy and Vite as a loopback connection.
     /// </summary>
-    private static void RequireOperator(HttpContext http, PhoneHomeRunnerSettings settings)
-    {
-        var path = OperatorTokenFile.ResolvePath(settings.OperatorTokenPath);
-        var provided = http.Request.Headers[OperatorTokenFile.Header].ToString();
-        if (!OperatorTokenFile.Matches(OperatorTokenFile.ReadOrCreate(path), provided))
-            throw new ForbiddenException(
-                "Force-release requires the operator token (scripts/runner-slots.ps1 sends it).",
-                "operator_token_required");
-    }
+    private static void RequireOperator(HttpContext http, PhoneHomeRunnerSettings settings) =>
+        OperatorCredential.Require(
+            http, settings, "Force-release requires the operator token (scripts/runner-slots.ps1 sends it).");
 
     /// <summary>
     /// A save that fails after the runner has released leaves a pending intent. Finish that
