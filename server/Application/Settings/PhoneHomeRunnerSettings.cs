@@ -28,7 +28,7 @@ public sealed class PhoneHomeRunnerSettings
     public IReadOnlyList<string> RawExeAllowList { get; set; } = ["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"];
 
     /// <summary>Upper bound on a registration's declared capacity (CARD-0604 D-14).</summary>
-    public int MaxCapacity { get; set; } = 8;
+    public int MaxCapacity { get; set; } = 10;
 
     public string ChildGrokHome { get; set; } = "/state/grok";
     public string ChildClaudeHome { get; set; } = "/state/claude";

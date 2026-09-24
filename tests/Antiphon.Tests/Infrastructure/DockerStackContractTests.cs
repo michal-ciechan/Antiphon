@@ -180,12 +180,15 @@ public sealed class DockerStackContractTests
     }
 
     [Test]
-    public void Server2_runner_capacity_is_three()
+    public void Server2_runner_capacity_is_ten()
     {
-        Env(Server2Runner(), "PhoneHome__Capacity").ShouldBe("3");
+        Env(Server2Runner(), "PhoneHome__Capacity").ShouldBe("10");
+        // The server refuses a registration above its own bound, so the declared seats must fit it.
+        int.Parse(Env(Server2Runner(), "PhoneHome__Capacity"))
+            .ShouldBeLessThanOrEqualTo(new Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings().MaxCapacity);
         var stack = DockerStackDocuments.Read("docs/docker-stack.md");
         stack.ShouldContain("PhoneHome__Capacity");
-        stack.ShouldContain("\"3\"");
+        stack.ShouldContain("\"10\"");
         stack.ShouldContain("scripts/runner-slots.ps1");
     }
 

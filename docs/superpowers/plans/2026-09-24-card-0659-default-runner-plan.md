@@ -241,7 +241,7 @@ explicit enough for that future extension; no new scaling settings here.
 
 | Dependency | Required before dormant Code lands? | Required before server2 is enabled as default? |
 |---|---|---|
-| CARD-0653 capacity hold, local/remote cap split, settled-session release and conditional stop | No for S1-S3; S4 integrates after its publication. Coordinate shared dispatcher edits rather than dispatch competing Code tasks. | Yes. Verify normal slot release, capacity hold before prep and operator recovery API readiness; confirm server2 declared capacity 3 after its authorized redeploy. |
+| CARD-0653 capacity hold, local/remote cap split, settled-session release and conditional stop | No for S1-S3; S4 integrates after its publication. Coordinate shared dispatcher edits rather than dispatch competing Code tasks. | Yes. Verify normal slot release, capacity hold before prep and operator recovery API readiness; confirm server2 declared capacity 10 after its authorized redeploy. |
 | CARD-0657 settlement sync/progress attribution | No; keep default unset. | Yes. Exact pushed remote SHA must be attributed and settle successfully before default traffic grows. |
 | CARD-0649 Claude report markers | Existing code may be present; source presence is insufficient. | Yes for Claude. Confirm server2 image actually includes it, then capture an attributed Claude report. |
 | CARD-0644 Worktree default | Present in inspected code; preserve it. | Yes, including pin/follow-up compatibility. |
