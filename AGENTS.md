@@ -11,6 +11,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Cards, delegates, landing, scopes, and tracker orchestration | [docs/orchestration-loop.md](docs/orchestration-loop.md) |
 | Card state versus session state and decision questions | [docs/agent-card-lifecycle.md](docs/agent-card-lifecycle.md) |
 | Inspecting agents, boards, and live sessions over HTTP | [docs/ops-http.md](docs/ops-http.md); full route map [docs/antiphon-api.md](docs/antiphon-api.md) |
+| Retrieving desktop, runner, Hangfire, remote, and transcript logs | [docs/logs.md](docs/logs.md) |
 | Workflow tracker configuration | [docs/workflow-tracker-block.md](docs/workflow-tracker-block.md) |
 | Agent kinds, provider settings, remote control, and Codex test isolation | [docs/agent-kinds.md](docs/agent-kinds.md), [docs/ai-agent-tui-configuration.md](docs/ai-agent-tui-configuration.md) |
 | Secrets, keys, and configuration custody | [docs/agent-credentials.md](docs/agent-credentials.md) |
