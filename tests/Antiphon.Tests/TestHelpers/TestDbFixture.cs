@@ -27,17 +27,11 @@ public class TestDbFixture
 	[Before(Assembly)]
 	public static async Task InitializeAsync(AssemblyHookContext context)
 	{
-		if (Environment.GetEnvironmentVariable(CodexStartupDeliveryWorker.Marker) is { } startup)
+		// CARD-0646: every worker mode runs on a parent-owned connection and exits here, before
+		// the warm-up below, so no worker child ever starts the shared store.
+		if (TestWorkerModes.Requested() is { } worker)
 		{
-			try { await CodexStartupDeliveryWorker.RunAsync(startup); Environment.Exit(0); }
-			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
-			return;
-		}
-
-		if (Environment.GetEnvironmentVariable(PostLandMutationDeliveryWorker.Marker) is { } delivery)
-		{
-			try { await PostLandMutationDeliveryWorker.RunAsync(delivery); Environment.Exit(0); }
-			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
+			await TestWorkerModes.RunAndExitAsync(worker.Mode, worker.Payload);
 			return;
 		}
 

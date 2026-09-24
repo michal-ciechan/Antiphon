@@ -1,12 +1,10 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
-using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -16,36 +14,7 @@ internal static class LandQueueRaceWorker
     internal const string Marker = "ANTIPHON_C467_QUEUE_WORKER";
     private sealed record Settings(string Root, Guid Session, Guid Task, Guid Notification);
 
-    [Before(Assembly)]
-    public static async Task DispatchWorkerIfRequested()
-    {
-        if (Environment.GetEnvironmentVariable(Marker) is not { } worker)
-            return;
-        try
-        {
-            await RunAsync(worker);
-            Environment.Exit(0);
-        }
-        catch (Exception ex)
-        {
-            var text = ex.GetType().Name + ": " + ex.Message + Environment.NewLine + ex.StackTrace + Environment.NewLine;
-            Console.Error.Write(text);
-            Console.Error.Flush();
-            try
-            {
-                var stderr = Console.OpenStandardError();
-                var bytes = Encoding.UTF8.GetBytes(text);
-                stderr.Write(bytes, 0, bytes.Length);
-                stderr.Flush();
-            }
-            catch
-            {
-                // Best-effort: Environment.Exit still reports failure.
-            }
-            Environment.Exit(1);
-        }
-    }
-
+    // Dispatched by TestDbFixture.InitializeAsync through TestWorkerModes (CARD-0646).
     internal static async Task RunAsync(string encoded)
     {
         var settings = JsonSerializer.Deserialize<Settings>(encoded)!;
