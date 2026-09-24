@@ -108,12 +108,19 @@ public sealed class DefaultRunnerRoutingPolicy
     /// CARD-0659 D-5. The one host/kind rule every post-create kind change shares: a task bound to
     /// a runner may only run a kind that runner admits (Grok or Claude Code), whatever the model
     /// walk prefers. The desktop runs every kind. The host itself never changes after create.
+    /// CARD-0660 D-10: this is the rule for a kind MOVE (reroute, rewalk, usage wall); it still
+    /// excludes Codex until S7, even though an explicit create may now place Codex on a runner.
     /// </summary>
     public static bool IsHostKindCompatible(string? runnerId, AgentKind kind) =>
         string.IsNullOrWhiteSpace(runnerId) || PhoneHomeLaunchPolicy.IsAdmittedKind(kind);
 
+    /// <summary>
+    /// CARD-0660 D-7. The pre-claim fence on a task's PERSISTED kind: whatever an explicit
+    /// <c>-Runner</c> create admitted (Grok, Claude Code or Codex) dispatches; anything else (a
+    /// legacy or out-of-band mismatch) is Blocked, never launched remotely or moved to the desktop.
+    /// </summary>
     public static bool IsHostKindAdmitted(string? runnerId, AgentKind kind) =>
-        IsHostKindCompatible(runnerId, kind);
+        string.IsNullOrWhiteSpace(runnerId) || PhoneHomeLaunchPolicy.IsExplicitRunnerTaskKind(kind);
 
     /// <summary>
     /// The stable Blocked reason for an automatic choice of a kind the task's runner cannot run.
@@ -204,6 +211,7 @@ public sealed class DefaultRunnerRoutingPolicy
             return ReasonExistingProcess;
         if (shape.Workspace != WorkspaceMode.Worktree)
             return ReasonWorkspaceNotWorktree;
+        // CARD-0660 D-10: Codex is admitted for an explicit -Runner only; it takes no default until S7.
         if (!PhoneHomeLaunchPolicy.IsAdmittedKind(shape.Kind))
             return ReasonKindNotSupported;
         // A delegated sub-orchestrator on the runner is supported for Claude Code only.

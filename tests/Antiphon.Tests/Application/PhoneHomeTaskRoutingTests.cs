@@ -41,10 +41,11 @@ public sealed class PhoneHomeTaskRoutingTests
     }
 
     [Test]
-    public void Only_grok_and_claude_run_a_runner_bound_task()
+    public void Only_grok_claude_and_codex_run_a_runner_bound_task()
     {
+        // CARD-0660 admits Codex; OpenCode is the unsupported-kind control.
         var policy = Policy();
-        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
+        foreach (var kind in new[] { AgentKind.OpenCode, AgentKind.Raw })
         {
             Should.Throw<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
                     policy.RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true, false, false,
@@ -52,7 +53,7 @@ public sealed class PhoneHomeTaskRoutingTests
                 .Code.ShouldBe("phone_home_kind_refused");
         }
 
-        foreach (var kind in new[] { AgentKind.Grok, AgentKind.ClaudeCode })
+        foreach (var kind in new[] { AgentKind.Grok, AgentKind.ClaudeCode, AgentKind.Codex })
             policy.RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true, false, false,
                 SessionBackend.PtyHost, kind, null);
     }

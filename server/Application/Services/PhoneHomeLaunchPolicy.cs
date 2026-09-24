@@ -45,9 +45,26 @@ public sealed class PhoneHomeLaunchPolicy
     public string ChildGrokHome => _settings.ChildGrokHome;
     public string ChildCodexHome => _settings.ChildCodexHome;
     public bool CodexAuthProbeEnabled => _settings.CodexAuthProbeEnabled;
+
+    /// <summary>
+    /// The kinds a runner takes without anyone having named it: default placement (CARD-0659) and
+    /// every automatic or rerouted kind move onto a runner-bound task. CARD-0660 D-10 keeps Codex
+    /// out of this set until its default-placement round (S7).
+    /// </summary>
     public static bool IsAdmittedKind(AgentKind kind) => kind is AgentKind.Grok or AgentKind.ClaudeCode;
 
-    public static bool IsExplicitRunnerTaskKind(AgentKind kind) => IsAdmittedKind(kind);
+    /// <summary>
+    /// CARD-0660 D-7/D-10: the kinds a delegated Worktree task may run on a runner the caller named
+    /// explicitly (<c>-Runner</c>). Codex is admitted here, and only here, ahead of S7.
+    /// </summary>
+    public static bool IsExplicitRunnerTaskKind(AgentKind kind) => IsAdmittedKind(kind) || kind == AgentKind.Codex;
+
+    /// <summary>
+    /// CARD-0660 D-8: the credential environment names a runner-bound Codex launch refuses. The
+    /// runner's Codex authenticates only through the subscription login in its own home.
+    /// </summary>
+    public static readonly IReadOnlyList<string> CodexCredentialEnvNames =
+        ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
 
     public void RefuseUnsupportedStart(
         Agent agent,
@@ -107,8 +124,12 @@ public sealed class PhoneHomeLaunchPolicy
                 throw new ConflictException("Delegated tasks are not enabled for the phone-home runner.", "phone_home_task_refused");
             if (!worktree)
                 throw new ConflictException("A runner-bound task must use a Worktree workspace.", "phone_home_worktree_refused");
-            if (!IsAdmittedKind(kind))
-                throw new ConflictException("A runner-bound task must be Grok or Claude Code.", "phone_home_kind_refused");
+            if (!IsExplicitRunnerTaskKind(kind))
+                throw new ConflictException("A runner-bound task must be Grok, Claude Code or Codex.", "phone_home_kind_refused");
+            // CARD-0660: Codex runs ordinary Worker tasks on the runner; runner-side SourceLanding
+            // custody is not part of its admission.
+            if (kind == AgentKind.Codex && sourceLanding)
+                throw new ConflictException("A runner-bound Codex task cannot use SourceLanding.", "phone_home_kind_refused");
             // CARD-0604 D-19 (Cut B) / CARD-0659: a runner-bound SourceLanding Mutation is a
             // supported shape. Create admits it only as a Mutation after asking THIS runner for
             // custody (SourceLandingAdmission.RequireSupportAsync), the dispatcher launches it into
@@ -164,12 +185,30 @@ public sealed class PhoneHomeLaunchPolicy
             }
         }
 
+        if (spec.Kind == AgentKind.Codex)
+        {
+            // Refused by name whatever the value, including empty: an empty OPENAI_API_KEY still
+            // changes which auth path Codex considers. The value never enters the message.
+            foreach (var name in CodexCredentialEnvNames)
+            {
+                if (spec.Env.Keys.Any(key => string.Equals(key, name, StringComparison.OrdinalIgnoreCase)))
+                    throw new ConflictException($"Credential environment name {name} is refused for runner-bound Codex.", "phone_home_env_refused");
+            }
+        }
+
         var env = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal)
         {
             ["GROK_HOME"] = _settings.ChildGrokHome,
             ["CLAUDE_CONFIG_DIR"] = _settings.ChildClaudeHome,
             ["ANTIPHON_API"] = _settings.CallbackOrigin,
         };
+        if (spec.Kind == AgentKind.Codex)
+        {
+            // CARD-0660 D-3: the runner's own home, never a desktop one in any spelling.
+            foreach (var key in env.Keys.Where(key => string.Equals(key, "CODEX_HOME", StringComparison.OrdinalIgnoreCase)).ToArray())
+                env.Remove(key);
+            env["CODEX_HOME"] = _settings.ChildCodexHome;
+        }
 
         var exe = ProjectExe(spec.Exe, agent, pinned);
         var cwd = string.IsNullOrWhiteSpace(runnerCwd) ? _settings.RunnerWorkspace : runnerCwd;
@@ -192,13 +231,20 @@ public sealed class PhoneHomeLaunchPolicy
 
     private string ProjectExe(string specExe, Agent agent, bool pinned)
     {
-        var fileName = Path.GetFileName(specExe);
+        // The desktop spells its paths with backslashes; take the file name the same way on any host.
+        var fileName = Path.GetFileName(specExe.Replace('\\', '/'));
         if (string.Equals(fileName, "grok.exe", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fileName, "grok", StringComparison.OrdinalIgnoreCase))
             return "grok";
         if (!pinned && (string.Equals(fileName, "claude.exe", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fileName, "claude", StringComparison.OrdinalIgnoreCase)))
             return "claude";
+        // CARD-0660 D-7: the desktop's standard Codex (the npm codex.cmd shim, codex.exe or a bare
+        // codex) is the image's native /usr/local/bin/codex. A different file name is not Codex.
+        if (!pinned && (string.Equals(fileName, "codex.cmd", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "codex.exe", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "codex", StringComparison.OrdinalIgnoreCase)))
+            return "codex";
         if (pinned)
             throw new ConflictException("Only the standard grok.exe definition may project to Linux.", "phone_home_wrapper_refused");
 

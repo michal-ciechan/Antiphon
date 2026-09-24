@@ -210,6 +210,15 @@ fast-forwards the desktop worktree (`--ff-only`; a divergence or a dirty desktop
 never a reset). Landing, retirement and residue accounting are unchanged. Card-backed starts,
 OnAgent, Shared, ReadOnly, pins and SourceLanding are all refused at create.
 
+An explicit `-Runner server2` may also carry `-Kind Codex` for a Worker task (CARD-0660); the
+automatic default placement still keeps Codex on the desktop. `PhoneHomeRunner:ChildCodexHome`
+(default `/state/codex`, POSIX absolute, never `/tmp`) is projected as `CODEX_HOME` and needs no
+user-secret while the runner's compose home agrees. `PhoneHomeRunner:CodexAuthProbeEnabled`
+(default true) asks that runner at create and retry, and a definite signed-out answer is 409
+`provider_sign_in_required` with `agentKind: Codex`, `codexHome`, `runnerId` and the
+`codex login --device-auth` remedy. The local `codex` definition (`codex.cmd`) is unchanged; the
+projection maps it to the image's native `codex`.
+
 PC-28 through PC-31 run in an inherited QEMU/TCG guest via `scripts/test-card0490-native.ps1`. Ordinary Code uses `-Ordinary -Phase baseline` only. Sourced Mutation requires `-BindingFile` and must not downgrade to ordinary. Asset pins live in `tests/fixtures/card0490-linux/assets.lock.json`; any `pending-operator-pin` there refuses the lane with exit 4.
 
 QEMU itself is the pinned weilnetz `qemu-w64-setup-20241220.exe` bundle (9.2.0); extract it and point `CARD0490_QEMU_DIR` at the result. The boot disk is **built, not downloaded**: `pwsh -NoProfile -File scripts/build-card0490-bootdisk.ps1 -QemuDir <dir> -Smoke -WriteLock` generates a 512-byte MBR from a table in the script, pads to a 64 MiB raw image and converts it with the pinned `qemu-img`, so the bytes are identical on every machine. It refuses to run if the QEMU binaries do not match their `assets.lock.json` hashes. The image carries no application source, no compiled Antiphon assemblies, no credentials and no saved VM memory. Its guest contract on COM1 is: emit `CARD0490-BOOT-OK`, echo every received byte, and on `q` emit `CARD0490-HALT` and power off through ACPI. `-Smoke` asserts all three through the plan's own `-blockdev`/`virtio-blk-pci` overlay invocation. That boot disk proves the guest boots and is drivable; it does **not** yet carry the SDK `10.0.204`/net9 runtime/offline NuGet payload that sourced PC-28–31 execution needs.

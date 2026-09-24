@@ -561,7 +561,8 @@ public sealed class AgentTaskDispatcher
             // CARD-0659 D-5: a runner-bound task whose persisted kind its runner cannot run (a legacy
             // or out-of-band mismatch) is Blocked here, before any claim, worktree or remote prep.
             // It is never launched remotely as that kind and never moved to the desktop.
-            if (!DefaultRunnerRoutingPolicy.IsHostKindCompatible(task.RunnerId, task.AgentKind))
+            // CARD-0660: an explicitly placed Codex task is not a mismatch.
+            if (!DefaultRunnerRoutingPolicy.IsHostKindAdmitted(task.RunnerId, task.AgentKind))
             {
                 await BlockRunnerKindAsync(task, DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(
                     task.RunnerId!, task.AgentKind, ModelLevelAliases.For(task.AgentKind, task.ModelLevel)), ct);

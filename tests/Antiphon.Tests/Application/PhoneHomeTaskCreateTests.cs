@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 public sealed class PhoneHomeTaskCreateTests
 {
     [Test]
-    public async Task Runner_bound_create_admits_claude_and_refuses_codex()
+    public async Task Runner_bound_create_admits_claude_and_explicit_codex()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var repoRoot = RepoRoot();
@@ -48,11 +48,12 @@ public sealed class PhoneHomeTaskCreateTests
         stored.RunnerId.ShouldBe("server2");
         stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
 
-        var refused = await Should.ThrowAsync<ValidationException>(() =>
-            service.CreateAsync(request with { Goal = "run Codex", AgentKind = AgentKind.Codex },
-                caller, CancellationToken.None));
-        refused.Errors[nameof(CreateAgentTaskRequest.RunnerId)].Single()
-            .ShouldContain("Grok or Claude Code");
+        // CARD-0660: an explicitly named runner now also takes a Codex Worker.
+        var codex = await service.CreateAsync(request with { Goal = "run Codex", AgentKind = AgentKind.Codex },
+            caller, CancellationToken.None);
+        var storedCodex = await db.AgentTasks.SingleAsync(t => t.Id == codex.Id);
+        storedCodex.RunnerId.ShouldBe("server2");
+        storedCodex.AgentKind.ShouldBe(AgentKind.Codex);
     }
 
     [Test]
