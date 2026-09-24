@@ -426,9 +426,14 @@ Resolve that input using existing queue controls. Transcript and task history st
 
 Land outcome notifications use SourceLandNotificationId, separate from report identity.
 The outbox owes delivery across terminal settlement and queue insertion. Receipt requires
-a complete UserPrompt in the destination after LastDeliveryBaselineSequence, or the
-attempt timestamp when no sequence baseline exists. Sent/screen confirmation is not
-this proof. Recovery catches up transcript evidence; typing remains in the session queue.
+a complete submitted prompt in the destination after LastDeliveryBaselineSequence, or within
+the attempt timestamp floor when no sequence baseline exists, and an actual delivery attempt.
+For a non-legacy Held, Aged, Conflict or Outcome note that prompt may be a UserPrompt or a
+submitted QueuedUserPrompt (the TUI's attachment/queued_command record). DispatchBase,
+DeliveryFailure, TaskCompletion, LegacyCheckNote and a legacy Outcome stay on the UserPrompt
+contract. QueueEnqueue, QueueDequeue, QueueRemove, Sent, LateConfirmed and an assistant
+acknowledgement are not receipt. Recovery catches up transcript evidence before declaring
+absence and persists the confirming sequence; typing remains in the session queue.
 Unresolved keyed rows and their destination transcript are retained by ordinary pruning.
 
 CARD-0443 capture-bearing Outcomes are composed once into a 1,024-byte UTF-8 envelope,

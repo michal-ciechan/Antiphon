@@ -184,7 +184,8 @@ public sealed class AgentTaskLandReceiptTests
         await db.SaveChangesAsync();
         await service.ReconcileAsync(note.Id, CancellationToken.None);
         await db.Entry(note).ReloadAsync();
-        var confirmed = evidence is "complete" or "flattened" or "clock-tolerance";
+        // CARD-0641 D-2: a complete submitted QueuedUserPrompt confirms this non-legacy Outcome.
+        var confirmed = evidence is "complete" or "flattened" or "clock-tolerance" or "queued-prompt";
         note.ConfirmedAt.HasValue.ShouldBe(confirmed);
         note.ConfirmingPromptSequence.ShouldBe(confirmed ? 11L : null);
         h.Adapter.Inputs.ShouldBeEmpty("receipt reconciliation must never type");

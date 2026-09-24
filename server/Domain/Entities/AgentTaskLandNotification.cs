@@ -2,7 +2,10 @@ using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Domain.Entities;
 
-/// <summary>Immutable event payload and durable delivery obligation; receipt requires UserPrompt evidence.</summary>
+/// <summary>
+/// Immutable event payload and durable delivery obligation. Receipt is a complete submitted
+/// UserPrompt, or, for a non-legacy Held, Aged, Conflict or Outcome note, a submitted QueuedUserPrompt.
+/// </summary>
 public sealed class AgentTaskLandNotification
 {
     public Guid Id { get; set; }

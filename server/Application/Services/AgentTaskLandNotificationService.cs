@@ -195,8 +195,16 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             if (row.DeliveryAttempts > 0)
             {
                 await runtime.CatchUpTranscriptAsync(session, ct);
-                var prompts = db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == session
-                    && p.Kind == TranscriptKinds.UserPrompt && p.Text != null);
+                // CARD-0641 D-2: a submitted QueuedUserPrompt is receipt for non-legacy Held, Aged,
+                // Conflict and Outcome notes. Housekeeping queue operations and every other kind,
+                // including a legacy Outcome, stay on the UserPrompt contract.
+                var acceptQueued = !note.IsLegacy && note.Kind is LandNotificationKind.Held
+                    or LandNotificationKind.Aged or LandNotificationKind.Conflict or LandNotificationKind.Outcome;
+                var prompts = db.TranscriptEntries.AsNoTracking().Where(p =>
+                    p.AgentSessionId == session && p.Text != null);
+                prompts = acceptQueued
+                    ? prompts.Where(p => p.Kind == TranscriptKinds.UserPrompt || p.Kind == TranscriptKinds.QueuedUserPrompt)
+                    : prompts.Where(p => p.Kind == TranscriptKinds.UserPrompt);
                 if (row.LastDeliveryBaselineSequence is long floor)
                     prompts = prompts.Where(p => p.Sequence > floor);
                 else if (row.LastDeliveryStartedAt is DateTime started)
