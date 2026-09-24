@@ -10,6 +10,30 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Get-MainCheckoutRoot {
+    $repositoryRoot = @(& git -C $PSScriptRoot rev-parse --show-toplevel 2>&1 | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0 -or -not $repositoryRoot) {
+        throw "Could not resolve the Git checkout containing $PSScriptRoot."
+    }
+
+    $worktrees = @(& git -C $repositoryRoot worktree list --porcelain 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not list Git worktrees for $repositoryRoot."
+    }
+
+    $mainRecord = @($worktrees | ForEach-Object { $_.ToString() } | Where-Object { $_ -match '^worktree\s+(.+)$' }) | Select-Object -First 1
+    if (-not $mainRecord) {
+        throw "Git did not report a primary worktree for $repositoryRoot."
+    }
+
+    $mainRoot = [System.IO.Path]::GetFullPath(([regex]::Match($mainRecord, '^worktree\s+(.+)$').Groups[1].Value.Trim()))
+    if (-not (Test-Path -LiteralPath $mainRoot -PathType Container)) {
+        throw "Git primary worktree does not exist: $mainRoot."
+    }
+
+    return $mainRoot
+}
+
 function Show-Tail {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -22,11 +46,12 @@ function Show-Tail {
     Get-Content -LiteralPath $files[-1].FullName -Tail $Tail
 }
 
-$canonicalRoot = 'C:\src\Antiphon'
-$logRoot = Join-Path $canonicalRoot 'logs'
+$mainCheckoutRoot = Get-MainCheckoutRoot
+$logRoot = Join-Path $mainCheckoutRoot 'logs'
+$desktopServerLogRoot = Join-Path $mainCheckoutRoot 'server\logs'
 
 switch ($Source) {
-    'desktop-server' { Show-Tail (Join-Path $logRoot 'antiphon-*.log') }
+    'desktop-server' { Show-Tail (Join-Path $desktopServerLogRoot 'antiphon-*.log') }
     'apphost' { Get-Content -LiteralPath (Join-Path $logRoot 'apphost.log') -Tail $Tail }
     'session-runner' {
         Get-Content -LiteralPath (Join-Path $logRoot 'session-runner.log') -Tail $Tail
@@ -45,7 +70,7 @@ switch ($Source) {
         if ($LASTEXITCODE -ne 0) { throw "server2 runner log retrieval failed (ssh/docker exit $LASTEXITCODE)." }
     }
     'server2-deploy' {
-        ssh -o BatchMode=yes -o ConnectTimeout=15 mc@server2 "find /home/mc/antiphon-server2 -maxdepth 2 -type f \( -name '*.log' -o -name '*.json' -o -name '*.txt' \) -print"
+        ssh -o BatchMode=yes -o ConnectTimeout=15 mc@server2 "find /home/mc/antiphon-server2 -path /home/mc/antiphon-server2/secrets -prune -o -maxdepth 2 -type f \( -name '*.log' -o -name '*.json' -o -name '*.txt' \) -print"
         if ($LASTEXITCODE -ne 0) { throw "server2 deployment-evidence inventory failed (ssh exit $LASTEXITCODE)." }
         throw 'No durable server2 deployment-evidence location is configured; see docs/logs.md.'
     }
@@ -55,12 +80,12 @@ switch ($Source) {
         if ($env:ANTIPHON_TASK_TOKEN) { $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN }
         # Invoke-RestMethod already returns an Object[] for this endpoint. Do not wrap the call in
         # @(): that makes the whole array one pseudo-agent and produces a malformed transcript URL.
-        $agents = Invoke-RestMethod "$api/api/agents" -Headers $headers -ErrorAction Stop
+        $agents = Invoke-RestMethod "$api/api/agents" -Headers $headers -TimeoutSec 15 -ErrorAction Stop
         $sessions = $agents | Where-Object { $_.liveSession -and $_.liveSession.id }
         if ($sessions.Count -eq 0) { throw 'No live agent sessions were returned; use the session id from an agent/task record for a historical transcript.' }
         foreach ($agent in $sessions) {
             Write-Output ("--- {0} {1} ---" -f $agent.name, $agent.liveSession.id)
-            $transcript = Invoke-RestMethod "$api/api/sessions/$($agent.liveSession.id)/transcript?since=0" -Headers $headers
+            $transcript = Invoke-RestMethod "$api/api/sessions/$($agent.liveSession.id)/transcript?since=0" -Headers $headers -TimeoutSec 15 -ErrorAction Stop
             $transcript.entries | Select-Object -Last $Tail
         }
     }
