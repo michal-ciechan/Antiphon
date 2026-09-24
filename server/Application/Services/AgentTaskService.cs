@@ -70,6 +70,9 @@ public sealed class AgentTaskService
     // CARD-0644 D-4. Optional so harnesses that never continue a retired worktree keep constructing
     // this. Absent, a retired Worktree tip cannot be proven and create refuses rather than guessing.
     private readonly DelegationWorktreeService? _worktrees;
+    // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
+    // phone-home policy or directory simply never selects a runner.
+    private readonly DefaultRunnerRoutingPolicy _defaultRunner;
 
     public AgentTaskService(
         AppDbContext db,
@@ -129,6 +132,7 @@ public sealed class AgentTaskService
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
         _workspaceGit = workspaceGit;
+        _defaultRunner = new DefaultRunnerRoutingPolicy(_settings, phoneHome, runners);
     }
 
     /// <summary>
@@ -221,6 +225,17 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
+
+        // CARD-0659 D-1. Snapshot what the caller said about the host before anything rewrites the
+        // request: omitted is automatic, `local` is an explicit desktop (stored as null, so it
+        // never trips the remote-only guards or CARD-0644's agent-pin reuse below), anything else
+        // is an explicit runner. The original process intent is kept too — a pin or follow-up the
+        // caller named excludes the default even when a later step degrades it to a fresh task.
+        var runnerIntent = RunnerRequestIntent.Parse(request.RunnerId);
+        request = request with { RunnerId = runnerIntent.RemoteRunnerId };
+        var askedForExistingProcess = request.AgentId is not null
+            || !string.IsNullOrWhiteSpace(request.Agent)
+            || !string.IsNullOrWhiteSpace(request.FollowUpOnTask);
 
         // CARD-0544 D-1: syntax first, before any other mode check, follow-up or pin can rewrite the
         // shape. Omitted is Final on Code/Review; an explicit round anywhere else, or an Interim
@@ -1141,7 +1156,7 @@ public sealed class AgentTaskService
         // configured runner, a Worktree workspace, a Grok kind, and no pin, OnAgent, Shared,
         // ReadOnly or SourceLanding. Everything else is refused HERE rather than queued forever,
         // because none of those shapes has a remote design yet (SourceLanding is Cut B).
-        var remoteRunnerId = string.IsNullOrWhiteSpace(request.RunnerId) ? null : request.RunnerId.Trim();
+        var remoteRunnerId = runnerIntent.RemoteRunnerId;
         if (remoteRunnerId is not null)
         {
             if (_phoneHome?.IsRunnerBound(remoteRunnerId) != true)
@@ -1165,6 +1180,24 @@ public sealed class AgentTaskService
                 throw new ValidationException(nameof(request.RunnerId),
                     "A runner-bound SourceLanding task must be a Mutation.");
         }
+
+        // CARD-0659 D-2/D-3. The default is decided HERE, once: after routing pins, the complexity
+        // walk, the inherited standing-agent kind and workspace resolution, and before the remote
+        // provider probe, SourceLanding custody admission and the insert. An explicit runner was
+        // validated above and is only recorded; a selected default already satisfies those rules.
+        var runnerDecision = _defaultRunner.Decide(runnerIntent, new DefaultRunnerShape(
+            workspace,
+            agentKind,
+            request.Kind,
+            request.Role,
+            ExistingProcess: askedForExistingProcess || liveFollowUp || followUpOfTaskId is not null
+                || request.AgentId is not null,
+            SourceLanding: request.SourceLandingOperationId is not null,
+            RoutingExhausted: routingExhausted));
+        if (runnerIntent.Source == RunnerRequestSource.Unset && runnerDecision?.SelectedRunnerId is { } selectedRunner)
+            remoteRunnerId = selectedRunner;
+        if (runnerDecision?.Warning is { } runnerWarning)
+            warning = warning is null ? runnerWarning : warning + " " + runnerWarning;
 
         var task = new AgentTask
         {
@@ -1323,7 +1356,10 @@ public sealed class AgentTaskService
                 // event says "Codex Frontier" and nothing records that a human pinned it there.
                 + (pinDecision.EventNote is { } pinNote ? $" [{pinNote}]" : string.Empty)
                 + (routingWalk is { } walk ? FormatComplexityCreatedDetail(walk) : string.Empty)
-                + (followUpMessage is { } followNote ? $" — {followNote}" : string.Empty),
+                + (followUpMessage is { } followNote ? $" — {followNote}" : string.Empty)
+                // CARD-0659 D-4: requested/default/selected host and why, from the decision made
+                // at create — never re-derived from later configuration.
+                + (runnerDecision is { } placed ? $" [{placed.AuditSegment}]" : string.Empty),
             At = now,
         });
         if (repeatOf is not null || routingExhausted)
