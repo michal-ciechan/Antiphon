@@ -20,6 +20,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly ILogger<PhoneHomeRecoveryPump> _logger;
     private PhoneHomeLiveConnection? _recovered;
     private (PhoneHomeLiveConnection Live, DateTimeOffset At)? _nextCatchUp;
+    private Task? _pump;
+    private CancellationTokenSource? _pumpStop;
 
     public PhoneHomeRecoveryPump(
         PhoneHomeRunnerDirectory directory,
@@ -96,9 +98,55 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         _nextCatchUp = null;
         _directory.MarkRecovered(live);
         _recovered = live;
-        _ = PumpEventsAsync(live, ct);
+        StartPump(live, ct);
         return true;
     }
+
+    private void StartPump(PhoneHomeLiveConnection live, CancellationToken ct)
+    {
+        var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _pumpStop = stop;
+        _pump = RunPumpAsync(live, stop);
+    }
+
+    private async Task RunPumpAsync(PhoneHomeLiveConnection live, CancellationTokenSource stop)
+    {
+        try
+        {
+            await PumpEventsAsync(live, stop.Token);
+        }
+        finally
+        {
+            stop.Dispose();
+        }
+    }
+
+    /// <summary>Test seam (CARD-0679 V-9): end the current pump task as if it had died.</summary>
+    internal async Task EndPumpForTest()
+    {
+        if (_pump is not { } pump)
+            return;
+        try
+        {
+            _pumpStop?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // already ended
+        }
+
+        try
+        {
+            await pump;
+        }
+        catch (OperationCanceledException)
+        {
+            // the ending this seam asked for
+        }
+    }
+
+    /// <summary>CARD-0679 D-2: events on <paramref name="live"/> whose processing threw.</summary>
+    internal int EventFailures(PhoneHomeLiveConnection live) => 0;
 
     internal async Task<bool> CatchUpAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {

@@ -95,8 +95,17 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     public async Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
         await GetBindingAsync(sessionId, ct) is SessionRunnerBinding.Remote remote ? remote.Owner : null;
 
+    /// <summary>
+    /// CARD-0679 D-3: how many binding reads this directory has run, so a test can see the
+    /// recovery pump's owner cache doing its job.
+    /// </summary>
+    internal long BindingLookups => Interlocked.Read(ref _bindingLookups);
+
+    private long _bindingLookups;
+
     public async Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct)
     {
+        Interlocked.Increment(ref _bindingLookups);
         await using var scope = _scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var row = await db.AgentSessions.AsNoTracking()
