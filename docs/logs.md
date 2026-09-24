@@ -14,13 +14,13 @@ This is the authoritative operator inventory for logs and transcript evidence. R
 | `pty-host` | `C:\logs\antiphon\session-runner\pty-hosts\logs\*.log`; `scripts/logs.ps1 -Source pty-host`. Related runner state is under `C:\logs\antiphon\session-runner` (manifests, transcript sidecars and Herdr sidecars). | Runner cleanup removes pty-host logs and non-live transcript sidecars after 14 days. Optional raw PTY audits are `%TEMP%\antiphon-pty-audits`, disabled unless `ANTIPHON_PTY_AUDIT=1`, capped at 20 MB/session, two days and 50 directories by default. | Path was retrievable. |
 | `fake-gateway` | Supervisor output: `C:\src\Antiphon\logs\fake-gateway.log`; delivery ledger: `C:\src\Antiphon\logs\fake-gateway\outbound.jsonl` unless `FakeGateway:DeliveryLog` overrides it. `scripts/logs.ps1 -Source fake-gateway` reads stdout/stderr. | No application rotation policy for either file. The JSONL is a local-dev/test assertion ledger, never production evidence. | Retrieved; current entries include inbound-unconsumed monitor failures. |
 
-The desktop server currently refused `http://localhost:17202`, so HTTP-only observations must be recorded as unavailable until the canonical stack is recovered. Do not restart it from a worktree; use [the AppHost runbook](apphost-runbook.md) from the canonical checkout.
+The desktop server was initially unavailable during this verification and later recovered enough to serve Hangfire. Do not restart it from a worktree; use [the AppHost runbook](apphost-runbook.md) from the canonical checkout.
 
 ## Hangfire jobs and failures
 
 Hangfire is in-process and uses `Hangfire.InMemory`. Open the local-only dashboard at `http://localhost:17202/hangfire` (or run `scripts/logs.ps1 -Source hangfire`) and inspect **Failed** and **Recurring Jobs**. Job/history expiration is eight days (`Hangfire:HistoryRetentionDays`); a server restart loses it immediately. There is no durable Hangfire file log or supported API export. Correlate a job failure with `desktop-server` while it exists.
 
-Current verification is a **gap** because the desktop server was refusing port 17202, so the dashboard could not be retrieved. Proposed fix: restore the canonical AppHost, then use durable Hangfire storage or export failure summaries if history must survive server restarts.
+Current verification retrieved the dashboard (HTTP 200). Proposed durability fix: use durable Hangfire storage or export failure summaries if history must survive server restarts.
 
 ## Agent transcripts
 
@@ -28,7 +28,7 @@ The server-normalized transcript is the delivery evidence. Obtain a live session
 
 Database retention is 30 days for normalized transcript rows (`Retention:TranscriptRetentionDays`). Runner sidecars in `C:\logs\antiphon\session-runner\transcripts\<sessionId>.json` are restart/adoption state, not the complete provider transcript, and non-live files are pruned after 14 days. Native Claude/Codex/Grok transcript stores are provider-owned and may contain credentials or unrelated conversations: do not enumerate or copy them.
 
-Current verification is a **gap**: the server API was unavailable, so no agent transcript could be retrieved through its authoritative route.
+Current verification reached the server API, but the first helper attempt exposed an array-enumeration defect in the helper and was corrected. Re-run `scripts/logs.ps1 -Source transcripts` to record the current live-session result; a no-live-session response is not a transcript failure.
 
 ## server2 runner and deployment evidence
 
