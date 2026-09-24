@@ -39,6 +39,7 @@ public static class RepositoryLeasePurposes
     public const string GatedCommit = "gated-commit";
     public const string WorktreeProvision = "worktree-provision";
     public const string WorktreeSettlement = "worktree-settlement";
+    public const string StartRefFetch = "start-ref-fetch";
 }
 
 public enum RepositoryLeaseOwnerState

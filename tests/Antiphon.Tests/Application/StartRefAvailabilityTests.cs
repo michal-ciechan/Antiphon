@@ -22,8 +22,9 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class StartRefAvailabilityTests
 {
-    private static StartRefAvailability Build(TimeSpan? fetchTimeout = null) =>
-        new(new LandingGit(), NullLogger<StartRefAvailability>.Instance, fetchTimeout);
+    private static StartRefAvailability Build(TimeSpan? fetchTimeout = null, IRepositoryMutationLease? leases = null) =>
+        new(new LandingGit(), leases ?? new RepositoryMutationLease(new LandingGit()),
+            NullLogger<StartRefAvailability>.Instance, fetchTimeout);
 
     [Test]
     public async Task A_local_commit_is_accepted_without_contacting_origin()
@@ -228,7 +229,7 @@ public class StartRefAvailabilityTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task The_create_fetch_is_journaled_and_takes_no_repository_lease(CancellationToken testCt)
+    public async Task The_create_fetch_is_journaled_and_holds_the_repository_lease(CancellationToken testCt)
     {
         await SkipIfGitUnavailableAsync();
         var root = NewRoot();
@@ -241,16 +242,19 @@ public class StartRefAvailabilityTests
             var leases = new RepositoryMutationLease(new LandingGit());
             var journal = await ChildJournalDirectoryAsync(repo);
 
-            var create = Build(TimeSpan.FromSeconds(8)).EnsureAvailableAsync(repo, missing, testCt);
+            var create = Build(TimeSpan.FromSeconds(8), leases).EnsureAvailableAsync(repo, missing, testCt);
             await silent.WaitForConnectionAsync(TimeSpan.FromSeconds(6));
             silent.Accepted.ShouldBeGreaterThan(0, "precondition: the create fetch is in flight");
 
             // In flight: the fetch child is journaled like every repository-mutating git child...
             Directory.EnumerateFiles(journal, "*.json").ShouldNotBeEmpty();
-            // ...create registered no lease owner (it never takes the lease)...
-            (await leases.FindOwnerAsync(repo, testCt)).ShouldBe(RepositoryLeaseOwner.Unknown);
+            // ...it runs under the repository mutation lease, owned for the start-ref fetch...
+            var owner = await leases.FindOwnerAsync(repo, testCt);
+            owner.ShouldNotBeNull();
+            owner.State.ShouldBe(RepositoryLeaseOwnerState.Known);
+            owner.Purpose.ShouldBe(RepositoryLeasePurposes.StartRefFetch);
             // ...and a dispatch acquisition answers at once instead of waiting out the fetch: the
-            // journal fences it, so the dispatcher holds the task (HeldOnLease) and moves on.
+            // lease is held, so the dispatcher holds the task (HeldOnLease) and moves on.
             var clock = Stopwatch.StartNew();
             var during = await leases.TryAcquireAsync(repo,
                 new RepositoryLeaseOwnerTag(Guid.NewGuid(), RepositoryLeasePurposes.Dispatch), testCt);
@@ -284,13 +288,79 @@ public class StartRefAvailabilityTests
             var git = new SlowFetchGit(TimeSpan.FromSeconds(5));
 
             var ex = await Should.ThrowAsync<ServiceUnavailableException>(() =>
-                new StartRefAvailability(git, NullLogger<StartRefAvailability>.Instance, TimeSpan.FromSeconds(6))
+                new StartRefAvailability(git, new RepositoryMutationLease(new LandingGit()),
+                        NullLogger<StartRefAvailability>.Instance, TimeSpan.FromSeconds(6))
                     .EnsureAvailableAsync(repo, missing, testCt));
 
             ex.Code.ShouldBe(StartRefAvailability.FetchTimeoutCode);
             git.ProbeAllowed.ShouldNotBeNull("precondition: the failed fetch was followed by the origin probe");
             // One 6s deadline covers all network work: a 5s fetch leaves the probe about 1s, not a fresh 6s.
             git.ProbeAllowed.Value.ShouldBeLessThan(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_repository_lease_held_past_the_budget_refuses_as_busy_without_fetching(CancellationToken testCt)
+    {
+        await SkipIfGitUnavailableAsync();
+        var root = NewRoot();
+        await using var silent = new SilentOrigin();
+        try
+        {
+            var (repo, _, _) = await CreateRepoAsync(root, withOrigin: false);
+            await GitAsync(repo, "remote", "add", "origin", silent.Url);
+            const string missing = "0123456789abcdef0123456789abcdef01234567";
+            var leases = new RepositoryMutationLease(new LandingGit());
+            await using var held = await leases.TryAcquireAsync(repo,
+                new RepositoryLeaseOwnerTag(Guid.NewGuid(), RepositoryLeasePurposes.Land), testCt);
+            held.ShouldNotBeNull("precondition: another operation holds the repository lease");
+            var clock = Stopwatch.StartNew();
+
+            var ex = await Should.ThrowAsync<ServiceUnavailableException>(() =>
+                Build(TimeSpan.FromSeconds(2), leases).EnsureAvailableAsync(repo, missing, testCt));
+
+            ex.Code.ShouldBe(StartRefAvailability.RepositoryBusyCode);
+            ex.StatusCode.ShouldBe(503);
+            ex.Message.ShouldContain(missing);
+            ex.Message.ShouldContain(repo);
+            silent.Accepted.ShouldBe(0, "no fetch may run while another operation holds the repository lease");
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "the lease wait is bounded by the network budget");
+            Directory.Exists(await ChildJournalDirectoryAsync(repo)).ShouldBeFalse("no fetch child was ever journaled");
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_repository_lease_released_within_the_budget_lets_the_fetch_run(CancellationToken testCt)
+    {
+        await SkipIfGitUnavailableAsync();
+        var root = NewRoot();
+        try
+        {
+            var (repo, _, origin) = await CreateRepoAsync(root);
+            var sha = await PushOriginOnlyCommitAsync(root, origin);
+            var leases = new RepositoryMutationLease(new LandingGit());
+            var held = await leases.TryAcquireAsync(repo,
+                new RepositoryLeaseOwnerTag(Guid.NewGuid(), RepositoryLeasePurposes.Land), testCt);
+            held.ShouldNotBeNull("precondition: another operation holds the repository lease");
+
+            var create = Build(TimeSpan.FromSeconds(20), leases).EnsureAvailableAsync(repo, sha, testCt);
+            await Task.Delay(TimeSpan.FromSeconds(1), testCt);
+            create.IsCompleted.ShouldBeFalse("create waits for the lease instead of fetching unfenced");
+            (await ResolvesAsync(repo, sha)).ShouldBeFalse("nothing is fetched while the lease is held elsewhere");
+            await held.DisposeAsync();
+
+            await create;
+            (await ResolvesAsync(repo, sha)).ShouldBeTrue("the fetch runs once the lease is free");
         }
         finally
         {
