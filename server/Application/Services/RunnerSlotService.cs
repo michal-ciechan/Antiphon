@@ -65,9 +65,7 @@ public static class RunnerSlotService
         CancellationToken ct)
     {
         var text = RequireReason(reason);
-        await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, text, ct);
-        await AuditAsync(db, runnerId, sessionId, text, ct);
-        await db.SaveChangesAsync(ct);
+        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, ct);
         return new RunnerSlotReleaseDto(1, [sessionId]);
     }
 
@@ -81,15 +79,80 @@ public static class RunnerSlotService
         {
             if (!slot.Orphan)
                 continue;
-            await directory.Resolve(runnerId).ReleaseSlotAsync(slot.SessionId, text, ct);
-            await AuditAsync(db, runnerId, slot.SessionId, text, ct);
+            // The list is a snapshot. A task can claim the seat before this loop reaches it.
+            var current = await LoadDesktopAsync(db, [slot.SessionId], ct);
+            if (!current.TryGetValue(slot.SessionId, out var row)
+                || row.Status != slot.DesktopStatus
+                || row.OpenTaskId != slot.OpenTaskId
+                || !IsOrphan(row.Live, row.OpenTaskId is not null, row.PooledWarm))
+                continue;
+            await ReleaseOneAsync(directory, db, runnerId, slot.SessionId, text, ct);
             released.Add(slot.SessionId);
         }
 
-        if (released.Count > 0)
-            await db.SaveChangesAsync(ct);
         return new RunnerSlotReleaseDto(released.Count, released);
     }
+
+    /// <summary>
+    /// Finish desktop audits whose runner release already happened and whose save did not.
+    /// A seat the runner still lists is released again; a seat it has already dropped is only audited.
+    /// </summary>
+    public static async Task<IReadOnlyList<Guid>> ReconcilePendingReleasesAsync(
+        PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct)
+    {
+        var pending = await db.AgentIncidents
+            .Where(incident => incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                && incident.FailureReason != null
+                && incident.FailureReason.StartsWith(PendingPrefix))
+            .ToListAsync(ct);
+        var finished = new List<Guid>();
+        foreach (var intent in pending)
+        {
+            if (intent.SessionId is not Guid sessionId)
+                continue;
+            var runnerId = intent.FailureReason![PendingPrefix.Length..];
+            var listed = await directory.Resolve(runnerId).ListAsync(ct);
+            if (listed.Any(session => session.SessionId == sessionId))
+                await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, intent.Message, ct);
+            await AuditAsync(db, runnerId, sessionId, intent.Message, ct);
+            intent.FailureReason = ReconciledMarker;
+            finished.Add(sessionId);
+        }
+
+        if (finished.Count > 0)
+            await db.SaveChangesAsync(ct);
+        return finished;
+    }
+
+    private const string PendingPrefix = "pending:";
+    private const string ReconciledMarker = "reconciled";
+
+    private static async Task ReleaseOneAsync(
+        PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
+        CancellationToken ct)
+    {
+        db.AgentIncidents.Add(NewIntent(runnerId, sessionId, reason));
+        await db.SaveChangesAsync(ct);
+        await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, reason, ct);
+        await AuditAsync(db, runnerId, sessionId, reason, ct);
+        var intent = db.AgentIncidents.Local.First(incident =>
+            incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+            && incident.SessionId == sessionId
+            && incident.FailureReason == PendingPrefix + runnerId);
+        intent.FailureReason = ReconciledMarker;
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static AgentIncident NewIntent(string runnerId, Guid sessionId, string reason) => new()
+    {
+        Id = Guid.NewGuid(),
+        SessionId = sessionId,
+        Kind = AgentIncidentKind.RunnerSlotReleaseIntent,
+        Severity = AlertSeverity.Warning,
+        Message = reason,
+        FailureReason = PendingPrefix + runnerId,
+        CreatedAt = DateTime.UtcNow,
+    };
 
     private static string RequireReason(string? reason)
     {
