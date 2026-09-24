@@ -78,7 +78,7 @@ public sealed class DurableRunnerSpillReceiptTests
         row.Body.ShouldContain(TypedBodySpill.InboxRelativePath(id.ToString("D")));
         row.DeliveryVerdict.ShouldBeNull();
 
-        var restarted = new RemoteSpillCourier(h.Provider);
+        var restarted = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
         var found = await restarted.FindDurableAsync(h.SessionId, row.Body, CancellationToken.None);
         found.ShouldNotBeNull();
         found.RunnerCwd.ShouldBe(runnerCwd);
@@ -119,7 +119,7 @@ public sealed class DurableRunnerSpillReceiptTests
         canceled.Status.ShouldBe(QueuedMessageStatus.Canceled);
         canceled.DeliveryVerdict.ShouldBe(DeliveryVerdict.SpillBodyMissing);
 
-        var restarted = new RemoteSpillCourier(h.Provider);
+        var restarted = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
         var again = await Should.ThrowAsync<RemoteSpillUndeliverableException>(() =>
             restarted.FindDurableAsync(h.SessionId, pointer, CancellationToken.None));
         again.Message.ShouldBe(RemoteSpillUndeliverableException.MissingBodyReason);
@@ -147,7 +147,7 @@ public sealed class DurableRunnerSpillReceiptTests
             await db.SaveChangesAsync();
         }
 
-        var courier = new RemoteSpillCourier(h.Provider);
+        var courier = new RemoteSpillCourier(h.Provider.GetRequiredService<IServiceScopeFactory>());
         var found = await courier.FindDurableAsync(
             h.SessionId, "Read " + relative + " before doing anything else", CancellationToken.None);
         found.ShouldNotBeNull();
@@ -155,10 +155,10 @@ public sealed class DurableRunnerSpillReceiptTests
         found.Spill.MessageId.ShouldBe(id);
 
         await using var saved = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        var row = await saved.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
-        row.Status.ShouldBe(QueuedMessageStatus.Pending);
-        row.RemoteSpillBody.ShouldBe(source);
-        row.RemoteSpillRelativePath.ShouldBe(relative);
+        var stored = await saved.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending);
+        stored.RemoteSpillBody.ShouldBe(source);
+        stored.RemoteSpillRelativePath.ShouldBe(relative);
     }
 
     [Test]
