@@ -41,7 +41,7 @@ switch ($Source) {
     }
     'fake-gateway' { Get-Content -LiteralPath (Join-Path $logRoot 'fake-gateway.log') -Tail $Tail }
     'server2-runner' {
-        ssh -o BatchMode=yes -o ConnectTimeout=15 mc@server2 "docker logs --tail $Tail antiphon-runner-session-runner-1"
+        ssh -o BatchMode=yes -o ConnectTimeout=15 mc@server2 "docker logs --tail $Tail antiphon-runner-session-runner-1; docker exec antiphon-runner-session-runner-1 sh -lc 'tail -n $Tail /state/runner-logs/session-runner-*.log /state/logs/dockerd.log 2>&1'"
         if ($LASTEXITCODE -ne 0) { throw "server2 runner log retrieval failed (ssh/docker exit $LASTEXITCODE)." }
     }
     'server2-deploy' {
