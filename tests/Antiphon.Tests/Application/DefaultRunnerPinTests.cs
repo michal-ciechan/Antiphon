@@ -1,12 +1,18 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -233,6 +239,207 @@ public sealed class DefaultRunnerPinTests
         (await Should.ThrowAsync<ServiceUnavailableException>(
                 () => new SourceLandingAdmission(null!, null!, offline.Directory).RequireSupportAsync("server2", CancellationToken.None)))
             .Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+    }
+
+    /// <summary>
+    /// Review 5de2b154 item 2: producer to recipient for a runner-bound SourceLanding Mutation.
+    /// The real create (default runner selected, custody asked of THAT runner), the real dispatcher
+    /// (remote snapshot created and validated through the typed phone-home operations, custody
+    /// reservation, launch spec projection), the real launch-time custody preparation and the
+    /// real phone-home client carrying the binding to the runner socket.
+    ///
+    /// Where the harness stops: the runner is <see cref="PhoneHomeScriptedPeer"/>, which answers
+    /// each typed frame with scripted results. Nothing runs the runner's own command dispatcher,
+    /// custody backend (cgroup/job admission of the binding), git snapshot, pty or Claude process,
+    /// so there is no transcript and no UserPrompt receipt. The last proven hop is the Launch frame
+    /// received at the runner socket carrying this execution's binding and the snapshot cwd.
+    /// </summary>
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task SourceLanding_mutation_reaches_runner_launch_with_binding()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync(provision: false);
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        const string runnerRepository = "/work/repos/antiphon";
+        VerificationCreationCoordinates? created = null;
+        string? createdSha = null;
+        peer.Reply = frame =>
+        {
+            switch (frame.Operation)
+            {
+                case PhoneHomeOperation.Capabilities:
+                    return Result(frame, new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                        Features: [RunnerCapabilityFeatures.VerificationCustodyV1],
+                        VerificationCustodyBackend: VerificationCustodyBackends.LinuxCgroup,
+                        RunnerStoreId: host.StoreId));
+                case PhoneHomeOperation.ProviderAuth:
+                    return Result(frame, new RunnerProviderAuthDto(
+                        "claude", true, "claude.ai", "max", DateTimeOffset.UtcNow, null));
+                case PhoneHomeOperation.VerificationWorkspaceCreate:
+                    var create = frame.Payload!.Value.Deserialize<PhoneHomeVerificationCreateRequest>(PhoneHomeFraming.Json)!;
+                    created = new VerificationCreationCoordinates(runnerRepository, runnerRepository + "/.git",
+                        "/work/worktrees/" + create.Identifier, runnerRepository + "/.git/worktrees/" + create.Identifier,
+                        create.Branch, Guid.NewGuid());
+                    createdSha = create.Sha;
+                    return Result(frame, new PhoneHomeVerificationCreateResponse(created, create.Sha));
+                case PhoneHomeOperation.VerificationWorkspaceValidate:
+                    return Result(frame, new PhoneHomeVerificationValidateResponse(true, null));
+                case PhoneHomeOperation.VerificationWorkspaceInspect:
+                    var c = created!;
+                    return Result(frame, new PhoneHomeVerificationInspectResponse(c.CreationId, createdSha, c.Branch,
+                        c.RepositoryPath, c.WorktreePath, c.WorktreeGitDirectory, createdSha, true, true, false));
+                default:
+                    return null;
+            }
+        };
+
+        var sink = new RecordingLaunchSink();
+        await using var services = SourceLandingDispatchGraph(world, host, sink);
+
+        // Producer: an omitted runner on the valid SourceLanding shape takes the default runner.
+        Guid taskId;
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var summary = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                world.Request(world.Companion) with { AgentKind = AgentKind.ClaudeCode }, world.Caller, CancellationToken.None);
+            taskId = summary.Id;
+        }
+
+        await using (var db = world.Host.CreateContext())
+        {
+            var queued = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            queued.RunnerId.ShouldBe(host.AllowedRunnerId, "the default runner was selected for the Mutation");
+            queued.SourceLandingSha.ShouldNotBeNull();
+            queued.Status.ShouldBe(AgentTaskStatus.Queued, queued.FailureReason);
+            (await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.AgentTaskId == taskId
+                    && e.Type == AgentTaskEventType.Created)).Detail.ShouldNotBeNull()
+                .ShouldContain($"runner source=default requested=unset default={host.AllowedRunnerId} "
+                    + $"selected={host.AllowedRunnerId} reason=eligible");
+        }
+
+        // Dispatch: snapshot on the runner, custody reservation, projected launch spec.
+        await using (var scope = services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+        await using var verify = world.Host.CreateContext();
+        var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+        var snapshot = created.ShouldNotBeNull("the snapshot is created on the runner, not the desktop");
+        createdSha.ShouldBe(task.SourceLandingSha);
+        task.WorktreePath.ShouldBe(snapshot.WorktreePath);
+        task.RemoteWorktreePath.ShouldBe(snapshot.WorktreePath);
+        task.VerificationCreationJson.ShouldBe(JsonSerializer.Serialize(snapshot));
+        peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0, "a SourceLanding Mutation runs in its snapshot, never a mirror");
+        var session = await verify.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == task.AgentSessionId);
+        session.RunnerId.ShouldBe(host.AllowedRunnerId);
+        session.RunnerCwd.ShouldBe(snapshot.WorktreePath);
+        var execution = await verify.VerificationExecutions.AsNoTracking().SingleAsync(e => e.TaskId == taskId);
+        execution.SessionId.ShouldBe(session.Id);
+
+        var launch = sink.Specs.ShouldHaveSingleItem();
+        var binding = launch.VerificationBinding.ShouldNotBeNull("the projected launch keeps the reservation's binding");
+        binding.ExecutionId.ShouldBe(execution.Id);
+        binding.Source.TaskId.ShouldBe(taskId);
+        binding.Source.LandedSha.ShouldBe(task.SourceLandingSha);
+        binding.Creation.ShouldBe(snapshot);
+        binding.Backend.ShouldBe(VerificationCustodyBackends.LinuxCgroup, "custody is the selected runner's, not the desktop's");
+        binding.RunnerStoreId.ShouldBe(host.StoreId);
+        launch.Cwd.ShouldBe(snapshot.WorktreePath);
+        launch.Exe.ShouldBe("claude");
+        launch.Backend.ShouldBe(SessionBackend.PtyHost);
+
+        // Recipient: launch-time custody preparation, then the phone-home client to the runner.
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var prepared = await scope.ServiceProvider.GetRequiredService<VerificationExecutionService>()
+                .PrepareLaunchAsync(session, launch, CancellationToken.None);
+            prepared.VerificationBinding.ShouldBe(binding);
+            await new PhoneHomeRunnerClient(live).StartAsync(session.Id, prepared, CancellationToken.None);
+        }
+
+        var started = peer.Launches.ShouldHaveSingleItem().Payload!.Value
+            .Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!;
+        started.SessionId.ShouldBe(session.Id);
+        started.Cwd.ShouldBe(snapshot.WorktreePath);
+        started.VerificationBinding.ShouldBe(binding, "the runner receives exactly the reserved binding");
+        await using var after = world.Host.CreateContext();
+        (await after.VerificationExecutions.AsNoTracking().SingleAsync(e => e.Id == execution.Id))
+            .RunnerCallIntentAt.ShouldNotBeNull("the runner-call intent is recorded before the launch frame");
+    }
+
+    private static ServiceProvider SourceLandingDispatchGraph(
+        PostLandMutationWorld world, PhoneHomeTestHost host, RecordingLaunchSink sink)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped(_ => world.Host.CreateContext());
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings
+        {
+            MaxConcurrentTasks = 512,
+            AllowedRoots = [world.Host.Fixture.Root],
+            DefaultRunnerId = host.AllowedRunnerId,
+        }));
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude.exe" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        // The landing fixture's git: the lease, the source identity and the snapshot all agree on
+        // one repository.
+        services.AddSingleton<ILandingGit>(world.Host.Fixture.Git);
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(world.Host.Fixture.Root, "desktop-worktrees"),
+        });
+        services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
+        {
+            Enabled = true,
+            AllowedRunnerId = host.AllowedRunnerId,
+            AllowDelegatedTasks = true,
+            HostWorkspaceRoot = world.Host.Fixture.Root,
+            RunnerWorkspace = "/work",
+            RunnerRepository = "/work/repos/antiphon",
+            CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+            SharedSecret = "x",
+            ClaudeAuthProbeEnabled = true,
+        }));
+        services.AddSingleton<PhoneHomeLaunchPolicy>();
+        services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+        services.AddSingleton<RemoteWorkspaceService>();
+        services.AddSingleton<RemoteWorkspacePreparer>();
+        services.AddSingleton<IAgentTaskLaunchSink>(sink);
+        services.AddScoped<SourceLandingAdmission>();
+        services.AddScoped<IVerificationWorkspace, LocalVerificationWorkspace>();
+        services.AddScoped<IVerificationWorkspaceDirectory, VerificationWorkspaceDirectory>();
+        services.AddScoped<VerificationExecutionService>();
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<AgentTaskDispatcher>();
+        return services.BuildServiceProvider();
+    }
+
+    private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
+        new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+    private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
+    {
+        public List<AgentLaunchSpec> Specs { get; } = [];
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
+            Specs.Add(spec);
     }
 
     private static CreateAgentTaskRequest Code(string goal, AgentKind? kind = null) =>
