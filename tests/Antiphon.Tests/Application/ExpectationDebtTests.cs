@@ -208,10 +208,29 @@ public sealed class ExpectationDebtTests
             scan.NudgesCommitted.ShouldBe(0);
         }
 
-        await using var read = world.Db();
-        var episode = await read.ExpectationEpisodes.AsNoTracking().SingleAsync(row => row.SubjectKey == remoteSubject);
-        episode.ResolvedAt.ShouldBeNull();
-        (await read.ExpectationEpisodes.CountAsync(row => row.Kind == ExpectationEpisodeKind.SilentInFlight)).ShouldBe(1);
+        await using (var read = world.Db())
+        {
+            var episode = await read.ExpectationEpisodes.AsNoTracking().SingleAsync(row => row.SubjectKey == remoteSubject);
+            episode.ResolvedAt.ShouldBeNull();
+            (await read.ExpectationEpisodes.CountAsync(row => row.Kind == ExpectationEpisodeKind.SilentInFlight)).ShouldBe(1);
+        }
+
+        // The runner answers again and the session is live: an unknown scan was not a clear
+        // scan, so the first clear scan after it does not resolve; the second one does.
+        var live = Probe(new() { [remoteSession] = new ExpectationSessionProbe(true, now, "live") }, available: true);
+        clock.SetUtcNow(new DateTimeOffset(now.AddMinutes(5), TimeSpan.Zero));
+        await using (var db = world.Db())
+            (await world.Service(db, clock).ScanAsync(world.Directive, live, CancellationToken.None))
+                .Evaluation.SilentInFlight.ShouldBeEmpty();
+        await using (var read = world.Db())
+            (await read.ExpectationEpisodes.SingleAsync(row => row.SubjectKey == remoteSubject)).ResolvedAt.ShouldBeNull();
+
+        clock.SetUtcNow(new DateTimeOffset(now.AddMinutes(6), TimeSpan.Zero));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, live, CancellationToken.None);
+        await using (var read = world.Db())
+            (await read.ExpectationEpisodes.SingleAsync(row => row.SubjectKey == remoteSubject)).ResolvedAt
+                .ShouldBe(now.AddMinutes(6));
     }
 
     [Test]

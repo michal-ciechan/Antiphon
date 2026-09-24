@@ -123,11 +123,15 @@ public sealed class ExpectationWatchdogService
             observed.Add(lane.SubjectKey);
         }
 
-        if (!evaluation.PreservesOpenEpisodes && previousScan is DateTime previous)
-        {
-            var keep = observed.Concat(evaluation.UnknownSubjectKeys).ToList();
-            await _ledger.ResolveClearedAsync(directive.Id, digest, keep, previous, asOf, ct);
-        }
+        await _ledger.ResolveClearedAsync(
+            directive.Id,
+            digest,
+            observed,
+            evaluation.UnknownSubjectKeys,
+            evaluation.PreservesOpenEpisodes,
+            previousScan,
+            asOf,
+            ct);
 
         await _ledger.RecordObservationAsync(directive.Id, digest, asOf, successful: true, error: null, ct);
         _db.ChangeTracker.Clear();
