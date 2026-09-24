@@ -221,6 +221,7 @@ public sealed class RunnerSettlementSyncTests
         // Rewound: origin's task branch was force-moved behind the baseline.
         await using (var world = await SyncWorld.CreateAsync(extraMasterCommit: true))
         {
+            await world.EnsureRunnerAsync();
             var parent = await world.RunAsync(world.Worktree, "rev-parse", world.Baseline + "^");
             await world.RunAsync(world.Runner, "push", "--force", "origin", parent + ":refs/heads/" + world.Branch);
 
@@ -480,7 +481,8 @@ public sealed class RunnerSettlementSyncTests
     /// </summary>
     internal sealed class SyncWorld : IAsyncDisposable
     {
-        private static readonly LandingGit Raw = new();
+        // Setup Git is bounded (timeout, kill, drained output) but not journaled: LandingGit's child
+        // journal reads StartTime of an already-reaped fast child on Linux (a pre-existing race).
 
         public string Root { get; }
         public string Origin => Path.Combine(Root, "origin.git");
@@ -627,14 +629,14 @@ public sealed class RunnerSettlementSyncTests
 
         public async Task<string?> SymbolicHeadAsync()
         {
-            var result = await Raw.RunAsync(Worktree, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None);
+            var result = await ExecAsync(Worktree, ["symbolic-ref", "-q", "HEAD"]);
             return result.Succeeded ? result.Output.Trim() : null;
         }
 
         public async Task<string> RevParseAsync(string revision) => await RunAsync(Desktop, "rev-parse", revision);
 
         public async Task<bool> HasObjectAsync(string sha) =>
-            (await Raw.RunAsync(Desktop, ["cat-file", "-e", sha + "^{commit}"], CancellationToken.None)).Succeeded;
+            (await ExecAsync(Desktop, ["cat-file", "-e", sha + "^{commit}"])).Succeeded;
 
         public async Task<string> StatusAsync() =>
             await RunAsync(Worktree, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none");
@@ -649,9 +651,38 @@ public sealed class RunnerSettlementSyncTests
 
         public async Task<string> RunAsync(string directory, params string[] arguments)
         {
-            var result = await Raw.RunAsync(directory, arguments, CancellationToken.None);
+            var result = await ExecAsync(directory, arguments);
             result.ExitCode.ShouldBe(0, "git " + string.Join(' ', arguments));
             return result.Output.Trim();
+        }
+
+        private static async Task<LandingGitResult> ExecAsync(string directory, IReadOnlyList<string> arguments)
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            using var process = System.Diagnostics.Process.Start(start)
+                ?? throw new IOException("git_start_failed");
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            try
+            {
+                await process.WaitForExitAsync(budget.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+                await System.Threading.Tasks.Task.WhenAll(output, error);
+                throw new TimeoutException("git " + string.Join(' ', arguments));
+            }
+            await System.Threading.Tasks.Task.WhenAll(output, error);
+            return new LandingGitResult(process.ExitCode, await output, process.ExitCode == 0 ? "" : await error);
         }
 
         private async Task ConfigureAsync(string repository)
