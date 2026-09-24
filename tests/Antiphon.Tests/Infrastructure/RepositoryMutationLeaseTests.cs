@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -300,13 +302,66 @@ public sealed class RepositoryMutationLeaseTests
         await fixture.AssertRemoteSourceAsync();
     }
 
+    // CARD-0661 (review 047193d4). The same fast exit through the real AgentTaskLandingProtocol and
+    // Postgres: the owned rebase child exits before its identity is read, and the worker dies before
+    // the protocol's clearing save. The persisted landing names the child operation with no identity,
+    // and crash recovery refuses as needs-inspection instead of trusting or discarding that state.
+    [Test]
+    public async Task C661_FastExitingOwnedChildPersistsUnknownIdentityAndRecoveryRefuses()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var git = new IdentityLostGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId) { Armed = false };
+        git.BeforeCommand = (_, arguments) =>
+        {
+            git.Armed = arguments.Contains("rebase"); // Only the protocol's owned rebase loses its identity.
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+        };
+        h.ConfigureServices = services => services.AddSingleton<Antiphon.Server.Application.Interfaces.ILandingGit>(git);
+        await h.RestartServicesAsync();
+        // The worker dies after the child exits, before the protocol clears its child state.
+        h.Fault.Matches = op => git.Reads > 0 && op.ChildOperation is null;
+
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+
+        h.Fault.Triggered.ShouldBeTrue();
+        git.Reads.ShouldBe(1, "exactly the owned rebase read its identity");
+        git.ExitedAtRead.ShouldBeTrue("the seam only reports a genuinely exited child as unidentifiable");
+        await using (var observer = h.CreateContext())
+        {
+            var persisted = await observer.AgentTaskLandings.AsNoTracking()
+                .SingleAsync(o => o.TaskId == h.Fixture.TaskId && o.Active);
+            persisted.Phase.ShouldBe(Antiphon.Server.Domain.Enums.LandPhase.RebaseStarted);
+            persisted.ChildOperation.ShouldNotBeNull().ShouldContain("rebase");
+            persisted.ChildProcessId.ShouldBeNull("an unidentifiable child is never persisted with a fabricated PID");
+            persisted.ChildProcessStartTicks.ShouldBeNull("an unidentifiable child is never persisted with a fabricated identity");
+        }
+
+        h.Fault.Matches = null;
+        h.ConfigureServices = null;
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+
+        var recovered = (await h.OperationAsync()).ShouldNotBeNull();
+        recovered.LastReason.ShouldBe("interrupted_process_requires_inspection");
+        recovered.ChildOperation.ShouldNotBeNull("recovery keeps the unknown child for inspection");
+        recovered.ChildProcessId.ShouldBeNull();
+        recovered.ChildProcessStartTicks.ShouldBeNull();
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim()
+            .ShouldBe(h.Fixture.SeedSha, "a refused recovery publishes nothing");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
     private sealed class IdentityLostGit(string home, Guid taskId) : LandingGitFixture.FixtureGit(home, taskId)
     {
+        public bool Armed { get; set; } = true;
         public int Reads { get; private set; }
         public bool ExitedAtRead { get; private set; }
 
         protected override bool TryReadStartIdentity(Process child, out long startTicks)
         {
+            if (!Armed) return base.TryReadStartIdentity(child, out startTicks);
             Reads++;
             child.WaitForExit(); // A genuinely fast-exiting child: stdout is already being drained.
             ExitedAtRead = child.HasExited;
