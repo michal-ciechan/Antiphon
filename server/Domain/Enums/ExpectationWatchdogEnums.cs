@@ -28,15 +28,17 @@ public enum ExpectationAttemptState
     Attempting = 1,
     Confirmed = 2,
     Uncertain = 3,
-    /// <summary>No receipt and Enter was withheld (or not known to have gone out). The body may still
-    /// stand in the composer, so ordinary input holds while it is visible whole.</summary>
+    /// <summary>No receipt and no evidence the body left the composer: Enter withheld, NoSubmitOutput,
+    /// NoTranscriptRecord, or a screen-only verdict. Ordinary input holds until a transcript record
+    /// shows the prompt, the body is no longer visible whole, or the generation changes.</summary>
     Unconfirmed = 4,
     Refused = 5,
 
     /// <summary>
-    /// CARD-0650 S4 repair D1. Enter went out but no receipt can confirm it (no transcript floor, a
-    /// truncated record, or no record by the deadline). Operator debt like Unconfirmed, and a late
-    /// receipt can still confirm it, but it never holds ordinary input: its echo stays on screen.
+    /// CARD-0650 S4 repair D1. A submitted-prompt record carries the body, but it cannot confirm:
+    /// the whole body with no transcript floor, or a Truncated record. Operator debt like
+    /// Unconfirmed, and a late receipt can still confirm it, but it never holds ordinary input:
+    /// the body left the composer and its echo stays on screen.
     /// </summary>
     Submitted = 6,
 }
