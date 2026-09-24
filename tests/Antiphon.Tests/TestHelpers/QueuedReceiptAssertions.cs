@@ -21,7 +21,8 @@ internal static class QueuedReceiptAssertions
         SessionQueuedMessage queued,
         Guid sessionId,
         bool busy,
-        string cut = "after-receipt")
+        string cut = "after-receipt",
+        bool busyBeforeDelivery = false)
     {
         var adapter = h.Adapter;
         BindRuntimeTranscript(adapter, sessionId, connection);
@@ -56,7 +57,7 @@ internal static class QueuedReceiptAssertions
                 queue = recovered.Queue;
             }
 
-            if (busy) await SetWorkingAsync(connection, sessionId, true);
+            if (busy && !busyBeforeDelivery) await SetWorkingAsync(connection, sessionId, true);
 
             if (queued.Status == QueuedMessageStatus.Pending && queued.DeliveryAttempts == 0)
             {
@@ -92,6 +93,12 @@ internal static class QueuedReceiptAssertions
             if (recovered is not null)
                 await recovered.DisposeAsync();
         }
+    }
+
+    public static async Task HoldRecipientBusyAsync(string connection, Guid sessionId)
+    {
+        await MarkRecipientLiveAsync(connection, sessionId);
+        await SetWorkingAsync(connection, sessionId, true);
     }
 
     private static async Task<string> AssertSubmittedAsync(

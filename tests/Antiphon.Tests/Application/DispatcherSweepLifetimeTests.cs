@@ -21,16 +21,10 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class DispatcherSweepLifetimeTests
 {
-    // Graph.Create reads TestDbFixture.ConnectionString synchronously; warming the store first keeps
-    // this class's tests from each parking a pool thread on the bootstrap, which starved the
-    // wall-clock waits of PhoneHomeConnectionTests running beside them in CP-1.
-    [Before(Class)]
-    public static Task WarmSharedStoreAsync() => TestDbFixture.Lifecycle.EnsureReadyAsync();
-
     [Test]
     public async Task Abandoned_sweep_runs_on_its_own_scope_and_that_scope_is_disposed_after_it_ends()
     {
-        await using var g = Graph.Create(scopeFactory: true);
+        await using var g = await Graph.CreateAsync(scopeFactory: true);
         AgentTaskDispatcher? seen = null;
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bodyDone = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,7 +63,7 @@ public class DispatcherSweepLifetimeTests
     [Test]
     public async Task A_sweep_still_running_from_the_previous_tick_is_skipped_and_counted()
     {
-        await using var g = Graph.Create(scopeFactory: true);
+        await using var g = await Graph.CreateAsync(scopeFactory: true);
         var calls = 0;
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Func<AgentTaskDispatcher, CancellationToken, Task<int>> body = async (_, _) =>
@@ -99,7 +93,7 @@ public class DispatcherSweepLifetimeTests
     [Test]
     public async Task Without_a_scope_factory_the_budget_cancels_but_never_abandons()
     {
-        await using var g = Graph.Create(scopeFactory: false);
+        await using var g = await Graph.CreateAsync(scopeFactory: false);
         AgentTaskDispatcher? seenA = null;
         var a = g.Tick.RunSweepAsync("cooperative", async (d, ct) =>
         {
@@ -134,7 +128,7 @@ public class DispatcherSweepLifetimeTests
     [Arguments(ScopeFault.DisposeThrowsAfterSweep)]
     public async Task A_failing_owned_scope_still_releases_the_sweep_claim(ScopeFault fault)
     {
-        await using var g = Graph.Create(scopeFactory: true, fault: fault);
+        await using var g = await Graph.CreateAsync(scopeFactory: true, fault: fault);
         var calls = 0;
         Func<AgentTaskDispatcher, CancellationToken, Task<int>> body = (_, _) =>
         {
@@ -178,14 +172,17 @@ public class DispatcherSweepLifetimeTests
         public required RecordingLogger<AgentTaskDispatcher> Logger { get; init; }
         public required DelegationSettings Settings { get; init; }
 
-        public static Graph Create(bool scopeFactory, ScopeFault fault = ScopeFault.None)
+        public static async Task<Graph> CreateAsync(bool scopeFactory, ScopeFault fault = ScopeFault.None)
         {
+            // The shared database may take a minute to start. Awaiting its one fixture task
+            // leaves pool threads available for the other CP-1 classes' short network waits.
+            var connection = (await TestDbFixture.Lifecycle.EnsureReadyAsync()).SharedConnectionString;
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
             var settings = new DelegationSettings();
             var logger = new RecordingLogger<AgentTaskDispatcher>();
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connection));
             services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton(Options.Create(new SupervisionSettings()));

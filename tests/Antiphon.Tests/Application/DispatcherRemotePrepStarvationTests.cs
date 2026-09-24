@@ -53,10 +53,9 @@ public sealed class DispatcherRemotePrepStarvationTests
             },
             ConfigureServices = services => Configure(services, host, receiptAdapter),
         });
-        // The receipt reads this adapter. queue-inserted and lost-wakeup hold boot-ready so the
-        // brief is still Pending with no UserPrompt; ConfirmQueuedReceiptAsync delivers it.
-        // after-receipt lets the launch deliver first.
-        var deferDelivery = cut is "queue-inserted" or "lost-wakeup";
+        // Hold boot-ready for the busy arm too: the recipient must become busy before the
+        // launch queue gets any chance to deliver the brief.
+        var deferDelivery = busy || cut is "queue-inserted" or "lost-wakeup";
         var ready = deferDelivery
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
@@ -110,7 +109,14 @@ public sealed class DispatcherRemotePrepStarvationTests
 
         var queued = await db.SessionQueuedMessages.AsNoTracking()
             .SingleAsync(m => m.ExecutionTaskId == localId);
-        if (deferDelivery)
+        if (busy)
+        {
+            await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, sessionId);
+            ready!.TrySetResult(true);
+            await harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+                .WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        }
+        else if (deferDelivery)
         {
             await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
                 schema.ConnectionString, harness, queued, sessionId, busy, cut);
@@ -119,10 +125,11 @@ public sealed class DispatcherRemotePrepStarvationTests
 
         await harness.Provider.GetRequiredService<AgentSessionLaunchQueue>()
             .WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
-        if (!deferDelivery)
+        if (!deferDelivery || busy)
         {
             await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
-                schema.ConnectionString, harness, queued, sessionId, busy, cut);
+                schema.ConnectionString, harness, queued, sessionId, busy, cut,
+                busyBeforeDelivery: busy);
         }
 
         await Task.Delay(100);
