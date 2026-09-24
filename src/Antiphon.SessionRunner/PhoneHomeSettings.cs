@@ -38,6 +38,19 @@ public sealed class PhoneHomeSettings
     public bool GrokAuthProbeEnabled { get; set; } = true;
 
     /// <summary>
+    /// CARD-0660 D-3: Codex's <c>CODEX_HOME</c> on the runner, the store the auth probe inspects.
+    /// The same value as the compose <c>CODEX_HOME</c> and the server's
+    /// <c>PhoneHomeRunner:ChildCodexHome</c>.
+    /// </summary>
+    public string CodexHome { get; set; } = "/state/codex";
+
+    /// <summary>
+    /// CARD-0660 D-9: refuse a <c>codex</c> launch with <c>provider_sign_in_required</c> when
+    /// <c>CODEX_HOME/auth.json</c> is absent. An unknown answer always admits.
+    /// </summary>
+    public bool CodexAuthProbeEnabled { get; set; } = true;
+
+    /// <summary>
     /// CARD-0604 D-14: how many concurrent sessions this runner will hold. The server bounds it
     /// again at registration (<c>PhoneHomeRunner:MaxCapacity</c>), so a runner cannot enlarge
     /// itself past what the control plane allows.

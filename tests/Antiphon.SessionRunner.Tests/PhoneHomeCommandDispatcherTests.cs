@@ -335,28 +335,28 @@ public class PhoneHomeCommandDispatcherTests
     }
 
     [Test]
-    public async Task Transcript_format_null_grok_and_claude_admitted_codex_refused()
+    public async Task Transcript_format_null_grok_claude_and_codex_admitted_others_refused()
     {
         var runtime = new RecordingRuntime();
         var dispatcher = Dispatcher(runtime);
 
-        foreach (var format in new string?[] { null, TranscriptFormats.Grok, TranscriptFormats.Claude })
+        foreach (var format in new string?[] { null, TranscriptFormats.Grok, TranscriptFormats.Claude, TranscriptFormats.Codex })
         {
             var admitted = await dispatcher.DispatchAsync(
                 Launch(Request("claude", "/work") with { TranscriptFormat = format }), CancellationToken.None);
             admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, (format ?? "null") + " must be admitted");
         }
 
-        foreach (var format in new[] { "codex", "opencode", "" })
+        foreach (var format in new[] { "opencode", "Codex-rollout", "" })
         {
             var refused = await dispatcher.DispatchAsync(
                 Launch(Request("claude", "/work") with { TranscriptFormat = format }), CancellationToken.None);
             refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, format + " has no tailer on this runner");
             refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
-            refused.ErrorDetail.ShouldBe("Only the Grok and Claude transcript formats are admitted.");
+            refused.ErrorDetail.ShouldBe("Only the Grok, Claude and Codex transcript formats are admitted.");
         }
 
-        runtime.Mutations.Count.ShouldBe(3);
+        runtime.Mutations.Count.ShouldBe(4);
     }
 
     [Test]
@@ -464,10 +464,10 @@ public class PhoneHomeCommandDispatcherTests
         grokDto.LoggedIn.ShouldBe(true);
         probe.Calls.ShouldBe(["claude", "grok"]);
 
-        var codex = await dispatcher.DispatchAsync(ProviderAuth("codex"), CancellationToken.None);
-        codex.Kind.ShouldBe(PhoneHomeFrameKind.Error);
-        codex.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
-        codex.StatusCode.ShouldBe(400);
+        var opencode = await dispatcher.DispatchAsync(ProviderAuth("opencode"), CancellationToken.None);
+        opencode.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        opencode.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        opencode.StatusCode.ShouldBe(400);
         probe.Calls.Count.ShouldBe(2);
         runtime.Mutations.ShouldBeEmpty();
 
@@ -479,6 +479,214 @@ public class PhoneHomeCommandDispatcherTests
         var unknownDto = unknown.Payload!.Value.Deserialize<RunnerProviderAuthDto>(PhoneHomeFraming.Json)!;
         unknownDto.LoggedIn.ShouldBeNull();
         unknownDto.Error.ShouldBe("probe_unavailable");
+    }
+
+    // --- CARD-0660 D-7/D-9: Codex on the runner (V-3). ---
+
+    [Test]
+    public async Task Codex_exe_is_only_the_bare_name_or_the_image_install_path()
+    {
+        // The Dockerfile links exactly /usr/local/bin/codex. The desktop's codex.cmd, another
+        // directory's codex, a relative or traversing path and a case variant are not the image's.
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime);
+
+        foreach (var exe in new[]
+                 {
+                     "codex.cmd", "codex.exe", "./codex", "Codex", "codex ", "/usr/bin/codex", "/opt/evil/codex",
+                     "/usr/local/bin/codex/../../tmp/codex", "/usr/local/bin/../bin/codex", "/usr/local/bin//codex",
+                     "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd", "/opt/codex/0.156.1/package/bin/codex.js",
+                 })
+        {
+            PhoneHomeCommandDispatcher.IsCodexExe(exe).ShouldBeFalse(exe);
+            var refused = await dispatcher.DispatchAsync(
+                Launch(Request(exe, "/work") with { TranscriptFormat = TranscriptFormats.Codex }), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, exe + " is not the image's codex");
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget, exe);
+        }
+
+        runtime.Mutations.ShouldBeEmpty();
+
+        foreach (var exe in new[] { "codex", "/usr/local/bin/codex" })
+        {
+            PhoneHomeCommandDispatcher.IsCodexExe(exe).ShouldBeTrue(exe);
+            var admitted = await dispatcher.DispatchAsync(
+                Launch(Request(exe, "/work") with { TranscriptFormat = TranscriptFormats.Codex }), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, exe + " is the image's codex and must be admitted: " + admitted.ErrorDetail);
+        }
+
+        runtime.Started.Select(started => started.Exe).ShouldBe(["codex", "/usr/local/bin/codex"]);
+    }
+
+    [Test]
+    public async Task Codex_launch_reaches_the_runtime_with_the_codex_transcript_and_unchanged_launch()
+    {
+        var runtime = new RecordingRuntime();
+        var probe = new RecordingProbe(true);
+        var dispatcher = Dispatcher(runtime, probe: probe);
+        string[] args =
+        [
+            "--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.5",
+            "-c", "model_reasoning_effort=\"high\"", "-c", "disable_paste_burst=true",
+            "-c", "developer_instructions=\"line one\nline two \\\"quoted\\\" \u00e9\"",
+        ];
+        var request = Request("/usr/local/bin/codex", "/work/worktrees/task-c660") with
+        {
+            Args = args,
+            Env = new Dictionary<string, string> { ["CODEX_HOME"] = "/state/codex" },
+            TranscriptEnabled = true,
+            TranscriptFormat = TranscriptFormats.Codex,
+            Backend = SessionBackends.PtyHost,
+        };
+
+        var reply = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
+
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+        probe.Calls.ShouldBe(["codex"], "a Codex launch asks the Codex probe only");
+        var started = runtime.Started.ShouldHaveSingleItem();
+        started.SessionId.ShouldBe(request.SessionId);
+        started.Exe.ShouldBe("/usr/local/bin/codex");
+        started.TranscriptFormat.ShouldBe(TranscriptFormats.Codex);
+        started.TranscriptEnabled.ShouldBeTrue();
+        started.Cwd.ShouldBe("/work/worktrees/task-c660");
+        started.Args.ShouldBe(args, "argv reaches the runtime byte-for-byte");
+        started.Env.ShouldBe(request.Env);
+        started.MemoryLimitMb.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Codex_launch_is_refused_before_the_runtime_when_the_probe_says_logged_out()
+    {
+        var runtime = new RecordingRuntime();
+        var probe = new RecordingProbe(false);
+        var refused = await Dispatcher(runtime, probe: probe)
+            .DispatchAsync(Launch(Request("codex", "/work") with { TranscriptFormat = TranscriptFormats.Codex }), CancellationToken.None);
+
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.ProviderSignInRequired);
+        refused.StatusCode.ShouldBe(409);
+        refused.ErrorDetail.ShouldNotBeNull();
+        refused.ErrorDetail.ShouldContain("Codex");
+        refused.ErrorDetail.ShouldContain("CODEX_HOME=/state/codex");
+        refused.ErrorDetail.ShouldContain("codex login --device-auth");
+        refused.ErrorDetail.ShouldContain("uid 1654");
+        refused.ErrorDetail.ShouldNotContain("grok login");
+        refused.ErrorDetail.ShouldNotContain("claude");
+        probe.Calls.ShouldBe(["codex"]);
+        runtime.Mutations.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Codex_launch_is_admitted_when_the_probe_is_signed_in_unknown_absent_or_disabled()
+    {
+        foreach (var loggedIn in new bool?[] { true, null })
+        {
+            var runtime = new RecordingRuntime();
+            var probe = new RecordingProbe(loggedIn);
+            var admitted = await Dispatcher(runtime, probe: probe)
+                .DispatchAsync(Launch(Request("codex", "/work") with { TranscriptFormat = TranscriptFormats.Codex }), CancellationToken.None);
+            admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"loggedIn={loggedIn?.ToString() ?? "null"} must admit: {admitted.ErrorDetail}");
+            probe.Calls.ShouldBe(["codex"]);
+            runtime.Mutations.ShouldBe(["start"]);
+        }
+
+        var noProbeRuntime = new RecordingRuntime();
+        var noProbe = await Dispatcher(noProbeRuntime)
+            .DispatchAsync(Launch(Request("codex", "/work") with { TranscriptFormat = TranscriptFormats.Codex }), CancellationToken.None);
+        noProbe.Kind.ShouldBe(PhoneHomeFrameKind.Result, noProbe.ErrorDetail);
+        noProbeRuntime.Mutations.ShouldBe(["start"]);
+
+        // The setting is the kill switch: off, the same signed-out answer is never asked for.
+        var disabledRuntime = new RecordingRuntime();
+        var disabledProbe = new RecordingProbe(false);
+        var disabled = await Dispatcher(disabledRuntime, probe: disabledProbe, codexAuthProbeEnabled: false)
+            .DispatchAsync(Launch(Request("codex", "/work") with { TranscriptFormat = TranscriptFormats.Codex }), CancellationToken.None);
+        disabled.Kind.ShouldBe(PhoneHomeFrameKind.Result, disabled.ErrorDetail);
+        disabledProbe.Calls.ShouldBeEmpty();
+        disabledRuntime.Mutations.ShouldBe(["start"]);
+
+        // Codex's switch is its own: turning Grok's and Claude's off does not skip Codex's probe.
+        var otherSwitchesProbe = new RecordingProbe(false);
+        var otherSwitches = await Dispatcher(new RecordingRuntime(), probe: otherSwitchesProbe,
+                claudeAuthProbeEnabled: false, grokAuthProbeEnabled: false)
+            .DispatchAsync(Launch(Request("codex", "/work")), CancellationToken.None);
+        otherSwitches.ErrorCode.ShouldBe(PhoneHomeProblemTypes.ProviderSignInRequired);
+        otherSwitchesProbe.Calls.ShouldBe(["codex"]);
+    }
+
+    [Test]
+    public async Task Codex_admission_keeps_cwd_backend_memory_custody_and_capacity_checks()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity: 1);
+        RunnerLaunchRequest Codex(string cwd = "/work") => Request("codex", cwd) with { TranscriptFormat = TranscriptFormats.Codex };
+
+        foreach (var (label, request) in new (string, RunnerLaunchRequest)[]
+                 {
+                     ("windows cwd", Codex("C:\\src\\Antiphon")),
+                     ("traversing cwd", Codex("/work/worktrees/../../etc")),
+                     ("herdr backend", Codex() with { Backend = SessionBackends.Herdr }),
+                     ("memory limit", Codex() with { MemoryLimitMb = 512 }),
+                     ("custody without backend", TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId)
+                         with { Exe = "codex", TranscriptFormat = TranscriptFormats.Codex }),
+                     ("unknown format", Codex() with { TranscriptFormat = "opencode" }),
+                 })
+        {
+            var refused = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, label);
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget, label);
+        }
+
+        runtime.Mutations.ShouldBeEmpty();
+
+        // The positive control: the same dispatcher admits a well-formed Codex launch...
+        var admitted = await dispatcher.DispatchAsync(Launch(Codex("/work/worktrees/task-c660")), CancellationToken.None);
+        admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, admitted.ErrorDetail);
+
+        // ...and then holds it to the one seat it has.
+        var full = await dispatcher.DispatchAsync(Launch(Codex()), CancellationToken.None);
+        full.ErrorCode.ShouldBe(PhoneHomeProblemTypes.Capacity);
+        runtime.Mutations.ShouldBe(["start"]);
+    }
+
+    [Test]
+    public async Task Provider_auth_operation_canonicalizes_codex_and_refuses_other_unknown_providers()
+    {
+        var runtime = new RecordingRuntime();
+        var probe = new RecordingProbe(false);
+        var dispatcher = Dispatcher(runtime, probe: probe);
+
+        foreach (var spelling in new[] { "codex", "Codex", "CODEX" })
+        {
+            var answered = await dispatcher.DispatchAsync(ProviderAuth(spelling), CancellationToken.None);
+            answered.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{spelling}: {answered.ErrorDetail}");
+            var dto = answered.Payload!.Value.Deserialize<RunnerProviderAuthDto>(PhoneHomeFraming.Json)!;
+            dto.Provider.ShouldBe("codex", spelling);
+            dto.LoggedIn.ShouldBe(false, spelling);
+        }
+
+        probe.Calls.ShouldBe(["codex", "codex", "codex"], "the probe is always asked by the canonical name");
+
+        foreach (var other in new[] { "opencode", "codex-cli", "openai" })
+        {
+            var refused = await dispatcher.DispatchAsync(ProviderAuth(other), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error, other);
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget, other);
+            refused.StatusCode.ShouldBe(400, other);
+            refused.ErrorDetail.ShouldNotBeNull();
+            refused.ErrorDetail.ShouldContain("'codex'", customMessage: other);
+        }
+
+        probe.Calls.Count.ShouldBe(3);
+
+        // No probe on this runner: Codex, like the others, cannot tell rather than guessing.
+        var unknown = await Dispatcher(runtime).DispatchAsync(ProviderAuth("codex"), CancellationToken.None);
+        unknown.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var unknownDto = unknown.Payload!.Value.Deserialize<RunnerProviderAuthDto>(PhoneHomeFraming.Json)!;
+        unknownDto.Provider.ShouldBe("codex");
+        unknownDto.LoggedIn.ShouldBeNull();
+        unknownDto.Error.ShouldBe("probe_unavailable");
+        runtime.Mutations.ShouldBeEmpty();
     }
 
     // --- CARD-0631 D-2/D-5: every handler fault still answers the request. ---
@@ -691,7 +899,7 @@ public class PhoneHomeCommandDispatcherTests
 
     private static PhoneHomeCommandDispatcher Dispatcher(
         IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true,
-        bool grokAuthProbeEnabled = true,
+        bool grokAuthProbeEnabled = true, bool codexAuthProbeEnabled = true,
         int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes, List<string>? logs = null) =>
         new(runtime, new PhoneHomeSettings
         {
@@ -701,6 +909,7 @@ public class PhoneHomeCommandDispatcherTests
             Capacity = capacity,
             ClaudeAuthProbeEnabled = claudeAuthProbeEnabled,
             GrokAuthProbeEnabled = grokAuthProbeEnabled,
+            CodexAuthProbeEnabled = codexAuthProbeEnabled,
             Limits = new PhoneHomeLimits(MaxMessageUtf8Bytes: maxMessageUtf8Bytes),
         }, probe, logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
 
@@ -715,6 +924,7 @@ public class PhoneHomeCommandDispatcherTests
     {
         public int Owned { get; set; }
         public List<string> Mutations { get; } = [];
+        public List<RunnerLaunchRequest> Started { get; } = [];
 
         /// <summary>CARD-0631: a runtime fault Health and Get throw, standing in for an escaping handler.</summary>
         public Func<Exception>? Fault { get; set; }
@@ -739,6 +949,7 @@ public class PhoneHomeCommandDispatcherTests
             if (_sessions.TryGetValue(request.SessionId, out var running) && running.Status != "Exited")
                 throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
             Mutations.Add("start");
+            Started.Add(request);
             Owned++;
             var session = new RunnerSessionDto(request.SessionId, 1, DateTime.UtcNow, "Running", null, "", 0,
                 AcceptedStartedAt: request.AcceptedStartedAt);

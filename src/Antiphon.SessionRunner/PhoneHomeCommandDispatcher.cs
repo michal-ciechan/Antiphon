@@ -433,6 +433,12 @@ public sealed class PhoneHomeCommandDispatcher
     /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> installs Claude Code.</summary>
     internal const string ImageClaudePath = "/usr/local/bin/claude";
 
+    /// <summary>CARD-0660 D-7. RED SEAM: no Codex executable is admitted yet.</summary>
+    internal static bool IsCodexExe(string? exe) => false;
+
+    /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> links the native Codex CLI.</summary>
+    internal const string ImageCodexPath = "/usr/local/bin/codex";
+
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {
         // CARD-0604 D-2 / CARD-0628 D-5: grok, claude, or an image-owned executable from the allow list. The runner keeps
