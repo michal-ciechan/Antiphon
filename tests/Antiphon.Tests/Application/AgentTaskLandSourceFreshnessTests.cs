@@ -756,10 +756,11 @@ public sealed class AgentTaskLandSourceFreshnessTests
         var switched = 0;
         h.Fixture.Git.BeforeCommand = async (_, args) =>
         {
-            // Only the target-advance ancestry asks whether the current target is an ancestor of another
-            // commit; the remote pre-check asks about the target itself and the observer about the source.
+            // After the prepared pin, only the target-advance ancestry asks whether the current target is an
+            // ancestor of another commit (the source resolver asks the same shape earlier, before any pin).
             if (args.Count == 4 && args[0] == "merge-base" && args[1] == "--is-ancestor"
                 && args[2] == targetBefore && args[3] != targetBefore
+                && h.Fixture.Git.Trace.Any(a => a.Length > 1 && a[0] == "update-ref" && a[1].EndsWith("/prepared", StringComparison.Ordinal))
                 && Interlocked.Exchange(ref switched, 1) == 0)
                 (await outsider.RunAsync(other, ["checkout", "master"], CancellationToken.None)).Succeeded.ShouldBeTrue();
             return null;
