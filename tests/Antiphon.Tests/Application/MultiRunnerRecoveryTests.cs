@@ -1,4 +1,3 @@
-using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -251,11 +250,11 @@ public sealed class MultiRunnerRecoveryTests
         EchoPrompts(peerB, harness, sessionB);
         await harness.InsertTurnAsync("prior-b", "done", sessionB);
         await harness.MarkWorkingAsync(sessionA);
+        (await Pump(host, harness).RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
         var promptA = "CARD-0710-A-" + Guid.NewGuid().ToString("N");
         var promptB = "CARD-0710-B-" + Guid.NewGuid().ToString("N");
         await harness.Queue.EnqueueAsync(sessionA, promptA, MessageSendMode.WhenIdle, CancellationToken.None);
         await harness.Queue.EnqueueAsync(sessionB, promptB, MessageSendMode.WhenIdle, CancellationToken.None);
-        (await Pump(host, harness).RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
 
         await harness.Queue.FlushIfIdleAsync(sessionA, CancellationToken.None);
         await harness.Queue.FlushIfIdleAsync(sessionB, CancellationToken.None);
@@ -380,33 +379,8 @@ public sealed class MultiRunnerRecoveryTests
     private static RunnerSessionDto Running(Guid sessionId) =>
         new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
 
-    private static void EchoPrompts(PhoneHomeScriptedPeer peer, BridgeQueueHarness harness, Guid sessionId)
-    {
-        var composer = new StringBuilder();
-        peer.Reply = frame =>
-        {
-            if (frame.Operation != PhoneHomeOperation.Input || frame.Payload is not { } payload)
-                return null;
-            var input = payload.TryGetProperty("input", out var text) ? text.GetString() ?? "" : "";
-            if (!input.EndsWith('\r'))
-            {
-                composer.Append(input);
-                return null;
-            }
-
-            composer.Append(input[..^1]);
-            var prompt = composer.ToString().Replace("\u001b[200~", "", StringComparison.Ordinal)
-                .Replace("\u001b[201~", "", StringComparison.Ordinal);
-            composer.Clear();
-            if (prompt.Length == 0)
-                return null;
-            harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt, sessionId: sessionId)
-                .GetAwaiter().GetResult();
-            harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: sessionId)
-                .GetAwaiter().GetResult();
-            return null;
-        };
-    }
+    private static void EchoPrompts(PhoneHomeScriptedPeer peer, BridgeQueueHarness harness, Guid sessionId) =>
+        PhoneHomeStrandedQueueTests.EchoSubmittedPromptsToTranscript(peer, harness, sessionId);
 
     private static async Task<QueuedMessageStatus> QueueStatusAsync(string connectionString, Guid sessionId, string body)
     {
