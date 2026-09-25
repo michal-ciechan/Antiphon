@@ -550,6 +550,21 @@ public sealed class RemoteWorkspacePreparerTests
         {
             // The crash boundary: the incarnation that queued the brief dies before its boot flush,
             // so its launch never passes ready. Only a restarted queue service can deliver the row.
+            ready!.TrySetResult(false);
+            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+            await using (var failedRead = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var failedSession = await failedRead.AgentSessions.AsNoTracking()
+                    .SingleAsync(s => s.Id == sessionId);
+                failedSession.Status.ShouldBe(SessionStatus.Failed);
+                failedSession.FailureReason.ShouldContain(AgentSessionService.NotReadyBase);
+                var pendingBrief = await failedRead.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == queued.Id);
+                pendingBrief.Status.ShouldBe(QueuedMessageStatus.Pending);
+                (await failedRead.TranscriptEntries.AsNoTracking()
+                    .CountAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt))
+                    .ShouldBe(0);
+            }
             await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
                 schema.ConnectionString, harness, queued, sessionId, busy, cut);
         }
@@ -570,9 +585,6 @@ public sealed class RemoteWorkspacePreparerTests
         harness.Adapter.StartedSessionId.ShouldBe(sessionId);
         if (cut == "lost-wakeup")
         {
-            // Reap the crashed incarnation's parked launch: it fails at ready and never types.
-            ready!.TrySetResult(false);
-            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
             (await PromptCountAsync()).ShouldBe(1);
         }
     }
