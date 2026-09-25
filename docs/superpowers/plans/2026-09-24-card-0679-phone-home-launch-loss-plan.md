@@ -309,7 +309,8 @@ R2's live duplicate ack is unchanged. `PhoneHomeRunnerClient.StartAsync` turns t
 `RemoteLaunchAlreadyExitedException`; the D-8 loop releases the adapter without a kill and does not
 retry, and `LaunchInteractiveAsync` marks the row Failed with a reason naming the runner, exit code
 and reason, `ExitCode` set and `TerminationSource` from the exit reason (`ProcessExit`), no deferred
-kill, `RestartFailureKind` as for any process that exits before ready (`Unknown`). The D-8 loop also
+kill, `RestartFailureKind` `LaunchOrProcessFailure` (R5 repair 2; the first repair left it `Unknown`,
+which never charged `ConsecutiveFailures`). The D-8 loop also
 reads a re-attach's wrapped loss through its wrapper for the reason and the in-flight test. The
 fence holds only while the runner lists the exited session: a `ReleaseSlot` or a runner restart
 forgets it. Tests: `PhoneHomeCommandDispatcherTests`
@@ -318,6 +319,28 @@ forgets it. Tests: `PhoneHomeCommandDispatcherTests`
 `Pre_ack_resend_answered_already_exited_ends_the_launch_without_a_second_start`,
 `Zero_retries_after_an_in_flight_pre_ack_loss_fail_at_once_with_a_deferred_kill` and
 `Second_loss_during_reattach_is_read_through_its_wrapper_and_exhausts_the_retries`.
+
+**R5 repair 2 (review 18f52a40).** The exited-session fence above reads only the runner's current
+session list, and `ReleaseSlot` or a runner restart can drop that record inside the desktop's pre-ack
+retry window. `PhoneHomeCommandDispatcher.LaunchAsync` now keeps a per-session accepted-generation
+watermark (`PhoneHomeLaunchGenerationStore`): after the live and listed-exited checks, a Launch whose
+generation is equal to or older than the watermark is refused with `409`
+`PhoneHomeProblemTypes.SessionGenerationAlreadyAccepted = "phone_home_session_generation_already_accepted"`;
+otherwise the watermark is raised and flushed to disk before `StartAsync`. An enabled runner keeps it
+under `PhoneHome:LaunchGenerationsPath`, defaulting to `launch-generations` beside `StoreIdPath` on
+the state volume (one file per session id, pruned after 7 days); a dispatcher with no path keeps it in
+memory. A newer generation (a resume) still starts. The desktop does not map the new code: the
+re-send surfaces as a `ConflictException`, which the D-8 loop does not retry, so the launch ends
+Failed with the runner's reason through today's kill path (a no-op generation kill: the runner holds
+nothing). `RestartFailurePolicy` classifies `RemoteLaunchAlreadyExitedException` as
+`LaunchOrProcessFailure`. `RunnerTerminalSession.StopWatching` cancels the exit watcher, and every
+runner adapter's `DisposeAsync` calls it, so a released adapter no longer polls `Get` through the
+runner's replacement connection. Tests: `PhoneHomeCommandDispatcherTests`
+`Pre_ack_resend_after_the_slot_was_released_starts_no_second_process` and
+`Pre_ack_resend_after_a_runner_restart_starts_no_second_process`; `RestartFailureClassificationTests`
+`Runner_confirmed_early_exit_is_a_launch_or_process_failure_that_charges_consecutive_failures` (and
+the already-exited launch test now asserts `LaunchOrProcessFailure`); `RunnerTerminalSessionGenerationTests`
+`A_disposed_adapter_stops_its_exit_watcher` (all five runner adapters).
 
 Rejected: a desktop-side `GetAsync` before every retried Launch to decide between attach and
 launch (a second request on a fresh connection that can itself drop; the runner is the authority

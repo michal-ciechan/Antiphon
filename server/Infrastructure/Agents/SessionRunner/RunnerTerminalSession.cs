@@ -9,6 +9,9 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 internal sealed class RunnerTerminalSession
 {
     private readonly ISessionRunnerClient _client;
+    // CARD-0679 R5 repair 2: a remote client follows the runner's current connection, so an exit
+    // watcher left running after its adapter was released would poll the replacement connection.
+    private readonly CancellationTokenSource _watcher = new();
     private Guid _sessionId;
     private bool _started;
     private DateTime? _acceptedGeneration;
@@ -38,7 +41,7 @@ internal sealed class RunnerTerminalSession
         StartedAt = session.StartedAt;
         Pid = session.Pid;
         ExitReason = session.ExitReason;
-        Exited = WaitForExitAsync(sessionId, CancellationToken.None);
+        Exited = WaitForExitAsync(sessionId, _watcher.Token);
         _started = true;
     }
 
@@ -83,7 +86,7 @@ internal sealed class RunnerTerminalSession
         _acceptedGeneration = session.AcceptedStartedAt;
         Pid = session.Pid;
         ExitReason = session.ExitReason;
-        Exited = WaitForExitAsync(sessionId, CancellationToken.None);
+        Exited = WaitForExitAsync(sessionId, _watcher.Token);
         _started = true;
     }
 
@@ -274,6 +277,13 @@ internal sealed class RunnerTerminalSession
         return result.Killed;
     }
 
+    /// <summary>
+    /// Ends the exit watcher: the adapter that owns this session was disposed, so nothing reads its
+    /// exit any more and no further Get is sent. <see cref="Exited"/> then completes with -1, as it
+    /// does when the watcher loses the runner.
+    /// </summary>
+    public void StopWatching() => _watcher.Cancel();
+
     private async Task<int> WaitForExitAsync(Guid sessionId, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -306,7 +316,14 @@ internal sealed class RunnerTerminalSession
                 return -1;
             }
 
-            await Task.Delay(250, ct);
+            try
+            {
+                await Task.Delay(250, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return -1;
+            }
         }
 
         return -1;

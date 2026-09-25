@@ -9,6 +9,22 @@ public sealed class PhoneHomeSettings
     public string ServerOrigin { get; set; } = "";
     public string SecretPath { get; set; } = "/run/secrets/phone-home";
     public string StoreIdPath { get; set; } = "/state/runner-store-id";
+
+    /// <summary>
+    /// CARD-0679 R5 repair 2: where the accepted-launch-generation watermarks live (one file per
+    /// session id), so a re-sent Launch is refused after a slot release or a runner restart. An enabled
+    /// runner left unset uses <c>launch-generations</c> beside <see cref="StoreIdPath"/>, on the same state
+    /// volume. With no path at all (a dispatcher built in a test) the watermark is in memory and
+    /// survives a release only.
+    /// </summary>
+    public string? LaunchGenerationsPath { get; set; }
+
+    /// <summary>The configured watermark directory, or the state-volume default beside the store id.</summary>
+    public string ResolvedLaunchGenerationsPath() =>
+        !string.IsNullOrWhiteSpace(LaunchGenerationsPath)
+            ? LaunchGenerationsPath
+            : Path.Combine(Path.GetDirectoryName(StoreIdPath) ?? ".", "launch-generations");
+
     public string AllowedCwd { get; set; } = "/work";
 
     /// <summary>
