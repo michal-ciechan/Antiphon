@@ -247,8 +247,22 @@ public sealed class AgentTaskLandService
         if (requestId is not null && task.CurrentLandRequestId != requestId)
             return LandRunResult.Complete;
         var request = await EnsureRequestAsync(task, ct);
+        try
+        {
+            return await RunEnsuredRequestAsync(task, request, ct);
+        }
+        finally
+        {
+            // CARD-0672 D-2: every return that leaves the request terminal ends its yield entry.
+            if (!request.IsPending)
+                _leaseWaiters?.EndYield(request.Id);
+        }
+    }
+
+    private async Task<LandRunResult> RunEnsuredRequestAsync(AgentTask task, AgentTaskLandRequest request, CancellationToken ct)
+    {
         if (!request.IsPending) return LandRunResult.Complete;
-        await _boundary.ReachedAsync("before-execution", taskId, request.Id, ct);
+        await _boundary.ReachedAsync("before-execution", task.Id, request.Id, ct);
         request.LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime;
         if (task.Status == AgentTaskStatus.Blocked)
             return LandRunResult.Complete;
@@ -267,7 +281,6 @@ public sealed class AgentTaskLandService
             ClearPending(task);
             await _db.SaveChangesAsync(ct);
             await canceled.CommitAsync(ct);
-            _leaseWaiters?.EndYield(request.Id);
             await ReleaseLandOwnerAsync(task.Id);
             return LandRunResult.Complete;
         }
@@ -300,8 +313,6 @@ public sealed class AgentTaskLandService
         }
         finally
         {
-            if (!request.IsPending)
-                _leaseWaiters?.EndYield(request.Id);
             var terminal = _db.ChangeTracker.Entries<AgentTaskEvent>().Select(e => e.Entity)
                 .Where(e => e.AgentTaskId == task.Id && e.LandRequestId == request.Id && e.IsLandTerminal)
                 .OrderBy(e => e.At).LastOrDefault();
@@ -1091,10 +1102,7 @@ public sealed class AgentTaskLandService
         await LockTaskAsync(task.Id, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (!request.IsPending)
-        {
-            _leaseWaiters.EndYield(request.Id);
             return LandRunResult.Complete;
-        }
         var at = now.UtcDateTime;
         request.LastEvaluatedAt = at;
         // One Held event per episode, deduplicated on the reason as HoldAsync is. No caller note:
