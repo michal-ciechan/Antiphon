@@ -105,8 +105,13 @@ public class PhoneHomePendingInventoryTests
             await using var db = h.Db();
             if (state == "terminal")
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Failed));
+            else if (state == "unbound")
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.RunnerId, (string?)null)
+                    .SetProperty(s => s.RunnerStoreId, (string?)null)
+                    .SetProperty(s => s.RunnerCwd, (string?)null));
             else
-                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, state == "unbound" ? null : "unaccepted-runner"));
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, "unaccepted-runner"));
             (await h.PreviewAsync()).Target.AgentLive.ShouldBe(false);
             (await h.MentionAsync("fake", "must not resurrect")).ShouldBeFalse();
             await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, "terminal", MessageSendMode.Now, CancellationToken.None));
