@@ -28,6 +28,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 internal sealed class BridgeQueueHarness : IAsyncDisposable
 {
+    public bool PreserveDatabaseOnDispose { get; init; }
     public required ServiceProvider Provider { get; init; }
     public required IServiceScope Scope { get; init; }
     public required string TempRoot { get; init; }
@@ -46,6 +47,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public sealed record HarnessOptions
     {
         public bool AlwaysOn { get; init; } = true;
+        public bool PreserveDatabaseOnDispose { get; init; }
         public TimeProvider? TimeProvider { get; init; }
         public SupervisionSettings? Supervision { get; init; }
         public ChannelBridgeSettings? Bridge { get; init; }
@@ -217,6 +219,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             attachedRuntime.Register(attachedSession, attachedAdapter);
             return new BridgeQueueHarness
             {
+                PreserveDatabaseOnDispose = options.PreserveDatabaseOnDispose,
                 Provider = provider,
                 Scope = scope,
                 TempRoot = tempRoot,
@@ -298,6 +301,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         return new BridgeQueueHarness
         {
+            PreserveDatabaseOnDispose = options.PreserveDatabaseOnDispose,
             Provider = provider,
             Scope = scope,
             TempRoot = tempRoot,
@@ -562,6 +566,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (!PreserveDatabaseOnDispose)
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString)))
         {
             var sessionIds = await db.AgentSessions
