@@ -1086,6 +1086,49 @@ R3 (`CDT` = SR `PhoneHomeCommandDispatcherTests`, `RRJ` = `RunnerRetireJobTests`
 Non-TUnit PCs (81..86) run the whole `test-deploy-server2.ps1` (one command, ~1 min) and read the
 named case's `FAIL`; every other PC is one method-scoped TUnit filter.
 
+### Out of scope
+
+- A desktop restart in the middle of the rolling flow: V-23 is one process; the restart half is
+  V-4's rebuilt directory plus the pump's existing recovery coverage (Risks).
+- The runner's own transcript capture crossing phone-home: MS-4 substitutes an inserted
+  `UserPrompt`; the real path is `PhoneHomeEventPumpTests` (regression) and L-1's settled task.
+- Two nested dockerd daemons on kernel 4.15, Grok/Codex token rotation: live only (L-1, L-2); no
+  deterministic test exists for either.
+- Hangfire scheduling of `antiphon:runner-retire`: the job runs through its class; that Hangfire
+  fires it is L-3's `retiredAt` "set by the job".
+- Migration content beyond `has-pending-model-changes` (CP-7); the row round-trip is V-4.
+- The desktop runner on 17204 (follow-up card).
+
+Plan rows flagged by this pass: **L-2 cannot go red** (observation, not a guard); the roster's
+V-30 methods could not go red on the override (a new method added); V-3's duplicate-id clause
+could not be built from configuration (dropped); V-5's red-commit mechanism ("the stub refuses
+`Resolve` too") was contrived (replaced by setup-red + PC-9); D-4's "server2-temp status is 404"
+contradicts D-2 (resolved in V-1). No other row is a stub: every V row has a PC or is an
+integration pin over named PCs (V-23).
+
+### TestDesign cost
+
+- Ordinary V/R floor (Code) = the checkpoint `EstimatedMinutes`: R1 CP-1..CP-2 = 6 + 5 = **11**;
+  R2 CP-3..CP-8 = 7 + 7 + 7 + 6 + 2 + 3 = **32**; R3 CP-9..CP-21 = **53**; ordinary total **96**
+  minutes (estimated), plus the live rows CP-22..CP-24 = 25 + 35 + 30 = **90** minutes on the
+  desktop lane (estimated; plus the old runner's drain time).
+- PC floor (Mutation, estimated): 86 PCs = 71 in `Antiphon.Tests`, 9 in
+  `Antiphon.SessionRunner.Tests`, 6 in `test-deploy-server2.ps1`. One unbatched TUnit cycle on
+  server2 ≈ 3 min incremental build + 1 min red run + 3 min restore build + 1 min green run = 8
+  min → 80 × 8 + 6 × 3 = **658** min unbatched. Batched by the rule (independent files and
+  methods only): the largest same-file groups are `AgentTaskDispatcher.cs` (11: PC-10, 11, 16..21,
+  38..40) and `RunnerRetireJob.cs`/`RunnerRetireService.cs` (12: PC-45..PC-56), so `Antiphon.Tests`
+  needs about 20 batches × 10 min = 200 min; SessionRunner 4 batches × 8 = 32 min; scripts 6 × 3 =
+  18 min; setup builds 2 × 6 = 12 min → **262** min (estimated), saving about **396** min. With
+  three shards (same branch tip, detached worktrees; `Antiphon.Tests` shards need per-test schema
+  isolation) the wall clock is about **95** min.
+- Total (estimated) = Code 96 + live 90 + Mutation 262 = **448** agent-minutes.
+
+Before handoff: bodies read (listed under Inspection); guards = 86, mapped = 86, missing = 0,
+duplicate PC maps = 0; every PC names a compiling defect, one method and one assertion (PC-81..86
+name a script case); numeric cost above; R1 is green pins only (no production change) with red
+proven by PC-1..PC-7, and R1 Code stays blocked until CARD-0710's `5f39210c` is on master.
+
 ### Execution and evidence
 
 Run each TUnit row with `pwsh -NoProfile -File scripts/run-checkpoint.ps1` and the exact filter,
@@ -1104,7 +1147,7 @@ assembly. Source is frozen during a run.
 
 R1: two slices, about 3 hours of authoring (after CARD-0710 lands); R2: three slices, about 7.5
 hours; R3: five slices, about 12 hours plus the live rows. Ordinary checkpoint floors from the
-tables: R1 **11** minutes, R2 **30** minutes, R3 **53** minutes (plus L-1..L-3, about 60 minutes of
+tables: R1 **11** minutes, R2 **32** minutes (TestDesign), R3 **53** minutes (plus L-1..L-3, about 60 minutes of
 desktop wall clock dominated by the 30-minute overlap wait and however long the old runner's last
 task takes). Suggested `-ExpectAbout`: R1 200 minutes, R2 480 minutes, R3 760 minutes.
 
