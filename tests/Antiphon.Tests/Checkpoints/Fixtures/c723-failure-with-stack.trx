@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="c723-0000-0000-0000-000000000001" name="c723 failure with stack" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+    <UnitTestResult testId="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" testName="display name" outcome="Failed" duration="00:00:01.5000000">
+      <Output>
+        <StdOut>stdout line one
+stdout line two</StdOut>
+        <ErrorInfo>
+          <Message>Expected 1 but was 2</Message>
+          <StackTrace>at Antiphon.Tests.Checkpoints.Sample.boom() in Sample.cs:line 4</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult testId="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" testName="skipped display" outcome="NotExecuted" duration="00:00:00" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" name="display name">
+      <TestMethod codeBase="C723.dll" className="Antiphon.Tests.Checkpoints.SampleTests" name="boom" />
+    </UnitTest>
+    <UnitTest id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" name="skipped display">
+      <TestMethod codeBase="C723.dll" className="Antiphon.Tests.Checkpoints.SampleTests" name="skipped_one" />
+    </UnitTest>
+  </TestDefinitions>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="1" passed="0" failed="1" />
+  </ResultSummary>
+</TestRun>
