@@ -80,6 +80,36 @@ public class ResilienceCircuitTests
     }
 
     [Test]
+    public async Task Evicted_authority_starts_a_fresh_circuit()
+    {
+        var settings = Tight();
+        settings.Http.MaxAuthorityPipelines = 2;
+        settings.CircuitBreaker.BreakDurationSeconds = 120;
+        var time = Clock();
+        var handler = new ScriptHandler((_, _) => Task.FromResult(ResilienceTestHost.Status(HttpStatusCode.ServiceUnavailable)));
+        await using var provider = ResilienceTestHost.Build(
+            handler, ResilienceClientNames.JiraRead, settings, time, new FixedResilienceJitter(0));
+        using var client = ResilienceTestHost.Client(provider, ResilienceClientNames.JiraRead);
+        await OpenAuthority(time, client, handler, "https://a.test/a");
+        var blocked = handler.Sends;
+        var blockedCall = await Should.ThrowAsync<HttpRequestException>(() => SendTo(client, "https://a.test/a"));
+        blockedCall.Message.ShouldContain("circuit is open");
+        handler.Sends.ShouldBe(blocked);
+
+        handler.Next = () => ResilienceTestHost.Status(HttpStatusCode.OK, "other");
+        (await SendTo(client, "https://b.test/b")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await SendTo(client, "https://c.test/c")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        provider.GetRequiredService<ResiliencePipelineCache>()
+            .ActiveHttpPipelines(ResilienceDependencies.Jira).ShouldBe(2);
+
+        handler.Next = () => ResilienceTestHost.Status(HttpStatusCode.OK, "fresh");
+        var fresh = await SendTo(client, "https://a.test/a");
+        fresh.StatusCode.ShouldBe(HttpStatusCode.OK);
+        handler.Sends.ShouldBe(blocked + 3);
+        handler.Paths[^1].ShouldBe("/a");
+    }
+
+    [Test]
     public async Task Non_transient_responses_do_not_open_the_circuit()
     {
         var (provider, handler, _) = OpenableHost();
@@ -205,10 +235,38 @@ public class ResilienceCircuitTests
 
     private static FakeTimeProvider Clock() => new(DateTimeOffset.Parse("2026-09-25T00:00:00Z"));
 
+    private static async Task OpenAuthority(
+        FakeTimeProvider time, HttpClient client, ScriptHandler handler, string uri)
+    {
+        for (var i = 0; i < 8; i++)
+        {
+            var before = handler.Sends;
+            try
+            {
+                using var response = await ResilienceTestHost.Pump(
+                    time, SendTo(client, uri), TimeSpan.FromMilliseconds(20), TimeSpan.FromSeconds(3));
+            }
+            catch (HttpRequestException ex) when (ex.Message.Contains("circuit is open", StringComparison.Ordinal))
+            {
+                handler.Sends.ShouldBe(before);
+                return;
+            }
+        }
+
+        throw new InvalidOperationException($"Circuit stayed closed after {handler.Sends} sends.");
+    }
+
     private static Task<HttpResponseMessage> Send(HttpClient client)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "user");
         ResilienceTestHost.Stamp(request, ResilienceOperations.GitHubUser);
+        return client.SendAsync(request);
+    }
+
+    private static Task<HttpResponseMessage> SendTo(HttpClient client, string uri)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        ResilienceTestHost.Stamp(request, ResilienceOperations.JiraSearch);
         return client.SendAsync(request);
     }
 
