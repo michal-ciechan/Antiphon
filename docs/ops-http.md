@@ -225,9 +225,11 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
 
 - **ARCHIVE IS `POST`; `DELETE` MEANS DELETE.** `POST /api/boards/{id}/archive` (reason required) is
   the reversible hide; `DELETE /api/boards/{id}` really removes the board and detaches its agents.
-  `DELETE /api/agents/{id}` is a **hard delete** with no archive and no running/always-on guard — it
+  `DELETE /api/agents/{id}` is a **hard delete** with no archive and no always-on guard — it
   releases the agent's cards and drops its workflow runs, and there is nothing to unarchive
-  afterwards. Grepping for `MapDelete` and stopping there is how an archive gets done as a delete.
+  afterwards. It stops a live (Starting/Running/Stopping) session first, as an operator request, and
+  answers 409 `agent_delete_session_live` (row kept) when that session is still live afterwards,
+  because the agent row is the session's only owner (CARD-0691). Grepping for `MapDelete` and stopping there is how an archive gets done as a delete.
 
 ## Typed input goes through the queue
 
