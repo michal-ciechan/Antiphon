@@ -491,11 +491,17 @@ public class ChannelPromptCorrelationTests
         var chat = await h.BindChannelAsync();
         var oldChat = sameConversation ? chat : await h.BindChannelAsync();
         const string content = "answer this request only [task deadbeef done]";
-        var legacy = await h.SeedChannelCorrelationAsync(Envelope + content, $"telegram:{oldChat}",
-            DateTime.UtcNow.AddMinutes(-2));
+        var legacy = await h.SeedPendingMessageAsync(Envelope + content, deliveryAttempts: 1,
+            baselineSequence: await h.CurrentTranscriptMaxSequenceAsync(),
+            lastDeliveryStartedAt: DateTime.UtcNow.AddMinutes(-2), origin: QueuedMessageOrigin.Channel,
+            status: QueuedMessageStatus.Sent, deliveryVerdict: DeliveryVerdict.Delivered,
+            conversationKey: $"telegram:{oldChat}");
         var marked = await EnqueueAsync(h, chat, content);
         var machine = await SeedMachineAsync(h, "[task deadbeef done] quoted by channel input");
-        await ReplayAsync(h, (await RowAsync(h, marked)).Body, "Only the new request's answer.");
+        var markedBody = (await RowAsync(h, marked)).Body;
+        h.Adapter.SubmittedBodies.ShouldBe([markedBody]);
+        await ReplayAsync(h, markedBody, "Only the new request's answer.");
+        h.Adapter.SubmittedBodies.ShouldBe([markedBody], "already delivered legacy input must never be retyped");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(chat);
         (await RowAsync(h, marked)).ChannelReplySettledAt.ShouldNotBeNull();
@@ -548,7 +554,7 @@ public class ChannelPromptCorrelationTests
             .SetProperty(m => m.LastDeliveryBaselineSequence, long.MaxValue));
         var attachment = Path.Combine(h.TempRoot, "repair-report.txt");
         await File.WriteAllTextAsync(attachment, "test-owned report attachment");
-        await ReplayAsync(h, report, $"Repair verified. [[attach:{attachment}]]");
+        await ReplayAsync(h, report, $"Repair verified.\n[[attach: {attachment}]]");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.ConversationId.ShouldBe(chat);
