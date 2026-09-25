@@ -203,6 +203,7 @@ public sealed class OutputDistillationService
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
+                    _messageQueue?.CompletionDeliveryFailed();
                     _logger.LogWarning(ex, "Distiller cleanup incomplete for {TaskId}; finite hold and dispatch expiry remain authoritative", request.TaskId);
                 }
                 if (writeLedger && source is not null && outcome is (DistillationOutcome.DegradedTimeout
@@ -219,15 +220,19 @@ public sealed class OutputDistillationService
             return;
         try
         {
+            var session = await _db.SessionQueuedMessages.Where(m => m.Id == id)
+                .Select(m => (Guid?)m.AgentSessionId).SingleOrDefaultAsync(ct);
             await _db.SessionQueuedMessages
                 // CARD-0544 D-9: a Completion obligation's hold is released like a direct note's.
                 .Where(m => m.Id == id && m.HoldUntil != null && (m.SourceLandNotificationId == null
                     || _db.AgentTaskLandNotifications.Any(n => n.Id == m.SourceLandNotificationId
                         && n.Kind == LandNotificationKind.TaskCompletion && n.CompletionSnapshotJson != null)))
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.HoldUntil, (DateTime?)null), ct);
+            if (session is Guid sessionId) _messageQueue?.CompletionHoldReleased(sessionId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            _messageQueue?.CompletionDeliveryFailed();
             _logger.LogWarning(ex, "Could not clear HoldUntil on queued message {QueuedId}", id);
         }
     }

@@ -72,6 +72,7 @@ public sealed class AgentTaskService
     // this. Absent, a retired Worktree tip cannot be proven and create refuses rather than guessing.
     private readonly DelegationWorktreeService? _worktrees;
     private readonly StartRefAvailability? _startRefs;
+    private readonly CompletionNoteFlushQueue? _completionNotes;
     // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
@@ -109,9 +110,11 @@ public sealed class AgentTaskService
         DelegationWorktreeService? worktrees = null,
         // CARD-0666. Optional. Absent, a caller start ref is checked only at dispatch, locally.
         StartRefAvailability? startRefs = null,
-        AgentSessionRuntime? runtime = null)
+        AgentSessionRuntime? runtime = null,
+        CompletionNoteFlushQueue? completionNotes = null)
     {
         _startRefs = startRefs;
+        _completionNotes = completionNotes;
         _worktrees = worktrees;
         _runners = runners;
         _phoneHome = phoneHome;
@@ -2251,6 +2254,7 @@ public sealed class AgentTaskService
         task.ConcurrencyToken = Guid.NewGuid();
         AddEvent(task.Id, AgentTaskEventType.Canceled, null, "Canceled.", now);
         await _db.SaveChangesAsync(ct);
+        if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
         // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.
         if (_workspaceUse is not null)
             await _workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);

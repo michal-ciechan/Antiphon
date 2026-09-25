@@ -34,16 +34,22 @@ internal static class CompletionNoteStamp
     public static async Task RepairFromAsync(
         AppDbContext db, IQueryable<SessionQueuedMessage> rows, CancellationToken ct)
     {
-        var pending = await rows.AsNoTracking()
+        var unstamped = rows.AsNoTracking()
             .Where(m => m.Origin == QueuedMessageOrigin.Delegation
                 && m.SourceLandNotificationId == null
                 && m.SourceTaskId != null
                 && m.ConversationKey != null
-                && m.ConversationKey.StartsWith("task:"))
-            .Select(m => new { TaskId = m.SourceTaskId!.Value, m.ContentDigest, m.CreatedAt })
-            .ToListAsync(ct);
+                && m.ConversationKey.StartsWith("task:")
+                && db.AgentTasks.Any(t => t.Id == m.SourceTaskId && t.CompletionNoteQueuedAt == null));
 
-        foreach (var row in pending.GroupBy(r => r.TaskId).Select(g => g.MinBy(x => x.CreatedAt)!))
-            await ApplyAsync(db, row.TaskId, row.ContentDigest, row.CreatedAt, ct);
+        while (true)
+        {
+            var pending = await unstamped.OrderBy(m => m.CreatedAt).ThenBy(m => m.Id).Take(128)
+                .Select(m => new { TaskId = m.SourceTaskId!.Value, m.ContentDigest, m.CreatedAt })
+                .ToListAsync(ct);
+            foreach (var row in pending.GroupBy(r => r.TaskId).Select(g => g.First()))
+                await ApplyAsync(db, row.TaskId, row.ContentDigest, row.CreatedAt, ct);
+            if (pending.Count < 128) return;
+        }
     }
 }

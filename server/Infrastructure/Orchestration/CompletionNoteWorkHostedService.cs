@@ -16,90 +16,123 @@ public sealed class CompletionNoteWorkHostedService(
     IServiceScopeFactory scopes, CompletionNoteFlushQueue flushes, SpecialistFailureQueue failures,
     TimeProvider clock, ILogger<CompletionNoteWorkHostedService> logger) : BackgroundService
 {
-    private int _scanOffset;
+    private const int PageSize = 128;
     protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
-        ScanAsync(stoppingToken), FlushAsync(stoppingToken), FlushAsync(stoppingToken),
+        RecoverAsync(stoppingToken), FlushAsync(stoppingToken), FlushAsync(stoppingToken),
         FlushAsync(stoppingToken), FlushAsync(stoppingToken), IncidentsAsync(stoppingToken));
 
-    private async Task ScanAsync(CancellationToken ct)
+    private async Task RecoverAsync(CancellationToken ct)
     {
+        var nextSweep = clock.GetUtcNow().UtcDateTime;
+        var failuresInARow = 0;
         while (!ct.IsCancellationRequested)
         {
+            var work = flushes.Recovery.Take(clock.GetUtcNow().UtcDateTime);
             try
             {
                 await using var scope = scopes.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var now = clock.GetUtcNow().UtcDateTime;
-                var sessions = await db.SessionQueuedMessages.AsNoTracking()
-                    .Where(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0
-                        && m.SourceTaskId != null && m.ContentDigest != null
-                        && (m.HoldUntil == null || m.HoldUntil <= now))
-                    .Select(m => m.AgentSessionId).Distinct().OrderBy(id => id)
-                    .Skip(_scanOffset).Take(128).ToListAsync(ct);
-                _scanOffset = sessions.Count == 128 ? _scanOffset + 128 : 0;
-                foreach (var session in sessions)
+                if (work.Sweep || clock.GetUtcNow().UtcDateTime >= nextSweep)
                 {
-                    if (scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } boundary)
-                        await boundary.ReachedAsync("completion-scan", Guid.Empty, session, ct);
-                    flushes.TryEnqueue(session);
+                    await SweepAsync(scope.ServiceProvider, db, ct);
+                    nextSweep = clock.GetUtcNow().UtcDateTime.AddMinutes(15);
                 }
-
-                await RecoverMissingSourcedCompletionNotesAsync(scope.ServiceProvider, db, ct);
+                else
+                {
+                    foreach (var task in work.Tasks)
+                        await RecoverMissingAsync(scope.ServiceProvider, db, task, ct);
+                }
+                foreach (var session in work.Sessions) flushes.TryEnqueue(session);
+                failuresInARow = 0;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
-            { logger.LogWarning(ex, "Completion note recovery scan failed"); }
-            await Task.Delay(TimeSpan.FromSeconds(1), clock, ct);
+            {
+                logger.LogWarning(ex, "Completion note recovery failed; requesting a backstop sweep");
+                flushes.Recovery.RequestSweep();
+                // First error gets an immediate recovery pass. A broken database must not
+                // become a tight retry loop; all failed work remains durable.
+                if (++failuresInARow > 1)
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Min(60, failuresInARow)), clock, ct);
+            }
+            await flushes.Recovery.WaitAsync(nextSweep, clock, ct);
+        }
+    }
+
+    private async Task SweepAsync(IServiceProvider services, AppDbContext db, CancellationToken ct)
+    {
+        await RecoverMissingAsync(services, db, null, ct);
+        Guid? cursor = null;
+        while (true)
+        {
+            var query = db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0
+                    && m.SourceTaskId != null && m.ContentDigest != null);
+            if (cursor is Guid after) query = query.Where(m => m.Id.CompareTo(after) > 0);
+            var rows = await query.OrderBy(m => m.Id).Take(PageSize)
+                .Select(m => new { m.Id, m.AgentSessionId, m.HoldUntil }).ToListAsync(ct);
+            foreach (var row in rows)
+            {
+                if (services.GetService<LandDeliveryBoundary>() is { } boundary)
+                    await boundary.ReachedAsync("completion-scan", Guid.Empty, row.AgentSessionId, ct);
+                flushes.Recovery.ScheduleFlush(row.AgentSessionId, row.HoldUntil ?? DateTime.MinValue);
+            }
+            if (rows.Count < PageSize) break;
+            cursor = rows[^1].Id;
         }
     }
 
     /// <summary>
-    /// G-150: a sourced Mutation Result that survived an enqueue fault is still owed a caller note.
-    /// Pending-row wakeup cannot see a missing insert; rebuild from the durable task.
-    /// Absence of a queue row is not enough: retention deletes Sent rows while sourced tasks
-    /// remain, so <see cref="AgentTaskCheckService.HasCompletionNoteAsync"/> also reads the
-    /// task stamp written at enqueue. An unstamped leftover queue row is repaired first —
-    /// treating it as "already delivered" without stamping is how retention-then-scan replayed.
+    /// Only unstamped sourced results can enter this walk. Keyset pages do not skip work when
+    /// stamping shrinks the partial index, and already-stamped history is never materialized.
+    /// The existing root receipt checks and atomic queue+stamp write remain authoritative.
     /// </summary>
-    private async Task RecoverMissingSourcedCompletionNotesAsync(
-        IServiceProvider services, AppDbContext db, CancellationToken ct)
+    private async Task RecoverMissingAsync(IServiceProvider services, AppDbContext db, Guid? taskId, CancellationToken ct)
     {
-        var owed = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.SourceLandingOperationId != null
-                && t.ParentSessionId != null
-                && t.ReplyTo == AgentTaskReplyTo.Session
-                && t.Result != null
-                && (t.Status == AgentTaskStatus.Succeeded
-                    || t.Status == AgentTaskStatus.Failed
-                    || t.Status == AgentTaskStatus.Canceled))
-            .Select(t => new { t.Id, Parent = t.ParentSessionId!.Value, t.RootTaskId })
-            .ToListAsync(ct);
-        if (owed.Count == 0)
-            return;
-
-        var owedIds = owed.Select(r => r.Id).ToList();
-        await CompletionNoteStamp.RepairFromAsync(
-            db,
-            db.SessionQueuedMessages.Where(m => m.SourceTaskId != null && owedIds.Contains(m.SourceTaskId.Value)),
-            ct);
-
-        var queue = services.GetRequiredService<SessionMessageQueueService>();
-        var settings = services.GetRequiredService<IOptions<DelegationSettings>>().Value;
-        foreach (var row in owed)
+        Guid? cursor = null;
+        Exception? failed = null;
+        while (true)
         {
-            if (await AgentTaskCheckService.HasCompletionNoteAsync(db, row.Parent, row.RootTaskId, ct))
-                continue;
-            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == row.Id, ct);
-            if (services.GetService<LandDeliveryBoundary>() is { } boundary)
-                await boundary.ReachedAsync("completion-scan", task.Id, row.Parent, ct);
-            var report = task.Result ?? "";
-            var note = DelegationReportFormatter.BuildCompletionNote(
-                task, settings, report, land: await LandCompletionFacts.LoadAsync(db, task, ct));
-            await queue.EnqueueAsync(
-                row.Parent, note.Body, MessageSendMode.WhenIdle, ct,
-                QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
-                task.Id, DelegationNoteDigest.Compute(report), note.Header, deliverIfIdle: false);
-            flushes.TryEnqueue(row.Parent);
+            var query = db.AgentTasks.AsNoTracking()
+                .Where(t => t.CompletionNoteQueuedAt == null
+                    && t.SourceLandingOperationId != null && t.ParentSessionId != null
+                    && t.ReplyTo == AgentTaskReplyTo.Session && t.Result != null
+                    && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Failed
+                        || t.Status == AgentTaskStatus.Canceled));
+            if (taskId is Guid id) query = query.Where(t => t.Id == id);
+            if (cursor is Guid after) query = query.Where(t => t.Id.CompareTo(after) > 0);
+            var owed = await query.OrderBy(t => t.Id).Take(PageSize).ToListAsync(ct);
+            if (owed.Count == 0) break;
+            var ids = owed.Select(t => t.Id).ToArray();
+            await CompletionNoteStamp.RepairFromAsync(db,
+                db.SessionQueuedMessages.Where(m => m.SourceTaskId != null && ids.Contains(m.SourceTaskId.Value)), ct);
+            var queue = services.GetRequiredService<SessionMessageQueueService>();
+            var settings = services.GetRequiredService<IOptions<DelegationSettings>>().Value;
+            foreach (var task in owed)
+            {
+                try
+                {
+                    var parent = task.ParentSessionId!.Value;
+                    if (await AgentTaskCheckService.HasCompletionNoteAsync(db, parent, task.RootTaskId, ct)) continue;
+                    if (services.GetService<LandDeliveryBoundary>() is { } boundary)
+                        await boundary.ReachedAsync("completion-scan", task.Id, parent, ct);
+                    var report = task.Result!;
+                    var note = DelegationReportFormatter.BuildCompletionNote(
+                        task, settings, report, land: await LandCompletionFacts.LoadAsync(db, task, ct));
+                    await queue.EnqueueAsync(parent, note.Body, MessageSendMode.WhenIdle, ct,
+                        QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
+                        task.Id, DelegationNoteDigest.Compute(report), note.Header, deliverIfIdle: false);
+                    flushes.TryEnqueue(parent);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    failed ??= ex;
+                    logger.LogWarning(ex, "Completion recovery failed for {TaskId}; continuing the page", task.Id);
+                }
+            }
+            if (taskId is not null || owed.Count < PageSize) break;
+            cursor = owed[^1].Id;
         }
+        if (failed is not null) throw new InvalidOperationException("Completion recovery has failed tasks to retry", failed);
     }
 
     private async Task FlushAsync(CancellationToken ct)
@@ -110,9 +143,22 @@ public sealed class CompletionNoteWorkHostedService(
             {
                 await using var scope = scopes.CreateAsyncScope();
                 await scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>().FlushIfIdleAsync(session, ct);
+                // Several held notes may share a caller. Once the earliest deadline fires,
+                // retain the next one even if the caller has not started another turn.
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var now = clock.GetUtcNow().UtcDateTime;
+                var nextHold = await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == session && m.Status == QueuedMessageStatus.Pending
+                        && m.DeliveryAttempts == 0 && m.SourceTaskId != null && m.ContentDigest != null
+                        && m.HoldUntil > now)
+                    .MinAsync(m => m.HoldUntil, ct);
+                if (nextHold is DateTime due) flushes.Recovery.ScheduleFlush(session, due);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
-            { logger.LogWarning(ex, "Deferred completion flush failed for {SessionId}", session); }
+            {
+                logger.LogWarning(ex, "Deferred completion flush failed for {SessionId}", session);
+                flushes.Recovery.RequestSweep();
+            }
             finally { flushes.Complete(session); }
         }
     }

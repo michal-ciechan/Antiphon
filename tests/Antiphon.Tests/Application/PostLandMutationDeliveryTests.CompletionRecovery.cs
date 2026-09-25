@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Data.Common;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +17,85 @@ namespace Antiphon.Tests.Application;
 
 public sealed partial class PostLandMutationDeliveryTests
 {
+    [Test]
+    public async Task C699_Recovery_error_sweeps_other_missed_events_without_waiting_fifteen_minutes()
+    {
+        var commands = new RecoveryCommands();
+        await using var settled = await SettleMutationAsync(new()
+        {
+            ConfigureDbContext = o => o.AddInterceptors(commands),
+        });
+        await using (var db = settled.World.Host.CreateContext())
+            await db.SessionQueuedMessages.Where(m => m.SourceTaskId == settled.World.TaskId).ExecuteDeleteAsync();
+        var clock = new RecoveryClock();
+        using var worker = RecoveryWorker(settled.Bridge, clock);
+        await worker.StartAsync(default);
+        try
+        {
+            await clock.TimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var missed = Guid.NewGuid();
+            await using (var db = settled.World.Host.CreateContext())
+            {
+                await db.AgentTasks.Where(t => t.Id == settled.World.TaskId).ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.CompletionNoteQueuedAt, (DateTime?)null)
+                    .SetProperty(t => t.CompletionNoteDigest, (string?)null));
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = missed, RootTaskId = missed, Title = "missed event", Goal = "recover",
+                    SourceLandingOperationId = settled.World.Operation, Status = AgentTaskStatus.Succeeded,
+                    ParentSessionId = settled.Bridge.SessionId, ReplyTo = AgentTaskReplyTo.Session,
+                    Result = "missed report", CreatedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+            commands.FailNextRecoveryRead = true;
+            settled.Bridge.Provider.GetRequiredService<CompletionNoteFlushQueue>().Recovery.Check(settled.World.TaskId);
+            await UntilAsync(async () =>
+            {
+                await using var db = settled.World.Host.CreateContext();
+                return await db.AgentTasks.CountAsync(t => (t.Id == missed || t.Id == settled.World.TaskId)
+                    && t.CompletionNoteQueuedAt != null) == 2;
+            }, "one targeted failure must sweep both the requested task and an unrelated missed event", 10);
+            commands.Failures.ShouldBe(1);
+            await using var verify = settled.World.Host.CreateContext();
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == missed)).ShouldBe(1);
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
+        }
+        finally { await worker.StopAsync(default); }
+    }
+
+    [Test]
+    public async Task C699_Startup_pages_past_a_full_batch_without_skipping_owed_tasks()
+    {
+        await using var settled = await SettleMutationAsync();
+        var ids = Enumerable.Range(0, 130).Select(_ => Guid.NewGuid()).ToArray();
+        await using (var db = settled.World.Host.CreateContext())
+        {
+            db.AgentTasks.AddRange(ids.Select(id => new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "missed event", Goal = "recover",
+                SourceLandingOperationId = settled.World.Operation, Status = AgentTaskStatus.Succeeded,
+                ParentSessionId = settled.Bridge.SessionId, ReplyTo = AgentTaskReplyTo.Session,
+                Result = "missed report", CreatedAt = DateTime.UtcNow,
+            }));
+            await db.SaveChangesAsync();
+        }
+        using var worker = RecoveryWorker(settled.Bridge, new RecoveryClock());
+        await worker.StartAsync(default);
+        try
+        {
+            await UntilAsync(async () =>
+            {
+                await using var db = settled.World.Host.CreateContext();
+                return await db.AgentTasks.CountAsync(t => ids.Contains(t.Id) && t.CompletionNoteQueuedAt != null) == ids.Length;
+            }, "stamping the first page must not skip the next page", 20);
+            await using var verify = settled.World.Host.CreateContext();
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId != null && ids.Contains(m.SourceTaskId.Value)))
+                .ShouldBe(ids.Length);
+        }
+        finally { await worker.StopAsync(default); }
+    }
+
     [Test]
     public async Task C699_Settlement_event_recovers_failed_publication_without_polling()
     {
@@ -167,9 +247,20 @@ public sealed partial class PostLandMutationDeliveryTests
     private sealed class RecoveryCommands : DbCommandInterceptor
     {
         public ConcurrentQueue<string> Sql { get; } = new();
+        public volatile bool FailNextRecoveryRead;
+        public int Failures;
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
-        { Sql.Enqueue(command.CommandText); return ValueTask.FromResult(result); }
+        {
+            Sql.Enqueue(command.CommandText);
+            if (FailNextRecoveryRead && command.CommandText.Contains("\"SourceLandingOperationId\" IS NOT NULL", StringComparison.Ordinal))
+            {
+                FailNextRecoveryRead = false;
+                Failures++;
+                throw new InvalidOperationException("owned completion recovery read failure");
+            }
+            return ValueTask.FromResult(result);
+        }
         public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<int> result, CancellationToken ct = default)
         { Sql.Enqueue(command.CommandText); return ValueTask.FromResult(result); }
