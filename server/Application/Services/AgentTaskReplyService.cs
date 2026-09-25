@@ -1944,7 +1944,7 @@ public sealed class AgentTaskReplyService
         }
         finally
         {
-            services.GetRequiredService<SessionMessageQueueService>().CompletionSettled(task);
+            services.GetService<SessionMessageQueueService>()?.CompletionSettled(task);
         }
 
         if (!release)

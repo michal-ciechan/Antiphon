@@ -28,6 +28,7 @@ public sealed class CompletionNoteWorkHostedService(
         while (!ct.IsCancellationRequested)
         {
             var work = flushes.Recovery.Take(clock.GetUtcNow().UtcDateTime);
+            foreach (var session in work.Sessions) flushes.TryEnqueue(session);
             try
             {
                 await using var scope = scopes.CreateAsyncScope();
@@ -42,7 +43,6 @@ public sealed class CompletionNoteWorkHostedService(
                     foreach (var task in work.Tasks)
                         await RecoverMissingAsync(scope.ServiceProvider, db, task, ct);
                 }
-                foreach (var session in work.Sessions) flushes.TryEnqueue(session);
                 failuresInARow = 0;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -60,7 +60,9 @@ public sealed class CompletionNoteWorkHostedService(
 
     private async Task SweepAsync(IServiceProvider services, AppDbContext db, CancellationToken ct)
     {
-        await RecoverMissingAsync(services, db, null, ct);
+        Exception? recoveryFailure = null;
+        try { await RecoverMissingAsync(services, db, null, ct); }
+        catch (Exception ex) when (!ct.IsCancellationRequested) { recoveryFailure = ex; }
         Guid? cursor = null;
         while (true)
         {
@@ -79,6 +81,8 @@ public sealed class CompletionNoteWorkHostedService(
             if (rows.Count < PageSize) break;
             cursor = rows[^1].Id;
         }
+        if (recoveryFailure is not null)
+            throw new InvalidOperationException("Completion recovery needs another sweep", recoveryFailure);
     }
 
     /// <summary>
