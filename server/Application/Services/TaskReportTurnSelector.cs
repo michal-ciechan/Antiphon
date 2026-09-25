@@ -46,7 +46,9 @@ internal sealed record TaskReportSelection(
 
 /// <summary>
 /// Picks the newest attributable turn inside the current task's ownership span.
-/// Housekeeping boundaries are skipped. A real unmarked prompt is a barrier.
+/// A Grok allowlisted boundary waits for the marked brief's own turn end. An inert
+/// compaction or local-command boundary settles that brief on this turn end, because
+/// those records sit inside the brief's turn. A real unmarked prompt is a barrier.
 /// Performs no settlement.
 /// </summary>
 internal static class TaskReportTurnSelector
@@ -100,7 +102,7 @@ internal static class TaskReportTurnSelector
                     ? "grok-background-completion"
                     : "grok-rules-refresh";
                 var owned = RealOwnerOfSkippedTurn(
-                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind);
+                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: false);
                 if (owned is not null)
                     return owned with { Skipped = skipped };
                 skipped.Add(new TaskReportSkip(end.Sequence, reason));
@@ -123,8 +125,11 @@ internal static class TaskReportTurnSelector
 
             if (TranscriptPromptSpan.IsHousekeepingPrompt(rawPrompt.Text, invoked))
             {
+                // Compaction and local-command records share the brief's turn. The
+                // TurnEnd belongs to that brief, including when the only compaction
+                // record is the continuation prompt.
                 var owned = RealOwnerOfSkippedTurn(
-                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind);
+                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: true);
                 if (owned is not null)
                     return owned with { Skipped = skipped };
                 skipped.Add(new TaskReportSkip(end.Sequence, "inert-housekeeping"));
@@ -209,7 +214,7 @@ internal static class TaskReportTurnSelector
         // Judge the in-turn owner before the closing-token check. An answer with no token
         // used to return null here, and the caller then walked back across the unmarked prompt.
         var inTurn = NewestRealBetween(raw, olderEndSequence, boundarySequence, sessionKind, rulesIds, invoked);
-        if (OwnRealPrompt(inTurn, notification, boundarySequence, stopReason, task, raw, rulesIds, invoked, sessionKind) is { } inTurnOwned)
+        if (OwnRealPrompt(inTurn, notification, boundarySequence, stopReason, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: false) is { } inTurnOwned)
             return inTurnOwned;
 
         var nextRaw = NextSequence(raw, notification.Sequence, static _ => true);
@@ -268,15 +273,19 @@ internal static class TaskReportTurnSelector
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
         IReadOnlySet<Guid> rulesIds,
         IReadOnlySet<string> invoked,
-        AgentKind sessionKind)
+        AgentKind sessionKind,
+        bool settleMarkedOwner)
     {
         var owner = NewestRealBetween(raw, olderEndSequence, end.Sequence, sessionKind, rulesIds, invoked);
-        return OwnRealPrompt(owner, boundaryPrompt, end.Sequence, end.StopReason, task, raw, rulesIds, invoked, sessionKind);
+        return OwnRealPrompt(
+            owner, boundaryPrompt, end.Sequence, end.StopReason, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner);
     }
 
     /// <summary>
     /// Dispatch-time, reply-watermark and marker checks for a real prompt that shares a
     /// skipped housekeeping turn. An unmarked eligible owner is <see cref="TaskReportSelectionKind.Uncorrelated"/>.
+    /// A marked owner settles on this boundary only when <paramref name="settleMarkedOwner"/>
+    /// is set (inert compaction and local commands). A Grok reminder waits for the brief's own turn end.
     /// </summary>
     private static TaskReportSelection? OwnRealPrompt(
         TranscriptPromptSpan.PromptRow? owner,
@@ -287,7 +296,8 @@ internal static class TaskReportTurnSelector
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
         IReadOnlySet<Guid> rulesIds,
         IReadOnlySet<string> invoked,
-        AgentKind sessionKind)
+        AgentKind sessionKind,
+        bool settleMarkedOwner)
     {
         if (owner is null || !IsTimeEligible(owner, task.DispatchedAt))
             return null;
@@ -307,10 +317,14 @@ internal static class TaskReportTurnSelector
             return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
         }
 
-        // A marked owner does not take the housekeeping boundary. Its own earlier TurnEnd
-        // is selected when the walk reaches it. Claiming this boundary would publish the
-        // acknowledgement, or nudge a brief that has not finished a turn of its own.
-        return null;
+        // A Grok completion reminder or rules refresh is its own turn. Publishing that
+        // boundary would take the acknowledgement as the report, or nudge a brief that
+        // has not finished. Compaction and local-command records have no separate turn
+        // end, so the caller settles the marked brief on this boundary instead.
+        if (!settleMarkedOwner)
+            return null;
+
+        return Finish(TaskReportSelectionKind.Selected, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
     }
 
     /// <summary>
