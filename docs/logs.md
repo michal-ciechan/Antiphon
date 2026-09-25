@@ -36,6 +36,8 @@ The runner container is `antiphon-runner-session-runner-1`. Retrieve its stdout/
 
 Verified: SSH and the named container were reachable and running; the retrieved tail contained a phone-home reconnect after HTTP 502. That reconnect issue is now fixed by CARD-0655.
 
+Phone-home disconnects (CARD-0679 D-1/D-4) leave one line on each side. On the desktop (`server` log), grep `Phone-home connection` for the Warning `... epoch <n> ended: <reason> after <s>s; ...` with the pending, in-flight and waiter counts, and the 50%/90% pending high-water Warning before an overflow. On the runner, grep `Phone-home connection ended:` for `epoch=`, `loop=` (the loop that ended), `fault=`, `overflow=`, the pending/in-flight counts and `lifetimeMs=`.
+
 There is currently **no retrievable durable server2 deployment-evidence source**: neither a deployment manifest nor `run.log` exists under `/home/mc/antiphon-server2` (only `secrets/` exists, which is deliberately excluded). `scripts/logs.ps1 -Source server2-deploy` inventories that root without touching `secrets/` and deliberately fails to make this gap visible. Proposed fix: have the server2 deploy owner write a non-secret manifest and `run.log` (deployment SHA, image digests, compose/config digest, timestamps, health/version probes, and rollback identity) to `/home/mc/antiphon-server2/evidence/`, with an explicit retention policy, then add its exact tail command here.
 
 ## Windmill runs

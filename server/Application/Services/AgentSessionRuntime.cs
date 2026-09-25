@@ -50,6 +50,7 @@ public sealed class AgentSessionRuntime
     private readonly ILogger<AgentSessionRuntime> _logger;
     private readonly AgentMentionRouter? _mentionRouter;
     private readonly SessionGenerationCompatState _generationCompat;
+    private readonly ISessionRunnerDirectory? _directory;
 
     public AgentSessionRuntime(
         ISessionRunnerClient runnerClient,
@@ -59,8 +60,11 @@ public sealed class AgentSessionRuntime
         TimeProvider timeProvider,
         ILogger<AgentSessionRuntime> logger,
         AgentMentionRouter? mentionRouter = null,
-        SessionGenerationCompatState? generationCompat = null)
+        SessionGenerationCompatState? generationCompat = null,
+        // CARD-0679 D-10: absent, only the local runner's sessions and test adapters are live.
+        ISessionRunnerDirectory? directory = null)
     {
+        _directory = directory;
         _runnerClient = runnerClient;
         _eventBus = eventBus;
         _settings = settings.Value;
@@ -1194,6 +1198,12 @@ public sealed class AgentSessionRuntime
         return new AgentSessionRuntimeBufferSnapshot(buffer.Buffer, buffer.LastSequence);
     }
 
+    /// <summary>
+    /// Sessions a runner holds live: the local runner's List, the in-process test adapters and,
+    /// CARD-0679 D-10, the connected phone-home runner's cached inventory (no RPC). Every caller
+    /// used to read a live phone-home session as dead: its stranded brief was never swept, a
+    /// WhenIdle reply stayed Pending and send-now answered 409.
+    /// </summary>
     public IReadOnlyList<Guid> ListLiveSessions() =>
         _runnerClient.ListAsync(CancellationToken.None)
             .GetAwaiter()
@@ -1201,6 +1211,7 @@ public sealed class AgentSessionRuntime
             .Where(session => session.Status is "Running" or "Starting")
             .Select(session => session.SessionId)
             .Concat(_testAdapters.Keys)
+            .Concat(_directory?.LiveRemoteSessionIds() ?? [])
             .Distinct()
             .ToList();
 

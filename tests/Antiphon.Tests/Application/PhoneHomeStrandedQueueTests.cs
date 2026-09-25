@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -119,6 +120,33 @@ public class PhoneHomeStrandedQueueTests
         started.Status.ShouldBe("Running");
         h.Runtime.ListLiveSessions().ShouldContain(launched, "the launch ack vouches for the session at once");
         peer.RequestCount(PhoneHomeOperation.List).ShouldBe(lists, "no refresh List was needed");
+        stop.Cancel();
+    }
+
+    [Test]
+    public async Task Inventory_refresh_learns_a_session_no_ack_or_event_announced()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        var pump = Pump(host, h);
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+        // Adopted by a restarted runner, say: no launch ack on this connection, no event.
+        var adopted = Guid.NewGuid();
+        peer.Sessions.Add(RunningOnRunner(adopted));
+
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeFalse();
+        peer.RequestCount(PhoneHomeOperation.List).ShouldBe(1, "the refresh waits InventoryRefreshSeconds");
+        h.Runtime.ListLiveSessions().ShouldNotContain(adopted);
+
+        clock.Advance(TimeSpan.FromSeconds(new PhoneHomeRunnerSettings().InventoryRefreshSeconds));
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeFalse();
+
+        await WaitUntilAsync(() => h.Runtime.ListLiveSessions().Contains(adopted));
+        peer.RequestCount(PhoneHomeOperation.List).ShouldBe(2);
         stop.Cancel();
     }
 

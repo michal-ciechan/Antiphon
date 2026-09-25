@@ -60,6 +60,13 @@ public sealed class PhoneHomeRunnerSettings
     public int CatchUpRetrySeconds { get; set; } = 5;
 
     /// <summary>
+    /// CARD-0679 D-10: while a connection is recovered, the recovery pump re-reads the runner's
+    /// List this often to refresh the cached inventory <c>ListLiveSessions</c> reads. Launch acks,
+    /// exits and kills update it between refreshes. <c>0</c> or less disables the refresh.
+    /// </summary>
+    public int InventoryRefreshSeconds { get; set; } = 30;
+
+    /// <summary>
     /// CARD-0679 D-3: how long the recovery pump trusts a "not ours" owner lookup for one session on
     /// one connection before reading the binding again (a match is trusted for the connection's
     /// life). Short, so a session row committed just after its first event is still picked up;
