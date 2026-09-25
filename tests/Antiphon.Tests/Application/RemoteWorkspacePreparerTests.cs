@@ -339,8 +339,10 @@ public sealed class RemoteWorkspacePreparerTests
         waiting.Select(w => w.TaskId).ShouldBe(ids, ignoreOrder: true);
         waiting.ShouldAllBe(w => w.Purpose == RepositoryLeasePurposes.Dispatch);
 
-        // (2) The gap: each crosses once, the preparer mirrors all three off the tick.
+        // (2) The gap: each crosses once, the preparer mirrors all three off the tick. The clock
+        // moves one tick cadence so this tick's Held rows sort after the first tick's.
         rig.Lease.Held = false;
+        await rig.AdvanceAsync(TimeSpan.FromSeconds(5));
         await rig.TickAsync().WaitAsync(TickBound);
         rig.Waiters.IsEmpty.ShouldBeTrue();
         foreach (var id in ids)
@@ -362,6 +364,7 @@ public sealed class RemoteWorkspacePreparerTests
 
         // (3) The next land holds the lease again: the prepared launches do not need it.
         rig.Lease.Held = true;
+        await rig.AdvanceAsync(TimeSpan.FromSeconds(5));
         var launched = await rig.TickAsync().WaitAsync(TickBound);
         launched.Dispatched.ShouldBe(3);
         launched.HeldOnLease.ShouldBe(0);
