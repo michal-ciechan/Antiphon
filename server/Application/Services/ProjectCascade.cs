@@ -59,7 +59,8 @@ public static class ProjectCascade
 
     /// <summary>
     /// Deletes the given boards and everything beneath them, leaf-first. Agents are detached, not
-    /// deleted. The caller owns the transaction — every step here is a separate statement.
+    /// deleted. The caller owns the transaction — every step here is a separate statement — and
+    /// the session-state fence around this call and that commit.
     /// </summary>
     public static async Task DeleteBoardsAsync(
         AppDbContext db, IReadOnlyList<Guid> boardIds, CancellationToken ct)

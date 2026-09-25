@@ -201,7 +201,7 @@ public class SessionStateWarmupTests
         await using var f = await SessionStateTestFixture.CreateAsync(clock: clock);
         var graph = await WarmCardSessionAsync(f);
         await using var db = f.Db();
-        await new BoardService(db, new MockEventBus(), TimeProvider.System).DeleteAsync(graph.BoardId, default);
+        await Boards(db, f).DeleteAsync(graph.BoardId, default);
         await AssertDeletedSessionStaysMissingAsync(f, clock);
     }
 
@@ -212,7 +212,7 @@ public class SessionStateWarmupTests
         await using var f = await SessionStateTestFixture.CreateAsync(clock: clock);
         var graph = await WarmCardSessionAsync(f);
         await using var db = f.Db();
-        await Projects(db).DeleteAsync(graph.ProjectId, force: true, default);
+        await Projects(db, f).DeleteAsync(graph.ProjectId, force: true, default);
         await AssertDeletedSessionStaysMissingAsync(f, clock);
     }
 
@@ -225,7 +225,7 @@ public class SessionStateWarmupTests
         fault.Armed = true;
         await using var db = f.Db();
         var ex = await Should.ThrowAsync<Exception>(() =>
-            new BoardService(db, new MockEventBus(), TimeProvider.System).DeleteAsync(before.BoardId, default));
+            Boards(db, f).DeleteAsync(before.BoardId, default));
         ex.ToString().ShouldContain("planned rollback");
         (await f.Store.ReadAsync(f.SessionId, default)).ShouldBe(before.Snapshot);
         await using var verify = f.Db();
@@ -241,7 +241,7 @@ public class SessionStateWarmupTests
         var graph = await WarmCardSessionAsync(f);
         fault.Armed = true;
         await using var db = f.Db();
-        var ex = await Should.ThrowAsync<Exception>(() => Projects(db).DeleteAsync(graph.ProjectId, force: true, default));
+        var ex = await Should.ThrowAsync<Exception>(() => Projects(db, f).DeleteAsync(graph.ProjectId, force: true, default));
         ex.ToString().ShouldContain("planned ambiguous commit");
         await using var verify = f.Db();
         (await verify.AgentSessions.AnyAsync(s => s.Id == f.SessionId)).ShouldBeFalse();
@@ -266,7 +266,7 @@ public class SessionStateWarmupTests
         {
             var wait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             f.Store.NextGateWait = wait;
-            deleting = new BoardService(db, new MockEventBus(), TimeProvider.System).DeleteAsync(graph.BoardId, default);
+            deleting = Boards(db, f).DeleteAsync(graph.BoardId, default);
             var winner = await Task.WhenAny(deleting, wait.Task).WaitAsync(TimeSpan.FromSeconds(10));
             f.Store.NextGateWait = null;
             winner.ShouldBe(wait.Task, "cascade delete must take the session gate held by the in-flight ingest");
@@ -327,8 +327,11 @@ public class SessionStateWarmupTests
         }
     }
 
-    private static ProjectService Projects(AppDbContext db) =>
-        new(db, null!, Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance);
+    private static BoardService Boards(AppDbContext db, SessionStateTestFixture f) =>
+        new(db, new MockEventBus(), TimeProvider.System, states: f.Store);
+
+    private static ProjectService Projects(AppDbContext db, SessionStateTestFixture f) =>
+        new(db, null!, Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance, states: f.Store);
 
     private static async Task AssertDeletedSessionStaysMissingAsync(SessionStateTestFixture f, AdvancingClock clock)
     {
@@ -402,7 +405,11 @@ public class SessionStateWarmupTests
             CancellationToken cancellationToken = default)
         {
             if (Armed && Before)
+            {
+                Armed = false;
                 throw new InvalidOperationException("planned rollback");
+            }
+
             return ValueTask.FromResult(result);
         }
 
@@ -411,7 +418,11 @@ public class SessionStateWarmupTests
             CancellationToken cancellationToken = default)
         {
             if (Armed && After)
+            {
+                Armed = false;
                 throw new InvalidOperationException("planned ambiguous commit");
+            }
+
             return Task.CompletedTask;
         }
     }

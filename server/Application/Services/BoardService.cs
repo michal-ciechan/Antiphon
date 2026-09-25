@@ -23,6 +23,7 @@ public sealed class BoardService
     private readonly ContextWindowSettings _contextWindow;
     private readonly CardsSettings _cards;
     private readonly ILogger<BoardService>? _logger;
+    private readonly SessionStateStore? _states;
 
     public BoardService(
         AppDbContext db,
@@ -31,7 +32,8 @@ public sealed class BoardService
         IOptions<ContextWindowSettings>? contextWindow = null,
         ILogger<BoardService>? logger = null,
         IOptions<CardsSettings>? cards = null,
-        CardTaskFileService? cardFiles = null)
+        CardTaskFileService? cardFiles = null,
+        SessionStateStore? states = null)
     {
         _db = db;
         _cardFiles = cardFiles;
@@ -40,6 +42,7 @@ public sealed class BoardService
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
         _logger = logger;
         _cards = cards?.Value ?? new CardsSettings();
+        _states = states;
     }
 
     public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(CancellationToken ct) =>
@@ -189,15 +192,15 @@ public sealed class BoardService
 
         if (_cardFiles is not null) await _cardFiles.EnsureDrainedAsync(board.ProjectId, id, ct);
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-        await ProjectCascade.DeleteBoardsAsync(_db, [id], ct);
-
-        var projectIsEmpty = !await _db.Boards.AnyAsync(b => b.ProjectId == board.ProjectId, ct)
-            && !await _db.Workflows.AnyAsync(w => w.ProjectId == board.ProjectId, ct);
-        if (projectIsEmpty)
-            await _db.Projects.Where(p => p.Id == board.ProjectId).ExecuteDeleteAsync(ct);
-
-        await transaction.CommitAsync(ct);
+        var projectIsEmpty = false;
+        await SessionStateDeletion.RunAsync(_db, _states, [id], async cancellationToken =>
+        {
+            await ProjectCascade.DeleteBoardsAsync(_db, [id], cancellationToken);
+            projectIsEmpty = !await _db.Boards.AnyAsync(b => b.ProjectId == board.ProjectId, cancellationToken)
+                && !await _db.Workflows.AnyAsync(w => w.ProjectId == board.ProjectId, cancellationToken);
+            if (projectIsEmpty)
+                await _db.Projects.Where(p => p.Id == board.ProjectId).ExecuteDeleteAsync(cancellationToken);
+        }, ct);
 
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = id, deleted = true }, ct);
 

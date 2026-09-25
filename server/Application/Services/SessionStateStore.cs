@@ -120,6 +120,69 @@ public sealed class SessionStateStore : IDisposable
         catch { Return(entry, releaseGate: false); throw; }
     }
 
+    /// <summary>
+    /// Holds the named session gates, in id order, across a bulk delete and its commit.
+    /// Dispose without <see cref="SessionStateMutation.PublishCommittedAsync"/> leaves cached snapshots untouched.
+    /// </summary>
+    internal async Task<SessionStateMutation> BeginMutationAsync(IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
+    {
+        var leases = new List<Lease>();
+        try
+        {
+            foreach (var id in sessionIds.Distinct().Order())
+            {
+                ct.ThrowIfCancellationRequested();
+                leases.Add(await AcquireAsync(id, ct));
+            }
+
+            return new SessionStateMutation(this, leases);
+        }
+        catch
+        {
+            for (var i = leases.Count - 1; i >= 0; i--) leases[i].Dispose();
+            throw;
+        }
+    }
+
+    internal static SessionStateMutation InactiveMutation() => new(null, []);
+
+    internal sealed class SessionStateMutation : IAsyncDisposable
+    {
+        private readonly SessionStateStore? _store;
+        private readonly List<Lease> _leases;
+        private bool _disposed;
+
+        internal SessionStateMutation(SessionStateStore? store, List<Lease> leases)
+        {
+            _store = store;
+            _leases = leases;
+        }
+
+        public async Task PublishCommittedAsync(CancellationToken ct)
+        {
+            if (_store is null || _leases.Count == 0) return;
+            foreach (var batch in Entries().Chunk(_store._settings.WarmupBatchSize))
+                await _store.LoadAsync(batch, reset: true, ct);
+        }
+
+        public async Task ReconcileAsync()
+        {
+            if (_store is null || _leases.Count == 0) return;
+            foreach (var batch in Entries().Chunk(_store._settings.WarmupBatchSize))
+                await _store.LoadAsync(batch, reset: false, CancellationToken.None);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            if (_disposed) return ValueTask.CompletedTask;
+            _disposed = true;
+            for (var i = _leases.Count - 1; i >= 0; i--) _leases[i].Dispose();
+            return ValueTask.CompletedTask;
+        }
+
+        private Entry[] Entries() => _leases.Select(lease => lease._entry).ToArray();
+    }
+
     private async Task EnsureLoadedAsync(Entry[] entries, CancellationToken ct)
     {
         var now = _clock.GetUtcNow();

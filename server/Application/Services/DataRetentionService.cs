@@ -204,16 +204,18 @@ public sealed class DataRetentionService
         if (_states is null) return await mutation();
         if (_db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null)
             throw new InvalidOperationException("Transcript retention must own its commit boundary.");
-        using var lease = await _states.BeginWriteAsync(sessionId, ct);
+        // Same gate and reseed as cascade deletion. ExecuteDelete is its own commit.
+        await using var fence = await _states.BeginMutationAsync([sessionId], ct);
         int removed;
         try { removed = await mutation(); }
         catch
         {
             // Includes an ambiguous ExecuteDelete outcome. A failed reload leaves unavailable state.
-            await lease.ReconcileAsync(false, CancellationToken.None);
+            await fence.ReconcileAsync();
             throw;
         }
-        if (removed > 0) await lease.ReconcileAsync(true, CancellationToken.None);
+
+        if (removed > 0) await fence.PublishCommittedAsync(CancellationToken.None);
         return removed;
     }
 
