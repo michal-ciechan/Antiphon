@@ -1,10 +1,12 @@
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -90,6 +92,94 @@ public sealed class AgentTaskLandDispatchYieldTests
         h.Waiters.Any(await h.CommonAsync()).ShouldBeTrue("the land proceeds past the waiter; it never clears it");
     }
 
+    /// <summary>
+    /// Review 3488192e (1): admission ends the yield budget. A land that proceeded past an exhausted
+    /// budget and was then interrupted is retried under the same request; with a dispatch still
+    /// waiting, the retry must yield again on a fresh budget instead of inheriting the spent one.
+    /// </summary>
+    [Test]
+    public async Task C672_admission_ends_an_exhausted_yield_budget_so_a_retry_yields_again()
+    {
+        // One registry for the whole server process: the retry is a re-pick by the same process.
+        var waiters = new RepositoryLeaseWaiters();
+        await using var h = await StartAsync(shared: waiters);
+        var waiter = Guid.NewGuid();
+        waiters.Register(await h.CommonAsync(), waiter, RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        h.Clock.Advance(TimeSpan.FromSeconds(91));
+        var crashed = false;
+        h.Harness.Fixture.Git.AfterCommand = (_, args, result) =>
+        {
+            if (!crashed && result.Succeeded && args[0] == "push")
+            {
+                crashed = true;
+                throw new InterruptedLand();
+            }
+            return Task.CompletedTask;
+        };
+
+        // The budget is spent, so this pass is admitted and runs until the injected interruption.
+        await Should.ThrowAsync<InterruptedLand>(() => h.Harness.RunAsync());
+        crashed.ShouldBeTrue();
+        var interrupted = await h.RequestAsync();
+        interrupted.IsPending.ShouldBeTrue();
+        interrupted.Attempt.ShouldBe(1);
+        (await h.EventsAsync(AgentTaskEventType.Warning)).Count(w => w.Detail.Contains("yield")).ShouldBe(1);
+
+        // The retry: same request, the dispatch still waiting. A fresh budget yields again.
+        h.Harness.Fixture.Git.AfterCommand = null;
+        await h.Harness.RestartServicesAsync();
+        h.Harness.Fixture.Git.Trace.Clear();
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        var retried = await h.RequestAsync();
+        retried.Id.ShouldBe(interrupted.Id);
+        retried.State.ShouldBe(LandRequestState.Held);
+        retried.HoldReasonCode.ShouldBe(AgentTaskLandService.LeaseYieldedToDispatchCode);
+        retried.HeldSince.ShouldBe(h.Clock.GetUtcNow().UtcDateTime, "a new yield episode starts a new budget");
+        retried.Attempt.ShouldBe(1, "the yielding retry was never admitted");
+        h.Harness.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("--ff-only"));
+
+        // The dispatch got its gap; the retry is admitted and finishes the publication.
+        waiters.Clear(waiter);
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Complete);
+        (await h.RequestAsync()).Attempt.ShouldBe(2);
+        await h.AssertLandedAsync();
+        (await h.EventsAsync(AgentTaskEventType.Warning)).Count(w => w.Detail.Contains("yield")).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Review 3488192e (3): the land monitor ages a yield from the yield itself. A request whose
+    /// progress clock is old but which only just stood aside is not a LandAged warning; the same
+    /// yield past LandWarningSeconds is, exactly once.
+    /// </summary>
+    [Test]
+    public async Task C672_land_monitor_ages_a_yield_from_its_own_start()
+    {
+        await using var h = await StartAsync();
+        var requested = await h.RequestAsync();
+        h.Clock.Advance(TimeSpan.FromSeconds(400));
+        h.Waiters.Register(await h.CommonAsync(), Guid.NewGuid(), RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        var yielded = await h.RequestAsync();
+        yielded.LastProgressAt.ShouldBe(requested.LastProgressAt, "a yield is not land progress");
+        var heldSince = yielded.HeldSince.ShouldNotBeNull();
+        var warning = new DelegationSettings().LandWarningSeconds;
+        (heldSince - yielded.LastProgressAt).TotalSeconds.ShouldBeGreaterThan(warning);
+
+        await h.SweepMonitorAsync(heldSince.AddSeconds(20));
+        (await h.EventsAsync(AgentTaskEventType.LandAged)).ShouldBeEmpty();
+        (await h.RequestAsync()).WarningAt.ShouldBeNull();
+
+        await h.SweepMonitorAsync(heldSince.AddSeconds(warning + 1));
+        var aged = (await h.EventsAsync(AgentTaskEventType.LandAged)).ShouldHaveSingleItem();
+        aged.Detail.ShouldStartWith("Warning:");
+        aged.Detail.ShouldContain("reason=" + AgentTaskLandService.LeaseYieldedToDispatchCode);
+        (await h.RequestAsync()).ErrorAt.ShouldBeNull();
+    }
+
     [Test]
     [Arguments("disabled")]
     [Arguments("other-repository")]
@@ -108,12 +198,14 @@ public sealed class AgentTaskLandDispatchYieldTests
         await h.AssertLandedAsync();
     }
 
-    private static async Task<World> StartAsync(int maxSeconds = 90)
+    private static async Task<World> StartAsync(int maxSeconds = 90, RepositoryLeaseWaiters? shared = null)
     {
         var h = new LandingSafetyHarness();
         var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
         h.Clock = clock;
         h.LandSettings = new() { LandYieldToDispatchMaxSeconds = maxSeconds };
+        if (shared is not null)
+            h.ConfigureServices = services => services.AddSingleton(shared);
         await h.InitializeAsync();
         await h.AddSourceAsync();
         await h.RequestAsync();
@@ -157,6 +249,18 @@ public sealed class AgentTaskLandDispatchYieldTests
             await Harness.Fixture.AssertRemoteSourceAsync();
         }
 
+        /// <summary>One land monitor sweep, as the hosted monitor runs it, at <paramref name="at"/>.</summary>
+        public async Task SweepMonitorAsync(DateTime at)
+        {
+            await using var db = Harness.CreateContext();
+            await new AgentTaskLandMonitorService(db,
+                    new FakeTimeProvider(new DateTimeOffset(DateTime.SpecifyKind(at, DateTimeKind.Utc))),
+                    Options.Create(new DelegationSettings()), new MockEventBus())
+                .SweepAsync(CancellationToken.None);
+        }
+
         public ValueTask DisposeAsync() => Harness.DisposeAsync();
     }
+
+    private sealed class InterruptedLand : Exception;
 }
