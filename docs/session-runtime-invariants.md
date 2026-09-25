@@ -55,7 +55,10 @@
   (`ISessionRunnerDirectory.UnknownRemoteSessionIds()`, `AgentSessionRuntime.ListUnknownSessions()`).
   Before the runner's first catch-up List in this process (a desktop restart) every session bound to
   it is unknown (`RemoteInventoryPending`, read with the session's `RunnerId` through
-  `AgentSessionRuntime.IsLiveOrUnknown`). It is gone only after an exit, a kill, or a List from a
+  `AgentSessionRuntime.IsLiveOrUnknown`), and with no inventory yet `UnknownRemoteSessionIds()`
+  names them from the desktop's own record (bound to that runner, Starting/Running/Stopping), so a
+  gate that tests list membership sees them too (review f87b49a7); send-now in that window is a
+  retryable 503 `phone_home_unavailable` with the message kept queued. It is gone only after an exit, a kill, or a List from a
   connected runner that does not name it. Destructive "not live" decisions read
   `ListLiveOrUnknownSessions()` / `IsLiveOrUnknown`, so an unknown session is not
   failed, its attempt is not canceled and its card keeps its claim (card reconciliation, the manual

@@ -54,6 +54,9 @@ public interface ISessionRunnerDirectory
     /// confirmed within the stale bound, and all of them while that connection is recovering,
     /// lease-expired or closed and no newer connection's catch-up List has answered. Only such a
     /// List (from a connected runner) or an exit/kill confirms a session gone. Never an RPC.
+    /// Before any connection has answered in this process (<see cref="RemoteInventoryPending"/>),
+    /// the sessions the desktop's own record binds to that runner and has not seen end (review
+    /// f87b49a7), so a gate that tests membership sees them too.
     /// </summary>
     IReadOnlyCollection<Guid> UnknownRemoteSessionIds() => [];
 

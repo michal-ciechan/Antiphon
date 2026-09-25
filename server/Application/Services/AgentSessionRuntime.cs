@@ -1248,8 +1248,15 @@ public sealed class AgentSessionRuntime
     /// directory has no inventory to name it in.
     /// </summary>
     public bool IsLiveOrUnknown(Guid sessionId, string? runnerId) =>
-        (_directory?.RemoteInventoryPending(runnerId) ?? false)
+        RemoteInventoryPending(runnerId)
         || ListLiveOrUnknownSessions().Contains(sessionId);
+
+    /// <summary>
+    /// CARD-0679 (review f87b49a7): true while <paramref name="runnerId"/> is a remote runner no
+    /// connection has answered for since this process started, so nothing can reach its sessions.
+    /// </summary>
+    public bool RemoteInventoryPending(string? runnerId) =>
+        _directory?.RemoteInventoryPending(runnerId) ?? false;
 
     public bool TryGetLiveSnapshot(Guid sessionId, out AgentSessionLiveSnapshot snapshot)
     {

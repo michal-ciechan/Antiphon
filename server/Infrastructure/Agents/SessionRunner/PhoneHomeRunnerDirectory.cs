@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -340,6 +341,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     /// current recovered connection, the entries past <see cref="PhoneHomeRunnerSettings.InventoryMaxAge"/>;
     /// when that connection is not vouching (recovering, lease-expired, closed or gone), every entry
     /// of the last recovered one, until a newer connection's catch-up List answers for them.
+    /// Before any connection has answered in this process (review f87b49a7) there is no inventory
+    /// at all, so it is every session the desktop's own record binds to the accepted runner and
+    /// has not seen end (Starting, Running, Stopping).
     /// </summary>
     public IReadOnlyCollection<Guid> UnknownRemoteSessionIds()
     {
@@ -347,7 +351,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         lock (_gate)
             last = _lastRecovered;
         if (last is null)
-            return [];
+            return RemoteInventoryPending(_settings.AllowedRunnerId) ? BoundSessionIds(_settings.AllowedRunnerId) : [];
         var live = SnapshotLive();
         if (live is not null && ReferenceEquals(live, last) && live.DispatchEligible && live.SocketOpen
             && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
@@ -362,6 +366,21 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             return false;
         lock (_gate)
             return _lastRecovered is null;
+    }
+
+    // Review f87b49a7: the list-based gates (schedule fire, channel targets, send-now) have no id
+    // to test while the inventory is pending, so the desktop's own binding record supplies them.
+    // Read only while pending; once a catch-up List has answered, the inventory speaks instead.
+    private IReadOnlyCollection<Guid> BoundSessionIds(string runnerId)
+    {
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return db.AgentSessions.AsNoTracking()
+            .Where(s => s.RunnerId == runnerId
+                && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running
+                    || s.Status == SessionStatus.Stopping))
+            .Select(s => s.Id)
+            .ToList();
     }
 
     public PhoneHomeRunnerStatusDto Status(string runnerId)

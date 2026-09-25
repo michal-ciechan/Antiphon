@@ -1076,6 +1076,16 @@ public sealed partial class SessionMessageQueueService
             throw new ConflictException(
                 $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
         }
+        // CARD-0679 (review f87b49a7): after a desktop restart, before the session's runner first
+        // answers, nothing can reach it. That is a retryable wait with the message still queued,
+        // not a 409 that the session is gone or that its terminal refused the input.
+        if (_runtime.RemoteInventoryPending(await ReadRunnerIdAsync(sessionId, ct)))
+        {
+            throw new ServiceUnavailableException(
+                $"Agent session '{sessionId}' is on a runner that has not reconnected since the desktop "
+                + "started; the message stays queued.",
+                PhoneHomeProblemTypes.Unavailable);
+        }
 
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
@@ -1510,6 +1520,16 @@ public sealed partial class SessionMessageQueueService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.AgentSessions.AsNoTracking()
             .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
+    }
+
+    private async Task<string?> ReadRunnerIdAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.RunnerId)
+            .FirstOrDefaultAsync(ct);
     }
 
     private enum FlushResult { Nothing, Delivered, Failed, LateConfirmed }
