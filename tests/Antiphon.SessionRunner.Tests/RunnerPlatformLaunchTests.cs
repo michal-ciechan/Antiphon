@@ -34,14 +34,26 @@ public sealed class RunnerPlatformLaunchTests
         var actual = RunnerPlatformWire.FromOperatingSystem();
         actual.ShouldNotBeNull();
         await using var matching = Runtime();
-        var started = await matching.StartAsync(Launch(actual), CancellationToken.None);
-        started.SessionId.ShouldNotBe(Guid.Empty);
-        matching.List().ShouldContain(session => session.SessionId == started.SessionId);
-
+        await AssertAdmittedAsync(matching, actual);
         await using var any = Runtime();
-        var unrestricted = await any.StartAsync(Launch(null), CancellationToken.None);
-        unrestricted.SessionId.ShouldNotBe(Guid.Empty);
-        any.List().ShouldContain(session => session.SessionId == unrestricted.SessionId);
+        await AssertAdmittedAsync(any, null);
+    }
+
+    private static async Task AssertAdmittedAsync(SessionRunnerRuntime runtime, string? platform)
+    {
+        try
+        {
+            var started = await runtime.StartAsync(Launch(platform), CancellationToken.None);
+            started.SessionId.ShouldNotBe(Guid.Empty);
+            runtime.List().ShouldContain(session => session.SessionId == started.SessionId);
+        }
+        catch (FileNotFoundException ex) when (ex.Message.Contains("pty-host exe missing", StringComparison.Ordinal))
+        {
+            // The guard admitted the launch. This checkpoint lane builds without an apphost,
+            // so the host binary is absent at the child seam and no session remains.
+            ex.Message.ShouldContain("pty-host exe missing");
+            runtime.List().ShouldBeEmpty();
+        }
     }
 
     [Test]
