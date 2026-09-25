@@ -489,6 +489,15 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             eligible, eligible, !eligible, eligible ? live?.Capacity : null, live?.Capabilities);
     }
 
+    /// <summary>The live connection for <paramref name="runnerId"/> only. Never another runner's socket.</summary>
+    public PhoneHomeLiveConnection? SnapshotLive(string? runnerId)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || RunnerRequestIntent.IsDesktopAlias(runnerId))
+            return null;
+        var live = SnapshotLive();
+        return live is not null && string.Equals(live.RunnerId, runnerId, StringComparison.Ordinal) ? live : null;
+    }
+
     public PhoneHomeLiveConnection? SnapshotLive()
     {
         lock (_gate)

@@ -113,6 +113,103 @@ public sealed class PhoneHomeRunnerSettings
     public string SlotReconcileCron { get; set; } = "*/2 * * * *";
 
     public PhoneHomeLimits Limits { get; set; } = new();
+
+    /// <summary>
+    /// CARD-0710 D-6. When this map is non-empty it is the only remote configuration: the singleton
+    /// keys above are ignored. An empty map normalizes those keys into one entry.
+    /// </summary>
+    public Dictionary<string, PhoneHomeRunnerEntry> Runners { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>One configured phone-home runner. Secrets stay on the entry; nothing here is logged.</summary>
+public sealed class PhoneHomeRunnerEntry
+{
+    public bool Enabled { get; set; } = true;
+    public string DisplayName { get; set; } = "";
+    public bool AllowDelegatedTasks { get; set; }
+    public Guid StandingAgentId { get; set; }
+    public string HostWorkspaceRoot { get; set; } = "";
+    public string RunnerWorkspace { get; set; } = "/work";
+    public string RunnerRepository { get; set; } = "/work/repos/antiphon";
+    public IReadOnlyList<string> RawExeAllowList { get; set; } = ["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"];
+    public int MaxCapacity { get; set; } = 10;
+    public string ChildGrokHome { get; set; } = "/state/grok";
+    public string ChildClaudeHome { get; set; } = "/state/claude";
+    public bool ClaudeAuthProbeEnabled { get; set; } = true;
+    public string ChildCodexHome { get; set; } = "/state/codex";
+    public bool CodexAuthProbeEnabled { get; set; } = true;
+    public string CallbackOrigin { get; set; } = "";
+    public string SharedSecret { get; set; } = "";
+}
+
+public sealed record ResolvedPhoneHomeRunner(string Id, PhoneHomeRunnerEntry Entry);
+
+public static class PhoneHomeRunnerCatalog
+{
+    public static bool UsesMap(PhoneHomeRunnerSettings settings) => settings.Runners is { Count: > 0 };
+
+    /// <summary>Enabled remotes. Empty when phone-home is off. Map entries win over the singleton.</summary>
+    public static IReadOnlyList<ResolvedPhoneHomeRunner> Resolve(PhoneHomeRunnerSettings settings)
+    {
+        if (!settings.Enabled)
+            return [];
+        if (UsesMap(settings))
+        {
+            var list = new List<ResolvedPhoneHomeRunner>();
+            foreach (var (key, entry) in settings.Runners)
+            {
+                if (string.IsNullOrWhiteSpace(key) || entry is not { Enabled: true })
+                    continue;
+                list.Add(new ResolvedPhoneHomeRunner(key.Trim(), entry));
+            }
+
+            return list;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.AllowedRunnerId))
+            return [];
+        return [new ResolvedPhoneHomeRunner(settings.AllowedRunnerId.Trim(), FromLegacy(settings))];
+    }
+
+    /// <summary>Every map entry, including disabled ones. Legacy mode is the one normalized entry.</summary>
+    public static IReadOnlyList<ResolvedPhoneHomeRunner> Configured(PhoneHomeRunnerSettings settings)
+    {
+        if (UsesMap(settings))
+        {
+            var list = new List<ResolvedPhoneHomeRunner>();
+            foreach (var (key, entry) in settings.Runners)
+            {
+                if (string.IsNullOrWhiteSpace(key) || entry is null)
+                    continue;
+                list.Add(new ResolvedPhoneHomeRunner(key.Trim(), entry));
+            }
+
+            return list;
+        }
+
+        return Resolve(settings);
+    }
+
+    public static PhoneHomeRunnerEntry FromLegacy(PhoneHomeRunnerSettings settings) => new()
+    {
+        Enabled = true,
+        DisplayName = settings.AllowedRunnerId.Trim(),
+        AllowDelegatedTasks = settings.AllowDelegatedTasks,
+        StandingAgentId = settings.StandingAgentId,
+        HostWorkspaceRoot = settings.HostWorkspaceRoot,
+        RunnerWorkspace = settings.RunnerWorkspace,
+        RunnerRepository = settings.RunnerRepository,
+        RawExeAllowList = settings.RawExeAllowList,
+        MaxCapacity = settings.MaxCapacity,
+        ChildGrokHome = settings.ChildGrokHome,
+        ChildClaudeHome = settings.ChildClaudeHome,
+        ClaudeAuthProbeEnabled = settings.ClaudeAuthProbeEnabled,
+        ChildCodexHome = settings.ChildCodexHome,
+        CodexAuthProbeEnabled = settings.CodexAuthProbeEnabled,
+        CallbackOrigin = settings.CallbackOrigin,
+        SharedSecret = settings.SharedSecret,
+    };
 }
 
 public static class PhoneHomeRunnerSettingsRules
@@ -122,6 +219,13 @@ public static class PhoneHomeRunnerSettingsRules
         var failures = new List<string>();
         if (!options.Enabled)
             return failures;
+        if (PhoneHomeRunnerCatalog.UsesMap(options))
+        {
+            ValidateMapped(options, failures);
+            ValidateGlobal(options, failures);
+            return failures;
+        }
+
         if (string.IsNullOrWhiteSpace(options.AllowedRunnerId) || options.AllowedRunnerId.Length > 64)
             failures.Add("PhoneHomeRunner:AllowedRunnerId must be a non-empty string of at most 64 characters.");
         // CARD-0659 D-1: "local" is the reserved desktop token in task creation and the directory.
@@ -158,6 +262,12 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:CallbackOrigin must be an absolute http(s) URI.");
         if (string.IsNullOrWhiteSpace(options.SharedSecret))
             failures.Add("PhoneHomeRunner:SharedSecret must be set when enabled.");
+        ValidateGlobal(options, failures);
+        return failures;
+    }
+
+    private static void ValidateGlobal(PhoneHomeRunnerSettings options, List<string> failures)
+    {
         if (options.TicketTtlSeconds <= 0)
             failures.Add("PhoneHomeRunner:TicketTtlSeconds must be positive.");
         if (options.HeartbeatSeconds <= 0)
@@ -178,6 +288,58 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:SlotReconcileCron must be set when enabled.");
         try { options.Limits.Validate("PhoneHomeRunner:Limits"); }
         catch (InvalidOperationException ex) { failures.Add(ex.Message); }
-        return failures;
+    }
+
+    private static void ValidateMapped(PhoneHomeRunnerSettings options, List<string> failures)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pins = new HashSet<Guid>();
+        foreach (var (key, entry) in options.Runners)
+        {
+            if (string.IsNullOrWhiteSpace(key) || entry is null)
+            {
+                failures.Add("PhoneHomeRunner:Runners keys must be non-empty runner ids.");
+                continue;
+            }
+
+            var id = key.Trim();
+            if (id.Length > 64 || id.Any(char.IsControl))
+                failures.Add($"PhoneHomeRunner:Runners:{id} must be at most 64 characters and contain no controls.");
+            else if (id.Equals(PhoneHomeProtocol.LocalRunnerId, StringComparison.OrdinalIgnoreCase)
+                || id.Equals(RunnerPlatformWire.DesktopId, StringComparison.OrdinalIgnoreCase))
+                failures.Add($"PhoneHomeRunner:Runners:{id} is reserved for the desktop.");
+            if (!seen.Add(id))
+                failures.Add($"PhoneHomeRunner:Runners id '{id}' is duplicated.");
+            if (!entry.Enabled)
+                continue;
+            if (entry.StandingAgentId != Guid.Empty && !pins.Add(entry.StandingAgentId))
+                failures.Add("PhoneHomeRunner:Runners standing agent ids must be unique.");
+            if (entry.StandingAgentId == Guid.Empty && !entry.AllowDelegatedTasks)
+                failures.Add($"PhoneHomeRunner:Runners:{id}:StandingAgentId must be set unless AllowDelegatedTasks is true.");
+            if (string.IsNullOrWhiteSpace(entry.HostWorkspaceRoot))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:HostWorkspaceRoot must be set.");
+            if (string.IsNullOrWhiteSpace(entry.RunnerWorkspace) || !entry.RunnerWorkspace.StartsWith('/'))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:RunnerWorkspace must be a POSIX absolute path.");
+            if (string.IsNullOrWhiteSpace(entry.RunnerRepository) || !entry.RunnerRepository.StartsWith('/'))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:RunnerRepository must be a POSIX absolute path.");
+            if (entry.MaxCapacity <= 0)
+                failures.Add($"PhoneHomeRunner:Runners:{id}:MaxCapacity must be positive.");
+            if (entry.RawExeAllowList.Any(exe => string.IsNullOrWhiteSpace(exe) || !exe.StartsWith('/')))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:RawExeAllowList entries must be POSIX absolute paths.");
+            if (string.IsNullOrWhiteSpace(entry.ChildGrokHome) || !entry.ChildGrokHome.StartsWith('/'))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildGrokHome must be a POSIX absolute path.");
+            if (string.IsNullOrWhiteSpace(entry.ChildClaudeHome) || !entry.ChildClaudeHome.StartsWith('/'))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildClaudeHome must be a POSIX absolute path.");
+            if (string.IsNullOrWhiteSpace(entry.ChildCodexHome) || !entry.ChildCodexHome.StartsWith('/')
+                || entry.ChildCodexHome.Split('/').Contains("..")
+                || entry.ChildCodexHome.TrimEnd('/') is "/tmp"
+                || entry.ChildCodexHome.StartsWith("/tmp/", StringComparison.Ordinal))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:ChildCodexHome must be a persistent POSIX path.");
+            if (!Uri.TryCreate(entry.CallbackOrigin, UriKind.Absolute, out var origin)
+                || (origin.Scheme != Uri.UriSchemeHttp && origin.Scheme != Uri.UriSchemeHttps))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:CallbackOrigin must be an absolute http(s) URI.");
+            if (string.IsNullOrWhiteSpace(entry.SharedSecret))
+                failures.Add($"PhoneHomeRunner:Runners:{id}:SharedSecret must be set.");
+        }
     }
 }

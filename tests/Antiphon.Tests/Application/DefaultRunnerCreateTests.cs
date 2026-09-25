@@ -324,7 +324,7 @@ internal sealed class DefaultRunnerKit
     public required FakeRunnerDirectory Directory { get; init; }
     public bool WithDirectory { get; init; } = true;
     public AgentRegistrySettings? Registry { get; init; }
-    public ISessionRunnerDirectory? RealDirectory { get; init; }
+    public ISessionRunnerDirectory? RealDirectory { get; set; }
 
     public AgentTaskService.Caller Caller => new(null, null, RepoRoot);
 
@@ -373,7 +373,7 @@ internal sealed class DefaultRunnerKit
 
     public AppDbContext Context() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
 
-    public AgentTaskService Service(AppDbContext db) => new(
+    public AgentTaskService Service(AppDbContext db, RunnerDefaultSettingsService? runnerDefaults = null) => new(
         db,
         new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
         Options.Create(Settings),
@@ -383,7 +383,8 @@ internal sealed class DefaultRunnerKit
         NullLogger<AgentTaskService>.Instance,
         registrySettings: Registry is null ? null : Options.Create(Registry),
         phoneHome: new PhoneHomeLaunchPolicy(Options.Create(PhoneHome)),
-        runners: RealDirectory ?? (WithDirectory ? Directory : null));
+        runners: RealDirectory ?? (WithDirectory ? Directory : null),
+        runnerDefaults: runnerDefaults);
 
     public sealed record Saved(AgentTask Task, string Created, IReadOnlyList<string> Warnings);
 
