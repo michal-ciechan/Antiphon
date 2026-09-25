@@ -477,6 +477,74 @@ public sealed class LandingGitTests
         legacy.Snapshot!.IgnoredPaths.ShouldBe(full.Snapshot.IgnoredPaths, "the two-argument call stays Full");
     }
 
+    [Test]
+    public async Task C688_HeadFileScanFindsTargetCheckouts()
+    {
+        // CARD-0688 V-2: "master only in the main checkout" is asserted from HEAD files, never a listing.
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var detached = Path.Combine(fixture.Root, "trees", "detached");
+        await fixture.RequiredAsync(fixture.Repository, "worktree", "add", "--detach", detached, fixture.SeedSha);
+        var workspace = new LandWorkspace(fixture.Git, Microsoft.Extensions.Options.Options.Create(
+            new Antiphon.Server.Application.Settings.GitSettings { WorktreeBasePath = Path.Combine(fixture.Root, "trees") }), TimeProvider.System);
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        fixture.Git.Trace.Clear();
+
+        var scan = workspace.ScanHeadFiles(common);
+
+        fixture.Git.Trace.ShouldBeEmpty("the scan reads files; it runs no git and no worktree list");
+        scan.Count.ShouldBe(3);
+        var main = scan.Single(h => h.IsMain);
+        main.SymbolicRef.ShouldBe(fixture.TargetRef);
+        LandingGit.PathsEqual(main.WorktreePath!, fixture.Repository).ShouldBeTrue();
+        scan.Single(h => h.WorktreePath is not null && LandingGit.PathsEqual(h.WorktreePath, fixture.Source))
+            .SymbolicRef.ShouldBe(fixture.SourceRef);
+        var loose = scan.Single(h => h.WorktreePath is not null && LandingGit.PathsEqual(h.WorktreePath, detached));
+        loose.SymbolicRef.ShouldBeNull();
+        loose.Sha.ShouldBe(fixture.SeedSha);
+        scan.Where(h => h.SymbolicRef == fixture.TargetRef).ShouldHaveSingleItem().IsMain.ShouldBeTrue();
+
+        // Construction proof: git itself refuses a second checkout of master without an override.
+        (await fixture.Git.RunAsync(detached, ["checkout", "master"], CancellationToken.None)).Succeeded.ShouldBeFalse();
+        await fixture.RequiredAsync(detached, "checkout", "--ignore-other-worktrees", "master");
+        fixture.Git.Trace.Clear();
+
+        var forced = workspace.ScanHeadFiles(common).Where(h => h.SymbolicRef == fixture.TargetRef).ToList();
+
+        fixture.Git.Trace.ShouldBeEmpty();
+        forced.Count.ShouldBe(2);
+        forced.ShouldContain(h => !h.IsMain && h.WorktreePath != null && LandingGit.PathsEqual(h.WorktreePath, detached));
+    }
+
+    [Test]
+    public async Task C642_RecheckSourceRemoteIsOneRoundTripWithoutPins()
+    {
+        // CARD-0642 V-14 (absorbed by CARD-0688 D-1 as V-3).
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var fingerprint = (await fixture.Git.DestinationAsync(fixture.Repository, fixture.TargetRef, CancellationToken.None)).Fingerprint;
+        var before = await fixture.Git.RunAsync(fixture.Repository, ["for-each-ref", "refs/antiphon/"], CancellationToken.None);
+        fixture.Git.Trace.Clear();
+
+        var recheck = await ((Antiphon.Server.Application.Interfaces.ILandingGit)fixture.Git).RecheckSourceRemoteAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            fingerprint, CancellationToken.None);
+
+        recheck.Reason.ShouldBeNull();
+        recheck.Sha.ShouldBe(fixture.SeedSha);
+        recheck.Fingerprint.ShouldBe(fingerprint);
+        fixture.Git.Trace.Count(a => a[0] == "ls-remote").ShouldBe(1);
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "fetch" || a[0] == "update-ref");
+        (await fixture.Git.RunAsync(fixture.Repository, ["for-each-ref", "refs/antiphon/"], CancellationToken.None))
+            .Output.ShouldBe(before.Output, "a recheck writes no pin ref");
+
+        (await ((Antiphon.Server.Application.Interfaces.ILandingGit)fixture.Git).RecheckSourceRemoteAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            new string('0', 64), CancellationToken.None)).Reason.ShouldBe("source_remote_endpoint_changed");
+
+        await fixture.RequiredAsync(fixture.Remote, "update-ref", "-d", fixture.SourceRef);
+        (await ((Antiphon.Server.Application.Interfaces.ILandingGit)fixture.Git).RecheckSourceRemoteAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
+            fingerprint, CancellationToken.None)).Reason.ShouldBe("source_remote_missing");
+    }
+
     private sealed class MarkerHomeGit(string home, Guid taskId, string configPath) : LandingGitFixture.FixtureGit(home, taskId)
     {
         protected override void ConfigureProcess(System.Diagnostics.ProcessStartInfo start)

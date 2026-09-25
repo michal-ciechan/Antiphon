@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260925014042_AddDedicatedLandWorktree")]
+    partial class AddDedicatedLandWorktree
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -122,9 +125,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("PoolIdleSince")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("PoolKillRetries")
-                        .HasColumnType("integer");
 
                     b.Property<Guid?>("PoolProjectId")
                         .HasColumnType("uuid");
@@ -1417,10 +1417,6 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("CardId")
                         .HasDatabaseName("IX_AgentTasks_CardId");
-
-                    b.HasIndex("Id")
-                        .HasDatabaseName("IX_AgentTasks_MissingCompletionNote")
-                        .HasFilter("\"CompletionNoteQueuedAt\" IS NULL AND \"SourceLandingOperationId\" IS NOT NULL AND \"ParentSessionId\" IS NOT NULL AND \"ReplyTo\" = 1 AND \"Result\" IS NOT NULL AND \"Status\" IN (4, 5, 6)");
 
                     b.HasIndex("LandRequestedAt")
                         .HasDatabaseName("IX_AgentTasks_LandRequestedAt")
@@ -5611,10 +5607,6 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_SessionQueuedMessages_DeferredFromRunAttemptId")
                         .HasFilter("\"DeferredFromRunAttemptId\" IS NOT NULL");
 
-                    b.HasIndex("Id")
-                        .HasDatabaseName("IX_SessionQueuedMessages_CompletionWakeup")
-                        .HasFilter("\"Status\" = 0 AND \"DeliveryAttempts\" = 0 AND \"SourceTaskId\" IS NOT NULL AND \"ContentDigest\" IS NOT NULL");
-
                     b.HasIndex("SourceLandNotificationId")
                         .IsUnique()
                         .HasFilter("\"SourceLandNotificationId\" IS NOT NULL");
@@ -6677,23 +6669,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("AgentSessionId", "Sequence")
                         .IsUnique()
                         .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Sequence");
-
-                    b.HasIndex("AgentSessionId", "Timestamp")
-                        .HasDatabaseName("IX_TranscriptEntries_End_AgentSessionId_Timestamp")
-                        .HasFilter("(\"Kind\" IN ('TurnEnd', 'SessionRestartBoundary')\nOR (\"Kind\" = 'CompactBoundary' AND \"Text\" IS NOT NULL AND strpos(\"Text\", '(manual)') > 0)\nOR (\"Kind\" = 'UserPrompt' AND \"Text\" IS NOT NULL AND \"Text\" LIKE '[Request interrupted%')) AND \"Timestamp\" IS NOT NULL")
-                        .HasAnnotation("Npgsql:CreatedConcurrently", true);
-
-                    b.HasIndex("AgentSessionId", "Uuid")
-                        .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Uuid")
-                        .HasFilter("\"Uuid\" IS NOT NULL")
-                        .HasAnnotation("Npgsql:CreatedConcurrently", true);
-
-                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("AgentSessionId", "Uuid"), new[] { "Kind" });
-
-                    b.HasIndex(new[] { "AgentSessionId", "Sequence" }, "IX_TranscriptEntries_End_AgentSessionId_Sequence")
-                        .HasDatabaseName("IX_TranscriptEntries_End_AgentSessionId_Sequence")
-                        .HasFilter("\"Kind\" IN ('TurnEnd', 'SessionRestartBoundary')\nOR (\"Kind\" = 'CompactBoundary' AND \"Text\" IS NOT NULL AND strpos(\"Text\", '(manual)') > 0)\nOR (\"Kind\" = 'UserPrompt' AND \"Text\" IS NOT NULL AND \"Text\" LIKE '[Request interrupted%')")
-                        .HasAnnotation("Npgsql:CreatedConcurrently", true);
 
                     b.ToTable("TranscriptEntries", (string)null);
                 });

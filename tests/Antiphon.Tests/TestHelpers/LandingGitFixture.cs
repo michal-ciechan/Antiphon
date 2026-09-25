@@ -48,6 +48,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         await RequiredAsync(Repository, "push", "origin", SourceRef);
         await RequiredAsync(Root, "clone", "--no-hardlinks", "--branch", "master", "--", Remote, Observer);
         Git.Trace.Clear();
+        Git.Commands.Clear();
     }
 
     public async Task<string> RequiredAsync(string path, params string[] arguments)
@@ -128,6 +129,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     internal class FixtureGit(string home, Guid taskId) : LandingGit
     {
         public List<string[]> Trace { get; } = [];
+        /// <summary>CARD-0688: every command with the directory it ran in.</summary>
+        public List<(string Directory, string[] Arguments)> Commands { get; } = [];
         public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
         public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
@@ -157,6 +160,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             Trace.Add(arguments.ToArray());
+            Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
@@ -200,6 +204,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         {
             Trace.Add(arguments.ToArray());
+            Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "owned_git_start", new { repository, arguments });
