@@ -215,6 +215,25 @@ public class ProjectSetupServiceTests
         }
     }
 
+    [Test]
+    public async Task Setup_commit_invalidates_a_snapshot_filled_before_the_transaction_committed()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        using var repo = new ScratchGitRepo("c700-setup");
+        await repo.CommitFileAsync("seed", "seed");
+        var lookup = new CardFileBoardLookup();
+        var before = await lookup.GetAsync(db, default);
+        before.Boards.ShouldBeEmpty();
+        var files = new CardTaskFileService(db, new CardTaskFileSyncGate(),
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), NullLogger<CardTaskFileService>.Instance,
+            new CardFileTestRepository(), boardLookup: lookup);
+        var result = await CreateService(db, files).SetupAsync(new ProjectSetupRequest(repo.Path, Name: "C700 setup"), default);
+        var after = await lookup.GetAsync(db, default);
+        after.Boards.Single().Id.ShouldBe(result.Board.Id);
+        after.Boards.Single().ProjectId.ShouldBe(result.Project.Id);
+    }
+
     private static ProjectSetupService CreateService(AppDbContext db, CardTaskFileService? cardFiles = null)
     {
         var eventBus = new MockEventBus();
