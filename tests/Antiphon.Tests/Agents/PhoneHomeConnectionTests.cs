@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -567,6 +568,58 @@ public class PhoneHomeConnectionTests
         // Review 914a96fd D1: nothing was written, so this is the never-sent code.
         typed.Code.ShouldBe("phone_home_connection_closed_before_send");
         typed.Message.ShouldContain(nameof(PhoneHomeOperation.List));
+    }
+
+    // CARD-0716 D-1: a host stop must close the socket with 1001 server_stopping before Kestrel's
+    // shutdown timeout aborts it. The 3s host bound is only so a red run does not sit for 30s.
+    [Test]
+    public async Task Host_stop_sends_a_going_away_close_before_the_socket_dies()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync(shutdownTimeout: TimeSpan.FromSeconds(3));
+        await using var peer = await host.ConnectPeerAsync();
+        await host.WaitLiveAsync();
+
+        _ = Task.Run(() => host.App.Lifetime.StopApplication());
+
+        var completed = await Task.WhenAny(peer.CloseObserved.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        completed.ShouldBe(peer.CloseObserved.Task);
+        var (status, description) = await peer.CloseObserved.Task;
+        status.ShouldBe(WebSocketCloseStatus.EndpointUnavailable);
+        description.ShouldBe("server_stopping");
+
+        var ended = host.Logs.Entries
+            .Where(e => e.Level == LogLevel.Warning && e.Message.Contains("ended: request_aborted", StringComparison.Ordinal))
+            .ToList();
+        ended.Count.ShouldBe(1);
+        host.Directory.Status(host.AllowedRunnerId).DisconnectReason.ShouldBe("request_aborted");
+    }
+
+    // CARD-0716 D-6: the accept line and the ended line share Kestrel's connection id, and a
+    // transport abort names the websocket and socket errors.
+    [Test]
+    public async Task Accept_and_end_lines_carry_the_connection_id_and_transport_codes()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        await host.WaitLiveAsync();
+
+        peer.Socket.Abort();
+
+        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && e["Reason"] is not null);
+        ended.Count.ShouldBe(1);
+        var accept = host.Logs.Entries
+            .Where(e => e.Level == LogLevel.Information && e.Message.Contains("accepted:", StringComparison.Ordinal))
+            .ToList();
+        accept.Count.ShouldBe(1);
+        var connectionId = accept[0]["ConnectionId"]?.ToString();
+        connectionId.ShouldNotBeNullOrWhiteSpace();
+        ended[0]["ConnectionId"]?.ToString().ShouldBe(connectionId);
+        ended[0]["WsError"]?.ToString().ShouldBe(nameof(WebSocketError.ConnectionClosedPrematurely));
+        var socketError = ended[0]["SocketError"]?.ToString();
+        socketError.ShouldNotBeNullOrWhiteSpace();
+        var namedSocketError = socketError == "none"
+            || (Enum.TryParse<SocketError>(socketError, out var parsed) && Enum.IsDefined(parsed));
+        namedSocketError.ShouldBeTrue();
     }
 
     private static PhoneHomeFrame OutputEvent(long epoch, int n) =>
