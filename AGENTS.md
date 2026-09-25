@@ -7,6 +7,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Change area | Required owner |
 |---|---|
 | Backend/domain/client conventions, layers, naming, errors, configuration | [docs/project-context.md](docs/project-context.md) |
+| Admitted HTTP and database read resilience | [docs/resilience.md](docs/resilience.md) |
 | Telegram/channel formatting and gateway settings | [docs/telegram.md](docs/telegram.md) |
 | Cards, delegates, landing, scopes, and tracker orchestration | [docs/orchestration-loop.md](docs/orchestration-loop.md) |
 | Card state versus session state and decision questions | [docs/agent-card-lifecycle.md](docs/agent-card-lifecycle.md) |

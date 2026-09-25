@@ -42,9 +42,9 @@ public class DatabaseReadResilienceTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var interceptor = new OneShotCommandInterceptor();
-        interceptor.Arm(Postgres("08006"));
         await using var provider = Host(schema.ConnectionString, fault: null, interceptor, out var time);
         var id = await SeedProvider(provider);
+        interceptor.Arm(Postgres("08006"));
         var service = provider.GetRequiredService<LlmProviderService>();
         var dto = await ResilienceTestHost.Pump(
             time, service.GetByIdAsync(id, CancellationToken.None), TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(8));
@@ -57,9 +57,9 @@ public class DatabaseReadResilienceTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var interceptor = new OneShotCommandInterceptor();
-        interceptor.Arm(Postgres("42601"));
         await using var provider = Host(schema.ConnectionString, fault: null, interceptor, out _);
         var id = await SeedProvider(provider);
+        interceptor.Arm(Postgres("42601"));
         var service = provider.GetRequiredService<LlmProviderService>();
         await Should.ThrowAsync<Exception>(() => service.GetByIdAsync(id, CancellationToken.None));
         interceptor.Executions.ShouldBe(1);
@@ -80,7 +80,9 @@ public class DatabaseReadResilienceTests
         observed.Count.ShouldBe(1);
         observed[0].ShouldBeTrue();
         time.Advance(TimeSpan.FromSeconds(1));
-        await Task.Delay(50);
+        var until = DateTime.UtcNow.AddSeconds(3);
+        while (observed.Count < 2 && DateTime.UtcNow < until)
+            await Task.Delay(20);
         observed.Count.ShouldBe(2);
         (await read).ShouldBeGreaterThanOrEqualTo(0);
     }
@@ -142,6 +144,49 @@ public class DatabaseReadResilienceTests
             },
             CancellationToken.None));
         writes.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Serialization_failure_rolls_back_and_replays_on_a_fresh_scope()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = Host(schema.ConnectionString, fault: null, interceptor: null, out var time);
+        await SeedProvider(provider);
+        var executor = provider.GetRequiredService<DatabaseResilienceExecutor>();
+        var contexts = new List<string>();
+        var read = executor.ExecuteReadAsync(
+            ResilienceOperations.LlmProvidersList,
+            async (db, ct) =>
+            {
+                contexts.Add(db.ContextId.ToString());
+                await using var tx = await db.Database.BeginTransactionAsync(ct);
+                if (contexts.Count == 1)
+                {
+                    db.LlmProviders.Add(new LlmProvider
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = "rolled-back",
+                        ProviderType = ProviderType.OpenAI,
+                        ApiKey = "sk-test",
+                        BaseUrl = "http://127.0.0.1:9",
+                        IsEnabled = true,
+                        DefaultModel = "m",
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow,
+                    });
+                    await db.SaveChangesAsync(ct);
+                    throw Postgres("40001");
+                }
+
+                (await db.LlmProviders.AsNoTracking().AnyAsync(row => row.Name == "rolled-back", ct)).ShouldBeFalse();
+                await tx.RollbackAsync(ct);
+                return await db.LlmProviders.AsNoTracking().CountAsync(ct);
+            },
+            CancellationToken.None);
+        var count = await ResilienceTestHost.Pump(time, read, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(8));
+        count.ShouldBeGreaterThan(0);
+        contexts.Count.ShouldBe(2);
+        contexts[0].ShouldNotBe(contexts[1]);
     }
 
     [Test]
@@ -287,8 +332,10 @@ public class DatabaseReadResilienceTests
             InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default)
         {
+            if (_exception is null)
+                return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
             Executions++;
-            if (Interlocked.Decrement(ref _remaining) >= 0 && _exception is not null)
+            if (Interlocked.Decrement(ref _remaining) >= 0)
                 throw _exception;
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }

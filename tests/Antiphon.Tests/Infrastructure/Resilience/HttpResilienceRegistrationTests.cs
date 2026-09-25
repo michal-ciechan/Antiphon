@@ -45,13 +45,23 @@ public class HttpResilienceRegistrationTests
         var before = commands.Sends;
 
         await Should.ThrowAsync<Exception>(() => sut.StartAsync(Guid.NewGuid(), Spec(), CancellationToken.None));
+        (commands.Sends - before).ShouldBe(1);
+        before = commands.Sends;
         await Should.ThrowAsync<Exception>(() => sut.SendInputAsync(Guid.NewGuid(), "hi", CancellationToken.None));
+        (commands.Sends - before).ShouldBe(1);
+        before = commands.Sends;
         await Should.ThrowAsync<Exception>(() => sut.KillAsync(Guid.NewGuid(), CancellationToken.None));
+        (commands.Sends - before).ShouldBe(1);
+        before = commands.Sends;
         await Should.ThrowAsync<Exception>(() => sut.AttachHerdrAsync(Attach(), CancellationToken.None));
+        (commands.Sends - before).ShouldBe(1);
+        before = commands.Sends;
+        // Disposal asks the read client for the capability first. An open read circuit is "no evidence",
+        // so the command client must not be touched.
         await Should.ThrowAsync<Exception>(() => sut.DisposeHerdrPaneAsync(new HerdrPaneDisposalRequest(Guid.NewGuid(), Guid.NewGuid(), "because"), CancellationToken.None));
+        commands.Sends.ShouldBe(before);
         await Should.ThrowAsync<Exception>(() => sut.ReadVerificationCustodyAsync(Binding(), seal: true, CancellationToken.None));
-
-        (commands.Sends - before).ShouldBe(6);
+        (commands.Sends - before).ShouldBe(1);
     }
 
     [Test]
