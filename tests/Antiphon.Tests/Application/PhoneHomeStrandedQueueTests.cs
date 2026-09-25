@@ -251,33 +251,57 @@ public class PhoneHomeStrandedQueueTests
         new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
 
     /// <summary>
-    /// The runner side of a real session: text typed before an Enter becomes that turn's UserPrompt
-    /// (and an immediate TurnEnd), the evidence the queue's delivery verification waits for.
+    /// The runner side of a real session's terminal: typed text shows in the composer on the
+    /// snapshot, every input advances the output sequence, and text typed before an Enter becomes
+    /// that turn's UserPrompt (and an immediate TurnEnd): the evidence the queue's delivery
+    /// verification reads, all of it over the phone-home connection.
     /// </summary>
     private static void EchoSubmittedPromptsToTranscript(PhoneHomeScriptedPeer peer, BridgeQueueHarness h)
     {
         var composer = new StringBuilder();
+        var sequence = 0L;
+        var generation = DateTime.UtcNow;
         peer.Reply = frame =>
         {
-            if (frame.Operation != PhoneHomeOperation.Input)
-                return null;
-            var input = ReadInput(frame);
-            if (!input.EndsWith('\r'))
+            switch (frame.Operation)
             {
-                composer.Append(input);
-                return null;
-            }
+                case PhoneHomeOperation.Input:
+                    sequence++;
+                    var input = ReadInput(frame);
+                    if (!input.EndsWith('\r'))
+                    {
+                        composer.Append(input);
+                        return null;
+                    }
 
-            composer.Append(input[..^1]);
-            var prompt = composer.ToString().Replace("\u001b[200~", "").Replace("\u001b[201~", "");
-            composer.Clear();
-            if (prompt.Length == 0)
-                return null;
-            h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt, timestamp: DateTime.UtcNow)
-                .GetAwaiter().GetResult();
-            h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn").GetAwaiter().GetResult();
-            return null;
+                    composer.Append(input[..^1]);
+                    var prompt = Visible(composer);
+                    composer.Clear();
+                    if (prompt.Length == 0)
+                        return null;
+                    h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt, timestamp: DateTime.UtcNow)
+                        .GetAwaiter().GetResult();
+                    h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn").GetAwaiter().GetResult();
+                    return null;
+                case PhoneHomeOperation.Snapshot:
+                    return Result(frame, new RunnerSnapshotDto(
+                        h.SessionId, Visible(composer), "> " + Visible(composer), sequence, generation));
+                case PhoneHomeOperation.Buffer:
+                    return Result(frame, new RunnerBufferDto(h.SessionId, Visible(composer), sequence));
+                case PhoneHomeOperation.Get:
+                    return Result(frame, new RunnerSessionDto(
+                        h.SessionId, 1, generation, "Running", null, "", sequence, AcceptedStartedAt: generation));
+                default:
+                    return null;
+            }
         };
+
+        static string Visible(StringBuilder typed) =>
+            typed.ToString().Replace("\u001b[200~", "").Replace("\u001b[201~", "");
+
+        static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) => new(
+            PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
     }
 
     private static string ReadInput(PhoneHomeFrame frame) =>
