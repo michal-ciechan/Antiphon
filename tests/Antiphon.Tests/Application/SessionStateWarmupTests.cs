@@ -52,7 +52,7 @@ public class SessionStateWarmupTests
         var seed = f.Store.ReadAsync(f.SessionId, default);
         await loader!.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var ingest = f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(1)]);
-        try { ingest.IsCompleted.ShouldBeFalse(); }
+        try { ingest.IsCompleted.ShouldBeFalse(); loader.Calls.ShouldBe(1, "the arriving ingest must wait for the existing seed"); }
         finally { loader.Release.TrySetResult(); }
         (await seed).Count.ShouldBe(0); (await ingest).LastStoredSeq.ShouldBe(1);
         var state = await f.Store.ReadAsync(f.SessionId, default);
@@ -131,7 +131,7 @@ public class SessionStateWarmupTests
         var waiting = f.Store.ReadAsync(f.OtherId, default);
         clock.Advance(TimeSpan.FromMinutes(2));
         await f.Store.ReadAsync(f.SessionId, default);
-        f.Store.CachedCount.ShouldBe(2); waiting.IsCompleted.ShouldBeFalse();
+        f.Store.CachedCount.ShouldBe(2); waiting.IsCompleted.ShouldBeFalse(); f.SeedQueries.ShouldBe(1);
         held.Dispose(); await waiting;
         clock.Advance(TimeSpan.FromMinutes(2));
         await f.Store.ReadAsync(f.SessionId, default);
@@ -150,6 +150,41 @@ public class SessionStateWarmupTests
         (await f.Store.ReadAsync(f.SessionId, default)).Working.ShouldBeTrue(); f.SeedQueries.ShouldBe(0);
         for (var i = 0; i < 2; i++) (await f.Store.ReadAsync(f.OtherId, default)).Working.ShouldBeTrue();
         f.SeedQueries.ShouldBe(2); f.Store.CachedCount.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Rollback_switch_restores_SQL_reads_but_keeps_committed_ingestion()
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync(settings: new SessionStateSettings { Enabled = false });
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(1)]);
+        var queue = f.Services.GetRequiredService<SessionMessageQueueService>();
+        f.Capture.Clear();
+        for (var i = 0; i < 2; i++) (await queue.GetQueueAsync(f.SessionId, default)).Working.ShouldBeTrue();
+        f.Capture.Reads.Count(c => c.Sql.Contains("session-state.fallback")).ShouldBe(2);
+        (await f.Store.ReadAsync(f.SessionId, default)).Count.ShouldBe(1);
+        await f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default);
+        (await f.Store.ReadAsync(f.SessionId, default)).Working.ShouldBeFalse();
+        (await queue.GetQueueAsync(f.SessionId, default)).Working.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Warmup_pins_a_terminal_session_owing_a_channel_reply()
+    {
+        var clock = new AdvancingClock();
+        await using var f = await SessionStateTestFixture.CreateAsync(clock: clock);
+        await using var db = f.Db();
+        await db.AgentSessions.Where(s => s.Id == f.OtherId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Stopped));
+        db.SessionQueuedMessages.Add(new Antiphon.Server.Domain.Entities.SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(), AgentSessionId = f.OtherId, Sequence = 1, Body = "synthetic channel work",
+            Status = QueuedMessageStatus.Sent, Origin = QueuedMessageOrigin.Channel,
+            DeliveryVerdict = DeliveryVerdict.Delivered, CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        await f.Store.WarmAsync(default);
+        f.Capture.Clear(); clock.Advance(TimeSpan.FromMinutes(16));
+        var state = await f.Store.ReadAsync(f.OtherId, default);
+        state.Pinned.ShouldBeTrue(); f.SeedQueries.ShouldBe(0);
     }
 
     private sealed class ControlledLoader(ISessionStateLoader inner) : ISessionStateLoader

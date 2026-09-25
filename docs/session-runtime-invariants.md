@@ -26,8 +26,11 @@
 
   This is one server process with multiple runners, not a multi-writer cache. Out-of-process SQL
   transcript changes require a server restart before reads/actions resume. A new process seeds
-  from PostgreSQL under a new epoch. Roll back by reverting the Round 1 change and restarting the
-  canonical checkout; no migration or pool-setting change is needed. Npgsql resets remain enabled.
+  from PostgreSQL under a new epoch. `SessionState:Enabled=false` restores SQL-backed queue/agent
+  reads while retaining ingestion serialization and restart-boundary publication. Settings are
+  read at process startup. Roll back with this switch or the previous build and restart the
+  canonical checkout, verifying `/api/version`; no migration or pool-setting change is needed.
+  Npgsql resets remain enabled.
   Remaining metadata readers, binding/UUID caches, revision waiters and UI invalidation belong to
   Rounds 2/3. `GET /api/diagnostics/session-state` exposes metadata-only process/cache counters,
   live/unknown counts and sanitized provider/pool flags. `Antiphon.SessionState` meters and SQL tags

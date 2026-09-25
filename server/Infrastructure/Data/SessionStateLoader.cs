@@ -16,9 +16,12 @@ public sealed class SessionStateLoader(IServiceScopeFactory scopes) : ISessionSt
          OR EXISTS (SELECT 1 FROM "AgentTasks" task WHERE task."Status" IN (0, 1, 2, 3)
              AND (task."AgentSessionId" = s."Id" OR task."ParentSessionId" = s."Id"))
          OR EXISTS (SELECT 1 FROM "SessionQueuedMessages" q WHERE q."AgentSessionId" = s."Id"
-             AND (q."Status" = 0 OR (q."Status" = 1 AND q."DeliveryVerdict" IS NULL)))
+             AND (q."Status" = 0 OR (q."Status" = 1 AND (q."DeliveryVerdict" IS NULL
+                 OR (q."Origin" = 1 AND q."ChannelReplySettledAt" IS NULL)))))
          OR EXISTS (SELECT 1 FROM "AgentTaskLandNotifications" n WHERE n."ParentSessionId" = s."Id"
-             AND n."ConfirmedAt" IS NULL AND n."State" <> 4))
+             AND n."ConfirmedAt" IS NULL AND n."State" <> 4)
+         OR EXISTS (SELECT 1 FROM "AgentTaskDispatchWarningIntents" i WHERE i."ParentSessionId" = s."Id"
+             AND i."MaterializedAt" IS NULL AND i."InitialState" <> 4))
         """;
 
     private const string Sql = $"""

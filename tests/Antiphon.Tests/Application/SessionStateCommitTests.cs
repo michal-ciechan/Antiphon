@@ -116,6 +116,7 @@ public class SessionStateCommitTests
         after.Working.ShouldBeFalse(); after.LastKind.ShouldBe("SessionRestartBoundary");
         after.Count.ShouldBe(2); after.LastSequence.ShouldBe(2); after.Revision.ShouldBeGreaterThan(before.Revision);
         after.AcceptedGeneration.ShouldBe(nextGeneration);
+        System.Text.Json.JsonSerializer.SerializeToElement(f.Store.GetMetrics()).GetProperty("ingestCalls").GetInt64().ShouldBe(2);
         (await f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default)).ShouldBeFalse();
         (await f.Store.ReadAsync(f.SessionId, default)).ShouldBe(after);
         await AssertDurableAsync(f);
@@ -136,6 +137,10 @@ public class SessionStateCommitTests
         var ended = await f.Store.ReadAsync(f.SessionId, default);
         var replay = await f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(1, uuid: "row-0")]);
         replay.LastStoredSeq.ShouldBeNull(); (await f.Store.ReadAsync(f.SessionId, default)).ShouldBe(ended);
+        var metrics = System.Text.Json.JsonSerializer.SerializeToElement(f.Store.GetMetrics());
+        metrics.GetProperty("ingestCalls").GetInt64().ShouldBe(14);
+        metrics.GetProperty("committedRows").GetInt64().ShouldBe(13);
+        metrics.GetProperty("duplicateBatches").GetInt64().ShouldBe(1);
         await AssertDurableAsync(f);
     }
 

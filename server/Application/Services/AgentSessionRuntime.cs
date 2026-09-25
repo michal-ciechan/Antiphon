@@ -836,11 +836,8 @@ public sealed class AgentSessionRuntime
         try
         {
             using var lease = _states is null ? null : await _states.BeginWriteAsync(sessionId, CancellationToken.None);
-            var previousCount = lease?.Snapshot.Count ?? 0;
             var result = await PersistTranscriptCoreAsync(sessionId, entries);
             await PublishCommittedAsync(lease, result);
-            _states?.RecordIngest(Math.Max(0, (lease?.Snapshot.Count ?? 0) - previousCount),
-                result.LastStoredSeq is null && !result.NeedsReload);
             return result;
         }
         catch (Exception ex)
@@ -854,8 +851,10 @@ public sealed class AgentSessionRuntime
     private static async Task PublishCommittedAsync(SessionStateStore.Lease? lease, PersistResult result)
     {
         if (lease is null) return;
+        var previousCount = lease.Snapshot.Count;
         if (result.NeedsReload) await lease.ReconcileAsync(false, CancellationToken.None);
         else await lease.PublishAsync(result.CommittedRows, result.AcceptedGeneration, CancellationToken.None);
+        lease.RecordIngest(previousCount, result.LastStoredSeq is null && result.AcceptedGeneration is not null && !result.NeedsReload);
     }
 
     /// <summary>The synthetic append shares serialization, persistence and publication with runner ingestion.</summary>
