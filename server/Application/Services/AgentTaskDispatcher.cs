@@ -336,6 +336,11 @@ public sealed class AgentTaskDispatcher
         // startup latency, and the janitor is what keeps that trade bounded.
         sweepFailures += await RunSweepAsync("retire idle warm agents", (d, ct2) => d.RetireIdleWarmAgentsAsync(ct2), ct);
 
+        // And with pool delegates nothing released (CARD-0691 D-1): release is a state this tick
+        // enforces, not a call every terminal writer must remember. After the janitor, so a row it
+        // just retired is not looked at twice.
+        sweepFailures += await RunSweepAsync("pool release", (d, ct2) => d.ReleaseUnownedPoolDelegatesAsync(ct2), ct);
+
         // And with settlements deferred waiting for a turn-ending response's own text (CARD-0046).
         // Nothing re-triggers a response that never writes text, so the grace needs a clock, and
         // this is the one that already runs on a 5 s cadence before the early return below.
@@ -6275,8 +6280,128 @@ public sealed class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
     }
 
-    /// <summary>CARD-0691 D-1 pool-release sweep (red-first surface; the sweep lands with S2).</summary>
-    internal Task<int> ReleaseUnownedPoolDelegatesAsync(CancellationToken ct) => Task.FromResult(0);
+    /// <summary>
+    /// CARD-0691 D-1: release enforced by state. A pool delegate that is not Stopped, has no pool
+    /// state (<c>PoolIdleSince</c> null), no open task, no SourceLanding task, a live session, and
+    /// whose newest task completed more than <see cref="DelegationSettings.PoolReleaseGraceSeconds"/>
+    /// ago was forgotten by whichever terminal writer settled it (a reported failure before D-2, a
+    /// cancel whose kill threw, ...). Apply settlement's own rule (<see cref="PoolDelegateRelease"/>):
+    /// a Shared delegate with a Starting/Running session goes warm, anything else is killed and its
+    /// row removed only once the session is terminal. A mid-turn session is deferred, like the
+    /// janitor defers one. The grace keeps this off a settlement in flight, which releases itself.
+    /// </summary>
+    internal async Task<int> ReleaseUnownedPoolDelegatesAsync(CancellationToken ct)
+    {
+        if (_settings.PoolReleaseGraceSeconds <= 0)
+            return 0;
+
+        var candidates = (await _db.Agents
+                .Where(a => a.IsPoolDelegate && a.Status != AgentStatus.Stopped
+                    && a.PoolIdleSince == null && a.PersistentSessionId != null)
+                .ToListAsync(ct))
+            .Select(a => (Agent: a, SessionId: Guid.TryParse(a.PersistentSessionId, out var sid) ? sid : (Guid?)null))
+            .Where(c => c.SessionId.HasValue)
+            .Select(c => (c.Agent, SessionId: c.SessionId!.Value))
+            .ToList();
+        if (candidates.Count == 0)
+            return 0;
+
+        var sessionIds = candidates.Select(c => c.SessionId).Distinct().ToList();
+        var liveStatus = await _db.AgentSessions.AsNoTracking()
+            .Where(s => sessionIds.Contains(s.Id)
+                && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running
+                    || s.Status == SessionStatus.Stopping))
+            .ToDictionaryAsync(s => s.Id, s => s.Status, ct);
+        candidates = candidates.Where(c => liveStatus.ContainsKey(c.SessionId)).ToList();
+        if (candidates.Count == 0)
+            return 0;
+
+        var agentIds = candidates.Select(c => c.Agent.Id).ToList();
+        var owned = (await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentId != null && agentIds.Contains(t.AgentId.Value))
+                .Select(t => new
+                {
+                    AgentId = t.AgentId!.Value, t.Id, t.RootTaskId, t.Status, t.Workspace, t.CompletedAt,
+                    Sourced = t.SourceLandingOperationId != null,
+                })
+                .ToListAsync(ct))
+            .GroupBy(t => t.AgentId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var now = UtcNow();
+        var cutoff = now.AddSeconds(-_settings.PoolReleaseGraceSeconds);
+        var due = candidates
+            .Select(c => (c.Agent, c.SessionId, Tasks: owned.GetValueOrDefault(c.Agent.Id)))
+            .Where(c => c.Tasks is { Count: > 0 }
+                && !c.Tasks.Any(t => t.Sourced)
+                && !c.Tasks.Any(t => t.Status is AgentTaskStatus.Queued or AgentTaskStatus.Dispatched
+                    or AgentTaskStatus.Working or AgentTaskStatus.Blocked))
+            .Select(c => (c.Agent, c.SessionId,
+                Newest: c.Tasks!.Where(t => t.CompletedAt != null).MaxBy(t => t.CompletedAt)))
+            .Where(c => c.Newest is not null && c.Newest.CompletedAt <= cutoff)
+            .ToList();
+        if (due.Count == 0)
+            return 0;
+
+        var working = await SessionMessageQueueService.IsWorkingBatchAsync(
+            _db, due.Select(d => d.SessionId).Distinct().ToList(), ct);
+        var dueIds = due.Select(d => d.Agent.Id).ToList();
+        var incidentAgentIds = (await _db.AgentIncidents.AsNoTracking()
+                .Where(i => i.AgentId != null && dueIds.Contains(i.AgentId.Value))
+                .Select(i => i.AgentId!.Value)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var acted = 0;
+        foreach (var (agent, sessionId, newest) in due)
+        {
+            var settled = DelegationReportFormatter.Short(newest!.Id);
+            if (working.GetValueOrDefault(sessionId))
+            {
+                _logger.LogWarning(
+                    "Pool release of delegate '{Name}' deferred: session {SessionId} is mid-turn although task {ShortId} settled {Status} at {At:O}",
+                    agent.Name, sessionId, settled, newest.Status, newest.CompletedAt);
+                continue;
+            }
+
+            if (_settings.PoolEnabled && newest.Workspace == WorkspaceMode.Shared
+                && liveStatus[sessionId] is SessionStatus.Starting or SessionStatus.Running)
+            {
+                PoolDelegateRelease.PoolWarm(agent, newest.RootTaskId, now);
+                _logger.LogWarning(
+                    "Pool release sweep pooled delegate '{Name}' warm: task {ShortId} settled {Status} at {At:O} and nothing released it (CARD-0691)",
+                    agent.Name, settled, newest.Status, newest.CompletedAt);
+                acted++;
+                continue;
+            }
+
+            var outcome = await PoolDelegateRelease.KillAndVerifyAsync(
+                _db, agent, sessionId, _sessions.KillAsync, _logger, ct);
+            if (outcome == PoolDelegateRelease.KillOutcome.SessionTerminal)
+            {
+                FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
+                _logger.LogWarning(
+                    "Pool release sweep retired delegate '{Name}': task {ShortId} settled {Status} at {At:O} and nothing released it (CARD-0691)",
+                    agent.Name, settled, newest.Status, newest.CompletedAt);
+            }
+            else
+            {
+                PoolDelegateRelease.MarkIdleForJanitor(agent, now);
+                await PoolDelegateRelease.RecordUnresolvedOnceAsync(_db, agent.Id, sessionId,
+                    $"The pool-release sweep killed session {sessionId} of delegate {agent.Name} (task {settled} settled "
+                    + $"{newest.Status}) and it is still live; the row is kept Idle for the janitor.", now, ct);
+                _logger.LogWarning(
+                    "Pool release sweep kept delegate '{Name}' Idle for the janitor: session {SessionId} is still live after the kill",
+                    agent.Name, sessionId);
+            }
+            acted++;
+        }
+
+        if (acted > 0)
+            await _db.SaveChangesAsync(ct);
+        return acted;
+    }
 
     /// <summary>
     /// Retire warm delegates that outstayed their welcome: idle past the TTL, or beyond the
@@ -6329,15 +6454,21 @@ public sealed class AgentTaskDispatcher
             .Distinct()
             .ToList();
         var liveSessionIds = new HashSet<Guid>();
+        // CARD-0691 D-3: the stale arm removes rows without a kill, so it may only take a row whose
+        // session is terminal. Created and Stopping (a kill that threw) are not.
+        var unfinishedSessionIds = new HashSet<Guid>();
         if (sessionIds.Count > 0)
         {
-            foreach (var id in await _db.AgentSessions.AsNoTracking()
+            foreach (var row in await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id)
-                    && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running))
-                .Select(s => s.Id)
+                    && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
+                        || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping))
+                .Select(s => new { s.Id, s.Status })
                 .ToListAsync(ct))
             {
-                liveSessionIds.Add(id);
+                unfinishedSessionIds.Add(row.Id);
+                if (row.Status is SessionStatus.Starting or SessionStatus.Running)
+                    liveSessionIds.Add(row.Id);
             }
         }
 
@@ -6404,7 +6535,7 @@ public sealed class AgentTaskDispatcher
         {
             if (retire.Contains(row.Agent))
                 continue;
-            if (row.SessionId is Guid sid && liveSessionIds.Contains(sid))
+            if (row.SessionId is Guid sid && unfinishedSessionIds.Contains(sid))
                 continue;
             if (busyAgentIds.Contains(row.Agent.Id))
                 continue;
@@ -6430,7 +6561,12 @@ public sealed class AgentTaskDispatcher
                     "Retiring warm delegate '{Name}': session {Id} reads mid-turn but has been silent since {At:O} (full idle TTL elapsed)",
                     agent.Name, sid, lastTranscript.GetValueOrDefault(sid));
             var idleSince = agent.PoolIdleSince;
-            await KillPooledSessionAsync(agent, ct);
+            if (!await KillPooledSessionAsync(agent, ct))
+            {
+                await KeepAfterUntakenKillAsync(agent, now, ct);
+                acted++;
+                continue;
+            }
             FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
             _logger.LogInformation(
                 "Retired warm delegate '{Name}' from {Dir} (idle since {Since:O})",
@@ -6488,7 +6624,12 @@ public sealed class AgentTaskDispatcher
                 continue;
             if (!await SourcedReleaseIsAuthorizedAsync(task, ct))
                 continue;
-            await KillPooledSessionAsync(agent, ct);
+            if (!await KillPooledSessionAsync(agent, ct))
+            {
+                await KeepAfterUntakenKillAsync(agent, now, ct);
+                acted++;
+                continue;
+            }
             FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
             if (task.VerificationCleanupResidue == "verification_release_unresolved")
                 task.VerificationCleanupResidue = "verification_release_stopped";
@@ -6521,18 +6662,48 @@ public sealed class AgentTaskDispatcher
             && e.CustodyReason is "Exited" or "NeverStarted");
     }
 
-    private async Task KillPooledSessionAsync(Agent agent, CancellationToken ct)
+    /// <summary>
+    /// Kill the delegate's session; true when it is verified terminal afterwards (CARD-0691 D-3), so
+    /// the row may go. A row with no session id has nothing to kill and is terminal.
+    /// </summary>
+    private async Task<bool> KillPooledSessionAsync(Agent agent, CancellationToken ct)
     {
-        if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+        var sessionId = Guid.TryParse(agent.PersistentSessionId, out var sid) ? sid : (Guid?)null;
+        return await PoolDelegateRelease.KillAndVerifyAsync(_db, agent, sessionId, _sessions.KillAsync, _logger, ct)
+            == PoolDelegateRelease.KillOutcome.SessionTerminal;
+    }
+
+    /// <summary>
+    /// CARD-0691 D-3: the janitor's kill did not end the session, so the row — the process's only
+    /// owner — stays. Count the retry and come back at the next TTL; once
+    /// <see cref="DelegationSettings.PoolReleaseMaxKillRetries"/> kills have not taken, record
+    /// <see cref="AgentIncidentKind.DelegateReleaseUnresolved"/> and leave the row Stopped so it
+    /// stops churning while staying visible.
+    /// </summary>
+    private async Task KeepAfterUntakenKillAsync(Agent agent, DateTime now, CancellationToken ct)
+    {
+        var retries = (agent.PoolKillRetries ?? 0) + 1;
+        agent.PoolKillRetries = retries;
+        var sessionId = Guid.TryParse(agent.PersistentSessionId, out var sid) ? sid : (Guid?)null;
+        if (retries < Math.Max(1, _settings.PoolReleaseMaxKillRetries))
+        {
+            PoolDelegateRelease.MarkIdleForJanitor(agent, now);
+            _logger.LogWarning(
+                "Kept pool delegate '{Name}': session {SessionId} is still live after kill {Retry}; retrying at the next idle TTL",
+                agent.Name, sessionId, retries);
             return;
-        try
-        {
-            await _sessions.KillAsync(sessionId, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Could not stop pooled session {SessionId}", sessionId);
-        }
+
+        await PoolDelegateRelease.RecordUnresolvedOnceAsync(_db, agent.Id, sessionId,
+            $"The pool janitor killed session {sessionId} of delegate {agent.Name} {retries} times and it is still "
+            + "live; the row is left Stopped with its session for an operator.", now, ct);
+        agent.Status = AgentStatus.Stopped;
+        agent.PoolIdleSince = null;
+        agent.PoolReservedForRootTaskId = null;
+        agent.UpdatedAt = now;
+        _logger.LogError(
+            "Gave up retiring pool delegate '{Name}': session {SessionId} is still live after {Retries} kills (CARD-0691)",
+            agent.Name, sessionId, retries);
     }
 
     private void FinishPoolRetire(Agent agent, bool hasIncident, DateTime now)
