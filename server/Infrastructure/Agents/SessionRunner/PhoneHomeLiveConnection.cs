@@ -142,10 +142,11 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     public async Task<PhoneHomeFrame> RequestAsync(PhoneHomeOperation operation, object? payload, CancellationToken ct)
     {
-        // CARD-0679 D-5: a request on a connection that already closed is the same typed transport
-        // loss as one the close caught in flight, not a raw WebSocketException from the send.
+        // CARD-0679 D-5: a request on a connection that already closed is a typed transport loss,
+        // not a raw WebSocketException from the send. Every throw before the frame is written is
+        // the never-sent code; only a waiter the close finds after its write is in flight.
         if (Volatile.Read(ref _closedReason) is not null || _socket.State != WebSocketState.Open)
-            throw Closed(operation, Volatile.Read(ref _closedReason) ?? $"socket {_socket.State}");
+            throw NotSent(operation, Volatile.Read(ref _closedReason) ?? $"socket {_socket.State}");
         if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
             or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.KillGeneration
             or PhoneHomeOperation.ClearBuffer or PhoneHomeOperation.Resize)
@@ -159,19 +160,21 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _waiters[id] = waiter;
         // A dispose that ran between the check above and the registration never saw this waiter.
         if (Volatile.Read(ref _closedReason) is { } raced && _waiters.TryRemove(id, out _))
-            throw Closed(operation, raced);
+            throw NotSent(operation, raced);
         Interlocked.Increment(ref _inFlight);
         var frame = new PhoneHomeFrame(
             PhoneHomeFrameKind.Request, Epoch, id, operation,
             payload is null ? null : JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
         try
         {
+            var written = false;
             try
             {
                 await _send.WaitAsync(ct);
                 try
                 {
                     await PhoneHomeFraming.WriteFrameAsync(_socket, frame, _limits.MaxMessageUtf8Bytes, ct);
+                    written = true;
                 }
                 finally
                 {
@@ -180,7 +183,10 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             }
             catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException)
             {
-                throw Closed(operation, Volatile.Read(ref _closedReason) ?? $"send failed: {ex.GetType().Name}");
+                // A close can dispose the send gate between a completed write and its Release: that
+                // frame left, so it is in flight, never the never-sent code the queue refunds.
+                var closedReason = Volatile.Read(ref _closedReason) ?? $"send failed: {ex.GetType().Name}";
+                throw written ? InFlight(operation, closedReason) : NotSent(operation, closedReason);
             }
 
             // CARD-0629: this used to wait on Timeout.Infinite. A runner that never answers one
@@ -329,9 +335,12 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     /// <summary>
     /// CARD-0679 D-5: closing fails every request still waiting with a typed
-    /// <see cref="PhoneHomeProblemTypes.ConnectionClosed"/> naming the runner, epoch, operation and
-    /// <paramref name="reason"/>. It used to cancel them, and a cancellation reads as the caller's
-    /// own token to every <c>catch (OperationCanceledException)</c> on the way up.
+    /// <see cref="PhoneHomeProblemTypes.ConnectionClosedInFlight"/> naming the runner, epoch, operation
+    /// and <paramref name="reason"/>. It used to cancel them, and a cancellation reads as the caller's
+    /// own token to every <c>catch (OperationCanceledException)</c> on the way up. A waiter is only
+    /// ever awaited after its frame was written; a request whose write never happened throws
+    /// <see cref="PhoneHomeProblemTypes.ConnectionClosedBeforeSend"/> itself, so the in-flight code
+    /// is the conservative one (review 914a96fd D1: the runner may have acted).
     /// </summary>
     public async ValueTask DisposeAsync(string reason)
     {
@@ -341,7 +350,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         foreach (var (id, waiter) in _waiters)
         {
             if (_waiters.TryRemove(id, out _))
-                waiter.Reply.TrySetException(Closed(waiter.Operation, closedReason));
+                waiter.Reply.TrySetException(InFlight(waiter.Operation, closedReason));
         }
         try
         {
@@ -353,8 +362,12 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _send.Dispose();
     }
 
-    private PhoneHomeTransportException Closed(PhoneHomeOperation operation, string reason) =>
-        new(PhoneHomeProblemTypes.ConnectionClosed,
+    private PhoneHomeTransportException NotSent(PhoneHomeOperation operation, string reason) =>
+        new(PhoneHomeProblemTypes.ConnectionClosedBeforeSend,
+            $"Phone-home connection to {RunnerId} (epoch {Epoch}) closed before {operation} was sent: {reason}");
+
+    private PhoneHomeTransportException InFlight(PhoneHomeOperation operation, string reason) =>
+        new(PhoneHomeProblemTypes.ConnectionClosedInFlight,
             $"Phone-home connection to {RunnerId} (epoch {Epoch}) closed while {operation} was in flight: {reason}");
 
     private sealed record Waiter(PhoneHomeOperation Operation, TaskCompletionSource<PhoneHomeFrame> Reply);

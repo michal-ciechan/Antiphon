@@ -183,11 +183,17 @@ public static class PhoneHomeProblemTypes
     public const string RequestTimeout = "phone_home_request_timeout";
 
     /// <summary>
-    /// CARD-0679 D-5: the connection a request was sent on (or was about to be sent on) closed
-    /// before its reply arrived. A transport loss, never a caller cancellation: the runner may or
-    /// may not have acted, and the next connection is the place to find out.
+    /// CARD-0679 D-5: the connection closed before the request was written, so the runner never
+    /// saw it. A transport loss, never a caller cancellation, and safe to treat as unreachable.
     /// </summary>
-    public const string ConnectionClosed = "phone_home_connection_closed";
+    public const string ConnectionClosedBeforeSend = "phone_home_connection_closed_before_send";
+
+    /// <summary>
+    /// CARD-0679 D-5: the connection closed after the request was written and before its reply
+    /// arrived. The runner may have acted on it (review 914a96fd D1: an Input it may already have
+    /// typed), so this is never "unreachable"; the next connection is the place to find out.
+    /// </summary>
+    public const string ConnectionClosedInFlight = "phone_home_connection_closed_in_flight";
 
     /// <summary>
     /// CARD-0679 D-9: a Launch for a session id the runner already holds live under a different

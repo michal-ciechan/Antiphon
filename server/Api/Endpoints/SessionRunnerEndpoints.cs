@@ -165,7 +165,7 @@ public static class SessionRunnerEndpoints
             }
             finally
             {
-                // CARD-0679 D-5: every waiter fails with phone_home_connection_closed naming this reason.
+                // CARD-0679 D-5: every waiter fails with phone_home_connection_closed_in_flight naming this reason.
                 await connection.DisposeAsync(connection.LastDisconnectReason ?? reason);
             }
 

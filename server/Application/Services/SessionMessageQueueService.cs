@@ -2843,9 +2843,12 @@ public sealed partial class SessionMessageQueueService
         || ex is ServiceUnavailableException { Code: var code }
             && (code == PhoneHomeProblemTypes.Unavailable
                 || string.Equals(code, "phone_home_unavailable", StringComparison.Ordinal))
-        // CARD-0679 D-5: the connection closed under the request. A timeout is deliberately not
-        // here: a request that timed out may have reached the runner.
-        || ex is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosed };
+        // CARD-0679 D-5: the connection closed before the request was written, so the runner never
+        // saw it. A close with the request IN FLIGHT is deliberately not here, nor is a timeout: the
+        // runner may have typed it, and refunding the attempt clears the floor the next flush's
+        // late-confirm reads, so the body would be typed twice (review 914a96fd D1). Those fall to
+        // the transport-failure revert, which keeps the attempt and its baseline.
+        || ex is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosedBeforeSend };
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
