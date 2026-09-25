@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { expect, it, vi } from 'vitest'
 import type { AgentTaskDetailDto, AgentTaskSummaryDto } from '../../api/agentTasks'
-import { renderWithProviders, screen } from '../../test/utils'
+import { renderWithProviders, screen, userEvent } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { TaskDetailBody } from './TaskDetailBody'
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
@@ -59,6 +59,28 @@ function detail(): AgentTaskDetailDto {
     events: [{ type: 'Created', modelLevel: 'Frontier', detail: 'Created.', at: '2026-02-03T09:00:00Z' }],
   }
 }
+
+it('shows the frozen requirement separately from the observed host', async () => {
+  const task = {
+    ...detail(),
+    summary: summary({
+      status: 'Queued',
+      requiredPlatform: 'Any',
+      runnerId: 'server2',
+      observedPlatform: 'linux',
+      requirementSource: 'Default',
+    }),
+  }
+  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
+  renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
+  const badge = await screen.findByTestId('placement')
+  expect(badge).toHaveTextContent('Any · server2')
+  expect(badge).not.toHaveTextContent('linux')
+  await userEvent.hover(badge)
+  expect(await screen.findByText(/Requirement: Any/)).toBeInTheDocument()
+  expect(screen.getByText(/Observed: linux/)).toBeInTheDocument()
+  expect(screen.getByText(/Queued; this task has not executed/)).toBeInTheDocument()
+})
 
 it('shows session liveness under a failed task', async () => {
   const task: AgentTaskDetailDto = {

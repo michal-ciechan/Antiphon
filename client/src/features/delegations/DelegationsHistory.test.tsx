@@ -202,6 +202,23 @@ describe('DelegationsHistory', () => {
     expect(screen.getByText('Fix the flaky channel test')).toBeInTheDocument()
   })
 
+  it('shows a requirement without treating the observed host as execution', async () => {
+    serveTasks([summary({
+      id: ROOT_ID,
+      title: 'Any on linux',
+      status: 'Succeeded',
+      requiredPlatform: 'Any',
+      runnerId: 'server2',
+      observedPlatform: 'linux',
+      requirementSource: 'Default',
+      completedAt: '2026-08-07T10:20:00Z',
+    })])
+    renderWithProviders(<DelegationsHistory />)
+    const row = await screen.findByTestId(`history-row-${shortId(ROOT_ID)}`)
+    expect(within(row).getByTestId('placement')).toHaveTextContent('Any · server2')
+    expect(within(row).getByTestId('placement')).not.toHaveTextContent('linux')
+  })
+
   it('shows a bound CARD chip and a child row’s root title', async () => {
     serveTasks()
     renderWithProviders(<DelegationsHistory />)

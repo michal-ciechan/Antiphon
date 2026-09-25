@@ -62,7 +62,7 @@ describe('TaskChip', () => {
   })
 
   it('shows Any on a Linux host without claiming the task executed', () => {
-    renderWithProviders(<TaskChip task={{ ...task, status: 'Queued', requiredPlatform: 'Any', runnerId: 'server2', observedPlatform: 'linux', requirementSource: 'GlobalDefault' }} onOpen={() => {}} />)
+    renderWithProviders(<TaskChip task={{ ...task, status: 'Queued', requiredPlatform: 'Any', runnerId: 'server2', observedPlatform: 'linux', requirementSource: 'Default', runnerSelectionSource: 'GlobalDefault' }} onOpen={() => {}} />)
     expect(screen.getByTestId('placement')).toHaveTextContent('Any · server2')
     expect(screen.queryByText(/executed/i)).not.toBeInTheDocument()
   })

@@ -115,6 +115,26 @@ function agent(overrides: Partial<AgentSummaryDto> = {}): AgentSummaryDto {
 }
 
 describe('TaskCard', () => {
+  it('shows a delegation requirement without replacing it with the observed host', () => {
+    renderWithProviders(
+      <TaskCard
+        item={item({
+          source: 'Delegation',
+          identifier: '15c3cb72',
+          state: 'Queued',
+          group: 'Next',
+          requiredPlatform: 'Windows',
+          runnerId: null,
+          observedPlatform: 'linux',
+        })}
+        onOpen={() => {}}
+      />,
+    )
+    const badge = screen.getByTestId('placement')
+    expect(badge).toHaveTextContent('Windows · Desktop')
+    expect(badge).not.toHaveTextContent('linux')
+  })
+
   it('shows the identifier and a Card or Task chip', () => {
     const { rerender } = renderWithProviders(<TaskCard item={item()} onOpen={() => {}} />)
     expect(screen.getByText('CARD-0002')).toBeInTheDocument()

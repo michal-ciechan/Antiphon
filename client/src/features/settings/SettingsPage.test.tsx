@@ -61,6 +61,7 @@ describe('SettingsPage', () => {
     let chainRequests = 0
     let pinRequests = 0
     let usageRequests = 0
+    let runnerDefaultRequests = 0
 
     server.use(
       http.get('/api/settings/templates', () => {
@@ -81,6 +82,14 @@ describe('SettingsPage', () => {
         usageRequests += 1
         return HttpResponse.json([])
       }),
+      http.get('/api/runner-defaults', () => {
+        runnerDefaultRequests += 1
+        return HttpResponse.json({
+          revision: 1, globalRunnerId: null, kindDefaults: [], updatedAt: '2026-09-25T00:00:00Z',
+          lastReason: null, lastProvenance: null, lastCallerTaskId: null,
+          supportedKinds: ['Grok', 'ClaudeCode', 'Codex'], unresolvedReferences: [],
+        })
+      }),
     )
 
     window.history.pushState({}, '', '/settings')
@@ -90,6 +99,7 @@ describe('SettingsPage', () => {
     expect(chainRequests).toBe(0)
     expect(pinRequests).toBe(0)
     expect(usageRequests).toBe(0)
+    expect(runnerDefaultRequests).toBe(0)
 
     await userEvent.click(screen.getByRole('tab', { name: /routing/i }))
     await waitFor(() => expect(screen.getByTestId('routing-settings-tab')).toBeInTheDocument())
@@ -97,6 +107,7 @@ describe('SettingsPage', () => {
       expect(chainRequests).toBe(1)
       expect(pinRequests).toBe(1)
       expect(usageRequests).toBe(1)
+      expect(runnerDefaultRequests).toBe(1)
     })
   })
 

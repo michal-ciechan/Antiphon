@@ -281,6 +281,15 @@ describe('RoutingSettingsTab', () => {
     expect(screen.getByTestId('routing-matrix-row-Code')).toHaveTextContent('Required Human pin: Code')
   })
 
+  it('a runner-defaults failure leaves the matrix mounted', async () => {
+    serveRouting()
+    server.use(http.get('/api/runner-defaults', () => new HttpResponse(null, { status: 500 })))
+    renderWithProviders(<RoutingSettingsTab />)
+    expect(await screen.findByRole('heading', { name: 'Role × complexity matrix' })).toBeInTheDocument()
+    expect(await screen.findByText(/Could not load runner defaults/)).toBeInTheDocument()
+    expect(screen.getByTestId('routing-matrix-row-Code')).toBeInTheDocument()
+  })
+
   it('renders the three headed sections with availability, usage, and the matrix', async () => {
     serveRouting()
     renderWithProviders(<RoutingSettingsTab />)

@@ -118,6 +118,11 @@ describe('CardHistory', () => {
     expect(screen.getByTestId('superseded-description-7')).not.toHaveTextContent('C408_PRIVATE_OLD')
   })
 
+  it('shows a superseded default platform on a content edit', async () => {
+    renderHistory([revision({ id: 'r8', revisionNumber: 8, kind: 'ContentEdit', requiredPlatform: 'Linux', reason: 'linux lane' })])
+    expect(await screen.findByTestId('revision-platform')).toHaveTextContent('Default task platform was Linux')
+  })
+
   it('renders every kind, in the order served, off one sequence', async () => {
     renderHistory(interleaved)
 

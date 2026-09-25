@@ -14,5 +14,7 @@ describe('sessionRunners', () => {
     await waitFor(() => expect(view.result.current.data).toHaveLength(2))
     expect(view.result.current.data?.[1].occupied).toBeNull()
     expect(view.result.current.data?.[0].capacityKind).toBe('delegatedTasks')
+    expect(view.result.current.data?.[0].platform).toBe('windows')
+    expect(view.result.current.data?.[1].platform).toBeNull()
   })
 })

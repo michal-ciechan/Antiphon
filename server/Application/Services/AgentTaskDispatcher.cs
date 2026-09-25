@@ -4187,24 +4187,25 @@ public sealed class AgentTaskDispatcher
 
         // Reuse before spawn: a warm delegate already sitting in this directory takes the task
         // without a cold start. Shared tasks only — a worktree task's directory doesn't exist yet.
+        // CARD-0710: classify before reuse mutates the warm agent or the task.
         if (claimed.Workspace == WorkspaceMode.Shared)
         {
+            if (await ClassifyRequiredPlatformAsync(claimed, ct) is { } reuseGate)
+            {
+                if (reuseGate.Block)
+                {
+                    await BlockAsync(claimed, reuseGate.Detail, ct);
+                    await transaction.CommitAsync(ct);
+                    return DispatchOneResult.NotClaimed;
+                }
+
+                await transaction.RollbackAsync(ct);
+                return DispatchOneResult.HeldForAgent;
+            }
+
             switch (await TryReuseWarmAgentAsync(claimed, now, ct))
             {
                 case ReuseOutcome.Reused:
-                    if (await ClassifyRequiredPlatformAsync(claimed, ct) is { } reuseGate)
-                    {
-                        if (reuseGate.Block)
-                        {
-                            await BlockAsync(claimed, reuseGate.Detail, ct);
-                            await transaction.CommitAsync(ct);
-                            return DispatchOneResult.NotClaimed;
-                        }
-
-                        await transaction.RollbackAsync(ct);
-                        return DispatchOneResult.HeldForAgent;
-                    }
-
                     await _db.SaveChangesAsync(ct);
                     await transaction.CommitAsync(ct);
                     await DeliverReuseMessagesAsync(claimed, ct);
