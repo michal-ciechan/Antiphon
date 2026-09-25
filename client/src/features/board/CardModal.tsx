@@ -143,6 +143,9 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
                 </Badge>
               )}
               <Badge variant="light">{stateLabel(card.status)}</Badge>
+              <Badge variant="outline" data-testid="card-default-platform">
+                Default task platform: {card.requiredPlatform ?? 'Any'}
+              </Badge>
               <CardAxisBadges card={card} />
               {activeSessionCount > 0 && (
                 <Badge color="green" variant="light">

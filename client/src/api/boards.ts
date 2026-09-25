@@ -114,6 +114,8 @@ export interface CardDto {
   externalIssue?: ExternalIssueDto | null
   /** True only when the summary representation cut card text. Full-card responses omit it. */
   hasMore?: boolean
+  /** CARD-0710. Default task platform. Any unless edited. */
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux'
 }
 
 export interface CardListDto {
@@ -183,6 +185,8 @@ export interface CardRevisionDto {
   terminalReason: string | null
   /** Populated only on Reopen rows — when the superseded close happened. */
   completedAt: string | null
+  /** CARD-0710. Superseded default on a content edit. Null on older rows. */
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux' | null
 }
 
 /**
@@ -342,6 +346,8 @@ export interface UpdateCardContentRequest {
   /** CARD-0544. Omitted = unchanged. */
   codeVerificationPolicy?: CardVerificationPolicy | null
   reviewVerificationPolicy?: CardVerificationPolicy | null
+  /** CARD-0710. Omitted = unchanged. Explicit Any resets the default. */
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux' | null
 }
 
 /** Archive is what "delete" means for a card: the row stays, so no identifier ever dangles. */

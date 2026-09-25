@@ -32,17 +32,20 @@ public sealed class RunnerDefaultSettingsService
     private readonly DelegationSettings _settings;
     private readonly TimeProvider _clock;
     private readonly IEventBus? _events;
+    private readonly ISessionRunnerDirectory? _runners;
 
     public RunnerDefaultSettingsService(
         AppDbContext db,
         IOptions<DelegationSettings> settings,
         TimeProvider clock,
-        IEventBus? events = null)
+        IEventBus? events = null,
+        ISessionRunnerDirectory? runners = null)
     {
         _db = db;
         _settings = settings.Value;
         _clock = clock;
         _events = events;
+        _runners = runners;
     }
 
     public async Task<RunnerDefaultSnapshot> EnsureInitializedAsync(CancellationToken ct)
@@ -133,6 +136,8 @@ public sealed class RunnerDefaultSettingsService
                 nameof(request.KindDefaults), "A kind default cannot be blank.")))
             .OrderBy(k => k.AgentKind)
             .ToList();
+        if (_runners is not null)
+            RejectNewUnknown(row, global, kinds);
         if (Same(row, global, kinds))
             return await ProjectAsync(ct);
 
@@ -227,8 +232,13 @@ public sealed class RunnerDefaultSettingsService
         var kinds = row.KindDefaults.OrderBy(k => k.AgentKind).Select(k => new RunnerKindDefaultDto(
             k.AgentKind, k.RunnerId, row.GlobalRunnerId, "KindDefault")).ToList();
         var unresolved = new List<string>();
-        if (row.GlobalRunnerId is { } global && !RunnerRequestIntent.IsDesktopAlias(global))
-            unresolved.Add(global);
+        if (_runners is not null)
+        {
+            var known = KnownIds();
+            NoteUnresolved(unresolved, known, row.GlobalRunnerId);
+            foreach (var kind in row.KindDefaults)
+                NoteUnresolved(unresolved, known, kind.RunnerId);
+        }
         return new RunnerDefaultsDto(
             row.Revision,
             row.GlobalRunnerId,
@@ -264,6 +274,56 @@ public sealed class RunnerDefaultSettingsService
 
         if (errors.Count > 0)
             throw new ValidationException(errors);
+    }
+
+    private void RejectNewUnknown(
+        RunnerRoutingSettings row,
+        string? global,
+        List<(AgentKind AgentKind, string RunnerId)> kinds)
+    {
+        var known = KnownIds();
+        var previous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (row.GlobalRunnerId is { } oldGlobal)
+            previous.Add(oldGlobal);
+        foreach (var old in row.KindDefaults)
+            previous.Add(old.RunnerId);
+        RequireKnown(known, previous, global);
+        foreach (var kind in kinds)
+            RequireKnown(known, previous, kind.RunnerId);
+    }
+
+    private HashSet<string> KnownIds()
+    {
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            RunnerPlatformWire.DesktopId,
+            PhoneHomeProtocol.LocalRunnerId,
+        };
+        if (_runners is not null)
+        {
+            foreach (var id in _runners.KnownRunnerIds)
+                known.Add(id);
+        }
+
+        return known;
+    }
+
+    private static void RequireKnown(HashSet<string> known, HashSet<string> previous, string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || known.Contains(id) || previous.Contains(id))
+            return;
+        throw new ValidationException(
+            "globalRunnerId",
+            $"Runner '{id}' is not in the catalogue.",
+            "runner_unknown");
+    }
+
+    private static void NoteUnresolved(List<string> unresolved, HashSet<string> known, string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || RunnerRequestIntent.IsDesktopAlias(id) || known.Contains(id))
+            return;
+        if (!unresolved.Contains(id, StringComparer.OrdinalIgnoreCase))
+            unresolved.Add(id);
     }
 
     private static string? CanonicalWrite(string? runnerId)

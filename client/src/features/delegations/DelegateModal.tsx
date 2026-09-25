@@ -4,6 +4,7 @@ import {
   Group,
   Modal,
   SegmentedControl,
+  Select,
   Switch,
   Stack,
   Text,
@@ -23,7 +24,10 @@ import {
   type WorkspaceMode,
 } from '../../api/agentTasks'
 import { getApiErrorMessage } from '../../api/client'
+import { useRunnerDefaults } from '../../api/runnerDefaults'
+import { useSessionRunners } from '../../api/sessionRunners'
 import { TierBadge } from './TaskChip'
+import type { RequiredPlatformName } from './placement'
 
 export interface DelegatePrefill {
   /** Seeds the goal — the files view passes the path it is looking at. */
@@ -32,6 +36,8 @@ export interface DelegatePrefill {
   workingDirectory?: string
   /** Declares the files this task owns; intersecting scopes are serialised by the dispatcher. */
   scope?: string
+  /** Shown as the inherited platform. Omitted means the server's card or Any. Not sent by itself. */
+  cardDefaultPlatform?: RequiredPlatformName
 }
 
 /**
@@ -69,6 +75,10 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const [scope, setScope] = useState(prefill?.scope ?? '')
   const [level, setLevel] = useState<AgentModelLevel | null>(null)
   const [denyEdits, setDenyEdits] = useState(true)
+  const [platformChoice, setPlatformChoice] = useState<'inherit' | RequiredPlatformName>('inherit')
+  const [runnerChoice, setRunnerChoice] = useState('automatic')
+  const runners = useSessionRunners()
+  const defaults = useRunnerDefaults()
 
   // A sub-orchestrator decomposes, which is the expensive kind of thinking — the server floors it
   // at High, so showing anything cheaper here would be a lie.
@@ -76,8 +86,21 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const effectiveLevel: AgentModelLevel =
     level ?? (kind === 'Orchestrator' && (roleLevel === 'Medium' || roleLevel === 'Low') ? 'High' : roleLevel)
 
+  const catalogue = runners.data ?? []
+  const selectedRunner = catalogue.find((row) => row.runnerId === runnerChoice)
+  const effectivePlatform = platformChoice === 'inherit' ? prefill?.cardDefaultPlatform : platformChoice
+  const runnerPlatform = runnerChoice === 'desktop' ? 'windows' : selectedRunner?.platform ?? null
+  const platformConflict =
+    runnerChoice !== 'automatic'
+    && (effectivePlatform === 'Windows' || effectivePlatform === 'Linux')
+    && runnerPlatform !== null
+    && runnerPlatform !== effectivePlatform.toLowerCase()
+  const inheritedHint = defaults.data
+    ? `Automatic uses ${defaults.data.globalRunnerId ?? 'the built-in fallback'} unless a kind override or a platform requirement says otherwise.`
+    : 'Automatic leaves the runner to the server.'
+
   const submit = () => {
-    if (!goal.trim()) return
+    if (!goal.trim() || platformConflict) return
     create.mutate(
       {
         goal: goal.trim(),
@@ -88,6 +111,8 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
         workingDirectory: directory.trim() || null,
         scope: scope.trim() || null,
         denyDirectEdits: kind === 'Orchestrator' ? denyEdits : null,
+        ...(platformChoice === 'inherit' ? {} : { requiredPlatform: platformChoice }),
+        ...(runnerChoice === 'automatic' ? {} : { runnerId: runnerChoice }),
       },
       {
         onSuccess: (task) => {
@@ -245,11 +270,52 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
         onChange={(event) => setScope(event.currentTarget.value)}
       />
 
+      <Select
+        label="Platform"
+        description={
+          prefill?.cardDefaultPlatform
+            ? `Inherit card default (${prefill.cardDefaultPlatform}). The server still decides the host.`
+            : 'Inherit leaves the card or follow-up requirement. Explicit Any resets it.'
+        }
+        value={platformChoice}
+        onChange={(value) => setPlatformChoice((value as 'inherit' | RequiredPlatformName) ?? 'inherit')}
+        data={[
+          { value: 'inherit', label: prefill?.cardDefaultPlatform ? `Inherit card default (${prefill.cardDefaultPlatform})` : 'Inherit card default' },
+          { value: 'Any', label: 'Any' },
+          { value: 'Windows', label: 'Windows' },
+          { value: 'Linux', label: 'Linux' },
+        ]}
+        data-testid="delegate-platform"
+      />
+
+      <Select
+        label="Runner"
+        description={inheritedHint}
+        value={runnerChoice}
+        onChange={(value) => setRunnerChoice(value ?? 'automatic')}
+        data={[
+          { value: 'automatic', label: 'Automatic' },
+          { value: 'desktop', label: 'Desktop' },
+          ...catalogue.map((row) => ({
+            value: row.runnerId,
+            label: `${row.displayName} · ${row.platform ?? 'platform unknown'} · ${
+              row.occupied === null || row.capacity === null ? 'occupancy unknown' : `${row.occupied}/${row.capacity}`
+            }${row.available ? '' : ' · offline'}`,
+          })),
+        ]}
+        data-testid="delegate-runner"
+      />
+      {platformConflict && (
+        <Text size="sm" c="danger" data-testid="delegate-platform-conflict">
+          {runnerChoice} is {runnerPlatform} and cannot run a {effectivePlatform} task. Choose a matching runner, or Automatic.
+        </Text>
+      )}
+
       <Group justify="flex-end">
         <Button variant="subtle" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} loading={create.isPending} disabled={!goal.trim()}>
+        <Button onClick={submit} loading={create.isPending} disabled={!goal.trim() || platformConflict}>
           Delegate
         </Button>
       </Group>

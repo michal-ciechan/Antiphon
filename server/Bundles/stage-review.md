@@ -19,4 +19,6 @@ ordinaryScopeCompleted: <Full|Interim|None>
 
 Full only when the complete required selection executed. The caller lands that original Code owner with `-ExpectedSourceSha` from this evidence, never the Review or a follow-up task.
 
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location in the prompt, and do not always pass -Runner server2. Omit -Runner unless the task must pin one host. Pass -Platform Windows when a checkpoint needs Windows junction or file-sharing behavior, ConPTY/Herdr, Windows path or CRLF handling, or a Windows-only E2E fixture. Pass -Platform Linux for Linux-only evidence. Any is only when every required check can run on any admitted host; it is not shorthand for both. CARD-0710 portable rows stay on the server2 lane. CP-13 and CP-14 are the Windows rows and are commissioned with -Platform Windows.
+
 next: land when there are no defects and this was a Final Review; review (Final) when a clean Interim; code when there are defects (name them in `handoff:`); decide when a human choice blocks.

@@ -134,6 +134,12 @@ param(
     [ValidateSet('FullOnly', 'AllowInterim')]
     [string]$ReviewVerificationPolicy,
 
+    # CARD-0710. Default task platform for new tasks bound to this card. Omitted leaves the
+    # current value. Explicit Any resets it. Create and edit only.
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Any', 'Windows', 'Linux')]
+    [string]$Platform,
+
     [Parameter(ParameterSetName = 'Verb')]
     [ValidateSet('Normal', 'Soon', 'Now')]
     [string]$Urgency,
@@ -398,6 +404,7 @@ function Write-CardLine {
     if ($null -ne $TheCard.position) { $rankBit = "rank {0} pos {1}" -f $TheCard.rank, $TheCard.position }
     Write-Output ("{0}  {1}  {2}/{3}  {4} ({5})  {6}{7}" -f `
             $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $rankBit, $prov, $TheCard.title, $labels)
+    if ($TheCard.requiredPlatform) { Write-Output ("platform    {0}" -f $TheCard.requiredPlatform) }
 }
 
 function Write-CardFileStatus {
@@ -583,6 +590,7 @@ switch ($Verb) {
         if ($PSBoundParameters.ContainsKey('Urgency')) { $body['urgency'] = $Urgency }
         if (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
         if ($Labels) { $body['labels'] = @($Labels) }
+        if ($PSBoundParameters.ContainsKey('Platform')) { $body['requiredPlatform'] = $Platform }
 
         $created = Invoke-Antiphon -Method POST -Path "/api/boards/$boardId/cards" -Body $body
         if ($Json) { $created | ConvertTo-Json -Depth 8; return }
@@ -621,9 +629,10 @@ switch ($Verb) {
         if ($PSBoundParameters.ContainsKey('Alias')) { $body['alias'] = $Alias }
         if ($PSBoundParameters.ContainsKey('CodeVerificationPolicy')) { $body['codeVerificationPolicy'] = $CodeVerificationPolicy }
         if ($PSBoundParameters.ContainsKey('ReviewVerificationPolicy')) { $body['reviewVerificationPolicy'] = $ReviewVerificationPolicy }
+        if ($PSBoundParameters.ContainsKey('Platform')) { $body['requiredPlatform'] = $Platform }
         if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
         if ($body.Count -le 2) {
-            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Alias, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels, -CodeVerificationPolicy, -ReviewVerificationPolicy.'
+            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Alias, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels, -CodeVerificationPolicy, -ReviewVerificationPolicy, -Platform.'
             exit 1
         }
 

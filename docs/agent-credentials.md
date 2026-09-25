@@ -214,6 +214,10 @@ the default browser. Redeeming it sets `antiphon-operator-dashboard` (`HttpOnly`
 SHA-256 hashes of nonces and session ids, in memory; a restart ends every dashboard session. The script prints
 neither the token nor the link.
 
+Runner defaults (`/api/runner-defaults`) store a runner id, a reason, and a revision. They do not
+store provider secrets, executable paths, or phone-home shared secrets. `Delegation:DefaultRunnerId`
+is an import input only: after revision 1 exists, placement does not read it again.
+
 ### server2 runner credentials (CARD-0604)
 
 Two secrets live only on server2 and never enter Antiphon's stores, the desktop scripts, the image

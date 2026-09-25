@@ -87,8 +87,8 @@ public sealed class PhoneHomeLaunchPolicy
 
     /// <summary>
     /// The kinds a runner takes without anyone having named it: default placement (CARD-0659) and
-    /// every automatic or rerouted kind move onto a runner-bound task. CARD-0660 D-10 keeps Codex
-    /// out of this set until its default-placement round (S7).
+    /// every automatic or rerouted kind move onto a runner-bound task. Named agents stay here.
+    /// Codex workers use <see cref="IsWorkerAdmittedKind"/> and are not named agents.
     /// </summary>
     public static bool IsAdmittedKind(AgentKind kind) => kind is AgentKind.Grok or AgentKind.ClaudeCode;
 

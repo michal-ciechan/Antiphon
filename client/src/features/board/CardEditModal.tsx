@@ -15,7 +15,7 @@ interface CardEditModalProps {
 }
 
 /** Which 422 keys this dialog has an input for. Anything else falls through to a notification. */
-const EDITABLE_FIELDS = ['Title', 'Description', 'Alias', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason', 'privateNotes', 'cardFileVisibility']
+const EDITABLE_FIELDS = ['Title', 'Description', 'Alias', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason', 'privateNotes', 'cardFileVisibility', 'requiredPlatform']
 
 /** The comma-separated labels field, both ways. Consistent with the create dialog, deliberately. */
 function parseLabels(value: string): string[] {
@@ -58,6 +58,7 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
   const [clearDueAt, setClearDueAt] = useState(false)
   const [labels, setLabels] = useState(card.labels.join(', '))
   const [reason, setReason] = useState('')
+  const [platform, setPlatform] = useState<'Any' | 'Windows' | 'Linux'>(card.requiredPlatform ?? 'Any')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   const titleOverLimit = title.length > CARD_LIMITS.title
@@ -92,6 +93,7 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
           reason: reason.trim(),
           ...(notesDraft === undefined ? {} : { privateNotes: notesDraft }),
           ...(visibility === (card.cardFileVisibility ?? 'Inherit') ? {} : { cardFileVisibility: visibility }),
+          ...(platform === (card.requiredPlatform ?? 'Any') ? {} : { requiredPlatform: platform }),
           title: title.trim() === card.title ? null : title.trim(),
           description: description.trim() === card.description ? null : description.trim(),
           alias: aliasTrimmed === (card.alias ?? '') ? null : aliasTrimmed,
@@ -135,6 +137,18 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
     >
       <Stack>
         <CardFilePolicyText status={card.cardFileStatus} />
+        <Select
+          label="Default task platform"
+          description="Copied onto each new task. A Windows task can still bypass a Linux runner preference. Editing this does not move a task that already exists."
+          value={platform}
+          onChange={(value) => setPlatform((value as 'Any' | 'Windows' | 'Linux') ?? 'Any')}
+          data={[
+            { value: 'Any', label: 'Any' },
+            { value: 'Windows', label: 'Windows' },
+            { value: 'Linux', label: 'Linux' },
+          ]}
+          data-testid="card-platform"
+        />
         <Text size="xs">Title, description, outcome and archive reasons are public fields on eligible cards.</Text>
         <Select label="Card-file visibility" data={['Inherit', 'Private', 'Public']} value={visibility} error={fieldErrors.cardFileVisibility} onChange={(v) => setVisibility((v as CardFileVisibility) ?? 'Inherit')} />
         <Button variant="subtle" onClick={() => setNotesOpen(!notesOpen)}>{notesOpen ? 'Hide private notes' : 'Edit private notes'}</Button>

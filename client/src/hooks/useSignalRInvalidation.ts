@@ -158,6 +158,10 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: () => [['channels']],
   },
   {
+    event: 'RunnerDefaultsChanged',
+    getKeys: () => [['runnerDefaults'], ['runnerDefaultRevisions']],
+  },
+  {
     event: 'ScheduleChanged',
     getKeys: (p) => [
       ['schedules'],

@@ -649,6 +649,11 @@ switch ($PSCmdlet.ParameterSetName) {
         $task = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/$Status"
         $s = $task.summary
         Write-Output ("{0}  {1}  {2}/{3}  {4}" -f $s.status, $s.title, $s.kind, $s.role, $s.modelLevel)
+        if ($s.requiredPlatform) {
+            $placed = if ($s.runnerId) { $s.runnerId } else { 'desktop' }
+            $observed = if ($s.observedPlatform) { $s.observedPlatform } else { 'platform unknown' }
+            Write-Output ("platform: {0} on {1}; observed {2}" -f $s.requiredPlatform, $placed, $observed)
+        }
         Write-Output "Delegate: $($s.status)"
         if ($task.sourceLandingOperationId) {
             Write-Output "Verification source: $($task.sourceLandingOperationId); commit $($task.sourceLandingSha)"
@@ -1110,6 +1115,10 @@ switch ($PSCmdlet.ParameterSetName) {
         else {
             Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
                     $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
+            if ($created.requiredPlatform) {
+                $placed = if ($created.runnerId) { $created.runnerId } else { 'desktop' }
+                Write-Output ("  platform: {0} on {1}" -f $created.requiredPlatform, $placed)
+            }
             if ($created.titleDiagnosisQueued) {
                 Write-Output '  title: pending (antiphon-diagnose will set it from the goal; pass -Title to set it yourself)'
             }

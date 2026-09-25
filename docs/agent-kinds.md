@@ -14,6 +14,13 @@ CARD-0490 adds an opt-in phone-home Linux Grok lane: one named cardless PtyHost 
 container, registered over an outbound WebSocket. Local Windows sessions keep `SessionRunner:BaseUrl`.
 See [testing-and-build.md](testing-and-build.md) (CARD-0490).
 
+CARD-0710 adds a task `requiredPlatform` (`Any`, `Windows`, `Linux`) and runtime runner defaults.
+A supported worker (Grok, Claude Code, or Codex) with no explicit runner follows the per-kind
+default, then the global default, then the built-in fallback. Codex workers are included.
+Named Codex agents, Codex orchestrators, specialists, and Codex SourceLanding stay refused.
+`Delegation:DefaultRunnerId` is import-only after the first runtime revision. Windows evidence
+is commissioned with `-Platform Windows`; it is not inferred from the runner's name.
+
 CARD-0604 widens that lane on the production `server2` runner from one pinned agent to a bounded
 pool: **runner-bound named agents** (`POST /api/agents` with `runnerId`) may be Grok, Claude Code, or
 **Raw** with an image-owned executable from the allow-list (`/bin/sh`, `/bin/bash`,

@@ -47,6 +47,7 @@ import type { AgentKind } from '../../api/boards'
 import { useModelAvailability } from '../../api/modelAvailability'
 import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
 import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegate'
+import { PlacementBadge } from './placement'
 import { TierBadge } from './TaskChip'
 import { BlockedQuestionCard } from './BlockedQuestionCard'
 import {
@@ -164,6 +165,13 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         <Badge size="sm" variant="default">
           {summary.role.toLowerCase()}
         </Badge>
+        <PlacementBadge
+          platform={summary.requiredPlatform}
+          runnerId={summary.runnerId}
+          source={summary.requirementSource}
+          observed={summary.observedPlatform}
+          status={summary.status}
+        />
         <Badge size="sm" variant="default">
           {WORKSPACE_LABEL[summary.workspace]}
         </Badge>

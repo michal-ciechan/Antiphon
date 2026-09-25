@@ -360,6 +360,8 @@ public sealed class AgentTaskService
         string? explicitModeWarning = null;
         string? continuationSha = null;
         var liveFollowUp = false;
+        var retainBoundRunner = false;
+        string? retainedRunnerId = null;
         CommitOnSettlePolicy? priorCommitOnSettle = null;
 
         // CARD-0291: a standing agent named by -Agent resolves HERE, before the CARD-0140 pin
@@ -422,6 +424,8 @@ public sealed class AgentTaskService
                     var tip = await RequireFrozenContinuationTipAsync(prior, caller, ct);
                     var shortId = DelegationReportFormatter.Short(prior.Id);
                     continuationSha = tip;
+                    retainBoundRunner = true;
+                    retainedRunnerId = prior.RunnerId;
                     followUpMessage = $"continuation of {shortId} at {tip} as Worktree";
                     request = request with
                     {
@@ -446,6 +450,8 @@ public sealed class AgentTaskService
             else
             {
                 liveFollowUp = true;
+                retainBoundRunner = true;
+                retainedRunnerId = string.IsNullOrWhiteSpace(followAgent.RunnerId) ? prior.RunnerId : followAgent.RunnerId;
                 skipInheritedSnapshot = true;
                 if (launchEnvOverride.Count > 0)
                 {
@@ -779,6 +785,8 @@ public sealed class AgentTaskService
             if (pinned is { IsPoolDelegate: false })
             {
                 skipInheritedSnapshot = true;
+                retainBoundRunner = true;
+                retainedRunnerId = pinned.RunnerId;
                 pinnedStandingAgent = pinned;
                 if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
                 {
@@ -1180,7 +1188,7 @@ public sealed class AgentTaskService
             if (workspace != WorkspaceMode.Worktree)
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must use a Worktree workspace.");
             // CARD-0660 D-7/D-10: an explicitly named runner also takes Codex, as an ordinary Worker
-            // task. The default placement below still keeps Codex on the desktop until S7.
+            // task. Automatic placement uses the same worker set, filtered by the frozen platform.
             if (!PhoneHomeLaunchPolicy.IsExplicitRunnerTaskKind(agentKind))
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must be Grok, Claude Code or Codex.");
             if (agentKind == AgentKind.Codex && request.Kind != AgentTaskKind.Worker)
@@ -1223,6 +1231,17 @@ public sealed class AgentTaskService
         var runnerDecision = _defaultRunner.Decide(runnerIntent, placementShape);
         if (runnerIntent.Source == RunnerRequestSource.Unset && runnerDecision?.SelectedRunnerId is { } selectedRunner)
             remoteRunnerId = selectedRunner;
+        if (retainBoundRunner && runnerIntent.Source == RunnerRequestSource.Unset)
+        {
+            remoteRunnerId = string.IsNullOrWhiteSpace(retainedRunnerId) ? null : retainedRunnerId;
+            runnerDecision = new DefaultRunnerDecision(
+                remoteRunnerId,
+                "existing-process",
+                "unset",
+                _defaultRunner.DefaultRunnerId,
+                DefaultRunnerRoutingPolicy.ReasonExistingProcess,
+                Warn: false);
+        }
         if (runnerDecision?.Warning is { } runnerWarning)
             warning = warning is null ? runnerWarning : warning + " " + runnerWarning;
 
@@ -1332,6 +1351,7 @@ public sealed class AgentTaskService
                 "kind-default" => RunnerSelectionSource.KindDefault,
                 "default" => RunnerSelectionSource.GlobalDefault,
                 "fallback" => RunnerSelectionSource.Fallback,
+                "existing-process" => RunnerSelectionSource.ExistingProcess,
                 _ => askedForExistingProcess ? RunnerSelectionSource.ExistingProcess : null,
             },
             PlacementReason = runnerDecision?.Reason,
@@ -1597,6 +1617,22 @@ public sealed class AgentTaskService
         if (!string.Equals(globalPreference, kindPreference, StringComparison.Ordinal)
             && await TryPlatformPreferenceAsync(globalPreference, "default", requirement, shape, ct) is { } globalHit)
             return globalHit;
+
+        if (DefaultRunnerRoutingPolicy.ExclusionFor(shape) is not null)
+        {
+            var desktopOnly = await DescribePlacementAsync(null, ct);
+            if (desktopOnly is { DispatchEligible: true }
+                && PlatformMatches(requirement, desktopOnly)
+                && desktopOnly.Capabilities?.Features?.Contains(RunnerPlatformWire.Feature) == true)
+            {
+                return (null, RunnerPlatformWire.Normalize(desktopOnly.Platform), new DefaultRunnerDecision(
+                    null, "fallback", "unset", _defaultRunner.DefaultRunnerId, "platform_match", Warn: false));
+            }
+
+            throw new ConflictException(
+                $"No eligible runner can run a {requirement} task.",
+                RunnerPlatformProblems.Unavailable);
+        }
 
         return await SelectPlatformCandidateAsync(requirement, ct);
     }

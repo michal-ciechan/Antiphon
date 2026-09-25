@@ -133,13 +133,16 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         new(PhoneHomeProtocol.Version, runnerId ?? AllowedRunnerId, bootId ?? BootId, storeId ?? StoreId, "linux", Capacity, null);
 
     public async Task<PhoneHomeRegistrationResponse> RegisterAsync(
-        Guid? bootId = null, Guid? storeId = null, string? secret = null, string? runnerId = null, string? platform = null)
+        Guid? bootId = null, Guid? storeId = null, string? secret = null, string? runnerId = null, string? platform = null,
+        RunnerCapabilitiesDto? capabilities = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
         request.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, secret ?? Secret);
         var registration = Registration(bootId, storeId, runnerId);
         if (platform is not null)
             registration = registration with { Platform = platform };
+        if (capabilities is not null)
+            registration = registration with { Capabilities = capabilities };
         request.Content = JsonContent.Create(registration, options: PhoneHomeFraming.Json);
         using var response = await Http.SendAsync(request);
         response.EnsureSuccessStatusCode();
@@ -162,10 +165,11 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     }
 
     public async Task<PhoneHomeScriptedPeer> ConnectPeerAsync(
-        bool autoReply = true, Guid? bootId = null, string? runnerId = null, Guid? storeId = null, string? secret = null)
+        bool autoReply = true, Guid? bootId = null, string? runnerId = null, Guid? storeId = null, string? secret = null,
+        string? platform = null, RunnerCapabilitiesDto? capabilities = null)
     {
         var id = runnerId ?? AllowedRunnerId;
-        var ticket = await RegisterAsync(bootId, storeId, secret, id);
+        var ticket = await RegisterAsync(bootId, storeId, secret, id, platform, capabilities);
         var peer = new PhoneHomeScriptedPeer { AutoReply = autoReply };
         peer.Socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
         var uri = runnerId is null

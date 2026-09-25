@@ -29,6 +29,7 @@ import { hiddenByScopeLine, scopeChipLabel } from './scopeVisuals'
 import { isUnreadDeliverable } from '../home/taskReview'
 import { formatClockTime } from '../home/workLineFormat'
 import { TaskDrawer } from './TaskDrawer'
+import { PlacementBadge } from './placement'
 import { TierBadge } from './TaskChip'
 import {
   SETTLED_STATUSES,
@@ -357,6 +358,13 @@ function HistoryRow({
       <Text size="xs" c="dimmed" truncate>
         {task.role}
       </Text>
+      <PlacementBadge
+        platform={task.requiredPlatform}
+        runnerId={task.runnerId}
+        source={task.requirementSource}
+        observed={task.observedPlatform}
+        status={task.status}
+      />
       <Box>
         <TierBadge level={task.modelLevel} kind={task.agentKind} />
       </Box>

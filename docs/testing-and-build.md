@@ -246,8 +246,13 @@ fast-forwards the desktop worktree (`--ff-only`; a divergence or a dirty desktop
 never a reset). Landing, retirement and residue accounting are unchanged. Card-backed starts,
 OnAgent, Shared, ReadOnly, pins and SourceLanding are all refused at create.
 
-An explicit `-Runner server2` may also carry `-Kind Codex` for a Worker task (CARD-0660); the
-automatic default placement still keeps Codex on the desktop. `PhoneHomeRunner:ChildCodexHome`
+An explicit `-Runner server2` may also carry `-Kind Codex` for a Worker task (CARD-0660).
+CARD-0710 places a supported Codex worker by the runtime runner defaults: per-kind, then global,
+then the built-in fallback. `Delegation:DefaultRunnerId` is an import input only. The first
+missing runtime-defaults row copies it once; after that row exists, including an explicit null
+global, editing the key or restarting does not change placement. Settings > Routing and
+`GET`/`PUT /api/runner-defaults` are the live control. Do not seed a Codex desktop exception.
+`PhoneHomeRunner:ChildCodexHome`
 (default `/state/codex`, POSIX absolute, never `/tmp`) is projected as `CODEX_HOME` and needs no
 user-secret while the runner's compose home agrees. `PhoneHomeRunner:CodexAuthProbeEnabled`
 (default true) asks that runner at create and retry, and a definite signed-out answer is 409

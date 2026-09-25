@@ -35,6 +35,27 @@ function captureCreate(warning: string | null = null): { body: CreateBody | null
 }
 
 describe('DelegateModal', () => {
+  it('omits runner and platform unless the caller chooses them, and keeps a conflicting runner', async () => {
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ cardDefaultPlatform: 'Windows' }} />)
+    await userEvent.type(screen.getByLabelText('Goal'), 'stay automatic')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body).not.toHaveProperty('runnerId')
+    expect(captured.body).not.toHaveProperty('requiredPlatform')
+
+    const conflicted = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    await userEvent.type(screen.getAllByLabelText('Goal')[1], 'windows on linux')
+    await userEvent.click(screen.getByTestId('delegate-platform'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Windows' }))
+    await userEvent.click(screen.getByTestId('delegate-runner'))
+    await userEvent.click(await screen.findByRole('option', { name: /server2/ }))
+    expect(screen.getByTestId('delegate-platform-conflict')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delegate' })).toBeDisabled()
+    expect(conflicted.body).toBeNull()
+  })
+
   it('C470 submits selected mutation role', async () => {
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ workingDirectory: 'C:/worktrees/card-task-aabbccdd' }} />)
