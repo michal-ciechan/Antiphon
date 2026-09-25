@@ -35,7 +35,11 @@ public sealed class AgentTaskLandService
     private readonly LandDeliveryBoundary _boundary;
     private readonly GitSettings? _gitSettings;
     private readonly WorkspaceUseAdmission? _workspaceUse;
+    private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private LandExecutionIdentity? _execution;
+
+    /// <summary>CARD-0672 D-2: the land stood aside at admission for queued dispatches.</summary>
+    public const string LeaseYieldedToDispatchCode = "repository_lease_yielded_to_dispatch";
 
     public AgentTaskLandService(
         AppDbContext db,
@@ -49,8 +53,10 @@ public sealed class AgentTaskLandService
         ILogger<AgentTaskLandService> logger,
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
         LandDeliveryBoundary? boundary = null, IOptions<GitSettings>? gitSettings = null,
-        WorkspaceUseAdmission? workspaceUse = null)
+        WorkspaceUseAdmission? workspaceUse = null,
+        RepositoryLeaseWaiters? leaseWaiters = null)
     {
+        _leaseWaiters = leaseWaiters;
         _workspaceUse = workspaceUse;
         _protocol = protocol;
         _boundary = boundary ?? new LandDeliveryBoundary();
@@ -270,6 +276,10 @@ public sealed class AgentTaskLandService
             await RefuseAsync(task, "landing_protocol_unavailable", ct);
             return LandRunResult.Complete;
         }
+        // CARD-0672 D-2: dispatch first. While a task refused the lease waits on this repository the
+        // land stands aside before it acquires, for at most LandYieldToDispatchMaxSeconds.
+        if (await YieldToDispatchAsync(task, request, ct) is { } yielded)
+            return yielded;
         await using var lease = await _leases.TryAcquireAsync(
             task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Land), ct);
         if (lease is null)
@@ -1006,6 +1016,104 @@ public sealed class AgentTaskLandService
         task.CurrentLandRequestId = request.Id;
         await _db.SaveChangesAsync(ct);
         return request;
+    }
+
+    /// <summary>
+    /// CARD-0672 D-2. Null means acquire as usual. A land yields only BEFORE it holds the lease: a
+    /// land's phases share one continuous lease (the read cache, the child journal and CARD-0688
+    /// all assume it), so admission is the one place the order can change. The sweep re-picks a
+    /// yielded request every LandSweepSeconds; the dispatcher's tick takes the lease in between.
+    /// </summary>
+    private async Task<LandRunResult?> YieldToDispatchAsync(AgentTask task, AgentTaskLandRequest request, CancellationToken ct)
+    {
+        if (_leaseWaiters is null)
+            return null;
+        var max = _settings.LandYieldToDispatchMaxSeconds;
+        if (max <= 0 || _leaseWaiters.IsEmpty)
+        {
+            _leaseWaiters.EndYield(request.Id);
+            return null;
+        }
+
+        IReadOnlyList<RepositoryLeaseWaiter> waiters;
+        try
+        {
+            waiters = _leaseWaiters.Snapshot(await _landingGit!.CommonDirectoryAsync(task.RepoPath!, ct));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // The acquire below resolves the same directory and reports its own failure.
+            return null;
+        }
+
+        if (waiters.Count == 0)
+        {
+            _leaseWaiters.EndYield(request.Id);
+            return null;
+        }
+
+        var now = _clock.GetUtcNow();
+        var first = _leaseWaiters.FirstYield(request.Id, now);
+        if (now - first >= TimeSpan.FromSeconds(max))
+        {
+            if (_leaseWaiters.MarkExhausted(request.Id))
+            {
+                var waited = (int)(now - first).TotalSeconds;
+                var warning = Event(task.Id, AgentTaskEventType.Warning,
+                    $"Land yield budget exhausted after {waited}s; proceeding with {waiters.Count} queued dispatch(es) still waiting "
+                    + "(Delegation:LandYieldToDispatchMaxSeconds).", now.UtcDateTime);
+                warning.LandRequestId = request.Id;
+                // Under the task lock with a fresh request row, so the event alone is written.
+                await using var warned = await _db.Database.BeginTransactionAsync(ct);
+                await LockTaskAsync(task.Id, ct);
+                await _db.Entry(request).ReloadAsync(ct);
+                _db.AgentTaskEvents.Add(warning);
+                await _db.SaveChangesAsync(ct);
+                await warned.CommitAsync(ct);
+                _logger.LogWarning(
+                    "Land of task {TaskId} request {RequestId} stops yielding after {Seconds}s with {Waiters} lease waiter(s)",
+                    task.Id, request.Id, waited, waiters.Count);
+            }
+
+            return null;
+        }
+
+        var shorts = string.Join(", ", waiters.Take(8).Select(w => DelegationReportFormatter.Short(w.TaskId)));
+        var purposes = string.Join(", ", waiters.Select(w => w.Purpose).Distinct(StringComparer.Ordinal));
+        var detail = $"Land yields the repository mutation lease to {waiters.Count} queued dispatch(es): {shorts} ({purposes}); "
+            + "resumes within Delegation:LandSweepSeconds.";
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await LockTaskAsync(task.Id, ct);
+        await _db.Entry(request).ReloadAsync(ct);
+        if (!request.IsPending)
+            return LandRunResult.Complete;
+        var at = now.UtcDateTime;
+        request.LastEvaluatedAt = at;
+        // One Held event per episode, deduplicated on the reason as HoldAsync is. No caller note:
+        // a yield resolves itself within a sweep (the CARD-0641 note is for holds that need one).
+        var changed = request.State != LandRequestState.Held || request.HoldReasonCode != LeaseYieldedToDispatchCode;
+        request.State = LandRequestState.Held;
+        request.HoldReasonCode = LeaseYieldedToDispatchCode;
+        request.HoldDetail = detail.Length <= 2000 ? detail : detail[..2000];
+        request.HoldingTaskId = null;
+        request.HoldingTaskStatus = null;
+        if (changed)
+        {
+            request.HeldSince = first.UtcDateTime;
+            request.HoldEpisode++;
+            var held = Event(task.Id, AgentTaskEventType.Held, request.HoldDetail, at);
+            if (task.ActiveLandingId is Guid operationId)
+                SetLandingEvidence(held, await _db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == operationId, ct));
+            held.LandRequestId = request.Id;
+            _db.AgentTaskEvents.Add(held);
+        }
+
+        request.ConcurrencyToken = Guid.NewGuid();
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        if (changed)
+            await PublishAsync(task, ct);
+        return LandRunResult.Held;
     }
 
     private async Task HoldOnBusyLeaseAsync(AgentTask task, AgentTaskLandRequest request, CancellationToken ct)

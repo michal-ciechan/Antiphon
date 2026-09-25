@@ -100,6 +100,10 @@ public sealed class AgentTaskDispatcher
     private readonly CheckCompactionContinuationService? _compaction;
     private readonly SweepInFlightState? _sweepInFlight;
     private readonly RemoteWorkspacePreparer? _remotePrep;
+    // CARD-0672 D-2. Both optional: absent, a lease refusal registers no waiter and a land never
+    // yields to this dispatcher, which is exactly the behaviour before the turnstile.
+    private readonly RepositoryLeaseWaiters? _leaseWaiters;
+    private readonly ILandingGit? _landingGit;
 
     /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
     internal AppDbContext Db => _db;
@@ -171,8 +175,14 @@ public sealed class AgentTaskDispatcher
         SweepInFlightState? sweepInFlight = null,
         // CARD-0633 D-4/D-5. Absent, a runner-bound task that still needs its mirror stays Queued
         // with a warning: this process has no way to prepare it off the tick.
-        RemoteWorkspacePreparer? remotePrep = null)
+        RemoteWorkspacePreparer? remotePrep = null,
+        // CARD-0672 D-2: the dispatch-first turnstile. The git service resolves the waiter key
+        // (the repository's common directory); without it the key is the full repository path.
+        RepositoryLeaseWaiters? leaseWaiters = null,
+        ILandingGit? landingGit = null)
     {
+        _leaseWaiters = leaseWaiters;
+        _landingGit = landingGit;
         _sweepInFlight = sweepInFlight;
         _remotePrep = remotePrep;
         _taskLaunchSink = taskLaunchSink;
@@ -257,7 +267,11 @@ public sealed class AgentTaskDispatcher
         int SkippedRoutingPin = 0,
         int BlockedRoutingExhausted = 0,
         int ResumedRoutingBlocked = 0,
-        int SkippedCapacityWait = 0);
+        int SkippedCapacityWait = 0,
+        /// <summary>CARD-0672 D-3: queued rows refused the repository mutation lease this tick.</summary>
+        int HeldOnLease = 0,
+        /// <summary>CARD-0672 D-3: runner-bound rows held because their runner is full or not eligible.</summary>
+        int HeldOnRunner = 0);
 
     private enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed }
 
@@ -273,6 +287,9 @@ public sealed class AgentTaskDispatcher
         public Dictionary<Guid, DateTime> HeldSince { get; } = new();
         public HashSet<Guid> Warned { get; } = new();
         public HashSet<Guid> Errored { get; } = new();
+        // CARD-0672 D-3: the current stint's Held rows and its floor, for the per-class ledger.
+        public Dictionary<Guid, List<(DateTime At, string Detail)>> HeldRows { get; } = new();
+        public Dictionary<Guid, DateTime> Floor { get; } = new();
     }
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
@@ -288,7 +305,10 @@ public sealed class AgentTaskDispatcher
         }
 
         if (!_settings.Enabled)
+        {
+            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>());
             return new TickResult(0, 0, 0, 0, 0, sweepFailures);
+        }
 
         // The clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
@@ -392,8 +412,11 @@ public sealed class AgentTaskDispatcher
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
         if (queued.Count == 0)
+        {
+            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>());
             return new TickResult(
                 0, 0, 0, 0, 0, sweepFailures, ResumedRoutingBlocked: resumedRoutingBlocked);
+        }
 
         // Tasks that declare overlapping file scopes must not run concurrently — the second waits
         // rather than racing on read-modify-write. This is the cost of Shared being the default,
@@ -476,6 +499,8 @@ public sealed class AgentTaskDispatcher
         var blockedRoutingExhausted = 0;
         var failures = 0;
         var heldThisTick = new List<(Guid TaskId, HoldKind Kind)>();
+        // CARD-0672 D-2: the waiter key per repository, resolved once per tick.
+        var waiterKeys = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var task in queued)
         {
@@ -733,6 +758,7 @@ public sealed class AgentTaskDispatcher
                 {
                     var leaseDetail = await DescribeLeaseHoldAsync(task, ct);
                     heldThisTick.Add((task.Id, HoldKind.Lease));
+                    await RegisterLeaseWaiterAsync(task, waiterKeys, ct);
                     if (await TraceHeldAsync(task, leaseDetail, lastHeld, ct))
                     {
                         _logger.LogInformation(
@@ -858,6 +884,10 @@ public sealed class AgentTaskDispatcher
             }
         }
 
+        // CARD-0672 D-2: only a task refused the lease on THIS tick still waits for it.
+        var heldOnLease = heldThisTick.Where(h => h.Kind == HoldKind.Lease).Select(h => h.TaskId).ToHashSet();
+        _leaseWaiters?.ReconcileDispatch(heldOnLease);
+
         var occupantShorts = busyScopes
             .Select(s => DelegationReportFormatter.Short(s.Id))
             .Take(8)
@@ -865,9 +895,11 @@ public sealed class AgentTaskDispatcher
         await EscalateHeldAgeAsync(
             heldThisTick, lastHeld, holdIndex, queued, active + dispatchedAgainstCap, occupantShorts, ct);
 
+        var heldOnRunner = heldThisTick.Count(h => h.Kind is HoldKind.RunnerCapacity or HoldKind.RunnerUnavailable);
         return new TickResult(
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
-            skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked, skippedCapacityWait);
+            skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked, skippedCapacityWait,
+            heldOnLease.Count, heldOnRunner);
     }
 
     /// <summary>
@@ -928,6 +960,37 @@ public sealed class AgentTaskDispatcher
         return sessions + pendingLaunch + inFlight;
     }
 
+    /// <summary>
+    /// CARD-0672 D-2: a task refused the lease waits for it where a land can see it. The key is the
+    /// repository's common directory, as the lease's own; if git cannot say, the full repository
+    /// path stands in, which still matches a land on the same path.
+    /// </summary>
+    private async Task RegisterLeaseWaiterAsync(
+        AgentTask task, Dictionary<string, string> waiterKeys, CancellationToken ct)
+    {
+        if (_leaseWaiters is null || task.RepoPath is not { Length: > 0 } repository)
+            return;
+        if (!waiterKeys.TryGetValue(repository, out var common))
+        {
+            common = Path.GetFullPath(repository);
+            if (_landingGit is not null)
+            {
+                try
+                {
+                    common = await _landingGit.CommonDirectoryAsync(repository, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _logger.LogDebug(ex, "Lease waiter key for {Repository} falls back to the full path", repository);
+                }
+            }
+
+            waiterKeys[repository] = common;
+        }
+
+        _leaseWaiters.Register(common, task.Id, RepositoryLeasePurposes.Dispatch, _timeProvider.GetUtcNow());
+    }
+
     private async Task<bool> TraceHeldAsync(
         AgentTask task, string detail, Dictionary<Guid, string> lastHeld, CancellationToken ct)
     {
@@ -972,12 +1035,15 @@ public sealed class AgentTaskDispatcher
             if (lastHeld is not null)
                 index.LastHeld[group.Key] = lastHeld.Detail;
 
-            var firstHeld = group
+            var stint = group
                 .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor)
                 .OrderBy(e => e.At).ThenBy(e => e.Id)
-                .FirstOrDefault();
+                .ToList();
+            var firstHeld = stint.FirstOrDefault();
             if (firstHeld is not null)
                 index.HeldSince[group.Key] = firstHeld.At;
+            index.Floor[group.Key] = floor;
+            index.HeldRows[group.Key] = stint.Select(e => (e.At, e.Detail)).ToList();
 
             foreach (var aged in group.Where(e => e.Type == AgentTaskEventType.HeldAged && e.At > floor))
             {
@@ -1126,11 +1192,17 @@ public sealed class AgentTaskDispatcher
             if (age < _settings.DispatchHeldWarningSeconds)
                 continue;
             var seconds = (int)age;
+            // CARD-0672 D-3: the rows loaded at the start of this tick. A row this tick wrote is
+            // stamped now, so it adds no time.
+            var ledger = DispatchHoldLedger.FromRows(
+                index.HeldRows.TryGetValue(taskId, out var rows) ? rows : [],
+                index.Floor.TryGetValue(taskId, out var floor) ? floor : DateTime.MinValue,
+                now);
             if (age >= _settings.DispatchHeldWarningSeconds && !index.Warned.Contains(taskId))
             {
                 var detail = DispatchHoldDetails.Escalation(
                     DispatchHoldDetails.WarningPrefix, seconds, heldSince, task.CreatedAt, reason,
-                    running, _settings.MaxConcurrentTasks, occupantShorts);
+                    running, _settings.MaxConcurrentTasks, occupantShorts, ledger);
                 _db.AgentTaskEvents.Add(new AgentTaskEvent
                 {
                     Id = Guid.NewGuid(), AgentTaskId = taskId, Type = AgentTaskEventType.HeldAged,
@@ -1138,16 +1210,14 @@ public sealed class AgentTaskDispatcher
                 });
                 index.Warned.Add(taskId);
                 changed.Add(taskId);
-                _logger.LogWarning(
-                    "Task {ShortId} held aged: {Detail}",
-                    DelegationReportFormatter.Short(taskId), detail);
+                LogHeldAged(LogLevel.Warning, taskId, detail, ledger);
             }
 
             if (age >= _settings.DispatchHeldErrorSeconds && !index.Errored.Contains(taskId))
             {
                 var detail = DispatchHoldDetails.Escalation(
                     DispatchHoldDetails.ErrorPrefix, seconds, heldSince, task.CreatedAt, reason,
-                    running, _settings.MaxConcurrentTasks, occupantShorts);
+                    running, _settings.MaxConcurrentTasks, occupantShorts, ledger);
                 _db.AgentTaskEvents.Add(new AgentTaskEvent
                 {
                     Id = Guid.NewGuid(), AgentTaskId = taskId, Type = AgentTaskEventType.HeldAged,
@@ -1155,9 +1225,7 @@ public sealed class AgentTaskDispatcher
                 });
                 index.Errored.Add(taskId);
                 changed.Add(taskId);
-                _logger.LogError(
-                    "Task {ShortId} held aged: {Detail}",
-                    DelegationReportFormatter.Short(taskId), detail);
+                LogHeldAged(LogLevel.Error, taskId, detail, ledger);
             }
         }
 
@@ -1171,6 +1239,16 @@ public sealed class AgentTaskDispatcher
                 "AgentTaskChanged", new { taskId, rootId }, ct);
         }
     }
+
+    private void LogHeldAged(LogLevel level, Guid taskId, string detail, DispatchHoldLedger ledger) =>
+        _logger.Log(
+            level,
+            "Task {ShortId} held aged: {Detail} (leaseWait={LeaseWaitSeconds} prepWait={PrepWaitSeconds} "
+            + "runnerWait={RunnerWaitSeconds} capWait={CapWaitSeconds} otherWait={OtherWaitSeconds} class={HoldClass})",
+            DelegationReportFormatter.Short(taskId), detail,
+            ledger.SecondsFor(DispatchHoldClass.Lease), ledger.SecondsFor(DispatchHoldClass.RemotePrep),
+            ledger.SecondsFor(DispatchHoldClass.Runner), ledger.SecondsFor(DispatchHoldClass.Cap),
+            ledger.OtherSeconds, ledger.DominantName);
 
     /// <summary>
     /// Re-walk a queued chain task whose snapshot alias cannot run. Returns true when kind/level
@@ -3930,6 +4008,23 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
+    /// <summary>
+    /// CARD-0672 D-1: the second crossing of a runner-bound task - desktop worktree cut, runner
+    /// mirror recorded - which only claims the row and launches into the mirror. A runner task is
+    /// Worktree-only and never a follow-up (AgentTaskService refuses both at create); the workspace
+    /// check keeps that local rather than assumed. Repairs,
+    /// SourceLanding snapshots and Interim verifications are excluded because their claim path
+    /// runs git against the repository.
+    /// </summary>
+    internal static bool LaunchesPreparedMirror(AgentTask task) =>
+        !string.IsNullOrEmpty(task.RunnerId)
+        && task.Workspace == WorkspaceMode.Worktree
+        && !string.IsNullOrEmpty(task.WorktreePath)
+        && !string.IsNullOrEmpty(task.RemoteWorktreePath)
+        && task.RepairSourceTaskId is null
+        && task.SourceLandingOperationId is null
+        && task.VerificationRound != VerificationRound.Interim;
+
     private async Task<DispatchOneResult> DispatchOneAsync(
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
     {
@@ -3940,8 +4035,13 @@ public sealed class AgentTaskDispatcher
 
         // Admission and landing read running claims under the same common-directory lease.
         // Hold through commit of the claim, including warm-agent and follow-up paths.
+        // CARD-0672 D-1 (invariant I-A): a runner session never writes the desktop checkout; only
+        // the leased settlement sync moves it. So the launch of a prepared runner task - its own
+        // worktree already cut, its mirror already recorded - mutates nothing a land relies on and
+        // takes no lease. Every crossing that runs git (the worktree cut, a repair source, a
+        // SourceLanding snapshot, an Interim recheck) still does.
         var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
-            && task.RepoPath is not null;
+            && task.RepoPath is not null && !LaunchesPreparedMirror(task);
         await using var repositoryLease = needsLease && _repositoryLeases is not null
             ? await _repositoryLeases.TryAcquireAsync(
                 task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)

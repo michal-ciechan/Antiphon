@@ -629,6 +629,14 @@ public sealed class DelegationSettings
     public int RunnerSyncBudgetSeconds { get; set; } = 120;
 
     /// <summary>
+    /// CARD-0672 D-2: how long one land request may stand aside at admission while queued
+    /// dispatches wait for the repository mutation lease. Each yield lasts one land sweep
+    /// (<see cref="LandSweepSeconds"/>); past this budget the land acquires anyway and writes one
+    /// warning. 0 disables the yield (waiters are still registered). Default 90, 0..600.
+    /// </summary>
+    public int LandYieldToDispatchMaxSeconds { get; set; } = 90;
+
+    /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
     /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.
     /// </summary>
@@ -1156,6 +1164,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             failures.Add("Delegation:RemotePrepBackoffBaseSeconds must be at least 1 and Delegation:RemotePrepBackoffMaxSeconds at least the base.");
         if (options.RunnerSyncBudgetSeconds < 1)
             failures.Add("Delegation:RunnerSyncBudgetSeconds must be at least 1.");
+        if (options.LandYieldToDispatchMaxSeconds is < 0 or > 600)
+            failures.Add("Delegation:LandYieldToDispatchMaxSeconds must be between 0 and 600.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");

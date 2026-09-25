@@ -42,12 +42,15 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
                 var result = await dispatcher.TickAsync(stoppingToken);
-                if (result.Dispatched > 0 || result.Failures > 0 || result.SkippedCapacityWait > 0)
+                if (result.Dispatched > 0 || result.Failures > 0 || result.SkippedCapacityWait > 0
+                    || result.HeldOnLease > 0 || result.HeldOnRunner > 0)
                 {
                     _logger.LogDebug(
                         "Delegation tick: {Dispatched} dispatched, {Concurrency} held on concurrency, "
-                        + "{Scope} held on scope, {CapacityWait} held on capacity wait, {Failures} failed",
-                        result.Dispatched, result.SkippedConcurrency, result.SkippedScope, result.SkippedCapacityWait, result.Failures);
+                        + "{Scope} held on scope, {CapacityWait} held on capacity wait, {Lease} held on lease, "
+                        + "{Runner} held on runner, {Failures} failed",
+                        result.Dispatched, result.SkippedConcurrency, result.SkippedScope, result.SkippedCapacityWait,
+                        result.HeldOnLease, result.HeldOnRunner, result.Failures);
                 }
 
                 // A tick that dispatched fine but lost a clock is the dangerous shape — the visible

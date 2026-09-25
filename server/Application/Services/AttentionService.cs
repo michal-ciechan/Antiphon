@@ -1265,6 +1265,9 @@ public sealed class AttentionService
             if (age < _delegation.DispatchHeldWarningSeconds)
                 continue;
             var agedCount = rows.Count(e => e.Type == AgentTaskEventType.HeldAged && e.At > floor);
+            // CARD-0672 D-3: the same per-class ledger the dispatcher's HeldAged row carries.
+            var ledger = DispatchHoldLedger.FromRows(
+                rows.Where(e => e.Type == AgentTaskEventType.Held).Select(e => (e.At, e.Detail)), floor, now);
             var severity = age >= _delegation.DispatchHeldErrorSeconds
                 ? AlertSeverity.Error
                 : AlertSeverity.Warning;
@@ -1277,12 +1280,13 @@ public sealed class AttentionService
                 null,
                 task.Title,
                 $"Queued and held for {(int)age}s; {lastHeld.Detail}",
-                $"task={task.Id:N}; created={task.CreatedAt:O}; heldSince={heldSince:O}; escalations={agedCount}",
+                $"task={task.Id:N}; created={task.CreatedAt:O}; heldSince={heldSince:O}; escalations={agedCount}; {ledger.Describe()}",
                 heldSince,
                 null,
                 [AttentionAction.OpenDrawer],
                 task.CardId,
-                ConditionKey: $"dispatch-held:{task.Id:N}"));
+                ConditionKey: $"dispatch-held:{task.Id:N}",
+                HoldClass: ledger.Dominant is null ? null : ledger.DominantName));
         }
 
         return items;
@@ -1296,6 +1300,12 @@ public sealed class AttentionService
         {
             var age = (now - request.LastProgressAt).TotalSeconds;
             if (request.State != LandRequestState.Held && age < _delegation.LandWarningSeconds) continue;
+            // CARD-0672 D-2: a land standing aside for queued dispatches resolves itself within a
+            // sweep; it is an attention item only once the yield itself is old.
+            if (request.State == LandRequestState.Held
+                && request.HoldReasonCode == AgentTaskLandService.LeaseYieldedToDispatchCode
+                && (now - (request.HeldSince ?? request.LastProgressAt)).TotalSeconds < _delegation.LandWarningSeconds)
+                continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.TaskId, ct);
             var item = new AttentionItemDto(request.State == LandRequestState.Held ? AttentionKind.LandHeld : AttentionKind.LandNoProgress,
                 age >= _delegation.LandErrorSeconds ? AlertSeverity.Error : AlertSeverity.Warning,

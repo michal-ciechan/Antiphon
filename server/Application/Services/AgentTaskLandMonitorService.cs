@@ -29,6 +29,10 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             request.ReconciliationError = task.CurrentLandRequestId != request.Id || task.LandRequestedAt != request.RequestedAt
                 || task.LandAttempt != request.Attempt ? "land_request_mirror_disagreement" : null;
             var age = (now - request.LastProgressAt).TotalSeconds;
+            // CARD-0672 D-2: a yield to queued dispatches resolves within a sweep; it ages only
+            // once the yield itself is older than the warning threshold.
+            if (request.State == LandRequestState.Held && request.HoldReasonCode == AgentTaskLandService.LeaseYieldedToDispatchCode)
+                age = Math.Min(age, (now - (request.HeldSince ?? request.LastProgressAt)).TotalSeconds);
             var operation = age >= settings.Value.LandWarningSeconds && task.ActiveLandingId is Guid operationId
                 ? await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == operationId && o.TaskId == task.Id, ct)
                 : null;
