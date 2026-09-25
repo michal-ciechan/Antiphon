@@ -5,8 +5,11 @@ using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Antiphon.Resilience;
+using Antiphon.Server.Infrastructure.Resilience;
 using Serilog;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Api.Endpoints;
@@ -556,6 +559,29 @@ try
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
     builder.Services.AddSingleton(TimeProvider.System);
+    var logicalDatabase = "default";
+    if (!string.IsNullOrWhiteSpace(connectionString))
+    {
+        try
+        {
+            logicalDatabase = new NpgsqlConnectionStringBuilder(connectionString).Database ?? "default";
+        }
+        catch (ArgumentException)
+        {
+            logicalDatabase = "default";
+        }
+    }
+
+    builder.Services.AddAntiphonResilience(builder.Configuration);
+    builder.Services.AddSingleton(new DatabaseResilienceName(logicalDatabase));
+    builder.Services.AddSingleton(sp => new DatabaseResilienceExecutor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<DatabaseAttemptExecutor>(),
+        sp.GetRequiredService<IOptionsMonitor<ResilienceSettings>>(),
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<DatabaseResilienceName>(),
+        sp.GetService<IDatabaseReadFault>(),
+        sp.GetService<IDatabaseReadObserver>()));
     // Working-directory autocomplete (directory browsing + atomic dir creation).
     builder.Services.AddSingleton<System.IO.Abstractions.IFileSystem>(new System.IO.Abstractions.FileSystem());
     builder.Services.AddSingleton<IDirectoryLister, FileSystemDirectoryLister>();
@@ -795,7 +821,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
-            .AddConsoleExporter());
+            .AddConsoleExporter())
+        .WithMetrics(metrics => metrics.AddAntiphonResilienceMetrics());
 
     var app = builder.Build();
 

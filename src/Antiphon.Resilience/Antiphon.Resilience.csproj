@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.Resilience</RootNamespace>
+    <AssemblyName>Antiphon.Resilience</AssemblyName>
+    <Description>Bounded, allowlisted HTTP and database attempt resilience. No server domain types.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+    <InternalsVisibleTo Include="Antiphon.Server" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+    <PackageReference Include="Microsoft.Extensions.Resilience" Version="10.10.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.0" />
+  </ItemGroup>
+
+</Project>

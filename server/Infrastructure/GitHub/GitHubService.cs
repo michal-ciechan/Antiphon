@@ -2,7 +2,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Antiphon.Resilience;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Infrastructure.Resilience;
 using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -16,8 +18,11 @@ namespace Antiphon.Server.Infrastructure.GitHub;
 public class GitHubService : IGitHubService
 {
     private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory? _httpClientFactory;
     private readonly ILogger<GitHubService> _logger;
     private readonly GithubSettings _settings;
+    private readonly TimeProvider _time;
+    private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -25,11 +30,20 @@ public class GitHubService : IGitHubService
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public GitHubService(HttpClient httpClient, IOptions<GithubSettings> settings, ILogger<GitHubService> logger)
+    public GitHubService(
+        HttpClient httpClient,
+        IOptions<GithubSettings> settings,
+        ILogger<GitHubService> logger,
+        IHttpClientFactory? httpClientFactory = null,
+        TimeProvider? time = null,
+        IOptionsMonitor<ResilienceSettings>? resilience = null)
     {
         _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience;
 
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
@@ -90,10 +104,14 @@ public class GitHubService : IGitHubService
         _logger.LogDebug("Fetching comments for PR #{PrNumber} in {Owner}/{Repo}", prNumber, owner, repo);
 
         var comments = new List<PullRequestComment>();
+        var budget = ReadBudget();
 
         // Get issue comments (general PR comments)
-        var issueCommentsJson = await _httpClient.GetStringAsync(
-            $"repos/{owner}/{repo}/issues/{prNumber}/comments", ct);
+        var issueCommentsJson = await ReadStringAsync(
+            $"repos/{owner}/{repo}/issues/{prNumber}/comments",
+            ResilienceOperations.GitHubPullRequestComments,
+            budget,
+            ct);
         using var issueDoc = JsonDocument.Parse(issueCommentsJson);
         foreach (var element in issueDoc.RootElement.EnumerateArray())
         {
@@ -101,8 +119,11 @@ public class GitHubService : IGitHubService
         }
 
         // Get review comments (inline code review comments)
-        var reviewCommentsJson = await _httpClient.GetStringAsync(
-            $"repos/{owner}/{repo}/pulls/{prNumber}/comments", ct);
+        var reviewCommentsJson = await ReadStringAsync(
+            $"repos/{owner}/{repo}/pulls/{prNumber}/comments",
+            ResilienceOperations.GitHubPullRequestComments,
+            budget,
+            ct);
         using var reviewDoc = JsonDocument.Parse(reviewCommentsJson);
         foreach (var element in reviewDoc.RootElement.EnumerateArray())
         {
@@ -116,19 +137,26 @@ public class GitHubService : IGitHubService
         string owner, string repo, int prNumber, CancellationToken ct)
     {
         _logger.LogDebug("Fetching status for PR #{PrNumber} in {Owner}/{Repo}", prNumber, owner, repo);
+        var budget = ReadBudget();
 
         // Get the PR to find the head SHA
-        var detail = await GetPullRequestDetailAsync(owner, repo, prNumber, ct);
+        var detail = await GetPullRequestDetailAsync(owner, repo, prNumber, budget, ct);
 
         // Get combined status
-        var statusJson = await _httpClient.GetStringAsync(
-            $"repos/{owner}/{repo}/commits/{detail.HeadSha}/status", ct);
+        var statusJson = await ReadStringAsync(
+            $"repos/{owner}/{repo}/commits/{detail.HeadSha}/status",
+            ResilienceOperations.GitHubCombinedStatus,
+            budget,
+            ct);
         using var statusDoc = JsonDocument.Parse(statusJson);
         var state = statusDoc.RootElement.GetProperty("state").GetString() ?? "unknown";
 
         // Get check runs
-        var checksJson = await _httpClient.GetStringAsync(
-            $"repos/{owner}/{repo}/commits/{detail.HeadSha}/check-runs", ct);
+        var checksJson = await ReadStringAsync(
+            $"repos/{owner}/{repo}/commits/{detail.HeadSha}/check-runs",
+            ResilienceOperations.GitHubCheckRuns,
+            budget,
+            ct);
         using var checksDoc = JsonDocument.Parse(checksJson);
         var checkRuns = new List<CheckRunInfo>();
         foreach (var element in checksDoc.RootElement.GetProperty("check_runs").EnumerateArray())
@@ -142,11 +170,18 @@ public class GitHubService : IGitHubService
         return new PullRequestStatus(state, checkRuns);
     }
 
-    public async Task<PullRequestDetail> GetPullRequestDetailAsync(
-        string owner, string repo, int prNumber, CancellationToken ct)
+    public Task<PullRequestDetail> GetPullRequestDetailAsync(
+        string owner, string repo, int prNumber, CancellationToken ct) =>
+        GetPullRequestDetailAsync(owner, repo, prNumber, ReadBudget(), ct);
+
+    private async Task<PullRequestDetail> GetPullRequestDetailAsync(
+        string owner, string repo, int prNumber, ResilienceBudget budget, CancellationToken ct)
     {
-        var prJson = await _httpClient.GetStringAsync(
-            $"repos/{owner}/{repo}/pulls/{prNumber}", ct);
+        var prJson = await ReadStringAsync(
+            $"repos/{owner}/{repo}/pulls/{prNumber}",
+            ResilienceOperations.GitHubPullRequest,
+            budget,
+            ct);
         using var prDoc = JsonDocument.Parse(prJson);
         var root = prDoc.RootElement;
 
@@ -163,7 +198,7 @@ public class GitHubService : IGitHubService
     {
         try
         {
-            var json = await _httpClient.GetStringAsync("user", ct);
+            var json = await ReadStringAsync("user", ResilienceOperations.GitHubUser, ReadBudget(), ct);
             using var doc = JsonDocument.Parse(json);
             var login = doc.RootElement.TryGetProperty("login", out var loginProp)
                 ? loginProp.GetString()
@@ -184,11 +219,15 @@ public class GitHubService : IGitHubService
         var repos = new List<GitHubRepoDto>();
         var page = 1;
         const int perPage = 100;
+        var budget = ReadBudget();
 
         while (true)
         {
-            var json = await _httpClient.GetStringAsync(
-                $"user/repos?per_page={perPage}&page={page}&type=all", ct);
+            var json = await ReadStringAsync(
+                $"user/repos?per_page={perPage}&page={page}&type=all",
+                ResilienceOperations.GitHubRepositories,
+                budget,
+                ct);
 
             using var doc = JsonDocument.Parse(json);
             var array = doc.RootElement;
@@ -220,8 +259,11 @@ public class GitHubService : IGitHubService
     {
         _logger.LogDebug("Fetching branches for {Owner}/{Repo}", owner, repo);
 
-        var json = await _httpClient.GetStringAsync(
-            $"repos/{owner}/{repo}/branches?per_page=100", ct);
+        var json = await ReadStringAsync(
+            $"repos/{owner}/{repo}/branches?per_page=100",
+            ResilienceOperations.GitHubBranches,
+            ReadBudget(),
+            ct);
 
         using var doc = JsonDocument.Parse(json);
         var branches = new List<GitHubBranchDto>();
@@ -246,12 +288,16 @@ public class GitHubService : IGitHubService
 
         try
         {
+            var budget = ReadBudget();
             // Search open PRs first, then closed (to surface active PRs first)
             foreach (var state in new[] { "open", "closed" })
             {
                 var encodedBranch = Uri.EscapeDataString(headBranch);
-                var json = await _httpClient.GetStringAsync(
-                    $"repos/{owner}/{repo}/pulls?state={state}&head={owner}:{encodedBranch}&per_page=1", ct);
+                var json = await ReadStringAsync(
+                    $"repos/{owner}/{repo}/pulls?state={state}&head={owner}:{encodedBranch}&per_page=1",
+                    ResilienceOperations.GitHubPullRequestByBranch,
+                    budget,
+                    ct);
 
                 using var doc = JsonDocument.Parse(json);
                 var array = doc.RootElement;
@@ -275,6 +321,25 @@ public class GitHubService : IGitHubService
             _logger.LogWarning(ex, "Failed to look up PR for branch {Branch} in {Owner}/{Repo}", headBranch, owner, repo);
             return null;
         }
+    }
+
+    private ResilienceBudget ReadBudget() =>
+        ResilienceBudget.Start(_time, _resilience?.CurrentValue ?? new ResilienceSettings(), profile: null);
+
+    private async Task<string> ReadStringAsync(
+        string path,
+        string operation,
+        ResilienceBudget budget,
+        CancellationToken ct)
+    {
+        var client = ResilienceReadClients.Select(
+            _httpClientFactory, _httpClient, ResilienceClientNames.GitHubRead);
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        ResilienceRequest.Stamp(request, operation, budget);
+        ResilienceRequest.CopyDefaultHeaders(_httpClient, request);
+        using var response = await client.SendAsync(request, ct).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
     }
 
     private static PullRequestComment ParseComment(JsonElement element, bool isReviewComment)

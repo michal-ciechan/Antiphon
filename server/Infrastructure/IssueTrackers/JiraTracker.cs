@@ -1,7 +1,9 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Resilience;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Infrastructure.Resilience;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
 
@@ -10,10 +12,12 @@ namespace Antiphon.Server.Infrastructure.IssueTrackers;
 public sealed class JiraTracker : IIssueTracker
 {
     private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory? _httpClientFactory;
 
-    public JiraTracker(HttpClient httpClient)
+    public JiraTracker(HttpClient httpClient, IHttpClientFactory? httpClientFactory = null)
     {
         _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
     }
 
     public TrackerKind Kind => TrackerKind.Jira;
@@ -63,8 +67,11 @@ public sealed class JiraTracker : IIssueTracker
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, path));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         ApplyAuth(config, request);
+        ResilienceRequest.Stamp(request, ResilienceOperations.JiraSearch);
+        var client = ResilienceReadClients.Select(
+            _httpClientFactory, _httpClient, ResilienceClientNames.JiraRead);
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        using var response = await client.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);

@@ -1,7 +1,10 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Resilience;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Infrastructure.Resilience;
+using Microsoft.Extensions.Options;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
 
@@ -10,10 +13,20 @@ namespace Antiphon.Server.Infrastructure.IssueTrackers;
 public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
 {
     private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory? _httpClientFactory;
+    private readonly TimeProvider _time;
+    private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
 
-    public GitHubIssuesTracker(HttpClient httpClient)
+    public GitHubIssuesTracker(
+        HttpClient httpClient,
+        IHttpClientFactory? httpClientFactory = null,
+        TimeProvider? time = null,
+        IOptionsMonitor<ResilienceSettings>? resilience = null)
     {
         _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience;
     }
 
     public TrackerKind Kind => TrackerKind.GitHubIssues;
@@ -30,10 +43,12 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
     {
         var repository = RequireRepository(config);
         var issues = new List<TrackedIssue>();
+        var budget = ReadBudget();
         foreach (var state in states.Count == 0 ? ["open"] : states)
         {
             var path = $"repos/{repository}/issues?state={Uri.EscapeDataString(state)}&per_page=100";
-            using var response = await SendAsync(config, HttpMethod.Get, path, ct);
+            using var response = await SendAsync(
+            config, HttpMethod.Get, path, ct, operation: ResilienceOperations.GitHubIssuesByStates, budget: budget);
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             foreach (var issue in doc.RootElement.EnumerateArray())
@@ -55,10 +70,13 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
     {
         var repository = RequireRepository(config);
         var issues = new List<TrackedIssue>();
+        var budget = ReadBudget();
         foreach (var externalId in externalIds)
         {
             var number = ParseIssueNumber(externalId);
-            using var response = await SendAsync(config, HttpMethod.Get, $"repos/{repository}/issues/{number}", ct);
+            using var response = await SendAsync(
+            config, HttpMethod.Get, $"repos/{repository}/issues/{number}", ct,
+            operation: ResilienceOperations.GitHubIssuesByIds, budget: budget);
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             if (!doc.RootElement.TryGetProperty("pull_request", out _))
@@ -75,6 +93,7 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
     {
         var repository = RequireRepository(config);
         var comments = new List<TrackedIssueComment>();
+        var budget = ReadBudget();
         var page = 1;
         while (true)
         {
@@ -85,7 +104,9 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
                     .Append(Uri.EscapeDataString(sinceUtc.ToUniversalTime().ToString("o")));
             }
 
-            using var response = await SendAsync(config, HttpMethod.Get, path.ToString(), ct);
+            using var response = await SendAsync(
+            config, HttpMethod.Get, path.ToString(), ct,
+            operation: ResilienceOperations.GitHubIssuesComments, budget: budget);
             using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
             var pageCount = 0;
@@ -257,7 +278,9 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
         HttpMethod method,
         string path,
         CancellationToken ct,
-        HttpContent? content = null)
+        HttpContent? content = null,
+        string? operation = null,
+        ResilienceBudget? budget = null)
     {
         var baseUri = new Uri(config.BaseUrl.TrimEnd('/') + "/");
         using var request = new HttpRequestMessage(method, new Uri(baseUri, path));
@@ -269,10 +292,21 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
         if (content is not null)
             request.Content = content;
 
-        var response = await _httpClient.SendAsync(request, ct);
+        var client = _httpClient;
+        if (operation is not null)
+        {
+            ResilienceRequest.Stamp(request, operation, budget ?? ReadBudget());
+            client = ResilienceReadClients.Select(
+                _httpClientFactory, _httpClient, ResilienceClientNames.GitHubIssuesRead);
+        }
+
+        var response = await client.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return response;
     }
+
+    private ResilienceBudget ReadBudget() =>
+        ResilienceBudget.Start(_time, _resilience?.CurrentValue ?? new ResilienceSettings(), profile: null);
 
     private static TrackedIssue ParseIssue(string repository, JsonElement issue)
     {

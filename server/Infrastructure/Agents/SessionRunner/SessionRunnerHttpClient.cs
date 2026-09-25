@@ -1,12 +1,14 @@
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Antiphon.Resilience;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Resilience;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 
@@ -30,6 +32,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SessionRunnerSettings _settings;
     private readonly GrokRulesSettings _rulesSettings;
+    private readonly TimeProvider _time;
+    private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
     private readonly object _capabilityGate = new();
     private RunnerCapabilitiesDto? _cachedCapabilities;
     private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
@@ -39,13 +43,42 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         HttpClient httpClient,
         IHttpClientFactory httpClientFactory,
         IOptions<SessionRunnerSettings> settings,
-        IOptions<GrokRulesSettings>? rulesSettings = null)
+        IOptions<GrokRulesSettings>? rulesSettings = null,
+        TimeProvider? time = null,
+        IOptionsMonitor<ResilienceSettings>? resilience = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
         _rulesSettings = rulesSettings?.Value ?? new();
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience;
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
+    }
+
+    private async Task<HttpResponseMessage> SendReadAsync(
+        string relative,
+        string operation,
+        CancellationToken ct,
+        ResilienceBudget? budget = null)
+    {
+        var client = ResilienceReadClients.Select(
+            _httpClientFactory, _httpClient, ResilienceClientNames.RunnerRead);
+        var request = new HttpRequestMessage(HttpMethod.Get, relative);
+        var settings = _resilience?.CurrentValue ?? new ResilienceSettings();
+        var profile = operation == ResilienceOperations.RunnerList ? ResilienceProfiles.RunnerList : null;
+        budget ??= ResilienceBudget.Start(_time, settings, profile);
+        ResilienceRequest.Stamp(request, operation, budget);
+        ResilienceRequest.CopyDefaultHeaders(_httpClient, request);
+        return await client.SendAsync(request, ct).ConfigureAwait(false);
+    }
+
+    private async Task<T> ReadJsonAsync<T>(string relative, string operation, CancellationToken ct, ResilienceBudget? budget = null)
+    {
+        using var response = await SendReadAsync(relative, operation, ct, budget).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Session runner returned an empty response.");
     }
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
@@ -130,8 +163,11 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         var path = $"sessions/{binding.Generation.SessionId:D}/executions/{binding.ExecutionId:D}/";
         using var response = seal
             ? await _httpClient.PostAsJsonAsync(path + "seal", binding, JsonOptions, ct)
-            : await _httpClient.GetAsync(path + "custody?acceptedStartedAt="
-                + Uri.EscapeDataString(binding.Generation.AcceptedStartedAt.ToString("O")), ct);
+            : await SendReadAsync(
+                path + "custody?acceptedStartedAt="
+                + Uri.EscapeDataString(binding.Generation.AcceptedStartedAt.ToString("O")),
+                ResilienceOperations.RunnerVerificationCustody,
+                ct);
         await ThrowForRunnerProblemAsync(response, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<VerificationCustodyStatus>(JsonOptions, ct)
@@ -243,7 +279,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     {
         try
         {
-            return await _httpClient.GetFromJsonAsync<RunnerCapabilitiesDto>("capabilities", JsonOptions, ct);
+            return await ReadJsonAsync<RunnerCapabilitiesDto>("capabilities", ResilienceOperations.RunnerCapabilities, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or NotSupportedException or JsonException
                                        or TaskCanceledException && !ct.IsCancellationRequested)
@@ -307,7 +343,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     {
         try
         {
-            using var response = await _httpClient.GetAsync("health", ct);
+            using var response = await SendReadAsync("health", ResilienceOperations.RunnerHealth, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             return $"{(int)response.StatusCode} {body}";
         }
@@ -397,25 +433,33 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
     {
-        var sessions = await _httpClient.GetFromJsonAsync<IReadOnlyList<RunnerSessionDto>>("sessions", JsonOptions, ct)
-            ?? [];
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        linked.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _settings.ListTimeoutSeconds)));
+        var settings = _resilience?.CurrentValue ?? new ResilienceSettings();
+        var budget = ResilienceBudget.Start(
+            _time,
+            settings,
+            ResilienceProfiles.RunnerList,
+            TimeSpan.FromSeconds(Math.Max(1, _settings.ListTimeoutSeconds)));
+        var sessions = await ReadJsonAsync<IReadOnlyList<RunnerSessionDto>>(
+            "sessions", ResilienceOperations.RunnerList, linked.Token, budget) ?? [];
         return sessions.Select(Map).ToList();
     }
 
     public async Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-        Map(await _httpClient.GetFromJsonAsync<RunnerSessionDto>($"sessions/{sessionId:D}", JsonOptions, ct)
-            ?? throw new InvalidOperationException("Session runner returned an empty session response."));
+        Map(await ReadJsonAsync<RunnerSessionDto>($"sessions/{sessionId:D}", ResilienceOperations.RunnerGet, ct));
 
     public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
     {
-        var buffer = await _httpClient.GetFromJsonAsync<RunnerBufferDto>($"sessions/{sessionId:D}/buffer", JsonOptions, ct)
-            ?? throw new InvalidOperationException("Session runner returned an empty buffer response.");
+        var buffer = await ReadJsonAsync<RunnerBufferDto>(
+            $"sessions/{sessionId:D}/buffer", ResilienceOperations.RunnerBuffer, ct);
         return new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence);
     }
 
     public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
-        using var response = await _httpClient.GetAsync($"sessions/{sessionId:D}/snapshot", ct);
+        using var response = await SendReadAsync(
+            $"sessions/{sessionId:D}/snapshot", ResilienceOperations.RunnerSnapshot, ct);
         await EnsureRunnerSuccessAsync(response, ct);
         var snapshot = await response.Content.ReadFromJsonAsync<RunnerSnapshotDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty snapshot response.");
@@ -430,8 +474,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
-        var transcript = await _httpClient.GetFromJsonAsync<RunnerTranscriptDto>($"sessions/{sessionId:D}/transcript", JsonOptions, ct)
-            ?? throw new InvalidOperationException("Session runner returned an empty transcript response.");
+        var transcript = await ReadJsonAsync<RunnerTranscriptDto>(
+            $"sessions/{sessionId:D}/transcript", ResilienceOperations.RunnerTranscript, ct);
         return new SessionRunnerTranscriptDto(
             transcript.SessionId,
             transcript.Entries.Select(MapTranscript).ToList(),
@@ -555,7 +599,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             || !features.Contains(RunnerCapabilityFeatures.CompactionContinuationStopV1, StringComparer.Ordinal))
             return CompactionTailObservation.Unsupported();
 
-        var response = await _httpClient.GetAsync($"sessions/{sessionId:D}/compaction-observation", ct);
+        var response = await SendReadAsync(
+            $"sessions/{sessionId:D}/compaction-observation",
+            ResilienceOperations.RunnerCompactionObservation,
+            ct);
         await ThrowForRunnerProblemAsync(response, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<CompactionTailObservation>(JsonOptions, ct)
@@ -748,7 +795,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
-        var response = await _httpClient.GetAsync($"herdr/panes/{Uri.EscapeDataString(paneId)}", ct);
+        var response = await SendReadAsync(
+            $"herdr/panes/{Uri.EscapeDataString(paneId)}",
+            ResilienceOperations.RunnerInspectHerdrPane,
+            ct);
         await ThrowForRunnerProblemAsync(response, ct);
         return await response.Content.ReadFromJsonAsync<HerdrPaneInspectDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty inspect response.");
@@ -775,14 +825,20 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<HerdrPaneDisposalReceipt> GetHerdrPaneDisposalAsync(Guid operationId, CancellationToken ct)
     {
         await RequirePaneDisposalCapabilityAsync(ct);
-        using var response = await _httpClient.GetAsync($"herdr/pane-disposals/{operationId:D}", ct);
+        using var response = await SendReadAsync(
+            $"herdr/pane-disposals/{operationId:D}",
+            ResilienceOperations.RunnerHerdrDisposal,
+            ct);
         return await ReadPaneDisposalAsync<HerdrPaneDisposalReceipt>(response, ct);
     }
 
     public async Task<HerdrPaneDisposalPreview> GetHerdrPaneDisposalPreviewAsync(Guid previewId, CancellationToken ct)
     {
         await RequirePaneDisposalCapabilityAsync(ct);
-        using var response = await _httpClient.GetAsync($"herdr/pane-disposals/previews/{previewId:D}", ct);
+        using var response = await SendReadAsync(
+            $"herdr/pane-disposals/previews/{previewId:D}",
+            ResilienceOperations.RunnerHerdrDisposalPreview,
+            ct);
         return await ReadPaneDisposalAsync<HerdrPaneDisposalPreview>(response, ct);
     }
 
