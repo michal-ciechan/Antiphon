@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -510,6 +511,54 @@ public sealed class WorktreeGuardedCleanupTests
         await using var h = await RemovalHarness.CreateAsync(); using var source = new CancellationTokenSource();
         h.Diagnostics.Before = () => { source.Cancel(); return Task.CompletedTask; };
         await Should.ThrowAsync<OperationCanceledException>(() => h.RemoveAsync(ct: source.Token)); h.Removes.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C665_SetAsideRestoreRefreshesRegistrationCache(bool pendingRecovery)
+    {
+        await using var h = await RemovalHarness.CreateAsync();
+        var fixture = h.H.Fixture;
+        var aside = WorktreeSetAside.SetAsidePath(fixture.Source);
+        using var operationScope = fixture.Git.BeginOperationScope();
+
+        async Task CacheMissingTreeAsync()
+        {
+            var rows = await fixture.Git.LiveRegistrationsAsync(fixture.Repository, default);
+            rows.Single(r => LandingGit.PathsEqual(r.Path, fixture.Source)).Prunable.ShouldBeTrue();
+        }
+
+        if (pendingRecovery)
+        {
+            WorktreeSetAside.Record(h.Operation.CommonDirectory,
+                new(fixture.Source, aside, h.Operation.GitDirectory, DateTime.UtcNow));
+            WorktreeNoFollowDelete.MoveAside(fixture.Source, aside);
+            await CacheMissingTreeAsync();
+            h.CleanFirst = true;
+        }
+        else
+        {
+            // A failed registration drop restores the tree within this same cache scope.
+            h.OnRemove = count => count == 1 ? CacheMissingTreeAsync() : Task.CompletedTask;
+        }
+
+        var result = await h.RemoveAsync(context: false);
+        if (!pendingRecovery)
+        {
+            result.Residue.ShouldBe("worktree_remove_failed");
+            (await File.ReadAllTextAsync(Path.Combine(fixture.Source, "feature.txt"))).ShouldBe("valuable feature\n");
+            var restored = await fixture.Git.InspectAsync(fixture.Coordinates, default);
+            restored.Accepted.ShouldBeTrue(restored.Reason);
+            result = await h.RemoveAsync(context: false);
+        }
+
+        result.IsClean.ShouldBeTrue(result.Residue);
+        fixture.Git.RegistrationDrops.ShouldHaveSingleItem().ShouldBe(fixture.Source);
+        Directory.Exists(fixture.Source).ShouldBeFalse();
+        Directory.Exists(aside).ShouldBeFalse();
+        WorktreeSetAside.Read(h.Operation.CommonDirectory, fixture.Source).ShouldBeNull();
+        await fixture.AssertRemoteSourceAsync();
     }
 
     internal sealed class RemovalHarness : IAsyncDisposable
