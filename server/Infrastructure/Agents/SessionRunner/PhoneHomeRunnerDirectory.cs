@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Security.Cryptography;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -406,7 +407,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 set.Add(id);
         }
 
-        return set;
+        // Callers treat the snapshot as immutable. A mutable set would let a reader insert a session
+        // the runner never reported.
+        return set.ToFrozenSet();
     }
 
     private IReadOnlyCollection<Guid> UnknownFor(RunnerSlot slot)
