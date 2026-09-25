@@ -76,8 +76,10 @@ public sealed class AgentTaskLandIndexLockTests
     }
 
     [Test]
-    public async Task Source_worktree_lock_refuses_before_rebase()
+    public async Task Land_worktree_lock_refuses_before_rebase()
     {
+        // CARD-0688 D-10: the rebase runs in the land worktree, so its pre-rebase lock refusal is there (it was the
+        // source worktree's). A lock code at RecoveryPinned stays resumable.
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
@@ -85,42 +87,39 @@ public sealed class AgentTaskLandIndexLockTests
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", ".");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "move master");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "HEAD:refs/heads/master");
-        var lockPath = await ResolveLockAsync(h.Fixture.Source);
-        var created = false;
+        string? lockPath = null;
         h.Fixture.Git.BeforeCommand = (repo, args) =>
         {
-            if (!created
-                && GitIndexLock.PathsEqual(repo, h.Fixture.Source)
-                && args.Contains("--git-path")
-                && args.Contains("index.lock")
-                && h.Fixture.Git.Trace.Any(a => a.Length > 0 && a[0] == "update-ref"))
+            if (lockPath is null && IsLandWorktree(h, repo) && args.Contains("--git-path") && args.Contains("index.lock"))
             {
+                lockPath = LandLockPath(repo);
                 File.WriteAllBytes(lockPath, []);
                 File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow - TimeSpan.FromHours(1));
-                created = true;
             }
             return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
         };
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
-        created.ShouldBeTrue();
+        lockPath.ShouldNotBeNull();
         await using var db = h.CreateContext();
         var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
             && e.Type == AgentTaskEventType.LandRefused);
         refused.Detail.ShouldStartWith("land refused: git_index_lock_stale;");
         refused.Detail.ShouldContain(lockPath);
-        var op = await h.OperationAsync();
-        op.ShouldNotBeNull();
-        op!.Phase.ShouldBe(LandPhase.RecoveryPinned);
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Phase.ShouldBe(LandPhase.RecoveryPinned);
         op.LastReason.ShouldBe(GitIndexLock.StaleCode);
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase"));
+        File.Delete(lockPath);
     }
 
     [Test]
-    public async Task Target_lock_refuses_before_ff_and_same_request_resumes()
+    public async Task Target_lock_is_canonical_residue_after_publication()
     {
+        // CARD-0688 D-4/D-10: the main checkout is fast-forwarded after publication, so a lock there is recorded
+        // as canonical residue (the land is not refused and is not resumed; the operator pulls there).
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
-        var sha = await h.AddSourceAsync();
+        await h.AddSourceAsync();
         var lockPath = await ResolveLockAsync(h.Fixture.Repository);
         var created = false;
         h.Fixture.Git.BeforeCommand = (repo, args) =>
@@ -129,7 +128,7 @@ public sealed class AgentTaskLandIndexLockTests
                 && GitIndexLock.PathsEqual(repo, h.Fixture.Repository)
                 && args.Contains("--git-path")
                 && args.Contains("index.lock")
-                && h.Fixture.Git.Trace.Any(a => a.Contains("rebase")))
+                && h.Fixture.Git.Trace.Any(a => a.Length > 0 && a[0] == "push"))
             {
                 File.WriteAllBytes(lockPath, []);
                 File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow - TimeSpan.FromHours(1));
@@ -139,27 +138,17 @@ public sealed class AgentTaskLandIndexLockTests
         };
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
         created.ShouldBeTrue();
-        var first = await h.OperationAsync();
-        first.ShouldNotBeNull();
-        first!.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
-        first.LastReason.ShouldBe(GitIndexLock.StaleCode);
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.CanonicalAdvanceReason.ShouldBe("canonical_index_lock");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only"));
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "push");
-        var targetBefore = first.TargetBeforeSha;
-        File.Delete(lockPath);
-        h.Fixture.Git.BeforeCommand = null;
-        h.Fixture.Git.Trace.Clear();
-        await h.RequestAsync(expectedSourceSha: sha);
-        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
-        var second = await h.OperationAsync();
-        second.ShouldNotBeNull();
-        second!.Id.ShouldBe(first.Id);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", "refs/heads/master")).Trim().ShouldBe(op.VerifiedSourceSha);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "refs/heads/master")).Trim().ShouldBe(op.TargetBeforeSha);
+        File.Exists(lockPath).ShouldBeTrue("a residue never deletes the lock");
         await using var db = h.CreateContext();
-        (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
-            && e.Type == AgentTaskEventType.Landed)).ShouldBeTrue();
-        (await db.AgentTaskEvents.AnyAsync(e => e.Detail.Contains("land_request_identity_conflict"))).ShouldBeFalse();
-        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "refs/heads/master")).Trim()
-            .ShouldNotBe(targetBefore);
+        (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.IsLandTerminal))
+            .Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+        File.Delete(lockPath);
     }
 
     [Test]
@@ -172,27 +161,23 @@ public sealed class AgentTaskLandIndexLockTests
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", ".");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "move master");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "HEAD:refs/heads/master");
-        var lockPath = await ResolveLockAsync(h.Fixture.Source);
-        var created = false;
+        string? lockPath = null;
         h.Fixture.Git.BeforeCommand = (repo, args) =>
         {
-            if (!created
-                && GitIndexLock.PathsEqual(repo, h.Fixture.Source)
-                && args.Contains("rebase")
-                && !args.Contains("--abort")
-                && !File.Exists(lockPath))
+            // CARD-0688 D-3: the rebase (and so the lock that races it) is in the land worktree.
+            if (lockPath is null && IsLandWorktree(h, repo) && args.Contains("rebase") && !args.Contains("--abort"))
             {
+                lockPath = LandLockPath(repo);
                 File.WriteAllBytes(lockPath, []);
-                created = true;
             }
             return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
         };
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
-        created.ShouldBeTrue();
+        lockPath.ShouldNotBeNull();
         var first = await h.OperationAsync();
         first.ShouldNotBeNull();
         first!.LastReason.ShouldBe(GitIndexLock.HeldCode);
-        first.LastReason.ShouldNotBe("interrupted_rebase_requires_inspection");
+        first.LastReason.ShouldNotBe("interrupted_rebase");
         first.Phase.ShouldBe(LandPhase.Refused);
         h.Fixture.Git.Trace.ShouldContain(a => a.Contains("rebase") && !a.Contains("--abort"));
         await using (var db = h.CreateContext())
@@ -201,7 +186,7 @@ public sealed class AgentTaskLandIndexLockTests
                 && e.Type == AgentTaskEventType.LandRefused);
             refused.Detail.ShouldContain(lockPath);
             (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
-                && e.Detail.Contains("interrupted_rebase_requires_inspection"))).ShouldBeFalse();
+                && e.Detail.Contains("interrupted_rebase"))).ShouldBeFalse();
         }
         File.Delete(lockPath);
         h.Fixture.Git.BeforeCommand = null;
@@ -212,7 +197,7 @@ public sealed class AgentTaskLandIndexLockTests
         (await again.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
             && e.Type == AgentTaskEventType.Landed)).ShouldBeTrue();
         (await again.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
-            && e.Detail.Contains("interrupted_rebase_requires_inspection"))).ShouldBeFalse();
+            && e.Detail.Contains("interrupted_rebase"))).ShouldBeFalse();
         var second = await h.OperationAsync();
         second.ShouldNotBeNull();
         second!.Id.ShouldNotBe(first.Id);
@@ -221,6 +206,8 @@ public sealed class AgentTaskLandIndexLockTests
     [Test]
     public async Task Lock_created_during_ff_merge_is_reported_held()
     {
+        // CARD-0688 D-4: the fast-forward is the canonical step after publication; a lock that makes it fail is
+        // recorded as canonical_index_lock residue (it was a pre-push git_index_lock_held refusal).
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
@@ -237,15 +224,27 @@ public sealed class AgentTaskLandIndexLockTests
             return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
         };
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
-        var op = await h.OperationAsync();
-        op.ShouldNotBeNull();
-        op!.LastReason.ShouldBe(GitIndexLock.HeldCode);
-        op.LastReason.ShouldNotBe("target_advance_failed");
-        op.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.CanonicalAdvanceReason.ShouldBe("canonical_index_lock");
+        op.CanonicalAdvanceReason.ShouldNotBe("canonical_advance_failed");
         await using var db = h.CreateContext();
-        var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
-            && e.Type == AgentTaskEventType.LandRefused);
-        refused.Detail.ShouldContain(lockPath);
+        var terminal = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.IsLandTerminal);
+        terminal.Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+        terminal.Detail.ShouldContain("canonical=canonical_index_lock");
+        (await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.Warning).ToListAsync())
+            .ShouldContain(e => e.Detail.Contains(h.Fixture.Repository));
+        File.Delete(lockPath);
+    }
+
+    private static bool IsLandWorktree(LandingSafetyHarness h, string repo) =>
+        Path.GetFullPath(repo).StartsWith(Path.Combine(h.Fixture.Root, "trees", "land") + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+
+    /// <summary>The land worktree's own index lock: its <c>.git</c> file names its admin directory.</summary>
+    private static string LandLockPath(string land)
+    {
+        var gitdir = File.ReadAllText(Path.Combine(land, ".git")).Trim()["gitdir:".Length..].Trim();
+        return Path.Combine(Path.GetFullPath(gitdir), "index.lock");
     }
 
     [Test]

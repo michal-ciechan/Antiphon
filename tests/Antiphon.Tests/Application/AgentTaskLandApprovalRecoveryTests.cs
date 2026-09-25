@@ -129,70 +129,49 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     [Test]
     public async Task C488_SourceFailureStopsTarget()
     {
+        // CARD-0688 D-2: the source is a branch ref; an unreadable ref stops resolution before any target work
+        // (the source fast-forward whose failure this pinned no longer exists).
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
         h.Git.BeforeCommand = (_, args) =>
-            args.Contains("merge") && args.Contains("--ff-only")
-                ? Task.FromResult<LandingGitResult?>(new(1, "", "ff failed"))
+            args is ["show-ref", _, ..] && args[^1] == h.Git.SourceRef
+                ? Task.FromResult<LandingGitResult?>(new(1, "", "ref read failed"))
                 : Task.FromResult<LandingGitResult?>(null);
         var queued = await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
         await using var db = h.CreateContext();
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId))
-            .SourceRefusalReason.ShouldBe("source_fast_forward_failed");
+            .SourceRefusalReason.ShouldBe("source_ref_error");
         (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
-        h.Git.Trace.ShouldNotContain(a => a[0] == "push");
+        h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a[0] == "fetch");
         (await h.Git.RequiredAsync(h.Git.Repository, "rev-parse", h.Git.TargetRef)).Trim().ShouldBe(h.Git.SeedSha);
     }
 
     [Test]
     public async Task C488_CleanLRetriesSavedAdvance()
     {
+        // CARD-0688 D-7: schema 3 never journals a source fast-forward. A request the old protocol left at
+        // AdvanceStarted (its child gone) is superseded: it refuses and the caller re-runs -Land.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Fault.RequestResolution = LandSourceResolutionState.AdvanceStarted;
-        h.Fault.AfterCommit = true;
-        await h.RequestAsync(expectedSourceSha: b);
-        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
-        await h.RestartServicesAsync();
-        h.Fault.RequestResolution = null;
-        h.Fault.AfterCommit = false;
-        h.Git.Trace.Clear();
-        h.Git.OwnedTrace.Clear();
-        await h.RunAsync();
-        h.Git.OwnedTrace.Count(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b)).ShouldBe(1);
-        var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.OriginalSourceSha.ShouldBe(b);
-        op.ReviewedSourceSha.ShouldBe(b);
+        var queued = await SeedAdvanceStartedAsync(h, b);
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued);
+        request.SourceRefusalReason.ShouldBe("landing_schema_superseded");
+        request.SourceAdvanceChildOperation.ShouldBeNull();
+        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
+        h.Git.OwnedTrace.ShouldBeEmpty();
+        h.Git.SourceHead.ShouldBe(h.Git.SeedSha, "nothing fast-forwards the task worktree");
     }
 
     [Test]
     public async Task C488_CleanEAcknowledgesIntent()
     {
-        await using var h = new LandingProtocolHarness();
-        await h.InitializeAsync();
-        var b = h.Git.AdvanceRemoteSource();
-        h.Fault.RequestResolution = LandSourceResolutionState.AdvanceStarted;
-        h.Fault.AfterCommit = true;
-        await h.RequestAsync(expectedSourceSha: b);
-        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
-        h.Git.RewindSource(b);
-        await h.RestartServicesAsync();
-        h.Fault.RequestResolution = null;
-        h.Fault.AfterCommit = false;
-        h.Git.OwnedTrace.Clear();
-        await h.RunAsync();
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b));
-        var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.OriginalSourceSha.ShouldBe(b);
-    }
-
-    [Test]
-    public async Task C488_UnrecordedFastForwardRefuses()
-    {
+        // CARD-0688: a resolution interrupted after its Observed checkpoint resolves again from the branch ref; a
+        // branch that meanwhile reached the reviewed SHA lands as Equal, with no fast-forward.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
@@ -204,37 +183,74 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await h.RestartServicesAsync();
         h.Fault.RequestResolution = null;
         h.Fault.AfterCommit = false;
+        h.Git.OwnedTrace.Clear();
         await h.RunAsync();
-        await using var db = h.CreateContext();
-        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
-        request.SourceRefusalReason.ShouldBe("source_advance_head_unexpected");
-        request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Observed);
-        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
+        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains(b));
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.OriginalSourceSha.ShouldBe(b);
+        op.SourceLocalSha.ShouldBe(b);
     }
 
     [Test]
-    public async Task C488_ThirdShaRecoveryRefuses()
+    public async Task C488_UnrecordedFastForwardRefuses()
     {
+        // CARD-0688: after an interrupted Observed checkpoint an unrecorded branch movement is never trusted:
+        // resolution starts again from the ref, and a branch that left the reviewed line refuses.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Fault.RequestResolution = LandSourceResolutionState.AdvanceStarted;
+        h.Fault.RequestResolution = LandSourceResolutionState.Observed;
         h.Fault.AfterCommit = true;
         await h.RequestAsync(expectedSourceSha: b);
         await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
-        await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "third C");
-        var c = h.Git.SourceHead;
-        c.ShouldNotBe(b);
+        await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "unrecorded writer");
         await h.RestartServicesAsync();
         h.Fault.RequestResolution = null;
         h.Fault.AfterCommit = false;
         await h.RunAsync();
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
-        request.SourceRefusalReason.ShouldBe("source_advance_head_unexpected");
+        request.SourceRefusalReason.ShouldBe("source_remote_diverged");
+        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C488_ThirdShaRecoveryRefuses()
+    {
+        // CARD-0688 D-7: an AdvanceStarted request refuses as superseded whatever the branch holds now.
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var b = h.Git.AdvanceRemoteSource();
+        var queued = await SeedAdvanceStartedAsync(h, b);
+        await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "third C");
+        var c = h.Git.SourceHead;
+        c.ShouldNotBe(b);
+        await h.RunQueuedAsync();
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued);
+        request.SourceRefusalReason.ShouldBe("landing_schema_superseded");
         request.ExpectedSourceSha.ShouldBe(b);
         h.Git.SourceHead.ShouldBe(c);
         (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
+    }
+
+    /// <summary>The request row the pre-CARD-0688 resolver left mid fast-forward: AdvanceStarted, child recorded
+    /// without a process (the worker died before the child started).</summary>
+    private static async Task<Guid> SeedAdvanceStartedAsync(LandingProtocolHarness h, string expected)
+    {
+        var queued = await h.RequestAsync(expectedSourceSha: expected);
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+        request.SourceResolutionState = LandSourceResolutionState.AdvanceStarted;
+        request.LocalBeforeSha = h.Git.SeedSha;
+        request.RemoteSourceSha = expected;
+        request.RemoteSourceRef = h.Git.SourceRef;
+        request.RemoteSourceFingerprint = h.Git.Fingerprint;
+        request.CandidateSourceSha = expected;
+        request.SourceRelationship = LandSourceRelationship.Behind;
+        request.SourceAdvanceChildOperation = "source-ff";
+        await db.SaveChangesAsync();
+        return request.Id;
     }
 
     [Test]
@@ -373,7 +389,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        h.Fault.Phase = LandPhase.TargetAdvanceStarted;
+        h.Fault.Phase = LandPhase.PushStarted; // CARD-0688: push intent is the schema-3 publication intent
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
         var op = (await h.OperationAsync()).ShouldNotBeNull();
@@ -385,7 +401,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await h.RunQueuedAsync();
         var after = (await h.OperationAsync()).ShouldNotBeNull();
         after.Id.ShouldBe(op.Id);
-        after.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
+        after.Phase.ShouldBe(LandPhase.PushStarted);
     }
 
     [Test]

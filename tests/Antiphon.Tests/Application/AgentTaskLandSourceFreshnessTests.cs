@@ -252,6 +252,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
     [Test]
     public async Task C488_DirtySourceFfRefuses()
     {
+        // CARD-0688 D-2: a Behind branch lands from the observed remote SHA without fast-forwarding the task
+        // worktree, so its dirty bytes are never at risk before cleanup; guarded cleanup keeps them as residue
+        // (this was a source_dirty refusal before the fast-forward).
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
@@ -261,12 +264,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
                 File.WriteAllText(Path.Combine(h.Git.Source, "keep.txt"), "dirty pre-ff\n");
             return Task.CompletedTask;
         };
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        await using var db = h.CreateContext();
-        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
-        request.SourceRefusalReason.ShouldBe("source_dirty");
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        await AssertLandedWithSourceResidueAsync(h, "source_dirty");
         (await File.ReadAllTextAsync(Path.Combine(h.Git.Source, "keep.txt"))).ShouldBe("dirty pre-ff\n");
         h.Git.SourceHead.ShouldBe(h.Git.SeedSha);
     }
@@ -274,6 +274,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
     [Test]
     public async Task C488_SourceIdentityFfRefuses()
     {
+        // CARD-0688 D-2 / I-4: the worktree's checked-out branch is a cleanup concern (was source_branch_mismatch).
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
@@ -282,17 +283,15 @@ public sealed class AgentTaskLandSourceFreshnessTests
             if (n == 1) h.Git.SwitchSourceBranch("other-source-writer");
             return Task.CompletedTask;
         };
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        await using var db = h.CreateContext();
-        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId))
-            .SourceRefusalReason.ShouldBe("source_branch_mismatch");
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        await AssertLandedWithSourceResidueAsync(h, "source_branch_mismatch");
     }
 
     [Test]
     public async Task C488_SourceSequencerFfRefuses()
     {
+        // CARD-0688 D-2 / I-5: a sequencer in the task worktree is a cleanup concern (was active_sequencer).
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
@@ -301,54 +300,49 @@ public sealed class AgentTaskLandSourceFreshnessTests
             if (n == 1) h.Git.MarkSourceSequencer();
             return Task.CompletedTask;
         };
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        await using var db = h.CreateContext();
-        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId))
-            .SourceRefusalReason.ShouldBe("active_sequencer");
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        await AssertLandedWithSourceResidueAsync(h, "active_sequencer");
     }
 
     [Test]
     public async Task C488_FastForwardCannotAdoptLaterHead()
     {
+        // CARD-0688 D-2: nothing fast-forwards any more; a later head on the branch after the observation is
+        // caught by the show-ref at operation creation and can never be adopted.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Git.AfterCommand = async (repo, args, _) =>
+        h.Git.OnSourceObservation = async n =>
         {
-            if (args.Contains("merge") && args.Contains("--ff-only"))
-                await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "later C");
+            if (n == 1) await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "later C");
         };
         var queued = await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
         request.SourceRefusalReason.ShouldBe("source_changed");
-        request.ResolvedSourceSha.ShouldBeNull();
         h.Git.SourceHead.ShouldNotBe(b);
         (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
+        h.Git.OwnedTrace.ShouldBeEmpty();
     }
 
     [Test]
     public async Task C488_PostFfDirtyRefuses()
     {
+        // CARD-0688: dirtiness appearing after resolution is also cleanup residue, never a publication blocker.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Git.AfterCommand = (_, args, _) =>
+        h.Git.OnSourceRecheck = n =>
         {
-            if (args.Contains("merge") && args.Contains("--ff-only"))
-                File.WriteAllText(Path.Combine(h.Git.Source, "keep.txt"), "post-ff dirty\n");
+            if (n == 2) File.WriteAllText(Path.Combine(h.Git.Source, "keep.txt"), "post-ff dirty\n");
             return Task.CompletedTask;
         };
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        await using var db = h.CreateContext();
-        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId))
-            .SourceRefusalReason.ShouldBe("source_dirty");
+        await AssertLandedWithSourceResidueAsync(h, "source_dirty");
         (await File.ReadAllTextAsync(Path.Combine(h.Git.Source, "keep.txt"))).ShouldBe("post-ff dirty\n");
-        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
     }
 
     [Test]
@@ -357,17 +351,14 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Git.AfterCommand = (_, args, _) =>
+        h.Git.OnSourceRecheck = n =>
         {
-            if (args.Contains("merge") && args.Contains("--ff-only"))
-                h.Git.SwitchSourceBranch("switched-after-ff");
+            if (n == 2) h.Git.SwitchSourceBranch("switched-after-ff");
             return Task.CompletedTask;
         };
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        await using var db = h.CreateContext();
-        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId))
-            .SourceRefusalReason.ShouldBe("source_branch_mismatch");
+        await AssertLandedWithSourceResidueAsync(h, "source_branch_mismatch");
     }
 
     [Test]
@@ -441,9 +432,10 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Git.OnSourceObservation = n =>
+        // CARD-0688 D-8: the resolver confirms its observation with one ls-remote, not a second observation.
+        h.Git.OnSourceRecheck = n =>
         {
-            if (n == 2) h.Git.AdvanceRemoteSource();
+            if (n == 1) h.Git.AdvanceRemoteSource();
             return Task.CompletedTask;
         };
         var queued = await h.RequestAsync(expectedSourceSha: b);
@@ -452,16 +444,18 @@ public sealed class AgentTaskLandSourceFreshnessTests
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
         request.SourceRefusalReason.ShouldBe("source_remote_changed");
         request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Observed);
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        h.Git.OwnedTrace.ShouldBeEmpty();
     }
 
     [Test]
     public async Task C488_RemoteFenceBeforeSourceFf()
     {
+        // CARD-0688: there is no source fast-forward; the fence before the first mutation of a Behind land is the
+        // recheck before the land-worktree reset.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Git.OnSourceObservation = n =>
+        h.Git.OnSourceRecheck = n =>
         {
             if (n == 3) h.Git.AdvanceRemoteSource();
             return Task.CompletedTask;
@@ -470,30 +464,28 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await h.RunQueuedAsync();
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
-        request.SourceRefusalReason.ShouldBe("source_remote_changed");
-        request.SourceResolutionState.ShouldBe(LandSourceResolutionState.AdvanceStarted);
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Resolved);
+        (await h.OperationAsync()).ShouldNotBeNull().LastReason.ShouldBe("source_remote_changed");
+        h.Git.OwnedTrace.ShouldBeEmpty();
     }
 
     [Test]
     public async Task C488_RemoteFenceAfterSourceFf()
     {
+        // CARD-0688: the protocol's entry recheck of a freshly resolved Behind land.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var b = h.Git.AdvanceRemoteSource();
-        h.Git.AfterCommand = (_, args, _) =>
+        h.Git.OnSourceRecheck = n =>
         {
-            if (args.Contains("merge") && args.Contains("--ff-only"))
-                h.Git.AdvanceRemoteSource();
+            if (n == 2) h.Git.AdvanceRemoteSource();
             return Task.CompletedTask;
         };
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        await using var db = h.CreateContext();
-        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
-        request.SourceRefusalReason.ShouldBe("source_remote_changed");
-        h.Git.SourceHead.ShouldBe(b);
-        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
+        (await h.OperationAsync()).ShouldNotBeNull().LastReason.ShouldBe("source_remote_changed");
+        h.Git.SourceHead.ShouldBe(h.Git.SeedSha, "the task worktree is never fast-forwarded");
+        h.Git.OwnedTrace.ShouldBeEmpty();
     }
 
     [Test]
@@ -512,10 +504,12 @@ public sealed class AgentTaskLandSourceFreshnessTests
     public async Task C488_RemoteFenceBeforeTargetIntent() => await RefuseAtPhaseAsync(LandPhase.Verified);
 
     [Test]
-    public async Task C488_RemoteFenceBeforeTargetMutation() => await RefuseAtPhaseAsync(LandPhase.TargetAdvanceStarted);
+    // CARD-0688 D-4: the target is mutated only after publication; the last pre-mutation fence is at Verified.
+    public async Task C488_RemoteFenceBeforeTargetMutation() => await RefuseAtPhaseAsync(LandPhase.Verified);
 
     [Test]
-    public async Task C488_RemoteFenceBeforePush() => await RefuseAtPhaseAsync(LandPhase.LocalTargetAdvanced);
+    // CARD-0688 D-8: the pre-push recheck runs in the Verified step (there is no LocalTargetAdvanced any more).
+    public async Task C488_RemoteFenceBeforePush() => await RefuseAtPhaseAsync(LandPhase.Verified);
 
     [Test]
     public async Task C488_RemoteFenceBeforeAlreadyPresent()
@@ -579,16 +573,21 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        h.Fault.AfterAcknowledged = async phase =>
+        // CARD-0688 D-4 / I-9: the guarded target is the observed remote (the rebase base), re-observed before the
+        // push; a remote that moved refuses and the operation is terminal, so the next request rebases again.
+        // Local target movement is no longer a landing precondition (was target_changed).
+        h.Fault.AfterAcknowledged = phase =>
         {
-            if (phase == LandPhase.TargetAdvanceStarted)
-                await h.Git.RequiredAsync(h.Git.Repository, "commit", "--allow-empty", "-m", "target third");
+            if (phase == LandPhase.Verified) h.Git.RewriteRemoteAwayFromSource();
+            return Task.CompletedTask;
         };
         await h.RequestAsync();
         await h.RunQueuedAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.LastReason.ShouldBe("target_changed");
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only") && a[a.Length - 1] != h.Git.SourceHead);
+        op.LastReason.ShouldBe("remote_changed_before_push");
+        op.Phase.ShouldBe(LandPhase.Refused);
+        h.Git.Trace.ShouldNotContain(a => a[0] == "push");
+        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
     }
 
     [Test]
@@ -619,6 +618,19 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await C488_PostFfIdentityRefuses();
         await C488_RebaseCannotAdoptLaterHead();
         await C488_TargetCheckpointStillGuarded();
+    }
+
+    /// <summary>CARD-0688 D-12: a worktree-state refusal of the old protocol is now guarded-cleanup residue. The land
+    /// publishes from the branch ref, never fast-forwards or rebases in the task worktree, and cleanup keeps it.</summary>
+    private static async Task AssertLandedWithSourceResidueAsync(LandingProtocolHarness h, string residue)
+    {
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed, op.LastReason);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe(residue);
+        Directory.Exists(h.Git.Source).ShouldBeTrue();
+        h.Git.Commands.ShouldNotContain(c => (c.Arguments.Contains("merge") || c.Arguments.Contains("rebase"))
+            && string.Equals(Path.GetFullPath(c.Directory), Path.GetFullPath(h.Git.Source), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task RefuseAtPhaseAsync(LandPhase phase)
@@ -700,7 +712,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
     {
         // CARD-0642 R1 repair: switching an EXISTING worktree onto the target moves only that worktree's
         // HEAD file, not the <common>/worktrees stamp. The checkout decision behind update-ref must be
-        // a fresh listing, never the land's cached one.
+        // a fresh read, never a cached one (CARD-0688: the HEAD files, read after publication).
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
@@ -731,10 +743,12 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await outsider.RunAsync(other, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], CancellationToken.None))
             .Output.ShouldBeEmpty("the other worktree's index and tree must not be left behind a moved branch");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.LastReason.ShouldBe("target_checkout_changed");
+        // CARD-0688 D-4/D-5: the push comes first; the canonical step's HEAD-file read (repeated as the last check
+        // before the mutation) sees the switched worktree and records a residue instead of moving the target.
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        op.CanonicalAdvanceReason.ShouldBe("target_checked_out_elsewhere");
         op.LocalTargetAfterSha.ShouldBeNull();
-        op.RemoteConfirmedAt.ShouldBeNull();
-        h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "push").Select(a => string.Join(' ', a)).ShouldBeEmpty();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only"));
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
@@ -777,10 +791,12 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await outsider.RunAsync(other, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], CancellationToken.None))
             .Output.ShouldBeEmpty("the other worktree's index and tree must not be left behind a moved branch");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.LastReason.ShouldBe("target_checkout_changed");
+        // CARD-0688 D-4/D-5: the push comes first; the canonical step's HEAD-file read (repeated as the last check
+        // before the mutation) sees the switched worktree and records a residue instead of moving the target.
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        op.CanonicalAdvanceReason.ShouldBe("target_checked_out_elsewhere");
         op.LocalTargetAfterSha.ShouldBeNull();
-        op.RemoteConfirmedAt.ShouldBeNull();
-        h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "push").Select(a => string.Join(' ', a)).ShouldBeEmpty();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only"));
         await h.Fixture.AssertRemoteSourceAsync();
     }
 

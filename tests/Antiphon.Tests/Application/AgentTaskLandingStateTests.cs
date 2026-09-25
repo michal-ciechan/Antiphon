@@ -61,7 +61,7 @@ public sealed class AgentTaskLandingStateTests
     public void C488_UnknownVersionRefuses()
     {
         var op = ValidV2();
-        op.SchemaVersion = 3;
+        op.SchemaVersion = 4; // CARD-0688: schema 3 is the dedicated land worktree protocol
         var policy = new AgentTaskLandingState();
         policy.HasPublication(op).ShouldBeFalse();
         Should.Throw<InvalidOperationException>(() => policy.Transition(op, LandPhase.Verified, DateTime.UtcNow))
