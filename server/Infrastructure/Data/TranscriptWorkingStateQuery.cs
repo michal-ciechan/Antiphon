@@ -10,11 +10,13 @@ internal static class TranscriptWorkingStateQuery
     // Trusted classification literals must stay literal in SQL: a generic prepared plan cannot
     // prove a parameterized predicate implies the partial-index filter. Migrations freeze their
     // own historical copies. Keep server/client/in-memory classification semantics in sync.
-    internal const string EndPredicate = """
-        "Kind" IN ('TurnEnd', 'SessionRestartBoundary')
-        OR ("Kind" = 'CompactBoundary' AND "Text" IS NOT NULL AND strpos("Text", '(manual)') > 0)
-        OR ("Kind" = 'UserPrompt' AND "Text" IS NOT NULL AND "Text" LIKE '[Request interrupted%')
-        """;
+    // Explicit "\n" joins, not a raw multi-line literal: this string is an index filter in the EF
+    // model, and a raw literal picks up the checkout's line endings (CRLF on Windows), which makes
+    // the model differ from the LF snapshot and fails startup with PendingModelChangesWarning.
+    internal const string EndPredicate =
+        "\"Kind\" IN ('TurnEnd', 'SessionRestartBoundary')\n" +
+        "OR (\"Kind\" = 'CompactBoundary' AND \"Text\" IS NOT NULL AND strpos(\"Text\", '(manual)') > 0)\n" +
+        "OR (\"Kind\" = 'UserPrompt' AND \"Text\" IS NOT NULL AND \"Text\" LIKE '[Request interrupted%')";
 
     private const string ActivityPredicate = """
         a."Kind" NOT IN ('TurnEnd', 'TurnTitle', 'SessionRestartBoundary', 'QueuedUserPrompt',
