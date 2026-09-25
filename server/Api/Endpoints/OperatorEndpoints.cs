@@ -35,12 +35,13 @@ public static class OperatorEndpoints
             return Results.Ok(new OperatorDashboardLoginDto($"{LoginPath}?nonce={nonce}", expiresAt));
         }).WithTags("Operator");
 
-        app.MapPost(ShutdownPath, (
+        app.MapPost(ShutdownPath, async (
             HttpContext http,
             OperatorShutdownRequest? body,
             OperatorShutdownCoordinator coordinator,
             IOptions<PhoneHomeRunnerSettings> settings,
-            IOptions<OperatorSettings> op) =>
+            IOptions<OperatorSettings> op,
+            CancellationToken ct) =>
         {
             OperatorCredential.Require(
                 http, settings.Value,
@@ -49,9 +50,10 @@ public static class OperatorEndpoints
                 throw new ValidationException("reason", "Shutdown reason must be at most 200 characters.");
             var reason = body?.Reason;
             var drainSeconds = op.Value.ShutdownDrainSeconds;
+            var starting = await coordinator.CountStartingLaunchesAsync(ct);
             http.Response.OnCompleted(() => coordinator.StopAsync(reason));
             return Results.Json(
-                new OperatorShutdownDto(true, Environment.ProcessId, drainSeconds, 0),
+                new OperatorShutdownDto(true, Environment.ProcessId, drainSeconds, starting),
                 statusCode: StatusCodes.Status202Accepted);
         }).WithTags("Operator");
 
