@@ -118,7 +118,7 @@ All AI agents and developers MUST follow these 13 rules:
 
 6. **Use EF Core `AppDbContext` directly** — no repository wrapper pattern. EF Core DbContext IS the abstraction.
 
-7. **Use `IOptions<TSettings>` for configuration** — never inject `IConfiguration` directly into services. Each feature gets a typed settings class. Only `Program.cs` touches `IConfiguration`.
+7. **Use `IOptions<TSettings>` for configuration** — never inject `IConfiguration` directly into services. Each feature gets a typed settings class. Only `Program.cs` touches `IConfiguration`. Admitted read retries use `Resilience` (`IOptions<ResilienceSettings>` / `IOptionsMonitor<ResilienceSettings>`), not EF Core `EnableRetryOnFailure`. The section and `Resilience__` environment variables are validated at startup; configuration may narrow the allowlists and the 120-second total budget, and `Enabled: false` keeps a single attempt. Owner: [docs/resilience.md](resilience.md).
 
 8. **Include `CancellationToken` as last parameter on every `Async` method** — API layer passes `HttpContext.RequestAborted`. Agent execution uses linked token source.
 

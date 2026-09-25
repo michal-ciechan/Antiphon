@@ -8,6 +8,17 @@ The deterministic scan covers production `server/` and `src/Antiphon.Messaging.S
 
 208 files; 1893 read/query-construction lines; 644 write/raw-command/startup lines; 1396 synchronous candidates. Multiple kinds can occur on one line. Transaction locations are separately enumerated and classified in the main plan.
 
+## Round 1 implementation evidence
+
+Round 1 admits exactly four database reads, each through `DatabaseResilienceExecutor` (fresh `AppDbContext` per attempt, `AsNoTracking`, materialized before return):
+
+- `LlmProviderService.GetAllAsync` and `GetByIdAsync`
+- `WorkflowTemplateService.GetAllAsync` and `GetByIdAsync`
+
+Their mutation methods stay on the caller's context. A serialization failure (`40001`) inside a test harness rolls back with the attempt scope and replays on a new scope; that harness is not a production write API. Every other row in the table remains at its baseline disposition. A listed line is not a protected call.
+
+Named HTTP read clients, GET only: `Resilience.RunnerRead`, `Resilience.GitHubRead`, `Resilience.GitHubIssuesRead`, `Resilience.JiraRead`, `Resilience.ProviderProbeRead`, `Resilience.GitConnectivityRead`. Runner commands, tracker mutations, pull-request creation, git push, and the Anthropic probe POST stay on their original clients. Linear and messaging are unchanged. Behavior and settings: [docs/resilience.md](../../resilience.md).
+
 ## Classification table
 
 | File | Async read / raw query locations | Write / raw command / startup locations | Synchronous LINQ candidates | Baseline disposition |
@@ -130,7 +141,7 @@ The deterministic scan covers production `server/` and `src/Antiphon.Messaging.S
 | `server/Application/Services/LandCompletionFacts.cs` | 15, 16, 18, 32 | — | — | Reads **N** until extracted/admitted; writes **K**. |
 | `server/Application/Services/LandFailureDiagnostic.cs` | — | — | 55 | Reads **N** until extracted/admitted; writes **K**. |
 | `server/Application/Services/LegacyCheckNotePublicationService.cs` | 58, 61, 65, 76, 129, 173, 232, 236, 284, 285, 305, 318, 324, 329, 346, 357 | 160, 224, 278, 293 | 153 | Reads **N** until extracted/admitted; writes **K**. |
-| `server/Application/Services/LlmProviderService.cs` | 32, 40, 76, 104, 116, 152, 164, 175, 182, 208, 213, 231 | 65, 94, 108, 199, 223, 235 | — | Reads **N** until extracted/admitted; writes **K**. R1 S override: GetAllAsync/GetByIdAsync reads only. |
+| `server/Application/Services/LlmProviderService.cs` | 32, 40, 76, 104, 116, 152, 164, 175, 182, 208, 213, 231 | 65, 94, 108, 199, 223, 235 | — | Reads **N** until extracted/admitted; writes **K**. R1 admitted only GetAllAsync and GetByIdAsync via DatabaseResilienceExecutor. Other lines in this file stay N/K. |
 | `server/Application/Services/ModelAvailability.cs` | 89, 118, 175, 263, 318, 372, 421 | 130, 197, 221, 285, 302, 324, 390 | 101, 332, 426, 429 | Reads **N** until extracted/admitted; writes **K**. |
 | `server/Application/Services/OrchestratorInvestigationSweepService.cs` | 87, 99, 110, 118, 133, 298, 316, 321, 329, 343 | 163, 305 | 100, 120, 121, 273, 345 | Reads **N** until extracted/admitted; writes **N**. |
 | `server/Application/Services/OrchestratorService.cs` | 215, 240, 250, 265, 276, 297, 634, 644, 667, 722, 866, 884, 899, 936, 1128 | 148, 690, 698, 803, 923 | 105, 112, 217, 220, 226, 243, 346, 376, 386, 387, 419, 425, 489, 630, 631, 632, 640, 641, 642, 836, 860, 865, 869, 883, 898, 1068 | Reads **N** until extracted/admitted; writes **N**. |
@@ -194,7 +205,7 @@ The deterministic scan covers production `server/` and `src/Antiphon.Messaging.S
 | `server/Application/Services/WatchdogService.cs` | 57 | — | 61 | Reads **N** until extracted/admitted; writes **K**. |
 | `server/Application/Services/WorkflowDefinitionLoader.cs` | 264, 321 | 330, 355 | 249, 325, 339, 405, 427 | Reads **N** until extracted/admitted; writes **K**. |
 | `server/Application/Services/WorkflowEngine.cs` | 66, 70, 87, 172, 250, 274, 405, 415, 452, 461, 516, 572, 619, 718, 748, 770, 794, 819 | 107, 139, 150, 193, 234, 307, 355, 383, 432, 483, 539, 602, 664, 729, 753, 775, 799, 835, 843 | 81, 82, 125, 185, 421, 467, 528, 584, 628, 642, 699 | Reads **N** until extracted/admitted; writes **K**. |
-| `server/Application/Services/WorkflowTemplateService.cs` | 24, 33, 60, 70, 84, 92 | 57, 81, 101 | 26, 122, 140, 257, 280 | Reads **N** until extracted/admitted; writes **K**. R1 S override: GetAllAsync/GetByIdAsync reads only. |
+| `server/Application/Services/WorkflowTemplateService.cs` | 24, 33, 60, 70, 84, 92 | 57, 81, 101 | 26, 122, 140, 257, 280 | Reads **N** until extracted/admitted; writes **K**. R1 admitted only GetAllAsync and GetByIdAsync via DatabaseResilienceExecutor. Other lines in this file stay N/K. |
 | `server/Application/Services/WorkspaceUseAdmission.cs` | 76, 86, 90 | — | 68, 77, 91 | Reads **N** until extracted/admitted; writes **N**. |
 | `server/Application/Services/WorktreeHealthService.cs` | 52, 85, 101, 187 | 95 | 55, 105, 241 | Reads **N** until extracted/admitted; writes **N**. |
 | `server/Application/Services/WorktreeResidueSweepService.cs` | 158, 168, 169, 309, 322, 511 | 154, 304 | 79, 134, 149, 160, 163, 175, 284, 308, 315, 365, 368, 522, 523, 530, 531, 535, 538, 545, 570, 571, 572, 573, 574, 575, 576 | Reads **N** until extracted/admitted; writes **N**. |
