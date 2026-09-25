@@ -107,10 +107,15 @@ public class SessionStateCommitTests
         await using var f = await SessionStateTestFixture.CreateAsync();
         await f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(1)]);
         var before = await f.Store.ReadAsync(f.SessionId, default);
+        var nextGeneration = before.AcceptedGeneration!.Value.AddSeconds(1);
+        await using (var db = f.Db())
+            await db.AgentSessions.Where(s => s.Id == f.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.StartedAt, nextGeneration));
         (await f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default)).ShouldBeTrue();
         var after = await f.Store.ReadAsync(f.SessionId, default);
         after.Working.ShouldBeFalse(); after.LastKind.ShouldBe("SessionRestartBoundary");
         after.Count.ShouldBe(2); after.LastSequence.ShouldBe(2); after.Revision.ShouldBeGreaterThan(before.Revision);
+        after.AcceptedGeneration.ShouldBe(nextGeneration);
         (await f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default)).ShouldBeFalse();
         (await f.Store.ReadAsync(f.SessionId, default)).ShouldBe(after);
         await AssertDurableAsync(f);
