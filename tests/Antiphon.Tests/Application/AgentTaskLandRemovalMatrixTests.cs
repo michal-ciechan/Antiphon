@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,7 +20,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
     [Arguments(1, "untracked")]
     [Arguments(1, ".antiphon/report.md")]
     [Arguments(1, ".claude/settings.json")]
-    [Arguments(1, "bin-private/keep.txt")]
+    [Arguments(1, "bin-private/settings.local.json")]
     [Arguments(1, "detach")]
     [Arguments(1, "switch")]
     [Arguments(1, "advance")]
@@ -31,7 +32,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
     [Arguments(2, "untracked")]
     [Arguments(2, ".antiphon/report.md")]
     [Arguments(2, ".claude/settings.json")]
-    [Arguments(2, "bin-private/keep.txt")]
+    [Arguments(2, "bin-private/settings.local.json")]
     [Arguments(2, "detach")]
     [Arguments(2, "switch")]
     [Arguments(2, "advance")]
@@ -98,7 +99,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
         var removed = await h.Services.GetRequiredService<IWorktreeManager>().TryRemoveAsync(request, CancellationToken.None);
         fired.ShouldBeTrue();
         removed.IsClean.ShouldBeFalse();
-        if (change is ".antiphon/report.md" or ".claude/settings.json" or "bin-private/keep.txt")
+        if (change is ".antiphon/report.md" or ".claude/settings.json" or "bin-private/settings.local.json")
             seen.ShouldBe(reading, "each ignored-content guard must refuse at its own boundary, before another source status read");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a[0] == "update-ref" && a.Contains("-d"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
@@ -242,28 +243,34 @@ public sealed class AgentTaskLandRemovalMatrixTests
             }
             return null;
         };
-        h.Fixture.Git.AfterCommand = async (_, args, result) =>
+        h.Fixture.Git.AfterUnregister = async _ =>
         {
-            if (args.Contains("worktree") && args.Contains("remove"))
+            directoryRemoved = true;
+            if (variant == "new-checkout")
             {
-                if (variant == "windows-file-handle") fired = true;
-                if (!result.Succeeded) return;
-                directoryRemoved = true;
-                if (variant == "new-checkout")
-                {
-                    fired = true;
-                    await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", newCheckout, h.Fixture.SourceRef[11..]);
-                }
+                fired = true;
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", newCheckout, h.Fixture.SourceRef[11..]);
             }
         };
         h.Fixture.Git.Trace.Clear();
         var removed = await h.Services.GetRequiredService<IWorktreeManager>().TryRemoveAsync(request, CancellationToken.None);
-        fired.ShouldBeTrue("the designated destructive boundary must be reached");
+        if (variant == "windows-file-handle")
+        {
+            // The held file now refuses the move-aside, before the administrative drop.
+            removed.Residue.ShouldBe("worktree_remove_failed");
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+            h.Fixture.Git.RegistrationDrops.ShouldBeEmpty();
+            Directory.Exists(op.GitDirectory).ShouldBeTrue();
+            Directory.Exists(WorktreeSetAside.SetAsidePath(h.Fixture.Source)).ShouldBeFalse();
+            WorktreeSetAside.Read(op.CommonDirectory, h.Fixture.Source).ShouldBeNull();
+        }
+        else fired.ShouldBeTrue("the designated destructive boundary must be reached");
         removed.IsClean.ShouldBeFalse();
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--force") || a.Contains("prune"));
         if (variant != "branch-moved") h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "update-ref" && a.Contains("-d"));
         h.Fixture.Git.BeforeCommand = null;
         h.Fixture.Git.AfterCommand = null;
+        h.Fixture.Git.AfterUnregister = null;
         var retainedRef = await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["rev-parse", "--verify", h.Fixture.SourceRef], CancellationToken.None);
         retainedRef.Succeeded.ShouldBeTrue("a refused/failed component must retain the source branch, including a raced newer tip");
         retainedRef.Output.Trim().ShouldBe(retained);
@@ -274,6 +281,20 @@ public sealed class AgentTaskLandRemovalMatrixTests
         }
         if (variant == "new-checkout")
             (await File.ReadAllTextAsync(Path.Combine(newCheckout, "feature.txt"))).ShouldBe("valuable feature\n");
+        if (variant == "registration-error")
+        {
+            h.Fixture.Git.RegistrationDrops.ShouldHaveSingleItem();
+            Directory.Exists(op.GitDirectory).ShouldBeFalse();
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+            var aside = WorktreeSetAside.SetAsidePath(h.Fixture.Source);
+            (await File.ReadAllTextAsync(Path.Combine(aside, "feature.txt"))).ShouldBe("valuable feature\n");
+            WorktreeSetAside.Read(op.CommonDirectory, h.Fixture.Source).ShouldNotBeNull();
+            var recovered = await h.Services.GetRequiredService<IWorktreeManager>().TryRemoveAsync(request, default);
+            recovered.IsClean.ShouldBeTrue(recovered.Residue);
+            Directory.Exists(aside).ShouldBeFalse();
+            WorktreeSetAside.Read(op.CommonDirectory, h.Fixture.Source).ShouldBeNull();
+            h.Fixture.Git.RegistrationDrops.Count.ShouldBe(1);
+        }
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
