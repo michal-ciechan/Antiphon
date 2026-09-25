@@ -101,6 +101,7 @@ public class ProjectService
         _db.Projects.Add(project);
         await _db.SaveChangesAsync(cancellationToken);
         _readinessCache?.Remove(project.Id);
+        _cardFiles?.InvalidateBoardLookups();
 
         if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id }, cancellationToken);
 
@@ -162,6 +163,7 @@ public class ProjectService
 
         await _db.SaveChangesAsync(cancellationToken);
         _readinessCache?.Remove(project.Id);
+        _cardFiles?.InvalidateBoardLookups();
 
         _logger.LogInformation("Updated project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
@@ -225,6 +227,7 @@ public class ProjectService
             await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(ct);
         }, cancellationToken);
         _readinessCache?.Remove(id);
+        _cardFiles?.InvalidateBoardLookups();
         if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = id, deleted = true }, cancellationToken);
 
         _logger.LogInformation(
@@ -254,6 +257,7 @@ public class ProjectService
         project.UpdatedAt = now;
         await _db.SaveChangesAsync(cancellationToken);
         _readinessCache?.Remove(project.Id);
+        _cardFiles?.InvalidateBoardLookups();
         if (_eventBus is not null)
             await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id, archived = true }, cancellationToken);
 
@@ -281,6 +285,7 @@ public class ProjectService
         project.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
         _readinessCache?.Remove(project.Id);
+        _cardFiles?.InvalidateBoardLookups();
         if (_eventBus is not null)
             await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id, archived = false }, cancellationToken);
 

@@ -172,6 +172,7 @@ public sealed class BoardService
         }
         _db.Boards.Add(board);
         await _db.SaveChangesAsync(ct);
+        _cardFiles?.InvalidateBoardLookups();
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
 
         return await GetByIdAsync(board.Id, ct);
@@ -201,6 +202,7 @@ public sealed class BoardService
             if (projectIsEmpty)
                 await _db.Projects.Where(p => p.Id == board.ProjectId).ExecuteDeleteAsync(cancellationToken);
         }, ct);
+        _cardFiles?.InvalidateBoardLookups();
 
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = id, deleted = true }, ct);
 
@@ -230,6 +232,7 @@ public sealed class BoardService
         board.ArchivedBy = string.IsNullOrWhiteSpace(request.ArchivedBy) ? null : request.ArchivedBy.Trim();
         board.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
+        _cardFiles?.InvalidateBoardLookups();
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id, archived = true }, ct);
         return ToSummaryDto(board);
     }
@@ -254,6 +257,7 @@ public sealed class BoardService
         board.ArchivedBy = null;
         board.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
+        _cardFiles?.InvalidateBoardLookups();
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id, archived = false }, ct);
         return ToSummaryDto(board);
     }
