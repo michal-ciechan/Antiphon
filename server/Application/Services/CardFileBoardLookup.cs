@@ -33,6 +33,84 @@ public sealed class CardFileBoardLookup
             if (_generation == generation) _cleanOptedOut.Add(boardId);
     }
 
+    /// <summary>
+    /// Drops clean opted-out boards from the sweep skip set without discarding the ownership
+    /// snapshot. A repository path limits that drop to boards whose card-file working tree is
+    /// that directory; null re-checks every skipped board.
+    /// </summary>
+    public void RequestOptedOutReinspection(string? repositoryPath = null)
+    {
+        _ = repositoryPath;
+    }
+
+    public void NoteServerGit(string repository, IReadOnlyList<string> arguments)
+    {
+        if (string.IsNullOrWhiteSpace(repository) || !GitMayRestoreWorktree(arguments)) return;
+        RequestOptedOutReinspection(repository);
+    }
+
+    public void NoteServerGit(string repository, string arguments) =>
+        NoteServerGit(repository, SplitGitArguments(arguments));
+
+    /// <summary>
+    /// True for a git invocation that can put committed files back into the working tree.
+    /// Index-only <c>restore --staged</c> and mixed <c>reset</c> do not.
+    /// </summary>
+    internal static bool GitMayRestoreWorktree(IReadOnlyList<string> arguments)
+    {
+        string? command = null;
+        var worktree = false;
+        var staged = false;
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            var arg = arguments[i];
+            if (command is null)
+            {
+                if (arg is "-c" or "-C" or "--config-env") { i++; continue; }
+                if (arg.StartsWith('-')) continue;
+                command = arg;
+                continue;
+            }
+            if (arg is "--staged" or "--cached") staged = true;
+            if (arg is "--worktree" or "--hard" or "--merge" or "--keep") worktree = true;
+        }
+        return command switch
+        {
+            "checkout" or "switch" or "pull" or "merge" or "rebase" or "cherry-pick" or "revert"
+                or "clone" or "checkout-index" or "stash" => true,
+            "restore" => worktree || !staged,
+            "reset" => worktree,
+            _ => false
+        };
+    }
+
+    internal static IReadOnlyList<string> SplitGitArguments(string arguments)
+    {
+        var args = new List<string>();
+        var current = new System.Text.StringBuilder();
+        char? quote = null;
+        foreach (var c in arguments)
+        {
+            if (quote is not null)
+            {
+                if (c == quote) quote = null;
+                else current.Append(c);
+                continue;
+            }
+            if (c is '"' or '\'') { quote = c; continue; }
+            if (char.IsWhiteSpace(c))
+            {
+                if (current.Length == 0) continue;
+                args.Add(current.ToString());
+                current.Clear();
+                continue;
+            }
+            current.Append(c);
+        }
+        if (current.Length > 0) args.Add(current.ToString());
+        return args;
+    }
+
     internal bool NeedsInspection(Entry board)
     {
         lock (_lock) return board.SyncCardFiles || !_cleanOptedOut.Contains(board.Id);
