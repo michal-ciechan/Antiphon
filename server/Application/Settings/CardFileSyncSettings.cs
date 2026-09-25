@@ -29,4 +29,12 @@ public sealed class CardFileSyncSettings
     /// (manual-only mode).
     /// </summary>
     public int IntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// How often a running tick re-checks opted-out boards already found clean. Startup and a
+    /// server git command that can restore the working tree re-check immediately. A non-positive
+    /// value uses 15 minutes. Manual-only mode (<see cref="IntervalSeconds"/> of 0) has no tick,
+    /// so this backstop does not run there.
+    /// </summary>
+    public int OptedOutReinspectionMinutes { get; set; } = 15;
 }

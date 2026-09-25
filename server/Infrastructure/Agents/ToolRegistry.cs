@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Agents.Tools;
 
 namespace Antiphon.Server.Infrastructure.Agents;
@@ -9,6 +10,10 @@ namespace Antiphon.Server.Infrastructure.Agents;
 /// </summary>
 public class ToolRegistry
 {
+    private readonly CardFileBoardLookup? _cardFiles;
+
+    public ToolRegistry(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
+
     /// <summary>
     /// Creates the standard set of agent tools scoped to the given worktree root.
     /// </summary>
@@ -22,7 +27,7 @@ public class ToolRegistry
             new BashTool(worktreeRoot),
             new GlobTool(worktreeRoot),
             new GrepTool(worktreeRoot),
-            new GitTool(worktreeRoot)
+            new GitTool(worktreeRoot, _cardFiles)
         ];
     }
 

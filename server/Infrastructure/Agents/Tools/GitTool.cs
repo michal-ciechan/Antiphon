@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Infrastructure.Agents.Tools;
 
@@ -10,6 +11,7 @@ namespace Antiphon.Server.Infrastructure.Agents.Tools;
 public sealed class GitTool : IAgentTool
 {
     private readonly string _worktreeRoot;
+    private readonly CardFileBoardLookup? _cardFiles;
 
     private static readonly HashSet<string> AllowedSubcommands = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -23,9 +25,10 @@ public sealed class GitTool : IAgentTool
         "--hard", "--no-verify"
     };
 
-    public GitTool(string worktreeRoot)
+    public GitTool(string worktreeRoot, CardFileBoardLookup? cardFiles = null)
     {
         _worktreeRoot = worktreeRoot;
+        _cardFiles = cardFiles;
     }
 
     public string Name => "git";
@@ -91,11 +94,13 @@ public sealed class GitTool : IAgentTool
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            _cardFiles?.NoteServerGit(_worktreeRoot, parts);
             return "Error: Git command timed out.";
         }
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
+        _cardFiles?.NoteServerGit(_worktreeRoot, parts);
 
         var result = $"Exit code: {process.ExitCode}";
         if (!string.IsNullOrEmpty(stdout))

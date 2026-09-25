@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Infrastructure.Git;
@@ -12,6 +13,7 @@ namespace Antiphon.Server.Infrastructure.Git;
 public class GitService : IGitService
 {
     private readonly ILogger<GitService> _logger;
+    private readonly CardFileBoardLookup? _cardFiles;
 
     /// <summary>
     /// Timeout for standard git operations (fetch, diff, checkout, etc.).
@@ -23,9 +25,10 @@ public class GitService : IGitService
     /// </summary>
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
-    public GitService(ILogger<GitService> logger)
+    public GitService(ILogger<GitService> logger, CardFileBoardLookup? cardFiles = null)
     {
         _logger = logger;
+        _cardFiles = cardFiles;
     }
 
     /// <summary>
@@ -227,7 +230,7 @@ public class GitService : IGitService
             return false;
         }
 
-        var owned = new LandingGit();
+        var owned = new LandingGit(_cardFiles);
         var added = await owned.RunAsync(worktreePath, ["add", "-A"], ct);
         if (!added.Succeeded) throw new InvalidOperationException(added.Diagnostic);
         var staged = await RunGitAsync(worktreePath, "diff --cached --name-only", ct);
@@ -357,10 +360,12 @@ public class GitService : IGitService
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
+            _cardFiles?.NoteServerGit(workingDirectory, arguments);
             throw;
         }
 
         await Task.WhenAll(stdoutTask, stderrTask);
+        _cardFiles?.NoteServerGit(workingDirectory, arguments);
 
         var stdout = stdoutBuilder.ToString();
         var stderr = stderrBuilder.ToString();
@@ -414,10 +419,12 @@ public class GitService : IGitService
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
+            _cardFiles?.NoteServerGit(workingDirectory, arguments);
             throw;
         }
 
         await Task.WhenAll(stdoutTask, stderrTask);
+        _cardFiles?.NoteServerGit(workingDirectory, arguments);
         return (process.ExitCode, stdoutBuilder.ToString(), stderrBuilder.ToString());
     }
 

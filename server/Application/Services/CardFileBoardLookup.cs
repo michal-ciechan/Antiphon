@@ -6,7 +6,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
-/// <summary>Process-local ownership lookup. BoardChanged and committed pin writes invalidate it.</summary>
+/// <summary>Process-local ownership lookup. BoardChanged and committed pin writes invalidate it.
+/// A clean opted-out skip is separate: startup, the sweep backstop, and a restoring server git
+/// command clear it without dropping the ownership snapshot.</summary>
 public sealed class CardFileBoardLookup
 {
     private readonly object _lock = new();
@@ -14,8 +16,11 @@ public sealed class CardFileBoardLookup
     private readonly HashSet<Guid> _cleanOptedOut = [];
     private Snapshot? _snapshot;
     private long _generation;
+    private long _reinspection;
 
     public long Generation { get { lock (_lock) return _generation; } }
+
+    public long Reinspection { get { lock (_lock) return _reinspection; } }
 
     public long Invalidate()
     {
@@ -27,20 +32,63 @@ public sealed class CardFileBoardLookup
         }
     }
 
-    internal void NoteCleanOptedOut(Guid boardId, long generation)
+    internal void NoteCleanOptedOut(Guid boardId, long generation, long reinspection)
     {
         lock (_lock)
-            if (_generation == generation) _cleanOptedOut.Add(boardId);
+            if (_generation == generation && _reinspection == reinspection)
+                _cleanOptedOut.Add(boardId);
     }
 
     /// <summary>
     /// Drops clean opted-out boards from the sweep skip set without discarding the ownership
     /// snapshot. A repository path limits that drop to boards whose card-file working tree is
-    /// that directory; null re-checks every skipped board.
+    /// that directory; null re-checks every skipped board. An in-flight sweep that already
+    /// captured the previous reinspection cannot mark a board clean again.
     /// </summary>
     public void RequestOptedOutReinspection(string? repositoryPath = null)
     {
-        _ = repositoryPath;
+        lock (_lock)
+        {
+            _reinspection++;
+            if (string.IsNullOrWhiteSpace(repositoryPath) || _snapshot is null)
+            {
+                _cleanOptedOut.Clear();
+                return;
+            }
+            string git;
+            try { git = NormalizeDirectory(repositoryPath); }
+            catch (Exception)
+            {
+                _cleanOptedOut.Clear();
+                return;
+            }
+            foreach (var board in _snapshot.Boards)
+            {
+                var root = board.CardFilesRepositoryPath ?? board.LocalRepositoryPath;
+                if (string.IsNullOrWhiteSpace(root))
+                {
+                    _cleanOptedOut.Remove(board.Id);
+                    continue;
+                }
+                try
+                {
+                    if (SameWorkingTree(git, NormalizeDirectory(root)))
+                        _cleanOptedOut.Remove(board.Id);
+                }
+                catch (Exception) { _cleanOptedOut.Remove(board.Id); }
+            }
+        }
+    }
+
+    private static string NormalizeDirectory(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private static bool SameWorkingTree(string git, string card)
+    {
+        if (string.Equals(git, card, StringComparison.OrdinalIgnoreCase)) return true;
+        var separator = Path.DirectorySeparatorChar;
+        return card.StartsWith(git + separator, StringComparison.OrdinalIgnoreCase)
+            || git.StartsWith(card + separator, StringComparison.OrdinalIgnoreCase);
     }
 
     public void NoteServerGit(string repository, IReadOnlyList<string> arguments)
