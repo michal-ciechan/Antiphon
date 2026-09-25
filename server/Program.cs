@@ -370,6 +370,8 @@ try
     builder.Services.AddSingleton<WorktreeGuardedCleanup>();
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
+    // CARD-0672 D-2: the dispatch-first turnstile shared by the dispatcher and the land service.
+    builder.Services.AddSingleton<RepositoryLeaseWaiters>();
     builder.Services.AddScoped<AgentTaskLandingState>();
     builder.Services.AddScoped<AgentTaskLandService>();
     builder.Services.AddScoped<AgentTaskLandNotificationService>();

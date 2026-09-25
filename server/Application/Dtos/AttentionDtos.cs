@@ -386,7 +386,9 @@ public sealed record AttentionItemDto(
     string? ConditionKey = null,
     Guid? LandRequestId = null,
     Guid? LandNotificationId = null,
-    Guid? HoldingTaskId = null);
+    Guid? HoldingTaskId = null,
+    // CARD-0672 D-3: a DispatchHeld row's dominant hold class (lease, remoteprep, runner, cap, ...).
+    string? HoldClass = null);
 
 /// <param name="RunnerConsulted">
 /// Whether the session runner answered this sweep. False means the runner-derived condition

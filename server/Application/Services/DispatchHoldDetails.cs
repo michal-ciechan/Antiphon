@@ -105,10 +105,14 @@ public static class DispatchHoldDetails
         string lastHeldDetail,
         int running,
         int max,
-        IReadOnlyList<string> occupantShorts)
+        IReadOnlyList<string> occupantShorts,
+        DispatchHoldLedger? ledger = null)
     {
         var occupants = string.Join(",", occupantShorts.Take(8));
-        return $"{prefix} dispatch held {seconds}s since {heldSince:O}; created {createdAt:O}; reason={lastHeldDetail}; running={running} of {max}; occupants={occupants}.";
+        // CARD-0672 D-3: the ledger follows occupants= so ExtractEscalationReason, which cuts at
+        // "; running=", still returns the hold sentence alone.
+        var wait = ledger is null ? "" : "; " + ledger.Describe();
+        return $"{prefix} dispatch held {seconds}s since {heldSince:O}; created {createdAt:O}; reason={lastHeldDetail}; running={running} of {max}; occupants={occupants}{wait}.";
     }
 
     /// <summary>
@@ -135,6 +139,44 @@ public static class DispatchHoldDetails
         if (IsOrdinaryWait(reason))
             return new ExpectationHoldClassification(ExpectationHoldClass.OrdinaryWait, evidence);
         return new ExpectationHoldClassification(ExpectationHoldClass.Unknown, evidence);
+    }
+
+    /// <summary>
+    /// CARD-0672 D-3: the ledger class of a stored hold sentence (an escalation row is unwrapped
+    /// first). Finer-grained than <see cref="Classify"/>, which keeps its own classes; this one only
+    /// says which kind of wait a stint of queue time was spent in. Anchored on each sentence's fixed
+    /// prefix where it has one, so a task title quoted inside a sentence cannot re-class it.
+    /// </summary>
+    public static DispatchHoldClass ClassOf(string? detail)
+    {
+        var reason = Reason(detail);
+        if (reason.StartsWith("Held: running task ", StringComparison.Ordinal)
+            || (reason.StartsWith("Held: '", StringComparison.Ordinal)
+                && reason.Contains("' intersects running task ", StringComparison.Ordinal)))
+            return DispatchHoldClass.Scope;
+        if (reason.StartsWith("Held: repository mutation lease", StringComparison.Ordinal))
+            return DispatchHoldClass.Lease;
+        if (reason.StartsWith("Held: remote workspace preparation", StringComparison.Ordinal))
+            return DispatchHoldClass.RemotePrep;
+        if (reason.StartsWith("Held: RunnerUnavailable", StringComparison.Ordinal)
+            || (reason.StartsWith("Held: runner '", StringComparison.Ordinal)
+                && reason.Contains("' at capacity ", StringComparison.Ordinal)))
+            return DispatchHoldClass.Runner;
+        if (reason.StartsWith("Held: concurrency cap reached", StringComparison.Ordinal)
+            || (reason.StartsWith("waiting for ", StringComparison.Ordinal)
+                && reason.Contains(" capacity (", StringComparison.Ordinal)))
+            return DispatchHoldClass.Cap;
+        if (reason.StartsWith("Held: pinned agent '", StringComparison.Ordinal)
+            || reason.StartsWith("Held: standing agent '", StringComparison.Ordinal))
+            return DispatchHoldClass.Agent;
+        if (reason.EndsWith(" is landing", StringComparison.Ordinal)
+            || (reason.StartsWith("held: ", StringComparison.Ordinal)
+                && reason.Contains(" is landing and is not yet in ", StringComparison.Ordinal)))
+            return DispatchHoldClass.Landing;
+        if (reason.StartsWith(RoutingPinPrefix, StringComparison.Ordinal)
+            || reason.EndsWith(" is held; dispatch paused for that model.", StringComparison.Ordinal))
+            return DispatchHoldClass.Routing;
+        return DispatchHoldClass.Other;
     }
 
     /// <summary>The hold sentence itself, unwrapped from a <see cref="Escalation"/> row when it is one.</summary>
@@ -210,3 +252,9 @@ public static class DispatchHoldDetails
         || (text.Contains("intersects", StringComparison.Ordinal)
             && text.Contains("running task", StringComparison.Ordinal));
 }
+
+/// <summary>
+/// CARD-0672 D-3: which kind of wait a queued task's hold was. Separate from
+/// <see cref="ExpectationHoldClass"/>, which says whether a hold is expected at all.
+/// </summary>
+public enum DispatchHoldClass { Lease, RemotePrep, Runner, Cap, Scope, Agent, Landing, Routing, Other }
