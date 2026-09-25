@@ -6,9 +6,9 @@ namespace Antiphon.SessionRunner;
 
 /// <summary>
 /// CARD-0660 D-6. Measures whether the runner's own Codex store has an <c>auth.json</c>.
-/// Metadata only: the file is never opened, parsed or logged, and no CLI is spawned. A regular
-/// file is signed in (a presence hint, not proof the token is valid or the plan entitled); a
-/// missing file or home is signed out. An unconfigured home, or a path whose metadata cannot be
+/// Metadata only: the file is never opened, parsed or logged, and no CLI is spawned. A regular,
+/// non-link file is signed in (a presence hint, not proof the token is valid or the plan
+/// entitled); a missing file or home, a directory, or a symlink (even to a real file) is signed out. An unconfigured home, or a path whose metadata cannot be
 /// read, is "cannot tell" (<c>LoggedIn</c> null), which callers admit.
 ///
 /// <para>Unlike <see cref="GrokAuthProbe"/>, this reads attributes rather than calling
@@ -60,7 +60,10 @@ public sealed class CodexAuthProbe : IProviderAuthProbe
         {
             try
             {
-                loggedIn = (_getAttributes(AuthPath) & FileAttributes.Directory) == 0;
+                // Only a regular, non-link file is presence. File.GetAttributes judges the final
+                // component with lstat semantics on Unix, so a symlinked (or dangling) auth.json
+                // carries ReparsePoint, while a regular file in a linked or bind-mounted home does not.
+                loggedIn = (_getAttributes(AuthPath) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
                 error = null;
             }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)

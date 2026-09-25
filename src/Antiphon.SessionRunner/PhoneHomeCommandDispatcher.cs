@@ -304,6 +304,7 @@ public sealed class PhoneHomeCommandDispatcher
         var launch = request.Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)
             ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Launch body is required.", 400);
         RejectUnsupportedLaunch(launch);
+        launch = WithImageCodexPath(launch);
         await RejectSignedOutClaudeAsync(launch, ct);
         await RejectSignedOutGrokAsync(launch, ct);
         await RejectSignedOutCodexAsync(launch, ct);
@@ -466,6 +467,14 @@ public sealed class PhoneHomeCommandDispatcher
 
     /// <summary>Where <c>docker/session-runner-grok/Dockerfile</c> links the native Codex CLI.</summary>
     internal const string ImageCodexPath = "/usr/local/bin/codex";
+
+    /// <summary>
+    /// CARD-0660 D-7 (review of ff170389): an admitted bare <c>codex</c> launches as
+    /// <see cref="ImageCodexPath"/>, so which binary runs never depends on a PATH lookup in the
+    /// child's environment. Every other field, the launch's own PATH included, is unchanged.
+    /// </summary>
+    internal static RunnerLaunchRequest WithImageCodexPath(RunnerLaunchRequest launch) =>
+        string.Equals(launch.Exe, "codex", StringComparison.Ordinal) ? launch with { Exe = ImageCodexPath } : launch;
 
     internal void RejectUnsupportedLaunch(RunnerLaunchRequest launch)
     {
