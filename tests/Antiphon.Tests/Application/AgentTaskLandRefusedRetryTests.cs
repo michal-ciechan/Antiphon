@@ -63,7 +63,7 @@ public sealed class AgentTaskLandRefusedRetryTests
         await File.WriteAllTextAsync(Path.Combine(s.F.Repository, "target-repair.txt"), "target-only repair\n");
         await s.F.RequiredAsync(s.F.Repository, "add", "target-repair.txt");
         await s.F.RequiredAsync(s.F.Repository, "commit", "-m", "target-only repair");
-        await s.F.RequiredAsync(s.F.Repository, "push", "origin", s.F.TargetRef);
+        await s.ReadAsync(s.F.Repository, "push", "origin", s.F.TargetRef); // independent git: not the land's trace
         var target = (await s.F.RequiredAsync(s.F.Repository, "rev-parse", "HEAD")).Trim();
         const string filter = "/*/*/RefusedRetryFixture/SelectedCheck";
         var barrierHit = false;
@@ -126,10 +126,10 @@ public sealed class AgentTaskLandRefusedRetryTests
     {
         await using var s = await Scenario.CreateAsync(sentinel: false);
         // CARD-0688 D-4/D-8: the target is read while the operation is created, so the operation-level remote read
-        // is the source recheck at protocol entry (the second source ls-remote after the resolver's own).
+        // is the source recheck at protocol entry (after the resolver's observation and its recheck).
         var sourceReads = 0;
         s.Inject = (p, a) => s.Is(p, s.F.Repository) && a.SequenceEqual(new[] { "ls-remote", "--refs", "--exit-code", s.F.Remote, s.F.SourceRef })
-            && ++sourceReads == 2;
+            && ++sourceReads == 3; // 1 resolver observation, 2 resolver recheck, 3 protocol entry
         await s.RefuseAsync("source_remote_unreadable");
         s.Hits.ShouldBeGreaterThan(0);
         s.Inject = null;
