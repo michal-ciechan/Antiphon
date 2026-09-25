@@ -9,9 +9,11 @@ namespace Antiphon.Server.Infrastructure.Orchestration;
 
 /// <summary>
 /// Periodic driver for <see cref="CardTaskFileService.SyncAllAsync"/> (CARD-0004). A 60 s tick
-/// and the manual endpoint are the only v1 triggers; there is no enqueue from <c>CardService</c>.
-/// <see cref="CardFileSyncSettings.IntervalSeconds"/> of 0 is manual-only: the tick never starts
-/// and <c>POST /api/boards/{id}/card-files/sync</c> stays available.
+/// and the manual endpoint are the steady triggers; there is no enqueue from <c>CardService</c>.
+/// Opted-out boards already found clean are swept again on startup, on
+/// <see cref="CardFileSyncSettings.OptedOutReinspectionMinutes"/>, and when server git restores
+/// that repository. <see cref="CardFileSyncSettings.IntervalSeconds"/> of 0 is manual-only: the
+/// tick and its backstop never start, and <c>POST /api/boards/{id}/card-files/sync</c> stays available.
 /// </summary>
 public sealed class CardTaskFileSyncHostedService : BackgroundService
 {
@@ -19,17 +21,20 @@ public sealed class CardTaskFileSyncHostedService : BackgroundService
     private readonly CardFileSyncSettings _settings;
     private readonly ILogger<CardTaskFileSyncHostedService> _logger;
     private readonly CardFileBoardLookup? _boardLookup;
+    private readonly TimeProvider _time;
 
     public CardTaskFileSyncHostedService(
         IServiceScopeFactory scopeFactory,
         IOptions<CardFileSyncSettings> settings,
         ILogger<CardTaskFileSyncHostedService> logger,
-        CardFileBoardLookup? boardLookup = null)
+        CardFileBoardLookup? boardLookup = null,
+        TimeProvider? time = null)
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _logger = logger;
         _boardLookup = boardLookup;
+        _time = time ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,9 +56,17 @@ public sealed class CardTaskFileSyncHostedService : BackgroundService
         }
 
         var interval = TimeSpan.FromSeconds(Math.Max(5, _settings.IntervalSeconds));
-        using var timer = new PeriodicTimer(interval);
+        var backstopMinutes = _settings.OptedOutReinspectionMinutes > 0 ? _settings.OptedOutReinspectionMinutes : 15;
+        var backstop = TimeSpan.FromMinutes(backstopMinutes);
+        var nextBackstop = _time.GetUtcNow() + backstop;
+        using var timer = new PeriodicTimer(interval, _time);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
+            if (_boardLookup is not null && _time.GetUtcNow() >= nextBackstop)
+            {
+                _boardLookup.RequestOptedOutReinspection();
+                nextBackstop = _time.GetUtcNow() + backstop;
+            }
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();

@@ -21,15 +21,18 @@ public class GitWorkspaceService
     private readonly ILogger<GitWorkspaceService> _logger;
     private readonly GitProcessGate _gate;
     private readonly GitSettings _settings;
+    private readonly CardFileBoardLookup? _cardFiles;
 
     public GitWorkspaceService(
         ILogger<GitWorkspaceService> logger,
         GitProcessGate? gate = null,
-        IOptions<GitSettings>? settings = null)
+        IOptions<GitSettings>? settings = null,
+        CardFileBoardLookup? cardFiles = null)
     {
         _logger = logger;
         _gate = gate ?? SharedGate;
         _settings = settings?.Value ?? new GitSettings();
+        _cardFiles = cardFiles;
     }
 
     public sealed record GitChange(string Path, GitFileStatus Status, string? OldPath);
@@ -1096,6 +1099,8 @@ public class GitWorkspaceService
         }
         finally
         {
+            if (process is not null)
+                _cardFiles?.NoteServerGit(workingDirectory, args);
             process?.Dispose();
         }
     }

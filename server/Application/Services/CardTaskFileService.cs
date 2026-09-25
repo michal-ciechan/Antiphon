@@ -75,6 +75,7 @@ public sealed partial class CardTaskFileService
         using var lease = await EnterBoardAsync(boardId, false, ct);
         // Authoritative reads occur only after both the project and Git-root leases are owned.
         var lookupGeneration = _boardLookup.Generation;
+        var reinspection = _boardLookup.Reinspection;
         var board = await ReadBoardAsync(boardId, ct);
         BoardInspection inspection;
         try { inspection = await InspectBoardAsync(board, false, ct); }
@@ -193,7 +194,7 @@ public sealed partial class CardTaskFileService
         }
         if (!dryRun && !board.SyncCardFiles && !status.RemovalPending && error is null
             && operationWarnings.Count == 0 && _db.Database.CurrentTransaction is null)
-            _boardLookup.NoteCleanOptedOut(board.Id, lookupGeneration);
+            _boardLookup.NoteCleanOptedOut(board.Id, lookupGeneration, reinspection);
         var warnings = Codes(status.Warnings, operationWarnings);
         if (!dryRun) _gate.NoteSkipReason(board.Id, inspection.Root, writeSkip ?? (error is not null ? commitSkip : null));
         return new(board.Id, board.Name, status.Directory, written, deleted, unchanged, sha, writeSkip, commitSkip, error, dryRun)

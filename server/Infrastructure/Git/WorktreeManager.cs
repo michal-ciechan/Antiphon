@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -31,20 +32,23 @@ public sealed class WorktreeManager : IWorktreeManager
     private readonly GitSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<WorktreeManager> _logger;
+    private readonly CardFileBoardLookup? _cardFiles;
 
     public WorktreeManager(
         IOptions<GitSettings> settings,
         TimeProvider timeProvider,
         ILogger<WorktreeManager> logger,
         GuardedWorktreeRemoval? guardedRemoval = null,
-        IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null)
+        IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
+        CardFileBoardLookup? cardFiles = null)
     {
         _guardedRemoval = guardedRemoval;
-        _creationGit = landingGit ?? new LandingGit();
+        _creationGit = landingGit ?? new LandingGit(cardFiles);
         _creationLeases = leases ?? new RepositoryMutationLease(_creationGit);
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _cardFiles = cardFiles;
     }
 
     public async Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct)
@@ -1117,7 +1121,7 @@ public sealed class WorktreeManager : IWorktreeManager
             var saved = await FindMetadataByPathAsync(ResolveWorktreeRoot(false), intent.Path, CancellationToken.None);
             if (branchExistedBefore || saved != intent || intent.CreationComplete || intent.CreationId is null)
                 return;
-            var git = new LandingGit();
+            var git = new LandingGit(_cardFiles);
             var common = await git.CommonDirectoryAsync(intent.RepoPath, CancellationToken.None);
             var rows = LandingGit.ParseRegistrations((await git.RunAsync(intent.RepoPath,
                 ["worktree", "list", "--porcelain", "-z"], CancellationToken.None)).Output);
@@ -1207,6 +1211,7 @@ public sealed class WorktreeManager : IWorktreeManager
             try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
             await process.WaitForExitAsync(CancellationToken.None);
             journal?.Exited(process);
+            _cardFiles?.NoteServerGit(workingDirectory, arguments);
             throw new TimeoutException(
                 $"git {string.Join(" ", arguments)} timed out after {budget.TotalSeconds:0}s in {workingDirectory}");
         }
@@ -1215,6 +1220,7 @@ public sealed class WorktreeManager : IWorktreeManager
             try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
             await process.WaitForExitAsync(CancellationToken.None);
             journal?.Exited(process);
+            _cardFiles?.NoteServerGit(workingDirectory, arguments);
             throw;
         }
         catch
@@ -1222,12 +1228,14 @@ public sealed class WorktreeManager : IWorktreeManager
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
             journal?.Exited(process);
+            _cardFiles?.NoteServerGit(workingDirectory, arguments);
             throw;
         }
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
         journal?.Exited(process);
+        _cardFiles?.NoteServerGit(workingDirectory, arguments);
         var result = new GitCommandResult(process.ExitCode, stdout, stderr);
 
         if (throwOnError && result.ExitCode != 0)

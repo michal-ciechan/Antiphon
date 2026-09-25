@@ -175,8 +175,15 @@ is no TTL or database polling for these lookups; a restart starts cold.
 
 A periodic sweep checks opted-out boards once after startup or invalidation to
 find legacy exports. Once working-tree and Git cleanup are both confirmed clear,
-it omits those boards from later sweeps. Pending or unavailable cleanup keeps
+it omits those boards from later sweeps. That skip is process-local and is
+cleared, without dropping the ownership snapshot, on startup, on a 15-minute
+backstop (`CardFileSync:OptedOutReinspectionMinutes`), and after a server git
+command that can restore the working tree (checkout, pull, merge, rebase, and
+the same family). A directory watch is not used: a checkout that rewrites many
+files can overflow the watcher buffer on Windows and on Linux and miss the
+restore this skip is meant to notice. Pending or unavailable cleanup keeps
 retrying. Manual status and sync still inspect the current filesystem and policy;
 lookups include archived and opted-out siblings so slug and cross-project
 ownership rules remain unchanged. Direct database maintenance that changes board
-ownership must publish `BoardChanged` or restart the server.
+ownership must publish `BoardChanged` or restart the server. An external checkout
+the server did not run is caught by the next startup or backstop.

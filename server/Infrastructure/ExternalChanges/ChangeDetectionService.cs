@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -23,6 +24,7 @@ public class ChangeDetectionService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ChangeDetectionService> _logger;
     private readonly GitSettings _gitSettings;
+    private readonly CardFileBoardLookup? _cardFiles;
 
     /// <summary>
     /// The artifact directory prefix used to detect cascade-triggering changes (FR68).
@@ -43,11 +45,13 @@ public class ChangeDetectionService : BackgroundService
     public ChangeDetectionService(
         IServiceScopeFactory scopeFactory,
         IOptions<GitSettings> gitSettings,
-        ILogger<ChangeDetectionService> logger)
+        ILogger<ChangeDetectionService> logger,
+        CardFileBoardLookup? cardFiles = null)
     {
         _scopeFactory = scopeFactory;
         _gitSettings = gitSettings.Value;
         _logger = logger;
+        _cardFiles = cardFiles;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -382,10 +386,12 @@ public class ChangeDetectionService : BackgroundService
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            _cardFiles?.NoteServerGit(workingDirectory, arguments);
             throw;
         }
 
         await Task.WhenAll(stdoutTask, stderrTask);
+        _cardFiles?.NoteServerGit(workingDirectory, arguments);
 
         if (process.ExitCode != 0)
         {
