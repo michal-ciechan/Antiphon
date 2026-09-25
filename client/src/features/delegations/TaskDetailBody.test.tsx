@@ -155,9 +155,16 @@ it('shows exact approval, source resolution, verification and legacy evidence', 
   }
   server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
   renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
-  expect(await screen.findByText(/Approved original/)).toBeInTheDocument()
-  expect(screen.getByText(shaB, { exact: false })).toBeInTheDocument()
+  const approved = await screen.findAllByText(/Approved original/)
+  expect(approved).toHaveLength(2)
+  expect(approved.every((line) => line.textContent?.includes(shaB))).toBe(true)
+  const line = (label: string, sha?: string) => (_content: string, node: Element | null) => {
+    if (node?.tagName !== 'P') return false
+    const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
+    return text.startsWith(label) && (sha === undefined || text.includes(sha))
+  }
+  expect(screen.getByText(line('Resolved source:', shaB))).toBeInTheDocument()
   expect(screen.getByText(shaP)).toBeInTheDocument()
-  expect(screen.getByText(/Remote source/)).toBeInTheDocument()
-  expect(screen.getByText(/Reviewed SHA/)).toBeInTheDocument()
+  expect(screen.getByText(line('Remote source:'))).toBeInTheDocument()
+  expect(screen.getByText(line('Reviewed SHA:', shaB))).toBeInTheDocument()
 })
