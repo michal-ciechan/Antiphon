@@ -47,9 +47,11 @@ public sealed class BuildSlotScriptTests
         "C589 WrapperTimeout prints the waiting and timeout lines");
 
     [Test]
-    public Task C589_WrapperUnreachableAtDeadline() => RunCaseAsync("C589_WrapperUnreachableAtDeadline", 2,
-        "C589 WrapperUnreachableAtDeadline exits 4 when the first unreachable answer arrives at the wait deadline",
-        "C589 WrapperUnreachableAtDeadline never starts a build before the full grace");
+    public Task C589_WrapperUnreachableAtDeadline() => RunCaseAsync("C589_WrapperUnreachableAtDeadline", 4,
+        "C589 WrapperUnreachableAtDeadline deadline_unreachable,unreachable fails open after grace",
+        "C589 WrapperUnreachableAtDeadline deadline_unreachable,unreachable never runs unleased early",
+        "C589 WrapperUnreachableAtDeadline deadline_notfound,notfound fails open after grace",
+        "C589 WrapperUnreachableAtDeadline deadline_notfound,notfound never runs unleased early");
 
     [Test]
     public Task C589_WrapperUnreachable() => RunCaseAsync("C589_WrapperUnreachable", 4,
