@@ -639,6 +639,25 @@ public class InstructionBundleTests
         review.ShouldContain("cannot go red");
     }
 
+    /// <summary>
+    /// CARD-0589 V-6: every build or test driver goes through the host build-slot gate. The standing
+    /// rule lives in delegate-basics (the wrapper, the visible BUILD SLOT lines, exit 4 as a timeout
+    /// to report) and Review names a driver run outside the gate as a checkpoint defect.
+    /// </summary>
+    [Test]
+    public void C589_V6_BuildSlotGateIsAStandingRuleReviewEnforces()
+    {
+        var basics = InstructionBundles.TextOf(InstructionBundles.DelegateBasics);
+        basics.ShouldContain("BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE");
+        basics.ShouldContain("scripts/build-slot.ps1 -Label");
+        basics.ShouldContain("BUILD SLOT");
+        basics.ShouldContain("exit 4");
+        basics.ShouldContain("never to retry unleased");
+
+        var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
+        review.ShouldContain("build or test driver outside the slot gate");
+    }
+
     [Test]
     public void C467_V21_DeliveryInventoryAndReviewAreMandatory()
     {
