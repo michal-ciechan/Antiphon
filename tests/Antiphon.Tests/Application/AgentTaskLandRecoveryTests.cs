@@ -247,6 +247,7 @@ public sealed class AgentTaskLandRecoveryTests
         await h.InitializeAsync();
         var sha = await h.AddSourceAsync();
         var hit = false;
+        var crash = new SimulatedServerCrash();
         h.Fixture.Git.AfterCommand = (_, args, result) =>
         {
             if (!hit && result.Succeeded && (boundary switch
@@ -257,12 +258,15 @@ public sealed class AgentTaskLandRecoveryTests
                 }))
             {
                 hit = true;
-                throw new SimulatedServerCrash();
+                throw crash;
             }
             return Task.CompletedTask;
         };
-        await Should.ThrowAsync<SimulatedServerCrash>(() => h.RunAsync());
-        hit.ShouldBeTrue();
+        SimulatedServerCrash? observedCrash = null;
+        try { await h.RunAsync(); }
+        catch (SimulatedServerCrash ex) { observedCrash = ex; }
+        hit.ShouldBeTrue($"the successful {boundary} command must reach the interruption hook");
+        observedCrash.ShouldBeSameAs(crash, "the interruption must escape cleanup, not become a completed residue result");
         var interrupted = (await h.OperationAsync()).ShouldNotBeNull();
         interrupted.Phase.ShouldBe(boundary switch
         {
@@ -271,6 +275,24 @@ public sealed class AgentTaskLandRecoveryTests
             _ => LandPhase.CleanupStarted,
         });
         interrupted.VerifiedSourceSha.ShouldBe(sha);
+        if (boundary == "directory-remove")
+        {
+            // Observe the acknowledgement gap independently: Git completed, but the durable
+            // intent has no result and the branch still awaits its guarded deletion.
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+            var registrations = await h.Fixture.Git.RegistrationsAsync(h.Fixture.Repository, CancellationToken.None);
+            registrations.ShouldNotContain(r => LandingGit.PathsEqual(r.Path, h.Fixture.Source));
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(sha);
+            interrupted.DirectoryRemoved.ShouldBeFalse();
+            interrupted.RegistrationRemoved.ShouldBeFalse();
+            interrupted.BranchRemoved.ShouldBeFalse();
+            interrupted.CleanupCompletedAt.ShouldBeNull();
+            await using var db = h.CreateContext();
+            var attempt = await db.WorktreeCleanupAttempts.AsNoTracking().SingleAsync(a => a.OperationId == interrupted.Id);
+            attempt.InitialCommandId.ShouldNotBeNull();
+            attempt.InitialCompletedAt.ShouldBeNull();
+            attempt.LastGitOutcomeJson.ShouldBeNull();
+        }
         h.Fixture.Git.AfterCommand = null;
         h.Fixture.Git.Trace.Clear();
         await h.RestartServicesAsync();
@@ -281,6 +303,8 @@ public sealed class AgentTaskLandRecoveryTests
         recovered.Id.ShouldBe(interrupted.Id);
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase"));
         h.Fixture.Git.Trace.Count(a => a[0] == "push").ShouldBe(0);
+        if (boundary == "directory-remove")
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("worktree") && a.Contains("remove"));
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(sha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
