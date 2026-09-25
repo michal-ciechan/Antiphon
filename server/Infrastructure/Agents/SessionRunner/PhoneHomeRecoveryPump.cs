@@ -24,6 +24,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly IBackgroundJobClient? _jobs;
     private PhoneHomeLiveConnection? _recovered;
     private (PhoneHomeLiveConnection Live, DateTimeOffset At)? _nextCatchUp;
+    private DateTimeOffset _nextRefresh;
+    private Task? _refresh;
     private Task? _pump;
     private CancellationTokenSource? _pumpStop;
     private readonly ConditionalWeakTable<PhoneHomeLiveConnection, ConnectionState> _states = new();
@@ -104,6 +106,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 StartPump(live, ct);
             }
 
+            RefreshInventoryIfDue(live, ct);
             return false;
         }
 
@@ -121,6 +124,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         }
 
         _nextCatchUp = null;
+        _nextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
         _directory.MarkRecovered(live);
         _recovered = live;
         StartPump(live, ct);
@@ -146,6 +150,53 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 "Enqueueing the runner slot reconcile after phone-home recovery failed (runner {RunnerId} epoch {Epoch})",
                 live.RunnerId, live.Epoch);
         }
+    }
+
+    /// <summary>
+    /// CARD-0679 D-10: re-read the runner's List every <see cref="PhoneHomeRunnerSettings.InventoryRefreshSeconds"/>
+    /// while <paramref name="live"/> stays recovered, so the cached inventory also learns what no
+    /// ack or event told it. Off the cycle: a silent runner must not hold up pump supervision.
+    /// </summary>
+    private void RefreshInventoryIfDue(PhoneHomeLiveConnection live, CancellationToken ct)
+    {
+        if (_settings.InventoryRefreshSeconds <= 0
+            || _refresh is { IsCompleted: false }
+            || live.Clock.GetUtcNow() < _nextRefresh)
+            return;
+        _nextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
+        _refresh = RefreshInventoryAsync(live, ct);
+    }
+
+    private async Task RefreshInventoryAsync(PhoneHomeLiveConnection live, CancellationToken ct)
+    {
+        try
+        {
+            await ReadInventoryAsync(live, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // The last inventory stands; a closed connection vouches for nothing anyway, and the
+            // next refresh or the next connection's catch-up reads it again.
+            _logger.LogWarning(
+                ex, "Phone-home inventory refresh List for runner {RunnerId} epoch {Epoch} failed ({Code})",
+                live.RunnerId, live.Epoch, ProblemCode(ex));
+        }
+    }
+
+    /// <summary>
+    /// CARD-0679 D-10: one List, which replaces <paramref name="live"/>'s cached inventory and
+    /// records its latency as <see cref="PhoneHomeLiveConnection.LastCatchUpMs"/> (D-1).
+    /// </summary>
+    private static async Task<IReadOnlyList<SessionRunnerSessionDto>> ReadInventoryAsync(
+        PhoneHomeLiveConnection live, CancellationToken ct)
+    {
+        var stamp = live.BeginInventoryRead();
+        var started = live.Clock.GetTimestamp();
+        var sessions = await new PhoneHomeRunnerClient(live).ListAsync(ct);
+        live.LastCatchUpMs = (long)live.Clock.GetElapsedTime(started).TotalMilliseconds;
+        live.ReplaceKnownLiveSessions(
+            sessions.Where(s => s.Status is "Running" or "Starting").Select(s => s.SessionId), stamp);
+        return sessions;
     }
 
     private void StartPump(PhoneHomeLiveConnection live, CancellationToken ct)
@@ -203,7 +254,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         IReadOnlyList<SessionRunnerSessionDto> sessions;
         try
         {
-            sessions = await client.ListAsync(ct);
+            sessions = await ReadInventoryAsync(live, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -268,6 +319,10 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 if (parsed is null)
                     continue;
                 sessionId = parsed.SessionId;
+                // CARD-0679 D-10: an exited session leaves the inventory whoever owns it; the List
+                // the inventory came from is not owner-filtered either.
+                if (parsed.Exited is not null)
+                    live.NoteSessionGone(parsed.SessionId);
                 if (!await OwnerMatchesAsync(live, parsed.SessionId, ct))
                     continue;
 

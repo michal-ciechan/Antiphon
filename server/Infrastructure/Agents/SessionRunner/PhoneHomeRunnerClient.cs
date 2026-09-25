@@ -79,6 +79,9 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
                 SessionGeneration.NotEchoed);
         }
 
+        // CARD-0679 D-10: the ack is the runner vouching for the session; the next List need not.
+        if (started.Status is "Running" or "Starting")
+            _connection.NoteSessionLive(sessionId);
         return started;
     }
 
@@ -249,7 +252,10 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     {
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.ReleaseSlot, new { sessionId, reason }, ct);
-        return _mapper.Map(Read<RunnerSessionDto>(frame) ?? throw Missing("release-slot"));
+        var released = _mapper.Map(Read<RunnerSessionDto>(frame) ?? throw Missing("release-slot"));
+        if (released.Status is not ("Running" or "Starting"))
+            _connection.NoteSessionGone(sessionId);
+        return released;
     }
 
     public async Task<CompactionContinuationStopResult> StopCompactionContinuationAsync(
@@ -293,7 +299,10 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
             PhoneHomeOperation.KillGeneration,
             new { sessionId, expectedAcceptedStartedAt },
             ct);
-        return Read<RunnerKillGenerationResult>(frame) ?? throw Missing("kill-generation");
+        var result = Read<RunnerKillGenerationResult>(frame) ?? throw Missing("kill-generation");
+        if (result.Killed)
+            _connection.NoteSessionGone(sessionId);
+        return result;
     }
 
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
