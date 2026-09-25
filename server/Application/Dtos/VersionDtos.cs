@@ -7,6 +7,9 @@ public static class AntiphonCapabilities
     /// POST <c>/api/agent-tasks/{id}/land/v2</c> implements the CARD-0488 approval contract.
     /// </summary>
     public const string LandV2 = "land-v2";
+
+    /// <summary>POST /api/operator/shutdown drains launches and stops the host (CARD-0716).</summary>
+    public const string OperatorShutdownV1 = "operator-shutdown-v1";
 }
 
 /// <summary>Build identity of this server process (CARD-0179 R3). <c>GET /api/version</c>.</summary>

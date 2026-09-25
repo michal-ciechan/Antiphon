@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
-public sealed class AgentSessionLaunchQueue : ILaunchOwnership
+public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 {
     private readonly object _gate = new();
     private readonly HashSet<Task> _launches = [];
