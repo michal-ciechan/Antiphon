@@ -35,6 +35,9 @@
   Rounds 2/3. `GET /api/diagnostics/session-state` exposes metadata-only process/cache counters,
   live/unknown counts and sanitized provider/pool flags. `Antiphon.SessionState` meters and SQL tags
   `session-state.seed`, `.pins`, `.fallback`, `.identity` distinguish cold loads from residual reads.
+  Diagnostics `efReadAttempts` and the `Antiphon.SessionState.Commands` meter count tagged EF
+  read attempts (including retries), separately from durable rows and PostgreSQL statement calls.
+  The binding counter remains zero until Round 2 tags/migrates that path. No SQL/parameters are retained.
   Use `scripts/measure-session-state-cache.ps1 -Mode Capture -Phase Before|After -Round R1` on the
   desktop with an immutable evidence root and sanitized `ContextPath`; the plan owns matched
   windows and final acceptance. Context includes `openClients`, `workloadKey`, `siblingShas`; a

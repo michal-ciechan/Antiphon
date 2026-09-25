@@ -25,6 +25,7 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
     public ServiceProvider Services { get; }
     public TranscriptCommandCapture Capture { get; } = new();
     public SessionStateStore Store => Services.GetRequiredService<SessionStateStore>();
+    public SessionStateCommandMetrics Commands => Services.GetRequiredService<SessionStateCommandMetrics>();
     public AgentSessionRuntime Runtime => Services.GetRequiredService<AgentSessionRuntime>();
     public int SeedQueries => Capture.Reads.Count(c => c.Sql.Contains("session-state.seed"));
 
@@ -44,7 +45,12 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton(Options.Create(_settings));
-        services.AddDbContext<AppDbContext>(Configure);
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddDbContext<AppDbContext>((sp, options) =>
+        {
+            Configure(options);
+            options.AddInterceptors(sp.GetRequiredService<SessionStateCommandMetrics>());
+        });
         services.AddSingleton<ISessionStateLoader>(sp =>
         {
             var loader = new SessionStateLoader(sp.GetRequiredService<IServiceScopeFactory>());

@@ -25,6 +25,8 @@ public class SessionStateWarmupTests
         f.SeedQueries.ShouldBe(1);
         results.ShouldAllBe(r => r.Count == 2 && r[f.SessionId].Readiness == SessionStateReadiness.Ready);
         await f.Store.WarmAsync(default); f.SeedQueries.ShouldBe(1);
+        f.Commands.Snapshot()["seed"].ShouldBe(1);
+        f.Commands.Snapshot()["pins"].ShouldBe(1);
     }
 
     [Test]
@@ -161,6 +163,7 @@ public class SessionStateWarmupTests
         f.Capture.Clear();
         for (var i = 0; i < 2; i++) (await queue.GetQueueAsync(f.SessionId, default)).Working.ShouldBeTrue();
         f.Capture.Reads.Count(c => c.Sql.Contains("session-state.fallback")).ShouldBe(2);
+        f.Commands.Snapshot()["fallback"].ShouldBe(2);
         (await f.Store.ReadAsync(f.SessionId, default)).Count.ShouldBe(1);
         await f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default);
         (await f.Store.ReadAsync(f.SessionId, default)).Working.ShouldBeFalse();
