@@ -510,19 +510,36 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             if (_socket.State == WebSocketState.Open)
             {
                 // CARD-0716 D-1: a planned host stop is 1001 server_stopping. Anything else stays
-                // the ordinary dispose close. A peer that does not answer the handshake is aborted
-                // so a stopping host never waits on it.
+                // the ordinary dispose close. CloseOutputAsync is a send, so it can run beside the
+                // receive that is still blocked; CloseAsync would start a second receive. A peer
+                // that does not answer within the handshake bound is aborted.
                 var stopping = string.Equals(reason, "request_aborted", StringComparison.Ordinal);
                 using var handshake = new CancellationTokenSource(
                     TimeSpan.FromSeconds(PhoneHomeProtocol.CloseHandshakeSeconds));
                 try
                 {
-                    await _socket.CloseAsync(
+                    await _socket.CloseOutputAsync(
                         stopping ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure,
                         stopping ? PhoneHomeCloseReasons.ServerStopping : "dispose",
                         handshake.Token);
+                    var deadline = DateTime.UtcNow.AddSeconds(PhoneHomeProtocol.CloseHandshakeSeconds);
+                    while (DateTime.UtcNow < deadline
+                        && _socket.State is WebSocketState.Open or WebSocketState.CloseSent
+                        && !handshake.IsCancellationRequested)
+                    {
+                        await Task.Delay(50, handshake.Token);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // handshake bound elapsed
                 }
                 catch
+                {
+                    // already closing
+                }
+
+                if (_socket.State is WebSocketState.Open or WebSocketState.CloseSent)
                 {
                     try { _socket.Abort(); } catch { /* already closed */ }
                 }

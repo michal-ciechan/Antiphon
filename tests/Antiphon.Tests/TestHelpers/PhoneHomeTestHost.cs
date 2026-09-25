@@ -375,6 +375,16 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                 if (frame is null)
                 {
                     CloseObserved.TrySetResult((Socket.CloseStatus, Socket.CloseStatusDescription));
+                    try
+                    {
+                        if (Socket.State is WebSocketState.CloseReceived or WebSocketState.Open)
+                            await Socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "ack", CancellationToken.None);
+                    }
+                    catch (Exception ex) when (ex is WebSocketException or InvalidOperationException or ObjectDisposedException)
+                    {
+                        // the server already finished the handshake
+                    }
+
                     break;
                 }
                 Incoming.Add(frame);
