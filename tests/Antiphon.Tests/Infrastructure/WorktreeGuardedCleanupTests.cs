@@ -368,6 +368,83 @@ public sealed class WorktreeGuardedCleanupTests
         Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
     }
 
+    // Review 0c0b9a4e item 1 over real Git and the journal: a file locked after the move stops the
+    // no-follow deletion once the registration is gone and part of the set-aside tree is deleted.
+    // The later pass finishes that same tree before the cleanup is reported complete.
+    [Test]
+    public async Task C665_LockedFileMidDeleteResumesOnLaterPass()
+    {
+        if (!OperatingSystem.IsWindows()) { Skip.Test("Sharing-mode locks are a Windows file-system behaviour."); return; }
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        FileStream? held = null;
+        h.OtherCommand = (_, args) => {
+            if (held is null && args[0] == "worktree" && args[1] == "remove")
+                held = new FileStream(Path.Combine(h.SetAsideTrees().ShouldHaveSingleItem(), "feature.txt"),
+                    FileMode.Open, FileAccess.Read, FileShare.Read);
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        WorktreeRemoval first;
+        string aside;
+        try
+        {
+            first = await h.RemoveAsync();
+            aside = h.SetAsideTrees().ShouldHaveSingleItem("the partial set-aside tree is still on disk");
+            File.Exists(Path.Combine(aside, ".git")).ShouldBeFalse("deletion had started before the lock stopped it");
+            File.Exists(Path.Combine(aside, "feature.txt")).ShouldBeTrue();
+        }
+        finally { held?.Dispose(); }
+        first.Residue.ShouldBe("worktree_removal_incomplete");
+        first.Detail.ShouldBe("set-aside: " + aside);
+        first.Unregistered.ShouldBeTrue(); first.BranchDeleted.ShouldBeFalse();
+        Directory.Exists(h.H.Fixture.Source).ShouldBeFalse();
+
+        h.OtherCommand = null;
+        var second = await h.RemoveAsync();
+        h.SetAsideTrees().ShouldBeEmpty("the later pass finishes the recorded set-aside tree");
+        second.IsClean.ShouldBeTrue(second.Residue);
+        second.BranchDeleted.ShouldBeTrue();
+    }
+
+    // Review 0c0b9a4e item 2 over real Git: between the move-aside and the registration drop the
+    // original path is recreated as a junction to a copy of the tree (a valid-looking worktree Git
+    // would accept). Nothing is deleted through it and the set-aside tree keeps its registration.
+    [Test]
+    public async Task C665_PathRecreatedBeforeUnregistrationKeepsOutsideTarget()
+    {
+        await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside-copy")).FullName;
+        using var link = DirectoryLink.TryCreate(Path.Combine(h.H.Fixture.Root, "staged-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var recreated = false;
+        h.OtherCommand = (_, args) => {
+            if (!recreated && args[0] == "worktree" && args[1] == "remove")
+            {
+                Directory.Exists(h.H.Fixture.Source).ShouldBeFalse("the tree has moved aside");
+                CopyTree(h.SetAsideTrees().ShouldHaveSingleItem(), outside);
+                link.MoveTo(h.H.Fixture.Source);
+                recreated = true;
+            }
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        var result = await h.RemoveAsync();
+        recreated.ShouldBeTrue();
+        (await File.ReadAllTextAsync(Path.Combine(outside, "feature.txt"))).ShouldBe("valuable feature\n");
+        File.Exists(Path.Combine(outside, ".git")).ShouldBeTrue();
+        File.GetAttributes(h.H.Fixture.Source).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue("the new path is left as it was");
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("worktree_removal_incomplete");
+        result.Unregistered.ShouldBeFalse();
+        (await File.ReadAllTextAsync(Path.Combine(h.SetAsideTrees().ShouldHaveSingleItem(), "feature.txt"))).ShouldBe("valuable feature\n");
+        (await h.H.Fixture.RequiredAsync(h.H.Fixture.Repository, "rev-parse", h.H.Fixture.SourceRef)).Trim().ShouldBe(h.SourceSha);
+
+        static void CopyTree(string from, string to)
+        {
+            foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
+            foreach (var directory in Directory.GetDirectories(from))
+                CopyTree(directory, Directory.CreateDirectory(Path.Combine(to, Path.GetFileName(directory))).FullName);
+        }
+    }
+
     [Test]
     public async Task C443_UnregisteredRootPreserved()
     {
@@ -474,6 +551,8 @@ public sealed class WorktreeGuardedCleanupTests
                 H.Fixture.Coordinates, Operation.CommonDirectory, Operation.GitDirectory, SourceSha, Operation.TargetBeforeSha,
                 Operation.Id, lease, CleanupContext: context ? Context : null), ct);
         }
+        public string[] SetAsideTrees() => Directory.GetDirectories(Path.GetDirectoryName(H.Fixture.Source)!,
+            "." + Path.GetFileName(H.Fixture.Source) + ".removing-*");
         public Task<WorktreeCleanupAttempt> RowAsync() => H.Services.GetRequiredService<IWorktreeCleanupJournal>().ReadAsync(Context, default);
         public ValueTask DisposeAsync() => H.DisposeAsync();
     }

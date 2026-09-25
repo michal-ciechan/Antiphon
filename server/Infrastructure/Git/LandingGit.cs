@@ -300,6 +300,11 @@ public class LandingGit : ILandingGit
         public void Dispose() { }
     }
 
+    /// <summary>CARD-0665 review 0c0b9a4e item 2 seam; the red commit leaves it unimplemented.</summary>
+    public virtual Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath,
+        string gitDirectory, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "worktree_unregister_not_implemented"));
+
     public async Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
         => HasSequencerAt(await CanonicalDirectoryAsync((await RequiredAsync(repository,
             ["rev-parse", "--absolute-git-dir"], ct)).Trim(), ct));

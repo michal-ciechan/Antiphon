@@ -163,6 +163,26 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             return result;
         }
 
+        /// <summary>
+        /// Production drops the registration with plain file I/O (CARD-0665 review 0c0b9a4e); it is
+        /// traced and hookable under this vector so fault cuts at registration removal keep their place.
+        /// </summary>
+        public static string[] UnregisterVector(string worktreePath) => ["worktree", "remove", "--registration-only", worktreePath];
+
+        public override async Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath,
+            string gitDirectory, CancellationToken ct)
+        {
+            var arguments = UnregisterVector(worktreePath);
+            Trace.Add(arguments);
+            if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
+            if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
+            LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
+            var result = await base.UnregisterWorktreeAsync(repository, worktreePath, gitDirectory, ct);
+            LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.Diagnostic });
+            if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
+            return result;
+        }
+
         public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
             Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         {

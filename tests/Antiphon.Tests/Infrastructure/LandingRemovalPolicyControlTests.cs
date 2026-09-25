@@ -193,7 +193,7 @@ public sealed class LandingRemovalPolicyControlTests
         if (change == "valid")
         {
             result.IsClean.ShouldBeTrue();
-            f.Mutations[0].ShouldBe(["worktree", "remove", "--", f.Source]);
+            f.Mutations[0].ShouldBe(f.UnregisterVector);
             f.Mutations[1].ShouldBe(["update-ref", "--no-deref", "-d", f.Request.Source.SourceFullRef, RemovalFixture.Sha]);
         }
         else
@@ -226,7 +226,7 @@ public sealed class LandingRemovalPolicyControlTests
         f.IgnoredPaths.AddRange(["obj/a.json", "bin-x/a.dll"]);
         var result = await f.RemoveAsync(gate: true);
         result.IsClean.ShouldBeTrue(result.Residue);
-        f.Mutations[0].ShouldBe(["worktree", "remove", "--", f.Source]);
+        f.Mutations[0].ShouldBe(f.UnregisterVector);
         f.InspectionCount.ShouldBe(2);
         f.Retention.Calls.ShouldHaveSingleItem().ShouldBe((0, 1), "an evidence-free tree still passes the artifact-pointer check once");
         result.Detail.ShouldBeNull();
@@ -257,7 +257,7 @@ public sealed class LandingRemovalPolicyControlTests
         f.Retention.Paths.Single().ShouldBe([".antiphon/task-0123abcd.md"]);
         f.Retention.Calls.ShouldHaveSingleItem().ShouldBe((1, 1), "evidence is retained once, after reading 1 and before reading 2");
         f.InspectionCount.ShouldBe(2);
-        f.Mutations[0].ShouldBe(["worktree", "remove", "--", f.Source]);
+        f.Mutations[0].ShouldBe(f.UnregisterVector);
         result.Detail.ShouldNotBeNull().ShouldStartWith("retained=1");
     }
 
@@ -353,7 +353,9 @@ public sealed class LandingRemovalPolicyControlTests
 
     // Review 5b79328d item 1: the tree is deleted by guarded removal itself, never through a link,
     // and Git only drops the registration of the absent directory. A link Git does not list is
-    // removed as a link; its target and descendants stay.
+    // removed as a link; its target and descendants stay. Review 0c0b9a4e item 3: this fixture's
+    // path removal descends through links as Git for Windows does, so handing Git the populated
+    // tree (the Round A deletion) empties the link's target and fails here.
     [Test]
     public async Task C665_UnlistedLinkIsRemovedWithoutTraversal()
     {
@@ -366,11 +368,12 @@ public sealed class LandingRemovalPolicyControlTests
         using var link = DirectoryLink.TryCreate(Path.Combine(f.Source, "bin-x", "link"), outside);
         if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
         var result = await f.RemoveAsync(gate: true);
-        result.IsClean.ShouldBeTrue(result.Residue);
-        Directory.Exists(f.Source).ShouldBeFalse();
         File.ReadAllText(Path.Combine(outside, "a.dll")).ShouldBe("outside bytes");
         File.ReadAllText(Path.Combine(outside, "nested", "b.dll")).ShouldBe("outside nested bytes");
-        Directory.GetFileSystemEntries(f.Root).Select(Path.GetFileName).ShouldBe(["outside"], "no set-aside copy of the tree remains");
+        result.IsClean.ShouldBeTrue(result.Residue);
+        Directory.Exists(f.Source).ShouldBeFalse();
+        f.SetAsideTrees().ShouldBeEmpty("no set-aside copy of the tree remains");
+        f.SetAsideRecords().ShouldBeEmpty("the finished removal leaves no record");
     }
 
     // A read-only file does not stop the removal (Git removes one too).
@@ -399,11 +402,90 @@ public sealed class LandingRemovalPolicyControlTests
         f.RemoveExitCode = 128;
         var result = await f.RemoveAsync(gate: true);
         result.Residue.ShouldBe("worktree_remove_failed");
-        f.Mutations.ShouldHaveSingleItem().ShouldBe(["worktree", "remove", "--", f.Source]);
+        f.Mutations.ShouldHaveSingleItem().ShouldBe(f.UnregisterVector);
         File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
         File.ReadAllText(Path.Combine(f.Source, "bin-x", "a.dll")).ShouldBe("build output");
-        Directory.GetFileSystemEntries(f.Root).Select(Path.GetFileName).ShouldBe(["source"], "no set-aside copy of the tree remains");
+        f.SetAsideTrees().ShouldBeEmpty("no set-aside copy of the tree remains");
+        f.SetAsideRecords().ShouldBeEmpty("a restored tree leaves no record");
         f.BranchPresent.ShouldBeTrue();
+    }
+
+    // Review 0c0b9a4e item 1: a locked file stops the no-follow deletion after the registration is
+    // gone and part of the set-aside tree is deleted. The later pass must finish that same tree;
+    // an absent, unregistered path alone is not a completed cleanup.
+    [Test]
+    public async Task C665_LockedFileMidDeleteResumesOnLaterPass()
+    {
+        if (!OperatingSystem.IsWindows()) { Skip.Test("Sharing-mode locks are a Windows file-system behaviour."); return; }
+        using var f = new RemovalFixture();
+        File.WriteAllText(Path.Combine(f.Source, "zz-held.txt"), "held by a scanner");
+        FileStream? held = null;
+        f.BeforeUnregister = () =>
+        {
+            var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+            held = new FileStream(Path.Combine(aside, "zz-held.txt"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        };
+        WorktreeRemoval first;
+        string aside;
+        try
+        {
+            first = await f.RemoveAsync(gate: true);
+            aside = f.SetAsideTrees().ShouldHaveSingleItem("the partial set-aside tree is still on disk");
+            File.Exists(Path.Combine(aside, "keep.txt")).ShouldBeFalse("deletion had started before the lock stopped it");
+        }
+        finally { held?.Dispose(); }
+        first.Residue.ShouldBe("worktree_removal_incomplete");
+        first.Detail.ShouldBe("set-aside: " + aside);
+        Directory.Exists(f.Source).ShouldBeFalse();
+        f.Registered.ShouldBeFalse();
+        f.BranchPresent.ShouldBeTrue("the branch waits for the directory");
+
+        f.BeforeUnregister = null;
+        var second = await f.RemoveAsync(gate: true);
+        f.SetAsideTrees().ShouldBeEmpty("the later pass finishes the recorded set-aside tree");
+        f.SetAsideRecords().ShouldBeEmpty();
+        second.IsClean.ShouldBeTrue(second.Residue);
+        f.BranchPresent.ShouldBeFalse();
+    }
+
+    // Review 0c0b9a4e item 2: once the tree has moved aside its path is free. Whatever occupies it
+    // before the registration is dropped is not this tree: nothing is deleted through it, and the
+    // set-aside tree stays whole with its registration.
+    [Test]
+    public async Task C665_PathRecreatedBeforeUnregistrationIsNeverTouched()
+    {
+        using var f = new RemovalFixture();
+        var outside = Directory.CreateDirectory(Path.Combine(f.Root, "outside")).FullName;
+        Directory.CreateDirectory(Path.Combine(outside, "nested"));
+        File.WriteAllText(Path.Combine(outside, "a.dll"), "outside bytes");
+        File.WriteAllText(Path.Combine(outside, "nested", "b.dll"), "outside nested bytes");
+        using var link = DirectoryLink.TryCreate(Path.Combine(f.Root, "staged-link"), outside);
+        if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var recreated = false;
+        f.BeforeUnregister = () =>
+        {
+            Directory.Exists(f.Source).ShouldBeFalse("the tree has moved aside");
+            link.MoveTo(f.Source);
+            recreated = true;
+        };
+        var result = await f.RemoveAsync(gate: true);
+        recreated.ShouldBeTrue();
+        File.ReadAllText(Path.Combine(outside, "a.dll")).ShouldBe("outside bytes");
+        File.ReadAllText(Path.Combine(outside, "nested", "b.dll")).ShouldBe("outside nested bytes");
+        File.GetAttributes(f.Source).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue("the new path is left as it was");
+        result.IsClean.ShouldBeFalse();
+        result.Residue.ShouldBe("worktree_removal_incomplete");
+        f.Registered.ShouldBeTrue("the registration belongs to the set-aside tree, which is kept");
+        var aside = f.SetAsideTrees().ShouldHaveSingleItem();
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
+        f.BranchPresent.ShouldBeTrue();
+
+        // A later pass sees both and refuses rather than choosing one.
+        f.BeforeUnregister = null;
+        var later = await f.RemoveAsync(gate: true);
+        later.Residue.ShouldBe("set_aside_pending");
+        File.ReadAllText(Path.Combine(outside, "a.dll")).ShouldBe("outside bytes");
+        File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
     }
 
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
@@ -441,6 +523,16 @@ public sealed class LandingRemovalPolicyControlTests
         public string? IgnoredPath { get; set; }
         public List<string> IgnoredPaths { get; } = [];
         public int RemoveExitCode { get; set; }
+        public bool Registered { get; set; } = true;
+        /// <summary>Runs between the move-aside and the registration drop.</summary>
+        public Action? BeforeUnregister { get; set; }
+        public string[] UnregisterVector => ["worktree", "remove", "--registration-only", Source];
+        public string[] SetAsideTrees() => Directory.GetDirectories(Root, ".source.removing-*");
+        public string[] SetAsideRecords()
+        {
+            var records = Path.Combine(Root, "antiphon", "worktree-removal");
+            return Directory.Exists(records) ? Directory.GetFileSystemEntries(records) : [];
+        }
         public RecordingRetention Retention { get; }
         public RemovalFixture()
         {
@@ -486,14 +578,20 @@ public sealed class LandingRemovalPolicyControlTests
         {
             LandingGitResult result;
             if (args[0] == "worktree" && args[1] == "list")
-                result = new(0, Directory.Exists(Source)
+                result = new(0, Registered
                     ? $"worktree {Source}\0HEAD {Sha}\0branch {Request.Source.SourceFullRef}\0\0"
                     : $"worktree {Root}\0HEAD {Sha}\0branch refs/heads/master\0\0", "");
             else if (args[0] == "worktree" && args[1] == "remove")
             {
+                // Retained so a regression to `git worktree remove <path>` is caught: like Git for
+                // Windows it deletes whatever is at the path, descending through a directory link.
                 Mutations.Add(args.ToArray());
-                // Like Git, a registration whose directory is already gone is dropped without touching disk.
-                if (RemoveExitCode == 0 && Directory.Exists(Source)) Directory.Delete(Source, recursive: true);
+                BeforeUnregister?.Invoke();
+                if (RemoveExitCode == 0)
+                {
+                    if (Directory.Exists(Source)) DeleteFollowingLinks(Source);
+                    Registered = false;
+                }
                 result = new(RemoveExitCode, "", "");
             }
             else if (args[0] == "update-ref" && args.Contains("-d"))
@@ -513,6 +611,24 @@ public sealed class LandingRemovalPolicyControlTests
             else if (args[0] == "merge-base") result = new(LocalChange == "ancestry" ? 1 : 0, "", "");
             else throw new InvalidOperationException("Unexpected cleanup command: " + args[0]);
             return Task.FromResult(result);
+        }
+        public Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath, string gitDirectory,
+            CancellationToken ct)
+        {
+            Mutations.Add(UnregisterVector);
+            BeforeUnregister?.Invoke();
+            if (RemoveExitCode != 0) return Task.FromResult(new LandingGitResult(RemoveExitCode, "", "controlled_failure"));
+            // Like production: a path that is occupied again is not this registration's tree.
+            if (Directory.Exists(worktreePath) || File.Exists(worktreePath))
+                return Task.FromResult(new LandingGitResult(1, "", "worktree_path_recreated"));
+            Registered = false;
+            return Task.FromResult(new LandingGitResult(0, "", ""));
+        }
+        private static void DeleteFollowingLinks(string directory)
+        {
+            foreach (var file in Directory.EnumerateFiles(directory)) { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); }
+            foreach (var child in Directory.EnumerateDirectories(directory)) DeleteFollowingLinks(child);
+            Directory.Delete(directory);
         }
         public void Dispose() => Directory.Delete(Root, recursive: true);
         private sealed class Lease(string common) : RepositoryLease
