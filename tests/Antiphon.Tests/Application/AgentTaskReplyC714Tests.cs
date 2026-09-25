@@ -201,6 +201,54 @@ public partial class AgentTaskReplyIntegrationTests
         stored.Result.ShouldBeNull();
     }
 
+    /// <summary>
+    /// The unmarked prompt and the completion reminder share one turn, so the turn end's
+    /// immediate prompt is the reminder. The older marked report must not settle.
+    /// </summary>
+    [Test]
+    public async Task C714_Grok_unmarked_prompt_before_reminder_is_barrier()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedGrokAsync(workspace.Path);
+        await SeedMarkedReportThenHousekeepingAsync(
+            sessionId, task, TranscriptKinds.UserPrompt, Card0714Transcript.Reminder);
+        await AssertOlderReportStaysUncorrelatedAsync(task.Id, sessionId);
+    }
+
+    [Test]
+    public async Task C714_Grok_unmarked_queued_prompt_before_reminder_is_barrier()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedGrokAsync(workspace.Path);
+        await SeedMarkedReportThenHousekeepingAsync(
+            sessionId, task, TranscriptKinds.QueuedUserPrompt, Card0714Transcript.Reminder);
+        await AssertOlderReportStaysUncorrelatedAsync(task.Id, sessionId);
+    }
+
+    /// <summary>
+    /// Claude: an unmarked prompt, then a task-notification, then an answer with no closing token.
+    /// </summary>
+    [Test]
+    public async Task C714_Claude_unmarked_prompt_before_notification_is_barrier()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddHours(-2);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.AgentKind = AgentKind.ClaudeCode;
+            t.DispatchedAt = dispatched;
+        });
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        task.DispatchedAt = dispatched;
+        const string notification =
+            "<task-notification>\n<task-id>a548067d72b9d6de9</task-id>\n"
+            + "<tool-use-id>toolu_c714barrier</tool-use-id>\n<status>completed</status>\n"
+            + "<result>The subagent's own report.</result>\n</task-notification>";
+        await SeedMarkedReportThenHousekeepingAsync(
+            sessionId, task, TranscriptKinds.UserPrompt, notification);
+        await AssertOlderReportStaysUncorrelatedAsync(task.Id, sessionId);
+    }
+
     [Test]
     public async Task C714_Codex_unmarked_user_turn_is_barrier()
     {
@@ -469,6 +517,42 @@ public partial class AgentTaskReplyIntegrationTests
                 e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
             warning.Detail.ShouldContain("not a report");
         }
+    }
+
+    /// <summary>
+    /// Older marked report, then a real unmarked prompt, then a housekeeping prompt, then an
+    /// answer and one turn end. The housekeeping prompt is the turn end's immediate prompt.
+    /// </summary>
+    private static async Task SeedMarkedReportThenHousekeepingAsync(
+        Guid sessionId, AgentTask task, string unmarkedKind, string housekeeping)
+    {
+        var at = task.DispatchedAt!.Value.AddMinutes(40);
+        var reportId = "older-report-" + Guid.NewGuid().ToString("N");
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, Card0714Transcript.Brief(task.Id), at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText, Card0714Transcript.ReportText(task.Id), at, reportId);
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, at, reportId);
+        var later = at.AddMinutes(10);
+        await SeedEntryAsync(sessionId, unmarkedKind, "a human typed this without the marker", later);
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, housekeeping, later);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText, "The answer after the housekeeping prompt.", later,
+            "answer-" + Guid.NewGuid().ToString("N"));
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, later);
+    }
+
+    private static async Task AssertOlderReportStaysUncorrelatedAsync(Guid taskId, Guid sessionId)
+    {
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.Result.ShouldBeNull();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Completed)).ShouldBeFalse();
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)).ShouldBeTrue();
     }
 
     private static async Task<(AgentTask Task, Guid SessionId)> SeedGrokAsync(
