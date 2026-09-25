@@ -560,6 +560,180 @@ the same count; the tip reformatted attributes), `PhoneHomeDirectoryTests` 7,
 `BuildSlotEndpointTests` 4, `BuildSlotScriptTests` 7, `PhoneHomeCommandDispatcherTests` 34,
 `PhoneHomeConnectionServiceTests` 10.
 
+## TestDesign pass (task 3895b67b)
+
+Written on the server2 runner against the CARD-0710 repair tip `origin/feat/card-task-7fa08907`
+(`b4a91c4e`, repair of task `8752034b`'s `fdf3778a`; `5f39210c` is **not** on `origin/master`
+at `a1492bd9`, so R1 stays blocked on 0710 landing). This section pins every roster row to a
+file, a checkpoint and a red mechanism, adds the rows the roster was missing, and maps every
+safety-critical guard to one positive control. The roster above stays the assertion source; where
+a row's assertion changes, the amendment below wins.
+
+### Inspection
+
+Bodies read (0710 repair tip unless noted):
+
+- `tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs`: `StartAsync(clock:, connectionString:,
+  configured:)` (a `configured` map keeps its own `LeaseSeconds`/`TicketTtlSeconds`; only
+  `OperatorTokenPath` and `Limits` are filled in), `RegisterAsync(... runnerId:)` calls
+  `EnsureSuccessStatusCode` (a refused registration throws `HttpRequestException`, so V-11 must
+  post the raw request), `ConnectPeerAsync(runnerId:, storeId:, secret:)`, `WaitLiveAsync(runnerId:)`,
+  `PostOperatorAsync(path, body, token, proxied:)`; the directory is built with an
+  `EmptyScopeFactory` when there is no connection string. `PhoneHomeScriptedPeer`: `Launches`
+  (Launch and LaunchPlatformConstrained), `Inputs`, `RequestCount(op)`, `Sessions` (List reply),
+  `Reply` hook, `SilentFor`, `EmitTranscriptAsync`; the default reply for an unlisted operation
+  is `{ ok = true }` (WorkspaceMirror/WorkspaceRemove included).
+- `MultiRunnerDirectoryTests.Pair/Entry` (private; `MaxCapacity 4`, `AllowDelegatedTasks` when
+  unpinned) — copied, not shared.
+- `PhoneHomeLaunchTransportTests.LaunchWorld` (drives `AgentSessionService.LaunchInteractiveAsync`
+  directly, not the dispatcher), `TaskPlatformDispatchTests.CreateDispatcher` (real
+  `AgentTaskDispatcher` over a `PhoneHomeTestHost` directory with a recording
+  `IAgentTaskLaunchSink`), `DispatcherRemotePrepStarvationTests.Configure` (real dispatcher inside
+  `BridgeQueueHarness`, `FakeTimeProvider`, `TickAsync`, transcript receipts inserted from the
+  adapter's `OnSubmitted`), `DefaultRunnerCreateTests` (placement read back from the saved row and
+  its Created/Warning events).
+- `server/.../PhoneHomeRunnerDirectory.cs` `Resolve` (:85-98), `ValidateTicket` (:313-322),
+  `Status` (:459), `RoutingSessionRunnerClient.Route` (:71-80), `RunnerScopedSessionRunnerClient.Current` (:30).
+- On master (unchanged by 0710): `src/Antiphon.SessionRunner/BuildSlotBroker.cs` (already takes
+  `IProcessLivenessProbe` and `TimeProvider`; `Sweep`/`SweepLocked`), `scripts/lib/build-slot.ps1`
+  (`C589_SLOT_SHIM` replaces `Invoke-AntiphonBuildSlotHttp`), `BuildSlotScriptTests` (7).
+
+Missing setup the Code stage must build (recorded, not assumed):
+
+- **MS-1** `tests/Antiphon.Tests/TestHelpers/RollingRunnerSettings.cs`: `Pair(secretA, secretB,
+  leaseSeconds = 90)` for `server2`/`server2-temp` with D-2's values (`MaxCapacity 10`), used by
+  `PhoneHomeConnectionTests`, `PhoneHomeRollingRunnerTests` and `RunnerRetireJobTests`.
+- **MS-2** `RollingWorld` is `BridgeQueueHarness` (real `SessionMessageQueueService`,
+  `AgentSessionLaunchQueue`, `AgentSessionService`) + `DispatcherRemotePrepStarvationTests.Configure`'s
+  dispatcher graph + `LaunchWorld`'s real `AgentProtocolAdapterFactory(directory: host.Directory)`
+  + `DefaultRunnerKit`'s policy/defaults registrations with the real directory, one
+  `FakeTimeProvider` shared by host, harness and (R3) job. If the harness binds a recording
+  `IAgentTaskLaunchSink`, `RollingWorld` binds `AgentSessionLaunchQueue` instead: a Launch frame
+  must be reached through the real queue, never through the sink.
+- **MS-3** Both peers script `Reply` for `WorkspaceMirror` with the result `RemoteWorkspaceService`
+  parses (copy the shape from the existing mirror-success test at S1); the `{ ok = true }` default
+  is not a mirror result.
+- **MS-4** A receipt hook: on a peer `Input` frame for a desktop-bound session, `RollingWorld`
+  inserts the matching `UserPrompt` transcript entry (`BridgeQueueHarness.InsertEntryAsync`) with
+  the exact submitted text — the substitute declared in the delivery inventory.
+
+Boundaries → rows: two ids equal/distinct secrets → V-3, V-34; configured-offline vs unknown vs
+desktop alias → V-1; ticket for id B on id A's route → V-34; drain with/without/ineligible
+redirect × default/explicit/SourceLanding → V-6, V-7, V-8, V-35; target idle vs at capacity →
+V-7, V-36; crash between rebind and launch → V-37; WorkspaceRemove failure → V-38; retire window
+`RetireMinDrainSeconds` 59/60 s and `RetireIdleSeconds` 119/120 s → V-16; busy answer → V-17;
+lease 89/90 s → V-19; renew grace 89/90 s → V-24. Excluded: a desktop restart in the middle of
+V-23 (one process; covered by V-4's rebuilt directory, see Risks).
+
+### Delivery inventory
+
+Durable identity joins each hop. "Receipt" is the evidence a test reads; a request frame, a queue
+insert, an event or an ack is never counted as delivery.
+
+| Path | Producer | Destination | Persistence boundary | Recovery | Observable receipt | Identity | Tests |
+|---|---|---|---|---|---|---|---|
+| DP-1 new task on the rolling target | `AgentTaskService.CreateAsync` placement → `AgentTaskDispatcher.TickAsync` claim | `server2-temp` peer Launch → session starts | `AgentTasks.RunnerId` at create; `AgentSessions.RunnerId/RunnerStoreId` at claim | next tick re-claims a Queued row; `LaunchTransport` retries a lost launch (existing) | peer B `Launches` + session row `RunnerStoreId == storeB` + the brief's `UserPrompt` transcript for that session (MS-4) | task id → session id | V-2, V-23 |
+| DP-2 message to a session on a draining runner | `SessionMessageQueueService` (real queue) | `server2` peer Input → agent turn | `SessionQueuedMessages` row | queue re-delivers until a `UserPrompt` receipt (existing) | matching complete `UserPrompt` transcript for S_A; queue row delivered | session id + message id | V-2, V-5, V-23 |
+| DP-3 drain redirect rebind | `AgentTaskDispatcher` tick (`RemoteHoldForAsync`) | redirect target Launch | `AgentTasks.RunnerId` rewrite + `drain_redirect` event in one `SaveChanges` | crash after the save: the next tick launches on the target without a second rebind or remove (V-37); remove failure: rebind still proceeds (V-38) | target peer `Launches` + session `RunnerStoreId` + brief `UserPrompt` | task id | V-7, V-36, V-37, V-38 |
+| DP-4 drain state | `POST .../drain` → `RunnerStateService` | `PhoneHomeRunnerDirectory.ApplyState` gate | `SessionRunnerStates` row (written before `ApplyState`) | `RunnerStateLoader` at startup (V-4) | `ResolveForNewWork` refusal + status `draining:true` from a rebuilt directory | runner id | V-4, V-9, V-10 |
+| DP-5 idle retire | `RunnerRetireJob` | runner process exit | `IdleObservedAt`, then `RetiredAt` | a job crash after send and before stamp: the next run finds the lease expired and stamps `idle_disconnected` (V-19) | `RunnerRetireResult` + the runner's `StopApplication` (V-15) + live `temp-down.txt` (L-3) | runner id + `ProcessBootId` | V-14..V-19, V-23, L-3 |
+| DP-6 build-slot renew | wrapper renewer (`Start-ThreadJob`) | broker lease | broker memory (`LastRenewedAt`) | a missed renew inside `RenewGraceSeconds` is harmless; outside it the lease is reaped (V-24) | 204 + `LastRenewedAt` moved | lease id | V-24..V-28 |
+
+Substitutes and what they cannot prove: the scripted peers stand in for two real runners (no
+pty, no process exit — L-1/L-3 prove those); MS-4's inserted `UserPrompt` stands in for the
+runner transcript crossing phone-home (proven by the existing `PhoneHomeEventPumpTests` and live by
+L-1's settled task), so DP-1/DP-2 tests prove routing to the right recipient plus the queue's
+receipt handling, not the runner's own transcript capture; V-15's recording lifetime cannot prove
+the container exits (L-3's `temp-down.txt` does). Busy recipient / already eligible for DP-2:
+V-5 delivers to an idle S_A; V-39 queues while S_A is busy (a `TurnEnd` not yet written) and
+proves delivery after the turn ends under the drain.
+
+### Proves it works now (pins)
+
+One row per roster ID: file, checkpoint, and the production line whose removal turns it red.
+Files are under `tests/Antiphon.Tests/` unless marked `SR` (`tests/Antiphon.SessionRunner.Tests/`).
+
+#### R1 (green pins on top of CARD-0710; red only through the PC rows)
+
+| ID | File :: method | CP | Red mechanism (production line) |
+|---|---|---|---|
+| V-1 | `Agents/PhoneHomeConnectionTests.cs` :: `Unknown_runner_status_is_404_and_carries_no_live_runner_identity` | CP-1 | `PhoneHomeRunnerDirectory.Status` keyed lookup (:459): PC-2 answers the first live slot → red at `server2-temp` `runnerStoreId.ShouldBeNull()`; PC-3 answers a not-available DTO for an unknown id → red at `StatusCode.ShouldBe(404)` |
+| V-2 | `Application/PhoneHomeRollingRunnerTests.cs` :: `Input_to_a_session_on_server2_reaches_server2_while_a_new_launch_goes_to_server2_temp` | CP-1 | `RoutingSessionRunnerClient.Route` `Resolve(remote.Owner.RunnerId)` (:78) → PC-1; `RunnerScopedSessionRunnerClient.Current` `Resolve(RunnerId)` (:30) → PC-4; `Resolve` keyed `SnapshotLive(runnerId)` (:89) → PC-5 |
+| V-3 | `Application/PhoneHomeRunnerSettingsValidatorTests.cs` :: `Two_entries_with_the_same_secret_and_host_root_validate` | CP-2 | `PhoneHomeRunnerSettingsValidator.ValidateMapped` admits equal secret values → PC-6 |
+| V-34 (new) | `Agents/PhoneHomeConnectionTests.cs` :: `Equal_secrets_do_not_let_a_server2_temp_ticket_connect_as_server2` | CP-1 | `ValidateTicket` `string.Equals(ticket.RunnerId, runnerId)` (:317) → PC-7 |
+
+Amendments (R1):
+
+- **V-1** resolves the D-4/roster conflict in favour of D-2: `server2-temp` is configured
+  permanently, so before registration its status is **200** `available:false,
+  dispatchEligible:false` with `runnerStoreId`, `processBootId` and `buildVersion` all null
+  (CARD-0729's false pass was server2's identity under the temp id); the **404** arm uses an
+  unconfigured id (`server2-other`). D-4's first sentence is superseded by this row; the scripts'
+  "non-200 is not eligible" rule is unchanged. If the unknown-id arm is not 404 at S1 (the
+  `NotFoundException` → `ExceptionMiddleware` mapping), R1 gains a production fix and a red
+  commit; say so in the S1 commit.
+- **V-2** decisive assertions, in order: (1) placement — `CreateAsync` with the global default
+  `server2-temp` saves `RunnerId == "server2-temp"` and a Created event containing
+  `selected=server2-temp`; (2) launch through the real queue (MS-2) — ticks (at most 5, each
+  followed by a 3 s bounded wait on `peerB.Launches`) until `peerB.Launches.Count == 1`;
+  `peerA.Launches.Count == 0`; the session row `RunnerId == "server2-temp"`, `RunnerStoreId ==
+  storeB`; (3) message — a queued message for S_A (`RunnerId == "server2"`) through
+  `SessionMessageQueueService`: `peerA.Inputs` has one frame whose text equals the message,
+  `peerB.Inputs` is empty, and the queue row is delivered on the MS-4 `UserPrompt` receipt; (4)
+  `RoutingSessionRunnerClient.SendInputAsync(S_A, "x")` adds one more `peerA` input and none on B.
+  The test uses **distinct** secrets; V-34 covers equal ones.
+- **V-3** drops the "duplicate id fails" clause (0710's `MultiRunnerDirectoryTests` owns id
+  uniqueness; the `Runners` dictionary is case-insensitive, so the arm cannot be built from
+  configuration); it asserts zero failures and `KnownRunnerIds` equal to `server2, server2-temp`.
+- **V-34** Pair with equal secrets; `RegisterAsync(runnerId: "server2-temp")`; the raw WebSocket
+  connect to `/api/session-runners/server2/connect` with that ticket fails (the upgrade is refused;
+  `host.Directory.SnapshotLive("server2")` stays null and `SnapshotLive("server2-temp")` stays
+  null); a peer then connects to `server2` with its own ticket and becomes live.
+
+### Guards the regression
+
+- R-1 (all rounds): the regression classes listed under the roster run in the round's green
+  checkpoints (CP-1/2, CP-4/5/6, CP-10/12/14/16/18/21); decisive assertion = each class executes
+  with 0 failed and the `Min` floor is met.
+
+### Guard inventory
+
+- G-1: D-3/row 4 — a per-session call resolves the session owner's runner, never a default | PC-1
+- G-2: D-3 — an adapter/launch client resolves its task's `RunnerId` | PC-4
+- G-3: 0710 D-6 — `Resolve(id)` returns that id's socket only | PC-5
+- G-4: D-4/CARD-0729 — `Status(id)` reads that id's slot only | PC-2
+- G-5: D-4 — an unconfigured id is `NotFound` (404), never a default answer | PC-3
+- G-6: D-2 — equal secret values across entries validate | PC-6
+- G-7: D-2 — with equal secrets a ticket is bound to the id that registered it | PC-7
+
+### Positive controls
+
+Mutation runs each PC method-scoped (`--treenode-filter "/*/*/<Class>/<Method>"`): break, red at
+the named assertion, restore, green. Zero executed or a build error is not red.
+
+- PC-1: break G-1 by `SessionRunnerBinding.Remote remote => _directory.Resolve(null)` in
+  `RoutingSessionRunnerClient.Route`; expect `PhoneHomeRollingRunnerTests.Input_to_a_session_on_server2_reaches_server2_while_a_new_launch_goes_to_server2_temp`
+  red at `peerA.Inputs.Count.ShouldBe(...)` (step 4).
+- PC-2: break G-4 by making `Status(runnerId)` read the first slot with a live connection
+  (`_slots.Values.First(s => s.Live is not null)`) when the requested slot has none; expect
+  `PhoneHomeConnectionTests.Unknown_runner_status_is_404_and_carries_no_live_runner_identity`
+  red at `server2-temp` `runnerStoreId.ShouldBeNull()`.
+- PC-3: break G-5 by returning the desktop not-available DTO instead of `throw new
+  NotFoundException(...)` for an unmapped id in `Status`; expect the same method red at
+  `StatusCode.ShouldBe(HttpStatusCode.NotFound)`.
+- PC-4: break G-2 by `private ISessionRunnerClient Current => _directory.Resolve(_directory.KnownRunnerIds.First(id => id != "desktop"))`
+  in `RunnerScopedSessionRunnerClient`; expect V-2's method red at `peerB.Launches.Count.ShouldBe(1)`.
+- PC-5: break G-3 by replacing `var live = SnapshotLive(runnerId);` with `var live = SnapshotLive();`
+  (the first live slot) in `Resolve`; expect V-2's method red at
+  `peerB.Launches.Count.ShouldBe(1)` or `peerA.Inputs` (whichever connected first; the test
+  connects A first, so the launch assertion is the decisive one).
+- PC-6: break G-6 by adding `if (secrets.Distinct().Count() != secrets.Count) failures.Add("duplicate secret")`
+  in `ValidateMapped`; expect `PhoneHomeRunnerSettingsValidatorTests.Two_entries_with_the_same_secret_and_host_root_validate`
+  red at `result.Failed.ShouldBeFalse()`.
+- PC-7: break G-7 by deleting `|| !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)`
+  from `ValidateTicket`; expect `PhoneHomeConnectionTests.Equal_secrets_do_not_let_a_server2_temp_ticket_connect_as_server2`
+  red at `SnapshotLive("server2").ShouldBeNull()`.
+
 ### Execution and evidence
 
 Run each TUnit row with `pwsh -NoProfile -File scripts/run-checkpoint.ps1` and the exact filter,
@@ -593,7 +767,7 @@ only. Red rows require the named assertion failures, not any failure.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c727-r1/` | pins-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(MultiRunnerProjectionTests*)\|(RunnerCatalogueTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeLaunchTransportTests*)/*` | V-1, V-2; multi-runner, routing and launch regressions | all listed classes, 0 failed; 2 new methods, 0 skipped | 55 | 6 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c727-r1/` | pins-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(MultiRunnerProjectionTests*)\|(RunnerCatalogueTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeLaunchTransportTests*)/*` | V-1, V-2, V-34; multi-runner, routing and launch regressions | all listed classes, 0 failed; 3 new methods, 0 skipped | 56 | 6 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c727-r1/` | config-docs-green | `/*/*/(PhoneHomeRunnerSettingsValidatorTests*)\|(DockerStackDocumentationTests*)/*` | V-3; docs contract | all listed, 0 failed/skipped; 1 new method | 17 | 5 |
 
 R1 floor = 6 + 5 = **11** minutes.
