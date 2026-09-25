@@ -150,7 +150,7 @@ public sealed class AgentChannelService
 
     private async Task<AgentSession> LoadLiveTargetSessionAsync(Guid sessionId, CancellationToken ct)
     {
-        var liveSessionIds = _runtime.ListLiveSessions().ToHashSet();
+        var liveSessionIds = _runtime.ListLiveOrUnknownSessions().ToHashSet();
         if (!liveSessionIds.Contains(sessionId))
             throw new NotFoundException(nameof(AgentSession), sessionId);
 
@@ -182,7 +182,7 @@ public sealed class AgentChannelService
             return [];
         }
 
-        var liveSessionIds = _runtime.ListLiveSessions().ToHashSet();
+        var liveSessionIds = _runtime.ListLiveOrUnknownSessions().ToHashSet();
         var sessions = await _db.AgentSessions
             .AsNoTracking()
             .Include(s => s.Card)

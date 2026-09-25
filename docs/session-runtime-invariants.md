@@ -43,9 +43,28 @@
   An exit or kill leaves a tombstone for that session generation: a launch ack or a List naming a
   generation already seen to end is ignored (the exit event can be pumped before the ack's
   continuation runs), a newer generation is not, and a List sent before a later ack or exit does
-  not undo it. Each entry keeps when a List, ack or event last confirmed it; one unconfirmed for
-  `PhoneHomeRunner:InventoryStaleAfterRefreshes` (default 3) refresh intervals stops counting as live
-  even while heartbeats hold the lease, and that many failed refreshes in a row log a Warning.
+  not undo it. A tombstone lasts as long as its connection, never a timed window, so no reply
+  continuation is too late for it. Each entry keeps when a List, ack or event last confirmed it; one
+  unconfirmed for `PhoneHomeRunner:InventoryStaleAfterRefreshes` (default 3) refresh intervals stops
+  counting as live even while heartbeats hold the lease, and that many failed refreshes in a row log
+  a Warning.
+
+- **Live, unknown, gone: only a confirmed absence is gone (CARD-0679, review 87af1bf6).** A
+  phone-home session past the stale bound, or on a connection that is recovering, lease-expired or
+  closed before a newer connection's catch-up List has answered, is *unknown*
+  (`ISessionRunnerDirectory.UnknownRemoteSessionIds()`, `AgentSessionRuntime.ListUnknownSessions()`).
+  Before the runner's first catch-up List in this process (a desktop restart) every session bound to
+  it is unknown (`RemoteInventoryPending`, read with the session's `RunnerId` through
+  `AgentSessionRuntime.IsLiveOrUnknown`). It is gone only after an exit, a kill, or a List from a
+  connected runner that does not name it. Destructive "not live" decisions read
+  `ListLiveOrUnknownSessions()` / `IsLiveOrUnknown`, so an unknown session is not
+  failed, its attempt is not canceled and its card keeps its claim (card reconciliation, the manual
+  turn wait, resume's already-running guard); queued delivery reads it too (stranded sweep,
+  deliver-if-idle, send-now, schedule fires, channel targets), and an unreachable runner leaves the
+  row Pending. Probes that act only on a confirmed live session (usage polls, compaction, watchdog
+  answers, API-error retries, local-command polls, expectation nudges, policy relaunch) read
+  `ListLiveSessions()` and skip it. A runner that never returns leaves its sessions unknown; an
+  operator kill or the runner's return settles them.
 
 - **A transport loss during a remote launch re-attaches after the ack and re-queues before it,
   bounded (CARD-0679 D-8; lands with R5).** Inside the launch, a transport-class loss before the

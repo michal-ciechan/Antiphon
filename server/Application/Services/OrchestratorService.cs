@@ -748,7 +748,7 @@ public sealed class OrchestratorService
                 {
                     ClearCardClaim(card, utcNow);
                 }
-                else if (!await HasLiveRuntimeSessionAsync(card.OwnerSession.Id, ct))
+                else if (!await HasLiveRuntimeSessionAsync(card.OwnerSession, ct))
                 {
                     MarkSuccessfulRuntimeStopped(card, utcNow);
                     ClearCardClaim(card, utcNow);
@@ -777,7 +777,7 @@ public sealed class OrchestratorService
             }
 
             if (ShouldProbeMissingRuntime(card.OwnerSession, utcNow)
-                && !await HasLiveRuntimeSessionAsync(card.OwnerSession.Id, ct))
+                && !await HasLiveRuntimeSessionAsync(card.OwnerSession, ct))
             {
                 await MarkMissingRuntimeCanceledAsync(card, utcNow, ct);
                 await _retryScheduler.ScheduleFailureAsync(
@@ -1071,14 +1071,17 @@ public sealed class OrchestratorService
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 
-    private async Task<bool> HasLiveRuntimeSessionAsync(Guid sessionId, CancellationToken ct)
+    private async Task<bool> HasLiveRuntimeSessionAsync(AgentSession session, CancellationToken ct)
     {
         try
         {
+            // CARD-0679 (review 87af1bf6): a phone-home session whose liveness is unknown (stale
+            // inventory, reconnect gap, no catch-up List since start) is not missing; only a
+            // confirmed absence fails it.
             if (_runtime is not null)
-                return _runtime.ListLiveSessions().Contains(sessionId);
+                return _runtime.IsLiveOrUnknown(session.Id, session.RunnerId);
 
-            await _sessionService.SendInputAsync(sessionId, string.Empty, ct);
+            await _sessionService.SendInputAsync(session.Id, string.Empty, ct);
             return true;
         }
         catch (NotFoundException)

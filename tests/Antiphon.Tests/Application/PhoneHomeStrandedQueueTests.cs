@@ -86,10 +86,14 @@ public class PhoneHomeStrandedQueueTests
                 new RunnerSessionExitedEvent(other, 0, nameof(AgentExitReason.Unknown), 0), PhoneHomeFraming.Json)));
         await WaitUntilAsync(() => !h.Runtime.ListLiveSessions().Contains(other));
         h.Runtime.ListLiveSessions().ShouldContain(h.SessionId, "only the exited session left the inventory");
+        h.Runtime.ListLiveOrUnknownSessions().ShouldNotContain(other, "an exit is a confirmed absence");
 
         peer.Socket.Abort();
         await WaitUntilAsync(() => !live.SocketOpen);
         h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId, "a closed connection vouches for nothing");
+        // Review 87af1bf6: nor does it say the session is gone; that waits for the next catch-up List.
+        h.Runtime.ListUnknownSessions().ShouldContain(h.SessionId);
+        h.Runtime.ListUnknownSessions().ShouldNotContain(other);
 
         peer.RequestCount(PhoneHomeOperation.List).ShouldBe(lists, "ListLiveSessions never asks the runner");
         stop.Cancel();
@@ -311,6 +315,9 @@ public class PhoneHomeStrandedQueueTests
         var listed = h.Runtime.ListLiveSessions();
         listed.ShouldNotContain(quiet, "unconfirmed for four refresh intervals: past the stale bound");
         listed.ShouldContain(talking, "its output confirmed it this interval");
+        // Review 87af1bf6: not live is not gone. Past the bound it is unknown, not dead.
+        h.Runtime.ListUnknownSessions().ShouldContain(quiet);
+        h.Runtime.ListUnknownSessions().ShouldNotContain(talking);
         host.Logs.Entries.Any(e => e.Level == LogLevel.Warning && e["ConsecutiveFailures"] is int n && n >= 3)
             .ShouldBeTrue("repeated refresh failures are called out, not just logged one by one");
 
@@ -320,6 +327,7 @@ public class PhoneHomeStrandedQueueTests
         await HeartbeatAsync(peer, live, clock);
         (await pump.RunCycleAsync(stop.Token)).ShouldBeFalse();
         await WaitUntilAsync(() => h.Runtime.ListLiveSessions().Contains(quiet));
+        h.Runtime.ListUnknownSessions().ShouldNotContain(quiet);
         stop.Cancel();
     }
 

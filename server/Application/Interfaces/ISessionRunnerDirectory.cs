@@ -47,4 +47,20 @@ public interface ISessionRunnerDirectory
     /// inventory. Never an RPC; empty when no remote runner is connected and recovered.
     /// </summary>
     IReadOnlyCollection<Guid> LiveRemoteSessionIds() => [];
+
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): remote sessions whose liveness is unknown, neither confirmed
+    /// live nor confirmed gone: the last recovered connection's inventory entries that nothing has
+    /// confirmed within the stale bound, and all of them while that connection is recovering,
+    /// lease-expired or closed and no newer connection's catch-up List has answered. Only such a
+    /// List (from a connected runner) or an exit/kill confirms a session gone. Never an RPC.
+    /// </summary>
+    IReadOnlyCollection<Guid> UnknownRemoteSessionIds() => [];
+
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): true while <paramref name="runnerId"/> is a remote runner no
+    /// connection has yet answered for in this process (a desktop restart before the runner is
+    /// back): every session bound to it is unknown, since nothing has listed them either way.
+    /// </summary>
+    bool RemoteInventoryPending(string? runnerId) => false;
 }

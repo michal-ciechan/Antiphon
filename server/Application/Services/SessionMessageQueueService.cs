@@ -346,7 +346,7 @@ public sealed partial class SessionMessageQueueService
 
         if (mode == MessageSendMode.Now)
         {
-            if (!_runtime.ListLiveSessions().Contains(sessionId))
+            if (!_runtime.ListLiveOrUnknownSessions().Contains(sessionId))
                 throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
             if (!await IsAcceptingInputAsync(sessionId, ct))
             {
@@ -611,7 +611,7 @@ public sealed partial class SessionMessageQueueService
             // (FlushSessionAsync).
             var working = await IsWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
-                && _runtime.ListLiveSessions().Contains(sessionId)
+                && _runtime.ListLiveOrUnknownSessions().Contains(sessionId)
                 && !working)
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
@@ -656,7 +656,7 @@ public sealed partial class SessionMessageQueueService
         if (TryGetForbiddenReason(kind, trimmed, out var forbiddenReason))
             throw new ValidationException(nameof(body), forbiddenReason);
 
-        if (!_runtime.ListLiveSessions().Contains(sessionId))
+        if (!_runtime.ListLiveOrUnknownSessions().Contains(sessionId))
             throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
         if (!await IsAcceptingInputAsync(sessionId, ct))
         {
@@ -1069,7 +1069,7 @@ public sealed partial class SessionMessageQueueService
     /// <summary>Promote a specific queued message: deliver it immediately and remove it from the queue.</summary>
     public async Task<SessionQueueDto> SendNowAsync(Guid sessionId, Guid messageId, CancellationToken ct)
     {
-        if (!_runtime.ListLiveSessions().Contains(sessionId))
+        if (!_runtime.ListLiveOrUnknownSessions().Contains(sessionId))
             throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
         if (!await IsAcceptingInputAsync(sessionId, ct))
         {
@@ -1295,7 +1295,9 @@ public sealed partial class SessionMessageQueueService
         if (candidates.Count == 0)
             return 0;
 
-        var live = _runtime.ListLiveSessions();
+        // CARD-0679 (review 87af1bf6): an unknown phone-home session keeps its queued work moving;
+        // a runner that is really unreachable leaves the row Pending (BackendUnreachable).
+        var live = _runtime.ListLiveOrUnknownSessions();
         var flushed = 0;
         foreach (var sessionId in candidates.Where(live.Contains))
         {

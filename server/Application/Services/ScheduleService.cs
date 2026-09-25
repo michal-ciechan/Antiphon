@@ -273,7 +273,8 @@ public sealed class ScheduleService
             return;
         }
 
-        var live = _runtime.ListLiveSessions().Contains(sessionId);
+        // CARD-0679: a session whose runner has not confirmed it gone still takes the fire's message.
+        var live = _runtime.ListLiveOrUnknownSessions().Contains(sessionId);
         if (!live)
         {
             var queueAnyway = schedule.WhenTargetDown == ScheduleWhenTargetDown.Queue;
@@ -922,7 +923,7 @@ public sealed class ScheduleService
         {
             sessionId = parsed;
             session = await _db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == parsed, ct);
-            live = _runtime.ListLiveSessions().Contains(parsed);
+            live = _runtime.ListLiveOrUnknownSessions().Contains(parsed);
         }
 
         var warnings = new List<string>();
