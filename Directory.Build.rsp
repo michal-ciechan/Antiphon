@@ -1,0 +1,4 @@
+# CARD-0589 D-2: MSBuild auto-response file for every project under this root.
+# Worker nodes exit with the build that started them (no orphaned /nodeReuse:true nodes).
+# No -maxcpucount here: the SDK bare -maxcpucount outranks this file (CP-1); the build-slot grant carries the count.
+-nodeReuse:false
