@@ -8,7 +8,14 @@
     no delegate re-derives TRX parsing or opens the file. It runs one row, never the table.
 
     Exit codes: 0 green; 1 one or more failed tests; 2 invalid input, failed build or no TRX;
-    3 fewer than -MinExecuted executed tests, or an -Expect token that matched no executed name.
+    3 fewer than -MinExecuted executed tests, or an -Expect token that matched no executed name;
+    4 no host build slot within -SlotWaitMinutes (nothing was built or run).
+
+    Build slot (CARD-0589): after input validation and the fresh results directory, the row takes a
+    lease from the session runner's /build-slots broker (scripts/lib/build-slot.ps1), waits for it
+    visibly in FIFO order (BUILD SLOT lines), builds with the grant's -maxcpucount:N and releases it
+    after the run. An unreachable runner falls back to an unleased run at -maxcpucount:4 after 60 s
+    and says so. -NoSlot is for an operator shell only; a delegate row never uses it.
 
     -MsBuildProperty Name=Value (CARD-0671) is forwarded as --property:Name=Value to BOTH the build
     and the `dotnet run`, so a -NoBuild row resolves the same output its build produced. Off
@@ -28,7 +35,9 @@ param(
     [int]$MinExecuted = 1,
     [string[]]$Expect,
     [string[]]$MsBuildProperty,
-    [string]$DotnetShim
+    [string]$DotnetShim,
+    [double]$SlotWaitMinutes = 45,
+    [switch]$NoSlot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -89,6 +98,26 @@ if (Test-Path -LiteralPath $resultsDirectory) {
 New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
 $resultsDirectory = (Resolve-Path -LiteralPath $resultsDirectory).Path
 
+# (2b) Host build slot (CARD-0589), after every input check so an invalid row never waits.
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'build-slot.ps1'))
+$slot = $null
+$slotState = 'skipped'
+$slotWaited = 0
+if ($NoSlot) {
+    Write-Host 'BUILD SLOT skipped by -NoSlot'
+} else {
+    $slot = Enter-AntiphonBuildSlot -Label ('{0}@{1}' -f $Name, $Project) -WaitMinutes $SlotWaitMinutes
+    $slotState = [string]$slot.Outcome
+    $slotWaited = [int]$slot.WaitedSeconds
+    if ($slotState -eq 'timeout') {
+        Write-Host ('CHECKPOINT {0} slot=timeout waited={1}s: no build slot within {2} minutes; nothing was built or run' -f $Name, $slotWaited, $SlotWaitMinutes)
+        Write-Trailer -Code 4
+        exit 4
+    }
+}
+$cpuArguments = @()
+if ($null -ne $slot -and [int]$slot.MaxCpuCount -gt 0) { $cpuArguments = @('-maxcpucount:' + [int]$slot.MaxCpuCount) }
+
 function Invoke-Dotnet {
     param([string[]]$Arguments)
     # Out-Host keeps the child's own output on the console instead of returning it from here.
@@ -100,24 +129,34 @@ function Invoke-Dotnet {
     return $LASTEXITCODE
 }
 
-# (3) Build, unless this row reuses an earlier row's output.
-$buildState = 'reused'
-if (-not $NoBuild) {
-    $buildExit = Invoke-Dotnet (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @('--nologo'))
-    if ($buildExit -ne 0) {
-        Write-Host ('CHECKPOINT {0} build=failed project={1} outputPath={2} exit={3}' -f $Name, $Project, $OutputPath, $buildExit)
-        foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
-        Write-Trailer -Code 2
-        exit 2
-    }
-    $buildState = 'ok'
-}
-
-# (4) One filter, one fresh TRX.
+# (3)-(4) run under the slot; it is released however they end (the runner also reaps it if this
+# process dies).
 $trxPath = Join-Path $resultsDirectory 'run.trx'
-$runExit = Invoke-Dotnet (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
-    '--', '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
-    '--results-directory', $resultsDirectory))
+try {
+    # (3) Build, unless this row reuses an earlier row's output. The grant's -maxcpucount applies to
+    # the build only: the --no-build run below starts no MSBuild nodes.
+    $buildState = 'reused'
+    $buildExit = 0
+    if (-not $NoBuild) {
+        $buildExit = Invoke-Dotnet (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
+        if ($buildExit -eq 0) { $buildState = 'ok' }
+    }
+
+    # (4) One filter, one fresh TRX.
+    if ($buildExit -eq 0) {
+        $runExit = Invoke-Dotnet (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
+            '--', '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
+            '--results-directory', $resultsDirectory))
+    }
+} finally {
+    Exit-AntiphonBuildSlot -Lease $slot
+}
+if ($buildExit -ne 0) {
+    Write-Host ('CHECKPOINT {0} build=failed project={1} outputPath={2} exit={3} slot={4} waited={5}s' -f $Name, $Project, $OutputPath, $buildExit, $slotState, $slotWaited)
+    foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
+    Write-Trailer -Code 2
+    exit 2
+}
 
 # (5) No TRX is not a result.
 if (-not (Test-Path -LiteralPath $trxPath)) {
@@ -201,8 +240,8 @@ try {
 } catch { }
 
 # (6) The report line the bundle asks Code to produce, then the roster.
-Write-Host ('CHECKPOINT {0} commit={1} build={2} filter={3} executed={4} passed={5} failed={6} skipped={7} trx={8}' -f `
-    $Name, $commit, $buildState, $Filter, $executed, $passed, $failed, $skipped, $trxPath)
+Write-Host ('CHECKPOINT {0} commit={1} build={2} filter={3} executed={4} passed={5} failed={6} skipped={7} trx={8} slot={9} waited={10}s' -f `
+    $Name, $commit, $buildState, $Filter, $executed, $passed, $failed, $skipped, $trxPath, $slotState, $slotWaited)
 
 foreach ($token in $propertyTokens) { Write-Host ('MSBUILD PROPERTY {0}' -f $token) }
 foreach ($testName in $failedNames) { Write-Host ('FAILED {0}' -f $testName) }
