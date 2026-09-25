@@ -21,10 +21,96 @@ The complete caller report is `.antiphon/task-81c898bc.md`.
 - EF tooling exception: repository-local `dotnet-ef` 9.0.20 restored; one design-time build with
   `OutputPath=bin-c698-ef/` and `UseAppHost=false` generated
   `20260925081051_AddTranscriptHotPathIndexes`. No migration/snapshot was handwritten.
-- CP-2 through CP-4 and isolated rehearsal results: recorded below after execution.
+- CP-2 through CP-4 passed at source commit `1ec704201362c8bd35b98ff259dc20662edb65d8`.
+  The final documentation commit adds this evidence without changing tested code.
 - Every planned positive control remains **PENDING**, for method-scoped SourceLanding Mutation.
 - Live acceptance remains **PENDING**: before/after `pg_stat_user_tables` deltas, PostgreSQL CPU,
   transcript-confirmed normal queued delivery and replay/catch-up after desktop activation.
+
+| Checkpoint | Executed | Passed | Failed | Skipped | Reruns |
+|---|---:|---:|---:|---:|---:|
+| CP-1, baseline production | 2 | 0 | 2 expected assertions | 0 | 1 |
+| CP-2, entire Unit lane | 2,999 | 2,999 | 0 | 28 unrelated | 3 |
+| CP-3, five full integration classes | 168 | 168 | 0 | 0 | 1 |
+| CP-4, persistence/replay manifest | 15 | 15 | 0 | 0 | 0 |
+
+CP-3's roster is 4 hot-path methods, 12 working-state methods, 4 migration methods,
+25 `SessionMessageQueueServiceTests` and 123 `SessionMessageQueueDeliveryVerificationTests`.
+CP-4 executed all 11 C561 methods, all 3 C698 methods and the sequence-restart regression.
+The CP-3 duration tripwire reported zero unlisted tests >=5 seconds.
+
+The CP-2 retries corrected two target-typed `params` test constructions and an adjacent
+Slow-registry reason, then rebuilt after CP-3 fixture fixes. CP-3 initially had 166 passes and
+two fixture failures: the existing fresh-start queue test assumed `cmd.exe`, and the generic
+EXPLAIN replay helper doubled EF's leading `@` parameter marker. The former now uses the
+current process executable for admission in that one test (no launch worker is running); its
+queue outcome assertions are unchanged. The latter now normalizes captured parameter names
+and asserts PostgreSQL's `generic_plans` counter advances. No production fix was needed after
+the initial query/index implementation. The large fixture also now verifies a wholly stale
+20,000-row tail, with no null timestamp accidentally providing early activity evidence.
+
+The 28 Unit skips are the existing Windows-specific cases in `AgentRegistrySettingsTests` (1),
+`AgentExecutableResolverTests` (1), `AgentPinPathTests` (1), `ClaudeRemoteControlLaunchArgsTests`
+(1), `DelegationReportFormatterTests` (1), `DirectoryBrowseServiceTests` (5),
+`GrokRulesTransportCompatibilityTests` (12 argument cases), `PtyDeliveryCeilingsTests` (3),
+`SessionDeliveryProfileTests` (2), plus `MarkdownPdfRendererTests` (1; no Edge/Chrome).
+The full method roster is in the task report and `unit-skips.txt`. No new/affected test skipped.
+
+### Isolated PostgreSQL evidence
+
+Final CP-3 evidence is in `.antiphon/card0698-checkpoints/cp3-rerun1-evidence/`.
+
+- Actual captured production queries use the UUID index with **both** key conditions for
+  1/512/1,025 keys; 1,025 distinct keys generate three probes (512/512/1).
+- Working batches for 1 and 32 sessions execute **one statement**, with both top-one boundary
+  indexes and the original sequence range index, without transcript sequential scans or
+  grouped historical aggregates. Custom and separately prepared, forced-generic plans pass;
+  no sequential-scan disabling or planner hints are used.
+- Replaying the captured production SQL for 100 singleton UUID probes, a 1,025-key catch-up
+  lookup, and 100 mixed working batches: transcript `seq_scan` **0 -> 0**, `idx_scan`
+  **0 -> 11,849**. The observer waits for positive index-counter publication after flushing
+  the producer. Index removal in only the owned database makes both plan assertions fail.
+- Populated pre-change upgrade: **377,003 rows**, **1,401 ms** for the migration, all three
+  indexes valid/ready/nonunique, and an unchanged hash of all persisted columns. This is a
+  synthetic rehearsal duration, not a live deployment estimate.
+
+| New index | Bytes in isolated fixture |
+|---|---:|
+| Session + UUID, including kind | 22,437,888 |
+| End session + sequence | 1,474,560 |
+| End session + non-null timestamp | 1,097,728 |
+| Total | 25,010,176 |
+
+Actual Down/Up preserved rows and original-query outcomes. A controlled old writer held
+concurrent creation in a lock wait while a second connection successfully inserted; releasing
+the first writer let the migration finish. The generated commands each have
+`TransactionSuppressed=true`. Generated Up/Down scripts are retained beside checkpoint logs.
+The no-build CLI script export initially looked for a framework-suffixed directory; setting
+`AppendTargetFrameworkToOutputPath=false` reused the checkpoint output successfully, without
+another build. The EF design-time build above was the only unlisted build; no unlisted test ran.
+
+### Positive controls still pending
+
+Ordinary baseline-red and dropped-index checks do not discharge SourceLanding controls.
+All controls below remain **PENDING**, scoped to the named method for later Mutation.
+
+| Mutation | Exact test method (class as above unless prefixed) |
+|---|---|
+| Auto compact becomes an end | `TranscriptWorkingStateQueryTests.Auto_and_unknown_compact_do_not_end_work` |
+| Continuation exclusion removed | `TranscriptWorkingStateQueryTests.Manual_compact_and_continuation_are_idle` |
+| Timestamp taken only from highest-sequence end | `TranscriptWorkingStateQueryTests.End_sequence_and_timestamp_maxima_can_come_from_different_rows` |
+| Independent activity maxima replace row correlation | `TranscriptWorkingStateQueryTests.Stale_replay_requires_one_qualifying_row_not_independent_activity_maxima` |
+| `>=` becomes `>`; null handling removed (separate mutations) | `TranscriptWorkingStateQueryTests.Null_and_equal_timestamps_preserve_conservative_working` |
+| Session correlation removed | `TranscriptWorkingStateQueryTests.No_end_activity_is_working` and `Missing_and_empty_sessions_are_idle` (scope each exact method) |
+| UUID-only dedup | `AgentSessionRuntimeTests.C698_same_uuid_different_kinds_survive_replay_across_sessions_and_generations` |
+| Chunking removed | `AgentSessionRuntimeTests.C698_1025_uuid_keys_are_bounded_and_replays_preserve_every_pair_and_sequence` |
+| Empty UUID guard removed | `AgentSessionRuntimeTests.C698_null_uuid_batches_dedup_by_sequence_without_a_uuid_read` |
+| UUID access path removed | `TranscriptHotPathQueryTests.Uuid_membership_seeks_by_session_and_uuid` |
+| Two working statements restored | `TranscriptHotPathQueryTests.Working_batch_uses_one_statement_and_indexed_boundaries` |
+| Boundary classification parameterized | `TranscriptHotPathQueryTests.Prepared_plans_keep_the_partial_index_paths` |
+| Concurrent flag removed | `TranscriptHotPathMigrationTests.Generated_sql_and_model_preserve_unique_sequence_and_suppress_index_transactions` |
+| Nonconcurrent creation blocks the second writer | `TranscriptHotPathMigrationTests.Concurrent_index_build_waits_for_old_writer_without_blocking_another_insert` |
+| UUID index made unique | `TranscriptHotPathMigrationTests.Populated_prechange_upgrade_preserves_all_rows_and_uuid_kinds` |
 
 ## Applying the additive migration
 
@@ -34,8 +120,9 @@ indexes serially, all with `CREATE INDEX CONCURRENTLY`. The unique session/seque
 the API-error partial index remain intact. There is no transcript rewrite or backfill.
 
 Generate a **non-idempotent**, migration-specific script with the repository-local CLI from
-the reviewed build. The `from` migration is the immediately preceding migration in the repo;
-the `to` migration is `20260925081051_AddTranscriptHotPathIndexes`. Inspect transaction boundaries:
+the reviewed build. The `from` migration is `20260924151156_AddLandHoldNotificationOwner`;
+the `to` migration is `20260925081051_AddTranscriptHotPathIndexes`. The reviewed export is
+`.antiphon/card0698-checkpoints/migration-up.sql`. Inspect transaction boundaries:
 all three concurrent creates must be outside `BEGIN`/`START TRANSACTION`; a later transaction
 around the migration-history insert is allowed. Do not use `--idempotent` or `psql -1`.
 
