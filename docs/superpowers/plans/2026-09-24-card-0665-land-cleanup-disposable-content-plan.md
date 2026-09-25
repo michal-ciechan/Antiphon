@@ -420,6 +420,9 @@ Pipes inside filters are escaped for Markdown; the real filter uses `|`.
 | CP-5b | S2 | `CP-4a`, `--no-build` | land-green-c665 | `/*/*/AgentTaskLandPublicationTests/C665_*` | V-4 | 2 `C665_*` methods, 0 failed | 2 | 2 |
 | CP-R2r | repair-2-red | `tests/Antiphon.Tests -> bin-c665-r/` | repair-2-red | `/*/*/WorktreeGuardedCleanupTests/C665_*` | V-3 red | 7 execute; the three repair-2 rows fail (nested `.antiphon` removed as disposable; outside bytes deleted through the junction), the four earlier rows pass | 7 | 25 |
 | CP-U | repair-2 | `CP-4a`, `--no-build` | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | ≥ 1 executed; failures compared with the same filter at origin/master | 1 | 5 |
+| CP-R3r | repair-3-red | `tests/Antiphon.Tests -> bin-c665-r3/` | repair-3-red-fake | `/*/*/LandingRemovalPolicyControlTests/C665_*` | V-2 red | 14 execute; five fail: `C665_LockedFileMidDeleteResumesOnLaterPass` (set-aside tree left after a "clean" second pass), `C665_PathRecreatedBeforeUnregistrationIsNeverTouched` (outside bytes deleted through the recreated path) and the three rows asserting the registration-drop vector (`C665_DisposableOnlyProceedsToRemoval`, `C665_EvidenceRetainedBeforeSecondReading`, `C665_FailedRegistrationRemovalRestoresTree`); `C665_UnlistedLinkIsRemovedWithoutTraversal` passes (repair 2 already moves the tree aside first; see CP-R3o) | 14 | 6 |
+| CP-R3r2 | repair-3-red | `CP-R3r`, `--no-build` | repair-3-red-git | `/*/*/WorktreeGuardedCleanupTests/C665_*` | V-3 red | 9 execute; `C665_LockedFileMidDeleteResumesOnLaterPass` fails (set-aside tree left); `C665_PathRecreatedBeforeUnregistrationKeepsOutsideTarget` fails if real Git deletes through the recreated junction (else reported as not red) | 9 | 10 |
+| CP-R3o | repair-3-red with Round A `GuardedWorktreeRemoval.cs` (32d57072) | `tests/Antiphon.Tests -> bin-c665-r3o/` | old-deletion-oracle | `/*/*/LandingRemovalPolicyControlTests/C665_UnlistedLinkIsRemovedWithoutTraversal` | review 0c0b9a4e item 3 | 1 executes and fails: the Round A deletion hands Git the populated tree and the fixture, like Git for Windows, descends through the link | 1 | 6 |
 | CP-6 | S3-red | `tests/Antiphon.Tests -> bin-c665-c/` | retention-red | `/*/*/(WorktreeEvidenceRetentionTests*)\|(AgentTaskLandEvidenceRetentionTests*)/*` | V-5, V-6 red | all execute; land rows refuse `evidence_retention_unavailable`, retention rows fail on missing copies | 10 | 5 |
 | CP-7 | S3 | `tests/Antiphon.Tests -> bin-c665-c/` | retention-green | `/*/*/(WorktreeEvidenceRetentionTests*)\|(AgentTaskLandEvidenceRetentionTests*)\|(AgentTaskLandCleanupSafetyTests*)/*` | V-5, V-6, R-1 | all listed, 0 failed/skipped | 38 | 7 |
 | CP-8 | S3 | `CP-7`, `--no-build` | report-store-regression | `/*/*/(OutputDistillationDeliveryTests*)\|(OutputDistillationApplyRaceTests*)/*` | R-2 | all listed, 0 failed; if a class name differs, amend this row with a reason | 1 | 3 |
@@ -439,3 +442,15 @@ fake-level CP-4a rows (`C665_UnlistedLinkIsRemovedWithoutTraversal`,
 `C665_FailedRegistrationRemovalRestoresTree`) cannot go red against Round A because the fake
 removes with .NET's non-following delete; they guard the new deletion and restore lines.
 `C665_ReadOnlyFileIsRemovedWithTheTree` is red at Round A only through the fake's delete.
+
+Round A repair 3 (review 0c0b9a4e): the set-aside tree has a deterministic name and a record
+under `<common>/antiphon/worktree-removal/` written before the move; a later pass resumes a
+partial deletion and reports complete only once the tree is gone. Git is no longer handed the
+path: `ILandingGit.UnregisterWorktreeAsync` renames Git's administrative entry out of
+`<common>/worktrees/` after checking its `gitdir` names the recorded path, the path is absent and
+the entry is unlocked (order kept: move aside, drop registration, delete, so a failed drop still
+restores the whole tree). Test fakes trace that operation as
+`worktree remove --registration-only <path>` so existing fault cuts keep their place. The
+fake's path removal now descends through links like Git for Windows, which makes
+`C665_UnlistedLinkIsRemovedWithoutTraversal` red against the Round A deletion (CP-R3o). CP-4a
+gains two `C665_*` methods (fourteen), CP-4b two (nine).

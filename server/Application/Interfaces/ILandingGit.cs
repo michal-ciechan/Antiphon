@@ -39,6 +39,13 @@ public interface ILandingGit
         => Task.FromResult(new LandingGitResult(1, "", "retirement_pin_not_implemented"));
     Task<LandingGitResult> DeleteRetirementPinAsync(string repository, Guid retirementId, string pinName, string expectedSha, CancellationToken ct)
         => Task.FromResult(new LandingGitResult(1, "", "retirement_pin_not_implemented"));
+    /// <summary>
+    /// Drops Git's administrative entry for a linked worktree whose directory is already gone, without
+    /// handing Git the path (CARD-0665 review 0c0b9a4e item 2). The entry's <c>gitdir</c> must name
+    /// <paramref name="worktreePath"/>; the working tree is never read or deleted.
+    /// </summary>
+    Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath, string gitDirectory, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "worktree_unregister_not_implemented"));
     Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct);
     Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
