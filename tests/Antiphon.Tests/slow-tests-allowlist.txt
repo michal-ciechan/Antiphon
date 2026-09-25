@@ -137,4 +137,5 @@ Antiphon.Tests.Application.RunnerTaskSettlementTests
 Antiphon.Tests.Application.TranscriptHotPathQueryTests
 # CARD-0698: persisted-row oracle and actual concurrent migration/rollback in owned databases.
 Antiphon.Tests.Application.TranscriptWorkingStateQueryTests
+# CARD-0698: concurrent index creation, populated upgrade and rollback in isolated PostgreSQL.
 Antiphon.Tests.Application.TranscriptHotPathMigrationTests
