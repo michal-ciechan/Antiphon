@@ -26,7 +26,7 @@ services:
       - "${ANTIPHON_BIND_ADDRESS:-127.0.0.1}:${ANTIPHON_BIND_PORT:-5000}:8080"
     environment:
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=antiphon;Username=antiphon;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required};No Reset On Close=true
       SessionRunner__Enabled: "true"
       SessionRunner__BaseUrl: http://session-runner:8080
       PhoneHomeRunner__Enabled: "false"
