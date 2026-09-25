@@ -83,8 +83,10 @@ internal static class TaskReportTurnSelector
             .ToListAsync(ct);
 
         var skipped = new List<TaskReportSkip>();
-        foreach (var end in boundaries)
+        for (var index = 0; index < boundaries.Count; index++)
         {
+            var end = boundaries[index];
+            var olderEnd = index + 1 < boundaries.Count ? boundaries[index + 1].Sequence : (long?)null;
             var rawPrompt = LastBefore(raw, end.Sequence);
             if (rawPrompt is null)
             {
@@ -97,6 +99,10 @@ internal static class TaskReportTurnSelector
                 var reason = TaskReportHousekeeping.IsMeasuredCompletionEnvelope(rawPrompt.Text)
                     ? "grok-background-completion"
                     : "grok-rules-refresh";
+                var owned = RealOwnerOfSkippedTurn(
+                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind);
+                if (owned is not null)
+                    return owned with { Skipped = skipped };
                 skipped.Add(new TaskReportSkip(end.Sequence, reason));
                 continue;
             }
@@ -105,7 +111,7 @@ internal static class TaskReportTurnSelector
                 && TaskReportHousekeeping.IsClaudeTaskNotification(rawPrompt.Text))
             {
                 var continuation = await TryClaudeContinuationAsync(
-                    db, sessionId, task, raw, rawPrompt, end.Sequence, rulesIds, invoked, sessionKind, ct);
+                    db, sessionId, task, raw, rawPrompt, end.Sequence, olderEnd, end.StopReason, rulesIds, invoked, sessionKind, ct);
                 if (continuation is null)
                 {
                     skipped.Add(new TaskReportSkip(end.Sequence, "claude-notification-ack"));
@@ -117,6 +123,10 @@ internal static class TaskReportTurnSelector
 
             if (TranscriptPromptSpan.IsHousekeepingPrompt(rawPrompt.Text, invoked))
             {
+                var owned = RealOwnerOfSkippedTurn(
+                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind);
+                if (owned is not null)
+                    return owned with { Skipped = skipped };
                 skipped.Add(new TaskReportSkip(end.Sequence, "inert-housekeeping"));
                 continue;
             }
@@ -177,8 +187,10 @@ internal static class TaskReportTurnSelector
 
     /// <summary>
     /// A notification response with this task's closing token, whose walk back reaches an
-    /// eligible marked prompt. Returns <see cref="TaskReportSelection.Empty"/> when the walk
-    /// hits a reply fence (the caller must not look further). Returns null to skip the ack.
+    /// eligible marked prompt. An eligible unmarked owner is a barrier
+    /// (<see cref="TaskReportSelectionKind.Uncorrelated"/>), including when the answer has no
+    /// closing token. Returns null only to skip an acknowledgement that has no real owner in
+    /// its turn.
     /// </summary>
     private static async Task<TaskReportSelection?> TryClaudeContinuationAsync(
         AppDbContext db,
@@ -187,11 +199,19 @@ internal static class TaskReportTurnSelector
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
         TranscriptPromptSpan.PromptRow notification,
         long boundarySequence,
+        long? olderEndSequence,
+        string? stopReason,
         IReadOnlySet<Guid> rulesIds,
         IReadOnlySet<string> invoked,
         AgentKind sessionKind,
         CancellationToken ct)
     {
+        // Judge the in-turn owner before the closing-token check. An answer with no token
+        // used to return null here, and the caller then walked back across the unmarked prompt.
+        var inTurn = NewestRealBetween(raw, olderEndSequence, boundarySequence, sessionKind, rulesIds, invoked);
+        if (OwnRealPrompt(inTurn, notification, boundarySequence, stopReason, task, raw, rulesIds, invoked, sessionKind) is { } inTurnOwned)
+            return inTurnOwned;
+
         var nextRaw = NextSequence(raw, notification.Sequence, static _ => true);
         var texts = db.TranscriptEntries.AsNoTracking().Where(t =>
             t.AgentSessionId == sessionId
@@ -212,6 +232,8 @@ internal static class TaskReportTurnSelector
                 continue;
             if (IsHousekeepingRow(sessionKind, row, rulesIds, invoked))
                 continue;
+            if (!IsTurnOwningKind(row.Kind))
+                continue;
             owner = row;
             break;
         }
@@ -227,10 +249,97 @@ internal static class TaskReportTurnSelector
 
         if (owner.Text is not string ownerText
             || !ownerText.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
-            return null;
+        {
+            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, notification, owner, raw, rulesIds, invoked, sessionKind, []);
+        }
 
         return Finish(TaskReportSelectionKind.Selected, boundarySequence, notification, owner, raw, rulesIds, invoked, sessionKind, []);
     }
+
+    /// <summary>
+    /// The newest real prompt between the next-older turn end and this housekeeping boundary
+    /// owns the turn. Null means there is no eligible owner, so the caller may keep walking.
+    /// </summary>
+    private static TaskReportSelection? RealOwnerOfSkippedTurn(
+        BoundaryRow end,
+        long? olderEndSequence,
+        TranscriptPromptSpan.PromptRow boundaryPrompt,
+        AgentTask task,
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked,
+        AgentKind sessionKind)
+    {
+        var owner = NewestRealBetween(raw, olderEndSequence, end.Sequence, sessionKind, rulesIds, invoked);
+        return OwnRealPrompt(owner, boundaryPrompt, end.Sequence, end.StopReason, task, raw, rulesIds, invoked, sessionKind);
+    }
+
+    /// <summary>
+    /// Dispatch-time, reply-watermark and marker checks for a real prompt that shares a
+    /// skipped housekeeping turn. An unmarked eligible owner is <see cref="TaskReportSelectionKind.Uncorrelated"/>.
+    /// </summary>
+    private static TaskReportSelection? OwnRealPrompt(
+        TranscriptPromptSpan.PromptRow? owner,
+        TranscriptPromptSpan.PromptRow boundaryPrompt,
+        long boundarySequence,
+        string? stopReason,
+        AgentTask task,
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked,
+        AgentKind sessionKind)
+    {
+        if (owner is null || !IsTimeEligible(owner, task.DispatchedAt))
+            return null;
+        if (task.RepliedAtSequence is long watermark && owner.Sequence <= watermark)
+        {
+            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+        }
+
+        if (stopReason is not null && !TranscriptKinds.IsReportBoundary(TranscriptKinds.TurnEnd, stopReason))
+        {
+            return Finish(TaskReportSelectionKind.Interrupted, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+        }
+
+        if (owner.Text is not string text
+            || !text.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
+        {
+            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+        }
+
+        return Finish(TaskReportSelectionKind.Selected, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+    }
+
+    /// <summary>
+    /// Newest UserPrompt or QueuedUserPrompt strictly after <paramref name="afterSequence"/>
+    /// and strictly before <paramref name="beforeSequence"/> that is not housekeeping.
+    /// Either kind owns the turn.
+    /// </summary>
+    private static TranscriptPromptSpan.PromptRow? NewestRealBetween(
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
+        long? afterSequence,
+        long beforeSequence,
+        AgentKind sessionKind,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked)
+    {
+        TranscriptPromptSpan.PromptRow? newest = null;
+        foreach (var row in rows)
+        {
+            if (afterSequence is long floor && row.Sequence <= floor)
+                continue;
+            if (row.Sequence >= beforeSequence)
+                break;
+            if (!IsTurnOwningKind(row.Kind) || IsHousekeepingRow(sessionKind, row, rulesIds, invoked))
+                continue;
+            newest = row;
+        }
+
+        return newest;
+    }
+
+    private static bool IsTurnOwningKind(string kind) =>
+        kind == TranscriptKinds.UserPrompt || kind == TranscriptKinds.QueuedUserPrompt;
 
     private static bool IsHousekeepingRow(
         AgentKind sessionKind,
