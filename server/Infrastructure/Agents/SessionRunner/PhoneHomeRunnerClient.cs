@@ -60,6 +60,16 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     {
         var request = _mapper.ToLaunchRequest(sessionId, spec);
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Launch, request, ct);
+        // CARD-0679 R5 repair: this generation already ran and exited on the runner (a re-sent
+        // Launch whose first send landed). Typed, with the exit the runner recorded.
+        if (frame is { Kind: PhoneHomeFrameKind.Error, ErrorCode: PhoneHomeProblemTypes.SessionAlreadyExited }
+            && frame.Payload?.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json) is { } exited)
+        {
+            throw new RemoteLaunchAlreadyExitedException(
+                _connection.RunnerId, sessionId, exited.ExitCode,
+                RunnerContractMapper.MapExitReason(exited.ExitReason), exited.ExitReason);
+        }
+
         var started = _mapper.Map(Read<RunnerSessionDto>(frame) ?? throw Missing("launch"));
         if (spec.AcceptedStartedAt is { } expected
             && !SessionGeneration.Equal(expected, started.AcceptedStartedAt))

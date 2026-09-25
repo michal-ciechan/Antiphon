@@ -316,8 +316,15 @@ public sealed class PhoneHomeCommandDispatcher
             // generation is the same launch: answer with the session already running, and do it
             // before capacity, which that very session occupies. Any other generation is a typed
             // refusal the desktop can match on, not the runtime's untyped "already running".
-            var existing = _runtime.List().FirstOrDefault(session =>
-                session.SessionId == launch.SessionId && session.Status != "Exited");
+            var sessions = _runtime.List().Where(session => session.SessionId == launch.SessionId).ToList();
+            var existing = sessions.FirstOrDefault(session => session.Status != "Exited");
+            // R5 repair (review 137c1631): a pre-ack re-send whose first Launch landed, ran and exited
+            // before the re-send arrived. Relaunching it would run the same generation twice, so it
+            // is answered with the exited session instead. A new generation (a resume) relaunches.
+            var exited = sessions.FirstOrDefault(session => session.Status == "Exited"
+                && SessionGeneration.Equal(session.AcceptedStartedAt, launch.AcceptedStartedAt));
+            if (existing is null && exited is not null)
+                return AlreadyExited(request, exited);
             if (existing is not null)
             {
                 if (SessionGeneration.Equal(existing.AcceptedStartedAt, launch.AcceptedStartedAt))
@@ -582,6 +589,14 @@ public sealed class PhoneHomeCommandDispatcher
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+    private static PhoneHomeFrame AlreadyExited(PhoneHomeFrame request, RunnerSessionDto exited) =>
+        new(PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(exited, PhoneHomeFraming.Json),
+            ErrorCode: PhoneHomeProblemTypes.SessionAlreadyExited,
+            ErrorDetail: $"Session '{exited.SessionId}' already ran under this generation and exited "
+                + $"(exit code {exited.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}, reason {exited.ExitReason}).",
+            StatusCode: 409);
 
     private static PhoneHomeFrame Error(PhoneHomeFrame request, string code, string detail, int status) =>
         new(PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,

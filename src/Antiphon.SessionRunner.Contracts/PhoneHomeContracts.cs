@@ -201,6 +201,14 @@ public static class PhoneHomeProblemTypes
     /// </summary>
     public const string SessionAlreadyRunning = "phone_home_session_already_running";
 
+    /// <summary>
+    /// CARD-0679 R5 repair: a Launch whose session id and generation already ran on this runner and
+    /// exited. The same generation never starts twice; the error frame's payload is the exited
+    /// <see cref="RunnerSessionDto"/> (exit code and reason), so the desktop ends that launch as one
+    /// that happened. A different generation for an exited session still relaunches.
+    /// </summary>
+    public const string SessionAlreadyExited = "phone_home_session_already_exited";
+
     /// <summary>CARD-0628 D-7: the provider CLI is not signed in on the runner.</summary>
     public const string ProviderSignInRequired = "provider_sign_in_required";
 
