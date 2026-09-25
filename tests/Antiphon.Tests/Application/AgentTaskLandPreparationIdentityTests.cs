@@ -25,7 +25,7 @@ public sealed class AgentTaskLandPreparationIdentityTests
         await h.RunAsync();
         var refused = (await h.OperationAsync()).ShouldNotBeNull();
         refused.Phase.ShouldBe(LandPhase.Refused);
-        refused.LastReason.ShouldBe("interrupted_rebase_requires_inspection");
+        refused.LastReason.ShouldBe("interrupted_rebase"); // CARD-0688 D-3: the land worktree is disposable
         refused.PreparedAt.ShouldBeNull();
         refused.RemoteConfirmedAt.ShouldBeNull();
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
@@ -48,7 +48,8 @@ public sealed class AgentTaskLandPreparationIdentityTests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         var original = await h.AddSourceAsync();
-        h.Fault.Phase = LandPhase.TargetAdvanceStarted;
+        // CARD-0688 D-4: push intent (PushStarted) is schema 3's unresolved publication intent.
+        h.Fault.Phase = LandPhase.PushStarted;
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
         var previous = (await h.OperationAsync()).ShouldNotBeNull();
@@ -60,7 +61,7 @@ public sealed class AgentTaskLandPreparationIdentityTests
         await h.RunAsync();
         var current = (await h.OperationAsync()).ShouldNotBeNull();
         current.Id.ShouldBe(previous.Id, "a request cannot discard unresolved target-advance evidence");
-        current.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
+        current.Phase.ShouldBe(LandPhase.PushStarted);
         current.RemoteConfirmedAt.ShouldBeNull();
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
@@ -93,9 +94,26 @@ public sealed class AgentTaskLandPreparationIdentityTests
         if (change is "source" or "target")
             await h.Fixture.RequiredAsync(change == "source" ? h.Fixture.Source : h.Fixture.Repository,
                 "commit", "--allow-empty", "-m", "new work after verified checkpoint");
+        // CARD-0688 D-4 / I-9: the target is the observed remote, so new target work is published there.
+        if (change == "target") await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
         if (change == "target-checkout")
             await h.Fixture.RequiredAsync(h.Fixture.Repository, "checkout", "-b", "another-target-checkout");
         var currentSource = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        if (change == "target-checkout")
+        {
+            // Which checkout holds the target is not part of the preparation any more: automatic recovery of the
+            // unchanged Verified preparation publishes, and the target (checked out nowhere now) advances by update-ref.
+            await h.RestartServicesAsync();
+            await h.RunAsync();
+            var resumed = (await h.OperationAsync()).ShouldNotBeNull();
+            resumed.Id.ShouldBe(previous.Id);
+            resumed.RemoteConfirmedAt.ShouldNotBeNull();
+            resumed.CanonicalAdvanceReason.ShouldBeNull();
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(resumed.VerifiedSourceSha);
+            h.Verifier.Calls.ShouldBe(1);
+            await h.Fixture.AssertRemoteSourceAsync();
+            return;
+        }
         if (change != "verification-filter")
         {
             await h.RestartServicesAsync();
@@ -213,12 +231,26 @@ public sealed class AgentTaskLandPreparationIdentityTests
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
         fired.ShouldBeTrue();
-        preparedCommitted.ShouldBeFalse("Prepared must describe the owned rebase result, not a subsequent writer or revised task");
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
-        (await h.OperationAsync())!.RemoteConfirmedAt.ShouldBeNull();
-        h.Verifier.Calls.ShouldBe(0);
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(retained);
+        if (change is "same-sha-switch" or "staged" or "dirty" or "untracked")
+        {
+            // CARD-0688 D-3: the owned rebase result lives in the land worktree, which no other writer shares; the
+            // task worktree's branch and bytes are guarded cleanup's concern, which keeps them as residue.
+            var op = (await h.OperationAsync())!;
+            preparedCommitted.ShouldBeTrue();
+            op.RemoteConfirmedAt.ShouldNotBeNull();
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            op.LastReason.ShouldBe(change == "same-sha-switch" ? "source_branch_mismatch" : "source_dirty");
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+        }
+        else
+        {
+            preparedCommitted.ShouldBeFalse("Prepared must describe the owned rebase result, not a subsequent writer or revised task");
+            (await h.OperationAsync())!.RemoteConfirmedAt.ShouldBeNull();
+            h.Verifier.Calls.ShouldBe(0);
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
+        }
         if (change == "staged") (await h.Fixture.RequiredAsync(h.Fixture.Source, "diff", "--cached")).ShouldContain("another writer staged bytes");
         if (change is "staged" or "dirty" or "untracked")
             (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, change == "untracked" ? "new.txt" : "keep.txt"))).ShouldBe("another writer staged bytes\n");
