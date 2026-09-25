@@ -16,17 +16,12 @@ namespace Antiphon.Server.Infrastructure.Git;
 internal static class WorktreeNoFollowDelete
 {
     /// <summary>
-    /// Renames the tree to a fresh sibling so Git can drop the registration of an absent directory
-    /// while the bytes can still be put back. Nothing is followed: a rename moves the entry itself.
+    /// Renames the tree to its recorded sibling (<see cref="WorktreeSetAside.SetAsidePath"/>) so the
+    /// registration of an absent directory can be dropped while the bytes can still be put back.
+    /// Nothing is followed: a rename moves the entry itself, and it refuses a taken destination.
     /// </summary>
-    public static string MoveAside(string path)
-    {
-        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        var parent = Path.GetDirectoryName(full) ?? throw new IOException("worktree_root_has_no_parent");
-        var aside = Path.Combine(parent, $".{Path.GetFileName(full)}.removing-{Guid.NewGuid().ToString("N")[..8]}");
-        Directory.Move(full, aside);
-        return aside;
-    }
+    public static void MoveAside(string path, string aside) =>
+        Directory.Move(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), aside);
 
     /// <summary>Puts a set-aside tree back; false when its path has been taken or the move fails.</summary>
     public static bool Restore(string aside, string path)
