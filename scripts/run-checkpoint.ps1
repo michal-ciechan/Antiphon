@@ -120,13 +120,32 @@ if ($null -ne $slot -and [int]$slot.MaxCpuCount -gt 0) { $cpuArguments = @('-max
 
 function Invoke-Dotnet {
     param([string[]]$Arguments)
-    # Out-Host keeps the child's own output on the console instead of returning it from here.
+    # ProcessStartInfo.ArgumentList passes each token literally. The call operator
+    # wildcard-scans a treenode filter (/*/*/Class/*) across /proc and /tmp before
+    # the child starts: tens of seconds on a busy host, long enough for the script
+    # harness's 300s budget to cancel a case that launches several children.
+    # Output is written to the host, not returned, so the exit code stays the value.
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
     if (-not [string]::IsNullOrWhiteSpace($DotnetShim)) {
-        & pwsh -NoProfile -NonInteractive -File $DotnetShim @Arguments | Out-Host
+        $psi.FileName = 'pwsh'
+        $tokens = @('-NoProfile', '-NonInteractive', '-File', $DotnetShim) + @($Arguments)
     } else {
-        & dotnet @Arguments | Out-Host
+        $psi.FileName = 'dotnet'
+        $tokens = @($Arguments)
     }
-    return $LASTEXITCODE
+    foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+    $proc.WaitForExit()
+    $stdout = [string]$stdoutTask.Result
+    $stderr = [string]$stderrTask.Result
+    if (-not [string]::IsNullOrEmpty($stdout)) { Write-Host $stdout.TrimEnd("`r", "`n") }
+    if (-not [string]::IsNullOrEmpty($stderr)) { Write-Host $stderr.TrimEnd("`r", "`n") }
+    return $proc.ExitCode
 }
 
 # (3)-(4) run under the slot; it is released however they end (the runner also reaps it if this
