@@ -7,6 +7,7 @@ using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -88,6 +89,9 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         }
 
         builder.Services.AddSingleton(settings);
+        builder.Services.Configure<OperatorSettings>(_ => { });
+        builder.Services.AddSingleton<ILaunchDrain, IdleLaunchDrain>();
+        builder.Services.AddSingleton<OperatorShutdownCoordinator>();
         builder.Services.AddSingleton<ISessionRunnerClient>(host.Local);
         builder.Services.AddSingleton(sp => new PhoneHomeRunnerDirectory(
             host.Local,
@@ -106,6 +110,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             await next(context);
         });
         host.App.MapSessionRunnerEndpoints();
+        host.App.MapOperatorEndpoints();
+        host.App.MapVersionEndpoints();
         await host.App.StartAsync();
         var url = host.App.Urls.Single();
         host.Http = new HttpClient { BaseAddress = new Uri(url) };
@@ -184,6 +190,11 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
+    }
+
+    private sealed class IdleLaunchDrain : ILaunchDrain
+    {
+        public Task WaitForIdleAsync(TimeSpan timeout, CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class EmptyScopeFactory : IServiceScopeFactory
