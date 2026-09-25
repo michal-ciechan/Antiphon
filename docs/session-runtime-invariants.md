@@ -13,7 +13,8 @@
   immediate enqueue check the current connection's recovery, socket and lease before mutating
   input state. A definitely unsent body returns 503 `phone_home_unavailable`: Now creates no row,
   send-now retains the entire prior row/attempt, and durable immediate enqueue removes only its
-  own provisional row. Body-written or in-flight uncertainty retains attempt evidence for normal
+  own provisional row. This includes a refusal of the proactive overlay Esc before the first body
+  write; the same exact restoration applies. Body-written or in-flight uncertainty retains attempt evidence for normal
   recovery; an unavailable Enter is never a refundable body attempt. Local readiness/Herdr/modal
   refusals and confirmed-gone sessions retain their own contracts.
 

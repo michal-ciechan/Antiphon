@@ -3229,7 +3229,18 @@ public sealed partial class SessionMessageQueueService
                     && overlay.DetectFragments.Any(f =>
                         ComposerDeliveryEvidence.FragmentIsVisible(before.RenderedScreen, f)))
                 {
-                    overlayDismissed = await TryDismissOverlayAsync(sessionId, overlayKind, ct);
+                    try
+                    {
+                        overlayDismissed = await TryDismissOverlayAsync(sessionId, overlayKind, ct);
+                    }
+                    catch (Exception ex) when (IsPreBodyPhoneHomeUnavailable(ex))
+                    {
+                        // This proactive Esc precedes the body's first write. Use the same refusal
+                        // outcome as an unsent body so immediate callers restore the old attempt or
+                        // remove their provisional row. In-flight errors and cancellation still escape.
+                        return new DeliveryOutcome(DeliveryVerdict.BackendUnreachable,
+                            UnavailabilityCode: PhoneHomeProblemTypes.Unavailable);
+                    }
                     if (overlayDismissed && _runtime.TryGetLiveSnapshot(sessionId, out var afterDismiss))
                         before = afterDismiss;
                 }
