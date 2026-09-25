@@ -31,7 +31,17 @@ public sealed class AgentTaskLandIdentityMatrixTests
         (await File.ReadAllBytesAsync(Path.Combine(h.Fixture.Source, "keep.txt"))).ShouldBe(bytes);
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(head);
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(h.Fixture.SeedSha);
-        (await h.OperationAsync()).ShouldBeNull();
+        // CARD-0688 D-2: the source is the branch ref. A unique detached commit is not the branch, so its request
+        // is a reviewed_source_mismatch; without one the contained branch is already present and guarded cleanup
+        // keeps the detached worktree as residue. Either way nothing rebases, removes or pushes.
+        var op = await h.OperationAsync();
+        if (uniqueCommit) op.ShouldBeNull();
+        else
+        {
+            op.ShouldNotBeNull().Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            op.LastReason.ShouldBe("detached_head");
+        }
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push");
         await h.Fixture.AssertRemoteSourceAsync();
     }
@@ -50,7 +60,12 @@ public sealed class AgentTaskLandIdentityMatrixTests
         await h.RunAsync();
         Directory.Exists(h.Fixture.Source).ShouldBeTrue("Git full-ref spelling is exact even on a case-insensitive filesystem");
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "symbolic-ref", "HEAD")).Trim().ShouldBe(other);
-        (await h.OperationAsync()).ShouldBeNull();
+        // CARD-0688 D-2: the exact-spelled branch ref is the source and is already present; the worktree's
+        // case-distinct symbolic HEAD is a cleanup identity mismatch that keeps it.
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe("source_branch_mismatch");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push");
         await h.Fixture.AssertRemoteSourceAsync();
     }
@@ -93,7 +108,26 @@ public sealed class AgentTaskLandIdentityMatrixTests
         };
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
-        (await h.OperationAsync()).ShouldBeNull("unknown source cannot acquire a publication operation by an ancestry shortcut");
+        if (variant is "malformed-git" or "inaccessible-git")
+            // The task worktree's git directory is read once, when the operation is created (D-2); an unreadable one
+            // refuses before any operation exists.
+            (await h.OperationAsync()).ShouldBeNull("unknown source cannot acquire a publication operation by an ancestry shortcut");
+        else
+        {
+            // CARD-0688 D-2: the source is the branch ref, so its already-present shortcut no longer depends on the
+            // worktree's registration or HEAD; guarded cleanup still needs a known identity and keeps the worktree.
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            op.LastReason.ShouldBe(variant switch
+            {
+                "missing-registration" => "unregistered_directory",
+                "ambiguous-registration" => "registration_mismatch",
+                "registration-error" => "cleanup_inspection_error",
+                _ => "identity_io_error",
+            });
+            Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        }
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push" || a.Contains("-d"));
         (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "keep.txt"))).ShouldBe("seed\n");
         h.Fixture.Git.BeforeCommand = null;
@@ -132,8 +166,11 @@ public sealed class AgentTaskLandIdentityMatrixTests
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a.Contains("rebase") || a[0] == "push");
         (await File.ReadAllTextAsync(file)).ShouldBe("uncommitted nested work\n");
         (await h.Fixture.RequiredAsync(nested, "rev-parse", "HEAD")).Trim().ShouldBe(head);
-        if (kind == "ignored-nested-repository") (await h.OperationAsync())!.Cleanup.ShouldBe(LandCleanupStatus.Refused);
-        else (await h.OperationAsync()).ShouldBeNull();
+        // CARD-0688 D-2: nested work is in the task worktree, which the land never touches before cleanup; the
+        // contained branch is already present and guarded cleanup refuses, keeping every nested byte.
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
