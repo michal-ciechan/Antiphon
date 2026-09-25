@@ -508,7 +508,25 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         try
         {
             if (_socket.State == WebSocketState.Open)
-                await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "dispose", CancellationToken.None);
+            {
+                // CARD-0716 D-1: a planned host stop is 1001 server_stopping. Anything else stays
+                // the ordinary dispose close. A peer that does not answer the handshake is aborted
+                // so a stopping host never waits on it.
+                var stopping = string.Equals(reason, "request_aborted", StringComparison.Ordinal);
+                using var handshake = new CancellationTokenSource(
+                    TimeSpan.FromSeconds(PhoneHomeProtocol.CloseHandshakeSeconds));
+                try
+                {
+                    await _socket.CloseAsync(
+                        stopping ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure,
+                        stopping ? PhoneHomeCloseReasons.ServerStopping : "dispose",
+                        handshake.Token);
+                }
+                catch
+                {
+                    try { _socket.Abort(); } catch { /* already closed */ }
+                }
+            }
         }
         catch { /* already closed */ }
         _socket.Dispose();
