@@ -149,3 +149,6 @@ Antiphon.Tests.Application.AgentTaskLandPublicationTests
 
 # CARD-0584: real queue timeout/retry, Postgres and runtime/publication replay.
 Antiphon.Tests.Application.ChannelPromptCorrelationTests
+
+# CARD-0701: isolated PostgreSQL hot-path query budgets.
+Antiphon.Tests.Application.SessionStateCacheReadTests
