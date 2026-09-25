@@ -21,6 +21,78 @@ public partial class AttentionServiceTests
 {
     [Test]
     [NotInParallel("C691Census")]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task overlapping_session_leaks_have_one_full_feed_row_until_resolved(bool remote, bool unowned)
+    {
+        await using var w = await CensusWorld.CreateAsync(remote);
+        if (unowned) await w.RemoveOwnerAsync();
+        w.Session.Status = SessionStatus.Stopping;
+        w.Session.LastSeenAt = w.Now.AddMinutes(-6);
+        w.Session.FailureReason = "kill not delivered: transport lost";
+        await w.Db.SaveChangesAsync();
+
+        string? key = null;
+        for (var poll = 0; poll < 2; poll++)
+        {
+            // Check every open row, not just the kind we expect to win. Failed-task history
+            // is context and is deliberately excluded from the attention badge itself.
+            var row = (await w.FeedAsync()).Items.Where(i => i.Kind != AttentionKind.RecentFailure)
+                .ShouldHaveSingleItem();
+            row.Kind.ShouldBe(AttentionKind.SessionStopStuck);
+            row.SessionId.ShouldBe(w.Session.Id);
+            row.Evidence.ShouldContain(w.Session.FailureReason);
+            row.Evidence.ShouldContain(unowned ? "no agent" : w.Task.Id.ToString());
+            row.Evidence.ShouldContain(unowned ? "SessionUnowned" : "PoolDelegateUnreleased");
+            if (poll > 0) row.ConditionKey.ShouldBe(key);
+            key = row.ConditionKey;
+            w.Clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        // A second, independent leak must retain its own row.
+        var other = new AgentSession
+        {
+            Id = Guid.NewGuid(), DefinitionName = "other leak", AgentKind = AgentKind.Codex,
+            Cwd = Path.GetTempPath(), Status = SessionStatus.Stopping,
+            CreatedAt = w.Now.AddHours(-1), StartedAt = w.Now.AddHours(-1), LastSeenAt = w.Now.AddMinutes(-6),
+        };
+        w.Db.AgentSessions.Add(other);
+        await w.Db.SaveChangesAsync();
+        var both = (await w.FeedAsync()).Items.Where(i => i.Kind != AttentionKind.RecentFailure).ToList();
+        both.Count.ShouldBe(2);
+        both.Select(i => i.SessionId).ShouldBe([w.Session.Id, other.Id], ignoreOrder: true);
+
+        w.Session.Status = other.Status = SessionStatus.Stopped;
+        w.Session.EndedAt = other.EndedAt = w.Now;
+        w.RunnerLive = w.Directory.Live = false;
+        await w.Db.SaveChangesAsync();
+        for (var poll = 0; poll < 2; poll++)
+            (await w.FeedAsync()).Items.Where(i => i.Kind != AttentionKind.RecentFailure).ShouldBeEmpty();
+    }
+
+    [Test]
+    [NotInParallel("C691Census")]
+    public async Task census_inspection_includes_every_candidate_beyond_the_feed_preview()
+    {
+        await using var w = await CensusWorld.CreateAsync();
+        var candidates = Enumerable.Range(1, 7)
+            .Select(pid => CensusCandidate(pid, ZombieCensusClass.Unclaimed, null)).ToArray();
+        w.Census.Publish(new ZombieCensusResult(w.Clock.GetUtcNow(), TimeSpan.Zero,
+            new ZombieCensusCounts(0, 0, 0, 7, 0, 0, 7), candidates, candidates, []));
+        var row = (await w.RowsAsync(AttentionKind.ZombieCensusReport)).ShouldHaveSingleItem();
+        // Assert the producer-to-client contract without a production DTO addition in this red commit.
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(row,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        json.TryGetProperty("censusCandidates", out var details).ShouldBeTrue();
+        details.GetArrayLength().ShouldBe(7);
+        details.EnumerateArray().Select(r => r.GetProperty("pid").GetInt32()).ShouldBe(Enumerable.Range(1, 7));
+        row.Evidence.ShouldNotContain("pid=6");
+    }
+
+    [Test]
+    [NotInParallel("C691Census")]
     [Arguments(false)]
     [Arguments(true)]
     public async Task a_running_pool_delegate_with_a_failed_task_older_than_twice_the_grace_is_unreleased(bool remote)
@@ -251,6 +323,7 @@ public partial class AttentionServiceTests
         public CensusDirectory Directory { get; }
         public ZombieCensusState Census { get; set; } = new();
         public int GraceSeconds { get; set; } = 120;
+        public bool RunnerLive { get; set; } = true;
 
         private CensusWorld(IsolatedTestSchema schema, bool remote)
         {
@@ -290,13 +363,16 @@ public partial class AttentionServiceTests
             return w;
         }
 
-        public async Task<List<AttentionItemDto>> RowsAsync(AttentionKind kind)
+        public async Task<List<AttentionItemDto>> RowsAsync(AttentionKind kind) =>
+            (await FeedAsync()).Items.Where(i => i.Kind == kind).ToList();
+
+        public async Task<AttentionDto> FeedAsync()
         {
-            var runner = new FakeRunnerClient { Sessions = [Running(Session.Id)] };
+            var runner = new FakeRunnerClient { Sessions = RunnerLive ? [Running(Session.Id)] : [] };
             var service = new AttentionService(Db, runner, Options.Create(new SupervisionSettings()),
                 Options.Create(new DelegationSettings { PoolReleaseGraceSeconds = GraceSeconds }), Clock,
                 NullLogger<AttentionService>.Instance, censusState: Census, runnerDirectory: Directory);
-            return (await service.GetAsync(CancellationToken.None)).Items.Where(i => i.Kind == kind).ToList();
+            return await service.GetAsync(CancellationToken.None);
         }
 
         public async Task RemoveOwnerAsync()
