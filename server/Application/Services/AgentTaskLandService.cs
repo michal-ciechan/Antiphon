@@ -1377,9 +1377,9 @@ public sealed class AgentTaskLandService
         var build = await runProcess(worktree, observer, ct, "dotnet", buildArgs);
         if (!build.Ok) return LandVerification.Failure("build", Tail(build));
         if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
-        // dotnet run hands -maxcpucount to the program, so the grant applies to the build above only.
+        // Reuse the capped build's artifacts; dotnet run's implicit build would run uncapped.
         var tests = await runProcess(worktree, observer, ct, "dotnet", ["run", "--project", "tests/Antiphon.Tests",
-            "--artifacts-path", output, "--", "--treenode-filter", filter, "--report-trx",
+            "--no-build", "--artifacts-path", output, "--", "--treenode-filter", filter, "--report-trx",
             "--report-trx-filename", "landing-verification.trx"]);
         if (!tests.Ok) return LandVerification.Failure("tests", Tail(tests));
         var reports = Directory.GetFiles(output, "landing-verification.trx", SearchOption.AllDirectories);
