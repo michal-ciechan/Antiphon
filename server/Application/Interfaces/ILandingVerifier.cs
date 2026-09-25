@@ -9,4 +9,5 @@ public interface ILandingVerifier
         => VerifyAsync(worktree, filter, ct);
 }
 
-public sealed record LandingVerificationCorrelation(Guid TaskId, Guid OperationId, Guid? RequestId);
+public sealed record LandingVerificationCorrelation(Guid TaskId, Guid OperationId, Guid? RequestId,
+    string? ArtifactsPath = null);

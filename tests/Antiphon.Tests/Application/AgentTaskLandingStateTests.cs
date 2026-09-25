@@ -138,6 +138,59 @@ public sealed class AgentTaskLandingStateTests
         new AgentTaskLandingState().HasPublication(unknown).ShouldBeFalse();
     }
 
+    [Test]
+    [Arguments("push-schema3", true)]
+    [Arguments("push-schema2", false)]
+    [Arguments("cleanup-schema3-local-sha", true)]
+    [Arguments("cleanup-schema3-landed-sha", false)]
+    [Arguments("cleanup-schema2-landed-sha", true)]
+    [Arguments("identity-no-source-local", false)]
+    [Arguments("identity-no-land-worktree", false)]
+    [Arguments("identity-no-local-target", false)]
+    public void C688_SchemaThreeArms(string variant, bool accepted)
+    {
+        // CARD-0688 V-14 (D-6/D-7): schema 3 pushes straight from Verified and deletes the branch at SourceLocalSha.
+        var op = ValidV2();
+        op.RebasedSourceSha = op.VerifiedSourceSha = new string('d', 40);
+        op.VerificationSkipReason = null;
+        op.VerificationPassed = true;
+        var schema3 = !variant.Contains("schema2", StringComparison.Ordinal);
+        if (schema3)
+        {
+            op.SchemaVersion = 3;
+            op.SourceLocalSha = new string('a', 40);
+            op.LandWorktreePath = "land";
+            op.LocalTargetBeforeSha = new string('b', 40);
+        }
+        var next = LandPhase.CleanupStarted;
+        switch (variant)
+        {
+            case "push-schema3" or "push-schema2":
+                op.Phase = LandPhase.Verified;
+                op.PushStartedAt = DateTime.UtcNow;
+                next = LandPhase.PushStarted;
+                break;
+            case "cleanup-schema3-local-sha":
+                op.Phase = LandPhase.PublicationConfirmed; op.CleanupStartedAt = DateTime.UtcNow; op.ExpectedDeletionSha = op.SourceLocalSha;
+                break;
+            case "cleanup-schema3-landed-sha" or "cleanup-schema2-landed-sha":
+                op.Phase = LandPhase.PublicationConfirmed; op.CleanupStartedAt = DateTime.UtcNow; op.ExpectedDeletionSha = op.VerifiedSourceSha;
+                break;
+            default:
+                op.Phase = LandPhase.PublicationConfirmed; op.CleanupStartedAt = DateTime.UtcNow; op.ExpectedDeletionSha = op.SourceLocalSha;
+                if (variant == "identity-no-source-local") op.SourceLocalSha = null;
+                if (variant == "identity-no-land-worktree") op.LandWorktreePath = " ";
+                if (variant == "identity-no-local-target") op.LocalTargetBeforeSha = "not-an-oid";
+                break;
+        }
+        var policy = new AgentTaskLandingState();
+        if (variant.StartsWith("identity-", StringComparison.Ordinal)) policy.HasPublication(op).ShouldBeFalse();
+        else if (next == LandPhase.CleanupStarted) policy.HasPublication(op).ShouldBeTrue();
+        if (accepted) policy.Transition(op, next, DateTime.UtcNow);
+        else Should.Throw<InvalidOperationException>(() => policy.Transition(op, next, DateTime.UtcNow));
+        if (accepted) op.Phase.ShouldBe(next);
+    }
+
     private static AgentTaskLanding ValidV2()
     {
         var op = new AgentTaskLanding

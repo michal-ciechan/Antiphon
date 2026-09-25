@@ -369,6 +369,217 @@ public sealed class AgentTaskLandPublicationTests
     }
 
     [Test]
+    public async Task C688_LandNeverRunsGitInTheSourceWorktree()
+    {
+        // CARD-0688 V-4 (D-2): before cleanup the task worktree is read once, for its git directory,
+        // besides the admission index-lock probe D-10 keeps; nothing inspects or mutates it.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await AdvanceRemoteTargetAsync(h);
+        var logger = new RecordingLogger<AgentTaskLandService>();
+        h.Logger = logger;
+        var cleanupAt = -1;
+        h.Fault.AfterAcknowledged = phase =>
+        {
+            if (phase == LandPhase.CleanupStarted && cleanupAt < 0) cleanupAt = h.Fixture.Git.Commands.Count;
+            return Task.CompletedTask;
+        };
+        h.Fixture.Git.Commands.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        cleanupAt.ShouldBeGreaterThan(0);
+        var inSource = h.Fixture.Git.Commands.Take(cleanupAt)
+            .Where(c => Antiphon.Server.Infrastructure.Git.LandingGit.PathsEqual(c.Directory, h.Fixture.Source)).Select(c => string.Join(' ', c.Arguments)).ToList();
+        inSource.Count(c => c == "rev-parse --absolute-git-dir").ShouldBe(1, string.Join(" | ", inSource));
+        inSource.ShouldAllBe(c => c == "rev-parse --absolute-git-dir" || c == "rev-parse --path-format=absolute --git-path index.lock");
+        var profile = logger.Entries.Single(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal));
+        Convert.ToInt32(profile.State["Inspections"]).ShouldBe(2, "only the guarded cleanup inspects the task worktree");
+    }
+
+    [Test]
+    public async Task C688_RebaseAndVerifyRunInTheLandWorktree()
+    {
+        // CARD-0688 V-5 (D-3/D-9): the task branch never moves; the rebased commit lives detached in the land worktree.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var source = await h.AddSourceAsync();
+        await AdvanceRemoteTargetAsync(h);
+        string? branchBeforeCleanup = null;
+        var reader = new LandingGitFixture.FixtureGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId);
+        h.Fault.AfterAcknowledged = async phase =>
+        {
+            if (phase == LandPhase.PublicationConfirmed && branchBeforeCleanup is null)
+                branchBeforeCleanup = (await reader.RunAsync(h.Fixture.Repository, ["rev-parse", h.Fixture.SourceRef], CancellationToken.None)).Output.Trim();
+        };
+        h.Fixture.Git.Commands.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.SchemaVersion.ShouldBe(3);
+        op.LandWorktreePath.ShouldNotBeNull();
+        op.SourceLocalSha.ShouldBe(source);
+        op.OriginalSourceSha.ShouldBe(source);
+        op.RebasedSourceSha.ShouldNotBe(source);
+        var rebase = h.Fixture.Git.Commands.Single(c => c.Arguments.Contains("rebase") && !c.Arguments.Contains("--abort"));
+        Antiphon.Server.Infrastructure.Git.LandingGit.PathsEqual(rebase.Directory, op.LandWorktreePath!).ShouldBeTrue(rebase.Directory);
+        h.Verifier.Invocations.ShouldHaveSingleItem();
+        Antiphon.Server.Infrastructure.Git.LandingGit.PathsEqual(h.Verifier.Invocations[0].Worktree, op.LandWorktreePath!).ShouldBeTrue();
+        branchBeforeCleanup.ShouldBe(source, "publication never moves the task branch");
+        (await reader.RunAsync(op.LandWorktreePath!, ["rev-parse", "HEAD"], CancellationToken.None)).Output.Trim().ShouldBe(op.RebasedSourceSha);
+        (await reader.RunAsync(op.LandWorktreePath!, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None)).ExitCode.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C688_PushPrecedesCanonicalAdvance()
+    {
+        // CARD-0688 V-6 (D-4): push first; the main checkout fast-forwards after publication.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fixture.Git.Commands.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        var push = h.Fixture.Git.Commands.FindIndex(c => c.Arguments[0] == "push");
+        var merge = h.Fixture.Git.Commands.FindIndex(c => c.Arguments.Contains("merge") && c.Arguments.Contains("--ff-only")
+            && Antiphon.Server.Infrastructure.Git.LandingGit.PathsEqual(c.Directory, h.Fixture.Repository));
+        push.ShouldBeGreaterThan(0);
+        merge.ShouldBeGreaterThan(push, "the canonical checkout advances only after publication");
+        op.CanonicalAdvancedAt.ShouldNotBeNull();
+        op.CanonicalAdvanceReason.ShouldBeNull();
+        op.LocalTargetBeforeSha.ShouldBe(h.Fixture.SeedSha);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim().ShouldBe(op.VerifiedSourceSha);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(op.VerifiedSourceSha);
+        (await TerminalAsync(h)).Detail.ShouldContain("canonical=advanced");
+    }
+
+    [Test]
+    public async Task C688_DirtyCanonicalCheckoutLandsWithResidue()
+    {
+        // CARD-0688 V-7: a dirty main checkout is an activation residue, never a publication refusal.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Repository, "operator-scratch.txt"), "untracked operator bytes\n");
+        h.Fixture.Git.Commands.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(op.VerifiedSourceSha);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        var push = h.Fixture.Git.Commands.FindIndex(c => c.Arguments[0] == "push");
+        h.Fixture.Git.Commands.Skip(push + 1).ShouldNotContain(c => c.Arguments.Contains("merge")
+            || c.Arguments[0] == "update-ref" && c.Arguments.Contains(h.Fixture.TargetRef));
+        op.CanonicalAdvanceReason.ShouldBe("canonical_checkout_dirty");
+        var terminal = await TerminalAsync(h);
+        terminal.Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+        terminal.Detail.ShouldContain("canonical=canonical_checkout_dirty");
+        await using var db = h.CreateContext();
+        (await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.Warning).ToListAsync())
+            .ShouldContain(e => e.Detail.Contains(h.Fixture.Repository) && e.Detail.Contains("git pull --rebase"));
+        File.Exists(Path.Combine(h.Fixture.Repository, "operator-scratch.txt")).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C688_TargetCheckedOutElsewhereIsResidueNotRefusal()
+    {
+        // CARD-0688 V-8 (D-5): a hand-made second checkout of master is a named residue.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var alias = Path.Combine(h.Fixture.Root, "alias");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--force", alias, "master");
+        h.Fixture.Git.Commands.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        op.CanonicalAdvanceReason.ShouldBe("target_checked_out_elsewhere");
+        h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("merge")
+            || c.Arguments[0] == "update-ref" && c.Arguments.Contains(h.Fixture.TargetRef));
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        (await TerminalAsync(h)).Detail.ShouldContain("canonical=target_checked_out_elsewhere");
+    }
+
+    [Test]
+    public async Task C688_LocalMasterBehindOriginRebasesOntoOrigin()
+    {
+        // CARD-0688 V-12 (D-4): a stale main checkout no longer refuses; the base is the observed origin/master.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var foreign = await PushFromObserverAsync(h, "foreign.txt");
+        h.Fixture.Git.Commands.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.TargetBeforeSha.ShouldBe(foreign);
+        h.Fixture.Git.Commands.Single(c => c.Arguments.Contains("rebase") && !c.Arguments.Contains("--abort")).Arguments[^1].ShouldBe(foreign);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(op.VerifiedSourceSha);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim().ShouldBe(op.VerifiedSourceSha);
+        (await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["merge-base", "--is-ancestor", foreign, "HEAD"], CancellationToken.None))
+            .ExitCode.ShouldBe(0, "the canonical fast-forward carries the foreign commit");
+        File.Exists(Path.Combine(h.Fixture.Repository, "foreign.txt")).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C688_LocalMasterAheadOfOriginRefuses()
+    {
+        // CARD-0688 V-13 (I-10): unpushed local master commits are the operator's, not a land's.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "unpushed local");
+        var local = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim();
+        h.Fixture.Git.Commands.Clear();
+
+        await h.RunAsync();
+
+        (await TerminalAsync(h)).Detail.ShouldContain("target_local_ahead");
+        (await h.OperationAsync()).ShouldBeNull("the refusal happens before an operation exists");
+        var pins = await h.Fixture.RequiredAsync(h.Fixture.Repository, "for-each-ref", "--format=%(refname)", $"refs/antiphon/land/{h.Fixture.TaskId:N}/");
+        pins.Split('\n', StringSplitOptions.RemoveEmptyEntries).ShouldNotContain(r => r.EndsWith("/source") || r.EndsWith("/target-before"));
+        Directory.Exists(Path.Combine(h.Fixture.Root, "trees", "land")).ShouldBeFalse();
+        h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("reset") || c.Arguments.Contains("rebase")
+            || c.Arguments[0] == "push" || c.Arguments[0] == "worktree" && c.Arguments[1] == "add");
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(local);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    private static async Task AdvanceRemoteTargetAsync(LandingSafetyHarness h)
+    {
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "new base");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+    }
+
+    private static async Task<string> PushFromObserverAsync(LandingSafetyHarness h, string file)
+    {
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Observer, file), "foreign\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Observer, "add", file);
+        await h.Fixture.RequiredAsync(h.Fixture.Observer, "commit", "-m", "foreign writer");
+        await h.Fixture.RequiredAsync(h.Fixture.Observer, "push", "origin", "HEAD:" + h.Fixture.TargetRef);
+        return (await h.Fixture.RequiredAsync(h.Fixture.Observer, "rev-parse", "HEAD")).Trim();
+    }
+
+    private static async Task<Antiphon.Server.Domain.Entities.AgentTaskEvent> TerminalAsync(LandingSafetyHarness h)
+    {
+        await using var db = h.CreateContext();
+        return await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.Fixture.TaskId && e.IsLandTerminal)
+            .OrderBy(e => e.At).LastAsync();
+    }
+
+    [Test]
     public async Task C642_ProtocolInspectionsAreIdentityAndStatus()
     {
         // CARD-0642 V-6: the resolver and protocol never ask for the ignored listing.

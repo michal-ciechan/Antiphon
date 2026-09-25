@@ -783,4 +783,90 @@ public sealed class AgentTaskLandSourceFreshnessTests
         h.Fixture.Git.Trace.Where(a => a.Length > 0 && a[0] == "push").Select(a => string.Join(' ', a)).ShouldBeEmpty();
         await h.Fixture.AssertRemoteSourceAsync();
     }
+
+    [Test]
+    public async Task C688_BehindLocalBranchLandsFromRemoteWithoutFastForward()
+    {
+        // CARD-0688 V-9 (D-2): a Behind desktop branch lands from the observed remote SHA; the task
+        // worktree is never fast-forwarded and cleanup deletes the branch at the SHA it actually has.
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var remote = h.Git.AdvanceRemoteSource();
+        var queued = await h.RequestAsync(expectedSourceSha: remote);
+        h.Git.Commands.Clear();
+
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.OriginalSourceSha.ShouldBe(remote);
+        op.SourceLocalSha.ShouldBe(h.Git.SeedSha);
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        h.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("merge") && string.Equals(
+            Path.GetFullPath(c.Directory), Path.GetFullPath(h.Git.Source), StringComparison.OrdinalIgnoreCase));
+        h.Git.Commands.ShouldContain(c => c.Arguments.SequenceEqual(new[] { "update-ref", "--no-deref", "-d", h.Git.SourceRef, h.Git.SeedSha }));
+        await using var db = h.CreateContext();
+        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId)).SourceResolutionState
+            .ShouldBe(LandSourceResolutionState.Resolved, "schema 3 never journals a source fast-forward");
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    public async Task C688_SourceBranchMovedMidLandRefuses(int recheck)
+    {
+        // CARD-0688 V-10 (I-2): the local branch is re-read by show-ref at every source checkpoint.
+        // Rechecks: 1 resolver, 2 protocol entry, 3 before the land-worktree reset, 4 before the push.
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var fired = -1;
+        h.Git.OnSourceRecheck = n =>
+        {
+            if (n == recheck) { h.Git.RewindSource(h.Git.SeedSha); fired = h.Git.Commands.Count; }
+            return Task.CompletedTask;
+        };
+        await h.RequestAsync();
+
+        await h.RunQueuedAsync();
+
+        fired.ShouldBeGreaterThanOrEqualTo(0, "the land must reach recheck " + recheck);
+        h.Git.Commands.Skip(fired).ShouldNotContain(c => c.Arguments.Contains("rebase") || c.Arguments[0] == "push"
+            || c.Arguments.Contains("reset"));
+        var op = await h.OperationAsync();
+        if (op is not null) new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+        await using var db = h.CreateContext();
+        (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.Type == AgentTaskEventType.LandRefused))
+            .Detail.ShouldContain("source_changed");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    public async Task C688_RemoteSourceMovedBeforeMutationRefuses(int recheck)
+    {
+        // CARD-0688 V-11 (CARD-0642 V-9 adapted): entry, pre-reset and pre-push rechecks each fence the next mutation.
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var fired = -1;
+        h.Git.OnSourceRecheck = n =>
+        {
+            if (n == recheck) { h.Git.AdvanceRemoteSource(); fired = h.Git.Commands.Count; }
+            return Task.CompletedTask;
+        };
+        await h.RequestAsync();
+
+        await h.RunQueuedAsync();
+
+        fired.ShouldBeGreaterThanOrEqualTo(0, "the land must reach recheck " + recheck);
+        h.Git.Commands.Skip(fired).ShouldNotContain(c => c.Arguments.Contains("rebase") || c.Arguments[0] == "push"
+            || c.Arguments.Contains("reset") || c.Arguments.Contains("merge"));
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.LastReason.ShouldBe("source_remote_changed");
+        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+        h.Git.SourceRemoteRechecks.ShouldBe(recheck);
+    }
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -316,6 +317,166 @@ public sealed class AgentTaskLandRecoveryTests
         resumedMutation.ShouldBeFalse("unknown schema must refuse before any resumed mutation");
         (await h.OperationAsync())!.LastReason.ShouldBe("landing_schema_unsupported");
         await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    [Arguments("prepared")]
+    [Arguments("local-target-advanced")]
+    [Arguments("published")]
+    public async Task C688_SchemaTwoOperationsOnResume(string phase)
+    {
+        // CARD-0688 V-15 (D-7): schema-2 work resumes only where the old and new protocols coincide.
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var original = await h.AddSourceAsync();
+        await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "schema-2 rebase moved the branch here");
+        var rebased = h.Git.SourceHead;
+        var (seeded, requestId) = await SeedSchemaTwoAsync(h, phase, original, rebased);
+
+        await h.RunQueuedAsync();
+
+        await using var db = h.CreateContext();
+        var op = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == seeded.Id);
+        var terminal = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.LandRequestId == requestId && e.IsLandTerminal);
+        switch (phase)
+        {
+            case "prepared":
+                op.Phase.ShouldBe(LandPhase.Refused);
+                op.LastReason.ShouldBe("landing_schema_superseded");
+                terminal.Type.ShouldBe(AgentTaskEventType.LandRefused);
+                terminal.Detail.ShouldContain("landing_schema_superseded");
+                h.Git.Commands.ShouldNotContain(c => c.Arguments[0] == "push" || c.Arguments.Contains("rebase"));
+                break;
+            case "local-target-advanced":
+                op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+                h.Git.RemoteTarget.ShouldBe(rebased);
+                terminal.Detail.ShouldContain("canonical=already");
+                op.ExpectedDeletionSha.ShouldBe(rebased);
+                op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+                break;
+            default:
+                op.Mode.ShouldBe(LandOperationMode.CleanupRetry);
+                op.ExpectedDeletionSha.ShouldBe(op.VerifiedSourceSha);
+                op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+                h.Git.Commands.ShouldNotContain(c => c.Arguments[0] == "push");
+                break;
+        }
+    }
+
+    [Test]
+    public async Task C688_InterruptedRebaseRecoversOnNextRequest()
+    {
+        // CARD-0688 V-16 (D-3, I-13): an interrupted rebase in the disposable land worktree refuses
+        // interrupted_rebase; the next request's reset aborts and cleans it, then lands.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var source = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "new base");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+        var target = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim();
+        var reader = new LandingGitFixture.FixtureGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId);
+        h.Fixture.Git.AfterCommand = async (directory, args, result) =>
+        {
+            if (!args.Contains("rebase") || args.Contains("--abort") || !result.Succeeded) return;
+            // The process dies mid-rebase: leave the sequencer state a real interrupted rebase leaves.
+            var admin = (await reader.RunAsync(directory, ["rev-parse", "--absolute-git-dir"], CancellationToken.None)).Output.Trim();
+            var state = Path.Combine(admin, "rebase-merge");
+            Directory.CreateDirectory(state);
+            await File.WriteAllTextAsync(Path.Combine(state, "head-name"), "detached HEAD\n");
+            await File.WriteAllTextAsync(Path.Combine(state, "orig-head"), source + "\n");
+            await File.WriteAllTextAsync(Path.Combine(state, "onto"), target + "\n");
+            throw new SimulatedServerCrash();
+        };
+        await Should.ThrowAsync<SimulatedServerCrash>(() => h.RunAsync());
+        h.Fixture.Git.AfterCommand = null;
+        var interrupted = (await h.OperationAsync()).ShouldNotBeNull();
+        interrupted.Phase.ShouldBe(LandPhase.RebaseStarted);
+        h.Fixture.Git.Commands.Clear();
+        await h.RestartServicesAsync();
+
+        await h.RunAsync();
+
+        var refused = (await h.OperationAsync()).ShouldNotBeNull();
+        refused.Id.ShouldBe(interrupted.Id);
+        refused.Phase.ShouldBe(LandPhase.Refused);
+        refused.LastReason.ShouldBe("interrupted_rebase");
+        h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments[0] == "push" || c.Arguments.Contains("rebase") || c.Arguments.Contains("reset"));
+
+        await h.RepostAsync();
+        h.Fixture.Git.Commands.Clear();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+
+        var landed = (await h.OperationAsync()).ShouldNotBeNull();
+        landed.Id.ShouldNotBe(refused.Id);
+        landed.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        var commands = h.Fixture.Git.Commands;
+        var abort = commands.FindIndex(c => c.Arguments.Contains("rebase") && c.Arguments.Contains("--abort"));
+        var reset = commands.FindIndex(c => c.Arguments.Contains("reset") && c.Arguments.Contains("--hard"));
+        var rebase = commands.FindIndex(c => c.Arguments.Contains("rebase") && !c.Arguments.Contains("--abort") && !c.Arguments.Contains("--quit"));
+        abort.ShouldBeGreaterThanOrEqualTo(0);
+        reset.ShouldBeGreaterThan(abort);
+        rebase.ShouldBeGreaterThan(reset);
+        LandingGit.PathsEqual(commands[abort].Directory, landed.LandWorktreePath!).ShouldBeTrue();
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    private static async Task<(Antiphon.Server.Domain.Entities.AgentTaskLanding Op, Guid RequestId)> SeedSchemaTwoAsync(
+        LandingProtocolHarness h, string phase, string original, string rebased)
+    {
+        var queued = await h.RequestAsync(expectedSourceSha: original);
+        var now = DateTime.UtcNow;
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+        var published = phase == "published";
+        var op = new Antiphon.Server.Domain.Entities.AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = h.Git.TaskId, SchemaVersion = 2, Active = true, CreatedAt = now, UpdatedAt = now,
+            Phase = phase switch { "prepared" => LandPhase.Prepared, "local-target-advanced" => LandPhase.LocalTargetAdvanced,
+                _ => LandPhase.PublicationConfirmed },
+            RepositoryPath = h.Git.Repository, CommonDirectory = Path.GetFullPath(h.Git.CommonDir), WorktreePath = h.Git.Source,
+            GitDirectory = Path.GetFullPath(h.Git.SourceGitDirectory), SourceFullRef = h.Git.SourceRef,
+            OriginalSourceSha = original, ReviewedSourceSha = original, PreparationInputSha = original,
+            ApprovalLandRequestId = request.Id, ApprovalKind = request.ApprovalKind, ApprovedAt = now,
+            SourceRemoteSha = h.Git.RemoteSource, SourceRemoteRef = h.Git.SourceRef, SourceRemoteFingerprint = h.Git.Fingerprint,
+            SourceRemoteObservedAt = now, TargetFullRef = h.Git.TargetRef, TargetBeforeSha = h.Git.SeedSha,
+            RemoteBeforeSha = h.Git.SeedSha, RemoteName = "origin", DestinationFullRef = h.Git.TargetRef,
+            RemoteFingerprint = h.Git.Fingerprint, VerificationFilter = request.VerifyFilter,
+            TargetCheckoutRecorded = true, TargetCheckoutPath = h.Git.Repository,
+            SourcePinned = true, TargetPinned = true, PreparedPinned = true, RebasedSourceSha = rebased,
+            RebaseStartedAt = now, PreparedAt = now,
+        };
+        op.RecoveryRefPrefix = $"refs/antiphon/land/{op.TaskId:N}/{op.Id:N}";
+        if (phase != "prepared")
+        {
+            op.VerifiedSourceSha = rebased;
+            op.VerifiedAt = now;
+            op.VerificationPassed = true;
+            op.VerificationStartedAt = now;
+            op.LocalTargetAfterSha = rebased;
+            await h.Git.RequiredAsync(h.Git.Repository, "update-ref", h.Git.TargetRef, rebased, h.Git.SeedSha);
+        }
+        if (published)
+        {
+            h.Git.SetRemoteContainsSource();
+            op.Publication = LandPublicationOutcome.Landed;
+            op.PushStartedAt = now;
+            op.PushExitCode = 0;
+            op.RemoteConfirmedAt = now;
+            op.ObservedRemoteTargetSha = rebased;
+            op.ConfirmationMethod = "push-endpoint-read-fetch-ancestry";
+        }
+        h.Git.SetPin(op.RecoveryRefPrefix + "/source", original);
+        h.Git.SetPin(op.RecoveryRefPrefix + "/target-before", h.Git.SeedSha);
+        h.Git.SetPin(op.RecoveryRefPrefix + "/prepared", rebased);
+        db.AgentTaskLandings.Add(op);
+        await db.SaveChangesAsync();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
+        task.ActiveLandingId = op.Id;
+        request.LandingOperationId = op.Id;
+        await db.SaveChangesAsync();
+        h.Git.Commands.Clear();
+        return (op, request.Id);
     }
 
     private sealed class SimulatedServerCrash : Exception;

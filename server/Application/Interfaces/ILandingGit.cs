@@ -31,6 +31,11 @@ public interface ILandingGit
         string sourceSha, string observationRef, CancellationToken ct);
     Task<LandingSourceObservation> ObserveSourceAsync(string repository, string sourceFullRef,
         string observationPrefix, CancellationToken ct);
+    /// <summary>CARD-0642 D-6 / CARD-0688 D-8: the one-round-trip remote source recheck before each mutation.
+    /// Fail-closed default: an implementor that cannot answer refuses, never reports absence.</summary>
+    Task<LandingSourceRecheck> RecheckSourceRemoteAsync(string repository, string sourceFullRef, string expectedSha,
+        string expectedFingerprint, CancellationToken ct)
+        => Task.FromResult(new LandingSourceRecheck(null, null, "source_recheck_unsupported"));
     Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct);
     Task<LandingRemoteObservation> ObserveRetirementAsync(string repository, LandingDestination destination,
         string sourceSha, Guid retirementId, string pinName, CancellationToken ct)
