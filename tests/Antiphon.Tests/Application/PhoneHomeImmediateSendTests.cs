@@ -160,6 +160,69 @@ public class PhoneHomeImmediateSendTests
     }
 
     [Test]
+    public async Task C696Repair_Overlay_Esc_refusal_ModeNow_preserves_state()
+        => await AssertOverlayEscRefusalAsync("now");
+
+    [Test]
+    public async Task C696Repair_Overlay_Esc_refusal_SendNow_restores_entire_old_attempt()
+        => await AssertOverlayEscRefusalAsync("send-now");
+
+    [Test]
+    public async Task C696Repair_Overlay_Esc_refusal_durable_immediate_removes_only_provisional_row()
+        => await AssertOverlayEscRefusalAsync("durable");
+
+    private static async Task AssertOverlayEscRefusalAsync(string operation)
+    {
+        // Exercise both Resolve's unavailable refusal and a captured connection's
+        // closed-before-send refusal, at the Esc preceding the first body write.
+        foreach (var staleConnection in new[] { false, true })
+        {
+            await using var h = await PhoneHomeOutageHarness.CreateAsync();
+            var row = await h.PendingAsync("preserve overlay attempt evidence", attempted: true);
+            await using (var db = h.Db())
+            {
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                    .SetProperty(s => s.GrokRulesState, GrokRulesState.Ready));
+                await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+                    .SetProperty(m => m.RemoteSpillBody, "old retained spill")
+                    .SetProperty(m => m.RemoteSpillRelativePath, ".antiphon/inbox/old.md"));
+            }
+            await using var peer = await h.RecoverAsync();
+            var live = h.Host.Directory.SnapshotLive()!;
+            h.Runtime.Register(h.SessionId, h.Bridge.Adapter);
+            h.Bridge.Adapter.OverlayOpen = true;
+            var client = new RunnerScopedSessionRunnerClient(h.Host.Directory, h.Host.AllowedRunnerId);
+            var attemptedInputs = new List<string>();
+            h.Bridge.Adapter.BeforeInput = async (input, ct) =>
+            {
+                attemptedInputs.Add(input);
+                input.ShouldBe("\u001b", "the outage must occur at the proactive overlay Esc, before the body");
+                await h.DisconnectAsync(peer);
+                if (staleConnection)
+                    await new PhoneHomeRunnerClient(live).SendInputAsync(h.SessionId, input, ct);
+                else
+                    await client.SendInputAsync(h.SessionId, input, ct);
+            };
+
+            var before = await h.DurableStateAsync();
+            var failure = await CaptureAsync(() => operation switch
+            {
+                "now" => h.Queue.EnqueueAsync(h.SessionId, "new now", MessageSendMode.Now, CancellationToken.None),
+                "send-now" => h.Queue.SendNowAsync(h.SessionId, row.Id, CancellationToken.None),
+                _ => h.Queue.EnqueueDeliveringNowAsync(h.SessionId, "new durable", CancellationToken.None)
+            });
+
+            attemptedInputs.ShouldBe(["\u001b"]);
+            peer.RequestCount(PhoneHomeOperation.Input).ShouldBe(0);
+            h.Bridge.Adapter.Inputs.ShouldBeEmpty();
+            failure.ShouldBeOfType<ServiceUnavailableException>().Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+            (await h.DurableStateAsync()).ShouldBe(before,
+                operation + " must preserve the prior row, attempt, baseline, verdict and spill; remove only its provisional row");
+        }
+    }
+
+    [Test]
     public async Task Body_sent_but_Enter_unavailable_keeps_uncertain_attempt()
     {
         foreach (var durable in new[] { false, true })
