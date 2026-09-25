@@ -214,6 +214,17 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
             return false;
         }
 
+        public override async Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath,
+            string gitDirectory, CancellationToken ct)
+        {
+            var result = await base.UnregisterWorktreeAsync(repository, worktreePath, gitDirectory, ct);
+            // The drop is file I/O, not a worktree subcommand, so it does not clear the cached list.
+            // The next read would still name the path and removal would restore an unregistered tree.
+            if (result.Succeeded)
+                lock (_gate) { _volatile.Clear(); }
+            return result;
+        }
+
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             var key = Key(repository, arguments);
