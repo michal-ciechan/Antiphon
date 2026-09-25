@@ -61,6 +61,13 @@ services:
       PhoneHome__StoreIdPath: /state/runner-store-id
       PhoneHome__AllowedCwd: /work
       PhoneHome__Capacity: "10"
+      # CARD-0589 D-4: the host build/test driver budget the runner brokers at /build-slots. Ten seats
+      # share four concurrent build or test drivers at six MSBuild nodes each, refused below 16 GB
+      # available (24 cores, no cgroup memory cap, other services on the host). Change these and
+      # redeploy; SessionRunner__BuildSlots__Enabled "false" answers every acquire unlimited.
+      SessionRunner__BuildSlots__MaxConcurrent: "4"
+      SessionRunner__BuildSlots__MaxCpuCount: "6"
+      SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
       # CARD-0628 D-6: one Claude store in three places. CLAUDE_CONFIG_DIR is the runner process's
