@@ -55,6 +55,11 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public string Fingerprint { get; }
     public List<string[]> Trace { get; } = [];
     public List<string[]> OwnedTrace { get; } = [];
+    /// <summary>CARD-0688: every command with the directory it ran in.</summary>
+    public List<(string Directory, string[] Arguments)> Commands { get; } = [];
+    /// <summary>CARD-0642 D-8 / CARD-0688: one-round-trip remote source rechecks, and a hook keyed by their ordinal.</summary>
+    public int SourceRemoteRechecks { get; private set; }
+    public Func<int, Task>? OnSourceRecheck { get; set; }
     public Func<Task>? BeforeInspection { get; set; }
     public int InspectionCalls { get; private set; }
     public Func<int, LandSourceInspection?>? InjectInspection { get; set; }
@@ -361,6 +366,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         ct.ThrowIfCancellationRequested();
         ValidateCommand(arguments);
         Trace.Add(arguments.ToArray());
+        Commands.Add((repository, arguments.ToArray()));
         if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected)
             return injected;
         if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);

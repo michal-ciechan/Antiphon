@@ -373,4 +373,43 @@ public sealed class AgentTaskLandIndexLockTests
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow - value);
         return path;
     }
+
+    [Test]
+    [Arguments("land-worktree")]
+    [Arguments("main-checkout")]
+    public async Task C688_AdmissionProbesLandWorktreeAndMainCheckoutWithoutListing(string where)
+    {
+        // CARD-0688 V-19 (D-10): admission probes the land worktree and the main checkout found from
+        // <common>/HEAD, never through a worktree listing; removing the lock resumes on the next sweep.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var workspace = new Antiphon.Server.Infrastructure.Git.LandWorkspace(h.Fixture.Git,
+            Microsoft.Extensions.Options.Options.Create(new Antiphon.Server.Application.Settings.GitSettings
+            { WorktreeBasePath = Path.Combine(h.Fixture.Root, "trees") }), TimeProvider.System);
+        var common = await h.Fixture.Git.CommonDirectoryAsync(h.Fixture.Repository, CancellationToken.None);
+        var land = workspace.PathFor(common);
+        (await workspace.EnsureAsync(h.Fixture.Repository, land, h.Fixture.SeedSha, null, CancellationToken.None)).Reason.ShouldBeNull();
+        var path = await CreateLockAsync(where == "land-worktree" ? land : h.Fixture.Repository, TimeSpan.FromHours(1));
+        h.Fixture.Git.Trace.Clear();
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Held);
+
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 1 && a[0] == "worktree" && a[1] == "list");
+        await using (var db = h.CreateContext())
+        {
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+            request.State.ShouldBe(LandRequestState.Held);
+            request.HoldReasonCode.ShouldBe(GitIndexLock.StaleCode);
+            request.HoldDetail.ShouldContain(path);
+        }
+        (await h.OperationAsync()).ShouldBeNull();
+        File.Delete(path);
+        await h.SweepAsync();
+
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        (await h.OperationAsync()).ShouldNotBeNull().Publication.ShouldBe(LandPublicationOutcome.Landed);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
 }

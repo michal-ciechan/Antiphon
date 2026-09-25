@@ -72,4 +72,17 @@ public sealed class AgentTaskLanding
     public DateTime? SourceRemoteObservedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public LandApprovalKind ApprovalKind { get; set; }
+
+    // CARD-0688 schema 3: the source is a ref, the land runs in one detached land worktree, and the
+    // canonical checkout is fast-forwarded after publication.
+    /// <summary>The task branch tip at op creation. The land never moves the branch; cleanup deletes it here.</summary>
+    public string? SourceLocalSha { get; set; }
+    public string? LandWorktreePath { get; set; }
+    /// <summary>Local target at op creation; an ancestor of (or equal to) the observed remote target.</summary>
+    public string? LocalTargetBeforeSha { get; set; }
+    public DateTime? LandWorkspaceReadyAt { get; set; }
+    public DateTime? CanonicalAdvanceStartedAt { get; set; }
+    public DateTime? CanonicalAdvancedAt { get; set; }
+    /// <summary>Why the canonical checkout was not advanced after publication; a residue, never a refusal.</summary>
+    public string? CanonicalAdvanceReason { get; set; }
 }

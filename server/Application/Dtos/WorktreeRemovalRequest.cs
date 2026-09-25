@@ -10,4 +10,5 @@ public sealed record WorktreeRemovalRequest(WorktreeRemovalPurpose Purpose,
     string ExpectedSourceSha, string ExpectedTargetSha, Guid? LandingId, RepositoryLease Lease,
     bool TargetCheckoutRecorded = false, string? TargetCheckoutPath = null, Guid? VerificationSealId = null,
     WorktreeCleanupContext? CleanupContext = null, string? ManagedRoot = null,
-    Guid? RetirementId = null, bool HasDeletionIntent = false);
+    Guid? RetirementId = null, bool HasDeletionIntent = false,
+    string? LandedSha = null);
