@@ -15,7 +15,7 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null) : I
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter,
         LandingVerificationCorrelation correlation, CancellationToken ct)
     {
-        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, correlation), ct);
+        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, correlation), ct, correlation.ArtifactsPath);
         return new(result.Ok, result.Ok ? result.Description : result.Step + " failed");
     }
 
