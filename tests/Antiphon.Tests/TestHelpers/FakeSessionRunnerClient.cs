@@ -54,6 +54,22 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
         get { lock (_gate) return _checkCalls.ToList(); }
     }
 
+    /// <summary>CARD-0589: scripts the runner's /build-slots answer; null (the default) is an unreachable runner.</summary>
+    public Func<BuildSlotRequest, RunnerBuildSlotAnswer?>? BuildSlotAcquire { get; set; }
+    public Action<Guid>? BuildSlotReleased { get; set; }
+    public List<Guid> ReleasedBuildSlots { get; } = [];
+
+    public Task<RunnerBuildSlotAnswer?> AcquireBuildSlotAsync(BuildSlotRequest request, CancellationToken ct) =>
+        Task.FromResult(BuildSlotAcquire?.Invoke(request));
+
+    public Task<bool> ReleaseBuildSlotAsync(Guid leaseId, CancellationToken ct)
+    {
+        lock (_gate)
+            ReleasedBuildSlots.Add(leaseId);
+        BuildSlotReleased?.Invoke(leaseId);
+        return Task.FromResult(true);
+    }
+
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
