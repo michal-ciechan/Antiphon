@@ -215,16 +215,13 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
+        // CARD-0688 D-7: a request the old protocol left mid-advance is superseded, and the refusal keeps the
+        // destination it recorded rather than adopting the moved remote.
         var b = h.Git.AdvanceRemoteSource();
-        h.Fault.RequestResolution = LandSourceResolutionState.AdvanceStarted;
-        h.Fault.AfterCommit = true;
-        await h.RequestAsync(expectedSourceSha: b);
-        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
+        await SeedAdvanceStartedAsync(h, b);
         var savedR = b;
         h.Git.AdvanceRemoteSource();
         await h.RestartServicesAsync();
-        h.Fault.RequestResolution = null;
-        h.Fault.AfterCommit = false;
         await h.RunAsync();
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
@@ -686,7 +683,9 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await h.RunQueuedAsync();
         var retry = (await h.OperationAsync()).ShouldNotBeNull();
         retry.ApprovalLandRequestId.ShouldBe(refused.ApprovalLandRequestId);
-        retry.PreviousPreparationOperationId.ShouldBe(refused.Id);
+        // CARD-0688 D-7: schema 3 never moved the branch, so the retry prepares the original again (no derivation).
+        retry.PreviousPreparationOperationId.ShouldBeNull();
+        retry.PreparationInputSha.ShouldBe(original);
         first.RequestId.ShouldBe(refused.ApprovalLandRequestId!.Value);
     }
 
