@@ -703,21 +703,7 @@ public sealed class WorktreeManager : IWorktreeManager
         }
     }
 
-    private string ResolveWorktreeRoot(bool create)
-    {
-        if (string.IsNullOrWhiteSpace(_settings.WorktreeBasePath))
-            throw new ValidationException("Git:WorktreeBasePath", "Worktree base path must be configured.");
-
-        var root = Path.IsPathRooted(_settings.WorktreeBasePath)
-            ? _settings.WorktreeBasePath
-            : Path.Combine(AppContext.BaseDirectory, _settings.WorktreeBasePath);
-        root = Path.GetFullPath(root);
-
-        if (create)
-            Directory.CreateDirectory(root);
-
-        return root;
-    }
+    private string ResolveWorktreeRoot(bool create) => WorktreeRoots.Resolve(_settings, create);
 
     private static string ResolveExistingDirectory(string path, string fieldName)
     {

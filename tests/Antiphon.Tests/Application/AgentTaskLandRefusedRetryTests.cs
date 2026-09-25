@@ -337,6 +337,36 @@ public sealed class AgentTaskLandRefusedRetryTests
         entry.Message.ShouldContain("outcome=Complete");
     }
 
+    [Test]
+    public async Task C688_RealLandProfile()
+    {
+        // CARD-0688 V-18 (D-11): a rebased, built real-git land after R1. Printed for the card as C688_PROFILE.
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "new base");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+        var logger = new RecordingLogger<AgentTaskLandService>();
+        h.Logger = logger;
+
+        (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        var entry = logger.Entries.Where(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal)).ShouldHaveSingleItem();
+        Console.WriteLine("C688_PROFILE: " + entry.Message);
+        Convert.ToInt32(entry.State["WorktreeList"]).ShouldBeLessThanOrEqualTo(3);
+        Convert.ToInt32(entry.State["Inspections"]).ShouldBeLessThanOrEqualTo(2);
+        Convert.ToInt32(entry.State["Processes"]).ShouldBeLessThanOrEqualTo(250);
+        Convert.ToInt32(entry.State["Remote"]).ShouldBeLessThanOrEqualTo(16);
+        foreach (var phase in new[] { "reset=", "rebase=", "verify=", "push=", "canonical=", "cleanup=" })
+            entry.Message.ShouldContain(phase);
+        var refs = await h.Fixture.RequiredAsync(h.Fixture.Repository, "for-each-ref", "--format=%(refname)", "refs/antiphon/");
+        refs.Split('\n', StringSplitOptions.RemoveEmptyEntries).ShouldNotContain(r => r.Contains("/source-recheck/"),
+            "a one-round-trip recheck leaves no loose ref");
+    }
+
     private sealed class Scenario : IAsyncDisposable
     {
         public const string SentinelBytes = "operator-owned target sentinel\n";

@@ -82,6 +82,12 @@ public sealed record LandingSourceObservation(string? Sha, string? ObservationRe
 
 public sealed record LandingSourceGraph(LandSourceRelationship Relationship, string? Reason);
 
+/// <summary>CARD-0642 D-6 / CARD-0688 D-8: one `ls-remote` of the source branch; no fetch and no pin ref.</summary>
+public sealed record LandingSourceRecheck(string? Sha, string? Fingerprint, string? Reason)
+{
+    public bool Accepted => Reason is null && Sha is not null && Fingerprint is { Length: 64 };
+}
+
 public sealed record LandingVerification(bool Passed, string Description);
 
 /// <summary>CARD-0642 D-5. Only guarded cleanup reads <see cref="LandSourceSnapshot.IgnoredPaths"/>;
