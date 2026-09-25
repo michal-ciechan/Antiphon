@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -1086,7 +1087,7 @@ public class PhoneHomeCommandDispatcherTests
         };
         // Bound from configuration, the way the runner reads it (PhoneHome:LaunchGenerationsPath).
         if (launchGenerationsPath is not null)
-            new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["LaunchGenerationsPath"] = launchGenerationsPath })
                 .Build().Bind(settings);
         return new(runtime, settings, probe, logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
