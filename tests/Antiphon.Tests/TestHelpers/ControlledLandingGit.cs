@@ -144,6 +144,10 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, started, ct);
 
+    // Production drops the registration with plain file I/O; modelled as a command so hooks see it.
+    public Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath, string gitDirectory,
+        CancellationToken ct) => ExecuteAsync(repository, ["worktree", "remove", "--registration-only", worktreePath], null, ct);
+
     public bool? ProcessAlive { get; set; } = false;
 
     public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct)
@@ -383,7 +387,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"] => true,
             ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] => true,
             ["worktree", "list", "--porcelain", "-z"] => true,
-            ["worktree", "remove", "--", var path] => PathsEqual(path, Source),
+            ["worktree", "remove", "--registration-only", var path] => PathsEqual(path, Source),
             ["worktree", "lock", var path] => PathsEqual(path, Source),
             ["fetch", "--no-tags", "--no-write-fetch-head", var endpoint, var spec] =>
                 endpoint == _endpoint && IsSourceOrTargetFetch(spec),
@@ -687,19 +691,12 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
 
     private LandingGitResult WorktreeRemove(IReadOnlyList<string> args)
     {
+        // Only the administrative entry goes; like production, the working tree is never touched.
         var path = args[^1];
+        if (Directory.Exists(path)) return new(1, "", "worktree_path_recreated");
         foreach (var key in _worktrees.Keys.Where(k => PathsEqual(k, path)).ToArray())
             _worktrees.Remove(key);
-        if (PathsEqual(path, Source))
-        {
-            _sourcePresent = false;
-            if (Directory.Exists(Source))
-            {
-                foreach (var file in Directory.EnumerateFiles(Source, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(file, FileAttributes.Normal);
-                Directory.Delete(Source, true);
-            }
-        }
+        if (PathsEqual(path, Source)) _sourcePresent = false;
         return new(0, "", "");
     }
 
