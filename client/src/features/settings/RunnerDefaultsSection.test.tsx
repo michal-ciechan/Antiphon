@@ -27,7 +27,7 @@ type SavedBody = {
 
 describe('RunnerDefaultsSection', () => {
   it('saves a cleared kind override with the current revision and keeps a stale draft', async () => {
-    let body: SavedBody | null = null
+    const captured: { body: SavedBody | null } = { body: null }
     server.use(
       http.get('/api/runner-defaults', () => HttpResponse.json(defaults)),
       http.get('/api/runner-defaults/revisions', () => HttpResponse.json({
@@ -39,7 +39,7 @@ describe('RunnerDefaultsSection', () => {
         { runnerId: 'server2', displayName: 'server2', platform: 'linux', available: false, dispatchEligible: false, unavailableReason: 'offline', capacity: null, occupied: null, capacityKind: 'sessions', stale: true, features: [] },
       ])),
       http.put('/api/runner-defaults', async ({ request }) => {
-        body = (await request.json()) as SavedBody
+        captured.body = (await request.json()) as SavedBody
         return HttpResponse.json({ title: 'runner_defaults_revision_conflict' }, { status: 409 })
       }),
     )
@@ -50,15 +50,15 @@ describe('RunnerDefaultsSection', () => {
     await userEvent.click(await screen.findByRole('option', { name: 'Use global default' }))
     await userEvent.type(screen.getByTestId('runner-defaults-reason'), 'clear codex')
     await userEvent.click(screen.getByTestId('runner-defaults-save'))
-    await waitFor(() => expect(body?.expectedRevision).toBe(3))
-    expect(body?.kindDefaults).toEqual([])
-    expect(body?.globalRunnerId).toBe('server2')
+    await waitFor(() => expect(captured.body?.expectedRevision).toBe(3))
+    expect(captured.body?.kindDefaults).toEqual([])
+    expect(captured.body?.globalRunnerId).toBe('server2')
     expect(await screen.findByTestId('runner-defaults-conflict')).toHaveTextContent('draft')
     expect(screen.getByTestId('runner-defaults-reason')).toHaveValue('clear codex')
   })
 
   it('saves the global runner with the current revision', async () => {
-    let body: SavedBody | null = null
+    const captured: { body: SavedBody | null } = { body: null }
     server.use(
       http.get('/api/runner-defaults', () => HttpResponse.json(defaults)),
       http.get('/api/runner-defaults/revisions', () => HttpResponse.json({ revisions: [], nextBeforeRevision: null })),
@@ -66,7 +66,7 @@ describe('RunnerDefaultsSection', () => {
         { runnerId: 'desktop', displayName: 'Desktop', platform: 'windows', available: true, dispatchEligible: true, unavailableReason: null, capacity: 6, occupied: 0, capacityKind: 'delegatedTasks', stale: false, features: [] },
       ])),
       http.put('/api/runner-defaults', async ({ request }) => {
-        body = (await request.json()) as SavedBody
+        captured.body = (await request.json()) as SavedBody
         return HttpResponse.json({ ...defaults, revision: 4, globalRunnerId: 'desktop', kindDefaults: [] })
       }),
     )
@@ -75,14 +75,14 @@ describe('RunnerDefaultsSection', () => {
     await userEvent.click(await screen.findByRole('option', { name: /^Desktop/ }))
     await userEvent.type(screen.getByTestId('runner-defaults-reason'), 'prefer desktop')
     await userEvent.click(screen.getByTestId('runner-defaults-save'))
-    await waitFor(() => expect(body?.expectedRevision).toBe(3))
-    expect(body?.globalRunnerId).toBe('desktop')
-    expect(body?.reason).toBe('prefer desktop')
-    expect(body?.kindDefaults).toEqual([{ agentKind: 'Codex', runnerId: 'desktop' }])
+    await waitFor(() => expect(captured.body?.expectedRevision).toBe(3))
+    expect(captured.body?.globalRunnerId).toBe('desktop')
+    expect(captured.body?.reason).toBe('prefer desktop')
+    expect(captured.body?.kindDefaults).toEqual([{ agentKind: 'Codex', runnerId: 'desktop' }])
   })
 
   it('restores history with the current revision', async () => {
-    let body: SavedBody | null = null
+    const captured: { body: SavedBody | null } = { body: null }
     server.use(
       http.get('/api/runner-defaults', () => HttpResponse.json(defaults)),
       http.get('/api/runner-defaults/revisions', () => HttpResponse.json({
@@ -91,17 +91,17 @@ describe('RunnerDefaultsSection', () => {
       })),
       http.get('/api/session-runners', () => HttpResponse.json([])),
       http.put('/api/runner-defaults', async ({ request }) => {
-        body = (await request.json()) as SavedBody
+        captured.body = (await request.json()) as SavedBody
         return HttpResponse.json({ ...defaults, revision: 4, globalRunnerId: 'desktop', kindDefaults: [] })
       }),
     )
     renderWithProviders(<RunnerDefaultsSection />)
     await userEvent.type(await screen.findByTestId('runner-defaults-reason'), 'restore earlier')
     await userEvent.click(screen.getByTestId('runner-defaults-restore-2'))
-    await waitFor(() => expect(body?.expectedRevision).toBe(3))
-    expect(body?.globalRunnerId).toBe('desktop')
-    expect(body?.kindDefaults).toEqual([])
-    expect(body?.reason).toBe('restore earlier')
+    await waitFor(() => expect(captured.body?.expectedRevision).toBe(3))
+    expect(captured.body?.globalRunnerId).toBe('desktop')
+    expect(captured.body?.kindDefaults).toEqual([])
+    expect(captured.body?.reason).toBe('restore earlier')
   })
 
   it('keeps a load failure inside the section', async () => {
