@@ -2,9 +2,12 @@ using System.Data.Common;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -74,6 +77,89 @@ public partial class CardFileBoardLookupTests
         Directory.GetFiles(world.DirectoryPath, "*.md").ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task Restored_opted_out_export_is_removed_when_reinspection_is_requested()
+    {
+        await using var prepared = await PrepareSkippedExportAsync();
+        prepared.Queries.Reset();
+        _lookup.RequestOptedOutReinspection();
+        var removed = (await prepared.Service.SyncAllAsync()).Single();
+        removed.Deleted.ShouldBe(2);
+        prepared.Queries.Lookups.ShouldBe(0);
+        Directory.GetFiles(prepared.World.DirectoryPath, "*.md").ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Server_checkout_reinspects_a_restored_opted_out_export()
+    {
+        await using var prepared = await PrepareSkippedExportAsync();
+        var git = new LandingGit(_lookup);
+        await git.RunAsync(prepared.World.Repo.Path, ["status", "--porcelain"], default);
+        (await prepared.Service.SyncAllAsync()).ShouldBeEmpty();
+        Directory.GetFiles(prepared.World.DirectoryPath, "*.md").Length.ShouldBe(2);
+        prepared.Queries.Reset();
+        await git.RunAsync(prepared.World.Repo.Path, ["checkout", "--", "."], default);
+        var removed = (await prepared.Service.SyncAllAsync()).Single();
+        removed.Deleted.ShouldBe(2);
+        prepared.Queries.Lookups.ShouldBe(0);
+        Directory.GetFiles(prepared.World.DirectoryPath, "*.md").ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Startup_reinspection_removes_a_restored_opted_out_export()
+    {
+        await using var prepared = await PrepareSkippedExportAsync();
+        using var hosted = new CardTaskFileSyncHostedService(new RefusingScopes(),
+            Options.Create(new CardFileSyncSettings { Enabled = true, IntervalSeconds = 0 }),
+            NullLogger<CardTaskFileSyncHostedService>.Instance, _lookup);
+        await hosted.StartAsync(default);
+        await hosted.ExecuteTask!;
+        await hosted.StopAsync(default);
+        prepared.Queries.Reset();
+        var removed = (await prepared.Service.SyncAllAsync()).Single();
+        removed.Deleted.ShouldBe(2);
+        prepared.Queries.Lookups.ShouldBe(0);
+        Directory.GetFiles(prepared.World.DirectoryPath, "*.md").ShouldBeEmpty();
+    }
+
+    private async Task<SkippedExport> PrepareSkippedExportAsync()
+    {
+        var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = new CardFilePrivacyWorld(isolated.ConnectionString);
+        AppDbContext? db = null;
+        try
+        {
+            await world.InitializeAsync();
+            await world.AddCardAsync();
+            await world.SyncAsync();
+            var exported = Directory.GetFiles(world.DirectoryPath, "*.md").ToDictionary(path => path, File.ReadAllBytes);
+            exported.Count.ShouldBe(2);
+            await using (var edit = world.Db())
+                await edit.Boards.Where(b => b.Id == world.BoardId).ExecuteUpdateAsync(s => s.SetProperty(b => b.SyncCardFiles, false));
+            var queries = new QueryCounter();
+            db = Context(isolated.ConnectionString, queries);
+            var service = Service(world, db);
+            var cleaned = (await service.SyncAllAsync()).Single();
+            cleaned.Deleted.ShouldBe(2);
+            cleaned.Policy!.RemovalPending.ShouldBeFalse();
+            (await service.SyncAllAsync()).ShouldBeEmpty();
+            foreach (var (path, bytes) in exported)
+                await File.WriteAllBytesAsync(path, bytes);
+            (await service.SyncAllAsync()).ShouldBeEmpty();
+            Directory.GetFiles(world.DirectoryPath, "*.md").Length.ShouldBe(2);
+            var prepared = new SkippedExport(isolated, world, db, service, queries);
+            db = null;
+            return prepared;
+        }
+        catch
+        {
+            if (db is not null) await db.DisposeAsync();
+            await world.DisposeAsync();
+            await isolated.DisposeAsync();
+            throw;
+        }
+    }
+
     private static AppDbContext Context(string connection, QueryCounter queries) => new(
         new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions(connection))
             .AddInterceptors(queries).Options);
@@ -81,6 +167,26 @@ public partial class CardFileBoardLookupTests
     private CardTaskFileService Service(CardFilePrivacyWorld world, AppDbContext db) => new(db, world.Gate,
         new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), NullLogger<CardTaskFileService>.Instance,
         new CardFileTestRepository(), Options.Create(new CardFileSyncSettings { IntervalSeconds = 0 }), _lookup);
+
+    private sealed class RefusingScopes : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => throw new InvalidOperationException("Startup reinspection resolved a sync scope.");
+    }
+
+    private sealed class SkippedExport(
+        IAsyncDisposable isolated, CardFilePrivacyWorld world, AppDbContext db, CardTaskFileService service, QueryCounter queries)
+        : IAsyncDisposable
+    {
+        public CardFilePrivacyWorld World { get; } = world;
+        public CardTaskFileService Service { get; } = service;
+        public QueryCounter Queries { get; } = queries;
+        public async ValueTask DisposeAsync()
+        {
+            await db.DisposeAsync();
+            await world.DisposeAsync();
+            await isolated.DisposeAsync();
+        }
+    }
 
     private sealed class QueryCounter : DbCommandInterceptor
     {

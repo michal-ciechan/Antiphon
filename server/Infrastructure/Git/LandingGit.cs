@@ -11,6 +11,10 @@ namespace Antiphon.Server.Infrastructure.Git;
 
 public class LandingGit : ILandingGit
 {
+    private readonly CardFileBoardLookup? _cardFiles;
+
+    public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
+
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 
     /// <summary>The started child's start identity, or false once it has exited and the platform
@@ -105,6 +109,7 @@ public class LandingGit : ILandingGit
             await process.WaitForExitAsync(CancellationToken.None);
             await Task.WhenAll(output, error);
             journal?.Exited(process);
+            _cardFiles?.NoteServerGit(repository, arguments);
             if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
             throw;
         }
@@ -112,6 +117,7 @@ public class LandingGit : ILandingGit
         // journal until both streams drain; worker death in that interval must still fence admission.
         await Task.WhenAll(output, error); // Never expose Git stderr (endpoints/hooks may contain secrets).
         journal?.Exited(process);
+        _cardFiles?.NoteServerGit(repository, arguments);
         string? rebaseHead = null;
         if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
         {

@@ -18,19 +18,25 @@ public sealed class CardTaskFileSyncHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly CardFileSyncSettings _settings;
     private readonly ILogger<CardTaskFileSyncHostedService> _logger;
+    private readonly CardFileBoardLookup? _boardLookup;
 
     public CardTaskFileSyncHostedService(
         IServiceScopeFactory scopeFactory,
         IOptions<CardFileSyncSettings> settings,
-        ILogger<CardTaskFileSyncHostedService> logger)
+        ILogger<CardTaskFileSyncHostedService> logger,
+        CardFileBoardLookup? boardLookup = null)
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _logger = logger;
+        _boardLookup = boardLookup;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // A process start, or this service starting again, re-checks boards already marked clean.
+        // The skip set is otherwise remembered for the life of the process.
+        _boardLookup?.RequestOptedOutReinspection();
         if (!_settings.Enabled)
             return;
 
