@@ -125,10 +125,49 @@ public class LandingGit : ILandingGit
     public async Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
         => ParseRegistrations(await RequiredAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct));
 
-    /// <summary>CARD-0665 review 0c0b9a4e item 2 seam; the red commit leaves it unimplemented.</summary>
-    public virtual Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath,
+    /// <summary>
+    /// Plain file operations inside the common directory: <c>git worktree remove</c> would validate
+    /// and delete whatever occupies the path by then. The entry is renamed out of
+    /// <c>worktrees/</c> in one step, so Git sees the registration either whole or gone.
+    /// </summary>
+    public virtual async Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath,
         string gitDirectory, CancellationToken ct)
-        => Task.FromResult(new LandingGitResult(1, "", "worktree_unregister_not_implemented"));
+    {
+        var common = await CommonDirectoryAsync(repository, ct);
+        var admin = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gitDirectory));
+        if (!PathsEqual(Path.GetDirectoryName(admin) ?? admin, Path.Combine(common, "worktrees")))
+            return new(1, "", "registration_entry_outside_common");
+        string recorded;
+        try { recorded = (await File.ReadAllTextAsync(Path.Combine(admin, "gitdir"), ct)).Trim(); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        { return new(1, "", "registration_entry_missing"); }
+        if (recorded.Length == 0 || !PathsEqual(recorded, Path.Combine(worktreePath, ".git")))
+            return new(1, "", "registration_entry_mismatch");
+        if (File.Exists(Path.Combine(admin, "locked"))) return new(1, "", "registration_locked");
+        if (Exists(worktreePath)) return new(1, "", "worktree_path_recreated");
+        var retired = WorktreeSetAside.RetiredAdminPath(common, worktreePath);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(retired)!);
+            if (Exists(retired)) WorktreeNoFollowDelete.Delete(retired);
+            Directory.Move(admin, retired);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            var code = ex.HResult & 0xFFFF;
+            return new(code == 0 ? 1 : code, "", "registration_entry_move_failed");
+        }
+        // The registration is gone; leftover administrative bytes go with the set-aside record.
+        try { WorktreeNoFollowDelete.Delete(retired); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return new(0, "", "");
+
+        static bool Exists(string path)
+        {
+            try { _ = File.GetAttributes(path); return true; }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+        }
+    }
 
     public async Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
         => HasSequencerAt(await CanonicalDirectoryAsync((await RequiredAsync(repository,
