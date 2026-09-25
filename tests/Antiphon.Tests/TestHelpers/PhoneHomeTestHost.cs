@@ -54,7 +54,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         string? connectionString = null,
         PhoneHomeLimits? limits = null,
         Action<DbContextOptionsBuilder>? configureDbContext = null,
-        TimeSpan? shutdownTimeout = null)
+        TimeSpan? shutdownTimeout = null,
+        PhoneHomeRunnerSettings? configured = null)
     {
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -63,7 +64,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
         if (shutdownTimeout is { } timeout)
             builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = timeout);
-        var settings = Options.Create(new PhoneHomeRunnerSettings
+        var settings = Options.Create(configured ?? new PhoneHomeRunnerSettings
         {
             Enabled = true,
             AllowedRunnerId = host.AllowedRunnerId,
@@ -75,6 +76,12 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             OperatorTokenPath = host.OperatorTokenPath,
             Limits = limits ?? new PhoneHomeLimits(),
         });
+        if (configured is not null)
+        {
+            if (string.IsNullOrWhiteSpace(settings.Value.OperatorTokenPath))
+                settings.Value.OperatorTokenPath = host.OperatorTokenPath;
+            settings.Value.Limits ??= limits ?? new PhoneHomeLimits();
+        }
         if (connectionString is not null)
         {
             builder.Services.AddDbContext<AppDbContext>(o =>
@@ -125,23 +132,27 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     public PhoneHomeRegistrationRequest Registration(Guid? bootId = null, Guid? storeId = null, string? runnerId = null) =>
         new(PhoneHomeProtocol.Version, runnerId ?? AllowedRunnerId, bootId ?? BootId, storeId ?? StoreId, "linux", Capacity, null);
 
-    public async Task<PhoneHomeRegistrationResponse> RegisterAsync(Guid? bootId = null, Guid? storeId = null, string? secret = null)
+    public async Task<PhoneHomeRegistrationResponse> RegisterAsync(
+        Guid? bootId = null, Guid? storeId = null, string? secret = null, string? runnerId = null, string? platform = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
         request.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, secret ?? Secret);
-        request.Content = JsonContent.Create(Registration(bootId, storeId), options: PhoneHomeFraming.Json);
+        var registration = Registration(bootId, storeId, runnerId);
+        if (platform is not null)
+            registration = registration with { Platform = platform };
+        request.Content = JsonContent.Create(registration, options: PhoneHomeFraming.Json);
         using var response = await Http.SendAsync(request);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<PhoneHomeRegistrationResponse>(PhoneHomeFraming.Json)
             ?? throw new InvalidOperationException("empty register");
     }
 
-    public async Task<PhoneHomeLiveConnection> WaitLiveAsync(TimeSpan? timeout = null)
+    public async Task<PhoneHomeLiveConnection> WaitLiveAsync(TimeSpan? timeout = null, string? runnerId = null)
     {
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(2));
         while (DateTime.UtcNow < deadline)
         {
-            var live = Directory.SnapshotLive();
+            var live = runnerId is null ? Directory.SnapshotLive() : Directory.SnapshotLive(runnerId);
             if (live is not null)
                 return live;
             await Task.Delay(20);
@@ -150,14 +161,19 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         throw new TimeoutException("Phone-home live connection was not accepted.");
     }
 
-    public async Task<PhoneHomeScriptedPeer> ConnectPeerAsync(bool autoReply = true, Guid? bootId = null)
+    public async Task<PhoneHomeScriptedPeer> ConnectPeerAsync(
+        bool autoReply = true, Guid? bootId = null, string? runnerId = null, Guid? storeId = null, string? secret = null)
     {
-        var ticket = await RegisterAsync(bootId);
+        var id = runnerId ?? AllowedRunnerId;
+        var ticket = await RegisterAsync(bootId, storeId, secret, id);
         var peer = new PhoneHomeScriptedPeer { AutoReply = autoReply };
         peer.Socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
-        await peer.Socket.ConnectAsync(ConnectUri, CancellationToken.None);
+        var uri = runnerId is null
+            ? ConnectUri
+            : new Uri($"ws://{Http.BaseAddress!.Authority}/api/session-runners/{Uri.EscapeDataString(id)}/connect");
+        await peer.Socket.ConnectAsync(uri, CancellationToken.None);
         peer.Start();
-        var live = await WaitLiveAsync();
+        var live = await WaitLiveAsync(runnerId: id);
         peer.Epoch = live.Epoch;
         return peer;
     }
@@ -213,6 +229,10 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     internal sealed class RecordingLocalClient : ISessionRunnerClient
     {
         public List<string> Calls { get; } = [];
+        public RunnerCapabilitiesDto? Capabilities { get; set; }
+
+        public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
+            Task.FromResult(Capabilities);
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
         {
             Calls.Add("start");
