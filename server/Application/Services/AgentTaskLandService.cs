@@ -267,6 +267,7 @@ public sealed class AgentTaskLandService
             ClearPending(task);
             await _db.SaveChangesAsync(ct);
             await canceled.CommitAsync(ct);
+            _leaseWaiters?.EndYield(request.Id);
             await ReleaseLandOwnerAsync(task.Id);
             return LandRunResult.Complete;
         }
@@ -299,6 +300,8 @@ public sealed class AgentTaskLandService
         }
         finally
         {
+            if (!request.IsPending)
+                _leaseWaiters?.EndYield(request.Id);
             var terminal = _db.ChangeTracker.Entries<AgentTaskEvent>().Select(e => e.Entity)
                 .Where(e => e.AgentTaskId == task.Id && e.LandRequestId == request.Id && e.IsLandTerminal)
                 .OrderBy(e => e.At).LastOrDefault();
@@ -373,6 +376,8 @@ public sealed class AgentTaskLandService
         await admission.CommitAsync(ct);
         }
         _execution = new LandExecutionIdentity(request.Id, request.Attempt);
+        // CARD-0672 D-2: admission ends this request's yield budget; a retry of it yields afresh.
+        _leaseWaiters?.EndYield(request.Id);
         await _db.Entry(task).ReloadAsync(ct);
         await _db.Entry(request).ReloadAsync(ct);
         var active = task.ActiveLandingId is Guid operationId
@@ -1086,7 +1091,10 @@ public sealed class AgentTaskLandService
         await LockTaskAsync(task.Id, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (!request.IsPending)
+        {
+            _leaseWaiters.EndYield(request.Id);
             return LandRunResult.Complete;
+        }
         var at = now.UtcDateTime;
         request.LastEvaluatedAt = at;
         // One Held event per episode, deduplicated on the reason as HoldAsync is. No caller note:

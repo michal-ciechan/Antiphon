@@ -24,8 +24,9 @@ public sealed class RepositoryLeaseWaiters
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
 
-    // A land request whose budget ran out keeps its first-yield entry so later re-picks do not
-    // yield again; once it is admitted nothing reads it, so entries this old are dropped.
+    // A land request whose budget ran out keeps its first-yield entry until the land service ends
+    // it (admission or a terminal return), so the re-picks in between do not yield again; an
+    // entry no boundary ever ended is dropped at this age.
     private static readonly TimeSpan YieldRetention = TimeSpan.FromDays(1);
 
     private readonly object _gate = new();

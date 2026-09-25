@@ -191,6 +191,11 @@ export interface AttentionItemDto {
   landRequestId?: string | null
   landNotificationId?: string | null
   holdingTaskId?: string | null
+  /**
+   * CARD-0672 D-3: a DispatchHeld row's dominant hold class (lease, remoteprep, runner, cap, ...),
+   * from the per-class wait ledger the row's evidence also carries. Absent on every other kind.
+   */
+  holdClass?: string | null
   kind: AttentionKind
   /** Critical = needs you now, Error = broken, Warning = suspect. The row's rank AND its group. */
   severity: AlertSeverity
