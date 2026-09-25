@@ -84,16 +84,28 @@ public partial class CardFileBoardLookupTests
 
     private sealed class QueryCounter : DbCommandInterceptor
     {
-        public int Reads { get; private set; }
-        public int Lookups { get; private set; }
-        public void Reset() { Reads = 0; Lookups = 0; }
+        private int _reads;
+        private int _lookups;
+        public int Reads => Volatile.Read(ref _reads);
+        public int Lookups => Volatile.Read(ref _lookups);
+        public void Reset() { Interlocked.Exchange(ref _reads, 0); Interlocked.Exchange(ref _lookups, 0); }
+        public override InterceptionResult<DbDataReader> ReaderExecuting(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Count(command);
+            return result;
+        }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
-            Reads++;
-            if (command.CommandText.Contains("FROM \"Boards\"", StringComparison.Ordinal)
-                && !command.CommandText.Contains("WHERE b.\"Id\" =", StringComparison.Ordinal)) Lookups++;
+            Count(command);
             return ValueTask.FromResult(result);
+        }
+        private void Count(DbCommand command)
+        {
+            Interlocked.Increment(ref _reads);
+            if (command.CommandText.Contains("FROM \"Boards\"", StringComparison.Ordinal)
+                && !command.CommandText.Contains("WHERE b.\"Id\" =", StringComparison.Ordinal)) Interlocked.Increment(ref _lookups);
         }
     }
 }
