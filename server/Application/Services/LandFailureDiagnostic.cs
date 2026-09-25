@@ -29,6 +29,11 @@ internal static class LandFailureDiagnostic
         "git check-ref-format <ref>",
         "git rev-parse --git-path index.lock",
         "filesystem canonicalization",
+        "git reset --hard <sha>",
+        "git clean -fdx",
+        "git worktree add --detach",
+        "git worktree lock",
+        "git show-ref <ref>",
     };
 
     public static string Classify(Exception exception, bool afterPublication = false)
@@ -85,7 +90,11 @@ internal static class LandFailureDiagnostic
         {
             "status" => "git status --porcelain=v1",
             "ls-files" => "git ls-files --others --ignored",
-            "worktree" => "git worktree list",
+            "worktree" => arguments.Count > 1 && arguments[1] is "add" ? "git worktree add --detach"
+                : arguments.Count > 1 && arguments[1] is "lock" ? "git worktree lock" : "git worktree list",
+            "reset" => "git reset --hard <sha>",
+            "clean" => "git clean -fdx",
+            "show-ref" => "git show-ref <ref>",
             "rev-parse" => arguments.Contains("--git-path")
                 ? "git rev-parse --git-path index.lock"
                 : "git rev-parse <identity>",
