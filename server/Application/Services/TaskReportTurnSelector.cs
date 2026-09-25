@@ -307,7 +307,10 @@ internal static class TaskReportTurnSelector
             return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
         }
 
-        return Finish(TaskReportSelectionKind.Selected, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+        // A marked owner does not take the housekeeping boundary. Its own earlier TurnEnd
+        // is selected when the walk reaches it. Claiming this boundary would publish the
+        // acknowledgement, or nudge a brief that has not finished a turn of its own.
+        return null;
     }
 
     /// <summary>
