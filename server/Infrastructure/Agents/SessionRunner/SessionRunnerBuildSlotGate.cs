@@ -57,8 +57,9 @@ public sealed class SessionRunnerBuildSlotGate(
                     GrantedTimestamp: time.GetTimestamp());
             }
 
-            // The wait deadline wins over fail-open, even for the first unreachable answer.
-            if (elapsed >= wait)
+            // Only a reachable refusal is subject to the wait deadline. A failed request gets
+            // its full grace, including when its first answer arrives past that deadline.
+            if ((answer?.Busy is not null || answer?.MemoryFloor is not null) && elapsed >= wait)
             {
                 Report(report, $"BUILD SLOT timeout after {(int)wait.TotalMinutes}m position={position}");
                 return new BuildSlotHold(BuildSlotHoldOutcome.Timeout, null, 0, elapsed, position);
@@ -97,7 +98,7 @@ public sealed class SessionRunnerBuildSlotGate(
                 }
             }
 
-            var remaining = wait - elapsed;
+            var remaining = unreachableSince is { } since ? grace - (elapsed - since) : wait - elapsed;
             await Task.Delay(delay < remaining ? delay : remaining, time, ct);
         }
     }

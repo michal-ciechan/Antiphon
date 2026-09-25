@@ -107,15 +107,13 @@ function Enter-AntiphonBuildSlot {
             return [pscustomobject]@{ Outcome = 'granted'; LeaseId = [string]$json.leaseId; MaxCpuCount = $cpu; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = [Diagnostics.Stopwatch]::StartNew(); Position = 0 }
         }
 
-        # The deadline wins over fail-open, including when this is the first unreachable answer.
-        if ($elapsed -ge $waitSeconds) {
-            Write-Host ('BUILD SLOT timeout after {0} position={1}' -f (Format-AntiphonBuildSlotSpan -Seconds $waitSeconds), $position)
-            return [pscustomobject]@{ Outcome = 'timeout'; LeaseId = $null; MaxCpuCount = 0; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = $null; Position = $position }
-        }
-
         if ($status -eq 409 -and ($type -eq 'build_slot_busy' -or $type -eq 'build_slot_memory_floor')) {
             $unreachableSince = -1.0
             $position = [int]$json.queuePosition
+            if ($elapsed -ge $waitSeconds) {
+                Write-Host ('BUILD SLOT timeout after {0} position={1}' -f (Format-AntiphonBuildSlotSpan -Seconds $waitSeconds), $position)
+                return [pscustomobject]@{ Outcome = 'timeout'; LeaseId = $null; MaxCpuCount = 0; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = $null; Position = $position }
+            }
             if ($retryOverride -gt 0) { $sleepMs = $retryOverride } else { $sleepMs = [Math]::Min([Math]::Max([int]$json.retryAfterMs, 250), 60000) }
             # Once a minute (and whenever the reason changes) the wait is visible in the transcript.
             if ($type -ne $lastState -or ($elapsed - $lastPrinted) -ge 60) {
@@ -139,7 +137,11 @@ function Enter-AntiphonBuildSlot {
             }
         }
 
-        $remainingMs = [int][Math]::Ceiling(($waitSeconds - $clock.Elapsed.TotalSeconds) * 1000)
+        # A reachable refusal uses the wait deadline; an unreachable runner gets its own full
+        # grace even if the first failed answer arrives after that deadline.
+        if ($unreachableSince -lt 0) { $remainingSeconds = $waitSeconds - $clock.Elapsed.TotalSeconds }
+        else { $remainingSeconds = $graceSeconds - ($clock.Elapsed.TotalSeconds - $unreachableSince) }
+        $remainingMs = [int][Math]::Ceiling($remainingSeconds * 1000)
         Start-Sleep -Milliseconds ([Math]::Max(1, [Math]::Min($sleepMs, $remainingMs)))
     }
 }
