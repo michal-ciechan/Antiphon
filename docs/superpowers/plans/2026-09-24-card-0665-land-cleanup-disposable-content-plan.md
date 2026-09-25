@@ -475,6 +475,7 @@ The extra baseline rows below are commissioned triage, not new acceptance requir
 | CP-R4-checkpoint | repair 4 | `CP-4a`, `--no-build` | full-checkpoint-matrix | `/*/*/AgentTaskLandCheckpointMatrixTests/*` | review items 1, 2 | all 43 rows pass, including both actual worker deaths | 43 | 8 |
 | CP-R4-removal | repair 4 | `CP-4a`, `--no-build` | full-removal-matrix | `/*/*/AgentTaskLandRemovalMatrixTests/*` | review item 3 | 50 results; held-file row requires Windows | 49 | 8 |
 | CP-R4-publication | repair 4 | `CP-4a`, `--no-build` | full-publication-class | `/*/*/AgentTaskLandPublicationTests/*` | Final profile, full affected class | every row executes, no failures | 1 | 9 |
+| CP-R4-publication-prior | repair-4 full-class failure | reuse `bin-c665-r4-prior/` at `5f4161c5` | retry-sentinel-triage | `/*/*/AgentTaskLandPublicationTests/C448_V33*` | R-1 | compare both obsolete disposable-sentinel rows before fixing the fixture | 2 | 1 |
 | CP-U | repair 4 | `CP-4a`, `--no-build` | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | no new failures; the brief names the GitWorkspace one-liner and browser PDF failures as inherited | 1 | 5 |
 
 The registration recovery tests distinguish a failed read from a failed administrative
@@ -509,3 +510,10 @@ the missing-inventory boundary. Both rows are triaged with their exact method at
 Windows junction semantics, the empty-unlisted-junction row and the three Windows
 sharing-lock rows remain Windows Review work when Code runs on Linux. Every PC remains pending for method-scoped SourceLanding
 Mutation; ordinary green and nightly do not discharge it.
+
+The full publication class also exposes both V33 cleanup-retry rows' obsolete disposable
+sentinel. Their exact prior-SHA filter is the additional triage row above; the corrected
+fixture proves an initial protected refusal with intact bytes before deleting its own
+sentinel and retrying. The full class is rebuilt and rerun as CP-R4-publication. Its build
+also includes the removal matrix's Slow classification, added after the duration audit
+measured 18 rows over five seconds; CP-U verifies the compiled classification registry.

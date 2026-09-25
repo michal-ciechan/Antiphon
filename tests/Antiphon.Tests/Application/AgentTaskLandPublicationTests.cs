@@ -247,11 +247,14 @@ public sealed partial class AgentTaskLandPublicationTests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         if (!alreadyPresent) await h.AddSourceAsync();
-        var sentinel = Path.Combine(h.Fixture.Source, "bin-private", "keep.txt");
+        var sentinel = Path.Combine(h.Fixture.Source, "bin-private", "settings.local.json");
         Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
         await File.WriteAllTextAsync(sentinel, "keep");
         await h.RunAsync();
         var operation = (await h.OperationAsync()).ShouldNotBeNull();
+        operation.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        operation.LastReason.ShouldBe("ignored_content_preserved");
+        (await File.ReadAllTextAsync(sentinel)).ShouldBe("keep");
         var publicationTime = operation.RemoteConfirmedAt;
         File.Delete(sentinel); // This test owns these exact bytes; this is the explicit cleanup remedy.
         await h.RepostAsync();
