@@ -93,6 +93,9 @@ builder.Services.AddHostedService<SessionLivenessSweepService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IProcessCpuProbe, SystemProcessCpuProbe>();
 builder.Services.AddHostedService<SessionCpuWatchdogService>();
+// CARD-0589 D-3: the host build/test driver budget (/build-slots). Registered after the liveness probe and
+// TimeProvider above, so the broker reaps with the same probe the session sweep uses.
+builder.Services.AddBuildSlotBroker(builder.Configuration);
 // CARD-0162: herdr event pump — always registered; inert unless SessionRunner:Herdr:Enabled.
 // Holds a pipe only while ≥ 1 live herdr session exists. Events are verification triggers, never evidence.
 builder.Services.AddHostedService<HerdrEventPumpService>();
@@ -223,6 +226,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
+// CARD-0589: build/test driver leases for scripts/run-checkpoint.ps1, scripts/build-slot.ps1 and the land verifier.
+app.MapBuildSlotRoutes();
 app.MapHerdrPaneDisposalRoutes();
 
 app.MapSessionGetRoute();
