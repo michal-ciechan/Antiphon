@@ -45,7 +45,11 @@ public sealed class AgentTaskLandSourcePersistenceTests
                 barrier.SignalPaused();
                 await barrier.WaitReleaseAsync();
             }
-            if (n == 2)
+        };
+        // CARD-0688 D-8: the resolver confirms its one observation with the one-round-trip recheck.
+        h.Git.OnSourceRecheck = async n =>
+        {
+            if (n == 1)
             {
                 await using var mid = h.CreateContext();
                 var stored = await mid.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
@@ -59,7 +63,7 @@ public sealed class AgentTaskLandSourcePersistenceTests
                 stored.SourceObservationRef.ShouldContain("/source-observed/");
                 stored.LastEvaluatedAt.ShouldBe(monitorNow.UtcDateTime);
                 stored.LastProgressAt.ShouldBe(monitorNow.UtcDateTime);
-                h.Git.InspectionCalls.ShouldBe(1);
+                h.Git.InspectionCalls.ShouldBe(0, "CARD-0688 D-2: the resolver never inspects the task worktree");
             }
         };
         var queued = await h.RequestAsync(expectedSourceSha: expected);
@@ -91,14 +95,15 @@ public sealed class AgentTaskLandSourcePersistenceTests
         (await done.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
         (await done.AgentTaskLandNotifications.CountAsync(n => n.RequestId == queued.RequestId && n.Kind == LandNotificationKind.Aged))
             .ShouldBe(ageSeconds == 0 ? 0 : ageSeconds == 300 ? 1 : 2);
-        // Resolver observes twice (initial + recheck). Protocol RecheckRemoteSourceAsync uses source-recheck, not a ResolveAsync replay.
-        h.Git.Trace.Count(a => a.Any(s => s.Contains("/source-observed/", StringComparison.Ordinal))).ShouldBe(2);
+        // CARD-0688: the resolver observes once (fetch + pin) and confirms with an ls-remote; protocol rechecks never pin.
+        h.Git.Trace.Count(a => a.Any(s => s.Contains("/source-observed/", StringComparison.Ordinal))).ShouldBe(1);
+        h.Git.SourceRemoteRechecks.ShouldBeGreaterThanOrEqualTo(2);
         h.Git.InspectionCalls.ShouldBeGreaterThanOrEqualTo(2);
     }
 
     [Test]
     [Arguments("observed")]
-    [Arguments("advance-started")]
+    [Arguments("observed-recheck")]
     [Arguments("child-started")]
     [Arguments("child-cleared")]
     [Arguments("resolved")]
@@ -107,6 +112,9 @@ public sealed class AgentTaskLandSourcePersistenceTests
     [Arguments("refuse-plain")]
     public async Task C498_MonitorPassAtEveryCheckpoint(string checkpoint)
     {
+        // CARD-0688: the resolver's checkpoints are observe -> recheck -> resolve -> create; the only owned
+        // child before publication is the land-worktree rebase (the source fast-forward child is gone, D-2),
+        // and the plain refusal is a missing source branch (a dirty worktree no longer refuses).
         var now = new DateTime(2026, 9, 13, 12, 0, 0, DateTimeKind.Utc);
         var clock = new FakeTimeProvider(new DateTimeOffset(now));
         await using var h = new LandingProtocolHarness();
@@ -120,44 +128,32 @@ public sealed class AgentTaskLandSourcePersistenceTests
             h.Git.DivergeRemoteSource();
             expected = h.Git.SourceHead;
         }
-        if (checkpoint == "refuse-plain") File.WriteAllText(Path.Combine(h.Git.Source, "keep.txt"), "dirty\n");
-        var inspections = 0;
-        h.Git.BeforeInspection = async () =>
+        if (checkpoint == "refuse-plain") h.Git.DeleteRef(h.Git.SourceRef);
+        async Task PauseAsync()
         {
-            inspections++;
-            if (checkpoint == "refuse-plain" && inspections == 1
-                || checkpoint == "advance-started" && inspections == 2
-                || checkpoint == "operation" && inspections == 4)
-            {
-                barrier.SignalPaused();
-                await barrier.WaitReleaseAsync();
-            }
-        };
+            barrier.SignalPaused();
+            await barrier.WaitReleaseAsync();
+        }
         h.Git.OnSourceObservation = async n =>
         {
-            if (checkpoint is "observed" or "refuse-observed" && n == 1
-                || checkpoint == "resolved" && n == 4)
-            {
-                barrier.SignalPaused();
-                await barrier.WaitReleaseAsync();
-            }
+            if (checkpoint is "observed" or "refuse-observed" && n == 1) await PauseAsync();
         };
+        h.Git.OnSourceRecheck = async n =>
+        {
+            if (checkpoint == "observed-recheck" && n == 1 || checkpoint == "resolved" && n == 2) await PauseAsync();
+        };
+        static bool Rebase(IReadOnlyList<string> args) => args.Contains("rebase") && !args.Contains("--abort");
         h.Git.BeforeCommand = async (_, args) =>
         {
-            if (checkpoint == "child-started" && args.Contains("merge") && args.Contains("--ff-only"))
-            {
-                barrier.SignalPaused();
-                await barrier.WaitReleaseAsync();
-            }
+            if (checkpoint == "child-started" && Rebase(args)
+                || checkpoint == "operation" && args is ["worktree", "add", ..]
+                || checkpoint == "refuse-plain" && args is ["show-ref", "--exists", _])
+                await PauseAsync();
             return null;
         };
         h.Git.AfterCommand = async (_, args, _) =>
         {
-            if (checkpoint == "child-cleared" && args.Contains("merge") && args.Contains("--ff-only"))
-            {
-                barrier.SignalPaused();
-                await barrier.WaitReleaseAsync();
-            }
+            if (checkpoint == "child-cleared" && Rebase(args)) await PauseAsync();
         };
         var queued = await h.RequestAsync(expectedSourceSha: expected);
         var runTask = h.RunQueuedAsync();
@@ -173,7 +169,7 @@ public sealed class AgentTaskLandSourcePersistenceTests
         request.SourceAdvanceChildOperation.ShouldBeNull();
         if (checkpoint.StartsWith("refuse", StringComparison.Ordinal))
         {
-            request.SourceRefusalReason.ShouldBe(checkpoint == "refuse-observed" ? "source_remote_diverged" : "source_dirty");
+            request.SourceRefusalReason.ShouldBe(checkpoint == "refuse-observed" ? "source_remote_diverged" : "source_ref_missing");
             request.TerminalFailureCode.ShouldBeNull();
             (await db.AgentTaskEvents.CountAsync(e => e.LandRequestId == request.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(1);
         }
@@ -202,7 +198,10 @@ public sealed class AgentTaskLandSourcePersistenceTests
             monitor = SweepMonitorAsync(h);
             await monitor.WaitAsync(TimeSpan.FromSeconds(10));
         }
-        h.Git.BeforeInspection = hook == "inspection" ? RunMonitorAsync : null;
+        // CARD-0688 D-2: the resolver's first source read is the branch show-ref, not a worktree inspection.
+        h.Git.BeforeCommand = hook == "inspection"
+            ? async (_, args) => { if (monitor is null && args is ["show-ref", "--verify", "--hash", _]) await RunMonitorAsync(); return null; }
+            : null;
         h.Git.OnSourceObservation = hook == "observation" ? _ => RunMonitorAsync() : null;
         h.Git.OnAncestorCheck = hook == "ancestor-command" ? RunMonitorAsync : null;
         await h.RequestAsync(expectedSourceSha: expected);
@@ -427,50 +426,6 @@ public sealed class AgentTaskLandSourcePersistenceTests
             var replacement = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId && r.IsPending);
             replacement.LandingOperationId.ShouldBeNull();
         }
-    }
-
-    [Test]
-    public async Task C498_ChildStartCallbackConflictFailsCallback()
-    {
-        await using var h = new LandingProtocolHarness();
-        await h.InitializeAsync();
-        var expected = h.Git.AdvanceRemoteSource();
-        var barrier = new PauseBarrier();
-        h.Git.BeforeCommand = async (_, args) =>
-        {
-            if (args.Contains("merge") && args.Contains("--ff-only"))
-            {
-                barrier.SignalPaused();
-                await barrier.WaitReleaseAsync();
-            }
-            return null;
-        };
-        var queued = await h.RequestAsync(expectedSourceSha: expected);
-        var runTask = h.RunQueuedAsync();
-        await barrier.WaitPausedAsync();
-        await using (var mut = h.CreateContext())
-        {
-            var request = await mut.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
-            request.IsPending = false;
-            request.State = LandRequestState.Canceled;
-            request.ConcurrencyToken = Guid.NewGuid();
-            var task = await mut.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
-            var replacement = NewPending(task, DateTime.UtcNow);
-            mut.AgentTaskLandRequests.Add(replacement);
-            task.CurrentLandRequestId = replacement.Id;
-            task.ConcurrencyToken = Guid.NewGuid();
-            await mut.SaveChangesAsync();
-        }
-        try
-        {
-            barrier.SignalRelease();
-            await Should.ThrowAsync<Exception>(runTask);
-        }
-        finally { barrier.SignalRelease(); }
-        h.Git.SourceHead.ShouldBe(h.Git.SeedSha);
-        await using var db = h.CreateContext();
-        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
-        (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == h.Git.TaskId && r.IsPending)).ShouldBe(1);
     }
 
     [Test]

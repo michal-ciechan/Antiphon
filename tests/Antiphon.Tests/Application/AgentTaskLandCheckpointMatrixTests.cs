@@ -21,7 +21,9 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         await h.AddSourceAsync();
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "recorded target before");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
-        h.Fault.Phase = LandPhase.TargetAdvanceStarted;
+        // CARD-0688 D-4 / I-9: the resumable checkpoint before the push is Verified (no target-advance phase), and
+        // the rebase base is the recorded, observed remote target T0; the local target is not a precondition.
+        h.Fault.Phase = LandPhase.Verified;
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
         var before = (await h.OperationAsync()).ShouldNotBeNull();
@@ -32,13 +34,16 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         await h.RestartServicesAsync();
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
-        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
         var after = (await h.OperationAsync()).ShouldNotBeNull();
         after.Id.ShouldBe(before.Id);
-        after.LastReason.ShouldBe("target_changed");
-        after.RemoteConfirmedAt.ShouldBeNull();
-        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        after.TargetBeforeSha.ShouldBe(before.TargetBeforeSha, "the resume never adopts the earlier local ancestor as its base");
+        after.RemoteConfirmedAt.ShouldNotBeNull();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase"));
+        (await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["merge-base", "--is-ancestor", before.TargetBeforeSha, after.VerifiedSourceSha!],
+            CancellationToken.None)).ExitCode.ShouldBe(0, "the published commit carries T0");
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(after.VerifiedSourceSha);
+        // After publication the reset main checkout (an ancestor) is fast-forwarded to the landed commit.
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(after.VerifiedSourceSha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
@@ -75,8 +80,8 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         }
         else
         {
-            h.Fault.Phase = cut switch { "C02" => LandPhase.Inspected, "C07" => LandPhase.Prepared,
-                "C08" => LandPhase.Verified, _ => LandPhase.TargetAdvanceStarted };
+            // CARD-0688 D-4: C09's target-advance intent collapses onto Verified, the last checkpoint before the push.
+            h.Fault.Phase = cut switch { "C02" => LandPhase.Inspected, "C07" => LandPhase.Prepared, _ => LandPhase.Verified };
             h.Fault.AfterCommit = true;
             await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
         }
@@ -94,8 +99,24 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         await h.RunAsync();
         var after = (await h.OperationAsync()).ShouldNotBeNull();
         after.Id.ShouldBe(before.Id);
+        if (change == "target")
+        {
+            // CARD-0688 I-9/I-10: a new local target commit is not a landing precondition, and it is never adopted:
+            // the land publishes onto the recorded remote target and the unpushed commit leaves the main checkout
+            // diverged, which the canonical step records instead of moving it.
+            after.RemoteConfirmedAt.ShouldNotBeNull();
+            after.CanonicalAdvanceReason.ShouldBe("canonical_diverged");
+            var published = (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim();
+            published.ShouldBe(after.VerifiedSourceSha);
+            (await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["merge-base", "--is-ancestor", target, published], CancellationToken.None))
+                .ExitCode.ShouldBe(1, "the local-only commit is not published");
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(target);
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only"));
+            await h.Fixture.AssertRemoteSourceAsync();
+            return;
+        }
         after.RemoteConfirmedAt.ShouldBeNull();
-        after.LastReason.ShouldBe(change switch { "source" => "source_changed", "target" => "target_changed", _ => "recovery_pin_failed" });
+        after.LastReason.ShouldBe(change == "source" ? "source_changed" : "recovery_pin_failed");
         h.Verifier.Calls.ShouldBe(calls);
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(source);
@@ -119,6 +140,9 @@ public sealed class AgentTaskLandCheckpointMatrixTests
     [Arguments("C21", LandPhase.Complete, false)]
     public async Task C448_V15_ResumeUsesOnlyAcknowledgedCheckpoints(string cut, LandPhase phase, bool committed)
     {
+        // CARD-0688 D-4: schema 3 never writes the target-advance phases; C09 collapses onto Verified and C10 onto
+        // PushStarted (the resumable pre-publication phase).
+        phase = phase switch { LandPhase.TargetAdvanceStarted => LandPhase.Verified, LandPhase.LocalTargetAdvanced => LandPhase.PushStarted, _ => phase };
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         var source = await h.AddSourceAsync();
@@ -138,7 +162,7 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", after.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
         if (cut == "C06")
         {
-            after.LastReason.ShouldBe("interrupted_rebase_requires_inspection");
+            after.LastReason.ShouldBe("interrupted_rebase"); // CARD-0688 D-3
             Directory.Exists(h.Fixture.Source).ShouldBeTrue();
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("merge") || a[0] == "push" || a.Contains("remove"));
             h.Verifier.Calls.ShouldBe(calls);
@@ -205,7 +229,8 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         }
         else
         {
-            h.Fault.Phase = cut switch { "C09" => LandPhase.TargetAdvanceStarted, "C10" => LandPhase.LocalTargetAdvanced,
+            // CARD-0688 D-4: C09/C10 (target-advance phases) collapse onto Verified and PushStarted.
+            h.Fault.Phase = cut switch { "C09" => LandPhase.Verified, "C10" => LandPhase.PushStarted,
                 "C11" => LandPhase.PushStarted, "C13" or "C14" => LandPhase.PublicationConfirmed, _ => LandPhase.CleanupStarted };
             h.Fault.AfterCommit = cut != "C13";
             await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
