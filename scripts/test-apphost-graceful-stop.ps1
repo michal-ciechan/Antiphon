@@ -298,9 +298,10 @@ function Test-T4 {
         $u = Invoke-C716Restart -Root $unsupported.Root -Arguments @('-TimeoutSec', '8')
         $f = Invoke-C716Restart -Root $refused.Root -Arguments @('-TimeoutSec', '8')
         $combined = $u.Text + "`n" + $f.Text
+        # The seam never reads a token, so a sentinel check here cannot fail.
+        # T-8 runs the real function and owns that assertion.
         $ok = ($u.Text -match 'graceful stop unsupported:') -and
             ($f.Text -match 'graceful stop refused:') -and
-            ($combined -notmatch [regex]::Escape($script:Sentinel)) -and
             ((Count-C716Kind $u.Trace 'stop-tree') -ge 1) -and
             ((Count-C716Kind $f.Trace 'stop-tree') -ge 1)
         if ($ok) { Write-Pass 'T-4' }
@@ -387,10 +388,189 @@ function Test-T7 {
     else { Write-Fail 'T-7' ($reasons -join '; ') }
 }
 
-$all = @('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7')
+function Get-C716FreePort {
+    $tcp = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
+    $tcp.Start()
+    $port = ([System.Net.IPEndPoint]$tcp.LocalEndpoint).Port
+    $tcp.Stop()
+    return $port
+}
+
+function Invoke-C716RealStop {
+    param(
+        [string]$BaseUrl,
+        [int]$TimeoutSec,
+        [string]$Reason,
+        [string]$TokenPath
+    )
+    $common = Join-Path $here 'apphost-common.ps1'
+    $prevToken = $env:ANTIPHON_OPERATOR_TOKEN_FILE
+    $env:ANTIPHON_OPERATOR_TOKEN_FILE = $TokenPath
+    $argPath = Join-Path ([System.IO.Path]::GetTempPath()) ('c716-t8-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        @(
+            '$ErrorActionPreference = ''Continue'''
+            ('. ''{0}''' -f ($common.Replace("'", "''")))
+            ('$r = Invoke-AppHostGracefulStop -TimeoutSec {0} -Reason ''{1}'' -BaseUrl ''{2}''' -f $TimeoutSec, $Reason.Replace("'", "''"), $BaseUrl.Replace("'", "''"))
+            'Write-Output (''CLASS={0}'' -f $r.Class)'
+            'Write-Output (''PID={0}'' -f $r.Pid)'
+            'Write-Output (''DETAIL={0}'' -f $r.Detail)'
+        ) | Set-Content -LiteralPath $argPath -Encoding ASCII
+        $output = @(& pwsh -NoProfile -File $argPath 2>&1 | ForEach-Object { $_.ToString() })
+        return ($output -join "`n")
+    } finally {
+        Remove-Item -LiteralPath $argPath -Force -ErrorAction SilentlyContinue
+        if ($null -eq $prevToken) { Remove-Item Env:ANTIPHON_OPERATOR_TOKEN_FILE -ErrorAction SilentlyContinue }
+        else { $env:ANTIPHON_OPERATOR_TOKEN_FILE = $prevToken }
+    }
+}
+
+function Start-C716Reply {
+    param(
+        $Listener,
+        [int]$Status,
+        [string]$Body,
+        [int]$HoldSec,
+        $Seen
+    )
+    $ps = [powershell]::Create()
+    $null = $ps.AddScript({
+        param($Listener, $Status, $Body, $HoldSec, $Seen)
+        try {
+            $ctx = $Listener.GetContext()
+            $Seen['header'] = [string]$ctx.Request.Headers['X-Antiphon-Operator-Token']
+            $Seen['path'] = [string]$ctx.Request.Url.AbsolutePath
+            if ($HoldSec -gt 0) { Start-Sleep -Seconds $HoldSec }
+            $resp = $ctx.Response
+            $resp.StatusCode = $Status
+            $resp.ContentType = 'application/json'
+            if (-not [string]::IsNullOrEmpty($Body)) {
+                $bytes = [System.Text.Encoding]::ASCII.GetBytes($Body)
+                $resp.ContentLength64 = $bytes.Length
+                $resp.OutputStream.Write($bytes, 0, $bytes.Length)
+            }
+            $resp.OutputStream.Close()
+            $resp.Close()
+        } catch {
+            $Seen['error'] = $_.Exception.Message
+        }
+    }).AddArgument($Listener).AddArgument($Status).AddArgument($Body).AddArgument($HoldSec).AddArgument($Seen)
+    return [pscustomobject]@{ PowerShell = $ps; Handle = $ps.BeginInvoke() }
+}
+
+function Stop-C716Reply {
+    param($Session, $Listener)
+    try { if ($Listener) { $Listener.Stop() } } catch { }
+    try { if ($Listener) { $Listener.Close() } } catch { }
+    if ($null -eq $Session) { return }
+    try {
+        if ($Session.Handle.IsCompleted) { $null = $Session.PowerShell.EndInvoke($Session.Handle) }
+    } catch { }
+    try { $Session.PowerShell.Dispose() } catch { }
+}
+
+function New-C716Listener {
+    param([int]$Port)
+    $listener = New-Object System.Net.HttpListener
+    $listener.Prefixes.Add(('http://127.0.0.1:{0}/' -f $Port))
+    $listener.Start()
+    return $listener
+}
+
+function Test-C716BaseUrlParameter {
+    $common = Join-Path $here 'apphost-common.ps1'
+    $probe = Join-Path ([System.IO.Path]::GetTempPath()) ('c716-t8-probe-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    @(
+        '$ErrorActionPreference = ''Stop'''
+        ('. ''{0}''' -f ($common.Replace("'", "''")))
+        '$names = @((Get-Command Invoke-AppHostGracefulStop).Parameters.Keys)'
+        'if ($names -contains ''BaseUrl'') { Write-Output ''BASEURL'' } else { Write-Output ''NO-BASEURL''; exit 2 }'
+    ) | Set-Content -LiteralPath $probe -Encoding ASCII
+    try {
+        $output = @(& pwsh -NoProfile -File $probe 2>&1 | ForEach-Object { $_.ToString() })
+        return (($output -join "`n") -match '(?m)^BASEURL$')
+    } finally {
+        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-T8 {
+    if (-not (Test-C716BaseUrlParameter)) {
+        Write-Fail 'T-8' 'Invoke-AppHostGracefulStop has no -BaseUrl parameter, so the real call would hit localhost:17202'
+        return
+    }
+    $sentinel = $script:Sentinel
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('c716-t8-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $tokenFile = Join-Path $root 'operator-token'
+    [System.IO.File]::WriteAllText($tokenFile, $sentinel)
+    $missing = Join-Path $root 'missing-token'
+    $outputs = New-Object System.Collections.Generic.List[string]
+    $reasons = @()
+    try {
+        $cases = @(
+            @{ Name = '202'; Status = 202; Body = '{"pid":4242}'; Hold = 0; ExpectClass = 'accepted'; ExpectPid = '4242'; ExpectDetail = '' }
+            @{ Name = '403'; Status = 403; Body = ''; Hold = 0; ExpectClass = 'refused'; ExpectPid = ''; ExpectDetail = 'http 403' }
+            @{ Name = '404'; Status = 404; Body = ''; Hold = 0; ExpectClass = 'unsupported'; ExpectPid = ''; ExpectDetail = 'http 404' }
+            @{ Name = '500'; Status = 500; Body = ''; Hold = 0; ExpectClass = 'error'; ExpectPid = ''; ExpectDetail = 'http 500' }
+            @{ Name = 'hang'; Status = 200; Body = ''; Hold = 5; ExpectClass = 'unreachable'; ExpectPid = ''; ExpectDetail = 'timeout' }
+        )
+        foreach ($case in $cases) {
+            $port = Get-C716FreePort
+            $listener = $null
+            $session = $null
+            $seen = @{ header = ''; path = ''; error = '' }
+            try {
+                $listener = New-C716Listener -Port $port
+                $timeout = 2
+                if ($case.Name -eq 'hang') { $timeout = 1 }
+                $session = Start-C716Reply -Listener $listener -Status $case.Status -Body $case.Body -HoldSec $case.Hold -Seen $seen
+                Start-Sleep -Milliseconds 50
+                $text = Invoke-C716RealStop -BaseUrl ('http://127.0.0.1:{0}' -f $port) -TimeoutSec $timeout -Reason 'restart-apphost' -TokenPath $tokenFile
+                $outputs.Add($text)
+                $classOk = $text -match ('(?m)^CLASS={0}$' -f [regex]::Escape($case.ExpectClass))
+                $pidOk = $true
+                if ($case.ExpectPid) { $pidOk = $text -match ('(?m)^PID={0}$' -f [regex]::Escape($case.ExpectPid)) }
+                $detailOk = $true
+                if ($case.ExpectDetail) { $detailOk = $text -match ('(?m)^DETAIL={0}$' -f [regex]::Escape($case.ExpectDetail)) }
+                $headerOk = ($seen['header'] -eq $sentinel) -and ($seen['path'] -eq '/api/operator/shutdown')
+                if ($case.Name -eq 'hang') { $headerOk = $true }
+                if (-not ($classOk -and $pidOk -and $detailOk -and $headerOk)) {
+                    $reasons += ('{0} class={1} pid={2} detail={3} headerOk={4} path={5} text={6}' -f $case.Name, $classOk, $pidOk, $detailOk, ($seen['header'] -eq $sentinel), $seen['path'], $text)
+                }
+            } catch {
+                $reasons += ('{0} {1}' -f $case.Name, $_.Exception.Message)
+            } finally {
+                Stop-C716Reply -Session $session -Listener $listener
+            }
+        }
+
+        $closed = Get-C716FreePort
+        $refused = Invoke-C716RealStop -BaseUrl ('http://127.0.0.1:{0}' -f $closed) -TimeoutSec 2 -Reason 'restart-apphost' -TokenPath $tokenFile
+        $outputs.Add($refused)
+        if ($refused -notmatch '(?m)^CLASS=unreachable$') { $reasons += ('refused {0}' -f $refused) }
+
+        $missingText = Invoke-C716RealStop -BaseUrl ('http://127.0.0.1:{0}' -f $closed) -TimeoutSec 2 -Reason 'restart-apphost' -TokenPath $missing
+        $outputs.Add($missingText)
+        if ($missingText -notmatch '(?m)^CLASS=refused$' -or $missingText -notmatch '(?m)^DETAIL=token file missing$') {
+            $reasons += ('missing {0}' -f $missingText)
+        }
+
+        $combined = $outputs -join "`n"
+        if ($combined -match [regex]::Escape($sentinel)) { $reasons += 'sentinel appeared in output' }
+        if ($reasons.Count -eq 0) { Write-Pass 'T-8' }
+        else { Write-Fail 'T-8' ($reasons -join ' || ') }
+    } catch {
+        Write-Fail 'T-8' $_.Exception.Message
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$all = @('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8')
 if ($Case) {
     $name = $Case
-    if ($name -match '^T-([1-7])$') { $name = 'T' + $Matches[1] }
+    if ($name -match '^T-([1-8])$') { $name = 'T' + $Matches[1] }
     $fn = Get-Command -Name ('Test-{0}' -f $name) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
     & $fn
