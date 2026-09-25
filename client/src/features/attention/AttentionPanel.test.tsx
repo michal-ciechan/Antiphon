@@ -1,5 +1,5 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { AttentionDto, AttentionItemDto, AttentionKind } from '../../api/attention'
 import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -38,6 +38,65 @@ function serve(payload: Partial<AttentionDto> & { items: AttentionItemDto[] }) {
 }
 
 describe('AttentionPanel', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/attention')
+    HTMLElement.prototype.scrollTo = vi.fn()
+  })
+
+  it.each(['SessionUnowned', 'SessionStopStuck'] as const)(
+    'opens a session-only %s inspection action and reads its transcript',
+    async (kind) => {
+      const reads: string[] = []
+      server.use(http.get('/api/sessions/:id/transcript', ({ params }) => {
+        reads.push(String(params.id))
+        return HttpResponse.json({ sessionId: params.id, lastSequence: 1, entries: [{
+          sequence: 1, kind: 'AssistantText', text: 'Transcript evidence for the ownerless session',
+          timestamp: '2026-08-17T09:00:00Z',
+        }] })
+      }))
+      serve({ items: [item({ kind, sessionId: 'leak-session', actions: ['OpenDrawer'] })] })
+      renderWithProviders(<AttentionPanel />)
+
+      const row = await screen.findByTestId(`attention-row-${kind}`)
+      await userEvent.click(within(row).getByRole('button', { name: 'Read it first' }))
+      const drawer = await screen.findByRole('dialog', { name: /Session inspection/ })
+      expect(await within(drawer).findByText('Transcript evidence for the ownerless session')).toBeInTheDocument()
+      expect(reads).toEqual(['leak-session'])
+      expect(new URLSearchParams(window.location.search).get('session')).toBe('leak-session')
+      await userEvent.click(within(drawer).getByRole('button', { name: 'Close inspection' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      await userEvent.click(within(row).getByRole('button', { name: `Open ${kind}` }))
+      expect(await screen.findByRole('dialog', { name: /Session inspection/ })).toBeInTheDocument()
+    },
+  )
+
+  it('opens census inspection with all candidates and follows a candidate session', async () => {
+    const census = {
+      ...item({ kind: 'ZombieCensusReport', title: 'Zombie census: Unclaimed',
+        conditionKey: 'zombie-census:Unclaimed', actions: ['OpenDrawer'],
+        evidence: 'Only the first five candidates are previewed here.' }),
+      censusCandidates: Array.from({ length: 7 }, (_, i) => ({
+        pid: 100 + i, exe: `candidate-${i + 1}`, startUtc: null, workingSetGb: 0,
+        cpuDeltaPercent: null, identityMethod: 'I1', sessionId: i === 6 ? 'census-session' : null,
+        dbStatus: 'Running', agentName: `agent-${i + 1}`, class: 'Unclaimed', failedRules: [],
+        futureAction: 'None', runnerClaimed: false, treeKillPid: 100 + i, isCandidate: true,
+      })),
+    }
+    server.use(http.get('/api/sessions/census-session/transcript', () => HttpResponse.json({
+      sessionId: 'census-session', lastSequence: 1, entries: [{ sequence: 1,
+        kind: 'AssistantText', text: 'Seventh candidate transcript', timestamp: null }],
+    })))
+    serve({ items: [census] })
+    renderWithProviders(<AttentionPanel />)
+    const row = await screen.findByTestId('attention-row-ZombieCensusReport')
+    await userEvent.click(within(row).getByRole('button', { name: 'Read it first' }))
+    const drawer = await screen.findByRole('dialog', { name: /Census inspection/ })
+    expect(within(drawer).getByText(/2026-08-17T09:00:00Z/)).toBeInTheDocument()
+    for (let i = 1; i <= 7; i++) expect(within(drawer).getByText(`candidate-${i}`)).toBeInTheDocument()
+    await userEvent.click(within(drawer).getByRole('link', { name: 'census-session' }))
+    expect(await screen.findByText('Seventh candidate transcript')).toBeInTheDocument()
+  })
+
   it('reads as reassurance when nothing is stuck', async () => {
     // THE common case, and the one that decides whether anybody keeps opening this tab. A blank
     // panel is indistinguishable from a broken one; this must say plainly that it looked and found
