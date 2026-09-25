@@ -630,6 +630,7 @@ public class InstructionBundleTests
         code.ShouldContain("### Checkpoints");
         code.ShouldContain("is a stub, not done");
         code.ShouldContain("unlisted");
+        code.ShouldContain("checkpoint tool");
         testDesign.ShouldContain("### Checkpoints");
 
         var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
@@ -637,6 +638,7 @@ public class InstructionBundleTests
         review.ShouldContain("Do not fix anything");
         review.ShouldContain("CP-n lines");
         review.ShouldContain("cannot go red");
+        review.ShouldContain("checkpoint-tool run");
     }
 
     /// <summary>

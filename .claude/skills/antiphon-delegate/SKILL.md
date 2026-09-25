@@ -94,6 +94,10 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Role TestDesign -Card CARD-nnnn -Tit
 
 # Code — runs the plan's ### Checkpoints table as a closed list; -ExpectAbout is the EstimatedMinutes sum + authoring
 pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Card CARD-nnnn -Title "build <card>" -Worktree -ExpectAbout <cp-estimated-minutes-sum+authoring> -Goal "execute <plan artifact path> and its verification section; checkpoints: <plan artifact path>@<full plan commit sha> section \"### Checkpoints\"; handoff from test-design/plan: '<verbatim>'"
+# The delegate runs the table once per committed slice group and waits (exit 75 means call wait again; do not end the turn while it is running):
+# dotnet run --project tools/Antiphon.Checkpoints -- run --plan <plan.md> --max-wait 570s
+# dotnet run --project tools/Antiphon.Checkpoints -- wait --latest --max-wait 570s
+# Review re-runs the claimed ordinary checks as one checkpoint-tool run of that same table before land.
 
 # Review -- ordinary pre-land review of the retained Code worktree
 $reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw
