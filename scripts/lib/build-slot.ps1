@@ -107,6 +107,12 @@ function Enter-AntiphonBuildSlot {
             return [pscustomobject]@{ Outcome = 'granted'; LeaseId = [string]$json.leaseId; MaxCpuCount = $cpu; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = [Diagnostics.Stopwatch]::StartNew(); Position = 0 }
         }
 
+        # The deadline wins over fail-open, including when this is the first unreachable answer.
+        if ($elapsed -ge $waitSeconds) {
+            Write-Host ('BUILD SLOT timeout after {0} position={1}' -f (Format-AntiphonBuildSlotSpan -Seconds $waitSeconds), $position)
+            return [pscustomobject]@{ Outcome = 'timeout'; LeaseId = $null; MaxCpuCount = 0; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = $null; Position = $position }
+        }
+
         if ($status -eq 409 -and ($type -eq 'build_slot_busy' -or $type -eq 'build_slot_memory_floor')) {
             $unreachableSince = -1.0
             $position = [int]$json.queuePosition
@@ -127,16 +133,12 @@ function Enter-AntiphonBuildSlot {
             if ($status -eq 0) { $lastAnswer = 'no answer' } else { $lastAnswer = ('http {0}' -f $status) }
             if ($unreachableSince -lt 0) { $unreachableSince = $elapsed }
             if ($retryOverride -gt 0) { $sleepMs = $retryOverride }
-            if (($elapsed - $unreachableSince) -ge $graceSeconds -or $elapsed -ge $waitSeconds) {
+            if (($elapsed - $unreachableSince) -ge $graceSeconds) {
                 Write-Host ('BUILD SLOT unleased reason=runner_unreachable maxcpucount={0} last={1}' -f $script:AntiphonBuildSlotUnleasedMaxCpuCount, $lastAnswer)
                 return [pscustomobject]@{ Outcome = 'unleased'; LeaseId = $null; MaxCpuCount = $script:AntiphonBuildSlotUnleasedMaxCpuCount; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = $null; Position = 0 }
             }
         }
 
-        if ($elapsed -ge $waitSeconds) {
-            Write-Host ('BUILD SLOT timeout after {0} position={1}' -f (Format-AntiphonBuildSlotSpan -Seconds $waitSeconds), $position)
-            return [pscustomobject]@{ Outcome = 'timeout'; LeaseId = $null; MaxCpuCount = 0; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = $null; Position = $position }
-        }
         $remainingMs = [int][Math]::Ceiling(($waitSeconds - $clock.Elapsed.TotalSeconds) * 1000)
         Start-Sleep -Milliseconds ([Math]::Max(1, [Math]::Min($sleepMs, $remainingMs)))
     }

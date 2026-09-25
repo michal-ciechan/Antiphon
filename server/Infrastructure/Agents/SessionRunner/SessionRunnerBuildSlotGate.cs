@@ -57,6 +57,13 @@ public sealed class SessionRunnerBuildSlotGate(
                     GrantedTimestamp: time.GetTimestamp());
             }
 
+            // The wait deadline wins over fail-open, even for the first unreachable answer.
+            if (elapsed >= wait)
+            {
+                Report(report, $"BUILD SLOT timeout after {(int)wait.TotalMinutes}m position={position}");
+                return new BuildSlotHold(BuildSlotHoldOutcome.Timeout, null, 0, elapsed, position);
+            }
+
             if (answer?.Busy is { } busy)
             {
                 unreachableSince = null;
@@ -83,18 +90,13 @@ public sealed class SessionRunnerBuildSlotGate(
             {
                 unreachableSince ??= elapsed;
                 delay = UnreachableRetry;
-                if (elapsed - unreachableSince >= grace || elapsed >= wait)
+                if (elapsed - unreachableSince >= grace)
                 {
                     Report(report, $"BUILD SLOT unleased reason=runner_unreachable maxcpucount={UnleasedMaxCpuCount} last=no answer");
                     return new BuildSlotHold(BuildSlotHoldOutcome.Unleased, null, UnleasedMaxCpuCount, elapsed);
                 }
             }
 
-            if (elapsed >= wait)
-            {
-                Report(report, $"BUILD SLOT timeout after {(int)wait.TotalMinutes}m position={position}");
-                return new BuildSlotHold(BuildSlotHoldOutcome.Timeout, null, 0, elapsed, position);
-            }
             var remaining = wait - elapsed;
             await Task.Delay(delay < remaining ? delay : remaining, time, ct);
         }
