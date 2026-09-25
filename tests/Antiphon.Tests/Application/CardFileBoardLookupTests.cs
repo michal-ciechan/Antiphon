@@ -94,11 +94,13 @@ public partial class CardFileBoardLookupTests
     {
         await using var prepared = await PrepareSkippedExportAsync();
         var git = new LandingGit(_lookup);
+        var before = _lookup.Reinspection;
         await git.RunAsync(prepared.World.Repo.Path, ["status", "--porcelain"], default);
-        (await prepared.Service.SyncAllAsync()).ShouldBeEmpty();
+        _lookup.Reinspection.ShouldBe(before);
         Directory.GetFiles(prepared.World.DirectoryPath, "*.md").Length.ShouldBe(2);
         prepared.Queries.Reset();
         await git.RunAsync(prepared.World.Repo.Path, ["checkout", "--", "."], default);
+        _lookup.Reinspection.ShouldBe(before + 1);
         var removed = (await prepared.Service.SyncAllAsync()).Single();
         removed.Deleted.ShouldBe(2);
         prepared.Queries.Lookups.ShouldBe(0);
@@ -145,7 +147,6 @@ public partial class CardFileBoardLookupTests
             (await service.SyncAllAsync()).ShouldBeEmpty();
             foreach (var (path, bytes) in exported)
                 await File.WriteAllBytesAsync(path, bytes);
-            (await service.SyncAllAsync()).ShouldBeEmpty();
             Directory.GetFiles(world.DirectoryPath, "*.md").Length.ShouldBe(2);
             var prepared = new SkippedExport(isolated, world, db, service, queries);
             db = null;

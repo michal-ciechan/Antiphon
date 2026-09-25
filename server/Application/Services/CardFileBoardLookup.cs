@@ -7,8 +7,9 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>Process-local ownership lookup. BoardChanged and committed pin writes invalidate it.
-/// A clean opted-out skip is separate: startup, the sweep backstop, and a restoring server git
-/// command clear it without dropping the ownership snapshot.</summary>
+/// A clean opted-out skip drops database work only. Every sweep still probes the pinned
+/// directory and the index. Startup, the sweep backstop, and a restoring server git command
+/// clear the skip without dropping the ownership snapshot.</summary>
 public sealed class CardFileBoardLookup
 {
     private readonly object _lock = new();

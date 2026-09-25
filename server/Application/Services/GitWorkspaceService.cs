@@ -22,17 +22,20 @@ public class GitWorkspaceService
     private readonly GitProcessGate _gate;
     private readonly GitSettings _settings;
     private readonly CardFileBoardLookup? _cardFiles;
+    private readonly CardFilePreCommitSweep? _preCommit;
 
     public GitWorkspaceService(
         ILogger<GitWorkspaceService> logger,
         GitProcessGate? gate = null,
         IOptions<GitSettings>? settings = null,
-        CardFileBoardLookup? cardFiles = null)
+        CardFileBoardLookup? cardFiles = null,
+        CardFilePreCommitSweep? preCommit = null)
     {
         _logger = logger;
         _gate = gate ?? SharedGate;
         _settings = settings?.Value ?? new GitSettings();
         _cardFiles = cardFiles;
+        _preCommit = preCommit;
     }
 
     public sealed record GitChange(string Path, GitFileStatus Status, string? OldPath);
@@ -794,6 +797,38 @@ public class GitWorkspaceService
             .ToArray(), 0);
     }
 
+    /// <summary>One <c>git ls-files -s</c> for the given directories. Paths are forward-slash.</summary>
+    public async Task<GitStrictList<string>> ListIndexedPathsAsync(
+        string workingDirectory, IReadOnlyList<string> pathspecs, CancellationToken ct)
+    {
+        var args = new List<string> { "ls-files", "-s", "-z", "--" };
+        args.AddRange(pathspecs);
+        var (code, stdout, stderr) = await RunAsync(workingDirectory, ct, [.. args]);
+        if (code != 0)
+            return new(false, [], code, stderr);
+        var paths = new List<string>();
+        foreach (var entry in stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = entry.IndexOf('\t');
+            if (tab < 0 || tab + 1 >= entry.Length) continue;
+            paths.Add(entry[(tab + 1)..].Replace('\\', '/'));
+        }
+        return new(true, paths, 0);
+    }
+
+    /// <summary>Added and modified names in <paramref name="fromSha"/>..<paramref name="toSha"/>.</summary>
+    public async Task<GitStrictList<string>> DiffNamesAsync(
+        string workingDirectory, string fromSha, string toSha, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(workingDirectory, ct,
+            "diff", "--name-only", "--diff-filter=AM", "--no-renames", "-z", fromSha + ".." + toSha);
+        if (code != 0)
+            return new(false, [], code, stderr);
+        return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(path => path.Replace('\\', '/'))
+            .ToArray(), 0);
+    }
+
     public Task<(int Code, string Stdout, string Stderr)> CaptureIndexAsync(string repo, CancellationToken ct) =>
         RunAsync(repo, ct, "write-tree");
 
@@ -824,6 +859,8 @@ public class GitWorkspaceService
         IReadOnlyList<(string Key, string Value)> trailers,
         CancellationToken ct)
     {
+        if ((pathspec is null || pathspec.Count == 0) && _preCommit is not null)
+            await _preCommit.SweepAsync(workingDirectory, ct);
         var args = new List<string> { "commit" };
         if (pathspec is { Count: > 0 })
             args.Add("--only");
