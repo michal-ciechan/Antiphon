@@ -68,6 +68,19 @@ public sealed class PhoneHomeRunnerSettings
     public int OwnerCacheNegativeSeconds { get; set; } = 5;
 
     /// <summary>
+    /// CARD-0679 D-8: how many times a remote launch retries its Start-to-ready segment after the
+    /// phone-home connection is lost under it (re-attach after the runner acknowledged the Launch,
+    /// re-launch before). <c>0</c> fails on the first loss.
+    /// </summary>
+    public int LaunchTransportRetries { get; set; } = 2;
+
+    /// <summary>
+    /// CARD-0679 D-8: how long one retry waits for the runner to be dispatch-eligible again before
+    /// the launch fails. Defaults to the lease; the row stays Starting while it waits.
+    /// </summary>
+    public int LaunchReattachWaitSeconds { get; set; } = PhoneHomeProtocol.DefaultLeaseSeconds;
+
+    /// <summary>
     /// CARD-0653: the owner-only file holding the operator credential for every operator surface.
     /// Empty means <c>%LOCALAPPDATA%\Antiphon\operator-token</c> (else the XDG data home). Set
     /// from <c>Operator:TokenPath</c> first, this legacy key second (CARD-0676 F-1; Program.cs).
@@ -132,6 +145,10 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:CatchUpRetrySeconds must be at least 1.");
         if (options.OwnerCacheNegativeSeconds < 0)
             failures.Add("PhoneHomeRunner:OwnerCacheNegativeSeconds must not be negative.");
+        if (options.LaunchTransportRetries < 0)
+            failures.Add("PhoneHomeRunner:LaunchTransportRetries must not be negative.");
+        if (options.LaunchReattachWaitSeconds < 1)
+            failures.Add("PhoneHomeRunner:LaunchReattachWaitSeconds must be at least 1.");
         if (!string.IsNullOrWhiteSpace(options.OperatorTokenPath) && !Path.IsPathFullyQualified(options.OperatorTokenPath))
             failures.Add("Operator:TokenPath (alias PhoneHomeRunner:OperatorTokenPath) must be an absolute path.");
         if (string.IsNullOrWhiteSpace(options.SlotReconcileCron))

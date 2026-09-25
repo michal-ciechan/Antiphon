@@ -17,7 +17,9 @@ public sealed class RestartFailurePolicy
             or HttpRequestException or SocketException or IOException or UnauthorizedAccessException or TimeoutException or OperationCanceledException
             // CARD-0679 D-5: a lost phone-home socket is pacing evidence, never permission to replace a
             // conversation.
-            or PhoneHomeTransportException or ServiceUnavailableException { Code: PhoneHomeProblemTypes.Unavailable }))
+            or PhoneHomeTransportException or ServiceUnavailableException { Code: PhoneHomeProblemTypes.Unavailable }
+            // CARD-0679 D-8: a remote launch whose transport retries ran out.
+            or RemoteLaunchTransportLostException))
             return RestartFailureKind.Infrastructure;
         if (chain.Any(e => e is AgentSessionService.ResumeTargetMissingException))
             return RestartFailureKind.ContinuityUnavailable;
