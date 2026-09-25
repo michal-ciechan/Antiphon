@@ -170,6 +170,7 @@ public sealed class CodexRunnerImageContractTests
             "trap 'rm -rf \"$root\"' EXIT",
             "cd \"$root\"",
             "uid=\"$(id -u)\"; gid=\"$(id -g)\"",
+            "export CODEX_HOME_REQUIRED=1",
             "seed() {",
             "( set -eu",
             section.Replace("codex_home=/codex-home\n", "codex_home=\"$root/codex\"\n", StringComparison.Ordinal),
@@ -211,6 +212,88 @@ public sealed class CodexRunnerImageContractTests
         output.ShouldContain("missing-not-created");
         output.ShouldContain("symlink exit=43\n");
         output.ShouldContain("symlink-target-untouched");
+    }
+
+    // Review 275c5757 D1. The whole init-state.sh, run for real under each compose file's
+    // state-init shape: whether it mounts /codex-home and what it sets CODEX_HOME_REQUIRED to are
+    // read from the compose files themselves. The base stack (and the nested child built from it)
+    // has no Codex home, and antiphon and session-runner wait on its state-init succeeding, so a
+    // missing mount there is skipped; only the server2 state-init refuses one.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void State_initializer_runs_under_each_compose_state_init_shape()
+    {
+        var baseInit = DockerStackDocuments.Service(Read("docker-compose.yml"), "state-init");
+        var server2Init = DockerStackDocuments.Service(Read("docker-compose.server2-runner.yml"), "state-init");
+        MountsCodexHome(baseInit).ShouldBeFalse("the base state-init has no Codex home mount");
+        OptionalEnv(baseInit, "CODEX_HOME_REQUIRED").ShouldBeNull("the base state-init does not require a Codex home");
+        MountsCodexHome(server2Init).ShouldBeTrue("the server2 state-init mounts the host Codex home");
+        OptionalEnv(server2Init, "CODEX_HOME_REQUIRED").ShouldBe("1", "the server2 state-init requires its Codex home");
+
+        // The script's absolute roots move under a per-case $R and its fixed app uid becomes the
+        // caller's, so an unprivileged shell runs every line. The quoted config heredoc is left
+        // alone (its trust key follows a quote), which the byte check below proves.
+        var script = Regex.Replace(Read("docker/stack/init-state.sh"),
+                @"(?<=[\s=])/(state|work|runner-state|codex-home)(?=[/\s;]|$)", "$$R/$1", RegexOptions.Multiline)
+            .Replace("\nuid=1654\n", "\nuid=$(id -u)\n", StringComparison.Ordinal)
+            .Replace("\ngid=1654\n", "\ngid=$(id -g)\n", StringComparison.Ordinal);
+        script.ShouldContain("\nuid=$(id -u)\ngid=$(id -g)\n");
+        script.ShouldContain("codex_home=$R/codex-home\n");
+        script.ShouldContain("for d in $R/state $R/work $R/runner-state; do\n");
+        script.ShouldContain("chown -R \"$uid:$gid\" $R/state $R/work $R/runner-state\n");
+        script.Contains("INIT_STATE_SH", StringComparison.Ordinal).ShouldBeFalse();
+
+        string Case(string name, string service, bool mounted) =>
+            "run " + name + " \"" + OptionalEnv(service, "CODEX_HOME_REQUIRED") + "\" " + (mounted ? "mounted" : "absent");
+
+        var harness = string.Join('\n',
+            "root=\"$(mktemp -d)\"",
+            "trap 'rm -rf \"$root\"' EXIT",
+            "cat > \"$root/init-state.sh\" <<'INIT_STATE_SH'",
+            script.TrimEnd('\n'),
+            "INIT_STATE_SH",
+            "run() {",
+            "  R=\"$root/$1\"; mkdir \"$R\"",
+            "  if [ \"$3\" = mounted ]; then mkdir -m 0755 \"$R/codex-home\"; fi",
+            "  if [ -n \"$2\" ]; then env CODEX_HOME_REQUIRED=\"$2\" R=\"$R\" sh \"$root/init-state.sh\" > \"$root/$1.log\" 2>&1",
+            "  else env -u CODEX_HOME_REQUIRED R=\"$R\" sh \"$root/init-state.sh\" > \"$root/$1.log\" 2>&1; fi",
+            "  echo \"$1 exit=$?\"",
+            "  sed \"s/^/$1 | /\" \"$root/$1.log\"",
+            "  if [ -d \"$R/runner-state/claude\" ]; then echo \"$1 volumes=initialized\"; fi",
+            "  if [ -e \"$R/codex-home\" ]; then echo \"$1 codex-home=present\"; else echo \"$1 codex-home=absent\"; fi",
+            "}",
+            Case("base", baseInit, MountsCodexHome(baseInit)),
+            Case("server2-absent", server2Init, mounted: false),
+            Case("server2-mounted", server2Init, MountsCodexHome(server2Init)),
+            "stat -c 'server2-mounted home=%a' \"$root/server2-mounted/codex-home\"",
+            "stat -c 'server2-mounted config=%a %F' \"$root/server2-mounted/codex-home/config.toml\"",
+            "echo '--- config ---'; cat \"$root/server2-mounted/codex-home/config.toml\"; echo '--- end ---'",
+            "") + "\n";
+
+        var output = RemoteScriptContractTests.LinuxShell(harness).Replace("\r\n", "\n");
+
+        // Base (and the nested child): no mount, no requirement. The volumes are initialized,
+        // state-init exits 0 so antiphon and session-runner can start, and no Codex home appears.
+        output.ShouldContain("base exit=0\n", customMessage: "the base stack's state-init must succeed without a Codex home");
+        output.ShouldContain("base | state-init owned uid=");
+        output.ShouldContain("base volumes=initialized\n");
+        output.ShouldContain("base codex-home=absent\n", customMessage: "a skipped Codex home is never created");
+        output.Contains("base | CodexHomeNotMounted", StringComparison.Ordinal).ShouldBeFalse();
+
+        // server2 with its mount missing refuses rather than seeding a directory that dies with
+        // the container.
+        output.ShouldContain("server2-absent exit=43\n");
+        output.ShouldContain("server2-absent | CodexHomeNotMounted path=");
+        output.ShouldContain("server2-absent codex-home=absent\n");
+
+        // server2 with its mount: seeded with the exact bytes, owned, and the volumes swept.
+        output.ShouldContain("server2-mounted exit=0\n");
+        output.ShouldContain("server2-mounted | state-init seeded codex config\n");
+        output.ShouldContain("server2-mounted | state-init owned uid=");
+        output.ShouldContain("server2-mounted volumes=initialized\n");
+        output.ShouldContain("server2-mounted home=700\n");
+        output.ShouldContain("server2-mounted config=600 regular file\n");
+        output.ShouldContain("--- config ---\n" + SeededConfig + "--- end ---\n");
     }
 
     [Test]
@@ -260,13 +343,17 @@ public sealed class CodexRunnerImageContractTests
         foreach (var command in Migration)
             docs.ShouldContain("\n" + command + "\n");
         docs.Contains("cat /state/codex", StringComparison.Ordinal).ShouldBeFalse("the migration never prints the file");
+
+        // Review 275c5757 D2: `docker cp -a` resolves the archive's owner by name inside the target
+        // and fails on a runner whose user is 0:0 (getent finds no "0:0"); chown/chmod set both.
+        docs.Contains("docker cp -a", StringComparison.Ordinal).ShouldBeFalse("docker cp -a fails against a 0:0 runner");
     }
 
     private static readonly string[] Migration =
     [
         "i=antiphon-runner-state-init-1",
         "c=antiphon-runner-session-runner-1",
-        "docker cp \"$i:/runner-state/codex/home/auth.json\" - | docker cp -a - \"$c:/state/codex/\"",
+        "docker cp \"$i:/runner-state/codex/home/auth.json\" - | docker cp - \"$c:/state/codex/\"",
         "docker exec -u 0:0 \"$c\" chown 1654:1654 /state/codex/auth.json",
         "docker exec -u 0:0 \"$c\" chmod 0600 /state/codex/auth.json",
         "docker exec -u 1654:1654 \"$c\" stat -c '%u:%g %a %F' /state/codex/auth.json",
@@ -283,6 +370,15 @@ public sealed class CodexRunnerImageContractTests
         target.Contains(':', StringComparison.Ordinal).ShouldBeFalse("the Codex home is mounted read-write: " + entry);
         return target;
     }
+
+    private static bool MountsCodexHome(string service) =>
+        DockerStackDocuments.List(service, "volumes")
+            .Any(entry => entry.EndsWith(":/codex-home", StringComparison.Ordinal) || entry.Contains(":/codex-home:", StringComparison.Ordinal));
+
+    private static string? OptionalEnv(string service, string key) =>
+        service.Split('\n').Any(line => line.Trim().StartsWith(key + ":", StringComparison.Ordinal))
+            ? DockerStackDocuments.Env(service, key)
+            : null;
 
     private static string SeedBlock(string text)
     {
