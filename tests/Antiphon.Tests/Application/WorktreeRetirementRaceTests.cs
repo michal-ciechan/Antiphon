@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -12,6 +13,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -870,6 +872,80 @@ public sealed class WorktreeRetirementRaceTests
         (await world.ActiveLaunchIdsAsync(queued.Id)).ShouldBeEmpty("the probe failure releases the task's Launch rows");
     }
 
+    [Test]
+    public async Task C664_OptionalWorkExpiredAfterAdmission_LeavesNoActiveLaunch()
+    {
+        // Review of B1 (dd61a38a): the claim admits the task's Launch row, then
+        // ExpireClaimedOptionalWorkAsync cancels the task and the claim commits.
+        var expireAtClaim = new ExpireDeadlineAtClaim();
+        await using var world = await RaceWorld.CreateAsync(interceptor: expireAtClaim);
+        var queued = await world.SeedQueuedTaskAsync(WorkspaceMode.Shared);
+        await using (var db = world.CreateDb())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == queued.Id);
+            row.Role = AgentTaskRole.Distill;
+            row.ExecutionDeadlineAt = DateTime.UtcNow.AddHours(1);
+            await db.SaveChangesAsync();
+        }
+        expireAtClaim.ConnectionString = world.Schema.ConnectionString;
+        expireAtClaim.TaskId = queued.Id;
+
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+
+        expireAtClaim.Expired.ShouldBeTrue("the claim read the task under FOR UPDATE");
+        await using (var db = world.CreateDb())
+        {
+            var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Canceled);
+            stored.FailureReason.ShouldBe("Optional work expired before execution.");
+            (await db.WorkspaceUseReservations.AsNoTracking().CountAsync(r =>
+                r.TaskId == queued.Id && r.Kind == WorkspaceReservationKind.Launch))
+                .ShouldBe(1, "the claim admitted the task's Launch row before the expiry canceled it");
+        }
+        (await world.ActiveLaunchIdsAsync(queued.Id)).ShouldBeEmpty("the claim-time expiry releases the task's Launch rows");
+    }
+
+    [Test]
+    public async Task C664_SessionLaunchThenKilled_ReleasesAndRetirementClaimAccepted()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
+        var session = await world.SeedInteractiveSessionAsync();
+        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, session.StartedAt, world.LaunchSpec(session.Id), null);
+        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        world.Adapter.Started.ShouldBeTrue();
+        (await world.ActiveSessionLaunchIdsAsync(session.Id)).Count.ShouldBe(1, "the launch admits one Launch row for the session");
+
+        await world.Sessions.KillAsync(session.Id, SessionTerminationSource.OperatorRequest, CancellationToken.None);
+
+        await using (var db = world.CreateDb())
+            (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session.Id)).Status.ShouldBe(SessionStatus.Stopped);
+        (await world.ActiveSessionLaunchIdsAsync(session.Id)).ShouldBeEmpty("the kill releases the session's Launch rows");
+        var claim = await world.Journal.TryClaimRetirementAsync(world.SessionProductionCommand(), CancellationToken.None);
+        claim.Reason.ShouldBeNull();
+        claim.Accepted.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C664_SessionLaunchFailureReleasesLaunchRows()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        world.Adapter.ReadyResult = false;
+        var session = await world.SeedInteractiveSessionAsync();
+        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, session.StartedAt, world.LaunchSpec(session.Id), null);
+        await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+
+        world.Adapter.Started.ShouldBeTrue();
+        await using (var db = world.CreateDb())
+        {
+            (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session.Id)).Status.ShouldBe(SessionStatus.Failed);
+            (await db.WorkspaceUseReservations.AsNoTracking().CountAsync(r =>
+                r.SessionId == session.Id && r.Kind == WorkspaceReservationKind.Launch))
+                .ShouldBe(1, "the launch admitted the session's Launch row before it failed");
+        }
+        (await world.ActiveSessionLaunchIdsAsync(session.Id)).ShouldBeEmpty("the launch failure releases the session's Launch rows");
+    }
+
     private sealed class RaceWorld : IAsyncDisposable
     {
         public required IsolatedTestSchema Schema { get; init; }
@@ -891,7 +967,8 @@ public sealed class WorktreeRetirementRaceTests
         public Guid RetirementId { get; } = Guid.NewGuid();
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(Path, "", Path);
 
-        public static async Task<RaceWorld> CreateAsync(Action<IServiceCollection>? configure = null)
+        public static async Task<RaceWorld> CreateAsync(
+            Action<IServiceCollection>? configure = null, IInterceptor? interceptor = null)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var path = Directory.CreateTempSubdirectory("c459-race-").FullName;
@@ -900,7 +977,10 @@ public sealed class WorktreeRetirementRaceTests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton(TimeProvider.System);
-            services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)));
+            var contextOptions = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+            if (interceptor is not null)
+                contextOptions = new DbContextOptionsBuilder<AppDbContext>(contextOptions).AddInterceptors(interceptor).Options;
+            services.AddScoped(_ => new AppDbContext(contextOptions));
             services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton(Options.Create(new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
@@ -1084,6 +1164,16 @@ public sealed class WorktreeRetirementRaceTests
                 .ToListAsync();
         }
 
+        public async Task<List<Guid>> ActiveSessionLaunchIdsAsync(Guid sessionId)
+        {
+            await using var db = CreateDb();
+            return await db.WorkspaceUseReservations.AsNoTracking()
+                .Where(r => r.SessionId == sessionId && r.Active && r.Kind == WorkspaceReservationKind.Launch)
+                .OrderBy(r => r.Id)
+                .Select(r => r.Id)
+                .ToListAsync();
+        }
+
         public async Task SetCreatedAtAsync(Guid reservationId, DateTime createdAt)
         {
             await using var db = CreateDb();
@@ -1260,6 +1350,33 @@ public sealed class WorktreeRetirementRaceTests
             await Provider.DisposeAsync();
             await Schema.DisposeAsync();
             try { Directory.Delete(Path, true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0664: moves the task's optional-work deadline into the past just before the dispatcher's
+    /// claim reads it under FOR UPDATE, so the claim-time expiry (not the tick's pre-selection sweep) cancels it.
+    /// </summary>
+    private sealed class ExpireDeadlineAtClaim : DbCommandInterceptor
+    {
+        public Guid TaskId;
+        public string ConnectionString = "";
+        public bool Expired { get; private set; }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (!Expired && TaskId != Guid.Empty
+                && command.CommandText.Contains("FOR UPDATE") && command.CommandText.Contains("AgentTasks")
+                && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == TaskId))
+            {
+                Expired = true;
+                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString));
+                await db.AgentTasks.Where(t => t.Id == TaskId).ExecuteUpdateAsync(
+                    u => u.SetProperty(t => t.ExecutionDeadlineAt, DateTime.UtcNow.AddSeconds(-1)), cancellationToken);
+            }
+
+            return result;
         }
     }
 
