@@ -841,8 +841,10 @@ public class PhoneHomeStrandedQueueTests
     /// that turn's UserPrompt (and an immediate TurnEnd): the evidence the queue's delivery
     /// verification reads, all of it over the phone-home connection.
     /// </summary>
-    internal static void EchoSubmittedPromptsToTranscript(PhoneHomeScriptedPeer peer, BridgeQueueHarness h)
+    internal static void EchoSubmittedPromptsToTranscript(
+        PhoneHomeScriptedPeer peer, BridgeQueueHarness h, Guid? sessionId = null)
     {
+        var id = sessionId ?? h.SessionId;
         var composer = new StringBuilder();
         var sequence = 0L;
         var generation = DateTime.UtcNow;
@@ -864,18 +866,20 @@ public class PhoneHomeStrandedQueueTests
                     composer.Clear();
                     if (prompt.Length == 0)
                         return null;
-                    h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt, timestamp: DateTime.UtcNow)
+                    h.InsertTranscriptEntryAsync(
+                            TranscriptKinds.UserPrompt, prompt, sessionId: id, timestamp: DateTime.UtcNow)
                         .GetAwaiter().GetResult();
-                    h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn").GetAwaiter().GetResult();
+                    h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: id)
+                        .GetAwaiter().GetResult();
                     return null;
                 case PhoneHomeOperation.Snapshot:
                     return Result(frame, new RunnerSnapshotDto(
-                        h.SessionId, Visible(composer), "> " + Visible(composer), sequence, generation));
+                        id, Visible(composer), "> " + Visible(composer), sequence, generation));
                 case PhoneHomeOperation.Buffer:
-                    return Result(frame, new RunnerBufferDto(h.SessionId, Visible(composer), sequence));
+                    return Result(frame, new RunnerBufferDto(id, Visible(composer), sequence));
                 case PhoneHomeOperation.Get:
                     return Result(frame, new RunnerSessionDto(
-                        h.SessionId, 1, generation, "Running", null, "", sequence, AcceptedStartedAt: generation));
+                        id, 1, generation, "Running", null, "", sequence, AcceptedStartedAt: generation));
                 default:
                     return null;
             }
