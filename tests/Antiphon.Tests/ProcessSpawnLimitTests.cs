@@ -72,6 +72,8 @@ public class ProcessSpawnLimitTests
             typeof(TestDbFixtureLazyInitializationTests),
             typeof(CheckCompactionCrashTests),
             typeof(CheckNoteDeliveryHandoffTests),
+            typeof(Antiphon.Tests.Scripts.RunCheckpointScriptTests),
+            typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
         ];
 
         foreach (var type in types)
