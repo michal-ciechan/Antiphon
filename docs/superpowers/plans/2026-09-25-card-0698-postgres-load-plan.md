@@ -98,9 +98,9 @@ Build the UUID index first, then the two end indexes, serially. At the measured 
 
 `Program.cs:831` automatically migrates before serving, so a migration timeout can delay API availability. Prefer applying the reviewed index-only migration while the old API is still serving, from the deployment host's approved configuration path. Do not put connection strings on a command line, read another user's credentials, or launch another Program to apply it. Scope the migration command timeout to **300 seconds per index**; a short metadata-lock timeout (5 seconds) is a retryable refusal after inspection, not permission to kill blockers. Use one migration owner. Verify the generated script's transaction boundaries before using it; do not use an idempotent wrapper that embeds concurrent DDL in a transaction or procedural block.
 
-After partial failure, inspect the migration history plus `pg_index.indisvalid`, `indisready` and `pg_get_indexdef`. No blind rerun or `IF NOT EXISTS` that mistakes an invalid/wrong index for success. Recover only these new indexes: if this migration is unrecorded, drop its already-created indexes concurrently after checking exact definitions and ownership, then rerun the reviewed migration. Never stamp migration history manually. If startup has already applied it successfully, do not replay it.
+After partial failure, inspect the migration history plus `pg_index.indisvalid`, `indisready` and `pg_get_indexdef`. Repair 1 makes the unrecorded migration retryable: each invalid index is conditionally renamed to its reserved `_invalid` cleanup name, dropped with a separate `DROP INDEX CONCURRENTLY IF EXISTS`, then created with `CREATE INDEX CONCURRENTLY IF NOT EXISTS`. Each command suppresses the EF transaction. The rename is necessary because PostgreSQL cannot execute concurrent DDL inside a conditional procedural block. A leftover cleanup index from an interrupted rename/drop is removed on retry; a valid original index retains its OID. Only this migration's names are touched, with a guard against a valid or unrelated relation occupying the cleanup name. Existing valid names still require the definition/ownership check; `IF NOT EXISTS` does not validate arbitrary pre-existing definitions. Never stamp migration history manually. If startup has already applied it successfully, do not replay it.
 
-Rollback the binary first if necessary; leave valid additive indexes in place. No data rollback is needed. Test a generated Down/Up round trip in isolation, but do not run Down on the live database merely to roll back code. Inspect whether the generated Down needs an online operational equivalent before any later index removal.
+Rollback the binary first if necessary; leave valid additive indexes in place. No data rollback is needed. Test a generated Down/Up round trip in isolation, but do not run Down on the live database merely to roll back code. Down uses a separate transaction-suppressed `DROP INDEX CONCURRENTLY IF EXISTS` for each original and cleanup name, so a partially completed Down can also retry.
 
 ## Call-site and cadence inventory
 
@@ -242,6 +242,13 @@ For TUnit rows use `scripts/run-checkpoint.ps1`, `-ResultsRoot .antiphon/card069
 Ordinary checkpoint floor: **40 minutes** (10 + 12 + 14 + 4). Authoring/scaffolding/evidence estimate: **60 minutes**; dispatch `-ExpectAbout` approximately **100 minutes**. These are planning budgets, not execution limits. Deployment plus two live 180-second windows is a separate approximately **15–25 minute** desktop obligation, including a 5-minute-per-index migration timeout budget if waits occur. This Plan stage ran zero tests/builds.
 
 ### Checkpoints
+
+Repair 1 reruns CP-1 on the implemented source, expecting both original query checks to pass;
+the original baseline-red evidence remains in the first Code report. Its additional, explicitly
+commissioned red-first retry filter is `/*/*/TranscriptHotPathMigrationTests/(Retry_*)|(Clean_database_first*)|(Down_retries*)`:
+7 cases, 6 expected failures and 1 clean-first-run pass before the repair. CP-3 now includes
+11 migration executions (the original 4 plus those 7); all must pass. CP-1/CP-2 use fresh
+`bin-c698-repair-cp1/` and `bin-c698-repair-green/` outputs; CP-3/CP-4 reuse CP-2.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|

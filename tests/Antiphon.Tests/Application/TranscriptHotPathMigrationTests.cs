@@ -6,7 +6,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -171,24 +170,32 @@ public class TranscriptHotPathMigrationTests
         var uuid = indexes.Single(i => i.GetDatabaseName() == names[0]);
         uuid.GetIncludeProperties().ShouldBe(["Kind"]);
         uuid.GetFilter().ShouldBe("\"Uuid\" IS NOT NULL");
-        var operations = migration.UpOperations.OfType<CreateIndexOperation>().ToArray();
-        migration.UpOperations.Count.ShouldBe(3);
-        operations.Select(i => i.Name).ShouldBe(names);
-        operations.ShouldAllBe(i => !i.IsUnique);
         var commands = db.GetService<IMigrationsSqlGenerator>().Generate(migration.UpOperations, migration.TargetModel);
-        commands.Count.ShouldBe(3);
-        commands.ShouldAllBe(c => c.TransactionSuppressed && c.CommandText.StartsWith("CREATE INDEX CONCURRENTLY"));
+        commands.Count.ShouldBe(9);
+        commands.ShouldAllBe(c => c.TransactionSuppressed);
+        var creates = commands.Where(c => c.CommandText.StartsWith("CREATE INDEX")).ToArray();
+        creates.Length.ShouldBe(3);
+        for (var i = 0; i < names.Length; i++)
+        {
+            creates[i].CommandText.ShouldStartWith($"CREATE INDEX CONCURRENTLY IF NOT EXISTS \"{names[i]}\"");
+            commands[i * 3 + 1].CommandText.ShouldStartWith(
+                $"DROP INDEX CONCURRENTLY IF EXISTS \"{names[i]}_invalid\"");
+        }
+        var downCommands = db.GetService<IMigrationsSqlGenerator>().Generate(migration.DownOperations, migration.TargetModel);
+        downCommands.Count.ShouldBe(6);
+        downCommands.ShouldAllBe(c => c.TransactionSuppressed && c.CommandText.StartsWith("DROP INDEX CONCURRENTLY IF EXISTS"));
         var script = db.GetService<IMigrator>().GenerateScript(previous, current);
+        var downScript = db.GetService<IMigrator>().GenerateScript(current, previous);
         var inTransaction = false;
-        foreach (var line in script.Split('\n').Select(l => l.Trim()))
+        foreach (var line in (script + "\n" + downScript).Split('\n').Select(l => l.Trim()))
         {
             if (line is "START TRANSACTION;" or "BEGIN;") inTransaction = true;
-            if (line.StartsWith("CREATE INDEX")) inTransaction.ShouldBeFalse();
+            if (line.StartsWith("CREATE INDEX") || line.StartsWith("DROP INDEX")) inTransaction.ShouldBeFalse();
             if (line == "COMMIT;") inTransaction = false;
         }
         f.Record("migration-sql", new { up = script,
-            down = db.GetService<IMigrator>().GenerateScript(current, previous),
-            commands = commands.Select(c => new { c.CommandText, c.TransactionSuppressed }) });
+            down = downScript,
+            commands = commands.Concat(downCommands).Select(c => new { c.CommandText, c.TransactionSuppressed }) });
     }
 
     [Test]
