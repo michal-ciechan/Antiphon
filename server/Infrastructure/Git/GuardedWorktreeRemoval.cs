@@ -216,7 +216,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             || op.TaskId != source.TaskId || op.SourceFullRef != source.SourceFullRef
             || op.TargetFullRef != source.TargetFullRef || op.TargetBeforeSha != request.ExpectedTargetSha
             || op.ExpectedDeletionSha != request.ExpectedSourceSha
-            || op.VerifiedSourceSha != request.ExpectedSourceSha || op.CleanupStartedAt is null
+            || op.VerifiedSourceSha != Landed(request) || op.CleanupStartedAt is null
             || op.Phase is not (LandPhase.CleanupStarted or LandPhase.Complete)
             || !LandingGit.PathsEqual(op.RepositoryPath, source.RepositoryPath)
             || !LandingGit.PathsEqual(op.WorktreePath, source.WorktreePath)
@@ -232,10 +232,14 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         }
         if (!refreshRemote) return null; // The preceding authority read already refreshed remote proof.
         var observed = await git.ObserveAsync(source.RepositoryPath,
-            new(op.RemoteName, op.DestinationFullRef, op.RemoteFingerprint), request.ExpectedSourceSha,
+            new(op.RemoteName, op.DestinationFullRef, op.RemoteFingerprint), Landed(request),
             op.RecoveryRefPrefix + "/cleanup-observed", ct);
         return observed.Reason ?? (observed.ContainsSource ? null : "remote_no_longer_contains_source");
     }
+
+    /// <summary>CARD-0688 D-6: a schema-3 land never moved the branch, so the branch/worktree identity
+    /// (<see cref="WorktreeRemovalRequest.ExpectedSourceSha"/>) and the published commit differ.</summary>
+    private static string Landed(WorktreeRemovalRequest request) => request.LandedSha ?? request.ExpectedSourceSha;
 
     private async Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
     {
