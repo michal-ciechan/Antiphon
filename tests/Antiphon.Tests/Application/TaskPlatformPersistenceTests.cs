@@ -195,13 +195,13 @@ public sealed class CardPlatformTests
         await using var createDb = kit.Context();
         var service = kit.Service(createDb);
         var inherited = await service.CreateAsync(new CreateAgentTaskRequest(
-            "inherit the card", Role: AgentTaskRole.Code, AgentKind: AgentKind.Grok,
-            Workspace: WorkspaceMode.Worktree, Card: card.Identifier), kit.Caller, CancellationToken.None);
+            "inherit the card", Role: AgentTaskRole.Code, AgentKind: AgentKind.ClaudeCode,
+            Workspace: WorkspaceMode.Shared, Card: card.Identifier), kit.Caller, CancellationToken.None);
         inherited.RequiredPlatform.ShouldBe(RequiredPlatform.Windows);
         inherited.RequirementSource.ShouldBe(RequirementSource.Card);
         var explicitAny = await service.CreateAsync(new CreateAgentTaskRequest(
             "explicit any", Role: AgentTaskRole.Code, AgentKind: AgentKind.Grok,
-            Workspace: WorkspaceMode.Worktree, Card: card.Identifier, RequiredPlatform: RequiredPlatform.Any),
+            Workspace: WorkspaceMode.Shared, Card: card.Identifier, RequiredPlatform: RequiredPlatform.Any),
             kit.Caller, CancellationToken.None);
         explicitAny.RequiredPlatform.ShouldBe(RequiredPlatform.Any);
         explicitAny.RequirementSource.ShouldBe(RequirementSource.Request);
@@ -302,10 +302,11 @@ file sealed class PlacementDirectory : ISessionRunnerDirectory
     public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
     {
         var id = string.IsNullOrWhiteSpace(runnerId) || RunnerRequestIntent.IsDesktopAlias(runnerId) ? "desktop" : runnerId.Trim();
+        var platform = id == "desktop" ? "windows" : Platform;
         return Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(
-            id, id, Platform, DateTimeOffset.UtcNow, true, true, false, 4,
+            id, id, platform, DateTimeOffset.UtcNow, true, true, false, 4,
             new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
-                Features: [RunnerPlatformWire.Feature], Platform: Platform)));
+                Features: [RunnerPlatformWire.Feature], Platform: platform)));
     }
     public ISessionRunnerClient Resolve(string? runnerId) => Local;
     public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>

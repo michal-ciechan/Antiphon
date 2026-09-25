@@ -15,6 +15,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -39,21 +40,19 @@ public sealed class RunnerDefaultsWireTests
     public async Task Put_global_affects_next_create_without_restart()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, "server2");
-        var first = await host.Client.GetFromJsonAsync<RunnerDefaultsDto>("/api/runner-defaults", Json);
+        await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, null);
+        var first = await Read<RunnerDefaultsDto>(await host.Client.GetAsync("/api/runner-defaults"));
         first.ShouldNotBeNull();
         var put = await host.Client.PutAsJsonAsync("/api/runner-defaults", new PutRunnerDefaultsRequest(
             first.Revision, "server2", [], "Operator asked for server2.", "Human"), Json);
-        put.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var saved = await put.Content.ReadFromJsonAsync<RunnerDefaultsDto>(Json);
+        var saved = await Read<RunnerDefaultsDto>(put);
         saved!.GlobalRunnerId.ShouldBe("server2");
         saved.Revision.ShouldBe(first.Revision + 1);
 
         var created = await host.Client.PostAsJsonAsync("/api/agent-tasks", new CreateAgentTaskRequest(
             "c710 grok inherits the put", Role: AgentTaskRole.Code, AgentKind: AgentKind.Grok,
             Workspace: WorkspaceMode.Worktree, WorkingDirectory: host.RepoRoot), Json);
-        created.StatusCode.ShouldBe(HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
-        var body = await created.Content.ReadFromJsonAsync<AgentTaskCreatedDto>(Json);
+        var body = await Read<AgentTaskCreatedDto>(created, HttpStatusCode.Created);
         body!.RunnerId.ShouldBe("server2");
         body.AgentKind.ShouldBe(AgentKind.Grok);
     }
@@ -63,7 +62,7 @@ public sealed class RunnerDefaultsWireTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, null);
-        var current = await host.Client.GetFromJsonAsync<RunnerDefaultsDto>("/api/runner-defaults", Json);
+        var current = await Read<RunnerDefaultsDto>(await host.Client.GetAsync("/api/runner-defaults"));
         var put = await host.Client.PutAsJsonAsync("/api/runner-defaults", new PutRunnerDefaultsRequest(
             current!.Revision, "server2", [new PutRunnerKindDefault(AgentKind.Codex, "desktop")],
             "Codex prefers the desktop.", "Human"), Json);
@@ -82,7 +81,7 @@ public sealed class RunnerDefaultsWireTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, null);
-        var current = await host.Client.GetFromJsonAsync<RunnerDefaultsDto>("/api/runner-defaults", Json);
+        var current = await Read<RunnerDefaultsDto>(await host.Client.GetAsync("/api/runner-defaults"));
         var withKind = await host.Client.PutAsJsonAsync("/api/runner-defaults", new PutRunnerDefaultsRequest(
             current!.Revision, "server2", [new PutRunnerKindDefault(AgentKind.Codex, "desktop")],
             "Temporary Codex desktop.", "Human"), Json);
@@ -107,8 +106,7 @@ public sealed class RunnerDefaultsWireTests
         var created = await host.Client.PostAsJsonAsync("/api/agent-tasks", new CreateAgentTaskRequest(
             "c710 queued before the edit", Role: AgentTaskRole.Code, AgentKind: AgentKind.Grok,
             Workspace: WorkspaceMode.Worktree, WorkingDirectory: host.RepoRoot), Json);
-        created.EnsureSuccessStatusCode();
-        var body = await created.Content.ReadFromJsonAsync<AgentTaskCreatedDto>(Json);
+        var body = await Read<AgentTaskCreatedDto>(created, HttpStatusCode.Created);
         body!.RunnerId.ShouldBe("server2");
         var current = await host.Client.GetFromJsonAsync<RunnerDefaultsDto>("/api/runner-defaults", Json);
         var moved = await host.Client.PutAsJsonAsync("/api/runner-defaults", new PutRunnerDefaultsRequest(
@@ -118,6 +116,14 @@ public sealed class RunnerDefaultsWireTests
         var task = await db.AgentTasks.SingleAsync(t => t.Id == body.Id);
         task.RunnerId.ShouldBe("server2");
         task.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    private static async Task<T> Read<T>(HttpResponseMessage response, HttpStatusCode expected = HttpStatusCode.OK)
+    {
+        var text = await response.Content.ReadAsStringAsync();
+        response.StatusCode.ShouldBe(expected, text);
+        return JsonSerializer.Deserialize<T>(text, Json)
+            ?? throw new InvalidOperationException(text);
     }
 }
 
@@ -361,8 +367,9 @@ public sealed class RunnerDefaultPlacementTests
             global.GetString().ShouldBe(RunnerRequestIntent.DisplayRunnerId(saved.Task.RunnerId));
         else
         {
-            saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.Fallback);
+            saved.Task.RunnerSelectionSource.ShouldBeNull();
             global.ValueKind.ShouldBe(JsonValueKind.Null);
+            saved.Task.RunnerId.ShouldBeNull();
         }
     }
 
@@ -629,22 +636,15 @@ file sealed class DefaultsHost : IAsyncDisposable
         builder.Services.AddLogging();
         var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
-        app.Use(async (ctx, next) =>
-        {
-            try
-            {
-                await next();
-            }
-            catch (Exception ex)
-            {
-                await File.AppendAllTextAsync(
-                    Path.Combine(Path.GetTempPath(), "c710-http.log"),
-                    ex + Environment.NewLine + "----" + Environment.NewLine);
-                throw;
-            }
-        });
         app.MapRunnerDefaultEndpoints();
-        app.MapAgentTaskEndpoints();
+        // The full task map includes GET /pipeline, whose service is not in this host. An
+        // unregistered parameter is inferred as a body and then fails every route on the host.
+        app.MapPost("/api/agent-tasks", async (
+            CreateAgentTaskRequest request, AgentTaskService service, CancellationToken ct) =>
+        {
+            var created = await service.CreateAsync(request, new AgentTaskService.Caller(null, null, ""), ct);
+            return Results.Created($"/api/agent-tasks/{created.Id}", created);
+        });
         await app.StartAsync();
         return new DefaultsHost(app, repo);
     }
