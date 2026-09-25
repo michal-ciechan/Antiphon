@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -79,14 +80,21 @@ public class AgentChannelServiceIntegrationTests
             var targetAdapter = new FakeAgentProtocolAdapter();
             await using var harness = BuildHarness(tempRoot, [sourceAdapter, targetAdapter]);
             harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            targetAdapter.OnSubmitted = async body =>
+            {
+                await BridgeQueueHarness.InsertEntryAsync(targetSession.Id, TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+                await BridgeQueueHarness.InsertEntryAsync(targetSession.Id, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            };
             harness.Runtime.Register(targetSession.Id, targetAdapter);
 
             sourceAdapter.Emit("@helper please inspect failing test");
 
             await WaitUntilAsync(
-                () => targetAdapter.SentInput.Contains("please inspect failing test", StringComparison.Ordinal),
+                () => harness.RouteDiagnostics.Snapshot().Any(e => e.Stage == MentionRouteDiagnostics.RouteReturned && e.Detail == "ok=true"),
                 () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
-            targetAdapter.SentInput.ShouldContain("[channel from lead]");
+            targetAdapter.SubmittedBodies.ShouldBe(["[channel from lead] please inspect failing test"]);
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == targetSession.Id && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text == "[channel from lead] please inspect failing test")).ShouldBe(1);
             harness.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "ChannelMessage"
                 && e.Group == AgentChannelGroups.Card(graph.TargetCard.Id));
             // Stages that precede SendInput — they must already be on the trail when
@@ -169,6 +177,11 @@ public class AgentChannelServiceIntegrationTests
             var targetAdapter = new FakeAgentProtocolAdapter();
             await using var harness = BuildHarness(tempRoot, [sourceAdapter, targetAdapter]);
             harness.Runtime.Register(sourceSession.Id, sourceAdapter);
+            targetAdapter.OnSubmitted = async body =>
+            {
+                await BridgeQueueHarness.InsertEntryAsync(targetSession.Id, TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+                await BridgeQueueHarness.InsertEntryAsync(targetSession.Id, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            };
             harness.Runtime.Register(targetSession.Id, targetAdapter);
 
             sourceAdapter.Emit("@helper p");
@@ -178,11 +191,12 @@ public class AgentChannelServiceIntegrationTests
             sourceAdapter.Emit("inspect failing test");
 
             await WaitUntilAsync(
-                () => targetAdapter.SentInput.Contains("please inspect failing test", StringComparison.Ordinal),
+                () => harness.RouteDiagnostics.Snapshot().Any(e => e.Stage == MentionRouteDiagnostics.RouteReturned && e.Detail == "ok=true"),
                 () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
             await Task.Delay(450);
 
             CountOccurrences(targetAdapter.SentInput, "[channel from lead]").ShouldBe(1);
+            targetAdapter.SubmittedBodies.ShouldBe(["[channel from lead] please inspect failing test"]);
         }
         finally
         {

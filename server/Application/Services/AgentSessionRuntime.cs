@@ -1264,6 +1264,41 @@ public sealed class AgentSessionRuntime
     public bool RemoteInventoryPending(string? runnerId) =>
         _directory?.RemoteInventoryPending(runnerId) ?? false;
 
+    /// <summary>A known terminal row never gains liveness from a stale membership snapshot.</summary>
+    internal bool IsLiveOrUnknown(AgentSession session) =>
+        session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping
+        && IsAcceptedRunnerBinding(session.RunnerId)
+        && (string.IsNullOrWhiteSpace(session.RunnerId) || session.RunnerId == PhoneHomeProtocol.LocalRunnerId
+            ? _testAdapters.ContainsKey(session.Id)
+                || (_directory?.Local ?? _runnerClient).ListAsync(CancellationToken.None).GetAwaiter().GetResult()
+                    .Any(s => s.SessionId == session.Id && s.Status is "Running" or "Starting")
+            : IsLiveOrUnknown(session.Id, session.RunnerId));
+
+    internal bool IsAcceptedRunnerBinding(string? runnerId) =>
+        string.IsNullOrWhiteSpace(runnerId) || runnerId == PhoneHomeProtocol.LocalRunnerId
+        || _directory is null || _directory.KnownRunnerIds.Contains(runnerId);
+
+    /// <summary>
+    /// Immediate input admission only; never retain the resolved client for the later write.
+    /// A caller with a loaded session can reuse its binding rather than read it a second time.
+    /// </summary>
+    internal async Task EnsureInputTransportAvailableAsync(
+        Guid sessionId, SessionRunnerBinding? binding, CancellationToken ct)
+    {
+        if (_directory is null) return;
+        binding ??= await _directory.GetBindingAsync(sessionId, ct);
+        if (binding is SessionRunnerBinding.Missing)
+            throw new NotFoundException(nameof(AgentSession), sessionId);
+        if (binding is SessionRunnerBinding.Remote remote)
+            _directory.Resolve(remote.Owner.RunnerId);
+    }
+
+    internal Task EnsureInputTransportAvailableAsync(AgentSession session, CancellationToken ct) =>
+        EnsureInputTransportAvailableAsync(session.Id,
+            session.RunnerId is not null && session.RunnerStoreId is Guid store && session.RunnerCwd is not null
+                ? new SessionRunnerBinding.Remote(new SessionRunnerOwner(session.RunnerId, store, session.RunnerCwd))
+                : SessionRunnerBinding.Local.Instance, ct);
+
     public bool TryGetLiveSnapshot(Guid sessionId, out AgentSessionLiveSnapshot snapshot)
     {
         try
@@ -1551,7 +1586,7 @@ public sealed class AgentSessionRuntime
             if (turn is null)
                 return;
 
-            var result = await WaitForManualTurnQuietAsync(sessionId, sequenceAtSubmit);
+            var result = await WaitForManualTurnQuietAsync(sessionId, turn.RunnerId, sequenceAtSubmit);
             await CompleteManualRunAttemptAsync(turn, result);
         }
         catch (Exception ex)
@@ -1625,19 +1660,20 @@ public sealed class AgentSessionRuntime
             session.Id,
             attempt.Id,
             cardId,
-            session.Card.BoardId);
+            session.Card.BoardId,
+            session.RunnerId);
         await PublishRunAttemptChangedAsync(turn, RunPhase.StreamingTurn);
         return turn;
     }
 
-    private async Task<ManualTurnWaitResult> WaitForManualTurnQuietAsync(Guid sessionId, long sequenceAtSubmit)
+    private async Task<ManualTurnWaitResult> WaitForManualTurnQuietAsync(Guid sessionId, string? runnerId, long sequenceAtSubmit)
     {
         var firstDeltaDeadline = UtcNow()
             + TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs));
         var sawDelta = false;
         while (UtcNow() < firstDeltaDeadline)
         {
-            if (!ListLiveOrUnknownSessions().Contains(sessionId))
+            if (!IsLiveOrUnknown(sessionId, runnerId))
                 return ManualTurnWaitResult.RuntimeMissing;
 
             if (GetRunnerSequenceOrDefault(sessionId, CancellationToken.None) > sequenceAtSubmit)
@@ -1662,7 +1698,7 @@ public sealed class AgentSessionRuntime
         while (UtcNow() < deadline)
         {
             await Task.Delay(ManualTurnPollInterval);
-            if (!ListLiveOrUnknownSessions().Contains(sessionId))
+            if (!IsLiveOrUnknown(sessionId, runnerId))
                 return ManualTurnWaitResult.RuntimeMissing;
 
             var currentSequence = GetRunnerSequenceOrDefault(sessionId, CancellationToken.None);
@@ -1797,7 +1833,8 @@ public sealed class AgentSessionRuntime
         Guid SessionId,
         Guid AttemptId,
         Guid CardId,
-        Guid BoardId);
+        Guid BoardId,
+        string? RunnerId);
 
     private enum ManualTurnWaitResult
     {

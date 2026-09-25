@@ -89,7 +89,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             host.Local,
             settings,
             connectionString is null ? new EmptyScopeFactory() : sp.GetRequiredService<IServiceScopeFactory>(),
-            clock ?? TimeProvider.System));
+            clock ?? TimeProvider.System,
+            inventoryLogger: sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>()));
         host.App = builder.Build();
         host.Directory = host.App.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
         host.App.UseWebSockets();

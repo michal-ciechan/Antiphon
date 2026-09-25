@@ -20,6 +20,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     private readonly PhoneHomeRunnerSettings _settings;
     private readonly IServiceScopeFactory _scopes;
     private readonly TimeProvider _clock;
+    private readonly PendingRunnerSessionInventory _pendingInventory;
     private readonly object _gate = new();
     private readonly Dictionary<string, Ticket> _tickets = new(StringComparer.Ordinal);
     private PhoneHomeLiveConnection? _live;
@@ -41,13 +42,16 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         IServiceScopeFactory scopes,
         TimeProvider clock,
         // CARD-0604 G-21: absent, a remote spill is typed whole rather than written anywhere.
-        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null)
+        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null,
+        ILogger<PhoneHomeRunnerDirectory>? inventoryLogger = null)
     {
         _spills = spills;
         _local = local;
         _settings = settings.Value;
         _scopes = scopes;
         _clock = clock;
+        _pendingInventory = new PendingRunnerSessionInventory(scopes, clock,
+            inventoryLogger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PhoneHomeRunnerDirectory>.Instance);
     }
 
     public ISessionRunnerClient Local => _local;
@@ -351,7 +355,27 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         lock (_gate)
             last = _lastRecovered;
         if (last is null)
-            return RemoteInventoryPending(_settings.AllowedRunnerId) ? BoundSessionIds(_settings.AllowedRunnerId) : [];
+        {
+            if (!RemoteInventoryPending(_settings.AllowedRunnerId))
+                return [];
+            IReadOnlyCollection<Guid> pending;
+            try { pending = _pendingInventory.Read(_settings.AllowedRunnerId); }
+            catch
+            {
+                // A successful first List can overtake even a failed bootstrap read.
+                lock (_gate)
+                {
+                    if (_lastRecovered is null) throw;
+                    return _lastRecovered.KnownLiveSessions();
+                }
+            }
+            lock (_gate)
+            {
+                // Include current authoritative membership: ListLiveOrUnknownSessions may have
+                // read its live half before this load blocked. Tombstones remain authoritative.
+                return _lastRecovered is { } recovered ? recovered.KnownLiveSessions() : pending;
+            }
+        }
         var live = SnapshotLive();
         if (live is not null && ReferenceEquals(live, last) && live.DispatchEligible && live.SocketOpen
             && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
@@ -366,21 +390,6 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             return false;
         lock (_gate)
             return _lastRecovered is null;
-    }
-
-    // Review f87b49a7: the list-based gates (schedule fire, channel targets, send-now) have no id
-    // to test while the inventory is pending, so the desktop's own binding record supplies them.
-    // Read only while pending; once a catch-up List has answered, the inventory speaks instead.
-    private IReadOnlyCollection<Guid> BoundSessionIds(string runnerId)
-    {
-        using var scope = _scopes.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return db.AgentSessions.AsNoTracking()
-            .Where(s => s.RunnerId == runnerId
-                && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running
-                    || s.Status == SessionStatus.Stopping))
-            .Select(s => s.Id)
-            .ToList();
     }
 
     public PhoneHomeRunnerStatusDto Status(string runnerId)

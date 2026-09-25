@@ -92,6 +92,13 @@ public sealed partial class SessionMessageQueueService
         return await _sessionProfile.ForSessionAsync(db, sessionId, ct);
     }
 
+    private static void ValidateMentionIdentity(SessionQueuedMessage existing, Guid sessionId, string? digest)
+    {
+        if (existing.AgentSessionId != sessionId || existing.Origin != QueuedMessageOrigin.Mention
+            || existing.ContentDigest != digest)
+            throw new ConflictException("Mention occurrence identity has a different destination or body.");
+    }
+
     private string NowModeFileStem() =>
         $"now-{_timeProvider.GetUtcNow().UtcDateTime:yyyyMMddHHmmss}";
 
@@ -299,7 +306,7 @@ public sealed partial class SessionMessageQueueService
     /// (CARD-0248 — the closing-line nudge records this so settle-anyway can wait on SentAt).
     /// Mode.Now creates no row and does not invoke it.
     /// </summary>
-    public async Task<SessionQueueDto> EnqueueAsync(
+    public Task<SessionQueueDto> EnqueueAsync(
         Guid sessionId, string body, MessageSendMode mode, CancellationToken ct,
         QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null,
         Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null,
@@ -319,12 +326,53 @@ public sealed partial class SessionMessageQueueService
         Guid? capacityWaitId = null,
         Guid? sourceLandNotificationId = null,
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null)
+        => EnqueueCoreAsync(sessionId, body, mode, origin, conversationKey, sourceTaskId,
+            contentDigest, noteHeader, sourceScheduleId, onCreated, deliverIfIdle, holdUntil,
+            executionDeadlineAt, executionTaskId, capacityRecoveryActionKey, capacityWaitId,
+            sourceLandNotificationId, afterLandQueueInsert, ct: ct);
+
+    internal async Task<Guid> EnqueueMentionAsync(Guid sessionId, string body, Guid occurrenceId, CancellationToken ct)
+    {
+        if (occurrenceId == Guid.Empty)
+            throw new ValidationException(nameof(occurrenceId), "A mention occurrence must have an identity.");
+        var normalized = (body ?? string.Empty).Trim().ReplaceLineEndings("\n");
+        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(normalized)));
+        var accepted = false;
+        try
+        {
+            await EnqueueCoreAsync(sessionId, normalized, MessageSendMode.WhenIdle,
+                origin: QueuedMessageOrigin.Mention, contentDigest: digest, deliverIfIdle: false,
+                onCreated: _ => accepted = true, mentionOccurrenceId: occurrenceId, ct: ct);
+        }
+        catch (Exception ex) when (accepted)
+        {
+            _logger.LogWarning(ex, "Mention {MessageId} was accepted; queue activity refresh failed", occurrenceId);
+        }
+        return occurrenceId;
+    }
+
+    private async Task<SessionQueueDto> EnqueueCoreAsync(
+        Guid sessionId, string body, MessageSendMode mode,
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null,
+        Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null,
+        Guid? sourceScheduleId = null,
+        Action<Guid>? onCreated = null,
+        bool deliverIfIdle = true,
+        DateTime? holdUntil = null,
+        DateTime? executionDeadlineAt = null, Guid? executionTaskId = null,
+        string? capacityRecoveryActionKey = null,
+        Guid? capacityWaitId = null,
+        Guid? sourceLandNotificationId = null,
+        Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
+        Guid? mentionOccurrenceId = null, CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
             throw new ValidationException(nameof(body), "Message must not be empty.");
 
-        var kind = await RequireSessionKindAsync(sessionId, ct);
+        var session = await RequireSessionAsync(sessionId, ct);
+        var kind = session.AgentKind;
         string? specialistInputPolicyJson = null;
         if (executionTaskId is { } inputTaskId)
         {
@@ -346,13 +394,7 @@ public sealed partial class SessionMessageQueueService
 
         if (mode == MessageSendMode.Now)
         {
-            if (!_runtime.ListLiveOrUnknownSessions().Contains(sessionId))
-                throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
-            if (!await IsAcceptingInputAsync(sessionId, ct))
-            {
-                throw new ConflictException(
-                    $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
-            }
+            await RequireImmediateAdmissionAsync(session, ct);
 
             // CARD-0161: resolve ceilings + blocked defer for send-now (same as flush).
             await using (var preScope = _scopeFactory.CreateAsyncScope())
@@ -375,21 +417,6 @@ public sealed partial class SessionMessageQueueService
                 }
             }
 
-            var nowBody = await SpillQueueBodyAsync(
-                sessionId, trimmed, NowModeFileStem(),
-                origin == QueuedMessageOrigin.Channel
-                    ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
-                    : null,
-                db: null, ct);
-            // CARD-0164: capture the floor BEFORE typing so Mode:Now's post-verdict grace uses the
-            // same baseline the confirm loop did (sequence when observable; wall-clock when not).
-            var nowBaseline = _verification.TranscriptConfirmEnabled
-                ? await CaptureTranscriptBaselineAsync(sessionId, ct)
-                : default;
-            DateTime? nowConfirmFrom = nowBaseline.Observable
-                ? null
-                : UtcNow() - TimeSpan.FromSeconds(
-                    Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
             // CARD-0137 S7: take the per-session lock the poll already holds, so a Mode.Now send
             // cannot interleave with a poll (or another Now) in one composer. DeliverAsync itself
             // must not take the lock — SendNowAsync and the turn-end flush already hold it.
@@ -398,8 +425,25 @@ public sealed partial class SessionMessageQueueService
             DeliveryOutcome outcome;
             try
             {
+                await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
                 await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
                 await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
+                var nowBody = await SpillQueueBodyAsync(
+                    sessionId, trimmed, NowModeFileStem(),
+                    origin == QueuedMessageOrigin.Channel
+                        ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
+                        : null,
+                    db: null, ct);
+                // CARD-0164: capture the floor BEFORE typing so Mode:Now's post-verdict grace uses the
+                // same baseline the confirm loop did (sequence when observable; wall-clock when not).
+                var nowBaseline = _verification.TranscriptConfirmEnabled
+                    ? await CaptureTranscriptBaselineAsync(sessionId, ct)
+                    : default;
+                DateTime? nowConfirmFrom = nowBaseline.Observable
+                    ? null
+                    : UtcNow() - TimeSpan.FromSeconds(
+                        Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+
                 var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
                 outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
                 if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
@@ -416,6 +460,7 @@ public sealed partial class SessionMessageQueueService
                         "Message delivery reached the transcript truncated "
                         + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
                 }
+                if (outcome.UnavailabilityCode is not null) throw PhoneHomeInputUnavailable();
                 if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
                 {
                     throw new ConflictException(
@@ -480,6 +525,17 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
+
+            if (mentionOccurrenceId is Guid occurrenceId)
+            {
+                var existing = await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == occurrenceId, ct);
+                if (existing is not null)
+                {
+                    ValidateMentionIdentity(existing, sessionId, contentDigest);
+                    onCreated?.Invoke(existing.Id);
+                    return await GetQueueAsync(sessionId, ct);
+                }
+            }
 
             if (sourceLandNotificationId is Guid notificationId)
             {
@@ -549,7 +605,7 @@ public sealed partial class SessionMessageQueueService
 
             var row = new SessionQueuedMessage
             {
-                Id = Guid.NewGuid(),
+                Id = mentionOccurrenceId ?? Guid.NewGuid(),
                 AgentSessionId = sessionId,
                 Body = trimmed,
                 Status = QueuedMessageStatus.Pending,
@@ -580,6 +636,16 @@ public sealed partial class SessionMessageQueueService
                 ? await db.Database.BeginTransactionAsync(ct)
                 : null;
             try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException ex) when (mentionOccurrenceId is not null
+                && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                db.Entry(row).State = EntityState.Detached;
+                var existing = await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == mentionOccurrenceId, ct);
+                if (existing is null) throw;
+                ValidateMentionIdentity(existing, sessionId, contentDigest);
+                onCreated?.Invoke(existing.Id);
+                return await GetQueueAsync(sessionId, ct);
+            }
             catch (DbUpdateException ex) when (sourceLandNotificationId is not null
                 && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
@@ -611,7 +677,7 @@ public sealed partial class SessionMessageQueueService
             // (FlushSessionAsync).
             var working = await IsWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
-                && _runtime.ListLiveOrUnknownSessions().Contains(sessionId)
+                && _runtime.IsLiveOrUnknown(session)
                 && !working)
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
@@ -652,17 +718,12 @@ public sealed partial class SessionMessageQueueService
         if (trimmed.Length == 0)
             throw new ValidationException(nameof(body), "Message must not be empty.");
 
-        var kind = await RequireSessionKindAsync(sessionId, ct);
+        var session = await RequireSessionAsync(sessionId, ct);
+        var kind = session.AgentKind;
         if (TryGetForbiddenReason(kind, trimmed, out var forbiddenReason))
             throw new ValidationException(nameof(body), forbiddenReason);
 
-        if (!_runtime.ListLiveOrUnknownSessions().Contains(sessionId))
-            throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
-        if (!await IsAcceptingInputAsync(sessionId, ct))
-        {
-            throw new ConflictException(
-                $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
-        }
+        await RequireImmediateAdmissionAsync(session, ct);
 
         await using (var preScope = _scopeFactory.CreateAsyncScope())
         {
@@ -691,6 +752,8 @@ public sealed partial class SessionMessageQueueService
         TranscriptBaseline nowBaseline;
         try
         {
+            await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
+            await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -755,6 +818,12 @@ public sealed partial class SessionMessageQueueService
                     + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
             }
 
+            if (outcome.UnavailabilityCode is not null)
+            {
+                db.SessionQueuedMessages.Remove(row);
+                await db.SaveChangesAsync(CancellationToken.None);
+                throw PhoneHomeInputUnavailable();
+            }
             if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
             {
                 row.Status = QueuedMessageStatus.Pending;
@@ -1069,30 +1138,10 @@ public sealed partial class SessionMessageQueueService
     /// <summary>Promote a specific queued message: deliver it immediately and remove it from the queue.</summary>
     public async Task<SessionQueueDto> SendNowAsync(Guid sessionId, Guid messageId, CancellationToken ct)
     {
-        if (!_runtime.ListLiveOrUnknownSessions().Contains(sessionId))
-            throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
-        if (!await IsAcceptingInputAsync(sessionId, ct))
-        {
-            throw new ConflictException(
-                $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
-        }
-        // CARD-0679 (review f87b49a7): after a desktop restart, before the session's runner first
-        // answers, nothing can reach it. That is a retryable wait with the message still queued,
-        // not a 409 that the session is gone or that its terminal refused the input.
-        if (_runtime.RemoteInventoryPending(await ReadRunnerIdAsync(sessionId, ct)))
-        {
-            throw new ServiceUnavailableException(
-                $"Agent session '{sessionId}' is on a runner that has not reconnected since the desktop "
-                + "started; the message stays queued.",
-                PhoneHomeProblemTypes.Unavailable);
-        }
-
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
         try
         {
-            await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
-            await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var message = await db.SessionQueuedMessages
@@ -1108,6 +1157,11 @@ public sealed partial class SessionMessageQueueService
                 throw new ConflictException(
                     "This remote-control maintenance request cannot be forced through SendNow.");
             }
+
+            await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
+            var beforeCall = db.Entry(message).CurrentValues.Clone();
+            await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
+            await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
 
             if (await IsModalBlockedAsync(sessionId, ct))
                 return await GetQueueAsync(sessionId, ct) with
@@ -1161,6 +1215,14 @@ public sealed partial class SessionMessageQueueService
             {
                 await CancelJustClaimedExpiredBriefsAsync(db, [message], ct);
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            }
+            if (outcome.UnavailabilityCode is not null)
+            {
+                // A pre-body refusal did not consume this attempt. Restore every scalar, including
+                // the OLD baseline/verdict and spill, rather than clearing prior delivery evidence.
+                db.Entry(message).CurrentValues.SetValues(beforeCall);
+                await db.SaveChangesAsync(CancellationToken.None);
+                throw PhoneHomeInputUnavailable();
             }
             if (outcome.Verdict == DeliveryVerdict.SpillBodyMissing)
                 throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
@@ -1307,9 +1369,19 @@ public sealed partial class SessionMessageQueueService
 
         // CARD-0679 (review 87af1bf6): an unknown phone-home session keeps its queued work moving;
         // a runner that is really unreachable leaves the row Pending (BackendUnreachable).
-        var live = _runtime.ListLiveOrUnknownSessions();
+        var live = _runtime.ListLiveOrUnknownSessions().ToHashSet();
+        await using (var candidateScope = _scopeFactory.CreateAsyncScope())
+        {
+            var candidateDb = candidateScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sessions = await candidateDb.AgentSessions.AsNoTracking()
+                .Where(s => candidates.Contains(s.Id) && s.Status == SessionStatus.Running)
+                .Select(s => new { s.Id, s.RunnerId }).ToListAsync(ct);
+            candidates = sessions.Where(s => _runtime.IsAcceptedRunnerBinding(s.RunnerId)
+                    && (live.Contains(s.Id) || _runtime.RemoteInventoryPending(s.RunnerId)))
+                .Select(s => s.Id).ToList();
+        }
         var flushed = 0;
-        foreach (var sessionId in candidates.Where(live.Contains))
+        foreach (var sessionId in candidates)
         {
             ct.ThrowIfCancellationRequested();
             var result = FlushResult.Nothing;
@@ -1522,16 +1594,6 @@ public sealed partial class SessionMessageQueueService
             .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
     }
 
-    private async Task<string?> ReadRunnerIdAsync(Guid sessionId, CancellationToken ct)
-    {
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await db.AgentSessions.AsNoTracking()
-            .Where(s => s.Id == sessionId)
-            .Select(s => s.RunnerId)
-            .FirstOrDefaultAsync(ct);
-    }
-
     private enum FlushResult { Nothing, Delivered, Failed, LateConfirmed }
 
     private async Task EnsureRulesAllowOrdinaryInputAsync(Guid sessionId, CancellationToken ct)
@@ -1693,10 +1755,20 @@ public sealed partial class SessionMessageQueueService
         CancellationToken ct,
         LateConfirmCollector? lateConfirmed = null)
     {
+        var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (rulesSession is null || !_runtime.IsLiveOrUnknown(rulesSession)) return FlushResult.Nothing;
+        try { await _runtime.EnsureInputTransportAvailableAsync(rulesSession, ct); }
+        catch (ServiceUnavailableException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable)
+        {
+            return FlushResult.Nothing;
+        }
         using var rulesScope = _scopeFactory.CreateScope();
         var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
-        if (rules is not null) await rules.ReconcileAsync(sessionId, ct);
-        var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (rules is not null)
+        {
+            await rules.ReconcileAsync(sessionId, ct);
+            rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        }
         // CARD-0574 D-10: one automatic admission predicate. Never type into a session that is
         // not Running. Starting means the launch's ready probe has not seen an idle composer;
         // Created has no process; Stopping/Stopped/Failed are written only by kill and failure.
@@ -2800,7 +2872,8 @@ public sealed partial class SessionMessageQueueService
     }
 
     private readonly record struct DeliveryOutcome(
-        DeliveryVerdict Verdict, string? RecordText = null, string ConfirmedBy = DeliveryConfirmedBy.None)
+        DeliveryVerdict Verdict, string? RecordText = null, string ConfirmedBy = DeliveryConfirmedBy.None,
+        string? UnavailabilityCode = null)
     {
         public static DeliveryOutcome Delivered { get; } = new(DeliveryVerdict.Delivered);
         public static DeliveryOutcome Of(DeliveryVerdict verdict, string? recordText = null) =>
@@ -2859,6 +2932,14 @@ public sealed partial class SessionMessageQueueService
         public static LateConfirmCounts Empty { get; } = new(0, 0, [], []);
         public int Handled => Confirmed + Truncated;
     }
+
+    private static ServiceUnavailableException PhoneHomeInputUnavailable() => new(
+        "Phone-home runner is unavailable; no message body was sent. Retry when the runner reconnects.",
+        PhoneHomeProblemTypes.Unavailable);
+
+    private static bool IsPreBodyPhoneHomeUnavailable(Exception ex) =>
+        ex is ServiceUnavailableException { Code: PhoneHomeProblemTypes.Unavailable }
+        or PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosedBeforeSend };
 
     private static bool IsHerdrUnreachable(Exception ex) =>
         ex is ServiceUnavailableException { Code: HerdrProblemTypes.Unreachable }
@@ -3166,83 +3247,94 @@ public sealed partial class SessionMessageQueueService
         // attempt and its floor so the next flush can recover without typing the body again.
         catch (Exception ex) when (IsHerdrUnreachable(ex))
         {
-            return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
+            return new DeliveryOutcome(DeliveryVerdict.BackendUnreachable,
+                UnavailabilityCode: IsPreBodyPhoneHomeUnavailable(ex) ? PhoneHomeProblemTypes.Unavailable : null);
         }
         catch (RemoteSpillUndeliverableException)
         {
             return DeliveryOutcome.Of(DeliveryVerdict.SpillBodyMissing);
         }
 
-        if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
+        try
         {
-            // CARD-0137 S5: reactive overlay recovery. One-shot, idle-gated Esc-and-retype.
-            // The Esc is gated on working == false AFTER a fresh CatchUpTranscriptAsync pull —
-            // a session parked on a tool-permission modal is mid-turn, so working is true and
-            // no Esc is sent. Re-typing is legal here: Enter was withheld, so nothing submitted.
-            var recovered = false;
-            if (overlayRecovery
-                && !overlayDismissed
-                && kind is { } recoverKind
-                && await TryDismissOverlayAsync(sessionId, recoverKind, ct))
+            if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
             {
-                if (_runtime.TryGetLiveSnapshot(sessionId, out var recoveredSnap))
-                    before = recoveredSnap;
-                try
+                // CARD-0137 S5: reactive overlay recovery. One-shot, idle-gated Esc-and-retype.
+                // The Esc is gated on working == false AFTER a fresh CatchUpTranscriptAsync pull —
+                // a session parked on a tool-permission modal is mid-turn, so working is true and
+                // no Esc is sent. Re-typing is legal here: Enter was withheld, so nothing submitted.
+                var recovered = false;
+                if (overlayRecovery
+                    && !overlayDismissed
+                    && kind is { } recoverKind
+                    && await TryDismissOverlayAsync(sessionId, recoverKind, ct))
                 {
-                    await _runtime.SendInputAsync(sessionId, payload, ct);
+                    if (_runtime.TryGetLiveSnapshot(sessionId, out var recoveredSnap))
+                        before = recoveredSnap;
+                    try
+                    {
+                        await _runtime.SendInputAsync(sessionId, payload, ct);
+                    }
+                    catch (RemoteSpillUndeliverableException)
+                    {
+                        return DeliveryOutcome.Of(DeliveryVerdict.SpillBodyMissing);
+                    }
+                    recovered = await WaitForComposerEvidenceAsync(
+                        sessionId, before.RenderedScreen, trimmed, ct);
+                    if (recovered)
+                    {
+                        _logger.LogInformation(
+                            "Overlay recovery restored composer evidence for session {SessionId} after one Esc",
+                            sessionId);
+                    }
                 }
-                catch (RemoteSpillUndeliverableException)
+
+                if (!recovered)
                 {
-                    return DeliveryOutcome.Of(DeliveryVerdict.SpillBodyMissing);
-                }
-                recovered = await WaitForComposerEvidenceAsync(
-                    sessionId, before.RenderedScreen, trimmed, ct);
-                if (recovered)
-                {
-                    _logger.LogInformation(
-                        "Overlay recovery restored composer evidence for session {SessionId} after one Esc",
-                        sessionId);
+                    _logger.LogWarning(
+                        "Delivery verification failed for session {SessionId}: body ({Length} chars) produced no "
+                        + "composer evidence within {Timeout}s — submit Enter withheld",
+                        sessionId, trimmed.Length, _verification.EvidenceTimeoutSeconds);
+                    return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
                 }
             }
 
-            if (!recovered)
+            var submitBaseline = verify
+                ? await SettlePostEvidenceAsync(sessionId, ct)
+                : default;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
+            // CARD-0693: the body already left, so an unreachable runner here is not a refund (see
+            // the body write above): it propagates and the attempt keeps its floor.
+            await _runtime.SendInputAsync(sessionId, "\r", ct);
+
+            if (confirmTranscript)
+            {
+                return await WaitForTranscriptConfirmAsync(
+                    sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
+                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt);
+            }
+
+            // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
+            if (submitBaseline.Sequence is { } advanceFrom
+                && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
             {
                 _logger.LogWarning(
-                    "Delivery verification failed for session {SessionId}: body ({Length} chars) produced no "
-                    + "composer evidence within {Timeout}s — submit Enter withheld",
-                    sessionId, trimmed.Length, _verification.EvidenceTimeoutSeconds);
-                return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
+                    "Delivery verification failed for session {SessionId}: submit Enter produced no output "
+                    + "within {Timeout}s",
+                    sessionId, _verification.PostSubmitAdvanceTimeoutSeconds);
+                return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
             }
+
+            return DeliveryOutcome.Delivered;
         }
-
-        var submitBaseline = verify
-            ? await SettlePostEvidenceAsync(sessionId, ct)
-            : default;
-
-        await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
-        // CARD-0693: the body already left, so an unreachable runner here is not a refund (see
-        // the body write above): it propagates and the attempt keeps its floor.
-        await _runtime.SendInputAsync(sessionId, "\r", ct);
-
-        if (confirmTranscript)
+        catch (Exception ex) when (IsPreBodyPhoneHomeUnavailable(ex))
         {
-            return await WaitForTranscriptConfirmAsync(
-                sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
-                ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt);
+            // The body already reached the transport. A later unavailable Enter is uncertainty,
+            // never the unchanged-state admission refusal used for a body that did not leave.
+            throw new PhoneHomeTransportException(PhoneHomeProblemTypes.ConnectionClosedInFlight,
+                "The message body was written but submission is uncertain; retained attempt evidence must be reconciled.");
         }
-
-        // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
-        if (submitBaseline.Sequence is { } advanceFrom
-            && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
-        {
-            _logger.LogWarning(
-                "Delivery verification failed for session {SessionId}: submit Enter produced no output "
-                + "within {Timeout}s",
-                sessionId, _verification.PostSubmitAdvanceTimeoutSeconds);
-            return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
-        }
-
-        return DeliveryOutcome.Delivered;
     }
 
     /// <summary>
@@ -4665,12 +4757,22 @@ public sealed partial class SessionMessageQueueService
                 && e.ResolvedAt == null, ct);
     }
 
-    private async Task<AgentKind> RequireSessionKindAsync(Guid sessionId, CancellationToken ct)
+    private async Task<AgentSession> RequireSessionAsync(Guid sessionId, CancellationToken ct)
     {
-        var kind = await TryGetSessionKindAsync(sessionId, ct);
-        if (kind is null)
-            throw new NotFoundException(nameof(AgentSession), sessionId);
-        return kind.Value;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct)
+            ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+    }
+
+    private async Task RequireImmediateAdmissionAsync(AgentSession session, CancellationToken ct)
+    {
+        if (!_runtime.IsLiveOrUnknown(session))
+            throw new ConflictException($"Agent session '{session.Id}' is not live; cannot send now.");
+        // An active remote Starting row still gets the transport refusal before terminal readiness.
+        await _runtime.EnsureInputTransportAvailableAsync(session, ct);
+        if (session.Status != SessionStatus.Running)
+            throw new ConflictException($"Agent session '{session.Id}' is still starting; its terminal is not ready for input yet.");
     }
 
     private async Task<AgentKind?> TryGetSessionKindAsync(Guid sessionId, CancellationToken ct)

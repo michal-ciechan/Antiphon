@@ -66,7 +66,7 @@ public class SessionQueuedMessage
     /// </summary>
     public Guid? SourceScheduleId { get; set; }
 
-    /// <summary>The normalized digest of the raw report carried by a completion note.</summary>
+    /// <summary>The normalized digest of a completion report, or the immutable normalized body of a Mention occurrence.</summary>
     public string? ContentDigest { get; set; }
 
     /// <summary>The exact non-report prefix of a completion note.</summary>

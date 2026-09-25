@@ -244,6 +244,18 @@ that queue response. Terminal-task briefs with an empty composer are canceled by
 `WhenIdle`, which holds until the agent finishes its turn). That queue owns the delivery contract —
 LF, bracketed paste, and a separate Enter — and the delivery verification that goes with it.
 
+For a phone-home session, Mode `Now` and
+`POST /api/sessions/{id}/messages/{messageId}/send-now` return retryable HTTP 503 with code
+`phone_home_unavailable` while the runner cannot dispatch (before first List, reconnecting,
+closed socket or expired lease). This refusal means no body was sent: Now inserts nothing and
+send-now preserves the queued row and all previous attempt evidence. A connection loss after
+body transmission retains that evidence for queue recovery; do not replay uncertain input as a
+new message. Stale inventory alone does not refuse an otherwise dispatchable connection.
+`WhenIdle` input remains accepted during an outage. Accepted @mentions use the same durable
+queue, one occurrence per turn; their activity event is acceptance, not a delivery receipt.
+Pending membership is cached for five seconds; a known active session omitted by that cache is
+still unknown until the runner supplies authoritative inventory.
+
 `POST /api/sessions/{id}/input` (`{"input":"..."}`) is a raw keystroke bypass, and the runner's
 `POST :17204/sessions/{id}/input` is a further bypass beneath that. Neither is for work bodies:
 they skip the paste contract and nothing records whether the prompt landed. CARD-0514 automatic

@@ -509,8 +509,7 @@ public class PhoneHomeStrandedQueueTests
 
     // Review f87b49a7, channel targets: both the direct send and the @mention lookup read the
     // list, so in the window the session did not exist (NotFound; "No live target matched").
-    // Channel input is typed, not queued: until the runner is back the send is refused as
-    // retryable (phone_home_unavailable), and the same target is reached once it is.
+    // Explicit channel input remains immediate and retryable; mentions are accepted durably.
     [Test]
     public async Task A_desktop_restart_before_the_first_List_does_not_lose_a_channel_target()
     {
@@ -530,14 +529,13 @@ public class PhoneHomeStrandedQueueTests
             sendRefused.ShouldBeOfType<ServiceUnavailableException>(
                 $"the target exists; only its runner is not back yet: {sendRefused}")
                 .Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
-            var routeRefused = await CaptureAsync(() => channel.RouteMentionAsync(source, mention, CancellationToken.None));
-            routeRefused.ShouldBeOfType<ServiceUnavailableException>(
-                $"the mention matched its target; only its runner is not back yet: {routeRefused}")
-                .Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+            (await channel.RouteMentionAsync(source, mention, CancellationToken.None)).ShouldBeTrue();
+            (await ReadRowContainingAsync(schema.ConnectionString, h.SessionId, mentioned)).Status.ShouldBe(QueuedMessageStatus.Pending);
         }
 
         await using var peer = await host.ConnectPeerAsync();
         peer.Sessions.Add(RunningOnRunner(h.SessionId));
+        EchoSubmittedPromptsToTranscript(peer, h);
         using var stop = new CancellationTokenSource();
         (await Pump(host, h).RunCycleAsync(stop.Token)).ShouldBeTrue("the first catch-up List answered");
 
@@ -545,7 +543,7 @@ public class PhoneHomeStrandedQueueTests
         {
             var channel = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
             await channel.SendToSessionAsync(null, h.SessionId, direct, CancellationToken.None);
-            (await channel.RouteMentionAsync(source, mention, CancellationToken.None)).ShouldBeTrue();
+            await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
         }
 
         TypedCount(peer, direct).ShouldBe(1);

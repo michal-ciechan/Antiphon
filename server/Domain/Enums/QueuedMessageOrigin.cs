@@ -50,4 +50,7 @@ public enum QueuedMessageOrigin
     /// NOT batch: two schedules firing together are two turns, not one merged prompt.
     /// </summary>
     Scheduled = 6,
+
+    /// <summary>A durable accepted @mention; one occurrence per turn, recovered by the queue.</summary>
+    Mention = 7,
 }

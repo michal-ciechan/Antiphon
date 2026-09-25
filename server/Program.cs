@@ -284,7 +284,8 @@ try
         sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<TimeProvider>(),
-        sp.GetRequiredService<RemoteSpillCourier>()));
+        sp.GetRequiredService<RemoteSpillCourier>(),
+        sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>()));
     builder.Services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<ISessionRunnerClient, RoutingSessionRunnerClient>();
     // The /events SSE stream must never hit HttpClient.Timeout (a long-lived response is not a
