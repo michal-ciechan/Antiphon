@@ -48,6 +48,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // a hand-built harness without one simply never skips the /remote-control send.
     private readonly IRcBridgeProbe? _rcProbe;
     private readonly ILaunchOwnership? _launchOwnership;
+    // CARD-0679 D-8: the eligibility probe for a remote launch that lost its connection. Null in a
+    // local-only world, where the launch keeps today's single attempt.
+    private readonly ISessionRunnerDirectory? _directory;
+    private readonly PhoneHomeRunnerSettings _phoneHome;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
 
@@ -70,7 +74,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         ILaunchOwnership? launchOwnership = null,
         // CARD-0312 S3: configuration only, so a ready-failure message can name the context
         // fullness that explains it. Optional; absent, the message is exactly today's.
-        IOptions<ContextWindowSettings>? contextWindow = null)
+        IOptions<ContextWindowSettings>? contextWindow = null,
+        ISessionRunnerDirectory? directory = null,
+        IOptions<PhoneHomeRunnerSettings>? phoneHome = null)
     {
         _db = db;
         _worktreeManager = worktreeManager;
@@ -89,6 +95,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _rcProbe = rcProbe;
         _launchOwnership = launchOwnership;
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
+        _directory = directory;
+        _phoneHome = phoneHome?.Value ?? new PhoneHomeRunnerSettings();
     }
 
     /// <summary>
@@ -457,10 +465,84 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             EnsureHerdrLaunchAllowed(session, spec);
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await AdmitWorkspaceAsync(session, ct);
-            await adapter.StartAsync(spec, ct);
 
-            await CaptureGrokRulesReceiptAsync(session, ct);
-            await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
+            // CARD-0679 D-8: for a remote session the Start-to-ready segment survives a lost
+            // phone-home connection. Nothing has been typed yet, so a loss after the runner
+            // acknowledged the Launch re-attaches to the session it holds, and a loss before the ack
+            // sends the same Launch (same generation fence) again. The row stays Starting throughout.
+            var remoteRunnerId = _directory is not null && !string.IsNullOrWhiteSpace(session.RunnerId)
+                ? session.RunnerId
+                : null;
+            var retries = Math.Max(0, _phoneHome.LaunchTransportRetries);
+            var waited = TimeSpan.Zero;
+            var reattach = false;
+            var receiptCaptured = false;
+            var launchMayHaveLanded = false;
+            for (var attempt = 1; ; attempt++)
+            {
+                var acked = reattach;
+                try
+                {
+                    adapter ??= _adapterFactory.Create(session.AgentKind, session.RunnerId);
+                    if (reattach)
+                    {
+                        await ((IAttachableProtocolAdapter)adapter).AttachAsync(session.Id, ct);
+                    }
+                    else
+                    {
+                        await adapter.StartAsync(spec, ct);
+                        acked = true;
+                    }
+
+                    if (!receiptCaptured)
+                    {
+                        await CaptureGrokRulesReceiptAsync(session, ct);
+                        receiptCaptured = true;
+                    }
+
+                    await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
+                    break;
+                }
+                // A re-attach wraps its Get failure ("Cannot attach: ..."), so its cause is read too.
+                catch (Exception ex) when (remoteRunnerId is not null
+                    && !ct.IsCancellationRequested
+                    && (PhoneHomeTransportLoss.Is(ex)
+                        || (reattach && ex.InnerException is { } cause && PhoneHomeTransportLoss.Is(cause))))
+                {
+                    var phase = acked ? RemoteLaunchTransportLostException.PostAck : RemoteLaunchTransportLostException.PreAck;
+                    launchMayHaveLanded |= acked
+                        || ex is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosedInFlight };
+                    // Never a kill: the session the runner holds is the one a retry re-attaches to.
+                    var attachable = adapter is null or IAttachableProtocolAdapter;
+                    if (adapter is not null)
+                        await adapter.DisposeAsync();
+                    adapter = null;
+                    await RecordLaunchTransportLossAsync(session, remoteRunnerId, phase, attempt, ex, ct);
+
+                    int? timedOutAfter = null;
+                    if (attempt <= retries && (!acked || attachable))
+                    {
+                        var (eligible, spent) = await WaitForRunnerEligibleAsync(remoteRunnerId, ct);
+                        waited += spent;
+                        if (eligible)
+                        {
+                            reattach = acked;
+                            continue;
+                        }
+
+                        timedOutAfter = Math.Max(1, _phoneHome.LaunchReattachWaitSeconds);
+                    }
+
+                    var lost = new RemoteLaunchTransportLostException(
+                        remoteRunnerId, phase, attempt, retries, waited, timedOutAfter, ex);
+                    // The runner holds (or may hold) the session under this generation and no
+                    // connection can carry the kill now, so it is sent when the runner is back.
+                    if (launchMayHaveLanded)
+                        await RecordLaunchDeferredKillAsync(session, remoteRunnerId, acceptedGeneration, lost);
+                    throw lost;
+                }
+            }
+
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
@@ -554,6 +636,74 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
 
             throw;
+        }
+    }
+
+    private static readonly TimeSpan LaunchReattachPollInterval = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// CARD-0679 D-8: one lost connection inside a remote launch, as a Warning log line and, when the
+    /// session serves a Dispatched task, a Warning event on that task.
+    /// </summary>
+    private async Task RecordLaunchTransportLossAsync(
+        AgentSession session, string runnerId, string phase, int attempt, Exception loss, CancellationToken ct)
+    {
+        _logger.LogWarning(loss,
+            "Remote launch of session {SessionId} on runner {RunnerId} lost its phone-home connection {Phase} "
+            + "(attempt {Attempt})",
+            session.Id, runnerId, phase, attempt);
+        var task = await _db.AgentTasks
+            .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
+            .OrderByDescending(t => t.DispatchedAt)
+            .FirstOrDefaultAsync(ct);
+        if (task is null)
+            return;
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = $"remote launch on runner '{runnerId}' lost its phone-home connection {phase} (attempt {attempt}); "
+                + (phase == RemoteLaunchTransportLostException.PostAck ? "re-attach" : "re-launch")
+                + " is bounded by the transport retries",
+            At = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// CARD-0679 D-8: polls until the runner is dispatch-eligible with an open socket, up to
+    /// <see cref="PhoneHomeRunnerSettings.LaunchReattachWaitSeconds"/> on this service's clock.
+    /// </summary>
+    private async Task<(bool Eligible, TimeSpan Waited)> WaitForRunnerEligibleAsync(string runnerId, CancellationToken ct)
+    {
+        var limit = TimeSpan.FromSeconds(Math.Max(1, _phoneHome.LaunchReattachWaitSeconds));
+        var started = _timeProvider.GetTimestamp();
+        while (true)
+        {
+            var waited = _timeProvider.GetElapsedTime(started);
+            if (_directory!.DeclaredCapacity(runnerId) is not null)
+                return (true, waited);
+            if (waited >= limit)
+                return (false, waited);
+            var remaining = limit - waited;
+            await Task.Delay(remaining < LaunchReattachPollInterval ? remaining : LaunchReattachPollInterval, _timeProvider, ct);
+        }
+    }
+
+    private async Task RecordLaunchDeferredKillAsync(
+        AgentSession session, string runnerId, DateTime acceptedGeneration, RemoteLaunchTransportLostException lost)
+    {
+        try
+        {
+            await RunnerSlotService.RecordDeferredKillAsync(
+                _db, runnerId, session.Id, acceptedGeneration,
+                $"failed launch after transport loss: {lost.Message}", CancellationToken.None);
+        }
+        catch (Exception recordEx)
+        {
+            _logger.LogError(recordEx,
+                "Recording the deferred kill for remote session {SessionId} failed", session.Id);
         }
     }
 
