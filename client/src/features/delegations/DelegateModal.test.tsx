@@ -257,4 +257,75 @@ describe('DelegateModal', () => {
 
     expect(screen.getByRole('button', { name: 'Delegate' })).toBeDisabled()
   })
+
+  it('lists runners only from the catalogue', async () => {
+    server.use(http.get('/api/session-runners', () => HttpResponse.json([runnerRow('server2', 'linux')])))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    await userEvent.click(screen.getByTestId('delegate-runner'))
+    expect(await screen.findByRole('option', { name: /server2/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /^Desktop/ })).not.toBeInTheDocument()
+  })
+
+  it('reads a conflict from the catalogue platform', async () => {
+    server.use(http.get('/api/session-runners', () => HttpResponse.json([
+      runnerRow('desktop', 'linux', 'Desktop'),
+    ])))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    await userEvent.click(screen.getByTestId('delegate-platform'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Windows' }))
+    await userEvent.click(screen.getByTestId('delegate-runner'))
+    const desktops = await screen.findAllByRole('option', { name: /^Desktop/ })
+    expect(desktops).toHaveLength(1)
+    expect(desktops[0]).toHaveTextContent('linux')
+    await userEvent.click(desktops[0])
+    expect(screen.getByTestId('delegate-platform-conflict')).toHaveTextContent('linux')
+    expect(screen.getByRole('button', { name: 'Delegate' })).toBeDisabled()
+  })
+
+  it('treats an unknown catalogue platform as no conflict', async () => {
+    server.use(http.get('/api/session-runners', () => HttpResponse.json([
+      runnerRow('desktop', null, 'Desktop'),
+    ])))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    await userEvent.click(screen.getByTestId('delegate-platform'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Windows' }))
+    await userEvent.click(screen.getByTestId('delegate-runner'))
+    await userEvent.click(await screen.findByRole('option', { name: /platform unknown/ }))
+    expect(screen.queryByTestId('delegate-platform-conflict')).not.toBeInTheDocument()
+  })
+
+  it('shows a stale create 409 and keeps the draft open', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    server.use(http.post('/api/agent-tasks', () => HttpResponse.json(
+      { title: 'concurrency_conflict', detail: 'The card changed. Reload and try again.' },
+      { status: 409 },
+    )))
+    const onClose = vi.fn()
+    renderWithProviders(<DelegateModal opened onClose={onClose} />)
+    await userEvent.type(screen.getByLabelText('Goal'), 'keep this draft')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'red', message: expect.stringContaining('card changed') }),
+    ))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Goal')).toHaveValue('keep this draft')
+  })
 })
+
+function runnerRow(id: string, platform: string | null, displayName = id) {
+  return {
+    runnerId: id,
+    displayName,
+    platform,
+    platformObservedAt: null,
+    available: true,
+    dispatchEligible: true,
+    unavailableReason: null,
+    capacity: 4,
+    occupied: 0,
+    capacityKind: 'sessions',
+    capacityObservedAt: null,
+    stale: false,
+    features: ['required-platform-v1'],
+  }
+}

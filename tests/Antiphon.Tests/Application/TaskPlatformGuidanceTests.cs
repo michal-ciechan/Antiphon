@@ -48,9 +48,21 @@ public sealed class RunnerDefaultGuidanceTests
         plan.ShouldContain("desktop / Windows");
         plan.ShouldContain("| CP-2 |");
         plan.ShouldContain("server2");
-        var code = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", "stage-code.md"));
-        code.ShouldContain("CP-13");
-        code.ShouldContain("-Platform Windows");
+        foreach (var name in new[] { "orchestrator.md", "stage-plan.md", "stage-code.md", "stage-review.md", "stage-mutation.md" })
+        {
+            var text = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", name));
+            text.ShouldContain("-Platform Windows");
+            text.ShouldNotContain("CP-13", $"{name} must not name this card's Windows rows");
+            text.ShouldNotContain("server2", $"{name} must not embed a fleet location");
+        }
+    }
+
+    [Test]
+    public void Reroute_diagnostic_names_codex()
+    {
+        var text = File.ReadAllText(Path.Combine(Root(), "server", "Application", "Services", "AgentTaskService.cs"));
+        text.ShouldNotContain("Reroute to Grok or ClaudeCode.");
+        text.ShouldContain("Reroute to Grok, ClaudeCode or Codex.");
     }
 
     [Test]

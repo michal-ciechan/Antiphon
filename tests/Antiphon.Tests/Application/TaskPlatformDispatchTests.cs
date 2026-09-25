@@ -182,6 +182,60 @@ public sealed class TaskPlatformDispatchTests
         task.Status.ShouldBe(AgentTaskStatus.Blocked);
         task.FailureReason.ShouldContain(RunnerPlatformProblems.Mismatch);
         task.RequiredPlatform.ShouldBe(RequiredPlatform.Linux);
+        task.AgentSessionId.ShouldBeNull();
+        var agent = await read.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Test]
+    public async Task Reused_process_hold_leaves_the_warm_agent_idle()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running, Cwd = workspace.Path, Cols = 80, Rows = 24,
+                CreatedAt = now, StartedAt = now, LastSeenAt = now,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, Name = "warm-hold", Slug = "warm-hold", WorkingDirectory = workspace.Path,
+                Details = "warm", Status = AgentStatus.Idle, Kind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true, PoolIdleSince = now.AddMinutes(-5),
+                PersistentSessionId = sessionId.ToString("D"), LaunchEnvJson = "{}",
+                CreatedAt = now, UpdatedAt = now,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId, RootTaskId = taskId, Title = "hold", Goal = "do not keep a running agent on a hold",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Medium, Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path, AgentId = agentId, RequiredPlatform = RequiredPlatform.Linux,
+                Status = AgentTaskStatus.Queued, ReplyTo = AgentTaskReplyTo.None,
+                CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var (dispatcher, sink) = CreateDispatcher(schema, new HoldingDirectory());
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        sink.Inputs.ShouldBeEmpty();
+        await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Queued);
+        task.AgentSessionId.ShouldBeNull();
+        task.FailureReason.ShouldBeNull();
+        (await read.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
+        (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched))
+            .ShouldBe(0);
     }
 
     [Test]
@@ -319,6 +373,29 @@ public sealed class TaskPlatformDispatchTests
                 "desktop", "Desktop", platform, DateTimeOffset.UtcNow, true, true, false, null,
                 new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
                     Features: [RunnerPlatformWire.Feature], Platform: platform)));
+        }
+        public ISessionRunnerClient Resolve(string? runnerId) => Local;
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerOwner?>(null);
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Missing.Instance);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("unused"));
+    }
+
+    private sealed class HoldingDirectory : ISessionRunnerDirectory
+    {
+        private int _calls;
+        public ISessionRunnerClient Local { get; } = new PhoneHomeTestHost.RecordingLocalClient();
+        public IReadOnlyList<string> KnownRunnerIds => ["desktop"];
+        public Guid? GetLiveStoreId(string? runnerId) => null;
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
+        {
+            var eligible = Interlocked.Increment(ref _calls) == 1;
+            return Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(
+                "desktop", "Desktop", "linux", DateTimeOffset.UtcNow, eligible, eligible, !eligible, null,
+                new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                    Features: [RunnerPlatformWire.Feature], Platform: "linux")));
         }
         public ISessionRunnerClient Resolve(string? runnerId) => Local;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
