@@ -17,6 +17,15 @@ public static class PhoneHomeProtocol
     public const int DefaultMaxPendingEventBytes = 16 * 1024 * 1024;
     public const int DefaultHeartbeatSeconds = 15;
     public const int DefaultLeaseSeconds = 90;
+
+    /// <summary>CARD-0716 D-1: how long a stopping host waits for the close handshake before Abort.</summary>
+    public const int CloseHandshakeSeconds = 3;
+}
+
+/// <summary>CARD-0716 D-1: close-frame descriptions the runner can tell apart without parsing prose.</summary>
+public static class PhoneHomeCloseReasons
+{
+    public const string ServerStopping = "server_stopping";
 }
 
 public enum PhoneHomeOperation
