@@ -269,6 +269,9 @@ public sealed class WorktreeGuardedCleanupTests
     public async Task C665_JunctionSwappedInBetweenReadingsIsRefused()
     {
         await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        // A directory-only ignore does not cover every host's representation of a link.
+        // Ignore the entry itself so the second reading exercises the reparse guard.
+        await File.AppendAllTextAsync(Path.Combine(h.Operation.CommonDirectory, "info", "exclude"), "\nbin-private\n");
         var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside")).FullName;
         await File.WriteAllTextAsync(Path.Combine(outside, "a.dll"), "outside bytes");
         var directory = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Source, "bin-private")).FullName;
@@ -350,9 +353,17 @@ public sealed class WorktreeGuardedCleanupTests
     public async Task C665_EmptyUnlistedJunctionTargetSurvivesRemoval()
     {
         await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
+        await File.AppendAllTextAsync(Path.Combine(h.Operation.CommonDirectory, "info", "exclude"), "\nbin-link\n");
         var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside-empty")).FullName;
         using var link = DirectoryLink.TryCreate(Path.Combine(h.H.Fixture.Source, "bin-link"), outside);
         if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
+        var listed = await h.H.Fixture.RequiredAsync(h.H.Fixture.Source,
+            "ls-files", "--others", "--ignored", "--exclude-standard", "-z");
+        if (listed.Split('\0', StringSplitOptions.RemoveEmptyEntries).Contains("bin-link"))
+        {
+            Skip.Test("This host's Git lists the empty directory link; the unlisted-junction boundary requires Windows review.");
+            return;
+        }
         var reads = 0; var written = false;
         h.OtherCommand = async (repo, args) => {
             if (repo == h.H.Fixture.Source && args[0] == "status" && h.Removes == 0) reads++;
