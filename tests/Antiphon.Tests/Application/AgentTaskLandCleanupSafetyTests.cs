@@ -175,10 +175,24 @@ public sealed class AgentTaskLandCleanupSafetyTests
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", h.Fixture.Source);
         if (deleteBranch) await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "-d", h.Fixture.SourceRef);
         await h.RunAsync();
-        (await h.OperationAsync()).ShouldBeNull();
         await using var db = h.CreateContext();
-        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(1);
-        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent))).ShouldBe(0);
+        if (deleteBranch)
+        {
+            // Without the branch there is no source to land: refused before any operation or receipt.
+            (await h.OperationAsync()).ShouldBeNull();
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(1);
+            (await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId)).SourceRefusalReason.ShouldBe("source_ref_missing");
+        }
+        else
+        {
+            // CARD-0688 D-2: the source is the branch ref, so a task whose worktree is already gone lands from it;
+            // the publication receipt then authorizes cleanup of the absent components and the branch delete.
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+            op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.AlreadyPresent)).ShouldBe(1);
+            (await h.Fixture.Git.RunAsync(h.Fixture.Repository, ["show-ref", "--exists", h.Fixture.SourceRef], CancellationToken.None)).ExitCode.ShouldBe(2);
+        }
         await h.Fixture.AssertRemoteSourceAsync();
     }
 

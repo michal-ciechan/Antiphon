@@ -294,7 +294,8 @@ public sealed class AgentTaskLandService
                 .OrderBy(e => e.At).LastOrDefault();
             var profile = gitScope.Profile;
             var phases = PhaseSeconds(task.ActiveLandingId is Guid landed
-                ? _db.ChangeTracker.Entries<AgentTaskLanding>().Select(e => e.Entity).FirstOrDefault(o => o.Id == landed) : null);
+                ? _db.ChangeTracker.Entries<AgentTaskLanding>().Select(e => e.Entity).FirstOrDefault(o => o.Id == landed) : null,
+                _protocol?.LastResetSeconds);
             _logger.LogInformation(
                 "Land git profile task={TaskId} request={RequestId} outcome={Outcome} wallSeconds={WallSeconds} processes={Processes} "
                 + "worktreeList={WorktreeList} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} "
@@ -962,13 +963,15 @@ public sealed class AgentTaskLandService
     }
 
     /// <summary>CARD-0688 D-11: per-phase wall seconds from the operation's own timestamps; "-" when a phase did not run.</summary>
-    internal static (string Reset, string Rebase, string Verify, string Push, string Canonical, string Cleanup) PhaseSeconds(AgentTaskLanding? op)
+    internal static (string Reset, string Rebase, string Verify, string Push, string Canonical, string Cleanup) PhaseSeconds(
+        AgentTaskLanding? op, double? resetSeconds = null)
     {
         static string Span(DateTime? start, DateTime? end) => start is { } s && end is { } e
             ? Math.Round(Math.Max(0, (e - s).TotalSeconds), 2).ToString(System.Globalization.CultureInfo.InvariantCulture) : "-";
-        if (op is null) return ("-", "-", "-", "-", "-", "-");
-        return (Span(op.RebaseStartedAt, op.LandWorkspaceReadyAt),
-            Span(op.LandWorkspaceReadyAt ?? op.RebaseStartedAt, op.PreparedAt), Span(op.VerificationStartedAt, op.VerifiedAt),
+        if (op is null) return (resetSeconds is null ? "-" : Math.Round(resetSeconds.Value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture), "-", "-", "-", "-", "-");
+        // The reset is timed in-process (RebaseStartedAt keeps meaning rebase intent, after the reset).
+        var reset = resetSeconds is { } r ? Math.Round(r, 2).ToString(System.Globalization.CultureInfo.InvariantCulture) : "-";
+        return (reset, Span(op.RebaseStartedAt, op.PreparedAt), Span(op.VerificationStartedAt, op.VerifiedAt),
             Span(op.PushStartedAt, op.RemoteConfirmedAt), Span(op.CanonicalAdvanceStartedAt, op.CanonicalAdvancedAt ?? (op.CanonicalAdvanceReason is null ? null : op.CleanupStartedAt)),
             Span(op.CleanupStartedAt, op.CleanupCompletedAt));
     }
