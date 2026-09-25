@@ -63,6 +63,10 @@ const ALL_KINDS: AttentionKind[] = [
   'StandingSpecialistHealth',
   'RemoteControlModal',
   'CompactionContinuationStalled',
+  'PoolDelegateUnreleased',
+  'SessionStopStuck',
+  'SessionUnowned',
+  'ZombieCensusReport',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -83,6 +87,16 @@ function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): A
 }
 
 describe('attentionVisuals', () => {
+  it.each([
+    ['PoolDelegateUnreleased', 'Error', 'broken'],
+    ['SessionStopStuck', 'Error', 'broken'],
+    ['SessionUnowned', 'Warning', 'review'],
+    ['ZombieCensusReport', 'Warning', 'review'],
+  ] as const)('draws %s in the %s severity bucket', (kind, severity, bucket) => {
+    expect(ATTENTION_VISUALS[kind], kind).toBeDefined()
+    expect(homeBucketOf(item({ kind, severity }))).toBe(bucket)
+  })
+
   it('maps every kind to a label, a colour, an icon and a hint', () => {
     for (const kind of ALL_KINDS) {
       const visual = ATTENTION_VISUALS[kind]

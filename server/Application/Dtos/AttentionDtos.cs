@@ -297,6 +297,18 @@ public enum AttentionKind
     /// Cleared only by receipt-backed recovery or operator supersession. Appended; never renumber.
     /// </summary>
     CompactionContinuationStalled = 43,
+
+    /// <summary>A live pool delegate has no open task past twice the release grace. Error.</summary>
+    PoolDelegateUnreleased = 44,
+
+    /// <summary>A stop or deferred remote kill has remained unresolved for five minutes. Error.</summary>
+    SessionStopStuck = 45,
+
+    /// <summary>A live session older than ten minutes has no agent, card, standing owner or open task. Warning.</summary>
+    SessionUnowned = 46,
+
+    /// <summary>Grouped candidates from the last successful local OS census. Warning; absent before a run.</summary>
+    ZombieCensusReport = 47,
 }
 
 /// <summary>

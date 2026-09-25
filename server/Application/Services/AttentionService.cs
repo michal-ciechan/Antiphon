@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -33,7 +34,7 @@ namespace Antiphon.Server.Application.Services;
 /// as <see cref="AttentionKind.DeadSession"/> rather than twice. The order is most-explanatory
 /// first: the row a human reads should name the cause, not a downstream symptom of it.</para>
 /// </summary>
-public sealed class AttentionService
+public sealed partial class AttentionService
 {
     /// <summary>
     /// How far back the two recency-windowed conditions look. Fixed rather than configurable in v1
@@ -134,7 +135,9 @@ public sealed class AttentionService
         ILogger<AttentionService> logger,
         IWorkspaceProgressProbe? workspaceProgress = null,
         IOptions<CardWorkTransitionSettings>? cardTransitions = null,
-        IOptions<ScheduleSettings>? schedules = null)
+        IOptions<ScheduleSettings>? schedules = null,
+        ZombieCensusState? censusState = null,
+        ISessionRunnerDirectory? runnerDirectory = null)
     {
         _db = db;
         _runnerClient = runnerClient;
