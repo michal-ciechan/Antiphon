@@ -54,10 +54,15 @@ public class ResilienceBudgetTests
         };
         settings.CircuitBreaker.MinimumThroughput = 1000;
         var step = 0;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handler = new ScriptHandler(async (_, ct) =>
         {
             if (Interlocked.Increment(ref step) == 1)
+            {
+                entered.TrySetResult();
                 await Task.Delay(Timeout.Infinite, ct);
+            }
+
             return ResilienceTestHost.Status(HttpStatusCode.ServiceUnavailable);
         });
         await using var provider = ResilienceTestHost.Build(handler, ResilienceClientNames.RunnerRead, settings, time, new FixedResilienceJitter(1));
@@ -66,16 +71,23 @@ public class ResilienceBudgetTests
         var started = time.GetUtcNow();
         using var first = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
         ResilienceTestHost.Stamp(first, ResilienceOperations.RunnerGet, budget);
+        var firstSend = client.SendAsync(first);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Should.ThrowAsync<TaskCanceledException>(() =>
-            ResilienceTestHost.Pump(time, client.SendAsync(first), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(8)));
+            ResilienceTestHost.Pump(time, firstSend, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(8)));
         var afterAttempt = time.GetUtcNow() - started;
         afterAttempt.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(10));
         afterAttempt.ShouldBeLessThan(TimeSpan.FromSeconds(12));
         handler.Sends.ShouldBe(1);
         using var second = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
         ResilienceTestHost.Stamp(second, ResilienceOperations.RunnerGet, budget);
+        var secondSend = client.SendAsync(second);
+        var sawSecond = DateTime.UtcNow.AddSeconds(5);
+        while (handler.Sends < 2 && DateTime.UtcNow < sawSecond)
+            await Task.Delay(10);
+        handler.Sends.ShouldBeGreaterThan(1);
         await Should.ThrowAsync<TaskCanceledException>(() =>
-            ResilienceTestHost.Pump(time, client.SendAsync(second), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(12)));
+            ResilienceTestHost.Pump(time, secondSend, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(12)));
         var elapsed = time.GetUtcNow() - started;
         elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(30));
         elapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(32));
