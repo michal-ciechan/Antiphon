@@ -54,7 +54,8 @@ describe('DelegateModal', () => {
     await userEvent.click(runners[runners.length - 1])
     await userEvent.click(await screen.findByRole('option', { name: /server2/ }))
     expect(screen.getByTestId('delegate-platform-conflict')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Delegate' })).toBeDisabled()
+    const delegateButtons = screen.getAllByRole('button', { name: 'Delegate' })
+    expect(delegateButtons[delegateButtons.length - 1]).toBeDisabled()
     expect(conflicted.body).toBeNull()
   })
 
