@@ -500,6 +500,12 @@ past the attempt floor. A prior cleanup capture is present, so the compact diagn
 envelope cannot silently discard the new detail. Round A's test retention seam copies
 and verifies real bytes; production retention policy remains Round B's responsibility.
 
-Windows junction semantics and the three Windows sharing-lock rows remain Windows Review
-work when Code runs on Linux. Every PC remains pending for method-scoped SourceLanding
+The between-readings link fixture ignores the entry itself, so both directory junctions
+and symbolic links reach the reparse guard. The empty-unlisted-junction row checks the
+actual Git inventory and skips when the host lists the link: that host cannot exercise
+the missing-inventory boundary. Both rows are triaged with their exact method at
+`5f4161c5`; the fixture correction requires one CP-4b rebuild and rerun.
+
+Windows junction semantics, the empty-unlisted-junction row and the three Windows
+sharing-lock rows remain Windows Review work when Code runs on Linux. Every PC remains pending for method-scoped SourceLanding
 Mutation; ordinary green and nightly do not discharge it.
