@@ -269,12 +269,11 @@ public sealed class WorktreeGuardedCleanupTests
     public async Task C665_JunctionSwappedInBetweenReadingsIsRefused()
     {
         await using var h = await RemovalHarness.CreateAsync(); h.CleanFirst = true;
-        // A directory-only ignore does not cover every host's representation of a link.
-        // Ignore the entry itself so the second reading exercises the reparse guard.
-        await File.AppendAllTextAsync(Path.Combine(h.Operation.CommonDirectory, "info", "exclude"), "\nbin-private\n");
+        // Keep the swapped entry under a disposable ignored ancestor. A file-like link
+        // at the worktree root would be protected rather than reaching the reparse guard.
         var outside = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Root, "outside")).FullName;
         await File.WriteAllTextAsync(Path.Combine(outside, "a.dll"), "outside bytes");
-        var directory = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Source, "bin-private")).FullName;
+        var directory = Directory.CreateDirectory(Path.Combine(h.H.Fixture.Source, "bin-private", "link")).FullName;
         await File.WriteAllTextAsync(Path.Combine(directory, "a.dll"), "build output");
         using var link = DirectoryLink.TryCreate(Path.Combine(h.H.Fixture.Root, "staged-link"), outside);
         if (link is null) { Skip.Test("This host cannot create a directory junction or symbolic link."); return; }
@@ -286,7 +285,7 @@ public sealed class WorktreeGuardedCleanupTests
         };
         var result = await h.RemoveAsync();
         result.Residue.ShouldBe("ignored_reparse_point"); reads.ShouldBe(2); h.Removes.ShouldBe(0);
-        result.Detail.ShouldBe("reparse: bin-private");
+        result.Detail.ShouldBe("reparse: bin-private/link");
         (await File.ReadAllTextAsync(Path.Combine(outside, "a.dll"))).ShouldBe("outside bytes");
         Directory.Exists(h.H.Fixture.Source).ShouldBeTrue();
     }
