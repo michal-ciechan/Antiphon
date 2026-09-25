@@ -885,7 +885,11 @@ function ConvertTo-AppHostSafeDetail {
 }
 
 function Invoke-AppHostGracefulStop {
-    param([int]$TimeoutSec = 5, [string]$Reason)
+    param(
+        [int]$TimeoutSec = 5,
+        [string]$Reason,
+        [string]$BaseUrl = 'http://localhost:17202'
+    )
     $tokenPath = Get-AppHostOperatorTokenPath
     if ([string]::IsNullOrWhiteSpace($tokenPath) -or -not (Test-Path -LiteralPath $tokenPath)) {
         return [pscustomobject]@{ Class = 'refused'; Pid = $null; Detail = 'token file missing' }
@@ -900,7 +904,10 @@ function Invoke-AppHostGracefulStop {
     }
     $body = (@{ reason = $Reason } | ConvertTo-Json -Compress)
     try {
-        $response = Invoke-WebRequest -Uri 'http://localhost:17202/api/operator/shutdown' -Method Post -Headers @{ 'X-Antiphon-Operator-Token' = $token } -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec $TimeoutSec
+        $root = $BaseUrl
+        if ([string]::IsNullOrWhiteSpace($root)) { $root = 'http://localhost:17202' }
+        $uri = $root.TrimEnd('/') + '/api/operator/shutdown'
+        $response = Invoke-WebRequest -Uri $uri -Method Post -Headers @{ 'X-Antiphon-Operator-Token' = $token } -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec $TimeoutSec
         $code = [int]$response.StatusCode
         if ($code -eq 202) {
             $pidValue = $null
