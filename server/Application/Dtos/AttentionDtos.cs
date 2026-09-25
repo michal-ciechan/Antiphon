@@ -400,7 +400,9 @@ public sealed record AttentionItemDto(
     Guid? LandNotificationId = null,
     Guid? HoldingTaskId = null,
     // CARD-0672 D-3: a DispatchHeld row's dominant hold class (lease, remoteprep, runner, cap, ...).
-    string? HoldClass = null);
+    string? HoldClass = null,
+    // CARD-0691: the whole candidate class from the same snapshot as the five-example preview.
+    IReadOnlyList<ZombieCensusRow>? CensusCandidates = null);
 
 /// <param name="RunnerConsulted">
 /// Whether the session runner answered this sweep. False means the runner-derived condition

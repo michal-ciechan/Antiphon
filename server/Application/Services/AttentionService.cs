@@ -227,9 +227,7 @@ public sealed partial class AttentionService
         var runnerSessions = await TryListRunnerSessionsAsync(ct);
         var remoteLive = (_runnerDirectory?.LiveRemoteSessionIds() ?? []).ToHashSet();
         var remoteUnknown = (_runnerDirectory?.UnknownRemoteSessionIds() ?? []).ToHashSet();
-        items.AddRange(await BuildPoolDelegateUnreleasedItemsAsync(now, remoteLive, remoteUnknown, ct));
-        items.AddRange(await BuildSessionStopStuckItemsAsync(now, runnerSessions, remoteLive, remoteUnknown, ct));
-        items.AddRange(await BuildSessionUnownedItemsAsync(now, remoteLive, remoteUnknown, ct));
+        items.AddRange(await BuildSessionLeakItemsAsync(now, runnerSessions, remoteLive, remoteUnknown, ct));
         items.AddRange(await BuildZombieCensusItemsAsync(ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));

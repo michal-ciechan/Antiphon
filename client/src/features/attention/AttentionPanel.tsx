@@ -39,6 +39,7 @@ import { useClearModelAvailabilityHold } from '../../api/modelAvailability'
 import { cancelQueuedMessage, sendQueuedMessageNow, stopSession } from '../../api/sessions'
 import { formatCost, formatDuration } from '../delegations/taskVisuals'
 import { BlockedReplyRow } from './BlockedReplyRow'
+import { AttentionInspectionDrawer } from './AttentionInspectionDrawer'
 import {
   ATTENTION_GROUPS,
   ATTENTION_VISUALS,
@@ -186,6 +187,7 @@ export function AttentionPanel() {
           </Stack>
         )
       })}
+      <AttentionInspectionDrawer items={items} />
     </Stack>
   )
 }

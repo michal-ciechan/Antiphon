@@ -402,6 +402,10 @@ export function targetOf(item: AttentionItemDto): string | null {
   if (item.taskId) return `/orchestrator?tab=delegations&task=${item.taskId}`
   // `?agent=` is how AgentsPage takes a selection — the incident drawer opens on the agent it names.
   if (item.agentId) return `/agents?agent=${item.agentId}`
+  if (item.sessionId && (item.kind === 'SessionUnowned' || item.kind === 'SessionStopStuck'))
+    return `/attention?session=${encodeURIComponent(item.sessionId)}`
+  if (item.kind === 'ZombieCensusReport' && item.conditionKey)
+    return `/attention?census=${encodeURIComponent(item.conditionKey)}`
   return null
 }
 
