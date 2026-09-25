@@ -24,17 +24,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     private readonly PendingRunnerSessionInventory _pendingInventory;
     private readonly object _gate = new();
     private readonly Dictionary<string, Ticket> _tickets = new(StringComparer.Ordinal);
-    private PhoneHomeLiveConnection? _live;
-    // CARD-0679 (review 87af1bf6): the connection whose catch-up List last answered for the
-    // runner's sessions. Kept past its end: until a newer connection recovers, its inventory is
-    // the best knowledge there is, and those sessions are unknown rather than gone.
-    private PhoneHomeLiveConnection? _lastRecovered;
-    private Guid? _liveStoreId;
-    private Guid? _liveBootId;
-    private DateTimeOffset _liveLeaseUntil;
-    private long _epoch;
-    private long _reconnects;
-    private LastDisconnectRecord? _lastDisconnect;
+    private readonly Dictionary<string, RunnerSlot> _slots = new(StringComparer.Ordinal);
+    private readonly ILogger _logger;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
 
     public PhoneHomeRunnerDirectory(
@@ -51,31 +42,51 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         _settings = settings.Value;
         _scopes = scopes;
         _clock = clock;
-        _pendingInventory = new PendingRunnerSessionInventory(scopes, clock,
-            inventoryLogger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PhoneHomeRunnerDirectory>.Instance);
+        _logger = inventoryLogger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PhoneHomeRunnerDirectory>.Instance;
+        _pendingInventory = new PendingRunnerSessionInventory(scopes, clock, _logger);
+        if (_settings.Enabled)
+        {
+            if (PhoneHomeRunnerCatalog.UsesMap(_settings))
+                _logger.LogWarning("PhoneHomeRunner singleton keys are ignored because PhoneHomeRunner:Runners is set.");
+            foreach (var resolved in PhoneHomeRunnerCatalog.Configured(_settings))
+                _slots[resolved.Id] = new RunnerSlot { Id = resolved.Id, Entry = resolved.Entry };
+        }
     }
 
     public ISessionRunnerClient Local => _local;
-    public IReadOnlyList<string> KnownRunnerIds =>
-        _settings.Enabled
-            ? [LocalRunnerId, _settings.AllowedRunnerId]
-            : [LocalRunnerId];
+    public IReadOnlyList<string> KnownRunnerIds
+    {
+        get
+        {
+            var ids = new List<string> { LocalRunnerId };
+            ids.AddRange(_slots.Keys);
+            return ids;
+        }
+    }
+
+    internal IReadOnlyList<string> RemoteRunnerIds
+    {
+        get
+        {
+            lock (_gate)
+                return _slots.Keys.ToArray();
+        }
+    }
 
     public Guid? GetLiveStoreId(string? runnerId)
     {
-        if (string.IsNullOrWhiteSpace(runnerId)
-            || !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot))
             return null;
         lock (_gate)
-            return SnapshotLive()?.RunnerStoreId ?? _liveStoreId;
+            return SnapshotOf(slot)?.RunnerStoreId ?? slot.StoreId;
     }
 
     public ISessionRunnerClient Resolve(string? runnerId)
     {
-        if (string.IsNullOrWhiteSpace(runnerId) || runnerId == LocalRunnerId)
+        if (string.IsNullOrWhiteSpace(runnerId) || runnerId == LocalRunnerId || RunnerRequestIntent.IsDesktopAlias(runnerId))
             return _local;
-        var live = SnapshotLive();
-        if (live is null || !string.Equals(live.RunnerId, runnerId, StringComparison.Ordinal))
+        var live = SnapshotLive(runnerId);
+        if (live is null)
             throw new ServiceUnavailableException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
         if (!live.DispatchEligible)
             throw new ServiceUnavailableException("Phone-home runner has not completed recovery.", PhoneHomeProblemTypes.Unavailable);
@@ -89,7 +100,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     public async Task<RunnerProviderAuthDto?> RequestProviderAuthAsync(
         string runnerId, string provider, CancellationToken ct)
     {
-        if (!_settings.Enabled || !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+        if (!_slots.TryGetValue(runnerId, out var slot) || !slot.Entry.Enabled)
             throw new ConflictException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
         try
         {
@@ -147,12 +158,12 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             }
         }
 
-        var live = SnapshotLive();
+        var live = SnapshotLive(runnerId);
         if (live is null || !live.DispatchEligible || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             return new RunnerInventory.Unavailable("phone-home runner unavailable");
         try
         {
-            return new RunnerInventory.Available(await new PhoneHomeRunnerClient(live).ListAsync(ct));
+            return new RunnerInventory.Available(await new PhoneHomeRunnerClient(live, _spills).ListAsync(ct));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -162,10 +173,21 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
 
     public bool AuthenticateSecret(string? provided)
     {
-        if (!_settings.Enabled || string.IsNullOrEmpty(_settings.SharedSecret) || string.IsNullOrEmpty(provided))
+        if (_slots.Count != 1)
             return false;
-        var expected = System.Text.Encoding.UTF8.GetBytes(_settings.SharedSecret);
+        return AuthenticateSecret(_slots.Keys.First(), provided);
+    }
+
+    public bool AuthenticateSecret(string? runnerId, string? provided)
+    {
+        if (!_settings.Enabled || string.IsNullOrEmpty(provided) || string.IsNullOrWhiteSpace(runnerId))
+            return false;
+        if (!_slots.TryGetValue(runnerId, out var slot) || !slot.Entry.Enabled || string.IsNullOrEmpty(slot.Entry.SharedSecret))
+            return false;
+        var expected = System.Text.Encoding.UTF8.GetBytes(slot.Entry.SharedSecret);
         var actual = System.Text.Encoding.UTF8.GetBytes(provided);
+        if (expected.Length != actual.Length)
+            return false;
         return CryptographicOperations.FixedTimeEquals(expected, actual);
     }
 
@@ -173,13 +195,13 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     {
         if (request.ProtocolVersion != PhoneHomeProtocol.Version)
             throw new ConflictException("Unsupported phone-home protocol version.", PhoneHomeProblemTypes.ProtocolVersion);
-        if (!string.Equals(request.RunnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+        if (!_slots.TryGetValue(request.RunnerId, out var slot) || !slot.Entry.Enabled)
             throw new ConflictException("Runner id is not allowed.", PhoneHomeProblemTypes.RunnerMismatch);
         // CARD-0604 D-14: the runner is a bounded pool, not a single seat. Capacity is declared by
-        // the runner and bounded by the server, so a misconfigured runner cannot enlarge itself.
-        if (request.Capacity < 1 || request.Capacity > _settings.MaxCapacity)
+        // the runner and bounded by that entry, so a misconfigured runner cannot enlarge itself.
+        if (request.Capacity < 1 || request.Capacity > slot.Entry.MaxCapacity)
             throw new ConflictException(
-                $"Phone-home capacity must be between 1 and {_settings.MaxCapacity}.",
+                $"Phone-home capacity must be between 1 and {slot.Entry.MaxCapacity}.",
                 PhoneHomeProblemTypes.Capacity);
         var registeredPlatform = RunnerPlatformWire.Normalize(request.Platform);
         var reportedPlatform = RunnerPlatformWire.Normalize(request.Capabilities?.Platform);
@@ -195,20 +217,21 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            if (_liveBootId is { } currentBoot
+            var lease = TimeSpan.FromSeconds(_settings.LeaseSeconds);
+            if (slot.BootId is { } currentBoot
                 && currentBoot != Guid.Empty
                 && currentBoot != request.ProcessBootId
-                && (_live is { } liveOwner && !liveOwner.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds))
-                    || _liveLeaseUntil > now))
+                && (slot.Live is { } liveOwner && !liveOwner.IsLeaseExpired(lease)
+                    || slot.LeaseUntil > now))
             {
                 throw new ConflictException("A competing boot cannot replace an unexpired owner.", PhoneHomeProblemTypes.BootConflict);
             }
-            if (_live is { } live && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            if (slot.Live is { } live && !live.IsLeaseExpired(lease))
             {
                 if (live.ProcessBootId != request.ProcessBootId)
                     throw new ConflictException("A competing boot cannot replace an unexpired owner.", PhoneHomeProblemTypes.BootConflict);
             }
-            else if (_liveStoreId is { } store && store != request.RunnerStoreId)
+            else if (slot.StoreId is { } store && store != request.RunnerStoreId)
             {
                 throw new ConflictException("Runner store identity does not match the live binding.", PhoneHomeProblemTypes.StoreMismatch);
             }
@@ -218,14 +241,18 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             // response can hand the runner the same number the server will stamp on its own frames.
             // A runner that numbers its own connections desynchronises the moment either process
             // restarts alone, and both receive loops then drop every frame in silence.
-            var epoch = ++_epoch;
+            var epoch = ++slot.Epoch;
             _tickets[ticket] = new Ticket(
                 ticket, request.RunnerId, request.RunnerStoreId, request.ProcessBootId,
                 now.AddSeconds(_settings.TicketTtlSeconds),
                 request.Capacity, platform, request.Capabilities, epoch);
-            _liveStoreId = request.RunnerStoreId;
-            _liveBootId = request.ProcessBootId;
-            _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
+            slot.StoreId = request.RunnerStoreId;
+            slot.BootId = request.ProcessBootId;
+            slot.LeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
+            slot.RegisteredPlatform = platform;
+            slot.PlatformObservedAt = platform is null ? slot.PlatformObservedAt : now;
+            slot.Capabilities = request.Capabilities ?? slot.Capabilities;
+            slot.RegisteredCapacity = request.Capacity;
             return new PhoneHomeRegistrationResponse(
                 ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId, epoch);
         }
@@ -250,9 +277,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
             ValidateTicket(runnerId, ticket);
 
-            if (_live is { } superseded)
+            if (!_slots.TryGetValue(runnerId, out var slot))
+                throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
+            if (slot.Live is { } superseded)
             {
-                RecordDisconnect(superseded, "superseded");
+                RecordDisconnect(slot, superseded, "superseded");
                 superseded.DisposeAsync("superseded").AsTask().GetAwaiter().GetResult();
             }
             // The ticket already carries the epoch the runner was told at registration.
@@ -260,9 +289,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             var connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
                 ticket.Capacity, ticket.Platform, ticket.Capabilities);
-            _live = connection;
-            _liveLeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
-            _reconnects++;
+            slot.Live = connection;
+            slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
+            slot.Reconnects++;
             return connection;
         }
     }
@@ -273,20 +302,21 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             return;
         lock (_gate)
         {
-            if (!ReferenceEquals(_live, connection))
+            if (!_slots.TryGetValue(connection.RunnerId, out var slot) || !ReferenceEquals(slot.Live, connection))
                 return;
             connection.DispatchEligible = true;
-            _lastRecovered = connection;
+            slot.LastRecovered = connection;
         }
     }
 
     private void ValidateTicket(string runnerId, Ticket ticket)
     {
         var now = _clock.GetUtcNow();
-        if (ticket.ExpiresAtUtc < now
+        if (!_slots.TryGetValue(ticket.RunnerId, out var slot)
+            || ticket.ExpiresAtUtc < now
             || !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)
-            || ticket.RunnerStoreId != _liveStoreId
-            || ticket.ProcessBootId != _liveBootId)
+            || ticket.RunnerStoreId != slot.StoreId
+            || ticket.ProcessBootId != slot.BootId)
             throw new ConflictException("Connection ticket is bound, expired, or already used.", PhoneHomeProblemTypes.InvalidTicket);
     }
 
@@ -298,19 +328,19 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     {
         lock (_gate)
         {
-            if (!ReferenceEquals(_live, connection))
+            if (!_slots.TryGetValue(connection.RunnerId, out var slot) || !ReferenceEquals(slot.Live, connection))
                 return;
-            RecordDisconnect(connection, reason);
+            RecordDisconnect(slot, connection, reason);
             connection.DispatchEligible = false;
-            _live = null;
+            slot.Live = null;
         }
     }
 
     // Caller holds _gate.
-    private void RecordDisconnect(PhoneHomeLiveConnection connection, string reason)
+    private void RecordDisconnect(RunnerSlot slot, PhoneHomeLiveConnection connection, string reason)
     {
         connection.TryRecordDisconnect(reason);
-        _lastDisconnect = new LastDisconnectRecord(
+        slot.LastDisconnect = new LastDisconnectRecord(
             connection.LastDisconnectReason ?? reason,
             connection.LastDisconnectAtUtc ?? _clock.GetUtcNow(),
             connection.Epoch);
@@ -322,14 +352,14 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         get
         {
             lock (_gate)
-                return _reconnects;
+                return _slots.Values.Sum(slot => slot.Reconnects);
         }
     }
 
     public int? DeclaredCapacity(string runnerId)
     {
-        var live = SnapshotLive();
-        if (live is null || !string.Equals(live.RunnerId, runnerId, StringComparison.Ordinal))
+        var live = SnapshotLive(runnerId);
+        if (live is null)
             return null;
         if (!live.DispatchEligible || !live.SocketOpen
             || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
@@ -344,11 +374,18 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     /// </summary>
     public IReadOnlyCollection<Guid> LiveRemoteSessionIds()
     {
-        var live = SnapshotLive();
-        if (live is null || !live.DispatchEligible || !live.SocketOpen
-            || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
-            return [];
-        return live.KnownLiveSessions(_settings.InventoryMaxAge);
+        var set = new HashSet<Guid>();
+        foreach (var slot in _slots.Values)
+        {
+            var live = SnapshotOf(slot);
+            if (live is null || !live.DispatchEligible || !live.SocketOpen
+                || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+                continue;
+            foreach (var id in live.KnownLiveSessions(_settings.InventoryMaxAge))
+                set.Add(id);
+        }
+
+        return set;
     }
 
     /// <summary>
@@ -362,32 +399,45 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     /// </summary>
     public IReadOnlyCollection<Guid> UnknownRemoteSessionIds()
     {
+        var set = new HashSet<Guid>();
+        foreach (var slot in _slots.Values)
+        {
+            foreach (var id in UnknownFor(slot))
+                set.Add(id);
+        }
+
+        return set;
+    }
+
+    private IReadOnlyCollection<Guid> UnknownFor(RunnerSlot slot)
+    {
         PhoneHomeLiveConnection? last;
         lock (_gate)
-            last = _lastRecovered;
+            last = slot.LastRecovered;
         if (last is null)
         {
-            if (!RemoteInventoryPending(_settings.AllowedRunnerId))
+            if (!RemoteInventoryPending(slot.Id))
                 return [];
             IReadOnlyCollection<Guid> pending;
-            try { pending = _pendingInventory.Read(_settings.AllowedRunnerId); }
+            try { pending = _pendingInventory.Read(slot.Id); }
             catch
             {
                 // A successful first List can overtake even a failed bootstrap read.
                 lock (_gate)
                 {
-                    if (_lastRecovered is null) throw;
-                    return _lastRecovered.KnownLiveSessions();
+                    if (slot.LastRecovered is null) throw;
+                    return slot.LastRecovered.KnownLiveSessions();
                 }
             }
             lock (_gate)
             {
                 // Include current authoritative membership: ListLiveOrUnknownSessions may have
                 // read its live half before this load blocked. Tombstones remain authoritative.
-                return _lastRecovered is { } recovered ? recovered.KnownLiveSessions() : pending;
+                return slot.LastRecovered is { } recovered ? recovered.KnownLiveSessions() : pending;
             }
         }
-        var live = SnapshotLive();
+
+        var live = SnapshotOf(slot);
         if (live is not null && ReferenceEquals(live, last) && live.DispatchEligible && live.SocketOpen
             && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             return live.UnconfirmedSessions(_settings.InventoryMaxAge);
@@ -397,26 +447,31 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     public bool RemoteInventoryPending(string? runnerId)
     {
         // A runner this desktop does not accept can never answer, so its sessions are not held open.
-        if (!_settings.Enabled || !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot) || !slot.Entry.Enabled)
             return false;
         lock (_gate)
-            return _lastRecovered is null;
+            return slot.LastRecovered is null;
     }
 
     public PhoneHomeRunnerStatusDto Status(string runnerId)
     {
-        if (!RunnerRequestIntent.IsDesktopAlias(runnerId)
-            && !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+        if (RunnerRequestIntent.IsDesktopAlias(runnerId))
+        {
+            return new PhoneHomeRunnerStatusDto(
+                RunnerPlatformWire.DesktopId, null, null, null, false, false, null, null, null, "desktop");
+        }
+
+        if (!_slots.TryGetValue(runnerId, out var slot))
             throw new NotFoundException("SessionRunner", runnerId);
-        var live = SnapshotLive();
+        var live = SnapshotOf(slot);
         var leaseExpired = live is not null && live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds));
         var available = live is not null && !leaseExpired && live.SocketOpen;
         LastDisconnectRecord? last;
         long reconnects;
         lock (_gate)
         {
-            last = _lastDisconnect;
-            reconnects = _reconnects;
+            last = slot.LastDisconnect;
+            reconnects = slot.Reconnects;
         }
 
         // CARD-0679 D-1: name why the runner is not available instead of a constant: the live
@@ -430,16 +485,16 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 ?? "unavailable";
         return new PhoneHomeRunnerStatusDto(
             runnerId,
-            live?.RunnerStoreId ?? _liveStoreId,
-            live?.ProcessBootId ?? _liveBootId,
+            live?.RunnerStoreId ?? slot.StoreId,
+            live?.ProcessBootId ?? slot.BootId,
             live?.Epoch,
             available,
             live is { DispatchEligible: true } && available,
             live?.LastHeartbeatUtc,
             // CARD-0604: registration carries the platform and the capabilities DTO, so the status
             // a deploy or a restart row reads is the runner's own report, not a null placeholder.
-            Platform: live?.Platform,
-            BuildVersion: live?.Capabilities?.Version,
+            Platform: live?.Platform ?? slot.RegisteredPlatform,
+            BuildVersion: live?.Capabilities?.Version ?? slot.Capabilities?.Version,
             DisconnectReason: disconnectReason,
             PendingEvents: live?.PendingEvents,
             PendingEventBytes: live?.PendingEventBytes,
@@ -477,16 +532,17 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 platform is null, null, caps);
         }
 
-        if (!string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+        if (!_slots.TryGetValue(runnerId, out var slot))
             return null;
-        var live = SnapshotLive();
-        var observed = RunnerPlatformWire.Normalize(live?.Platform);
+        var live = SnapshotOf(slot);
+        var observed = RunnerPlatformWire.Normalize(live?.Platform ?? slot.RegisteredPlatform);
         var eligible = live is { DispatchEligible: true, SocketOpen: true }
             && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds));
+        var display = string.IsNullOrWhiteSpace(slot.Entry.DisplayName) ? slot.Id : slot.Entry.DisplayName;
         return new RunnerDescriptor(
-            runnerId, runnerId, observed,
-            observed is null ? null : live?.LastHeartbeatUtc ?? _clock.GetUtcNow(),
-            eligible, eligible, !eligible, eligible ? live?.Capacity : null, live?.Capabilities);
+            slot.Id, display, observed,
+            observed is null ? null : slot.PlatformObservedAt ?? live?.LastHeartbeatUtc ?? _clock.GetUtcNow(),
+            eligible, eligible, !eligible, eligible ? live?.Capacity : null, live?.Capabilities ?? slot.Capabilities);
     }
 
     /// <summary>The live connection for <paramref name="runnerId"/> only. Never another runner's socket.</summary>
@@ -494,24 +550,49 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     {
         if (string.IsNullOrWhiteSpace(runnerId) || RunnerRequestIntent.IsDesktopAlias(runnerId))
             return null;
-        var live = SnapshotLive();
-        return live is not null && string.Equals(live.RunnerId, runnerId, StringComparison.Ordinal) ? live : null;
+        return _slots.TryGetValue(runnerId, out var slot) ? SnapshotOf(slot) : null;
     }
 
+    /// <summary>The single configured remote, for callers that predate a runner id. Null when several are configured.</summary>
     public PhoneHomeLiveConnection? SnapshotLive()
+    {
+        if (_slots.Count != 1)
+            return null;
+        return SnapshotOf(_slots.Values.First());
+    }
+
+    private PhoneHomeLiveConnection? SnapshotOf(RunnerSlot slot)
     {
         lock (_gate)
         {
-            if (_live is null)
+            if (slot.Live is null)
                 return null;
-            if (_live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            if (slot.Live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             {
-                _live.DispatchEligible = false;
-                return _live;
+                slot.Live.DispatchEligible = false;
+                return slot.Live;
             }
 
-            return _live;
+            return slot.Live;
         }
+    }
+
+    private sealed class RunnerSlot
+    {
+        public required string Id;
+        public required PhoneHomeRunnerEntry Entry;
+        public PhoneHomeLiveConnection? Live;
+        public PhoneHomeLiveConnection? LastRecovered;
+        public Guid? StoreId;
+        public Guid? BootId;
+        public DateTimeOffset LeaseUntil;
+        public long Epoch;
+        public long Reconnects;
+        public LastDisconnectRecord? LastDisconnect;
+        public string? RegisteredPlatform;
+        public DateTimeOffset? PlatformObservedAt;
+        public RunnerCapabilitiesDto? Capabilities;
+        public int RegisteredCapacity;
     }
 
     private sealed record LastDisconnectRecord(string Reason, DateTimeOffset AtUtc, long Epoch);

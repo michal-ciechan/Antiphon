@@ -22,12 +22,9 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<PhoneHomeRecoveryPump> _logger;
     private readonly IBackgroundJobClient? _jobs;
-    private PhoneHomeLiveConnection? _recovered;
-    private (PhoneHomeLiveConnection Live, DateTimeOffset At)? _nextCatchUp;
-    private DateTimeOffset _nextRefresh;
-    private Task? _refresh;
-    private Task? _pump;
-    private CancellationTokenSource? _pumpStop;
+    private readonly ConcurrentDictionary<string, Cycle> _cycles = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> _catchUpHolds = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, int> _transcriptFailures = new(StringComparer.Ordinal);
     private readonly ConditionalWeakTable<PhoneHomeLiveConnection, ConnectionState> _states = new();
 
     public PhoneHomeRecoveryPump(
@@ -45,8 +42,11 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         _logger = logger;
     }
 
-    /// <summary>Test seam: when set, catch-up waits until the TCS completes.</summary>
+    /// <summary>Test seam: when set, catch-up for every runner waits until the TCS completes.</summary>
     internal TaskCompletionSource? CatchUpHold { get; set; }
+
+    /// <summary>Hold catch-up for one runner. Another runner's cycle is not waited on.</summary>
+    internal void HoldCatchUp(string runnerId, TaskCompletionSource hold) => _catchUpHolds[runnerId] = hold;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -73,7 +73,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     }
 
     /// <summary>How many owned sessions' transcripts failed in the last catch-up that listed.</summary>
-    internal int LastCatchUpTranscriptFailures { get; private set; }
+    internal int LastCatchUpTranscriptFailures =>
+        _transcriptFailures.Count == 0 ? 0 : _transcriptFailures.Values.Sum();
 
     /// <summary>
     /// One recovery step for the current live connection. Returns true when this cycle marked it
@@ -81,20 +82,32 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     /// </summary>
     internal async Task<bool> RunCycleAsync(CancellationToken ct)
     {
-        var live = _directory.SnapshotLive();
+        var ids = _directory.RemoteRunnerIds;
+        if (ids.Count == 0)
+            return false;
+        if (ids.Count == 1)
+            return await RunOneAsync(ids[0], ct);
+        var results = await Task.WhenAll(ids.Select(id => RunOneAsync(id, ct)));
+        return results.Any(static ready => ready);
+    }
+
+    private async Task<bool> RunOneAsync(string runnerId, CancellationToken ct)
+    {
+        var cycle = _cycles.GetOrAdd(runnerId, static _ => new Cycle());
+        var live = _directory.SnapshotLive(runnerId);
         if (live is null || !live.SocketOpen)
         {
-            _recovered = null;
-            _nextCatchUp = null;
+            cycle.Recovered = null;
+            cycle.NextCatchUp = null;
             return false;
         }
 
-        if (ReferenceEquals(_recovered, live))
+        if (ReferenceEquals(cycle.Recovered, live))
         {
             // CARD-0679 D-2: nothing else would ever release this connection's later events. A
             // pump that ended because the connection was disposed drained a completed Events
             // channel; that ending is not an error, and the next cycle sees the closed socket.
-            if (_pump is { IsCompleted: true } ended
+            if (cycle.Pump is { IsCompleted: true } ended
                 && !ct.IsCancellationRequested
                 && !live.Events.Completion.IsCompleted)
             {
@@ -103,31 +116,31 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                     "Phone-home event pump ended while the connection is live (runner {RunnerId} epoch {Epoch}, "
                     + "{PumpStatus}); restarting it with {PendingEvents} events pending",
                     live.RunnerId, live.Epoch, ended.Status, live.PendingEvents);
-                StartPump(live, ct);
+                StartPump(live, cycle, ct);
             }
 
-            RefreshInventoryIfDue(live, ct);
+            RefreshInventoryIfDue(live, cycle, ct);
             return false;
         }
 
         // CARD-0633 D-2: a failed catch-up is retried after CatchUpRetrySeconds on the connection's
         // own clock, not on the next 50 ms turn of the loop.
-        if (_nextCatchUp is { } next && ReferenceEquals(next.Live, live) && live.Clock.GetUtcNow() < next.At)
+        if (cycle.NextCatchUp is { } next && ReferenceEquals(next.Live, live) && live.Clock.GetUtcNow() < next.At)
             return false;
 
         // Dispatch-eligible only after the owner inventory was actually read. A List that failed or
         // timed out used to be swallowed here and the runner marked recovered anyway (CARD-0629).
         if (!await CatchUpAsync(live, ct))
         {
-            _nextCatchUp = (live, live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.CatchUpRetrySeconds));
+            cycle.NextCatchUp = (live, live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.CatchUpRetrySeconds));
             return false;
         }
 
-        _nextCatchUp = null;
-        _nextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
+        cycle.NextCatchUp = null;
+        cycle.NextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
         _directory.MarkRecovered(live);
-        _recovered = live;
-        StartPump(live, ct);
+        cycle.Recovered = live;
+        StartPump(live, cycle, ct);
         EnqueueSlotReconcile(live);
         return true;
     }
@@ -157,14 +170,14 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     /// while <paramref name="live"/> stays recovered, so the cached inventory also learns what no
     /// ack or event told it. Off the cycle: a silent runner must not hold up pump supervision.
     /// </summary>
-    private void RefreshInventoryIfDue(PhoneHomeLiveConnection live, CancellationToken ct)
+    private void RefreshInventoryIfDue(PhoneHomeLiveConnection live, Cycle cycle, CancellationToken ct)
     {
         if (_settings.InventoryRefreshSeconds <= 0
-            || _refresh is { IsCompleted: false }
-            || live.Clock.GetUtcNow() < _nextRefresh)
+            || cycle.Refresh is { IsCompleted: false }
+            || live.Clock.GetUtcNow() < cycle.NextRefresh)
             return;
-        _nextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
-        _refresh = RefreshInventoryAsync(live, ct);
+        cycle.NextRefresh = live.Clock.GetUtcNow() + TimeSpan.FromSeconds(_settings.InventoryRefreshSeconds);
+        cycle.Refresh = RefreshInventoryAsync(live, ct);
     }
 
     private async Task RefreshInventoryAsync(PhoneHomeLiveConnection live, CancellationToken ct)
@@ -218,11 +231,12 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         return sessions;
     }
 
-    private void StartPump(PhoneHomeLiveConnection live, CancellationToken ct)
+    private void StartPump(PhoneHomeLiveConnection live, Cycle cycle, CancellationToken ct)
     {
+        cycle.PumpStop?.Cancel();
         var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _pumpStop = stop;
-        _pump = RunPumpAsync(live, stop);
+        cycle.PumpStop = stop;
+        cycle.Pump = RunPumpAsync(live, stop);
     }
 
     private async Task RunPumpAsync(PhoneHomeLiveConnection live, CancellationTokenSource stop)
@@ -240,24 +254,27 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     /// <summary>Test seam (CARD-0679 V-9): end the current pump task as if it had died.</summary>
     internal async Task EndPumpForTest()
     {
-        if (_pump is not { } pump)
-            return;
-        try
+        foreach (var cycle in _cycles.Values)
         {
-            _pumpStop?.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-            // already ended
-        }
+            if (cycle.Pump is not { } pump)
+                continue;
+            try
+            {
+                cycle.PumpStop?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // already ended
+            }
 
-        try
-        {
-            await pump;
-        }
-        catch (OperationCanceledException)
-        {
-            // the ending this seam asked for
+            try
+            {
+                await pump;
+            }
+            catch (OperationCanceledException)
+            {
+                // the ending this seam asked for
+            }
         }
     }
 
@@ -266,7 +283,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
 
     internal async Task<bool> CatchUpAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {
-        if (CatchUpHold is { } hold)
+        var hold = _catchUpHolds.TryGetValue(live.RunnerId, out var specific) ? specific : CatchUpHold;
+        if (hold is not null)
             await hold.Task.WaitAsync(ct);
 
         var client = new PhoneHomeRunnerClient(live);
@@ -284,7 +302,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             return false;
         }
 
-        LastCatchUpTranscriptFailures = 0;
+        _transcriptFailures[live.RunnerId] = 0;
         if (sessions.Count == 0)
             return true;
 
@@ -313,7 +331,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             }
         }
 
-        LastCatchUpTranscriptFailures = failures;
+        _transcriptFailures[live.RunnerId] = failures;
         return true;
     }
 
@@ -398,6 +416,16 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     }
 
     private ConnectionState StateFor(PhoneHomeLiveConnection live) => _states.GetValue(live, _ => new ConnectionState());
+
+    private sealed class Cycle
+    {
+        public PhoneHomeLiveConnection? Recovered;
+        public (PhoneHomeLiveConnection Live, DateTimeOffset At)? NextCatchUp;
+        public DateTimeOffset NextRefresh;
+        public Task? Refresh;
+        public Task? Pump;
+        public CancellationTokenSource? PumpStop;
+    }
 
     /// <summary>What the pump keeps for one connection; it goes with the connection.</summary>
     private sealed class ConnectionState

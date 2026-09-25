@@ -1172,7 +1172,7 @@ public sealed class AgentTaskService
         {
             if (_phoneHome?.IsRunnerBound(remoteRunnerId) != true)
                 throw new ValidationException(nameof(request.RunnerId), $"Unknown or disabled session runner '{remoteRunnerId}'.");
-            if (!_phoneHome.AllowDelegatedTasks)
+            if (!_phoneHome.AllowsDelegatedTasks(remoteRunnerId))
                 throw new ValidationException(nameof(request.RunnerId), "Delegated tasks are not enabled for this session runner.");
             if (workspace != WorkspaceMode.Worktree)
                 throw new ValidationException(nameof(request.RunnerId), "A runner-bound task must use a Worktree workspace.");
@@ -1208,7 +1208,7 @@ public sealed class AgentTaskService
             defaultsSnapshot = await _runnerDefaults.EnsureInitializedAsync(ct);
             _defaultRunner.ApplySnapshot(defaultsSnapshot);
         }
-        var runnerDecision = _defaultRunner.Decide(runnerIntent, new DefaultRunnerShape(
+        var placementShape = new DefaultRunnerShape(
             workspace,
             agentKind,
             request.Kind,
@@ -1216,7 +1216,8 @@ public sealed class AgentTaskService
             ExistingProcess: askedForExistingProcess || liveFollowUp || followUpOfTaskId is not null
                 || request.AgentId is not null,
             SourceLanding: request.SourceLandingOperationId is not null,
-            RoutingExhausted: routingExhausted));
+            RoutingExhausted: routingExhausted);
+        var runnerDecision = _defaultRunner.Decide(runnerIntent, placementShape);
         if (runnerIntent.Source == RunnerRequestSource.Unset && runnerDecision?.SelectedRunnerId is { } selectedRunner)
             remoteRunnerId = selectedRunner;
         if (runnerDecision?.Warning is { } runnerWarning)
@@ -1238,16 +1239,11 @@ public sealed class AgentTaskService
             }
             else
             {
-                var described = await DescribePlacementAsync(remoteRunnerId, ct);
-                if (PlatformMatches(requirement, described))
-                    observedPlatform = RunnerPlatformWire.Normalize(described?.Platform);
-                else
-                {
-                    var match = await SelectPlatformCandidateAsync(requirement, ct);
-                    remoteRunnerId = match.RunnerId;
-                    observedPlatform = match.Platform;
-                    runnerDecision = match.Decision ?? runnerDecision;
-                }
+                var selected = await SelectConstrainedAutomaticAsync(
+                    requirement, placementShape, agentKind, defaultsSnapshot, ct);
+                remoteRunnerId = selected.RunnerId;
+                observedPlatform = selected.Platform;
+                runnerDecision = selected.Decision;
             }
         }
         else
@@ -1582,11 +1578,64 @@ public sealed class AgentTaskService
         }
     }
 
-    private async Task<(string? RunnerId, string? Platform, DefaultRunnerDecision? Decision)> SelectPlatformCandidateAsync(
+    private async Task<(string? RunnerId, string? Platform, DefaultRunnerDecision Decision)> SelectConstrainedAutomaticAsync(
+        RequiredPlatform requirement,
+        DefaultRunnerShape shape,
+        AgentKind kind,
+        RunnerDefaultSnapshot? snapshot,
+        CancellationToken ct)
+    {
+        string? kindPreference = snapshot is not null && snapshot.KindDefaults.TryGetValue(kind, out var configuredKind)
+            ? configuredKind
+            : null;
+        var globalPreference = snapshot is not null ? snapshot.GlobalRunnerId : _defaultRunner.DefaultRunnerId;
+        if (await TryPlatformPreferenceAsync(kindPreference, "kind-default", requirement, shape, ct) is { } kindHit)
+            return kindHit;
+        if (!string.Equals(globalPreference, kindPreference, StringComparison.Ordinal)
+            && await TryPlatformPreferenceAsync(globalPreference, "default", requirement, shape, ct) is { } globalHit)
+            return globalHit;
+
+        return await SelectPlatformCandidateAsync(requirement, ct);
+    }
+
+    private async Task<(string? RunnerId, string? Platform, DefaultRunnerDecision)?> TryPlatformPreferenceAsync(
+        string? preference,
+        string source,
+        RequiredPlatform requirement,
+        DefaultRunnerShape shape,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(preference))
+            return null;
+        if (RunnerRequestIntent.IsDesktopAlias(preference))
+        {
+            var desktop = await DescribePlacementAsync(null, ct);
+            if (desktop is not { DispatchEligible: true } || !PlatformMatches(requirement, desktop))
+                return null;
+            return (null, RunnerPlatformWire.Normalize(desktop.Platform), new DefaultRunnerDecision(
+                null, source, "unset", RunnerPlatformWire.DesktopId, "platform_match", Warn: false));
+        }
+
+        if (DefaultRunnerRoutingPolicy.ExclusionFor(shape) is not null
+            || _phoneHome?.IsRunnerBound(preference) != true
+            || !_phoneHome.AllowsDelegatedTasks(preference))
+            return null;
+        var described = await DescribePlacementAsync(preference, ct);
+        if (described is not { DispatchEligible: true }
+            || !PlatformMatches(requirement, described)
+            || described.Capabilities?.Features?.Contains(RunnerPlatformWire.Feature) != true)
+            return null;
+        return (preference, RunnerPlatformWire.Normalize(described.Platform), new DefaultRunnerDecision(
+            preference, source, "unset", preference, "platform_match", Warn: false));
+    }
+
+    private async Task<(string? RunnerId, string? Platform, DefaultRunnerDecision)> SelectPlatformCandidateAsync(
         RequiredPlatform requirement, CancellationToken ct)
     {
         var desktop = await DescribePlacementAsync(null, ct);
-        if (PlatformMatches(requirement, desktop))
+        if (desktop is { DispatchEligible: true }
+            && PlatformMatches(requirement, desktop)
+            && desktop.Capabilities?.Features?.Contains(RunnerPlatformWire.Feature) == true)
         {
             return (null, RunnerPlatformWire.Normalize(desktop?.Platform), new DefaultRunnerDecision(
                 null, "fallback", "unset", _defaultRunner.DefaultRunnerId, "platform_match", Warn: false));
@@ -1608,7 +1657,9 @@ public sealed class AgentTaskService
                     continue;
                 }
 
-                if (described is { DispatchEligible: true } && PlatformMatches(requirement, described))
+                if (described is { DispatchEligible: true }
+                    && PlatformMatches(requirement, described)
+                    && described.Capabilities?.Features?.Contains(RunnerPlatformWire.Feature) == true)
                 {
                     return (id, RunnerPlatformWire.Normalize(described.Platform), new DefaultRunnerDecision(
                         id, "fallback", "unset", _defaultRunner.DefaultRunnerId, "platform_match", Warn: false));

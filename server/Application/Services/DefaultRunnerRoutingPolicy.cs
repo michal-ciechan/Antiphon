@@ -221,7 +221,7 @@ public sealed class DefaultRunnerRoutingPolicy
 
         if (_phoneHome?.IsRunnerBound(configured) != true)
             return Local(configured, ReasonNotEnabled, warn: true);
-        if (!_phoneHome.AllowDelegatedTasks)
+        if (!_phoneHome.AllowsDelegatedTasks(configured))
             return Local(configured, ReasonTasksDisabled, warn: true);
         if (_runners is null)
             return Local(configured, ReasonDirectoryUnavailable, warn: true);
@@ -282,7 +282,7 @@ public sealed class DefaultRunnerRoutingPolicy
                 ReasonLocalRequested, Warn: false);
         if (ExclusionFor(shape) is not null)
             return null;
-        if (_phoneHome?.IsRunnerBound(kindRunner) != true || _phoneHome.AllowDelegatedTasks != true || _runners is null)
+        if (_phoneHome?.IsRunnerBound(kindRunner) != true || !_phoneHome.AllowsDelegatedTasks(kindRunner) || _runners is null)
             return null;
         try
         {
