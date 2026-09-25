@@ -40,6 +40,22 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  PoolDelegateUnreleased: {
+    label: 'Pool release overdue', color: 'danger', icon: TbUserOff,
+    hint: 'A live pool delegate has no open task and has not been released past twice the release grace.',
+  },
+  SessionStopStuck: {
+    label: 'Stop unresolved', color: 'danger', icon: TbClockPause,
+    hint: 'A session stop or deferred remote kill has remained unresolved for more than five minutes.',
+  },
+  SessionUnowned: {
+    label: 'Unowned session', color: 'warning', icon: TbUserOff,
+    hint: 'A live session has no agent, card, standing owner or open task. Inspect its evidence.',
+  },
+  ZombieCensusReport: {
+    label: 'Census candidates', color: 'warning', icon: TbSearch,
+    hint: 'Candidates from the last successful local process census. Check the generation time and evidence.',
+  },
   LandHeld: { label: 'Land held', color: 'warning', icon: TbClockPause, hint: 'An existing writer or repository lease holds landing.' },
   LandNoProgress: { label: 'Land aged', color: 'warning', icon: TbClockExclamation, hint: 'An accepted land has made no forward progress.' },
   LandOutcomeUnconfirmed: { label: 'Land receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt receipt.' },

@@ -13,11 +13,13 @@ public sealed class ZombieCensusJob
 
     private readonly ZombieCensusService _service;
     private readonly ILogger<ZombieCensusJob> _logger;
+    private readonly ZombieCensusState? _state;
 
     public ZombieCensusJob(ZombieCensusService service, ILogger<ZombieCensusJob> logger, ZombieCensusState? state = null)
     {
         _service = service;
         _logger = logger;
+        _state = state;
     }
 
     [AutomaticRetry(Attempts = 0)]
@@ -26,6 +28,7 @@ public sealed class ZombieCensusJob
         try
         {
             var result = await _service.RunAsync(cancellationToken);
+            _state?.Publish(result);
             _logger.LogInformation(
                 "Zombie census completed in {DurationMs}ms PoolExpired={PoolExpired} ReconcilerOwned={ReconcilerOwned} EndedButAlive={EndedButAlive} Unclaimed={Unclaimed} Ignored={Ignored} Unidentified={Unidentified} Candidates={Candidates}",
                 (int)result.Duration.TotalMilliseconds,

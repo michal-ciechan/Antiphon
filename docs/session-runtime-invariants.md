@@ -284,6 +284,17 @@
   saved, a remote kill interrupted by caller cancellation still records its generation-conditional
   deferred kill with an uncancelled persistence token; reconciliation can retry when the runner returns.
 
+- **Pool release is enforced by state (CARD-0691).** A reported `failed` releases like success;
+  `Blocked` retains its conversation. The dispatcher revisits unowned pool delegates after
+  `Delegation:PoolReleaseGraceSeconds` (default 120; zero disables the sweep), deferring mid-turn
+  sessions. `SessionReconciliation:StoppingRetryAfterSeconds` (default 60) governs stop retries.
+  Agent deletion stops first and refuses with 409 `agent_delete_session_live` when exit cannot
+  be confirmed. The attention feed reports `PoolDelegateUnreleased` past twice the grace,
+  `SessionStopStuck` for stops or pending deferred kills older than five minutes, and
+  `SessionUnowned` after ten minutes without an owner. Remote leak rows need confirmed live
+  inventory; CARD-0679 unknown/pending inventory is not leak evidence. A pending stop intent
+  remains visible as unresolved intent, explicitly naming unknown liveness.
+
 - **A bind-refusal recovery needs zero ingested rows and a `done` report** (CARD-0551): all three sweeps (delivery watchdog, dead-session reconciler, overdue Gate 3) attempt `RecoverFromBindRefusalAsync` only for a session with no ingested transcript row; the JSONL arm accepts a file only when a later assistant record ends with the task's `[antiphon-report:<id> done]` line; a file with the brief and no report withholds the watchdog's kill and fails the task with the file path. Live miss 2026-09-18: two mid-turn Reviews with 46 and 59 rows were written Succeeded at exactly the phase-clock boundary.
 
 ### Preserved Gotcha #27

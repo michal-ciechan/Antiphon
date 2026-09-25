@@ -468,6 +468,7 @@ try
     builder.Services.AddScoped<CardWorkTransitionService>();
     builder.Services.AddScoped<ParkedMessageSweepService>();
     builder.Services.AddSingleton<IZombieProcessCensus, WindowsZombieProcessCensus>();
+    builder.Services.AddSingleton<ZombieCensusState>();
     builder.Services.AddScoped<ZombieCensusService>();
     builder.Services.AddScoped<ZombieCensusJob>();
     builder.Services.AddScoped<WorktreeResidueSweepService>();

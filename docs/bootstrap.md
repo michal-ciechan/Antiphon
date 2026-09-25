@@ -491,7 +491,7 @@ the one-shot rollout pass.
 
 | Id | Cron (Europe/London) | Default | What it does |
 |---|---|---|---|
-| `antiphon:zombie-census` | `30 9 * * *` | report-only | OS-process zombie census (CARD-0298). No execute switch. |
+| `antiphon:zombie-census` | `30 9 * * *` | report-only | Local Windows OS-process census (CARD-0298/0691). The latest successful result feeds `ZombieCensusReport` on attention; absent until a successful run, retained with its original timestamp after failure, reset at server restart. Remote `PoolDelegateUnreleased` and session rows come from DB plus confirmed inventory. No execute switch. |
 | `antiphon:worktree-residue` | `0 10 * * *` | `WorktreeResidue:Execute = false` | CARD-0459: inventories settled-task and confirmed-publication residue, persists a run, and (only when Execute is true) retires released clean trees or queues cleanup-only landing retries. Preview: `POST /api/agent-tasks/worktree-residue/preview`. Release: `POST /api/agent-tasks/{id}/worktree-retirement`. Operator script: `scripts/worktree-residue.ps1`. Shortening TTL or calling `PruneStaleAsync` does not grant authority. CARD-0664: every run (daily and preview, even with Execute false) and server startup first release orphaned workspace-use `Launch` rows (owner ended or missing, older than `WorktreeResidue:LaunchGraceMinutes`, default 15, minimum 1); startup logs `Workspace reservations reconciled: released N orphaned Launch rows`. |
 
 ### Start the frontend (React/Vite — port 17282)

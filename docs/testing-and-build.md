@@ -31,6 +31,15 @@
 
 ### Preserved Gotcha #30
 
+CARD-0691 R2's Windows host work is a separate rollout from the R3 attention feed.
+Until R2 lands, the following teardown contract is planned, not a shipped guarantee:
+test runtimes set `SessionRunner:PtyHostExitWithOwner=true`; the leak sweep derives its
+root matcher from `TestSessionLogRoot.KnownPrefixes`; and
+`PtyHostTestSettingsGuardTests.every_linger_override_in_tests_also_exits_with_owner`
+guards new runtime fixtures. The linger clock starts at child exit; a live child never
+expires from linger alone. R2's opt-in owner watch supplies the test-time bound, while
+production retains restart/re-adoption with the default `PtyHostExitWithOwner=false`.
+
 - **Building while daemons run**: the always-on session-runner (and dev server) lock their `bin/` outputs. To build/test without restarting them, use an alternate output path: `dotnet run --project tests/<X> --property:OutputPath=bin-ptyhost/` (gitignored by `bin-*/`). **End it with a forward slash, never a backslash.** `'--property:OutputPath=bin-x\'` loses its trailing backslash to Windows argv quoting, and the mangled value creates junk directories — `bin-x --treenode-filter`, `bin-check --nologo`, and worst of all `bin-profile ` *with a trailing space* (see the next bullet — that one breaks the whole repo's build). `OutputPath` applies to every project in the graph, so one run drops a `bin-<name>/` in ~12 directories. Keep an exact producer-owned output inventory; a directory name or age alone does not authorize deletion. `cleanup-build-junk.ps1` retains its existing age-based cleanup behavior (see below). Process-spawning tests share a 1-wide `ProcessSpawnLimit` lane (CARD-0050 S5); a failure there is a real defect unless it also fails at the base commit (stash and re-run).
 
 - **Restoring a mutation-test source backup with `Copy-Item` preserves its old modification time** (CARD-0412 D4). An incremental build can then reuse the mutated DLL even though the source diff is restored. Update the restored file's `LastWriteTime` or explicitly rebuild, and verify the test output contains the freshly built DLL before treating the restored-green run as evidence.
