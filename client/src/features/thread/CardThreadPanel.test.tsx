@@ -273,7 +273,7 @@ describe('CardThreadPanel', () => {
     seed(thread({ card: { ...card, requiredPlatform: 'Linux' } }))
     renderWithProviders(<CardThreadPanel identifier="CARD-0067" boardId="board-1" columns={columns} />)
     await userEvent.click(await screen.findByTestId('thread-hand-back'))
-    expect(await screen.findByText(/Inherit card default \(Linux\)/)).toBeInTheDocument()
+    expect(await screen.findAllByText(/Inherit card default \(Linux\)/)).toHaveLength(2)
   })
 
   it('joins /api/attention by taskId — the stuck badge and headline land on the task row', async () => {
