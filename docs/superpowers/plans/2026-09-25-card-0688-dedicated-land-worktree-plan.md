@@ -113,11 +113,12 @@ round trips per checkpoint and process start latency under load.
 | Pins 3 × 5, rebase + HEAD read, target advance, push (+`DestinationAsync`), ancestry, index-lock probes, `worktree remove`, branch delete | | ~45 |
 | **Total** | **7** | **~600** (`processes=603`; `remote=37`) |
 
-After R1 of this plan the same land is: 0 protocol inspections, 3 listings and 2 `Full` inspections in
-cleanup (unchanged, owned by CARD-0459/0543 and being replaced by CARD-0692), 1 `ObserveSourceAsync`, 4
-one-round-trip source rechecks, 2 target observes (+1 on the already-present path), 2 cleanup observes, 1
+After R1 of this plan the same land is: 0 protocol inspections, 4 listings and 2 `Full` inspections in
+cleanup (three listings plus the inspection's registration-cache fill; unchanged, owned by
+CARD-0459/0543 and being replaced by CARD-0692), 1 `ObserveSourceAsync`, 4 one-round-trip source rechecks,
+2 target observes (+1 on the already-present path), 3 cleanup observes, 1
 push, ~9 processes for the land worktree reset, ~7 for the canonical advance, 3 pins, rebase, and the pin
-reads: about **200 processes**, `worktreeList ≤ 3`, `inspections ≤ 2`, `remote ≤ 16`, no loose recheck
+reads: about **200 processes**, `worktreeList ≤ 4`, `inspections ≤ 2`, `remote ≤ 19`, no loose recheck
 refs. At 0.37 s per spawn that is ~75 s of git, of which cleanup is ~25 s.
 
 ## Invariants the walks enforce today, and how each holds under the new design
@@ -305,7 +306,7 @@ refs. At 0.37 s per spawn that is ~75 s of git, of which cleanup is ~25 s.
   `CanonicalAdvancedAt`, `CleanupStartedAt`, `CleanupCompletedAt`; reset = `RebaseStartedAt` − the new
   `LandWorkspaceReadyAt`, a column added with the others). Card exit evidence: three profile lines from
   real desktop lands after each round (one doc-only, two code), each with `processes ≤ 250`,
-  `worktreeList ≤ 3`, `inspections ≤ 2`, `remote ≤ 16` after R1, and start→confirmed under 240 s for a
+  `worktreeList ≤ 4`, `inspections ≤ 2`, `remote ≤ 19` after R1, and start→confirmed under 240 s for a
   built land and under 120 s for a skipped one after R2. Rejected: new `landing` DTO fields (the log line
   and `StageOutcomes` already reach `scripts/logs.ps1` and `scripts/stage-value-report.ps1`).
 
@@ -539,9 +540,13 @@ All tests are cross-platform: paths through `Path.Combine`, git through `Landing
   third SHA refuses `source_changed`; a remote that does not contain `VerifiedSourceSha` refuses
   `remote_no_longer_contains_source`.
 - **V-18** `AgentTaskLandRefusedRetryTests.C688_RealLandProfile` (real git; replaces
-  `C642_RealLandOpensOneScope`'s thresholds): `worktreeList ≤ 3`, `inspections ≤ 2`, `processes ≤ 250`,
-  `remote ≤ 16`, `registrationHits` any; no `refs/antiphon/**/source-recheck/**` ref exists afterwards; the
+  `C642_RealLandOpensOneScope`'s thresholds): `worktreeList ≤ 4`, `inspections ≤ 2`, `processes ≤ 250`,
+  `remote ≤ 19`, `registrationHits` any; no `refs/antiphon/**/source-recheck/**` ref exists afterwards; the
   profile line contains `reset=`, `push=`, `canonical=`; print it as `C688_PROFILE:`. Red today: 603/7/19/37.
+
+  R1 budget revision approved by the caller on 2026-09-25: allow four worktree listings and nineteen
+  remote calls. The extra one listing and three remote calls account for cleanup's own listings,
+  inspections and observations, which D-14 deliberately preserves; those safeguards remain unchanged.
 - **V-19** `AgentTaskLandIndexLockTests.C688_AdmissionProbesLandWorktreeAndMainCheckoutWithoutListing`
   (real git): a stale `index.lock` in the land worktree holds admission with `git_index_lock_stale`; one
   in the main checkout (on `master`) holds; the trace has no `worktree list` before the hold; removing the

@@ -351,9 +351,9 @@ public sealed class AgentTaskLandRefusedRetryTests
         op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
         var entry = logger.Entries.Where(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal)).ShouldHaveSingleItem();
         Console.WriteLine("C688_PROFILE: " + entry.Message);
-        // R1's claim: no listing before cleanup. Guarded cleanup (unchanged, D-14) lists three times itself and its
-        // first Full inspection fills the scope's registration cache once, so a land's total is four, not the
-        // plan's estimated three.
+        // R1 V-18 budget approved 2026-09-25: four listings, preserving D-14's cleanup safeguards.
+        // No listing precedes cleanup. Cleanup lists three times itself and its first Full inspection fills
+        // the scope's registration cache once.
         cleanupAt.ShouldBeGreaterThan(0);
         h.Fixture.Git.Trace.Take(cleanupAt).ShouldNotContain(a => a.Length > 1 && a[0] == "worktree" && a[1] == "list");
         Convert.ToInt32(entry.State["WorktreeList"]).ShouldBeLessThanOrEqualTo(4);
@@ -362,7 +362,7 @@ public sealed class AgentTaskLandRefusedRetryTests
         // Remote round trips before cleanup: resolver observation (ls-remote+fetch) and its recheck, the target
         // observation at creation, three protocol rechecks (entry, pre-reset, pre-push), the pre-push observation,
         // the push and its confirming observation = 13. Guarded cleanup (unchanged, D-14) observes the remote three
-        // times (2 each), so the land total is 19; the plan estimated 16 from two cleanup observations.
+        // times (2 each), so the approved R1 V-18 total is 19, preserving all cleanup observations.
         h.Fixture.Git.Trace.Take(cleanupAt).Count(a => a[0] is "ls-remote" or "fetch" or "push").ShouldBeLessThanOrEqualTo(13);
         Convert.ToInt32(entry.State["Remote"]).ShouldBeLessThanOrEqualTo(19);
         foreach (var phase in new[] { "reset=", "rebase=", "verify=", "push=", "canonical=", "cleanup=" })
