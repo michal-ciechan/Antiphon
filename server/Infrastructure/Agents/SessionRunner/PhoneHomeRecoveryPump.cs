@@ -233,7 +233,18 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
 
     private void StartPump(PhoneHomeLiveConnection live, Cycle cycle, CancellationToken ct)
     {
-        cycle.PumpStop?.Cancel();
+        if (cycle.Pump is { IsCompleted: false })
+        {
+            try
+            {
+                cycle.PumpStop?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The previous pump already disposed its stop source.
+            }
+        }
+
         var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cycle.PumpStop = stop;
         cycle.Pump = RunPumpAsync(live, stop);
