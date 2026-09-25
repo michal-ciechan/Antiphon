@@ -38,9 +38,9 @@ external SQL maintenance must publish an event or restart the process.
   probes the pinned directory for markdown and runs one `git ls-files -s` per
   repository; a hit unstages and deletes immediately. Startup, the 15-minute
   backstop, and a restoring server git command still force a full reinspection.
-  Git in another repository leaves an unrelated board skipped. A land refuses
-  when the source diff adds or modifies an opted-out card directory. A server
-  whole-index commit reinspects that repository first. `GitMayRestoreWorktree`
+  Git in another repository leaves an unrelated board skipped. The land-path
+  guard is CARD-0724. A server whole-index commit reinspects that repository
+  first. `GitMayRestoreWorktree`
   treats `restore --staged` and mixed `reset` as not restoring, and `reset --hard`
   as restoring.
 
@@ -147,8 +147,8 @@ tool were also removed. The output inventory and full raw logs remain under
 
 Review c739cb90 found that a staged restore during the 15-minute skip could be
 committed. The skip now drops database work only. Each sweep probes skipped
-boards, a land refuses an opted-out card-directory diff, and a server
-whole-index commit reinspects that repository first. The historical verified
+boards, and a server whole-index commit reinspects that repository first.
+The land-path guard is CARD-0724. The historical verified
 commit `d0eb4ae3b4fb37465c7ca391992119041ff1e30e` is the cache implementation.
 The repair's verified code/test commit is `f32c03023dbac21c1621e85778abe8e2efe3e8ca`
 on `feat/card-task-77bbad75` in `/work/worktrees/task-77bbad75`.
@@ -185,14 +185,25 @@ The 20 card-file failures are the CARD-0713 set (4 hook, 3 junction, 3 reparse,
 (CARD-0715). No new failures. All PCs remain pending for method-scoped
 SourceLanding Mutation. bin-c700r output was removed after these runs.
 
+## Repair 3 (rebase, land guard moved)
+
+Rebased onto current master. `AgentTaskLandingProtocol` and
+`DelegationWorktreeService` match master, with no CARD-0700 changes.
+`OptedOutLandRefusalAsync`, `DiffNamesAsync`, and the two land-diff tests are
+removed. The land-path guard is CARD-0724. The cache, the per-tick directory
+and index probe, the startup / 15-minute / server-git reinspection triggers,
+and the whole-index pre-commit check remain. Board deletion keeps master's
+session-state cascade and still invalidates the lookup cache.
+
 ## Handoff
 
-The verified code/test commit is `f32c03023dbac21c1621e85778abe8e2efe3e8ca`.
 The cache implementation recorded above remains `d0eb4ae3b4fb37465c7ca391992119041ff1e30e`.
-This follow-up commit adds the repair evidence.
+Repair 2's verified commit was `f32c03023dbac21c1621e85778abe8e2efe3e8ca`.
+Repair 3 is the branch tip that drops the land-path guard after the rebase.
 
-Review the probe, the land refusal, and the whole-index reinspection. The caller
-owns landing. Restart the server after land; the runner does not host this sweep.
+Review the probe, the reinspection triggers, and the whole-index reinspection.
+The land-path guard is CARD-0724. The caller owns landing. Restart the server
+after land; the runner does not host this sweep.
 Ordinary runs do not discharge any SourceLanding Mutation obligation. Work
 proceeded under the standing operator authority; no additional approval was
 requested.

@@ -155,30 +155,6 @@ public partial class CardFileBoardLookupTests
         await AssertExportGoneAsync(prepared.Repo);
     }
 
-    [Test]
-    public async Task Repair2_Land_diff_touching_an_opted_out_directory_is_refused()
-    {
-        await using var prepared = await PrepareRemovedExportAsync();
-        var parent = (await GitOk(prepared.Repo, "rev-parse", "HEAD")).Trim();
-        var reason = await prepared.Service.OptedOutLandRefusalAsync(prepared.Repo, parent, prepared.ExportSha, default);
-        reason.ShouldBe("opted_out_card_files");
-    }
-
-    [Test]
-    public async Task Repair2_Land_diff_on_an_opted_in_board_is_allowed()
-    {
-        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var world = new CardFilePrivacyWorld(isolated.ConnectionString);
-        await world.InitializeAsync();
-        await world.AddCardAsync();
-        await using var db = Context(isolated.ConnectionString, new QueryCounter());
-        var service = Service(world, db, autoCommit: true);
-        (await service.SyncBoardAsync(world.BoardId)).CommitSha.ShouldNotBeNull();
-        var child = (await GitOk(world.Repo.Path, "rev-parse", "HEAD")).Trim();
-        var parent = (await GitOk(world.Repo.Path, "rev-parse", "HEAD~1")).Trim();
-        (await service.OptedOutLandRefusalAsync(world.Repo.Path, parent, child, default)).ShouldBeNull();
-    }
-
     private async Task<RemovedExport> PrepareRemovedExportAsync()
     {
         var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();

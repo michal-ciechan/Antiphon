@@ -816,19 +816,6 @@ public class GitWorkspaceService
         return new(true, paths, 0);
     }
 
-    /// <summary>Added and modified names in <paramref name="fromSha"/>..<paramref name="toSha"/>.</summary>
-    public async Task<GitStrictList<string>> DiffNamesAsync(
-        string workingDirectory, string fromSha, string toSha, CancellationToken ct)
-    {
-        var (code, stdout, stderr) = await RunAsync(workingDirectory, ct,
-            "diff", "--name-only", "--diff-filter=AM", "--no-renames", "-z", fromSha + ".." + toSha);
-        if (code != 0)
-            return new(false, [], code, stderr);
-        return new(true, stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
-            .Select(path => path.Replace('\\', '/'))
-            .ToArray(), 0);
-    }
-
     public Task<(int Code, string Stdout, string Stderr)> CaptureIndexAsync(string repo, CancellationToken ct) =>
         RunAsync(repo, ct, "write-tree");
 

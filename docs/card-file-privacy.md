@@ -184,10 +184,9 @@ also runs on startup, on a 15-minute backstop
 can restore the working tree (checkout, pull, merge, rebase, and the same
 family). A directory watch is not used: a checkout that rewrites many files can
 overflow the watcher buffer on Windows and on Linux and miss the restore this
-skip is meant to notice. A land refuses when the source diff adds or modifies an
-opted-out board's card directory, including a commit made in an agent worktree
-the sweep never visits. A server whole-index commit reinspects that repository
-first. Pending or unavailable cleanup keeps retrying. Manual status and sync
+skip is meant to notice. The land-path guard is CARD-0724. A server whole-index
+commit reinspects that repository first. Pending or unavailable cleanup keeps
+retrying. Manual status and sync
 still inspect the current filesystem and policy; lookups include archived and
 opted-out siblings so slug and cross-project ownership rules remain unchanged.
 Direct database maintenance that changes board ownership must publish

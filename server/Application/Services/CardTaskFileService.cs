@@ -230,36 +230,6 @@ public sealed partial class CardTaskFileService
         }
     }
 
-    /// <summary>
-    /// <c>opted_out_card_files</c> when <paramref name="fromSha"/>..<paramref name="toSha"/> adds or
-    /// modifies an opted-out board's card directory in <paramref name="repositoryPath"/>. Null when
-    /// the diff does not. A diff that cannot be read refuses, so a land does not publish unseen paths.
-    /// </summary>
-    public async Task<string?> OptedOutLandRefusalAsync(
-        string repositoryPath, string fromSha, string toSha, CancellationToken ct)
-    {
-        if (!IsCommitId(fromSha) || !IsCommitId(toSha)) return "opted_out_card_files";
-        var lookup = await _boardLookup.GetAsync(_db, ct);
-        var prefixes = new List<string>();
-        foreach (var board in lookup.Boards)
-        {
-            if (board.SyncCardFiles || !BoardUsesRepository(board, repositoryPath)) continue;
-            prefixes.Add(string.IsNullOrWhiteSpace(board.CardFilesDirectorySlug)
-                ? "docs/cards/"
-                : $"docs/cards/{board.CardFilesDirectorySlug}/");
-        }
-        if (prefixes.Count == 0) return null;
-        var diff = await _git.DiffNamesAsync(repositoryPath, fromSha, toSha, ct);
-        if (!diff.Succeeded) return "opted_out_card_files";
-        foreach (var path in diff.Items)
-        {
-            var normalized = path.Replace('\\', '/');
-            if (prefixes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
-                return "opted_out_card_files";
-        }
-        return null;
-    }
-
     private async Task<IReadOnlyList<Guid>> ProbeSkippedAsync(
         IReadOnlyList<CardFileBoardLookup.Entry> skipped, CancellationToken ct)
     {
@@ -335,9 +305,6 @@ public sealed partial class CardTaskFileService
         }
         catch (Exception) { return false; }
     }
-
-    private static bool IsCommitId(string value) =>
-        value.Length is 40 or 64 && value.All(static c => c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
 
     private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct, bool ignorePins = false) =>
         (await _boardLookup.GetAsync(_db, ct)).UniqueSlug(board, ignorePins);
