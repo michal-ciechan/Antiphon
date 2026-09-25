@@ -11,6 +11,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -385,8 +386,12 @@ public sealed class RemoteWorkspacePreparerTests
     /// runner task - refused at crossing 1 while a land holds the lease, mirrored in the gap, then
     /// launched lease-free while the NEXT land holds it - through the real launch queue and the
     /// real session message queue to a runtime-produced, complete UserPrompt. Busy and already
-    /// eligible recipients; the enqueue cut (row persisted, never flushed) and the lost-wakeup cut
-    /// (the queue service is replaced, as a restart replaces it). Every step is joined by durable
+    /// eligible recipients, and one injected failure per named handoff (review c1c0dd1a (3)):
+    /// <c>queue-inserted</c> faults the enqueue boundary - the brief's row commits, then the
+    /// dispatcher's enqueue call throws - and the SAME incarnation's boot flush must still deliver
+    /// it; <c>lost-wakeup</c> crashes at the boot-flush boundary - the incarnation that queued the
+    /// brief never passes ready, so its wakeup is lost - and a restarted queue service delivers it.
+    /// Every step is joined by durable
     /// identity: task -> Dispatched event -> AgentSessionId -> queued row (ExecutionTaskId) ->
     /// the recipient's UserPrompt. The phone-home host owns the fake clock; the queue harness stays
     /// on the system clock, as in DispatcherRemotePrepStarvationTests.
@@ -407,12 +412,15 @@ public sealed class RemoteWorkspacePreparerTests
         host.Directory.MarkRecovered(live);
         var lease = new HoldableLease();
         var slot = new AdapterSlot();
+        var taskId = Guid.NewGuid();
+        var enqueueFault = cut == "queue-inserted" ? new BriefEnqueueFault(taskId) : null;
         await using var harness = await BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = false,
             ConnectionString = schema.ConnectionString,
             Delegation = new DelegationSettings { MaxConcurrentTasks = 32, AllowedRoots = ["C:\\", "/"] },
             ConfigureServices = services => ConfigureDelivery(services, host, slot, lease),
+            ConfigureDbContext = enqueueFault is null ? null : o => o.AddInterceptors(enqueueFault),
         });
         // Hold boot-ready for the deferred arms, so the brief cannot be typed before the cut.
         var deferDelivery = busy || cut is "queue-inserted" or "lost-wakeup";
@@ -435,7 +443,6 @@ public sealed class RemoteWorkspacePreparerTests
         };
 
         var workspace = Path.Combine(harness.TempRoot, "workspace");
-        var taskId = Guid.NewGuid();
         var mirror = "/work/worktrees/" + RemoteWorkspaceService.MirrorName(taskId);
         await using (var seed = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
@@ -515,25 +522,43 @@ public sealed class RemoteWorkspacePreparerTests
         queued.Body.ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
 
         var launchQueue = harness.Provider.GetRequiredService<AgentSessionLaunchQueue>();
+        async Task<int> PromptCountAsync() => await read.TranscriptEntries.AsNoTracking()
+            .CountAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
+        if (cut is "queue-inserted" or "lost-wakeup")
+        {
+            // Both cuts start from a committed, undelivered brief with the launch parked at ready.
+            queued.Status.ShouldBe(QueuedMessageStatus.Pending);
+            queued.DeliveryAttempts.ShouldBe(0);
+            harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+            (await PromptCountAsync()).ShouldBe(0);
+        }
+
         if (busy)
         {
             await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, sessionId);
             ready!.TrySetResult(true);
-            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
         }
-        else if (deferDelivery)
+        else if (cut == "queue-inserted")
         {
-            await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
-                schema.ConnectionString, harness, queued, sessionId, busy, cut);
+            // The enqueue boundary: the row committed and then the enqueue call threw. The
+            // dispatcher kept the task Dispatched (asserted above); this incarnation's own boot
+            // flush is the recovery - no restart, no second queue service.
+            enqueueFault!.Faulted.ShouldBe(1, "the dispatcher's brief enqueue took the injected fault");
             ready!.TrySetResult(true);
         }
-
-        await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
-        if (!deferDelivery || busy)
+        else if (cut == "lost-wakeup")
         {
+            // The crash boundary: the incarnation that queued the brief dies before its boot flush,
+            // so its launch never passes ready. Only a restarted queue service can deliver the row.
             await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
-                schema.ConnectionString, harness, queued, sessionId, busy, cut,
-                busyBeforeDelivery: busy);
+                schema.ConnectionString, harness, queued, sessionId, busy, cut);
+        }
+
+        if (cut != "lost-wakeup")
+        {
+            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+            await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+                schema.ConnectionString, harness, queued, sessionId, busy, busyBeforeDelivery: busy);
         }
 
         // The one complete UserPrompt on the task's own session carries the task's own brief.
@@ -543,6 +568,13 @@ public sealed class RemoteWorkspacePreparerTests
         prompts.ShouldHaveSingleItem().Text.ShouldNotBeNull()
             .ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
         harness.Adapter.StartedSessionId.ShouldBe(sessionId);
+        if (cut == "lost-wakeup")
+        {
+            // Reap the crashed incarnation's parked launch: it fails at ready and never types.
+            ready!.TrySetResult(false);
+            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+            (await PromptCountAsync()).ShouldBe(1);
+        }
     }
 
     private static void ConfigureDelivery(
@@ -584,6 +616,38 @@ public sealed class RemoteWorkspacePreparerTests
         services.AddSingleton<RemoteWorkspacePreparer>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
+    }
+
+    /// <summary>
+    /// The enqueue-boundary fault: the delegation brief's queue row for one task commits, and then
+    /// the enqueue call throws, as a transport or process error after the insert would.
+    /// </summary>
+    private sealed class BriefEnqueueFault(Guid taskId) : SaveChangesInterceptor
+    {
+        private readonly AsyncLocal<bool> _matched = new();
+        private int _faulted;
+
+        public int Faulted => Volatile.Read(ref _faulted);
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            _matched.Value = Faulted == 0 && eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.State == EntityState.Added && e.Entity.ExecutionTaskId == taskId
+                    && e.Entity.Origin == QueuedMessageOrigin.Delegation);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            if (_matched.Value && Interlocked.CompareExchange(ref _faulted, 1, 0) == 0)
+            {
+                _matched.Value = false;
+                throw new IOException("injected enqueue-boundary fault: the brief row committed, the enqueue call failed");
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 
     /// <summary>The harness's fake TUI as the launch factory, filled once the harness exists.</summary>

@@ -151,6 +151,65 @@ public sealed class AgentTaskLandDispatchYieldTests
     }
 
     /// <summary>
+    /// Review c1c0dd1a (2): every terminal return ends the request's yield entry, not only admission
+    /// and the leased pass. The request yields first (its entry exists), then a later pass returns
+    /// with the request terminal: refused because the landing protocol is unavailable, already
+    /// terminal when picked, or cancelled as no longer eligible. The registry is the observer:
+    /// <see cref="RepositoryLeaseWaiters.FirstYield"/> answers the entry's start while one is
+    /// retained, and the time asked about once it has been ended.
+    /// </summary>
+    [Test]
+    [Arguments("protocol-unavailable")]
+    [Arguments("already-terminal")]
+    [Arguments("no-longer-eligible")]
+    public async Task C672_a_terminal_return_ends_the_request_yield_entry(string arm)
+    {
+        await using var h = await StartAsync();
+        var common = await h.CommonAsync();
+        h.Waiters.Register(common, Guid.NewGuid(), RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        var yielded = await h.RequestAsync();
+        yielded.HoldReasonCode.ShouldBe(AgentTaskLandService.LeaseYieldedToDispatchCode);
+        var firstYield = h.Clock.GetUtcNow();
+
+        await using (var db = h.Harness.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Harness.Fixture.TaskId);
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == yielded.Id);
+            switch (arm)
+            {
+                case "protocol-unavailable":
+                    task.RepoPath = null;
+                    break;
+                case "already-terminal":
+                    request.State = LandRequestState.Canceled;
+                    request.IsPending = false;
+                    break;
+                case "no-longer-eligible":
+                    task.Status = AgentTaskStatus.Failed;
+                    break;
+            }
+            await db.SaveChangesAsync();
+        }
+
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Complete);
+        var terminal = await h.RequestAsync();
+        terminal.Id.ShouldBe(yielded.Id);
+        terminal.IsPending.ShouldBeFalse();
+        if (arm == "protocol-unavailable")
+            (await h.EventsAsync(AgentTaskEventType.LandRefused)).ShouldHaveSingleItem()
+                .Detail.ShouldContain("landing_protocol_unavailable");
+        if (arm == "no-longer-eligible")
+            terminal.ReconciliationError.ShouldBe("task_no_longer_eligible");
+
+        h.Waiters.Any(common).ShouldBeTrue("the dispatch still waits; only the land's own entry ends");
+        var asked = h.Clock.GetUtcNow().AddSeconds(30);
+        h.Waiters.FirstYield(yielded.Id, asked).ShouldBe(asked,
+            $"the {arm} return left the yield entry begun at {firstYield:O} behind");
+    }
+
+    /// <summary>
     /// Review 3488192e (3): the land monitor ages a yield from the yield itself. A request whose
     /// progress clock is old but which only just stood aside is not a LandAged warning; the same
     /// yield past LandWarningSeconds is, exactly once.
