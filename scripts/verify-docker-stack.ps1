@@ -1,15 +1,20 @@
 # CARD-0590 stack verifier. -Case selects one literal checkpoint or guard.
 param(
     [Parameter(Mandatory = $true)][string]$Case,
-    [Parameter(Mandatory = $true)][string]$Manifest
+    [Parameter(Mandatory = $true)][string]$Manifest,
+    [switch]$RefreshClaudeToken
 )
 $ErrorActionPreference = 'Stop'
+# Copy before dot-sourcing c590-real.ps1: that script's param block runs in this scope and
+# would clear a same-named switch.
+$c737RefreshClaudeToken = [bool]$RefreshClaudeToken
 . (Join-Path $PSScriptRoot 'c590-command.ps1')
 if (-not (Test-Path -LiteralPath $Manifest)) { Write-Error 'Manifest is required'; exit 2 }
 $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 $root = [string]$m.evidenceRoot
 if (-not $env:ANTIPHON_C590_STUB) {
     . (Join-Path $PSScriptRoot 'c590-real.ps1')
+    $script:C628RefreshClaudeToken = $c737RefreshClaudeToken
     if (Test-C590LiveCase -Case $Case) {
         Invoke-C590LiveCase -Case $Case -Manifest $m
     }

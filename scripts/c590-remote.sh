@@ -1205,9 +1205,10 @@ case_deploy_parent() {
     stat -c '%a' "$PHONE_HOME_SECRET" > "$CASE_DIR/phone-home-mode.txt"
     printf 'true\n' > "$CASE_DIR/deploy-key-present.txt"
     printf 'true\n' > "$CASE_DIR/phone-home-secret-present.txt"
-    # CARD-0628 D-1: the token file must EXIST before compose, or the bind mount would create a
-    # directory in its place. Absent from the vault is not a failure: the file stays empty, the
-    # deploy warns and the runner reports claudeAuth=logged-out. Only its presence is recorded.
+    # CARD-0628 D-1 / CARD-0737: the token file must EXIST before compose, or the bind mount
+    # would create a directory in its place. The desktop deploy leaves an existing file alone
+    # unless -RefreshClaudeToken was asked. A missing or empty file is a warning, not a failed
+    # deploy: the runner reports claudeAuth=logged-out. Only its presence is recorded.
     if [ -d "$CLAUDE_OAUTH_TOKEN_PATH" ]; then
         write_result false ClaudeOAuthTokenPathIsDirectory 2
     fi
@@ -1219,7 +1220,7 @@ case_deploy_parent() {
         printf 'true\n' > "$CASE_DIR/claude-oauth-token-present.txt"
     else
         printf 'false\n' > "$CASE_DIR/claude-oauth-token-present.txt"
-        printf 'WARN ClaudeOAuthTokenAbsent: the runner will report claudeAuth=logged-out\n' \
+        printf 'WARN ClaudeOAuthTokenAbsent: the remote token file is missing or empty; the runner will report claudeAuth=logged-out. Pass -RefreshClaudeToken to refresh it from the vault.\n' \
             | tee -a "$CASE_DIR/command.log" >&2
     fi
     # CARD-0631: before compose binds it, and before stack.env is rewritten below.
