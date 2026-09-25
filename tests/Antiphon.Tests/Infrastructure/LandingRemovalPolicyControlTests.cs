@@ -511,6 +511,25 @@ public sealed class LandingRemovalPolicyControlTests
         File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
     }
 
+    // CARD-0721: a registration list that still names the path after the administrative entry
+    // is gone is stale. Restoring from it leaves an unregistered directory and no set-aside record.
+    [Test]
+    public async Task C721_StaleRegistrationListAfterUnregisterDoesNotRestoreAnOrphan()
+    {
+        using var f = new RemovalFixture();
+        // Every list after the drop still names the source, as a worktree-list cache that
+        // file-I/O unregister does not invalidate.
+        f.StaleListsAfterDrop = 8;
+        var result = await f.RemoveAsync(gate: true);
+        Directory.Exists(f.Source).ShouldBeFalse("a stale list must not put an unregistered tree back at its path");
+        f.Registered.ShouldBeFalse();
+        f.SetAsideTrees().ShouldBeEmpty("the dropped tree's bytes are deleted, not restored");
+        f.SetAsideRecords().ShouldBeEmpty();
+        result.Unregistered.ShouldBeTrue();
+        result.DirectoryGone.ShouldBeTrue();
+        result.IsClean.ShouldBeTrue(result.Residue);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -624,6 +643,8 @@ public sealed class LandingRemovalPolicyControlTests
         public Action? BeforeUnregister { get; set; }
         public Action? AfterUnregister { get; set; }
         public Action? BeforeRegistrationQuery { get; set; }
+        /// <summary>Lists after the drop that still name the source, modelling a cached worktree list.</summary>
+        public int StaleListsAfterDrop { get; set; }
         public string[] UnregisterVector => ["worktree", "remove", "--registration-only", Source];
         public string[] SetAsideTrees() => Directory.GetDirectories(Root, ".source.removing-*");
         public string[] SetAsideRecords()
@@ -678,7 +699,9 @@ public sealed class LandingRemovalPolicyControlTests
             if (args[0] == "worktree" && args[1] == "list")
             {
                 BeforeRegistrationQuery?.Invoke();
-                result = new(0, Registered
+                var stale = !Registered && StaleListsAfterDrop > 0;
+                if (stale) StaleListsAfterDrop--;
+                result = new(0, Registered || stale
                     ? $"worktree {Source}\0HEAD {Sha}\0branch {Request.Source.SourceFullRef}\0\0"
                     : $"worktree {Root}\0HEAD {Sha}\0branch refs/heads/master\0\0", "");
             }
