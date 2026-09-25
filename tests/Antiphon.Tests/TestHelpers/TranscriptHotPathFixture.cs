@@ -87,6 +87,7 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
             SELECT gen_random_uuid(), (@ids)[s + 1], n,
                 CASE WHEN s = 129 THEN 'QueueEnqueue'
                      WHEN s = 128 THEN 'AssistantText'
+                     WHEN s = 1 AND n > 80000 THEN 'AssistantText'
                      WHEN s = 127 AND n > 300 THEN 'AssistantText'
                      WHEN n % 10 = 0 THEN 'TurnEnd'
                      WHEN n % 10 = 1 THEN 'UserPrompt'
@@ -96,7 +97,7 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
                 repeat('synthetic transcript ', CASE WHEN n % 7 = 0 THEN 40 ELSE 4 END),
                 CASE WHEN n % 40 = 0 THEN NULL
                      ELSE timestamptz '2026-01-01 00:00:00+00' +
-                        (CASE WHEN s = 127 AND n > 300 THEN 1
+                        (CASE WHEN (s = 1 AND n > 80000) OR (s = 127 AND n > 300) THEN 1
                               WHEN n % 20 = 0 THEN n - 25 ELSE n END) * interval '1 millisecond' END,
                 timestamptz '2026-01-01 00:00:00+00'
             FROM (
@@ -257,6 +258,6 @@ internal static class TranscriptPlanAssertions
                 Property(c, "Index Name") == "IX_TranscriptEntries_End_AgentSessionId_" + suffix &&
                 Property(c, "Index Cond").Contains("AgentSessionId")), "boundary must use a top-one partial-index probe");
         nodes.ShouldContain(n => Property(n, "Index Name") == "IX_TranscriptEntries_AgentSessionId_Sequence" &&
-            Property(n, "Index Cond").Contains("Sequence >"), "post-end activity must seek the sequence range");
+            Regex.IsMatch(Property(n, "Index Cond"), "\"Sequence\"\\s*>"), "post-end activity must seek the sequence range");
     }
 }

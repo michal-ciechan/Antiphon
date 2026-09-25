@@ -22,7 +22,7 @@ public class TranscriptWorkingStateQueryTests
     [Test]
     public async Task Missing_and_empty_sessions_are_idle()
     {
-        await CheckAsync(new(false, []));
+        await CheckAsync(new Scenario(false, []));
         await using var f = await TranscriptHotPathFixture.CreateAsync();
         await using var db = f.CreateDb();
         // Preserve the old dictionary contract; duplicate requested IDs are rejected.
@@ -36,7 +36,7 @@ public class TranscriptWorkingStateQueryTests
         new(true, [new("FutureActivityKind", 1)]));
 
     [Test]
-    public async Task No_end_housekeeping_is_idle() => await CheckAsync(new(false,
+    public async Task No_end_housekeeping_is_idle() => await CheckAsync(new Scenario(false,
     [
         new("TurnTitle", 1), new("QueuedUserPrompt", 2), new("QueueEnqueue", 3),
         new("QueueDequeue", 4), new("QueueRemove", 5), new("CompactBoundary", 6),
