@@ -37,8 +37,26 @@ public sealed class AgentTaskLandRecoveryTests
         h.Fixture.Git.Trace.Clear();
         await h.RestartServicesAsync();
         await h.RunAsync();
-        (await h.OperationAsync())!.Id.ShouldBe(previous.Id);
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push");
+        var current = (await h.OperationAsync()).ShouldNotBeNull();
+        if (change == "automatic")
+        {
+            current.Id.ShouldBe(previous.Id);
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push");
+        }
+        else
+        {
+            // CARD-0688 D-2/D-3: an explicit repost lands from the unchanged branch through the (reset) land
+            // worktree; the task worktree's dirty bytes, sequencer or switched branch are guarded cleanup's
+            // concern, which refuses and keeps them. The interrupted operation's recovery evidence is untouched.
+            current.Id.ShouldNotBe(previous.Id);
+            current.Publication.ShouldBe(LandPublicationOutcome.Landed);
+            current.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            current.LastReason.ShouldBe(change switch
+            {
+                "dirty" => "source_dirty", "active-sequencer" => "active_sequencer", _ => "source_branch_mismatch",
+            });
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+        }
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         if (change == "dirty") (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "keep.txt"))).ShouldBe("manual work\n");
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", previous.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
@@ -133,7 +151,8 @@ public sealed class AgentTaskLandRecoveryTests
             File.Exists(ready).ShouldBeTrue(worker.HasExited ? await stderr : "required crash cut not reached");
             var interrupted = (await h.OperationAsync()).ShouldNotBeNull();
             var expected = cut switch { "C03" => LandPhase.Inspected, "C05" => LandPhase.RebaseStarted,
-                "C09" => LandPhase.TargetAdvanceStarted, "C12" => LandPhase.PushStarted,
+                // CARD-0688 D-4: the target fast-forward (C09) is the canonical step after publication.
+                "C09" => LandPhase.PublicationConfirmed, "C12" => LandPhase.PushStarted,
                 "C14" => LandPhase.PublicationConfirmed, _ => LandPhase.CleanupStarted };
             interrupted.Phase.ShouldBe(expected);
             if (cut == "C03")
@@ -173,15 +192,20 @@ public sealed class AgentTaskLandRecoveryTests
             (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", recovered.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
             if (cut == "C05")
             {
-                recovered.LastReason.ShouldBe("interrupted_rebase_requires_inspection");
+                // CARD-0688 D-3: the interrupted rebase lives in the disposable land worktree; the restart refuses
+                // it without touching anything, and the task worktree (never rebased) keeps the operator's bytes.
+                recovered.LastReason.ShouldBe("interrupted_rebase");
                 (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim().ShouldBe(index);
                 (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "keep.txt"))).ShouldBe("operator resolution\n");
-                h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a[0] == "push" || a.Contains("remove"));
-                // Explicit operator resolution is a separate action after the conservative restart refusal.
-                var gitDir = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "--absolute-git-dir")).Trim();
-                (Path.Exists(Path.Combine(gitDir, "rebase-merge")) || Path.Exists(Path.Combine(gitDir, "rebase-apply")))
-                    .ShouldBeTrue("interrupted rebase evidence must still be present for operator continue");
-                await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "--continue");
+                h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("reset") || a[0] == "push" || a.Contains("remove"));
+                var landAdmin = (await h.Fixture.RequiredAsync(recovered.LandWorktreePath!, "rev-parse", "--absolute-git-dir")).Trim();
+                (Path.Exists(Path.Combine(landAdmin, "rebase-merge")) || Path.Exists(Path.Combine(landAdmin, "rebase-apply")))
+                    .ShouldBeTrue("the refusal leaves the interrupted rebase for the next request's reset, not the restart");
+                // Explicit operator resolution is a separate action: rebase the task branch onto the target, keeping
+                // the source side of the conflict, then land that commit with a fresh request.
+                await h.Fixture.RequiredAsync(h.Fixture.Source, "reset", "--hard", "HEAD");
+                var tip = (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim();
+                await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "-X", "theirs", tip);
                 var resolved = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
                 const string filter = "/*/*/ResolvedFixture/*";
                 await h.RequestAsync(filter, expectedSourceSha: resolved);
@@ -200,7 +224,7 @@ public sealed class AgentTaskLandRecoveryTests
                 recovered.Cleanup.ShouldBe(LandCleanupStatus.Complete);
                 recovered.VerifiedSourceSha.ShouldBe(source);
                 if (cut != "C03") h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase"));
-                h.Fixture.Git.Trace.Count(a => a[0] == "push").ShouldBe(cut is "C03" or "C09" ? 1 : 0);
+                h.Fixture.Git.Trace.Count(a => a[0] == "push").ShouldBe(cut is "C03" ? 1 : 0);
                 (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(source);
             }
             await h.Fixture.AssertRemoteSourceAsync();
@@ -242,7 +266,7 @@ public sealed class AgentTaskLandRecoveryTests
         var interrupted = (await h.OperationAsync()).ShouldNotBeNull();
         interrupted.Phase.ShouldBe(boundary switch
         {
-            "local-advance" => LandPhase.TargetAdvanceStarted,
+            "local-advance" => LandPhase.PublicationConfirmed, // CARD-0688 D-4: the canonical fast-forward follows publication
             "push" => LandPhase.PushStarted,
             _ => LandPhase.CleanupStarted,
         });
@@ -256,7 +280,7 @@ public sealed class AgentTaskLandRecoveryTests
         recovered.Cleanup.ShouldBe(LandCleanupStatus.Complete);
         recovered.Id.ShouldBe(interrupted.Id);
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase"));
-        h.Fixture.Git.Trace.Count(a => a[0] == "push").ShouldBe(boundary == "local-advance" ? 1 : 0);
+        h.Fixture.Git.Trace.Count(a => a[0] == "push").ShouldBe(0);
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(sha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
@@ -279,7 +303,7 @@ public sealed class AgentTaskLandRecoveryTests
         await h.RunAsync();
         var refused = (await h.OperationAsync()).ShouldNotBeNull();
         refused.Phase.ShouldBe(LandPhase.Refused);
-        refused.LastReason.ShouldBe("interrupted_rebase_requires_inspection");
+        refused.LastReason.ShouldBe("interrupted_rebase"); // CARD-0688 D-3: the land worktree is disposable
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--abort") || a[0] == "push" || a.Contains("remove"));
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", refused.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
@@ -299,7 +323,7 @@ public sealed class AgentTaskLandRecoveryTests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        h.Fault.Phase = LandPhase.TargetAdvanceStarted;
+        h.Fault.Phase = LandPhase.Verified; // CARD-0688: the last checkpoint before the push (no target-advance phase)
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
         await using (var db = h.CreateContext())

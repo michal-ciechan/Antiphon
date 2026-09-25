@@ -341,8 +341,13 @@ public sealed class LandingSourceFreshnessTests
         var b = h.Git.AdvanceRemoteSource();
         await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        var merge = h.Git.OwnedTrace.Where(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b)).ToArray();
-        merge.ShouldNotBeEmpty();
+        // CARD-0688 D-2/D-4: nothing fast-forwards the task worktree any more (a Behind branch lands from the observed
+        // remote SHA); the one remaining fast-forward is the canonical checkout's, after publication, to the exact
+        // verified commit and with autostash disabled.
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains(b));
+        var merge = h.Git.OwnedTrace.Where(a => a.Contains("merge") && a.Contains("--ff-only")).ToArray();
+        merge.ShouldHaveSingleItem()[^1].ShouldBe(op.VerifiedSourceSha);
         merge[0].ShouldContain("merge.autoStash=false");
     }
 

@@ -144,7 +144,10 @@ public sealed class AgentTaskLandBoundaryControlledTests
             retainedSha = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
             afterBoundary = h.Fixture.Git.Trace.Count;
         }
-        h.Fault.AfterAcknowledged = async phase => { if (phase.ToString() == boundary) await MutateAsync(); };
+        // CARD-0688 D-4: schema 3 has no target-advance phases before publication, so the two legacy boundaries
+        // collapse onto Verified, the last acknowledged boundary before the push.
+        var acknowledged = boundary is "TargetAdvanceStarted" or "LocalTargetAdvanced" ? "Verified" : boundary;
+        h.Fault.AfterAcknowledged = async phase => { if (phase.ToString() == acknowledged) await MutateAsync(); };
         h.Fixture.Git.AfterCommand = async (_, args, result) =>
         {
             if (args[0] == "fetch" && result.Succeeded && args.Any(a => a.StartsWith(h.Fixture.TargetRef, StringComparison.Ordinal)))
@@ -152,34 +155,51 @@ public sealed class AgentTaskLandBoundaryControlledTests
                 observedFetches++;
                 if (boundary == "remote" || boundary == "BeforePushIntent" && observedFetches == 2) await MutateAsync();
             }
-            if (boundary == "BeforeRebaseIntent" && args[0] == "merge-base" && args.Count == 4
-                && args[2] == h.Fixture.SeedSha && args[3] == h.Fixture.SeedSha && result.Succeeded)
+            // Before rebase intent: the containment check against the observed target, after the recovery pins.
+            if (boundary == "BeforeRebaseIntent" && args is ["merge-base", "--is-ancestor", _, var target]
+                && target == h.Fixture.SeedSha
+                && h.Fixture.Git.Trace.Any(a => a[0] == "update-ref" && a[1].EndsWith("/target-before", StringComparison.Ordinal)))
                 await MutateAsync();
         };
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
         fired.ShouldBeTrue("the named boundary must be reached before claiming refusal coverage");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.RemoteConfirmedAt.ShouldBeNull("changed source cannot receive an AlreadyPresent/publication receipt");
-        op.LastReason.ShouldBe(change switch { "advance" => "source_changed", "dirty" or "staged" or "untracked" => "source_dirty", "switch" => "source_branch_mismatch", _ => "task_coordinates_changed" });
-        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("remove"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(retainedSha);
         if (change is "dirty" or "staged" or "untracked")
             (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, change == "untracked" ? "new.txt" : "keep.txt"))).ShouldBe("new writer bytes\n");
         if (change == "staged") (await h.Fixture.RequiredAsync(h.Fixture.Source, "diff", "--cached")).ShouldContain("new writer bytes");
+        if (change is "dirty" or "staged" or "untracked" or "switch")
+        {
+            // CARD-0688 D-2 / I-4 / I-5: the task worktree's tree and checked-out branch are not landing
+            // preconditions any more (the land publishes from the branch ref); guarded cleanup keeps them as residue.
+            op.RemoteConfirmedAt.ShouldNotBeNull();
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            op.LastReason.ShouldBe(change == "switch" ? "source_branch_mismatch" : "source_dirty");
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+            await h.Fixture.AssertRemoteSourceAsync();
+            return;
+        }
+        op.RemoteConfirmedAt.ShouldBeNull("changed source cannot receive an AlreadyPresent/publication receipt");
+        // CARD-0688 D-4: the first target observation now happens while the operation is created, so a task-coordinate
+        // change there is caught by the protocol's entry identity check rather than the per-checkpoint recheck.
+        op.LastReason.ShouldBe(change == "advance" ? "source_changed"
+            : boundary != "remote" ? "task_coordinates_changed"
+            : change == "metadata-repository" ? "repository_lease_required" : "pending_operation_coordinates_changed");
+        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("remove"));
         if (boundary is "remote" or "BeforeRebaseIntent" or "RebaseStarted")
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase"), "source fence must precede the rebase request");
-        if (boundary == "remote") op.RemoteBeforeSha.ShouldBeNull("changed source cannot acknowledge the initial remote observation");
+        if (boundary == "remote") op.SourcePinned.ShouldBeFalse("changed source cannot be pinned after the creation observation");
         if (boundary == "BeforeRebaseIntent") op.RebaseStartedAt.ShouldBeNull("the source fence must precede rebase intent");
         if (boundary == "Prepared") h.Verifier.Calls.ShouldBe(0, "source changes must refuse before running verification");
-        if (boundary == "Verified") op.Phase.ShouldBe(LandPhase.Verified, "source changes must refuse before target-advance intent");
-        if (boundary == "LocalTargetAdvanced")
+        if (boundary is "Verified" or "TargetAdvanceStarted" or "LocalTargetAdvanced")
+            op.Phase.ShouldBe(LandPhase.Verified, "source changes must refuse before push intent");
+        if (boundary is "Verified" or "LocalTargetAdvanced")
             h.Fixture.Git.Trace.Skip(afterBoundary).ShouldNotContain(a => a[0] == "fetch" && a.Any(x => x.StartsWith(h.Fixture.TargetRef, StringComparison.Ordinal)), "source changes must refuse before a new publication observation");
         if (boundary == "BeforePushIntent") op.PushStartedAt.ShouldBeNull("source changes must refuse before push intent");
-        if (boundary == "TargetAdvanceStarted")
-            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef),
-                "source changes must refuse before advancing the target");
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef),
+            "source changes must refuse before advancing the target");
         await h.Fixture.AssertRemoteSourceAsync();
     }
 

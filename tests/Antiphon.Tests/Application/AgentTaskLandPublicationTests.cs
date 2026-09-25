@@ -57,8 +57,12 @@ public sealed class AgentTaskLandPublicationTests
         Directory.Exists(h.Fixture.Source).ShouldBeTrue("competing remote state or changed endpoint must never authorize cleanup");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.RemoteConfirmedAt.ShouldBeNull();
-        op.LocalTargetAfterSha.ShouldBe(source);
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a.Contains("--force") || a.Contains("--mirror"));
+        // CARD-0688 D-4: the push comes first, so an unconfirmed publication never advanced the local target.
+        op.LocalTargetAfterSha.ShouldBeNull();
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        // The land worktree's own heal path is `worktree add --force --force`; no other forced or mirrored command runs.
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a.Contains("--mirror")
+            || a.Contains("--force") && !(a[0] == "worktree" && a[1] == "add"));
         h.Fixture.Git.BeforeCommand = null;
         h.Fixture.Git.AfterCommand = null;
         h.Fault.AfterAcknowledged = null;
@@ -185,25 +189,27 @@ public sealed class AgentTaskLandPublicationTests
         else await h.RunAsync();
         h.Fixture.Git.Trace.ShouldContain(a => a[0] == "ls-remote" && a.Contains(h.Fixture.SourceRef),
             "the remote source observation must run unfaulted before the target observation");
-        var operation = (await h.OperationAsync()).ShouldNotBeNull();
-        operation.SourceRemoteSha.ShouldBe(h.Fixture.SeedSha);
-        if (fault is not ("timeout" or "canceled"))
-            operation.LastReason.ShouldBe(fault switch
-            {
-                "read-error" or "missing" => "remote_read_failed",
-                "empty" or "malformed" => "remote_response_invalid",
-                "fetch-error" => "remote_fetch_failed",
-                _ => "remote_ancestry_error",
-            });
-        operation.RemoteConfirmedAt.ShouldBeNull();
-        // Drain-side timeout/cancellation settlement can retain a null operation reason.
-        (operation.LastReason ?? "").ShouldNotContain("synthetic-private-marker");
+        // CARD-0688 D-4: the target is observed while the operation is created (it becomes the rebase base), so a
+        // failed observation refuses before any operation, pin or land-worktree mutation exists.
+        (await h.OperationAsync()).ShouldBeNull();
         await using (var db = h.CreateContext())
         {
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+            request.RemoteSourceSha.ShouldBe(h.Fixture.SeedSha);
+            if (fault is not ("timeout" or "canceled"))
+                request.SourceRefusalReason.ShouldBe(fault switch
+                {
+                    "read-error" or "missing" => "remote_read_failed",
+                    "empty" or "malformed" => "remote_response_invalid",
+                    "fetch-error" => "remote_fetch_failed",
+                    _ => "remote_ancestry_error",
+                });
+            // Drain-side timeout/cancellation settlement can retain a null refusal reason.
+            (request.SourceRefusalReason ?? "").ShouldNotContain("synthetic-private-marker");
             var terminal = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
                 && e.Type == AgentTaskEventType.LandRefused);
             terminal.Detail.ShouldNotContain("synthetic-private-marker");
-            terminal.LandingOperationId.ShouldBe(operation.Id);
+            terminal.LandingOperationId.ShouldBeNull();
         }
         h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase") || a.Contains("remove"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
@@ -229,12 +235,30 @@ public sealed class AgentTaskLandPublicationTests
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", remoteTip + ":" + h.Fixture.TargetRef);
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
-        var operation = (await h.OperationAsync()).ShouldNotBeNull();
-        operation.Publication.ShouldBe(containsSource ? LandPublicationOutcome.AlreadyPresent : LandPublicationOutcome.Refused);
-        Directory.Exists(h.Fixture.Source).ShouldBe(!containsSource);
-        if (!containsSource) operation.LastReason.ShouldBe("remote_ahead_or_diverged");
-        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase"));
-        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(localBefore);
+        // CARD-0688 D-4 / I-10 (inverted): the rebase base is the observed remote target, so a remote ahead of a
+        // stale local target is normal; only a local target that is not an ancestor of the remote (unpushed or
+        // divergent local commits) refuses, as target_local_ahead before any operation exists.
+        var operation = await h.OperationAsync();
+        if (divergent)
+        {
+            operation.ShouldBeNull();
+            await using var db = h.CreateContext();
+            (await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId)).SourceRefusalReason.ShouldBe("target_local_ahead");
+            Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+            h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase"));
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(localBefore);
+        }
+        else
+        {
+            operation.ShouldNotBeNull().Publication.ShouldBe(containsSource ? LandPublicationOutcome.AlreadyPresent : LandPublicationOutcome.Landed);
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+            operation.TargetBeforeSha.ShouldBe(remoteTip);
+            if (containsSource) h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase"));
+            // A landed commit fast-forwards the stale main checkout through the remote tip; an already-present source
+            // is already in the local target, so the canonical step leaves it where it was ("already").
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim()
+                .ShouldBe(containsSource ? localBefore : operation.VerifiedSourceSha);
+        }
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
@@ -310,9 +334,17 @@ public sealed class AgentTaskLandPublicationTests
         await h.RunAsync();
         (await File.ReadAllBytesAsync(sentinel)).ShouldBe(bytes);
         h.Fixture.Git.Trace.ShouldNotContain(a => (a[0] == "push" || a[0] == "rebase") || a.Contains("remove"));
+        // CARD-0688 D-2 / I-3..I-5: the source is the branch ref, so the already-present shortcut is taken from it;
+        // the task worktree's state is guarded cleanup's concern, which refuses and preserves it (these were
+        // pre-shortcut landing refusals).
+        var reason = change switch { "detached" => "detached_head", "switched" => "source_branch_mismatch", _ => "source_dirty" };
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe(reason);
         await using var db = h.CreateContext();
-        (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused))
-            .Detail.ShouldContain(change switch { "detached" => "detached_head", "switched" => "source_branch_mismatch", _ => "source_dirty" });
+        (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.AlreadyPresent))
+            .Detail.ShouldContain(reason);
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
@@ -358,8 +390,9 @@ public sealed class AgentTaskLandPublicationTests
         };
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.LocalTargetAfterSha.ShouldBe(source);
+        op.LocalTargetAfterSha.ShouldBeNull("CARD-0688 D-4: the local target advances only after a confirmed publication");
         op.RemoteConfirmedAt.ShouldBeNull();
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
         h.Fixture.Git.BeforeCommand = null;
@@ -590,8 +623,11 @@ public sealed class AgentTaskLandPublicationTests
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
         var push = h.Git.Trace.FindIndex(a => a[0] == "push");
         push.ShouldBeGreaterThan(0, "the land must publish");
-        var beforePush = h.Git.InspectionScopes.Where(i => i.TraceIndex <= push).Select(i => i.Scope).ToList();
-        beforePush.ShouldNotBeEmpty();
-        beforePush.ShouldAllBe(scope => scope == LandInspectionScope.IdentityAndStatus);
+        // CARD-0688 D-2 supersedes the CARD-0642 scope split: the resolver and protocol never inspect the task
+        // worktree, so no inspection precedes the push; guarded cleanup's are the only ones, and they are Full.
+        h.Git.InspectionScopes.Where(i => i.TraceIndex <= push).ShouldBeEmpty();
+        var cleanup = h.Git.InspectionScopes.Select(i => i.Scope).ToList();
+        cleanup.Count.ShouldBe(2);
+        cleanup.ShouldAllBe(scope => scope == LandInspectionScope.Full);
     }
 }

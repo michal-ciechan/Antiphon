@@ -281,6 +281,9 @@ public sealed class AgentTaskLandPersistenceFailureTests
     [Arguments(LandPhase.Complete, true)]
     public async Task C448_V16_AcknowledgedCheckpointsGateDependentMutations(LandPhase phase, bool afterCommit)
     {
+        // CARD-0688 D-4: schema 3 never writes the two target-advance phases; their acknowledgement gates are the
+        // nearest schema-3 checkpoints (Verified before push intent; PushStarted as the resumable pre-publication phase).
+        phase = phase switch { LandPhase.TargetAdvanceStarted => LandPhase.Verified, LandPhase.LocalTargetAdvanced => LandPhase.PushStarted, _ => phase };
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         var sha = await h.AddSourceAsync();
@@ -325,7 +328,7 @@ public sealed class AgentTaskLandPersistenceFailureTests
         var recovered = (await h.OperationAsync()).ShouldNotBeNull();
         if (phase == LandPhase.Prepared && !afterCommit || phase == LandPhase.RebaseStarted && afterCommit)
         {
-            recovered.LastReason.ShouldBe("interrupted_rebase_requires_inspection");
+            recovered.LastReason.ShouldBe("interrupted_rebase"); // CARD-0688 D-3: the land worktree is disposable
             recovered.Cleanup.ShouldBe(LandCleanupStatus.NotStarted);
             Directory.Exists(h.Fixture.Source).ShouldBeTrue();
             (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", recovered.RecoveryRefPrefix + "/source")).Trim().ShouldBe(sha);

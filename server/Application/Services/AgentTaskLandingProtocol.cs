@@ -169,6 +169,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     await RecheckRemoteSourceAsync(op, ct);
                     var remote = await ObserveAsync(op, InputSha(op), ct);
                     Require(remote.ContainsSource, "remote_changed_before_push");
+                    await RecheckSourceAsync(op, ct);
                     op.VerifiedSourceSha = InputSha(op);
                     op.VerifiedAt = Now();
                     op.VerificationSkipReason = "exact_remote_containment";
@@ -182,6 +183,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 op.RebaseStartedAt = Now();
                 var land = await PrepareLandWorktreeAsync(op, InputSha(op), ct);
                 await TransitionAsync(op, LandPhase.RebaseStarted, ct);
+                await RecheckApprovalAsync(op, request, ct);
+                await RecheckSourceAsync(op, ct);
                 var rebase = await MutateAsync(op, land,
                     ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", op.TargetBeforeSha], ct);
                 if (!rebase.Succeeded)
@@ -245,11 +248,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 {
                     // The pre-push observation is the CAS: a plain push of a descendant of the observed tip.
                     Require(beforePush.Sha == (op.RemoteBeforeSha ?? op.TargetBeforeSha), "remote_changed_before_push");
+                    await RecheckSourceAsync(op, ct);
                     if (op.Phase != LandPhase.PushStarted)
                     {
                         op.PushStartedAt = Now();
                         await TransitionAsync(op, LandPhase.PushStarted, ct);
                     }
+                    await RecheckSourceAsync(op, ct);
                     var pushed = await OwnedAsync(op, "push", started =>
                         git.PushOwnedAsync(op.RepositoryPath, Destination(op), op.VerifiedSourceSha!, started, ct), ct);
                     op.PushExitCode = pushed.ExitCode;
@@ -378,6 +383,12 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             : await CommitAsync(checkout, "HEAD", ct);
         if (current == verified) return null; // already there (a schema-2 land advanced it before its push)
         if (!await IsAncestorAsync(op.RepositoryPath, current, verified, ct)) return "canonical_diverged";
+        // CARD-0642 R1 carried over: the HEAD-file read is the last check before the mutation, because another
+        // process can switch a worktree onto the target unseen while the ancestry check runs.
+        var (again, _) = ScanTarget(op);
+        if (again is not null) return again;
+        if ((checkout is null) != (HeadsOf(op).First(h => h.IsMain).SymbolicRef != op.TargetFullRef))
+            return "canonical_checkout_changed";
         LandingGitResult advanced;
         if (checkout is null)
             advanced = await MutateAsync(op, op.RepositoryPath,
@@ -403,19 +414,30 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     /// </summary>
     private async Task<(string? Reason, string? Checkout)> CanonicalDecisionAsync(AgentTaskLanding op, CancellationToken ct)
     {
-        var heads = LandWorkspace?.ScanHeadFiles(op.CommonDirectory) ?? Infrastructure.Git.LandWorkspace.Scan(op.CommonDirectory);
-        var elsewhere = heads.FirstOrDefault(h => !h.IsMain && h.SymbolicRef == op.TargetFullRef);
-        if (elsewhere is not null) return ("target_checked_out_elsewhere", elsewhere.WorktreePath ?? elsewhere.AdminDirectory);
-        var main = heads.First(h => h.IsMain);
-        if (main.SymbolicRef != op.TargetFullRef) return (null, null);
-        if (main.WorktreePath is null) return ("canonical_checkout_unknown", null);
-        var checkout = main.WorktreePath;
+        var (reason, checkout) = ScanTarget(op);
+        if (reason is not null || checkout is null) return (reason, checkout);
         if (await TryIndexLockRefusalAsync(checkout, ct) is not null) return ("canonical_index_lock", checkout);
         if (await git.HasActiveSequencerAsync(checkout, ct)) return ("canonical_active_sequencer", checkout);
         var status = await git.RunAsync(checkout,
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
         if (!status.Succeeded || status.Output.Length != 0) return ("canonical_checkout_dirty", checkout);
         return (null, checkout);
+    }
+
+    private IReadOnlyList<LandingHeadFile> HeadsOf(AgentTaskLanding op) =>
+        LandWorkspace?.ScanHeadFiles(op.CommonDirectory) ?? Infrastructure.Git.LandWorkspace.Scan(op.CommonDirectory);
+
+    /// <summary>The file-only half of the decision: the target is checked out in the main checkout (its path),
+    /// nowhere (null) or elsewhere / unknowably (a residue reason). An unreadable main HEAD is never "nowhere".</summary>
+    private (string? Reason, string? Checkout) ScanTarget(AgentTaskLanding op)
+    {
+        var heads = HeadsOf(op);
+        var elsewhere = heads.FirstOrDefault(h => !h.IsMain && h.SymbolicRef == op.TargetFullRef);
+        if (elsewhere is not null) return ("target_checked_out_elsewhere", elsewhere.WorktreePath ?? elsewhere.AdminDirectory);
+        var main = heads.First(h => h.IsMain);
+        if (main.SymbolicRef is null && main.Sha is null) return ("canonical_checkout_unknown", main.WorktreePath);
+        if (main.SymbolicRef != op.TargetFullRef) return (null, null);
+        return main.WorktreePath is null ? ("canonical_checkout_unknown", null) : (null, main.WorktreePath);
     }
 
     private ILandWorkspace RequireWorkspace() => LandWorkspace ?? throw new LandingRefusal("land_worktree_root_unavailable");

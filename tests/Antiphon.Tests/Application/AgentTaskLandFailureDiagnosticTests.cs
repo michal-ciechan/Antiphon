@@ -169,7 +169,7 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         await using var h = new LandingProtocolHarness();
         h.AddHostedLandService();
         await h.InitializeAsync();
-        h.Git.BeforeInspection = () => throw new IOException(Marker);
+        h.Git.BeforeCommand = ThrowOnSourceRead(h, () => new IOException(Marker));
         await h.RequestAsync(expectedSourceSha: h.Git.SourceHead);
         var hosted = new AgentTaskLandHostedService(h.Queue, h.Services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<AgentTaskLandHostedService>.Instance);
@@ -207,7 +207,7 @@ public sealed class AgentTaskLandFailureDiagnosticTests
         await h.InitializeAsync();
         h.Fault.TerminalCut = cut;
         h.Fault.EventKind = AgentTaskEventType.LandRefused;
-        h.Git.BeforeInspection = () => throw new IOException(Marker);
+        h.Git.BeforeCommand = ThrowOnSourceRead(h, () => new IOException(Marker));
         await h.RequestAsync(expectedSourceSha: h.Git.SourceHead);
         var hosted = new AgentTaskLandHostedService(h.Queue, h.Services.GetRequiredService<IServiceScopeFactory>(), hostedLog);
         await hosted.StartAsync(CancellationToken.None);
@@ -229,7 +229,7 @@ public sealed class AgentTaskLandFailureDiagnosticTests
             var handled = entries.Single(e => e.State.ContainsKey("DiagnosticId") && e.Message.Contains("Land operation failed"));
             persist.State["DiagnosticId"].ShouldBe(handled.State["DiagnosticId"]);
             h.Fault.TerminalCut = null;
-            h.Git.BeforeInspection = null;
+            h.Git.BeforeCommand = null;
             await h.RestartServicesAsync();
             await h.SweepAsync();
             (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
@@ -310,65 +310,61 @@ public sealed class AgentTaskLandFailureDiagnosticTests
     }
 
     [Test]
-    [Arguments("status_error")]
-    [Arguments("identity_io_error")]
-    [Arguments("identity_inaccessible")]
-    [Arguments("source_dirty")]
-    [Arguments("operation-inspection")]
+    [Arguments("git_directory_unreadable")]
+    [Arguments("source_ref_error")]
     [Arguments("commit_lookup_failed")]
+    [Arguments("source_dirty")]
+    [Arguments("status_error")]
     public async Task C498_InspectionDiagnosticPropagatesToRequest(string arm)
     {
+        // CARD-0688 D-2: the resolver no longer inspects the task worktree. Its git reads are the branch show-ref,
+        // the target commit lookup, the destination and one rev-parse --absolute-git-dir in the worktree; each
+        // failure refuses with a sanitized diagnostic. A dirty worktree or a failing worktree status is not a
+        // landing refusal any more: the land publishes and guarded cleanup keeps the worktree as residue.
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         if (arm == "source_dirty")
             File.WriteAllText(Path.Combine(h.Git.Source, "keep.txt"), "dirty\n");
-        else if (arm == "commit_lookup_failed")
-        {
-            h.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(
-                args[0] == "rev-parse" && args.Any(a => a.Contains("^{commit}", StringComparison.Ordinal))
-                    ? new LandingGitResult(128, "", Marker) : null);
-        }
+        else if (arm == "status_error")
+            h.Git.InjectInspection = call => call == 1
+                ? new LandSourceInspection(null, "status_error", new LandInspectionDiagnostic("git status --porcelain=v1", 128, "git_exit_128", null))
+                : null;
         else
-        {
-            h.Git.InjectInspection = call =>
+            h.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(arm switch
             {
-                var match = arm == "operation-inspection" ? call == 2 : call == 1;
-                if (!match) return null;
-                var diagnostic = arm switch
-                {
-                    "status_error" => new LandInspectionDiagnostic("git status --porcelain=v1", 128, "git_exit_128", null),
-                    "identity_io_error" => new LandInspectionDiagnostic("git rev-parse <identity>", 128, "git_exit_128", "LandingGitCommandException"),
-                    "identity_inaccessible" => new LandInspectionDiagnostic(null, null, null, "UnauthorizedAccessException"),
-                    _ => new LandInspectionDiagnostic("git status --porcelain=v1", 1, "git_exit_1", null),
-                };
-                var reason = arm == "operation-inspection" ? "status_error" : arm;
-                return new LandSourceInspection(null, reason, diagnostic);
-            };
-        }
+                "commit_lookup_failed" when args[0] == "rev-parse" && args.Any(a => a.Contains("^{commit}", StringComparison.Ordinal))
+                    => new LandingGitResult(128, "", Marker),
+                "git_directory_unreadable" when args is ["rev-parse", "--absolute-git-dir"] => new LandingGitResult(128, "", Marker),
+                "source_ref_error" when args is ["show-ref", _, ..] && args[^1] == h.Git.SourceRef => new LandingGitResult(1, "", Marker),
+                _ => null,
+            });
         var queued = await h.RequestAsync(expectedSourceSha: h.Git.SourceHead);
         (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
         await using var db = h.CreateContext();
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
         request.TerminalFailureCode.ShouldBeNull();
         request.FailureDiagnosticId.ShouldBeNull();
-        if (arm == "source_dirty")
+        if (arm is "source_dirty" or "status_error")
         {
-            request.SourceRefusalReason.ShouldBe("source_dirty");
-            request.SourceDiagnosticCode.ShouldBeNull();
+            request.SourceRefusalReason.ShouldBeNull();
+            var op = (await db.AgentTaskLandings.SingleAsync(o => o.TaskId == h.Git.TaskId && o.Active));
+            op.RemoteConfirmedAt.ShouldNotBeNull();
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            op.LastReason.ShouldBe(arm);
+            Directory.Exists(h.Git.Source).ShouldBeTrue();
+            return;
         }
-        else if (arm == "commit_lookup_failed")
+        switch (arm)
         {
-            request.SourceRefusalReason.ShouldBe("commit_lookup_failed");
-            request.SourceDiagnosticCommand.ShouldBe("git rev-parse <identity>");
-            request.SourceDiagnosticExitCode.ShouldBe(128);
-            request.SourceDiagnosticCode.ShouldBe("git_exit_128");
-        }
-        else
-        {
-            request.SourceRefusalReason.ShouldBe(arm == "operation-inspection" ? "status_error" : arm);
-            if (arm == "status_error" || arm == "operation-inspection")
-                request.SourceDiagnosticCode.ShouldBe(arm == "status_error" ? "git_exit_128" : "git_exit_1");
-            if (arm == "identity_io_error") request.SourceDiagnosticCode.ShouldBe("git_exit_128");
+            case "commit_lookup_failed" or "git_directory_unreadable":
+                request.SourceRefusalReason.ShouldBe(arm == "commit_lookup_failed" ? "commit_lookup_failed" : "source_git_directory_unreadable");
+                request.SourceDiagnosticCommand.ShouldBe("git rev-parse <identity>");
+                request.SourceDiagnosticExitCode.ShouldBe(128);
+                request.SourceDiagnosticCode.ShouldBe("git_exit_128");
+                break;
+            default:
+                request.SourceRefusalReason.ShouldBe("source_ref_error");
+                break;
         }
         var terminal = await db.AgentTaskEvents.SingleAsync(e => e.LandRequestId == request.Id && e.Type == AgentTaskEventType.LandRefused);
         var outcome = await db.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == request.Id && n.Kind == LandNotificationKind.Outcome);
@@ -394,11 +390,17 @@ public sealed class AgentTaskLandFailureDiagnosticTests
             "generic" => new InvalidOperationException(Marker),
             _ => new OperationCanceledException(new CancellationToken(true)),
         };
+        // CARD-0688 D-2: the resolver's first git read of the source is one show-ref of the branch (it inspected the
+        // worktree before); its post-Observed confirmation is the one-round-trip recheck (a second observation before).
         if (seam == "before-operation")
-            h.Git.BeforeInspection = () => throw Ex();
+            h.Git.BeforeCommand = ThrowOnSourceRead(h, Ex);
         else
-            h.Git.OnSourceObservation = n => n == 2 ? throw Ex() : Task.CompletedTask;
+            h.Git.OnSourceRecheck = n => n == 1 ? throw Ex() : Task.CompletedTask;
     }
+
+    private static Func<string, IReadOnlyList<string>, Task<LandingGitResult?>> ThrowOnSourceRead(LandingProtocolHarness h, Func<Exception> error)
+        => (_, args) => args is ["show-ref", "--verify", "--hash", var name] && name == h.Git.SourceRef
+            ? throw error() : Task.FromResult<LandingGitResult?>(null);
 
     private static async Task WaitTerminalAsync(LandingProtocolHarness h)
     {

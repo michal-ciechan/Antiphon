@@ -43,15 +43,20 @@ public sealed class LandingProtocolGuardTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        h.Git.BeforeCommand = (repo, args) => Task.FromResult(
-            args[0] == "symbolic-ref" && args[^1] == "HEAD"
-            && string.Equals(Path.GetFullPath(repo), Path.GetFullPath(h.Git.Repository), StringComparison.OrdinalIgnoreCase)
-                ? new Antiphon.Server.Application.Dtos.LandingGitResult(128, h.Git.TargetRef + "\n", "git_exit_128")
-                : null);
+        // CARD-0688 D-5: the target decision reads <common>/HEAD after publication, not symbolic-ref before it.
+        // An unreadable main HEAD is never taken for "checked out nowhere": the canonical step records a
+        // residue and nothing moves the target (before CARD-0688 this refused target_checkout_changed).
+        h.Git.AfterCommand = (_, args, result) =>
+        {
+            if (args[0] == "push" && result.Succeeded) File.WriteAllText(Path.Combine(h.Git.CommonDir, "HEAD"), "\0garbage\n");
+            return Task.CompletedTask;
+        };
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.LastReason.ShouldBe("target_checkout_changed");
-        h.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push");
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        op.CanonicalAdvanceReason.ShouldBe("canonical_checkout_unknown");
+        h.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "update-ref" && a.Contains(h.Git.TargetRef));
+        h.Git.TargetHead.ShouldBe(h.Git.SeedSha);
     }
 
     [Test]
@@ -81,22 +86,24 @@ public sealed class LandingProtocolGuardTests
         var protocol = new AgentTaskLandingProtocol(db, h.Git,
             h.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IRepositoryMutationLease>(),
             h.Worktrees, h.Verifier, TimeProvider.System);
-        var method = typeof(AgentTaskLandingProtocol).GetMethod("CheckTargetAsync",
+        // CARD-0688 D-5: the target decision now runs after publication, from HEAD files. A second checkout of
+        // the target is a named residue (was ambiguous_target_checkout); registration lock/prune state and the
+        // old "recorded" flag are no longer consulted (were target_registration_unavailable/target_checkout_changed).
+        var method = typeof(AgentTaskLandingProtocol).GetMethod("CanonicalDecisionAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        Exception? failure = null;
-        try { await (Task)method.Invoke(protocol, [op, h.Git.SeedSha, CancellationToken.None])!; }
-        catch (Exception ex) { failure = ex.InnerException ?? ex; }
-        if (change == "ambiguous" || change == "locked" || change == "prunable" || change == "unrecorded")
+        var decision = (Task)method.Invoke(protocol, [op, CancellationToken.None])!;
+        await decision;
+        var (reason, checkout) = ((string?, string?))decision.GetType().GetProperty("Result")!.GetValue(decision)!;
+        if (change == "ambiguous")
         {
-            failure.ShouldNotBeNull().GetType().Name.ShouldBe("LandingRefusal");
-            failure!.Message.ShouldBe(change switch
-            {
-                "ambiguous" => "ambiguous_target_checkout",
-                "locked" or "prunable" => "target_registration_unavailable",
-                _ => "target_checkout_changed",
-            });
+            reason.ShouldBe("target_checked_out_elsewhere");
+            checkout.ShouldBe(Path.Combine(h.Git.Root, "canonical-alias"));
         }
-        else failure.ShouldBeNull();
+        else
+        {
+            reason.ShouldBeNull();
+            checkout.ShouldBe(h.Git.Repository);
+        }
         h.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push");
     }
 
@@ -109,8 +116,10 @@ public sealed class LandingProtocolGuardTests
         h.Git.BeforeCommand = (_, args) => Task.FromResult(
             args[0] == "fetch" ? new Antiphon.Server.Application.Dtos.LandingGitResult(128, "", "remote_read_failed") : null);
         await h.RunAsync();
-        var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.RemoteConfirmedAt.ShouldBeNull();
+        // CARD-0688 D-4: the remote target is observed when the operation is created, so a fetch fault may
+        // refuse before any operation exists; either way nothing is pushed or confirmed.
+        (await h.OperationAsync())?.RemoteConfirmedAt.ShouldBeNull();
+        h.Git.Trace.ShouldNotContain(a => a[0] == "push");
         Directory.Exists(h.Git.Source).ShouldBeTrue();
     }
 
@@ -216,8 +225,27 @@ public sealed class LandingProtocolGuardTests
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         h.Verifier.Calls.ShouldBe(1);
-        op.RemoteConfirmedAt.ShouldBeNull();
-        h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("--ff-only") || a.Contains("remove"));
+        if (change == "head")
+        {
+            // I-2: the branch is re-read by show-ref at every source checkpoint; a moved branch never publishes.
+            op.RemoteConfirmedAt.ShouldBeNull();
+            h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("--ff-only") || a.Contains("remove"));
+            op.LastReason.ShouldBe("source_changed");
+            return;
+        }
+        // CARD-0688 D-2 / I-3: the task worktree's identity is a cleanup concern, not a landing precondition.
+        // The land publishes from the branch ref; guarded cleanup refuses the changed worktree and keeps it.
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        if (change == "registered_path")
+        {
+            // Cleanup identifies the worktree by the operation's recorded path and its registration row;
+            // a snapshot's registered-path field is not part of that identity (real git reports the same path).
+            op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+            return;
+        }
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        h.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+        Directory.Exists(h.Git.Source).ShouldBeTrue();
         if (change == "rejected") op.LastReason.ShouldBe("source_rejected");
         else op.LastReason.ShouldBe("source_changed");
     }

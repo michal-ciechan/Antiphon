@@ -153,7 +153,7 @@ public sealed class LandingProtocolHarnessTests
         if (mode == "Fresh")
         {
             phases.ShouldContain(LandPhase.Prepared);
-            phases.ShouldContain(LandPhase.LocalTargetAdvanced);
+            phases.ShouldContain(LandPhase.PushStarted); // CARD-0688: schema 3 pushes from Verified; no local advance first
             h.Git.Trace.ShouldContain(a => a[0] == "push");
         }
         if (mode == "AlreadyPresent") h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase"));
@@ -218,7 +218,7 @@ public sealed class LandingProtocolHarnessTests
         Exception? failure = null;
         try { await h.RunAsync(); } catch (Exception ex) { failure = ex; }
         entryAcquired.ShouldBe(false, "the first protocol query must still hold the service lease");
-        acquired.Count.ShouldBeGreaterThanOrEqualTo(2, "admission and an in-protocol inspection must both be observed");
+        acquired.Count.ShouldBeGreaterThanOrEqualTo(2, "both guarded-cleanup inspections (CARD-0688: the only ones) must be observed under the lease");
         acquired.ShouldAllBe(value => !value);
         failure.ShouldBeNull();
     }
@@ -228,12 +228,12 @@ public sealed class LandingProtocolHarnessTests
         if (mode != "AlreadyPresent") await h.AddSourceAsync();
         if (mode == "ResumePublication")
         {
-            h.Fault.Phase = LandPhase.LocalTargetAdvanced;
+            h.Fault.Phase = LandPhase.PushStarted; // CARD-0688: the resumable pre-publication phase
             h.Fault.AfterCommit = true;
             await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
             h.Fault.Triggered.ShouldBeTrue();
             var op = (await h.OperationAsync()).ShouldNotBeNull();
-            op.Phase.ShouldBe(LandPhase.LocalTargetAdvanced);
+            op.Phase.ShouldBe(LandPhase.PushStarted);
             op.RemoteConfirmedAt.ShouldBeNull();
         }
         if (mode == "CleanupRetry")
@@ -245,7 +245,7 @@ public sealed class LandingProtocolHarnessTests
             h.Fault.AfterAcknowledged = phase => { phases.Add(phase); return Task.CompletedTask; };
             await h.RunAsync();
             phases.ShouldContain(LandPhase.Prepared);
-            phases.ShouldContain(LandPhase.LocalTargetAdvanced);
+            phases.ShouldContain(LandPhase.PushStarted); // CARD-0688: schema 3 pushes from Verified; no local advance first
             h.Git.Trace.ShouldContain(a => a[0] == "push");
             var op = (await h.OperationAsync()).ShouldNotBeNull();
             op.RemoteConfirmedAt.ShouldNotBeNull();
