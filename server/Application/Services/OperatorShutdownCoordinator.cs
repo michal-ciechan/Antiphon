@@ -74,6 +74,40 @@ public sealed class OperatorShutdownCoordinator
         _lifetime.StopApplication();
     }
 
+    /// <summary>
+    /// Distinct Starting sessions that have a Dispatched task, the same set
+    /// <see cref="RecordInterruptedLaunchesAsync"/> records. The 202 body reports this
+    /// count before the drain; a database fault logs and returns 0 so the shutdown still answers.
+    /// </summary>
+    public async Task<int> CountStartingLaunchesAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetService<AppDbContext>();
+            if (db is null)
+                return 0;
+            var startingIds = await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Status == SessionStatus.Starting)
+                .Select(s => s.Id)
+                .ToListAsync(ct);
+            if (startingIds.Count == 0)
+                return 0;
+            return await db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentSessionId != null
+                    && startingIds.Contains(t.AgentSessionId.Value)
+                    && t.Status == AgentTaskStatus.Dispatched)
+                .Select(t => t.AgentSessionId!.Value)
+                .Distinct()
+                .CountAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Operator shutdown could not count starting launches");
+            return 0;
+        }
+    }
+
     public async Task<IReadOnlyList<Guid>> RecordInterruptedLaunchesAsync(
         AppDbContext db, string? reason, CancellationToken ct)
     {

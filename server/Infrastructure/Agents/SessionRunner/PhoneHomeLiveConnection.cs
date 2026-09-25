@@ -26,6 +26,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private bool _warnedHigh;
     private string? _closedReason;
 
+    /// <summary>CARD-0716 repair: 1 while <see cref="ReceiveLoopAsync"/> has not returned.</summary>
+    private int _receiveLoopRunning;
+
     // CARD-0679 D-1: released events per wall-clock second, the last ten seconds, for the
     // high-water line's pump rate.
     private readonly object _rateGate = new();
@@ -377,6 +380,19 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     public async Task ReceiveLoopAsync(CancellationToken ct, ILogger? logger = null)
     {
+        Interlocked.Exchange(ref _receiveLoopRunning, 1);
+        try
+        {
+            await ReceiveLoopCoreAsync(ct, logger);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _receiveLoopRunning, 0);
+        }
+    }
+
+    private async Task ReceiveLoopCoreAsync(CancellationToken ct, ILogger? logger)
+    {
         while (!ct.IsCancellationRequested && _socket.State == WebSocketState.Open)
         {
             var frame = await PhoneHomeFraming.ReadFrameAsync(_socket, _limits.MaxMessageUtf8Bytes, ct);
@@ -513,21 +529,30 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 // the ordinary dispose close. CloseOutputAsync is a send, so it can run beside the
                 // receive that is still blocked; CloseAsync would start a second receive. A peer
                 // that does not answer within the handshake bound is aborted.
+                // CARD-0716 repair: overflow, message_too_large and receive_fault have already left
+                // the loop, so nobody reads the peer's ack. CloseAsync finishes that handshake
+                // instead of waiting out the bound and then aborting.
                 var stopping = string.Equals(reason, "request_aborted", StringComparison.Ordinal);
+                var status = stopping ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure;
+                var description = stopping ? PhoneHomeCloseReasons.ServerStopping : "dispose";
                 using var handshake = new CancellationTokenSource(
                     TimeSpan.FromSeconds(PhoneHomeProtocol.CloseHandshakeSeconds));
                 try
                 {
-                    await _socket.CloseOutputAsync(
-                        stopping ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure,
-                        stopping ? PhoneHomeCloseReasons.ServerStopping : "dispose",
-                        handshake.Token);
-                    var deadline = DateTime.UtcNow.AddSeconds(PhoneHomeProtocol.CloseHandshakeSeconds);
-                    while (DateTime.UtcNow < deadline
-                        && _socket.State is WebSocketState.Open or WebSocketState.CloseSent
-                        && !handshake.IsCancellationRequested)
+                    if (Volatile.Read(ref _receiveLoopRunning) > 0)
                     {
-                        await Task.Delay(50, handshake.Token);
+                        await _socket.CloseOutputAsync(status, description, handshake.Token);
+                        var deadline = DateTime.UtcNow.AddSeconds(PhoneHomeProtocol.CloseHandshakeSeconds);
+                        while (DateTime.UtcNow < deadline
+                            && _socket.State is WebSocketState.Open or WebSocketState.CloseSent
+                            && !handshake.IsCancellationRequested)
+                        {
+                            await Task.Delay(50, handshake.Token);
+                        }
+                    }
+                    else
+                    {
+                        await _socket.CloseAsync(status, description, handshake.Token);
                     }
                 }
                 catch (OperationCanceledException)
