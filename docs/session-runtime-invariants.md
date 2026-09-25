@@ -40,6 +40,24 @@
   (default 30), added to by a launch ack and removed from by `SessionExited` or a kill. It is never an
   RPC, and a connection that is recovering, lease-expired or closed contributes nothing. Without it the
   stranded-queue sweep, deliver-if-idle and send-now treated every phone-home session as dead.
+  An exit or kill leaves a tombstone for that session generation: a launch ack or a List naming a
+  generation already seen to end is ignored (the exit event can be pumped before the ack's
+  continuation runs), a newer generation is not, and a List sent before a later ack or exit does
+  not undo it. Each entry keeps when a List, ack or event last confirmed it; one unconfirmed for
+  `PhoneHomeRunner:InventoryStaleAfterRefreshes` (default 3) refresh intervals stops counting as live
+  even while heartbeats hold the lease, and that many failed refreshes in a row log a Warning.
+
+- **A transport loss during a remote launch re-attaches after the ack and re-queues before it,
+  bounded (CARD-0679 D-8; lands with R5).** Inside the launch, a transport-class loss before the
+  Launch ack re-sends the Launch with the same accepted generation (the runner answers a
+  same-generation duplicate with the existing session and a different one with a typed 409,
+  `phone_home_session_already_running`); a loss after the ack attaches a fresh adapter to the
+  runner's session. Each retry first waits up to `PhoneHomeRunner:LaunchReattachWaitSeconds`
+  (default 90) for the runner to be dispatch-eligible again, at most
+  `PhoneHomeRunner:LaunchTransportRetries` (default 2) times, with the row still `Starting` and only
+  before anything is typed. Exhausted, the session fails with a transport `FailureReason` naming the
+  runner, phase, attempts and wait (never "A task was canceled."), and a post-ack failure records the
+  generation-conditional kill intent above. Until R5 lands, such a launch still fails at once.
 
 - **No runner RPC inside a claim transaction (CARD-0633).** Branch push and the runner mirror run
   on `RemoteWorkspacePreparer` after the claim commits with the task still Queued, so a silent

@@ -59,6 +59,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
         var request = _mapper.ToLaunchRequest(sessionId, spec);
+        var sent = _connection.BeginInventoryRead();
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Launch, request, ct);
         // CARD-0679 R5 repair: this generation already ran and exited on the runner (a re-sent
         // Launch whose first send landed). Typed, with the exit the runner recorded.
@@ -80,8 +81,10 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         }
 
         // CARD-0679 D-10: the ack is the runner vouching for the session; the next List need not.
+        // Unless the pump already saw this generation exit: the runner can write the exit event
+        // before this continuation runs, and the ack must not make a dead session live again.
         if (started.Status is "Running" or "Starting")
-            _connection.NoteSessionLive(sessionId);
+            _connection.NoteSessionLive(sessionId, started.AcceptedStartedAt ?? spec.AcceptedStartedAt, sent);
         return started;
     }
 
@@ -254,7 +257,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
             PhoneHomeOperation.ReleaseSlot, new { sessionId, reason }, ct);
         var released = _mapper.Map(Read<RunnerSessionDto>(frame) ?? throw Missing("release-slot"));
         if (released.Status is not ("Running" or "Starting"))
-            _connection.NoteSessionGone(sessionId);
+            _connection.NoteSessionGone(sessionId, released.AcceptedStartedAt);
         return released;
     }
 
@@ -301,7 +304,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
             ct);
         var result = Read<RunnerKillGenerationResult>(frame) ?? throw Missing("kill-generation");
         if (result.Killed)
-            _connection.NoteSessionGone(sessionId);
+            _connection.NoteSessionGone(sessionId, expectedAcceptedStartedAt);
         return result;
     }
 

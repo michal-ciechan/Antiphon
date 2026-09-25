@@ -317,15 +317,17 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     }
 
     /// <summary>
-    /// CARD-0679 D-10: the recovered connection's cached inventory. A connection that is not
-    /// dispatch-eligible (still recovering, lease expired) or whose socket closed vouches for nothing.
+    /// CARD-0679 D-10: the recovered connection's cached inventory, less entries unconfirmed for
+    /// longer than <see cref="PhoneHomeRunnerSettings.InventoryMaxAge"/>. A connection that is not
+    /// dispatch-eligible (still recovering), whose lease expired or whose socket closed vouches for nothing.
     /// </summary>
     public IReadOnlyCollection<Guid> LiveRemoteSessionIds()
     {
         var live = SnapshotLive();
-        if (live is null || !live.DispatchEligible || !live.SocketOpen)
+        if (live is null || !live.DispatchEligible || !live.SocketOpen
+            || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             return [];
-        return live.KnownLiveSessions;
+        return live.KnownLiveSessions(_settings.InventoryMaxAge);
     }
 
     public PhoneHomeRunnerStatusDto Status(string runnerId)

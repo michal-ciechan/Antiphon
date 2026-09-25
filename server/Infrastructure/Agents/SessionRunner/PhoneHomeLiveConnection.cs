@@ -109,54 +109,151 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     /// </summary>
     public long? LastCatchUpMs { get; set; }
 
-    // CARD-0679 D-10: what this connection knows the runner holds live. Each entry keeps the stamp
-    // of its last change, so a List answered after a launch ack or an exit does not undo them.
-    private readonly ConcurrentDictionary<Guid, InventoryEntry> _inventory = new();
+    // CARD-0679 D-10: what this connection knows the runner holds live. Every change takes a stamp,
+    // so a List sent before a launch ack or an exit does not undo them. An exit leaves a tombstone
+    // for its generation, so neither a late ack nor a List brings that generation back (review
+    // 57fa2e6a: the exit event can be pumped before the ack's continuation runs). Each live entry
+    // keeps when the runner last confirmed it, so a cache no List refreshes ages out instead of
+    // vouching for a lost session for as long as heartbeats hold the lease.
+    private readonly object _inventoryGate = new();
+    private readonly Dictionary<Guid, InventoryEntry> _inventory = new();
+    private readonly Dictionary<Guid, Tombstone> _tombstones = new();
     private long _inventoryStamp;
 
     /// <summary>
-    /// CARD-0679 D-10: the sessions the runner last reported Running/Starting, kept current by the
-    /// recovery pump's List, launch acks, exits and kills. Read without an RPC.
+    /// How long a tombstone outlives its exit: longer than any request's reply timeout, so no ack
+    /// or List sent before the exit can still be answered after the tombstone is dropped.
     /// </summary>
-    public IReadOnlyCollection<Guid> KnownLiveSessions =>
-        _inventory.Where(entry => entry.Value.Live).Select(entry => entry.Key).ToArray();
+    internal static readonly TimeSpan TombstoneRetention = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// CARD-0679 D-10: call before sending the inventory List; pass the result to
-    /// <see cref="ReplaceKnownLiveSessions"/> with that List's answer.
+    /// CARD-0679 D-10: the sessions the runner last reported Running/Starting, kept current by the
+    /// recovery pump's List, launch acks, events, exits and kills. An entry no List, ack or event
+    /// confirmed within <paramref name="maxAge"/> is left out; null is no age bound. Read without
+    /// an RPC.
+    /// </summary>
+    public IReadOnlyCollection<Guid> KnownLiveSessions(TimeSpan? maxAge = null)
+    {
+        var now = Clock.GetUtcNow();
+        lock (_inventoryGate)
+        {
+            return _inventory
+                .Where(entry => maxAge is not { } age || now - entry.Value.ConfirmedAt <= age)
+                .Select(entry => entry.Key)
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0679 D-10: call before sending a request whose answer updates the inventory (the List,
+    /// a Launch); pass the result with that answer, so changes seen after it outrank the answer.
     /// </summary>
     internal long BeginInventoryRead() => Interlocked.Increment(ref _inventoryStamp);
 
     /// <summary>
     /// CARD-0679 D-10: the runner's List is the inventory, except for sessions whose launch ack,
-    /// exit or kill arrived after <paramref name="readStamp"/>: those are newer than the List.
+    /// exit or kill arrived after <paramref name="readStamp"/> (those are newer than the List) and
+    /// generations an exit already ended. A listed session counts as confirmed now.
     /// </summary>
-    internal void ReplaceKnownLiveSessions(IEnumerable<Guid> live, long readStamp)
+    internal void ReplaceKnownLiveSessions(IEnumerable<(Guid SessionId, DateTime? Generation)> live, long readStamp)
     {
-        var listed = live.ToHashSet();
-        foreach (var id in listed)
-            _inventory.AddOrUpdate(id,
-                _ => new InventoryEntry(true, readStamp),
-                (_, current) => current.Stamp > readStamp ? current : new InventoryEntry(true, readStamp));
-        foreach (var (id, entry) in _inventory)
+        var now = Clock.GetUtcNow();
+        lock (_inventoryGate)
         {
-            if (entry.Stamp > readStamp || listed.Contains(id))
-                continue;
-            // Absent from (or a tombstone older than) a List that started after this entry
-            // changed: the List is the truth for it. Removed only if it has not changed since.
-            ((ICollection<KeyValuePair<Guid, InventoryEntry>>)_inventory).Remove(new(id, entry));
+            var listed = new HashSet<Guid>();
+            foreach (var (id, generation) in live)
+            {
+                if (Ended(id, generation, readStamp))
+                    continue;
+                listed.Add(id);
+                if (_inventory.TryGetValue(id, out var current) && current.Stamp > readStamp)
+                    continue;
+                _inventory[id] = new InventoryEntry(generation, readStamp, now);
+            }
+
+            foreach (var (id, entry) in _inventory.ToArray())
+            {
+                // Absent from a List sent after this entry last changed: the List is the truth for it.
+                if (entry.Stamp <= readStamp && !listed.Contains(id))
+                    _inventory.Remove(id);
+            }
+
+            foreach (var (id, tombstone) in _tombstones.ToArray())
+            {
+                if (now - tombstone.At > TombstoneRetention)
+                    _tombstones.Remove(id);
+            }
         }
     }
 
-    /// <summary>CARD-0679 D-10: the runner acknowledged a launch of <paramref name="sessionId"/>.</summary>
-    internal void NoteSessionLive(Guid sessionId) =>
-        _inventory[sessionId] = new InventoryEntry(true, Interlocked.Increment(ref _inventoryStamp));
+    /// <summary>
+    /// CARD-0679 D-10: the runner acknowledged a launch of <paramref name="generation"/>;
+    /// <paramref name="requestStamp"/> was taken before the Launch was sent. An ack for a
+    /// generation whose exit was already seen changes nothing. Returns whether it was recorded.
+    /// </summary>
+    internal bool NoteSessionLive(Guid sessionId, DateTime? generation, long requestStamp)
+    {
+        lock (_inventoryGate)
+        {
+            if (Ended(sessionId, generation, requestStamp))
+                return false;
+            _inventory[sessionId] = new InventoryEntry(
+                generation, Interlocked.Increment(ref _inventoryStamp), Clock.GetUtcNow());
+            return true;
+        }
+    }
 
-    /// <summary>CARD-0679 D-10: the runner reported <paramref name="sessionId"/> exited or killed.</summary>
-    internal void NoteSessionGone(Guid sessionId) =>
-        _inventory[sessionId] = new InventoryEntry(false, Interlocked.Increment(ref _inventoryStamp));
+    /// <summary>
+    /// CARD-0679 D-10: the runner reported <paramref name="sessionId"/>'s <paramref name="generation"/>
+    /// exited or killed (null: an older runner that does not say which). A live entry of a newer
+    /// generation stays; the tombstone is left either way.
+    /// </summary>
+    internal void NoteSessionGone(Guid sessionId, DateTime? generation)
+    {
+        lock (_inventoryGate)
+        {
+            var stamp = Interlocked.Increment(ref _inventoryStamp);
+            var ended = generation;
+            if (_tombstones.TryGetValue(sessionId, out var prior)
+                && prior.Generation is { } priorGeneration && generation is { } exitGeneration
+                && SessionGeneration.Compare(priorGeneration, exitGeneration) > 0)
+                ended = priorGeneration;
+            _tombstones[sessionId] = new Tombstone(ended, stamp, Clock.GetUtcNow());
 
-    private readonly record struct InventoryEntry(bool Live, long Stamp);
+            if (_inventory.TryGetValue(sessionId, out var entry)
+                && !(entry.Generation is { } liveGeneration && generation is { } goneGeneration
+                    && SessionGeneration.Compare(liveGeneration, goneGeneration) > 0))
+                _inventory.Remove(sessionId);
+        }
+    }
+
+    /// <summary>CARD-0679 D-10: an event from <paramref name="sessionId"/> confirms it is still live.</summary>
+    internal void NoteSessionConfirmed(Guid sessionId)
+    {
+        lock (_inventoryGate)
+        {
+            if (_inventory.TryGetValue(sessionId, out var entry))
+                _inventory[sessionId] = entry with { ConfirmedAt = Clock.GetUtcNow() };
+        }
+    }
+
+    /// <summary>
+    /// Whether an exit already ended this <paramref name="generation"/>. With both generations
+    /// known it is the older-or-equal test; otherwise an exit seen after <paramref name="stamp"/>
+    /// (after the request was sent) outranks the answer. Callers hold the gate.
+    /// </summary>
+    private bool Ended(Guid sessionId, DateTime? generation, long stamp)
+    {
+        if (!_tombstones.TryGetValue(sessionId, out var tombstone))
+            return false;
+        if (tombstone.Generation is { } ended && generation is { } answered)
+            return SessionGeneration.Compare(answered, ended) <= 0;
+        return tombstone.Stamp > stamp;
+    }
+
+    private readonly record struct InventoryEntry(DateTime? Generation, long Stamp, DateTimeOffset ConfirmedAt);
+
+    private readonly record struct Tombstone(DateTime? Generation, long Stamp, DateTimeOffset At);
 
     /// <summary>
     /// CARD-0679 D-1: records why this connection ended. The first writer wins, so the route's

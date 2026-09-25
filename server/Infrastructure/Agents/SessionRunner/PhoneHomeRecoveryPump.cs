@@ -169,19 +169,37 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
 
     private async Task RefreshInventoryAsync(PhoneHomeLiveConnection live, CancellationToken ct)
     {
+        var state = StateFor(live);
         try
         {
             await ReadInventoryAsync(live, ct);
+            var ended = Interlocked.Exchange(ref state.RefreshFailures, 0);
+            if (ended >= StaleAfterRefreshes)
+                _logger.LogInformation(
+                    "Phone-home inventory refresh for runner {RunnerId} epoch {Epoch} succeeded after "
+                    + "{ConsecutiveFailures} failed refreshes", live.RunnerId, live.Epoch, ended);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            // The last inventory stands; a closed connection vouches for nothing anyway, and the
-            // next refresh or the next connection's catch-up reads it again.
+            // The last inventory stands, but only until its entries age past InventoryMaxAge; a
+            // closed connection vouches for nothing anyway, and the next refresh or the next
+            // connection's catch-up reads it again.
+            var failures = Interlocked.Increment(ref state.RefreshFailures);
             _logger.LogWarning(
                 ex, "Phone-home inventory refresh List for runner {RunnerId} epoch {Epoch} failed ({Code})",
                 live.RunnerId, live.Epoch, ProblemCode(ex));
+            if (failures == StaleAfterRefreshes)
+                _logger.LogWarning(
+                    "Phone-home inventory refreshes for runner {RunnerId} epoch {Epoch} failed {ConsecutiveFailures} "
+                    + "times in a row while the connection stays up; cached sessions no List, launch ack or event "
+                    + "confirmed within {MaxAgeSeconds}s no longer count as live",
+                    live.RunnerId, live.Epoch, failures, _settings.InventoryMaxAge?.TotalSeconds);
         }
     }
+
+    // Review 57fa2e6a: the Warning threshold is the stale bound; with the bound off, three in a row.
+    private int StaleAfterRefreshes =>
+        _settings.InventoryStaleAfterRefreshes > 0 ? _settings.InventoryStaleAfterRefreshes : 3;
 
     /// <summary>
     /// CARD-0679 D-10: one List, which replaces <paramref name="live"/>'s cached inventory and
@@ -195,7 +213,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         var sessions = await new PhoneHomeRunnerClient(live).ListAsync(ct);
         live.LastCatchUpMs = (long)live.Clock.GetElapsedTime(started).TotalMilliseconds;
         live.ReplaceKnownLiveSessions(
-            sessions.Where(s => s.Status is "Running" or "Starting").Select(s => s.SessionId), stamp);
+            sessions.Where(s => s.Status is "Running" or "Starting").Select(s => (s.SessionId, s.AcceptedStartedAt)),
+            stamp);
         return sessions;
     }
 
@@ -320,9 +339,12 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                     continue;
                 sessionId = parsed.SessionId;
                 // CARD-0679 D-10: an exited session leaves the inventory whoever owns it; the List
-                // the inventory came from is not owner-filtered either.
+                // the inventory came from is not owner-filtered either. Any other event from a
+                // session is the runner confirming it is still there.
                 if (parsed.Exited is not null)
-                    live.NoteSessionGone(parsed.SessionId);
+                    live.NoteSessionGone(parsed.SessionId, parsed.Exited.AcceptedStartedAt);
+                else
+                    live.NoteSessionConfirmed(parsed.SessionId);
                 if (!await OwnerMatchesAsync(live, parsed.SessionId, ct))
                     continue;
 
@@ -382,5 +404,6 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     {
         public ConcurrentDictionary<Guid, (bool Owned, DateTimeOffset At)> Owners { get; } = new();
         public int EventFailures;
+        public int RefreshFailures;
     }
 }

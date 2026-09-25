@@ -67,6 +67,21 @@ public sealed class PhoneHomeRunnerSettings
     public int InventoryRefreshSeconds { get; set; } = 30;
 
     /// <summary>
+    /// CARD-0679 D-10 (review 57fa2e6a): a cached inventory entry that no refresh List, launch ack
+    /// or event has confirmed for this many <see cref="InventoryRefreshSeconds"/> intervals no longer
+    /// counts as live, so refreshes that keep failing while heartbeats hold the lease cannot keep a
+    /// lost session "live" forever. The pump logs a Warning when this many refreshes in a row fail.
+    /// <c>0</c> or less (or a disabled refresh) removes the bound.
+    /// </summary>
+    public int InventoryStaleAfterRefreshes { get; set; } = 3;
+
+    /// <summary>The age past which a cached inventory entry stops counting as live, or null for no bound.</summary>
+    public TimeSpan? InventoryMaxAge =>
+        InventoryRefreshSeconds > 0 && InventoryStaleAfterRefreshes > 0
+            ? TimeSpan.FromSeconds((double)InventoryRefreshSeconds * InventoryStaleAfterRefreshes)
+            : null;
+
+    /// <summary>
     /// CARD-0679 D-3: how long the recovery pump trusts a "not ours" owner lookup for one session on
     /// one connection before reading the binding again (a match is trusted for the connection's
     /// life). Short, so a session row committed just after its first event is still picked up;
