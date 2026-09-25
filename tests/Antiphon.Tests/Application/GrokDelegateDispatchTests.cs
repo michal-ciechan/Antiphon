@@ -846,7 +846,8 @@ public class GrokDelegateDispatchTests
     private static (AgentTaskDispatcher, RecordingSessionStopper, ServiceProvider) BuildHarness(
         int? budgetChars, bool withGrokDefinition, string? grokExe, int? poolMaxIdlePerDirectory)
     {
-        var stopper = new RecordingSessionStopper();
+        // CARD-0691 D-3: the janitor removes a row only once the kill ended its session, as the real stopper does.
+        var stopper = new RecordingSessionStopper { StopsSessionsIn = TestDbFixture.ConnectionString };
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
