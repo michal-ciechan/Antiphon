@@ -316,6 +316,18 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         return live.Capacity;
     }
 
+    /// <summary>
+    /// CARD-0679 D-10: the recovered connection's cached inventory. A connection that is not
+    /// dispatch-eligible (still recovering, lease expired) or whose socket closed vouches for nothing.
+    /// </summary>
+    public IReadOnlyCollection<Guid> LiveRemoteSessionIds()
+    {
+        var live = SnapshotLive();
+        if (live is null || !live.DispatchEligible || !live.SocketOpen)
+            return [];
+        return live.KnownLiveSessions;
+    }
+
     public PhoneHomeRunnerStatusDto Status(string runnerId)
     {
         var live = SnapshotLive();

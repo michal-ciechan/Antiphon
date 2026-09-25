@@ -109,6 +109,55 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     /// </summary>
     public long? LastCatchUpMs { get; set; }
 
+    // CARD-0679 D-10: what this connection knows the runner holds live. Each entry keeps the stamp
+    // of its last change, so a List answered after a launch ack or an exit does not undo them.
+    private readonly ConcurrentDictionary<Guid, InventoryEntry> _inventory = new();
+    private long _inventoryStamp;
+
+    /// <summary>
+    /// CARD-0679 D-10: the sessions the runner last reported Running/Starting, kept current by the
+    /// recovery pump's List, launch acks, exits and kills. Read without an RPC.
+    /// </summary>
+    public IReadOnlyCollection<Guid> KnownLiveSessions =>
+        _inventory.Where(entry => entry.Value.Live).Select(entry => entry.Key).ToArray();
+
+    /// <summary>
+    /// CARD-0679 D-10: call before sending the inventory List; pass the result to
+    /// <see cref="ReplaceKnownLiveSessions"/> with that List's answer.
+    /// </summary>
+    internal long BeginInventoryRead() => Interlocked.Increment(ref _inventoryStamp);
+
+    /// <summary>
+    /// CARD-0679 D-10: the runner's List is the inventory, except for sessions whose launch ack,
+    /// exit or kill arrived after <paramref name="readStamp"/>: those are newer than the List.
+    /// </summary>
+    internal void ReplaceKnownLiveSessions(IEnumerable<Guid> live, long readStamp)
+    {
+        var listed = live.ToHashSet();
+        foreach (var id in listed)
+            _inventory.AddOrUpdate(id,
+                _ => new InventoryEntry(true, readStamp),
+                (_, current) => current.Stamp > readStamp ? current : new InventoryEntry(true, readStamp));
+        foreach (var (id, entry) in _inventory)
+        {
+            if (entry.Stamp > readStamp || listed.Contains(id))
+                continue;
+            // Absent from (or a tombstone older than) a List that started after this entry
+            // changed: the List is the truth for it. Removed only if it has not changed since.
+            ((ICollection<KeyValuePair<Guid, InventoryEntry>>)_inventory).Remove(new(id, entry));
+        }
+    }
+
+    /// <summary>CARD-0679 D-10: the runner acknowledged a launch of <paramref name="sessionId"/>.</summary>
+    internal void NoteSessionLive(Guid sessionId) =>
+        _inventory[sessionId] = new InventoryEntry(true, Interlocked.Increment(ref _inventoryStamp));
+
+    /// <summary>CARD-0679 D-10: the runner reported <paramref name="sessionId"/> exited or killed.</summary>
+    internal void NoteSessionGone(Guid sessionId) =>
+        _inventory[sessionId] = new InventoryEntry(false, Interlocked.Increment(ref _inventoryStamp));
+
+    private readonly record struct InventoryEntry(bool Live, long Stamp);
+
     /// <summary>
     /// CARD-0679 D-1: records why this connection ended. The first writer wins, so the route's
     /// classified reason is not overwritten by a later generic one. Returns false when a reason

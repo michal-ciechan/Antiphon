@@ -25,6 +25,22 @@
   (default 5) before asking again. One session's transcript failure is a warning and does not fence
   the runner.
 
+- **A reconnect fails in-flight phone-home requests with a typed error, never a cancellation
+  (CARD-0679 D-5/D-6).** A request whose frame was written fails with
+  `phone_home_connection_closed_in_flight` (the runner may have acted); one never written fails with
+  `phone_home_connection_closed_before_send`. A remote adapter routes every call to the current
+  connection, and `Resolve` refuses a connection whose socket closed. A failed launch whose kill
+  cannot be sent records a generation-conditional `pending:kill-generation:` intent that the slot
+  reconcile sends once the runner is back.
+
+- **A live phone-home session is live to every `ListLiveSessions()` caller (CARD-0679 D-10).**
+  `AgentSessionRuntime.ListLiveSessions()` unions the local runner's List, the in-process test
+  adapters and `ISessionRunnerDirectory.LiveRemoteSessionIds()`: the recovered connection's cached
+  inventory, replaced by each catch-up List and by a List every `PhoneHomeRunner:InventoryRefreshSeconds`
+  (default 30), added to by a launch ack and removed from by `SessionExited` or a kill. It is never an
+  RPC, and a connection that is recovering, lease-expired or closed contributes nothing. Without it the
+  stranded-queue sweep, deliver-if-idle and send-now treated every phone-home session as dead.
+
 - **No runner RPC inside a claim transaction (CARD-0633).** Branch push and the runner mirror run
   on `RemoteWorkspacePreparer` after the claim commits with the task still Queued, so a silent
   mirror cannot hold the row lock or the rest of the tick. The Claude credential probe

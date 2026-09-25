@@ -41,4 +41,10 @@ public interface ISessionRunnerDirectory
     /// A null answer does not hold; an unavailable runner is a separate gate.
     /// </summary>
     int? DeclaredCapacity(string runnerId) => null;
+
+    /// <summary>
+    /// CARD-0679 D-10: sessions a connected remote runner holds live, from the connection's cached
+    /// inventory. Never an RPC; empty when no remote runner is connected and recovered.
+    /// </summary>
+    IReadOnlyCollection<Guid> LiveRemoteSessionIds() => [];
 }
