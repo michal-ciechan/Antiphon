@@ -37,6 +37,10 @@ public sealed class DispatcherRemotePrepStarvationTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        // Three runner tasks prepare on one tick. The host default is one seat, and
+        // CARD-0653 counts each in-flight mirror, so the later tasks were held at
+        // capacity instead of staying in remote prep.
+        host.Capacity = 3;
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         host.Directory.MarkRecovered(live);
