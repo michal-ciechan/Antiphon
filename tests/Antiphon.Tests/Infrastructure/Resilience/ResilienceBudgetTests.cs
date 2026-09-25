@@ -32,8 +32,20 @@ public class ResilienceBudgetTests
         using var client = ResilienceTestHost.Client(provider, ResilienceClientNames.RunnerRead);
         var started = time.GetUtcNow();
         var work = Send(client, ResilienceOperations.RunnerGet);
-        await Should.ThrowAsync<TaskCanceledException>(() =>
-            ResilienceTestHost.Pump(time, work, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20)));
+        // Stop one second before the total budget so observing cancellation cannot advance the clock.
+        var realLimit = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (time.GetUtcNow() - started < TimeSpan.FromSeconds(119) && !work.IsCompleted)
+        {
+            if (DateTime.UtcNow >= realLimit)
+                throw new TimeoutException("fake clock did not reach 119s before the real-time limit");
+            time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(1);
+        }
+
+        work.IsCompleted.ShouldBeFalse("the read must still be running one second before the total budget");
+        (time.GetUtcNow() - started).ShouldBe(TimeSpan.FromSeconds(119));
+        time.Advance(TimeSpan.FromSeconds(1));
+        await Should.ThrowAsync<TaskCanceledException>(() => work.WaitAsync(TimeSpan.FromSeconds(10)));
         var elapsed = time.GetUtcNow() - started;
         elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(120));
         elapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(121));
