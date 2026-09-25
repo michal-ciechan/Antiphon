@@ -104,10 +104,11 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
         Bridge.Runtime.TryRemove(sessionId, out _).ShouldBeTrue();
     }
 
-    public async Task<PhoneHomeScriptedPeer> RecoverAsync(bool includeTarget = true)
+    public async Task<PhoneHomeScriptedPeer> RecoverAsync(bool includeTarget = true, Guid? additionalSession = null)
     {
         var peer = await Host.ConnectPeerAsync();
         if (includeTarget) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(SessionId));
+        if (additionalSession is Guid other) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(other));
         PhoneHomeStrandedQueueTests.EchoSubmittedPromptsToTranscript(peer, Bridge);
         var pump = PhoneHomeStrandedQueueTests.Pump(Host, Bridge);
         _pumps.Add(pump);

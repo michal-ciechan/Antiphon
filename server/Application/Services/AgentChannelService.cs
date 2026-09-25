@@ -200,16 +200,21 @@ public sealed class AgentChannelService
         }
 
         var liveSessionIds = _runtime.ListLiveOrUnknownSessions().ToHashSet();
+        var localSessionIds = _runtime.ListLocalLiveSessions();
+        var pendingRunnerIds = _runtime.PendingRunnerIds();
         var sessions = await _db.AgentSessions
             .AsNoTracking()
             .Include(s => s.Card)
             .Where(s => s.Id != source.Id
+                && (liveSessionIds.Contains(s.Id) || pendingRunnerIds.Contains(s.RunnerId!))
                 && TargetStatuses.Contains(s.Status)
                 && s.Card.BoardId == source.Card.BoardId)
             .ToListAsync(ct);
 
         sessions = sessions.Where(s => _runtime.IsAcceptedRunnerBinding(s.RunnerId)
-            && (_runtime.RemoteInventoryPending(s.RunnerId) || liveSessionIds.Contains(s.Id))).ToList();
+            && (string.IsNullOrWhiteSpace(s.RunnerId) || s.RunnerId == Antiphon.SessionRunner.Contracts.PhoneHomeProtocol.LocalRunnerId
+                ? localSessionIds.Contains(s.Id)
+                : _runtime.RemoteInventoryPending(s.RunnerId) || liveSessionIds.Contains(s.Id))).ToList();
         var matches = sessions
             .Where(s => s.DefinitionName.Equals(normalized, StringComparison.OrdinalIgnoreCase))
             .ToList();

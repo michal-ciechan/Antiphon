@@ -98,15 +98,15 @@ public class PhoneHomePendingInventoryTests
     [Test]
     public async Task Terminal_rows_and_unaccepted_bindings_do_not_gain_liveness()
     {
-        foreach (var terminal in new[] { true, false })
+        foreach (var state in new[] { "terminal", "unaccepted", "unbound" })
         {
             await using var h = await PhoneHomeOutageHarness.CreateAsync();
             h.Runtime.ListLiveOrUnknownSessions().ShouldContain(h.SessionId);
             await using var db = h.Db();
-            if (terminal)
+            if (state == "terminal")
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Failed));
             else
-                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, "unaccepted-runner"));
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, state == "unbound" ? null : "unaccepted-runner"));
             (await h.PreviewAsync()).Target.AgentLive.ShouldBe(false);
             (await h.MentionAsync("fake", "must not resurrect")).ShouldBeFalse();
             await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, "terminal", MessageSendMode.Now, CancellationToken.None));
@@ -132,14 +132,8 @@ public class PhoneHomePendingInventoryTests
             try
             {
                 await PhoneHomeOutageHarness.UntilAsync(() => arrived.IsSet);
-                await using var peer = await h.Host.ConnectPeerAsync();
-                var live = await h.Host.WaitLiveAsync();
                 var newer = Guid.NewGuid();
-                // Same authoritative mutation the recovery pump makes after its real List.
-                var inventory = await new PhoneHomeRunnerClient(live).ListAsync(CancellationToken.None);
-                inventory.ShouldBeEmpty();
-                live.ReplaceKnownLiveSessions(includesNew ? [(newer, (DateTime?)DateTime.UtcNow)] : [], live.BeginInventoryRead());
-                h.Host.Directory.MarkRecovered(live);
+                await using var peer = await h.RecoverAsync(includeTarget: false, additionalSession: includesNew ? newer : null);
                 release.Set();
                 var ids = await read;
                 ids.ShouldNotContain(h.SessionId);
