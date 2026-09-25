@@ -500,17 +500,18 @@ public sealed class AgentTaskLandService
         var (siblings, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
         var marker = UnlandedMarker(siblings);
         if (CanonicalWarning(op) is { } canonical) warnings = [.. warnings, canonical];
-        await SettleLandedAsync(task, type, AppendUnlandedMarker(AppendDetail(FormatOutcome(op), result.Detail), marker),
+        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op, result.Detail), marker),
             warnings, siblings, ct, result.Detail);
         return LandRunResult.Complete;
     }
 
-    internal static string FormatOutcome(AgentTaskLanding op) =>
+    internal static string FormatOutcome(AgentTaskLanding op, string? cleanupDetail = null) =>
         $"{(op.Publication == LandPublicationOutcome.AlreadyPresent ? "already present" : "landed")} operation={op.Id:N} mode={op.Mode} "
         + $"source={op.OriginalSourceSha} reviewed={op.ReviewedSourceSha ?? op.OriginalSourceSha} verified={op.VerifiedSourceSha} -> {op.RemoteName}:{op.DestinationFullRef}; "
         + $"remote={op.ObservedRemoteTargetSha} confirmed at {op.RemoteConfirmedAt:O}; "
         + (op.PushStartedAt is null ? "no push attempted; " : $"push exit={op.PushExitCode?.ToString() ?? "unknown"}; ")
         + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}")
+        + (string.IsNullOrEmpty(cleanupDetail) ? "" : $"; {cleanupDetail}")
         + (CanonicalOutcome(op) is { } canonical ? $"; canonical={canonical}" : "");
 
     /// <summary>CARD-0688 D-4: <c>advanced</c>, <c>already</c> or the residue reason; null before the step ran.</summary>
@@ -966,7 +967,8 @@ public sealed class AgentTaskLandService
         _db.AgentTaskEvents.Add(terminal);
         CompleteRequest(task, request, terminal);
         AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCapture, unlandedSiblings,
-            AppendDetail(op?.LastReason ?? "cleanup complete", cleanupDetail));
+            AppendDetail(AppendDetail(op?.LastReason ?? "cleanup complete",
+                op?.CanonicalAdvanceReason is { } canonicalReason ? $"canonical={canonicalReason}" : null), cleanupDetail));
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);

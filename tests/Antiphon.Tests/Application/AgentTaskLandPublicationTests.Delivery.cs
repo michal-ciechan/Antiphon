@@ -85,7 +85,7 @@ public sealed partial class AgentTaskLandPublicationTests
             note.Body.ShouldContain(expected);
             if (canonicalReason is not null)
             {
-                terminal.Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+                terminal.Type.ShouldBe(AgentTaskEventType.LandingCleanup);
                 terminal.Detail.ShouldContain("canonical=" + canonicalReason);
                 note.Body.ShouldContain("canonical=" + canonicalReason);
                 (await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId
