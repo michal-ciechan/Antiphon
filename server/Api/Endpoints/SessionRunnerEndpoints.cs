@@ -125,38 +125,59 @@ public static class SessionRunnerEndpoints
             // receive fault nobody classified still reaches the exception middleware.
             // CARD-0716 D-1: the receive loop also ends when this host is stopping, so the close
             // frame goes out before Kestrel's shutdown timeout aborts the upgraded connection.
+            // ReceiveAsync treats cancellation as Abort(), which would tear the socket down before
+            // DisposeAsync can send 1001. Watch the host stop beside the receive instead, and leave
+            // the socket open so the close frame is a send concurrent with that receive.
             string reason;
             Exception? fault = null;
             WebSocketException? transportFault = null;
-            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, lifetime.ApplicationStopping);
-            try
+            var receive = connection.ReceiveLoopAsync(ct, logger);
+            var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (lifetime.ApplicationStopping.UnsafeRegister(
+                static state => ((TaskCompletionSource)state!).TrySetResult(), stopping))
             {
-                await connection.ReceiveLoopAsync(stop.Token, logger);
-                reason = stop.IsCancellationRequested ? AbortReason(lifetime) : "close_received";
-            }
-            catch (PhoneHomeTransportException ex) when (ex.Code == PhoneHomeProblemTypes.EventOverflow
-                || ex.Code == PhoneHomeProblemTypes.MessageTooLarge)
-            {
-                reason = ex.Code;
-            }
-            catch (OperationCanceledException) when (stop.IsCancellationRequested)
-            {
-                reason = AbortReason(lifetime);
-            }
-            catch (WebSocketException ex)
-            {
-                reason = "transport_abort";
-                transportFault = ex;
-            }
-            catch (Exception) when (connection.LastDisconnectReason is { } recorded)
-            {
-                // Superseded by a newer connection, whose accept disposed this socket under the read.
-                reason = recorded;
-            }
-            catch (Exception ex)
-            {
-                reason = $"receive_fault:{ex.GetType().Name}";
-                fault = ex;
+                var winner = await Task.WhenAny(receive, stopping.Task);
+                if (winner == stopping.Task && !receive.IsCompleted)
+                {
+                    reason = "request_aborted";
+                    _ = receive.ContinueWith(
+                        static completed => { _ = completed.Exception; },
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+                else
+                {
+                    try
+                    {
+                        await receive;
+                        reason = ct.IsCancellationRequested ? AbortReason(lifetime) : "close_received";
+                    }
+                    catch (PhoneHomeTransportException ex) when (ex.Code == PhoneHomeProblemTypes.EventOverflow
+                        || ex.Code == PhoneHomeProblemTypes.MessageTooLarge)
+                    {
+                        reason = ex.Code;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        reason = AbortReason(lifetime);
+                    }
+                    catch (WebSocketException ex)
+                    {
+                        reason = "transport_abort";
+                        transportFault = ex;
+                    }
+                    catch (Exception) when (connection.LastDisconnectReason is { } recorded)
+                    {
+                        // Superseded by a newer connection, whose accept disposed this socket under the read.
+                        reason = recorded;
+                    }
+                    catch (Exception ex)
+                    {
+                        reason = $"receive_fault:{ex.GetType().Name}";
+                        fault = ex;
+                    }
+                }
             }
 
             try
@@ -164,29 +185,30 @@ public static class SessionRunnerEndpoints
                 directory.Disconnect(connection, reason);
                 var lifetimeSeconds = (connection.Clock.GetUtcNow() - connection.StartedAtUtc).TotalSeconds;
                 var recordedReason = connection.LastDisconnectReason ?? reason;
+                // The counts after PendingEvents stay in the text. A thirteenth named hole is dropped
+                // from the structured state, and the test reads SocketError from that state.
+                var pendingText =
+                    "socket {SocketState}; pending {PendingEvents} events / " + connection.PendingEventBytes
+                    + " bytes; live buffer " + connection.LiveBufferEvents
+                    + " events; in flight " + connection.InFlight
+                    + "; failing " + connection.PendingWaiters + " waiters";
                 if (transportFault is not null)
                 {
                     var (wsError, socketError) = PhoneHomeTransportFault.Describe(transportFault);
                     logger.LogWarning(
                         "Phone-home connection {RunnerId} epoch {Epoch} ended: {Reason} after {LifetimeSeconds:0.0}s; "
-                        + "socket {SocketState}; pending {PendingEvents} events / {PendingEventBytes} bytes; "
-                        + "live buffer {LiveBufferEvents} events; in flight {InFlight}; failing {Waiters} waiters; "
-                        + "connection {ConnectionId} transport {WsError}/{SocketError}",
+                        + pendingText + "; connection {ConnectionId} wsError {WsError} socketError {SocketError}",
                         connection.RunnerId, connection.Epoch, recordedReason, lifetimeSeconds,
-                        connection.SocketState, connection.PendingEvents, connection.PendingEventBytes,
-                        connection.LiveBufferEvents, connection.InFlight, connection.PendingWaiters,
+                        connection.SocketState, connection.PendingEvents,
                         connectionId, wsError, socketError);
                 }
                 else
                 {
                     logger.LogWarning(
                         "Phone-home connection {RunnerId} epoch {Epoch} ended: {Reason} after {LifetimeSeconds:0.0}s; "
-                        + "socket {SocketState}; pending {PendingEvents} events / {PendingEventBytes} bytes; "
-                        + "live buffer {LiveBufferEvents} events; in flight {InFlight}; failing {Waiters} waiters; "
-                        + "connection {ConnectionId}",
+                        + pendingText + "; connection {ConnectionId}",
                         connection.RunnerId, connection.Epoch, recordedReason, lifetimeSeconds,
-                        connection.SocketState, connection.PendingEvents, connection.PendingEventBytes,
-                        connection.LiveBufferEvents, connection.InFlight, connection.PendingWaiters,
+                        connection.SocketState, connection.PendingEvents,
                         connectionId);
                 }
             }
