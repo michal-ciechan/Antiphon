@@ -247,7 +247,7 @@ public sealed class AgentTaskLandRecoveryTests
         await h.InitializeAsync();
         var sha = await h.AddSourceAsync();
         var hit = false;
-        var crash = new SimulatedServerCrash();
+        var crash = new SimulatedServerInterruption();
         h.Fixture.Git.AfterCommand = (_, args, result) =>
         {
             if (!hit && result.Succeeded && (boundary switch
@@ -262,9 +262,9 @@ public sealed class AgentTaskLandRecoveryTests
             }
             return Task.CompletedTask;
         };
-        SimulatedServerCrash? observedCrash = null;
+        SimulatedServerInterruption? observedCrash = null;
         try { await h.RunAsync(); }
-        catch (SimulatedServerCrash ex) { observedCrash = ex; }
+        catch (SimulatedServerInterruption ex) { observedCrash = ex; }
         hit.ShouldBeTrue($"the successful {boundary} command must reach the interruption hook");
         observedCrash.ShouldBeSameAs(crash, "the interruption must escape cleanup, not become a completed residue result");
         var interrupted = (await h.OperationAsync()).ShouldNotBeNull();
@@ -531,8 +531,12 @@ public sealed class AgentTaskLandRecoveryTests
         return (op, request.Id);
     }
 
+    private sealed class SimulatedServerCrash : Exception;
+
     // Cleanup turns ordinary exceptions into durable residue; those do not model a server
     // interruption. Cancellation propagates through both cleanup catch boundaries, leaving
     // the successful Git command unacknowledged for the new service graph to reconcile.
-    private sealed class SimulatedServerCrash : OperationCanceledException;
+    // The acknowledgement-gap test catches this directly to preserve the exact instance;
+    // async assertion wrappers can replace a cancelled task's exception with TaskCanceledException.
+    private sealed class SimulatedServerInterruption : OperationCanceledException;
 }
