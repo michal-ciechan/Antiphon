@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class PostLandMutationDeliveryTests
+public sealed partial class PostLandMutationDeliveryTests
 {
     [Test]
     public async Task C478_V09a_LandProducerToCaller()
@@ -1117,7 +1117,8 @@ public sealed class PostLandMutationDeliveryTests
     }
 
     private static async Task<SettledMutation> SettleMutationAsync(BridgeQueueHarness.HarnessOptions? options = null,
-        string? report = null, QueueInsertFault? fault = null)
+        string? report = null, QueueInsertFault? fault = null,
+        Func<BridgeQueueHarness, Task>? beforeSettlement = null)
     {
         var world = await PostLandMutationWorld.CreateAsync();
         options ??= new();
@@ -1169,6 +1170,7 @@ public sealed class PostLandMutationDeliveryTests
             });
             await db.SaveChangesAsync();
         }
+        if (beforeSettlement is not null) await beforeSettlement(bridge);
         if (fault is not null) fault.Armed = true;
         await new AgentTaskReplyService(
             bridge.Provider.GetRequiredService<IServiceScopeFactory>(),
