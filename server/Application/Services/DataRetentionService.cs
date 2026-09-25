@@ -19,6 +19,7 @@ public sealed class DataRetentionService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<DataRetentionService> _logger;
     private readonly AuditService _auditService;
+    private readonly SessionStateStore? _states;
 
     public DataRetentionService(
         AppDbContext db,
@@ -26,8 +27,10 @@ public sealed class DataRetentionService
         IOptions<AuditSettings> auditSettings,
         TimeProvider timeProvider,
         ILogger<DataRetentionService> logger,
-        AuditService auditService)
+        AuditService auditService,
+        SessionStateStore? states = null)
     {
+        _states = states;
         _db = db;
         _settings = settings.Value;
         _auditSettings = auditSettings.Value;
@@ -111,7 +114,10 @@ public sealed class DataRetentionService
             query = query.Where(s => !protectedList.Contains(s.Id));
         }
 
-        var removed = await query.ExecuteDeleteAsync(ct);
+        var removed = 0;
+        foreach (var sessionId in await query.Select(s => s.Id).ToListAsync(ct))
+            removed += await MutateTranscriptAsync(sessionId,
+                () => query.Where(s => s.Id == sessionId).ExecuteDeleteAsync(ct), ct);
         if (removed > 0)
         {
             _logger.LogInformation(
@@ -174,9 +180,13 @@ public sealed class DataRetentionService
         foreach (var sessionId in eligible)
         {
             // Whole session or nothing — the WHERE is AgentSessionId only, never CreatedAt.
-            var deleted = await _db.TranscriptEntries
-                .Where(t => t.AgentSessionId == sessionId)
-                .ExecuteDeleteAsync(ct);
+            var deleted = await MutateTranscriptAsync(sessionId, async () =>
+            {
+                // Recheck under the ingest gate: a catch-up may have committed after discovery.
+                if (await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId && t.CreatedAt >= cutoff, ct))
+                    return 0;
+                return await _db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync(ct);
+            }, ct);
             if (deleted > 0)
             {
                 _logger.LogInformation(
@@ -186,6 +196,24 @@ public sealed class DataRetentionService
             }
         }
 
+        return removed;
+    }
+
+    private async Task<int> MutateTranscriptAsync(Guid sessionId, Func<Task<int>> mutation, CancellationToken ct)
+    {
+        if (_states is null) return await mutation();
+        if (_db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null)
+            throw new InvalidOperationException("Transcript retention must own its commit boundary.");
+        using var lease = await _states.BeginWriteAsync(sessionId, ct);
+        int removed;
+        try { removed = await mutation(); }
+        catch
+        {
+            // Includes an ambiguous ExecuteDelete outcome. A failed reload leaves unavailable state.
+            await lease.ReconcileAsync(false, CancellationToken.None);
+            throw;
+        }
+        if (removed > 0) await lease.ReconcileAsync(true, CancellationToken.None);
         return removed;
     }
 

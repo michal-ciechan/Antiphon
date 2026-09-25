@@ -62,6 +62,9 @@ internal sealed class SessionStateReadFixture : IAsyncDisposable
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddDbContext<AppDbContext>(b => b.UseNpgsql(schema.ConnectionString,
             o => o.MigrationsAssembly("Antiphon.Server")).AddInterceptors(Capture));
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<CardWorkflowRunFactory>();

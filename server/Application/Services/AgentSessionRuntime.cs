@@ -51,6 +51,7 @@ public sealed class AgentSessionRuntime
     private readonly AgentMentionRouter? _mentionRouter;
     private readonly SessionGenerationCompatState _generationCompat;
     private readonly ISessionRunnerDirectory? _directory;
+    private readonly SessionStateStore? _states;
 
     public AgentSessionRuntime(
         ISessionRunnerClient runnerClient,
@@ -62,8 +63,10 @@ public sealed class AgentSessionRuntime
         AgentMentionRouter? mentionRouter = null,
         SessionGenerationCompatState? generationCompat = null,
         // CARD-0679 D-10: absent, only the local runner's sessions and test adapters are live.
-        ISessionRunnerDirectory? directory = null)
+        ISessionRunnerDirectory? directory = null,
+        SessionStateStore? states = null)
     {
+        _states = states;
         _directory = directory;
         _runnerClient = runnerClient;
         _eventBus = eventBus;
@@ -81,7 +84,8 @@ public sealed class AgentSessionRuntime
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
         ILogger<AgentSessionRuntime> logger,
-        AgentMentionRouter? mentionRouter = null)
+        AgentMentionRouter? mentionRouter = null,
+        SessionStateStore? states = null)
         : this(
             new EmptySessionRunnerClient(),
             eventBus,
@@ -89,7 +93,8 @@ public sealed class AgentSessionRuntime
             scopeFactory,
             timeProvider,
             logger,
-            mentionRouter)
+            mentionRouter,
+            states: states)
     {
     }
 
@@ -804,6 +809,8 @@ public sealed class AgentSessionRuntime
         long? LastStoredSeq, bool AddedTurnBoundary, bool AddedAssistantText, bool AddedManualCompactBoundary)
     {
         public static PersistResult Empty { get; } = new(null, false, false, false);
+        public IReadOnlyList<TranscriptEntry> CommittedRows { get; init; } = [];
+        public bool NeedsReload { get; init; }
     }
 
     internal const string TranscriptStubPrefix = "[transcript text not persistable:";
@@ -824,6 +831,55 @@ public sealed class AgentSessionRuntime
 
     internal async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
     {
+        if (entries.Count == 0) return PersistResult.Empty;
+        try
+        {
+            using var lease = _states is null ? null : await _states.BeginWriteAsync(sessionId, CancellationToken.None);
+            var previousCount = lease?.Snapshot.Count ?? 0;
+            var result = await PersistTranscriptCoreAsync(sessionId, entries);
+            await PublishCommittedAsync(lease, result);
+            _states?.RecordIngest(Math.Max(0, (lease?.Snapshot.Count ?? 0) - previousCount),
+                result.LastStoredSeq is null && !result.NeedsReload);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(ex));
+            _logger.LogWarning(ex, "Transcript state unavailable for session {SessionId}", sessionId);
+            return PersistResult.Empty;
+        }
+    }
+
+    private static async Task PublishCommittedAsync(SessionStateStore.Lease? lease, PersistResult result)
+    {
+        if (lease is null) return;
+        if (result.NeedsReload) await lease.ReconcileAsync(false, CancellationToken.None);
+        else await lease.PublishAsync(result.CommittedRows, CancellationToken.None);
+    }
+
+    /// <summary>The synthetic append shares serialization, persistence and publication with runner ingestion.</summary>
+    internal async Task<bool> WriteRestartBoundaryIfInterruptedAsync(Guid sessionId, CancellationToken ct)
+    {
+        using var lease = _states is null ? null : await _states.BeginWriteAsync(sessionId, ct);
+        bool working;
+        if (lease is not null) working = lease.Snapshot.Working;
+        else
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            working = await SessionMessageQueueService.IsWorkingAsync(
+                scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
+        }
+        if (!working) return false;
+        var boundary = new SessionRunnerTranscriptEvent(sessionId, 0, TranscriptKinds.SessionRestartBoundary,
+            Guid.NewGuid().ToString("D"), null, _timeProvider.GetUtcNow(), "system",
+            "Session relaunched; the previous turn had been interrupted mid-flight.", null, null, null, null, null);
+        var result = await PersistTranscriptCoreAsync(sessionId, [boundary]);
+        await PublishCommittedAsync(lease, result);
+        return result.LastStoredSeq is not null;
+    }
+
+    private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    {
         using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
             return PersistResult.Empty;
@@ -832,6 +888,8 @@ public sealed class AgentSessionRuntime
 
         try
         {
+            if (System.Transactions.Transaction.Current is not null)
+                throw new InvalidOperationException("Transcript ingestion must own its commit boundary.");
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
@@ -854,6 +912,7 @@ public sealed class AgentSessionRuntime
             foreach (var uuidBatch in incomingUuids.Chunk(512))
             {
                 var existing = await db.TranscriptEntries
+                    .TagWith("session-state.identity")
                     .Where(t => t.AgentSessionId == sessionId && t.Uuid != null && uuidBatch.Contains(t.Uuid!))
                     .Select(t => new { t.Uuid, t.Kind })
                     .ToListAsync();
@@ -876,7 +935,7 @@ public sealed class AgentSessionRuntime
                 .Where(t => t.AgentSessionId == sessionId)
                 .MaxAsync(t => (long?)t.Sequence) ?? 0;
 
-            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var now = SessionGeneration.Normalize(_timeProvider.GetUtcNow().UtcDateTime);
             var pending = new List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)>();
             foreach (var e in entries)
             {
@@ -901,7 +960,7 @@ public sealed class AgentSessionRuntime
                     Kind = e.Kind,
                     Uuid = e.Uuid,
                     ParentUuid = e.ParentUuid,
-                    Timestamp = e.Timestamp?.UtcDateTime,
+                    Timestamp = e.Timestamp is { } timestamp ? SessionGeneration.Normalize(timestamp.UtcDateTime) : null,
                     Role = e.Role,
                     Text = e.Text,
                     ToolName = e.ToolName,
@@ -941,13 +1000,14 @@ public sealed class AgentSessionRuntime
             }
 
             _persistFailures.TryRemove(sessionId, out _);
-            return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence));
+            return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
+                with { CommittedRows = pending.Select(p => p.Row).ToArray() };
         }
         catch (Exception ex)
         {
             RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(ex));
             _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
-            return PersistResult.Empty;
+            return PersistResult.Empty with { NeedsReload = true };
         }
     }
 
@@ -958,6 +1018,8 @@ public sealed class AgentSessionRuntime
         DbUpdateException batchFailure)
     {
         var landed = new List<SessionRunnerTranscriptEvent>();
+        var committed = new List<TranscriptEntry>();
+        var needsReload = false;
         long? lastStoredSeq = null;
         var anyStubOrSkip = false;
         foreach (var (row, source) in rows)
@@ -966,6 +1028,7 @@ public sealed class AgentSessionRuntime
             try
             {
                 await db.SaveChangesAsync();
+                committed.Add(row);
                 landed.Add(source);
                 lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
                 continue;
@@ -979,8 +1042,17 @@ public sealed class AgentSessionRuntime
                         rowFailure,
                         "Transcript row uuid {Uuid} already stored for session {SessionId} (23505); skipped",
                         row.Uuid, sessionId);
-                    landed.Add(source);
-                    lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
+                    // A collision proves only that SOMETHING already committed. Recover its
+                    // actual identity/sequence; never fold our proposed row or classification.
+                    needsReload = true;
+                    var durable = await db.TranscriptEntries.AsNoTracking().FirstOrDefaultAsync(t =>
+                        t.AgentSessionId == sessionId && (row.Uuid != null
+                            ? t.Uuid == row.Uuid && t.Kind == row.Kind : t.Sequence == row.Sequence));
+                    if (durable is not null)
+                    {
+                        landed.Add(source);
+                        lastStoredSeq = lastStoredSeq is { } seq && seq > durable.Sequence ? seq : durable.Sequence;
+                    }
                     continue;
                 }
 
@@ -991,6 +1063,7 @@ public sealed class AgentSessionRuntime
                 try
                 {
                     await db.SaveChangesAsync();
+                    committed.Add(row);
                     landed.Add(source);
                     lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
                     RecordTranscriptPersistFailure(sessionId, detail);
@@ -1004,7 +1077,7 @@ public sealed class AgentSessionRuntime
                     if (IsTransientDbFailure(stubFailure))
                     {
                         RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(stubFailure));
-                        return ResultFrom(landed, lastStoredSeq);
+                        return ResultFrom(landed, lastStoredSeq) with { CommittedRows = committed, NeedsReload = true };
                     }
 
                     RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(stubFailure));
@@ -1017,7 +1090,7 @@ public sealed class AgentSessionRuntime
 
         if (!anyStubOrSkip)
             _persistFailures.TryRemove(sessionId, out _);
-        return ResultFrom(landed, lastStoredSeq);
+        return ResultFrom(landed, lastStoredSeq) with { CommittedRows = committed, NeedsReload = needsReload };
     }
 
     private static PersistResult ResultFrom(IEnumerable<SessionRunnerTranscriptEvent> landed, long? lastStoredSeq)

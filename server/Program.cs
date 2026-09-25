@@ -559,6 +559,11 @@ try
     builder.Services.AddSingleton<IWorkspaceHookRunner, WorkspaceHookRunner>();
     builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();
     builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
+    builder.Services.Configure<SessionStateSettings>(builder.Configuration.GetSection("SessionState"));
+    builder.Services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+    builder.Services.AddSingleton<SessionStateStore>();
+    // Startup barrier before any state-dependent hosted consumer.
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionStateWarmupService>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
     // Which delivery ceilings are in force, from the pseudoconsole actually serving the ptys
     // (CARD-0037). Must be registered before anything that types into a terminal.

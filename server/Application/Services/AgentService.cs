@@ -42,6 +42,7 @@ public sealed class AgentService
     private readonly AgentPinnedInstructionService? _pins;
     private readonly IDelegateSessionStopper? _sessions;
     private readonly AgentSessionRuntime? _runtime;
+    private readonly SessionStateStore? _states;
 
     public AgentService(
         AppDbContext db,
@@ -64,8 +65,10 @@ public sealed class AgentService
         // CARD-0691 D-5: delete stops the agent's live session first. Optional for the same reason;
         // a harness without it cannot delete an agent whose session is live (409), never orphans one.
         IDelegateSessionStopper? sessions = null,
-        AgentSessionRuntime? runtime = null)
+        AgentSessionRuntime? runtime = null,
+        SessionStateStore? states = null)
     {
+        _states = states;
         _phoneHome = phoneHome;
         _sessions = sessions;
         _runtime = runtime;
@@ -105,7 +108,9 @@ public sealed class AgentService
             .Where(session => session.Dto.Status == SessionStatus.Running)
             .Select(session => session.Dto.Id)
             .ToList();
-        var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, runningSessionIds, ct);
+        var working = _states is null
+            ? await SessionMessageQueueService.IsWorkingBatchAsync(_db, runningSessionIds, ct)
+            : await _states.IsWorkingBatchAsync(runningSessionIds, ct);
         var lastRefreshed = await LoadLastRefreshedAtAsync(agents.Select(a => a.Id), ct);
         var result = new List<AgentSummaryDto>(agents.Count);
         foreach (var a in agents)
@@ -162,7 +167,8 @@ public sealed class AgentService
     /// </summary>
     private async Task<bool> IsSessionWorkingAsync(AgentSessionSummaryDto? live, CancellationToken ct) =>
         live is { Status: SessionStatus.Running }
-        && await SessionMessageQueueService.IsWorkingAsync(_db, live.Id, ct);
+        && (_states is null ? await SessionMessageQueueService.IsWorkingAsync(_db, live.Id, ct)
+            : await _states.IsWorkingAsync(live.Id, ct));
 
     public async Task<AgentDetailDto> GetByIdAsync(Guid id, CancellationToken ct)
     {

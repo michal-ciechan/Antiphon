@@ -44,6 +44,7 @@ public sealed partial class SessionMessageQueueService
     private readonly SessionDeliveryProfile? _sessionProfile;
     private readonly ILogger<SessionMessageQueueService> _logger;
     private readonly CapacityRecoveryService? _capacityRecovery;
+    private readonly SessionStateStore? _states;
 
     public SessionMessageQueueService(
         IServiceScopeFactory scopeFactory,
@@ -59,8 +60,10 @@ public sealed partial class SessionMessageQueueService
         CapacityRecoveryService? capacityRecovery = null,
         // CARD-0604 G-21. Absent, a remote spill still never writes a desktop file; it simply
         // types the whole body instead, which is the safe direction.
-        RemoteSpillCourier? remoteSpills = null)
+        RemoteSpillCourier? remoteSpills = null,
+        SessionStateStore? states = null)
     {
+        _states = states;
         _remoteSpills = remoteSpills;
         _ptyProfile = ptyProfile;
         _sessionProfile = sessionProfile;
@@ -675,7 +678,7 @@ public sealed partial class SessionMessageQueueService
             // Pending here; DeliverNextLockedAsync is the single automatic admission predicate
             // (CARD-0574 D-10). The launch path flushes the queue itself the moment boot completes
             // (FlushSessionAsync).
-            var working = await IsWorkingAsync(db, sessionId, ct);
+            var working = await ReadWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
                 && _runtime.IsLiveOrUnknown(session)
                 && !working)
@@ -1391,7 +1394,7 @@ public sealed partial class SessionMessageQueueService
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                if (!await IsWorkingAsync(db, sessionId, ct))
+                if (!await ReadWorkingAsync(db, sessionId, ct))
                     result = await DeliverNextLockedAsync(db, sessionId, ct);
             }
             finally
@@ -1431,7 +1434,7 @@ public sealed partial class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Boot is not the moment to compact — cancel-not-strand, a later sweep re-derives.
             await CancelPendingSupervisionLockedAsync(db, sessionId, "boot-flush", ct);
-            result = !await IsWorkingAsync(db, sessionId, ct)
+            result = !await ReadWorkingAsync(db, sessionId, ct)
                 ? await DeliverNextLockedAsync(db, sessionId, ct)
                 : FlushResult.Nothing;
         }
@@ -1466,7 +1469,7 @@ public sealed partial class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            if (!await IsWorkingAsync(db, sessionId, ct))
+            if (!await ReadWorkingAsync(db, sessionId, ct))
             {
                 // A pending auto-compact after a *manual* compact is redundant; drop it.
                 await CancelPendingSupervisionLockedAsync(db, sessionId, "idle-flush", ct);
@@ -4299,7 +4302,7 @@ public sealed partial class SessionMessageQueueService
             // Asked before the kill decision AND before the incident text is written, so both tell
             // the same story. Never kill over a Supervision compact — the session may be the
             // operator's own live conversation (CARD-0056 re-adoption).
-            var working = await IsWorkingAsync(db, sessionId, ct);
+            var working = await ReadWorkingAsync(db, sessionId, ct);
             // CARD-0103 withholds the always-on kill for the refunded shape too: the fresh composer
             // a kill buys is worthless against a TUI that has not started reading, and killing and
             // relaunching straight back into the same race is CARD-0047's restart loop by another
@@ -4693,6 +4696,9 @@ public sealed partial class SessionMessageQueueService
 
     // Internal so the agent list/detail can surface the SAME working signal on agent cards —
     // "Working" on a card must mean mid-turn right now, not merely "session started".
+    private Task<bool> ReadWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        _states is null ? IsWorkingAsync(db, sessionId, ct) : _states.IsWorkingAsync(sessionId, ct);
+
     internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
         (await IsWorkingBatchAsync(db, [sessionId], ct))[sessionId];
 
@@ -4706,7 +4712,7 @@ public sealed partial class SessionMessageQueueService
     /// message is Pending like any other, and a queue that could not say so showed CARD-0055's
     /// parked messages as ordinary pending ones — visible, and silently never going anywhere.
     /// </param>
-    private static async Task<SessionQueueDto> BuildQueueDtoAsync(
+    private async Task<SessionQueueDto> BuildQueueDtoAsync(
         AppDbContext db, Guid sessionId, int maxAttempts, CancellationToken ct)
     {
         var messages = await db.SessionQueuedMessages
@@ -4725,7 +4731,7 @@ public sealed partial class SessionMessageQueueService
                 m.NoteHeader,
                 false))
             .ToListAsync(ct);
-        var working = await IsWorkingAsync(db, sessionId, ct);
+        var working = await ReadWorkingAsync(db, sessionId, ct);
         var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         var modalBlocked = false;
         if (session is not null)
@@ -4854,7 +4860,7 @@ public sealed partial class SessionMessageQueueService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            if (await IsWorkingAsync(db, sessionId, ct))
+            if (await ReadWorkingAsync(db, sessionId, ct))
             {
                 _logger.LogInformation(
                     "Overlay dismiss withheld for session {SessionId}: session is working after transcript pull",
@@ -4957,7 +4963,7 @@ public sealed partial class SessionMessageQueueService
                 return new LocalCommandPollResult.Skipped("not live");
             if (!await IsAcceptingInputAsync(sessionId, ct))
                 return new LocalCommandPollResult.Skipped("not Running");
-            if (await IsWorkingAsync(db, sessionId, ct))
+            if (await ReadWorkingAsync(db, sessionId, ct))
                 return new LocalCommandPollResult.Skipped("working");
             if (await db.SessionQueuedMessages.AsNoTracking()
                 .AnyAsync(m => m.AgentSessionId == sessionId
