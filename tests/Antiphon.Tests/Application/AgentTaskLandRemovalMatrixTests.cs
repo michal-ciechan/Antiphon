@@ -181,7 +181,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
         if (variant == "valid")
         {
             h.Fixture.Git.Trace.Single(a => a.Contains("worktree") && a.Contains("remove"))
-                .ShouldBe(["worktree", "remove", "--", h.Fixture.Source]);
+                .ShouldBe(LandingGitFixture.FixtureGit.UnregisterVector(h.Fixture.Source));
             h.Fixture.Git.Trace.Single(a => a[0] == "update-ref" && a.Contains("-d"))
                 .ShouldBe(["update-ref", "--no-deref", "-d", h.Fixture.SourceRef, source]);
         }
