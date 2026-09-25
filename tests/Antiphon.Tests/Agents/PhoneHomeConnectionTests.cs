@@ -528,7 +528,9 @@ public class PhoneHomeConnectionTests
         }
 
         var typed = thrown.ShouldBeOfType<PhoneHomeTransportException>();
-        typed.Code.ShouldBe("phone_home_connection_closed");
+        // Review 914a96fd D1: the request was sent, so the runner may have acted on it. That is
+        // never the never-sent code, which the queue treats as unreachable and refunds.
+        typed.Code.ShouldBe("phone_home_connection_closed_in_flight");
         typed.Message.ShouldContain(host.AllowedRunnerId);
         typed.Message.ShouldContain($"epoch {live.Epoch}");
         typed.Message.ShouldContain(nameof(PhoneHomeOperation.Health));
@@ -562,7 +564,8 @@ public class PhoneHomeConnectionTests
         }
 
         var typed = thrown.ShouldBeOfType<PhoneHomeTransportException>();
-        typed.Code.ShouldBe("phone_home_connection_closed");
+        // Review 914a96fd D1: nothing was written, so this is the never-sent code.
+        typed.Code.ShouldBe("phone_home_connection_closed_before_send");
         typed.Message.ShouldContain(nameof(PhoneHomeOperation.List));
     }
 

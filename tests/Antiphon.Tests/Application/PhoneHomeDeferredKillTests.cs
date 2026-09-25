@@ -1,16 +1,22 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Hangfire;
+using Hangfire.Common;
+using Hangfire.States;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -167,6 +173,105 @@ public class PhoneHomeDeferredKillTests
         await using (var again = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
             await RunnerSlotService.ReconcilePendingReleasesAsync(host.Directory, again, CancellationToken.None);
         peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(2);
+    }
+
+    // Review 914a96fd D2: the recovery cycle is what makes a deferred kill land seconds after the
+    // runner is back rather than at the next cron tick. Across a real reconnect, the reconcile job
+    // is enqueued only once the NEW connection is dispatch-eligible, and running it sends the
+    // generation kill to the new peer.
+    [Test]
+    public async Task Recovery_cycle_enqueues_the_slot_reconcile_after_MarkRecovered_and_the_kill_reaches_the_new_peer()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        var jobs = new RecordingJobClient(host);
+        var pump = new PhoneHomeRecoveryPump(
+            host.Directory,
+            Options.Create(new PhoneHomeRunnerSettings { Enabled = true, AllowedRunnerId = host.AllowedRunnerId, StandingAgentId = Guid.NewGuid(), HostWorkspaceRoot = @"C:\work", SharedSecret = host.Secret }),
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<PhoneHomeRecoveryPump>.Instance,
+            jobs);
+        using var cts = new CancellationTokenSource();
+
+        await using var peerA = await host.ConnectPeerAsync();
+        var liveA = await host.WaitLiveAsync();
+        (await pump.RunCycleAsync(cts.Token)).ShouldBeTrue();
+        // A launch clean-up kill could not be sent: the socket dropped and the intent was recorded.
+        peerA.Socket.Abort();
+        await WaitUntilAsync(() => !liveA.SocketOpen);
+        (await pump.RunCycleAsync(cts.Token)).ShouldBeFalse();
+        var generation = new DateTime(2026, 9, 24, 11, 0, 0, DateTimeKind.Utc);
+        var sessionId = Guid.NewGuid();
+        await SeedIntentAsync(schema.ConnectionString, sessionId,
+            $"pending:kill-generation:{host.AllowedRunnerId}:{generation.Ticks}", DateTime.UtcNow.AddMinutes(-2));
+        var enqueuedBeforeB = jobs.Enqueued.Count;
+
+        await using var peerB = await host.ConnectPeerAsync();
+        await WaitUntilAsync(() => host.Directory.SnapshotLive() is { } l && !ReferenceEquals(l, liveA));
+        var liveB = host.Directory.SnapshotLive()!;
+        (await pump.RunCycleAsync(cts.Token)).ShouldBeTrue();
+
+        jobs.Enqueued.Count.ShouldBe(enqueuedBeforeB + 1, "recovering the new connection enqueues one reconcile");
+        var enqueued = jobs.Enqueued[^1];
+        enqueued.Job.Type.ShouldBe(typeof(RunnerSlotReconcileJob));
+        enqueued.Job.Method.Name.ShouldBe(nameof(RunnerSlotReconcileJob.ExecuteAsync));
+        enqueued.State.ShouldBeOfType<EnqueuedState>();
+        enqueued.LiveAtEnqueue.ShouldBeSameAs(liveB);
+        enqueued.EligibleAtEnqueue.ShouldBeTrue("the job is enqueued after MarkRecovered, so it can reach the runner");
+        peerB.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0, "the cycle enqueues; the job kills");
+
+        // Hangfire runs the enqueued job.
+        await using (var jobDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            await new RunnerSlotReconcileJob(host.Directory, jobDb, NullLogger<RunnerSlotReconcileJob>.Instance)
+                .ExecuteAsync(CancellationToken.None);
+
+        var kill = peerB.Incoming.Single(f => f.Kind == PhoneHomeFrameKind.Request
+            && f.Operation == PhoneHomeOperation.KillGeneration);
+        SessionIdOf(kill).ShouldBe(sessionId);
+        kill.Payload!.Value.GetProperty("expectedAcceptedStartedAt").GetDateTime().ToUniversalTime()
+            .ShouldBe(generation);
+        peerA.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await verify.AgentIncidents.SingleAsync(i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent))
+            .FailureReason.ShouldBe("reconciled");
+        cts.Cancel();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (!condition() && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        condition().ShouldBeTrue();
+    }
+
+    private sealed record EnqueuedJob(Job Job, IState State, PhoneHomeLiveConnection? LiveAtEnqueue, bool EligibleAtEnqueue);
+
+    /// <summary>Records each enqueue with the directory's state at that instant; runs nothing.</summary>
+    private sealed class RecordingJobClient(PhoneHomeTestHost host) : IBackgroundJobClient
+    {
+        public List<EnqueuedJob> Enqueued { get; } = [];
+
+        public string Create(Job job, IState state)
+        {
+            var live = host.Directory.SnapshotLive();
+            bool eligible;
+            try
+            {
+                host.Directory.Resolve(host.AllowedRunnerId);
+                eligible = true;
+            }
+            catch (ServiceUnavailableException)
+            {
+                eligible = false;
+            }
+
+            Enqueued.Add(new EnqueuedJob(job, state, live, eligible));
+            return Enqueued.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        public bool ChangeState(string jobId, IState state, string expectedState) => false;
     }
 
     private static Guid SessionIdOf(PhoneHomeFrame frame) =>

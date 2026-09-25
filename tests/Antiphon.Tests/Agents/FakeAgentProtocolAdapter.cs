@@ -133,6 +133,12 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     /// models a 503 herdr_unreachable from the runner.
     /// </summary>
     public Exception? ThrowOnSend { get; set; }
+
+    /// <summary>
+    /// CARD-0679: awaited first in <see cref="SendInputAsync"/>, before any composer work, so a
+    /// test can carry each write over a real transport; whatever it throws is the write's failure.
+    /// </summary>
+    public Func<string, CancellationToken, Task>? BeforeInput { get; set; }
     public string SentPrompt { get; private set; } = string.Empty;
     private readonly List<string> _prompts = [];
     // Every prompt sent, in order — lets tests assert the /rename + /remote-control sequence
@@ -344,6 +350,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     {
         if (ThrowOnSend is { } throwOnSend)
             throw throwOnSend;
+        if (BeforeInput is { } beforeInput)
+            await beforeInput(input, ct);
 
         SentInput += input;
         _inputs.Add(input);
