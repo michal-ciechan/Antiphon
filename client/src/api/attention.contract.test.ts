@@ -15,7 +15,9 @@ const repoRoot = path.resolve(here, '..', '..', '..')
 function recordFields(source: string): string[] {
   const record = source.match(/public sealed record AttentionItemDto\(([\s\S]*?)\);/)
   expect(record, 'server AttentionItemDto record').not.toBeNull()
+  // A Windows checkout reads the record with CRLF endings; '.' stops at CR, so normalise first.
   return record![1]
+    .replace(/\r\n?/g, '\n')
     .split('\n')
     .map((line) => line.replace(/\/\/.*$/, '').trim())
     .filter((line) => line.length > 0)
