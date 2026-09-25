@@ -150,6 +150,8 @@ public sealed class RunSchedulerTests
     private static Task<SchedulerResult> Schedule(FakeDriver driver, CheckpointManifest manifest, IReadOnlyList<CheckpointSpec> rows, int width)
     {
         var root = CheckpointFixtures.TempDir();
+        foreach (var row in rows)
+            row.Expect = [];
         var scheduler = new RunScheduler(driver, new FakePlatform());
         return scheduler.RunAsync(new SchedulerRequest
         {

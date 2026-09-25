@@ -87,9 +87,11 @@ public sealed class RunScheduler
                 finished.Add(Placeholder(row, "build-failed", ExitCodes.Invalid));
             }
 
-            var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
-            while (Pick(pending, running.Count, request, buildStates, exclusiveRunning) is CheckpointSpec next)
+            while (true)
             {
+                var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
+                if (Pick(pending, running.Count, request, buildStates, exclusiveRunning) is not CheckpointSpec next)
+                    break;
                 pending.Remove(next);
                 var rowProgress = request.State.Rows.First(row => row.Id == next.Id);
                 rowProgress.State = "running";
