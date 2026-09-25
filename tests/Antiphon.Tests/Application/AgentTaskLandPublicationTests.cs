@@ -588,7 +588,7 @@ public sealed class AgentTaskLandPublicationTests
             if (phase == LandPhase.PublicationConfirmed)
             {
                 published = true;
-                if (!atMutation) Corrupt();
+                if (!atMutation && !injected) Corrupt();
             }
             if (phase == LandPhase.CleanupStarted) Restore();
             return Task.CompletedTask;
