@@ -87,6 +87,11 @@
   (`GetProviderAuthAsync`) runs before that claim opens, on a 5-second budget; a timeout does not
   fail the task and does not hold `FOR UPDATE`.
 
+- **A runner session never writes the desktop checkout (CARD-0672 I-A).** The session writes its
+  runner mirror; only the leased settlement sync moves the desktop worktree. That is why a
+  prepared runner task (worktree cut, mirror recorded) launches without the repository mutation
+  lease, while its first crossing, the worktree cut, keeps it.
+
 - **Workspace-use reservation (CARD-0459).** Create, requeue, dispatch (including ReadOnly),
   Answer/Continue/Refine, Land, card reopen, Start/Attach/Resume and Herdr attach consult a
   persisted workspace reservation. A claimed retirement excludes new use of that exact path and
