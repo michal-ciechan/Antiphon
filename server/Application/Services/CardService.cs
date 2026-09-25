@@ -552,6 +552,7 @@ public sealed class CardService : IScheduledCardActions
         card.ConcurrencyToken = Guid.NewGuid();
 
         await SaveCardWriteAsync(card, ct);
+        if (request.CardFileVisibility is not null) _cardFiles?.InvalidateBoardLookups();
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         fileLease?.Dispose();

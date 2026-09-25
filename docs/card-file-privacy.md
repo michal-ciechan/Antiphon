@@ -163,3 +163,20 @@ with all other boards protected. Inherit is eligible on an opted-in board and ne
 cards default to Inherit, so Public overrides are not an approval allowlist.
 Continue to review generated diffs before each publication. Private visibility
 and notes do not erase historical revisions, Git history or external copies.
+
+## Board lookup cache (CARD-0700)
+
+Card-file inspection shares a process-local immutable snapshot of board/project
+ownership metadata and sibling slug owners. `BoardChanged` invalidates it before
+SignalR delivery; project create/delete, committed setup, visibility/opt-in edits,
+and ownership pin writes also invalidate. Transactional callers read their own
+rows without populating the shared cache. A raced cache fill is discarded. There
+is no TTL or database polling for these lookups; a restart starts cold.
+
+A periodic sweep checks opted-out boards once after startup or invalidation to
+find legacy exports. Once working-tree and Git cleanup are both confirmed clear,
+it omits those boards from later sweeps. Pending or unavailable cleanup keeps
+retrying. Manual status and sync still inspect the current filesystem and policy;
+lookups include archived and opted-out siblings so slug and cross-project
+ownership rules remain unchanged. Direct database maintenance that changes board
+ownership must publish `BoardChanged` or restart the server.

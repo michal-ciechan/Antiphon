@@ -18,6 +18,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed partial class CardTaskFileService
 {
     private readonly AppDbContext _db;
+    private readonly CardFileBoardLookup _boardLookup;
     private readonly CardTaskFileSyncGate _gate;
     private readonly GitWorkspaceService _git;
     private readonly ICardFileRepository _repository;
@@ -30,9 +31,11 @@ public sealed partial class CardTaskFileService
         GitWorkspaceService git,
         ILogger<CardTaskFileService> logger,
         ICardFileRepository repository,
-        IOptions<CardFileSyncSettings>? settings = null)
+        IOptions<CardFileSyncSettings>? settings = null,
+        CardFileBoardLookup? boardLookup = null)
     {
         _db = db;
+        _boardLookup = boardLookup ?? new CardFileBoardLookup();
         _gate = gate;
         _git = git;
         _logger = logger;
@@ -44,7 +47,8 @@ public sealed partial class CardTaskFileService
         bool dryRun = false, CancellationToken ct = default)
     {
         if (!_syncSettings.Enabled) return [];
-        var ids = await _db.Boards.AsNoTracking().OrderBy(b => b.ProjectId).ThenBy(b => b.Id).Select(b => b.Id).ToListAsync(ct);
+        var lookup = await _boardLookup.GetAsync(_db, ct);
+        var ids = lookup.Boards.Where(_boardLookup.NeedsInspection).Select(b => b.Id).ToArray();
         var results = new List<CardFileSyncBoardResult>();
         foreach (var id in ids)
         {
@@ -70,6 +74,7 @@ public sealed partial class CardTaskFileService
         if (!_syncSettings.Enabled) throw new ConflictException("Card file sync is disabled.", "card_file_sync_disabled");
         using var lease = await EnterBoardAsync(boardId, false, ct);
         // Authoritative reads occur only after both the project and Git-root leases are owned.
+        var lookupGeneration = _boardLookup.Generation;
         var board = await ReadBoardAsync(boardId, ct);
         BoardInspection inspection;
         try { inspection = await InspectBoardAsync(board, false, ct); }
@@ -98,6 +103,7 @@ public sealed partial class CardTaskFileService
                 await _db.Boards.Where(b => b.Id == board.Id).ExecuteUpdateAsync(setters => setters
                     .SetProperty(b => b.CardFilesDirectorySlug, inspection.Slug)
                     .SetProperty(b => b.CardFilesRepositoryPath, root), ct);
+                lookupGeneration = _boardLookup.Invalidate();
                 board.CardFilesDirectorySlug = inspection.Slug;
                 board.CardFilesRepositoryPath = root;
             }
@@ -185,6 +191,9 @@ public sealed partial class CardTaskFileService
                 if (!dryRun) status = await StatusUnderGateAsync(board, ct);
             }
         }
+        if (!dryRun && !board.SyncCardFiles && !status.RemovalPending && error is null
+            && operationWarnings.Count == 0 && _db.Database.CurrentTransaction is null)
+            _boardLookup.NoteCleanOptedOut(board.Id, lookupGeneration);
         var warnings = Codes(status.Warnings, operationWarnings);
         if (!dryRun) _gate.NoteSkipReason(board.Id, inspection.Root, writeSkip ?? (error is not null ? commitSkip : null));
         return new(board.Id, board.Name, status.Directory, written, deleted, unchanged, sha, writeSkip, commitSkip, error, dryRun)
@@ -194,36 +203,11 @@ public sealed partial class CardTaskFileService
         };
     }
 
-    private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct, bool ignorePins = false)
-    {
-        var baseSlug = CardTaskFileRenderer.BoardSlug(board.Name);
-        if (string.IsNullOrEmpty(baseSlug))
-            baseSlug = "board";
+    public void InvalidateBoardLookups() => _boardLookup.Invalidate();
 
-        var siblings = await _db.Boards.AsNoTracking()
-            .Where(b => b.ProjectId == board.ProjectId)
-            .Select(b => new { b.Id, b.Name, b.CreatedAt, b.CardFilesDirectorySlug })
-            .ToListAsync(ct);
+    private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct, bool ignorePins = false) =>
+        (await _boardLookup.GetAsync(_db, ct)).UniqueSlug(board, ignorePins);
 
-        static string RawSlug(string name)
-        {
-            var slug = CardTaskFileRenderer.BoardSlug(name);
-            return string.IsNullOrEmpty(slug) ? "board" : slug;
-        }
-
-        var colliding = siblings
-            .Where(b => string.Equals((ignorePins ? null : b.CardFilesDirectorySlug) ?? RawSlug(b.Name), baseSlug, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(b => b.CreatedAt)
-            .ThenBy(b => b.Id)
-            .ToList();
-
-        if (colliding.Count == 0 || colliding[0].Id == board.Id)
-            return baseSlug;
-
-        var suffix = $"-{board.Id.ToString("N")[..8]}";
-        var maxBase = Math.Max(1, CardTaskFileRenderer.SlugMaxLength - suffix.Length);
-        var trimmed = baseSlug.Length <= maxBase ? baseSlug : baseSlug[..maxBase].Trim('-');
-        return trimmed + suffix;
-    }
-
+    private async Task<List<Board>> LookupBoardsAsync(CancellationToken ct) =>
+        (await _boardLookup.GetAsync(_db, ct)).Boards.Select(b => b.ToBoard()).ToList();
 }
