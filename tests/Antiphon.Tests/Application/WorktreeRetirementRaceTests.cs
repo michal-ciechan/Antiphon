@@ -26,6 +26,30 @@ namespace Antiphon.Tests.Application;
 public sealed class WorktreeRetirementRaceTests
 {
     [Test]
+    public void C694_DeleteDirectory_RemovesReadOnlyFile()
+    {
+        var root = Directory.CreateTempSubdirectory("c694-cleanup-").FullName;
+        var nested = Directory.CreateDirectory(System.IO.Path.Combine(root, "objects"));
+        var file = System.IO.Path.Combine(nested.FullName, "object");
+        try
+        {
+            File.WriteAllText(file, "git object");
+            File.SetAttributes(file, FileAttributes.ReadOnly);
+
+            StartRefGit.DeleteDirectory(root);
+
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally
+        {
+            if (File.Exists(file))
+                File.SetAttributes(file, FileAttributes.Normal);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task C459_OneRetirementClaim()
     {
         await using var world = await RaceWorld.CreateAsync();
@@ -1364,7 +1388,7 @@ public sealed class WorktreeRetirementRaceTests
         {
             await Provider.DisposeAsync();
             await Schema.DisposeAsync();
-            try { Directory.Delete(Path, true); } catch (IOException) { }
+            StartRefGit.DeleteDirectory(Path);
         }
     }
 
