@@ -836,6 +836,61 @@ public class PhoneHomeCommandDispatcherTests
         runtime.List().Single().AcceptedStartedAt.ShouldBe(generation);
     }
 
+    // --- CARD-0679 R5 repair (review 137c1631): a re-sent Launch for a session that already exited. ---
+
+    [Test]
+    public async Task Duplicate_launch_of_an_exited_session_with_the_same_generation_starts_no_second_process()
+    {
+        var logs = new List<string>();
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity: 1, logs: logs);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 25, 10, 0, 0, DateTimeKind.Utc));
+        var request = Request("grok", "/work") with { AcceptedStartedAt = generation };
+        (await dispatcher.DispatchAsync(Launch(request), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        // The first process ran and exited before the desktop's pre-ack re-send arrived.
+        runtime.MarkExited(request.SessionId, exitCode: 3, exitReason: "ProcessExited");
+
+        var resend = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
+
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(1, "the same generation never runs twice");
+        resend.Kind.ShouldBe(PhoneHomeFrameKind.Error, "the re-send is answered, not started");
+        resend.StatusCode.ShouldBe(409);
+        // The wire value, pinned: the desktop matches on the code, never on detail text.
+        resend.ErrorCode.ShouldBe("phone_home_session_already_exited");
+        var exited = resend.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json)!;
+        exited.SessionId.ShouldBe(request.SessionId);
+        exited.Status.ShouldBe("Exited");
+        exited.ExitCode.ShouldBe(3);
+        exited.ExitReason.ShouldBe("ProcessExited");
+        exited.AcceptedStartedAt.ShouldBe(generation);
+        runtime.List().Single().Status.ShouldBe("Exited");
+        lock (logs)
+            logs.Count(line => line.StartsWith("[Information]", StringComparison.Ordinal)
+                && line.Contains("phone_home_session_already_exited", StringComparison.Ordinal)
+                && line.Contains(request.SessionId.ToString(), StringComparison.Ordinal)).ShouldBe(1, string.Join(Environment.NewLine, logs));
+    }
+
+    [Test]
+    public async Task Launch_of_an_exited_session_under_a_new_generation_still_relaunches()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity: 1);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 25, 10, 0, 0, DateTimeKind.Utc));
+        var request = Request("grok", "/work") with { AcceptedStartedAt = generation };
+        (await dispatcher.DispatchAsync(Launch(request), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.MarkExited(request.SessionId, exitCode: 0, exitReason: "ProcessExited");
+
+        // claude --resume reuses the session id under a new generation: today's relaunch stands.
+        var next = request with { AcceptedStartedAt = SessionGeneration.Next(generation, generation) };
+        var relaunched = await dispatcher.DispatchAsync(Launch(next), CancellationToken.None);
+
+        relaunched.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{relaunched.ErrorCode}: {relaunched.ErrorDetail}");
+        var dto = relaunched.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json)!;
+        dto.Status.ShouldBe("Running");
+        dto.AcceptedStartedAt.ShouldBe(next.AcceptedStartedAt);
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(2);
+    }
+
     // --- CARD-0679 D-4: the mutation log line carries ids, exe basename and generations only. ---
 
     [Test]
@@ -999,6 +1054,13 @@ public class PhoneHomeCommandDispatcherTests
                 AcceptedStartedAt: request.AcceptedStartedAt);
             _sessions[request.SessionId] = session;
             return Task.FromResult(session);
+        }
+
+        /// <summary>The session's process exited; like the real runtime, it stays listed as Exited.</summary>
+        public void MarkExited(Guid sessionId, int? exitCode, string exitReason)
+        {
+            _sessions[sessionId] = _sessions[sessionId] with { Status = "Exited", ExitCode = exitCode, ExitReason = exitReason };
+            Owned--;
         }
         public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
         public RunnerSnapshotDto GetSnapshot(Guid sessionId) => new(sessionId, "", "", 0, DateTime.UtcNow);

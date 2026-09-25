@@ -160,6 +160,148 @@ public class PhoneHomeLaunchTransportTests
         (await world.ReadKillIntentsAsync()).ShouldBeEmpty();
     }
 
+    // --- CARD-0679 R5 repair (review 137c1631). ---
+
+    [Test]
+    public async Task Pre_ack_resend_answered_already_exited_ends_the_launch_without_a_second_start()
+    {
+        await using var world = await LaunchWorld.CreateAsync();
+        world.PeerA.SilentFor(PhoneHomeOperation.Launch);
+
+        var launch = world.Launch();
+        await world.WaitForRequestOrEndAsync(world.PeerA, PhoneHomeOperation.Launch, launch);
+        world.PeerA.Socket.Abort();
+
+        // The first Launch did land: its process ran and exited before the re-send arrived, so the
+        // runner answers the re-send with that exited session instead of starting it again.
+        await using var peerB = await world.ReconnectAsync(peer => peer.Reply = frame => AlreadyExited(frame, exitCode: 3));
+        var error = await world.AdvanceUntilEndedAsync(launch);
+
+        var session = await world.ReadSessionAsync();
+        session.Status.ShouldBe(SessionStatus.Failed);
+        error.ShouldNotBeNull();
+        session.ExitCode.ShouldBe(3, $"the launch ran and ended; it failed with: {session.FailureReason}");
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldContain(world.RunnerId);
+        session.FailureReason.ShouldContain("exit code 3");
+        session.FailureReason.ShouldContain(nameof(AgentExitReason.ProcessExited));
+        session.RestartFailureKind.ShouldNotBe(RestartFailureKind.Infrastructure, "a process that ran and exited is not a transport loss");
+        session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        peerB.Launches.Count.ShouldBe(1, "the lost Launch is re-sent once and never again");
+        AcceptedStartedAtOf(peerB.Launches[0]).ShouldBe(AcceptedStartedAtOf(world.PeerA.Launches[0]));
+        peerB.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0, "an exited session has nothing to kill");
+        peerB.RequestCount(PhoneHomeOperation.Snapshot).ShouldBe(0, "an exited session is never waited on for readiness");
+        world.PeerA.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+        (await world.ReadKillIntentsAsync()).ShouldBeEmpty();
+        var warnings = await world.ReadTaskWarningsAsync();
+        warnings.Count.ShouldBe(1);
+        warnings[0].ShouldContain("pre-ack");
+    }
+
+    [Test]
+    public async Task Zero_retries_after_an_in_flight_pre_ack_loss_fail_at_once_with_a_deferred_kill()
+    {
+        await using var world = await LaunchWorld.CreateAsync(launchTransportRetries: 0);
+        world.PeerA.SilentFor(PhoneHomeOperation.Launch);
+
+        var launch = world.Launch();
+        await world.WaitForRequestOrEndAsync(world.PeerA, PhoneHomeOperation.Launch, launch);
+        // The Launch frame reached the runner, so the runner may hold the session.
+        world.PeerA.Socket.Abort();
+
+        // The fake clock is never advanced: with no retry left the launch must not wait for the runner.
+        Exception? error = null;
+        try
+        {
+            await launch.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (Exception ex) when (ex is not TimeoutException)
+        {
+            error = ex;
+        }
+
+        error.ShouldNotBeNull();
+        var session = await world.ReadSessionAsync();
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldContain(world.RunnerId);
+        session.FailureReason.ShouldContain("pre-ack");
+        session.FailureReason.ShouldContain("attempt 1");
+        session.FailureReason.ShouldContain("0 retries allowed");
+        session.FailureReason.ShouldContain("no retry was left");
+        session.RestartFailureKind.ShouldBe(RestartFailureKind.Infrastructure);
+        var intents = await world.ReadKillIntentsAsync();
+        intents.Count.ShouldBe(1, "an in-flight Launch may have landed, so its kill is deferred");
+        intents[0].ShouldBe($"pending:kill-generation:{world.RunnerId}:{world.Generation.Ticks}");
+        world.PeerA.Launches.Count.ShouldBe(1);
+        world.PeerA.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+        var warnings = await world.ReadTaskWarningsAsync();
+        warnings.Count.ShouldBe(1);
+        warnings[0].ShouldContain("pre-ack");
+    }
+
+    [Test]
+    public async Task Second_loss_during_reattach_is_read_through_its_wrapper_and_exhausts_the_retries()
+    {
+        await using var world = await LaunchWorld.CreateAsync(launchTransportRetries: 1);
+        world.PeerA.SilentFor(PhoneHomeOperation.Snapshot);
+
+        var launch = world.Launch();
+        await world.WaitForRequestOrEndAsync(world.PeerA, PhoneHomeOperation.Snapshot, launch);
+        world.PeerA.Socket.Abort();
+
+        // The replacement connection drops under the re-attach's Get, which the attach wraps.
+        await using var peerB = await world.ReconnectAsync(peer => peer.SilentFor(PhoneHomeOperation.Get));
+        await world.AdvanceUntilRequestOrEndAsync(peerB, PhoneHomeOperation.Get, launch);
+        peerB.Socket.Abort();
+        var error = await world.AdvanceUntilEndedAsync(launch);
+
+        var session = await world.ReadSessionAsync();
+        session.Status.ShouldBe(SessionStatus.Failed);
+        error.ShouldNotBeNull();
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldContain(world.RunnerId);
+        session.FailureReason.ShouldContain("post-ack");
+        session.FailureReason.ShouldContain("attempt 2");
+        session.FailureReason.ShouldContain("1 retry allowed");
+        session.FailureReason.ShouldContain("no retry was left");
+        session.FailureReason.ShouldNotContain("Cannot attach",
+            customMessage: "the reason names the transport loss, not the attach wrapper that says the runner does not know the session");
+        session.RestartFailureKind.ShouldBe(RestartFailureKind.Infrastructure);
+        var warnings = await world.ReadTaskWarningsAsync();
+        warnings.Count.ShouldBe(2);
+        warnings[0].ShouldContain("post-ack");
+        warnings[0].ShouldContain("attempt 1");
+        warnings[1].ShouldContain("post-ack");
+        warnings[1].ShouldContain("attempt 2");
+        var intents = await world.ReadKillIntentsAsync();
+        intents.Count.ShouldBe(1, "the runner holds the acknowledged session, so its kill is deferred");
+        intents[0].ShouldBe($"pending:kill-generation:{world.RunnerId}:{world.Generation.Ticks}");
+        world.PeerA.Launches.Count.ShouldBe(1);
+        peerB.Launches.Count.ShouldBe(0, "an acknowledged launch is never launched again");
+        world.PeerA.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+        peerB.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// What the runner answers a re-sent Launch whose generation already ran and exited: a typed 409
+    /// carrying the exited session. The wire code is pinned as a literal.
+    /// </summary>
+    private static PhoneHomeFrame? AlreadyExited(PhoneHomeFrame request, int exitCode)
+    {
+        if (request.Operation != PhoneHomeOperation.Launch)
+            return null;
+        var launch = request.Payload!.Value.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!;
+        var exited = new RunnerSessionDto(launch.SessionId, 1, DateTime.UtcNow, "Exited", exitCode,
+            nameof(AgentExitReason.ProcessExited), 0, AcceptedStartedAt: launch.AcceptedStartedAt);
+        return new PhoneHomeFrame(
+            PhoneHomeFrameKind.Error, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(exited, PhoneHomeFraming.Json),
+            ErrorCode: "phone_home_session_already_exited",
+            ErrorDetail: $"Session '{launch.SessionId}' already ran under this generation and exited.",
+            StatusCode: 409);
+    }
+
     private static DateTime AcceptedStartedAtOf(PhoneHomeFrame launch) =>
         launch.Payload!.Value.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!.AcceptedStartedAt!.Value.ToUniversalTime();
 
@@ -320,6 +462,21 @@ public class PhoneHomeLaunchTransportTests
             peer.Epoch = liveB.Epoch;
             _host.Directory.MarkRecovered(liveB);
             return peer;
+        }
+
+        /// <summary>Moves the service's clock in eligibility-poll steps until <paramref name="peer"/> sees <paramref name="operation"/>.</summary>
+        public async Task AdvanceUntilRequestOrEndAsync(PhoneHomeScriptedPeer peer, PhoneHomeOperation operation, Task launch)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(20);
+            while (peer.RequestCount(operation) == 0 && !launch.IsCompleted && DateTime.UtcNow < deadline)
+            {
+                Clock.Advance(TimeSpan.FromMilliseconds(500));
+                await Task.Delay(20);
+            }
+
+            if (peer.RequestCount(operation) == 0)
+                throw new InvalidOperationException(
+                    $"The launch ended before its {operation} request: {launch.Exception?.GetBaseException()}");
         }
 
         /// <summary>
