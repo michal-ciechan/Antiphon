@@ -1,5 +1,7 @@
 # CARD-0415 fix round: Landing* test suite hit 600s Bash timeout
 
+> Evidence correction, 2026-09-10: the "genuine hang" verdict below is not established by the captured output. The shell pipeline hides passing tests, and one cumulative CPU reading is not a progress sample. A [bounded current-master reproduction with an async dump](2026-09-10-landing-filter-bounded-reproduction.md) observed nine passing cases in ten minutes and a Git child await; the captured method subsequently passed all four rows. Full-filter completion and the original 30-minute incident remain unverified. The original observations below are retained.
+
 ## Session and evidence
 
 - Live session `89093d49-ea9e-4d2a-a2ef-c3456988e2a0` (task `d87a154c`), transcript entries
