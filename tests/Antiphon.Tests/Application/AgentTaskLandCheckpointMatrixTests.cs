@@ -276,20 +276,15 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         await h.InitializeAsync();
         var source = await h.AddSourceAsync();
         var ready = Path.Combine(h.Fixture.Root, "removal-ready.json");
-        var script = Path.Combine(h.Fixture.Root, "removal-worker.ps1");
-        await File.WriteAllTextAsync(script, """
-            $ErrorActionPreference = 'Stop'
-            $assembly = [Reflection.Assembly]::LoadFrom($args[0])
-            $method = $assembly.GetType('Antiphon.Tests.TestHelpers.LandingSafetyHarness', $true).GetMethod('RunCrashWorkerAsync', [Reflection.BindingFlags]'Public,Static')
-            $method.Invoke($null, [object[]]@($args[1], $args[2], $args[3], $args[4])).GetAwaiter().GetResult()
-            """);
-        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+        var start = new System.Diagnostics.ProcessStartInfo("dotnet")
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
         };
-        foreach (var arg in new[] { "-NoProfile", "-File", script, typeof(LandingSafetyHarness).Assembly.Location,
-            h.Fixture.Root, h.Fixture.TaskId.ToString(), dropped ? "C665-after-drop" : "C665-before-drop", ready })
-            start.ArgumentList.Add(arg);
+        foreach (var arg in new[] { typeof(LandingSafetyHarness).Assembly.Location, "--treenode-filter",
+            "/*/*/AgentTaskLandCheckpointMatrixTests/C665_*" }) start.ArgumentList.Add(arg);
+        start.Environment[LandingRemovalCrashWorker.Marker] = System.Text.Json.JsonSerializer.Serialize(
+            new LandingRemovalCrashWorker.Request(h.Fixture.Root, h.Fixture.TaskId,
+                dropped ? "C665-after-drop" : "C665-before-drop", ready));
         start.Environment["ANTIPHON_C448_TEST_CONNECTION"] = h.Schema.ConnectionString;
         using var worker = System.Diagnostics.Process.Start(start)!;
         var output = worker.StandardOutput.ReadToEndAsync();

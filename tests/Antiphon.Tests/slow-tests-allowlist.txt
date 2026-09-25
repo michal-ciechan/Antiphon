@@ -141,3 +141,5 @@ Antiphon.Tests.Application.TranscriptWorkingStateQueryTests
 Antiphon.Tests.Application.TranscriptHotPathMigrationTests
 # CARD-0696: real HTTP/phone-home outage matrices and delivery confirmation across both backends (3 measured rows >=5s).
 Antiphon.Tests.Application.PhoneHomeImmediateSendTests
+
+Antiphon.Tests.Application.AgentTaskLandPublicationTests

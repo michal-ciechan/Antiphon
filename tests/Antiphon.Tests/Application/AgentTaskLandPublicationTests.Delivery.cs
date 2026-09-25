@@ -95,6 +95,9 @@ public sealed partial class AgentTaskLandPublicationTests
             (await failed.SessionQueuedMessages.CountAsync(q => q.SourceLandNotificationId == note.Id))
                 .ShouldBe(cut == "queue-inserted" ? 1 : 0);
         }
+        await using (var due = h.CreateContext())
+            await due.AgentTaskLandNotifications.Where(n => n.Id == note.Id)
+                .ExecuteUpdateAsync(n => n.SetProperty(x => x.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
         await h.RestartServicesAsync();
         await ReconcileAsync(null);
         await using (var queued = h.CreateContext())
