@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -78,5 +80,25 @@ public class RestartFailureClassificationTests
         state.ContinuityResumeFailures = int.MaxValue;
         policy.Charge(state, RestartFailureKind.Unknown);
         state.ContinuityResumeFailures.ShouldBe(int.MaxValue);
+    }
+
+    // CARD-0679 R5 repair 2 (review 18f52a40): the runner confirmed the launch's process ran and exited
+    // before it was ready. That is a process failure, and the supervisor's consecutive-failure budget
+    // is charged for it; Unknown left it uncharged.
+    [Test]
+    public void Runner_confirmed_early_exit_is_a_launch_or_process_failure_that_charges_consecutive_failures()
+    {
+        var policy = new RestartFailurePolicy();
+        var exited = new RemoteLaunchAlreadyExitedException(
+            "runner-a", Guid.NewGuid(), 3, AgentExitReason.ProcessExited, "ProcessExited");
+
+        policy.Classify(exited).ShouldBe(RestartFailureKind.LaunchOrProcessFailure);
+
+        var state = new AgentSupervisionState();
+        var session = new AgentSession { Id = Guid.NewGuid(), StartedAt = DateTime.UtcNow,
+            Status = SessionStatus.Failed, RestartFailureKind = policy.Classify(exited) };
+        policy.Observe(state, session).ShouldBeTrue();
+        state.ConsecutiveFailures.ShouldBe(1);
+        state.RestartBackoffFailures.ShouldBe(1);
     }
 }

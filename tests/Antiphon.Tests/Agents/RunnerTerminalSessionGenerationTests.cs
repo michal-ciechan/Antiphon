@@ -1,8 +1,11 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -82,6 +85,37 @@ public class RunnerTerminalSessionGenerationTests
         client.ConditionalInputs.ShouldBe(["/remote-control"]);
     }
 
+    // CARD-0679 R5 repair 2 (review 18f52a40): a remote adapter follows the runner's current connection,
+    // so the exit watcher of an adapter the launch loop already released kept polling Get through
+    // the replacement connection for the life of the session.
+    [Test]
+    [Arguments(AgentKind.Raw)]
+    [Arguments(AgentKind.ClaudeCode)]
+    [Arguments(AgentKind.Codex)]
+    [Arguments(AgentKind.OpenCode)]
+    [Arguments(AgentKind.Grok)]
+    public async Task A_disposed_adapter_stops_its_exit_watcher(AgentKind kind)
+    {
+        var sessionId = Guid.NewGuid();
+        var client = new RecordingClient();
+        var adapter = new AgentProtocolAdapterFactory(Options.Create(new AgentRegistrySettings()), client).Create(kind);
+        await ((IAttachableProtocolAdapter)adapter).AttachAsync(sessionId, CancellationToken.None);
+        // The attach's own Get, then the watcher's polls: the watcher is running.
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (client.GetCalls < 3 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        client.GetCalls.ShouldBeGreaterThanOrEqualTo(3, "the exit watcher polls Get while the adapter is live");
+
+        await adapter.DisposeAsync();
+        await Task.Delay(100);
+        var afterDispose = client.GetCalls;
+        // Four of the watcher's 250 ms poll intervals.
+        await Task.Delay(1000);
+
+        client.GetCalls.ShouldBe(afterDispose, "a disposed adapter's exit watcher sends no further Get");
+        adapter.Exited.IsCompleted.ShouldBeTrue("the watcher ends when its adapter is disposed");
+    }
+
     private static AgentLaunchSpec Spec(Guid sessionId, DateTime generation) =>
         new("fake", AgentKind.ClaudeCode, "cmd", [], new Dictionary<string, string>(), Path.GetTempPath(), 120, 30,
             SessionId: sessionId, AcceptedStartedAt: generation);
@@ -96,6 +130,8 @@ public class RunnerTerminalSessionGenerationTests
         public List<string> ConditionalInputs { get; } = [];
         public List<string> RawInputs { get; } = [];
         public DateTime? BoundGeneration { get; set; }
+        private int _getCalls;
+        public int GetCalls => Volatile.Read(ref _getCalls);
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
         {
@@ -109,9 +145,12 @@ public class RunnerTerminalSessionGenerationTests
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
-        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(GetOverride?.Invoke(sessionId)
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _getCalls);
+            return Task.FromResult(GetOverride?.Invoke(sessionId)
                 ?? new SessionRunnerSessionDto(sessionId, 1, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
+        }
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "", 0));
