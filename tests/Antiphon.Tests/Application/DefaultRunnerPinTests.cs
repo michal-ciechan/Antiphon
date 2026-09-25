@@ -22,8 +22,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-0659 V-3. The default host is chosen from the kind the routing pins and walks actually
-/// settled on, never from the raw request: a pin that lands on Codex stays on the desktop, one that
-/// lands on Grok/Claude takes the default, a Required-pin conflict refuses before any placement,
+/// settled on, never from the raw request: a pin that lands on Codex, Grok or Claude takes the
+/// default, a Required-pin conflict refuses before any placement,
 /// and an exhausted walk stays local. SourceLanding uses the SELECTED host's custody: a valid
 /// Mutation shape can take the default, the dispatch gate admits it, and custody admission asks
 /// that runner and refuses rather than falling back.
@@ -78,8 +78,9 @@ public sealed class DefaultRunnerPinTests
                 Case.Sensitive, row);
             DefaultRunnerKit.Occurrences(saved.Created, "runner source=").ShouldBe(1, row);
             saved.Warnings.ShouldNotContain(w => w.Contains("Default runner", StringComparison.Ordinal), row);
-            kit.Directory.ResolveCalls.Count.ShouldBe(expectedRunner is null ? 0 : 1,
-                row + ": only a compatible pinned kind consults the readiness gate");
+            var resolves = expectedRunner is null ? 0 : expectedKind == AgentKind.Codex ? 2 : 1;
+            kit.Directory.ResolveCalls.Count.ShouldBe(resolves,
+                row + ": readiness once, plus the Codex login probe when that kind is placed on the runner");
         }
     }
 
@@ -100,7 +101,7 @@ public sealed class DefaultRunnerPinTests
                      ("-Local with a configured agent pin", "local",
                          "runner source=explicit-local requested=local default=server2 selected=local reason=local_requested"),
                      ("omitted runner with a configured agent pin", null,
-                         "runner source=default requested=unset default=server2 selected=local reason=existing_process"),
+                         "runner source=existing-process requested=unset default=server2 selected=local reason=existing_process"),
                  })
         {
             var created = await service.CreateAsync(

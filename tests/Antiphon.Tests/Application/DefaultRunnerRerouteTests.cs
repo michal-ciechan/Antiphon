@@ -41,9 +41,11 @@ public sealed class DefaultRunnerRerouteTests
             var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, status);
             await using var db = CreateContext(schema);
 
-            var refused = await Should.ThrowAsync<ConflictException>(() => TaskService(db, workspace.Path)
+            // OpenCode is not a delegate kind, so the refusal is validation and happens
+            // before the runner-kind conflict. The row is still untouched.
+            var refused = await Should.ThrowAsync<ValidationException>(() => TaskService(db, workspace.Path)
                 .RerouteAsync(taskId, AgentKind.OpenCode, AgentModelLevel.Frontier, CancellationToken.None));
-            refused.Code.ShouldBe("runner_kind_unsupported", status.ToString());
+            refused.Message.ShouldContain("not a delegate kind", Case.Sensitive, status.ToString());
 
             await using var verify = CreateContext(schema);
             var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
@@ -65,22 +67,28 @@ public sealed class DefaultRunnerRerouteTests
         var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier), (AgentKind.Codex, AgentModelLevel.Frontier));
         await SeedHoldAsync(schema, "fable");
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Queued);
-        var world = CreateDispatcher(schema, eligible: true);
+        // Codex is a supported worker, so the rewalk keeps the runner. The runner is offline,
+        // which holds the task without a launch.
+        var world = CreateDispatcher(schema, eligible: false);
 
         var result = await world.Dispatcher.TickAsync(CancellationToken.None);
 
-        result.BlockedRoutingExhausted.ShouldBe(1);
+        result.BlockedRoutingExhausted.ShouldBe(0);
         result.Dispatched.ShouldBe(0);
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        AssertRunnerKindBlocked(stored, pin.Id);
-        stored.WorktreePath.ShouldBeNull("no worktree is cut for a launch that cannot happen");
-        stored.RemoteWorktreePath.ShouldBeNull("no remote prep for an incompatible kind");
+        stored.Status.ShouldBe(AgentTaskStatus.Queued);
+        stored.AgentKind.ShouldBe(AgentKind.Codex);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        stored.RunnerId.ShouldBe(Runner);
+        stored.RoutingPinId.ShouldBe(pin.Id);
+        stored.WorktreePath.ShouldBeNull("an offline runner holds; it does not cut a worktree");
+        stored.RemoteWorktreePath.ShouldBeNull();
         stored.AgentSessionId.ShouldBeNull();
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
-            .ShouldBe(0, "the incompatible candidate was never published as the task's kind");
-        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked))
             .ShouldBe(1);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked))
+            .ShouldBe(0);
         (await verify.AgentSessions.CountAsync()).ShouldBe(0, "no session anywhere, desktop or runner");
         world.Directory.ResolveCalls.ShouldNotContain((string?)null, "nothing was prepared against the desktop runner");
 
@@ -109,23 +117,30 @@ public sealed class DefaultRunnerRerouteTests
         await SeedHoldAsync(schema, "fable");
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Blocked);
 
-        for (var tick = 1; tick <= 3; tick++)
+        var first = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+        first.ResumedRoutingBlocked.ShouldBe(1, "Codex is a supported worker, so the held Claude head resumes onto it");
+        first.Dispatched.ShouldBe(0);
+
+        for (var tick = 2; tick <= 3; tick++)
         {
-            var result = await CreateDispatcher(schema, eligible: true).Dispatcher.TickAsync(CancellationToken.None);
-            result.ResumedRoutingBlocked.ShouldBe(0, $"tick {tick}: the walk's choice is still Codex on a runner");
+            var result = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+            result.ResumedRoutingBlocked.ShouldBe(0, $"tick {tick}: the resume already published Codex");
             result.Dispatched.ShouldBe(0, $"tick {tick}");
         }
 
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        AssertRunnerKindBlocked(stored, pin.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Queued, "the runner is offline, so the resumed task is held");
+        stored.AgentKind.ShouldBe(AgentKind.Codex);
+        stored.RunnerId.ShouldBe(Runner);
+        stored.RoutingPinId.ShouldBe(pin.Id);
+        stored.AgentSessionId.ShouldBeNull();
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked))
-            .ShouldBe(1, "one event for the transition to runner_kind_unsupported, none per tick");
-        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
             .ShouldBe(0);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(1, "one resume, none per later tick");
         (await verify.AgentSessions.CountAsync()).ShouldBe(0);
 
-        // When the compatible head frees up, the ordinary resume takes over and keeps the runner.
         await using (var db = CreateContext(schema))
         {
             db.ModelAvailabilityHolds.RemoveRange(db.ModelAvailabilityHolds);
@@ -133,11 +148,11 @@ public sealed class DefaultRunnerRerouteTests
         }
 
         var freed = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
-        freed.ResumedRoutingBlocked.ShouldBe(1);
+        freed.ResumedRoutingBlocked.ShouldBe(0, "clearing the Claude hold does not walk the task back off Codex");
         await using var verify2 = CreateContext(schema);
         var resumed = await verify2.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        resumed.Status.ShouldBe(AgentTaskStatus.Queued, "the runner is offline, so the resumed task is held, not moved");
-        resumed.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        resumed.Status.ShouldBe(AgentTaskStatus.Queued);
+        resumed.AgentKind.ShouldBe(AgentKind.Codex);
         resumed.RunnerId.ShouldBe(Runner);
         resumed.AgentSessionId.ShouldBeNull();
     }
@@ -160,16 +175,19 @@ public sealed class DefaultRunnerRerouteTests
         var decision = await tasks.RerouteOnWallAsync(
             task, "fable", "fable hit a usage wall", sessionLimitHasScheduledResume: false, CancellationToken.None);
 
-        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Blocked);
+        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Rerouted);
         stopper.Killed.ShouldBe([sessionId], "the walled process is released through the existing stop contract");
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        AssertRunnerKindBlocked(stored, pin.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Queued);
+        stored.AgentKind.ShouldBe(AgentKind.Codex);
+        stored.RunnerId.ShouldBe(Runner);
+        stored.RoutingPinId.ShouldBe(pin.Id);
         stored.AgentSessionId.ShouldBeNull();
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked))
-            .ShouldBe(1);
-        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
             .ShouldBe(0);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(1);
     }
 
     [Test]

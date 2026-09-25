@@ -227,8 +227,9 @@ public sealed class DefaultRunnerCreateTests
 
             var saved = await kit.ReadAsync(created.Id);
             saved.Task.RunnerId.ShouldBeNull(row);
+            var source = reason == "existing_process" ? "existing-process" : "default";
             saved.Created.ShouldContain(
-                $"runner source=default requested=unset default=server2 selected=local reason={reason}", Case.Sensitive, row);
+                $"runner source={source} requested=unset default=server2 selected=local reason={reason}", Case.Sensitive, row);
             DefaultRunnerKit.Occurrences(saved.Created, "runner source=").ShouldBe(1, row);
             saved.Warnings.ShouldNotContain(w => w.Contains("runner", StringComparison.OrdinalIgnoreCase),
                 row + ": an excluded shape is not a warning");
