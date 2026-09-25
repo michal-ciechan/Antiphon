@@ -622,6 +622,58 @@ public class PhoneHomeConnectionTests
         namedSocketError.ShouldBeTrue();
     }
 
+    // CARD-0716 repair: overflow used to send the close and then wait out the 3s handshake
+    // bound, because the receive loop had already left and nobody read the peer's ack.
+    [Test]
+    public async Task Overflow_close_finishes_the_handshake()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync(limits: new PhoneHomeLimits(MaxPendingEvents: 2));
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+
+        for (var i = 0; i < 4; i++)
+        {
+            try
+            {
+                await peer.EmitAsync(OutputEvent(live.Epoch, i));
+            }
+            catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException)
+            {
+                break;
+            }
+        }
+
+        await AssertHandshakeClosedAsync(host, live, PhoneHomeProblemTypes.EventOverflow);
+    }
+
+    // CARD-0716 repair: a receive fault is the same shape. The loop has thrown, so CloseAsync
+    // can complete the handshake instead of aborting after the full bound.
+    [Test]
+    public async Task Receive_fault_close_finishes_the_handshake()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+
+        var bytes = Encoding.UTF8.GetBytes("{not-json");
+        await peer.Socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+        await AssertHandshakeClosedAsync(host, live, "receive_fault:JsonException");
+    }
+
+    private static async Task AssertHandshakeClosedAsync(
+        PhoneHomeTestHost host, PhoneHomeLiveConnection live, string reason)
+    {
+        var ended = await WaitForLogsAsync(host, e => e.Level == LogLevel.Warning && Equals(e["Reason"], reason));
+        ended.Count.ShouldBe(1);
+        var deadline = DateTime.UtcNow.AddSeconds(1.5);
+        while (live.SocketState is WebSocketState.Open or WebSocketState.CloseSent && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        live.SocketState.ShouldBe(
+            WebSocketState.Closed,
+            "the close handshake must finish without waiting out the 3s abort bound");
+    }
+
     private static PhoneHomeFrame OutputEvent(long epoch, int n) =>
         new(PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: SessionRunnerEventNames.SessionOutput,
             Payload: JsonSerializer.SerializeToElement(new { sessionId = Guid.Empty, text = $"chunk-{n}" }, PhoneHomeFraming.Json));
