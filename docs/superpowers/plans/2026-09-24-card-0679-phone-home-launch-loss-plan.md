@@ -178,6 +178,19 @@ to the `Infrastructure` arm (a lost socket is pacing evidence, never permission 
 conversation). `RequestTimeout` is deliberately **not** added to the unreachable predicate: a
 timeout means the runner may have acted.
 
+**R4 repair (review 914a96fd D1).** One code for both closes let the queue refund an Input the
+runner may already have typed: the refund clears `LastDeliveryStartedAt` and the baseline, the next
+flush skips late-confirm, and the brief is typed twice. `ConnectionClosed` is therefore split.
+`ConnectionClosedBeforeSend = "phone_home_connection_closed_before_send"` is every throw before the
+frame is written (closed or non-`Open` socket, a close racing the waiter registration, a failed
+write). `ConnectionClosedInFlight = "phone_home_connection_closed_in_flight"` is every waiter
+`DisposeAsync` fails (a waiter is awaited only after its write) and a send-gate failure after a
+completed write. `IsHerdrUnreachable` matches only the never-sent code; an in-flight close falls to
+the transport-failure revert, which keeps the attempt and its floor. `PhoneHomeTransportLoss.Is`
+(the deferred kill) and `RestartFailurePolicy` accept both. Tests:
+`SessionMessageQueuePhoneHomeDropTests` (both arms through the real transport); V-12 now expects
+the in-flight code and V-13 the never-sent code.
+
 Rejected: `TrySetException(new OperationCanceledException(...))` subclasses (every `catch
 (OperationCanceledException)` in the codebase would keep treating a transport loss as a caller
 cancellation).
@@ -335,7 +348,7 @@ followed by a fresh `ConnectPeerAsync`. `PhoneHomeTestHost` gains a capturing `I
 ### D-12. Docs
 
 `docs/session-runtime-invariants.md` gains two bullets under the phone-home group: "a reconnect
-fails in-flight requests with `phone_home_connection_closed`, never a cancellation, and a remote
+fails in-flight requests with `phone_home_connection_closed_in_flight` (a request never written is `phone_home_connection_closed_before_send`), never a cancellation, and a remote
 adapter routes every call to the current connection"; "a transport loss during a remote launch
 re-attaches after the ack and re-queues before it, bounded by `LaunchTransportRetries`; the
 runner session is killed on reconnect through a generation-conditional intent when the launch is
@@ -404,8 +417,8 @@ One execution per method. The red mechanism names the assertion that fails on th
 | V-9 | PhoneHomeEventPumpTests.Recovery_cycle_restarts_a_pump_that_ended_while_the_socket_is_open | Complete the pump task artificially (test seam `EndPumpForTest`) then `RunCycleAsync`; a new pump observes the next event; an Error entry "pump ended while the connection is live". Today: `RunCycleAsync` returns false and the event is never observed. |
 | V-10 | PhoneHomeEventPumpTests.Owner_lookups_are_cached_per_connection | 50 events for one owned session and 5 for one foreign session; `host.Directory.BindingLookups` rises by at most 2 (one per session); after a reconnect the first event looks up again. Today: 55 lookups. |
 | V-11 | AgentSessionRuntimeActivityTests.Output_bursts_write_LastSeenAt_at_most_once_per_interval | `FakeTimeProvider`, interval 1000 ms; 20 output events at the same instant then one after 1001 ms; `LastSeenAt` written twice (SaveChanges interceptor count == 2) and equals the last write's time. Today: 21 writes. |
-| V-12 | PhoneHomeConnectionTests.Disconnect_fails_in_flight_requests_with_a_typed_connection_closed_error | `autoReply: false` peer; start `GetHealthAsync`; `peer.Socket.Abort()`; awaiting throws `PhoneHomeTransportException` with `Code == "phone_home_connection_closed"` and a message containing the runner id, the epoch and `Health`. Today: `TaskCanceledException`. |
-| V-13 | PhoneHomeConnectionTests.Send_on_a_closed_connection_is_the_same_typed_error | Abort the peer, wait for `!live.SocketOpen`, then `RequestAsync(List)`; typed `ConnectionClosed`, not `WebSocketException`. Today: `WebSocketException` from `WriteFrameAsync`. |
+| V-12 | PhoneHomeConnectionTests.Disconnect_fails_in_flight_requests_with_a_typed_connection_closed_error | `autoReply: false` peer; start `GetHealthAsync`; `peer.Socket.Abort()`; awaiting throws `PhoneHomeTransportException` with `Code == "phone_home_connection_closed_in_flight"` (R4 repair; was `phone_home_connection_closed`) and a message containing the runner id, the epoch and `Health`. Today: `TaskCanceledException`. |
+| V-13 | PhoneHomeConnectionTests.Send_on_a_closed_connection_is_the_same_typed_error | Abort the peer, wait for `!live.SocketOpen`, then `RequestAsync(List)`; typed `ConnectionClosedBeforeSend` (R4 repair), not `WebSocketException`. Today: `WebSocketException` from `WriteFrameAsync`. |
 | V-14 | PhoneHomeDirectoryTests.Remote_adapter_reaches_the_replacement_connection_after_a_reconnect | Connect A, mark recovered, `factory.Create(Raw, host.AllowedRunnerId)`, `AttachAsync(sessionId)` (peer Get returns Running); abort A; connect B, mark recovered; `adapter.KillGenerationAsync(gen, grace)`; `peerB.RequestCount(KillGeneration) == 1`. Today: `InvalidOperationException` "not dispatch-eligible" from A's connection. |
 | V-15 | PhoneHomeDirectoryTests.Resolve_refuses_a_recovered_connection_whose_socket_is_closed | Mark recovered, abort the peer, wait for `!SocketOpen` while the lease is fresh; `Resolve` throws `ServiceUnavailableException(phone_home_unavailable)`. Today: returns a client on the dead object. |
 | V-16 | PhoneHomeDeferredKillTests.Kill_with_no_eligible_connection_records_a_generation_kill_intent | `KillAndDisposeAsync` path driven through a failing Raw launch with the peer aborted before the kill; one `RunnerSlotReleaseIntent` with `FailureReason == "pending:kill-generation:grok-linux:<ticks>"`. Today: a Warning log and no row. |

@@ -14,7 +14,10 @@ public static class PhoneHomeTransportLoss
     public const string NotDispatchEligibleMessage = "Phone-home connection is not dispatch-eligible.";
 
     public static bool Is(Exception ex) =>
-        ex is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosed }
+        ex is PhoneHomeTransportException
+        {
+            Code: PhoneHomeProblemTypes.ConnectionClosedBeforeSend or PhoneHomeProblemTypes.ConnectionClosedInFlight,
+        }
         || ex is ServiceUnavailableException { Code: PhoneHomeProblemTypes.Unavailable }
         || ex is InvalidOperationException { Message: NotDispatchEligibleMessage };
 }
