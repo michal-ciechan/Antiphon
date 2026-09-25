@@ -8,9 +8,11 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
@@ -376,6 +378,221 @@ public sealed class RemoteWorkspacePreparerTests
         }
         rig.Sink.Specs.Count.ShouldBe(3);
         rig.Waiters.IsEmpty.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Review 3488192e (2): V-1 and V-12 carried to the recipient. The card's timeline for one
+    /// runner task - refused at crossing 1 while a land holds the lease, mirrored in the gap, then
+    /// launched lease-free while the NEXT land holds it - through the real launch queue and the
+    /// real session message queue to a runtime-produced, complete UserPrompt. Busy and already
+    /// eligible recipients; the enqueue cut (row persisted, never flushed) and the lost-wakeup cut
+    /// (the queue service is replaced, as a restart replaces it). Every step is joined by durable
+    /// identity: task -> Dispatched event -> AgentSessionId -> queued row (ExecutionTaskId) ->
+    /// the recipient's UserPrompt. The phone-home host owns the fake clock; the queue harness stays
+    /// on the system clock, as in DispatcherRemotePrepStarvationTests.
+    /// </summary>
+    [Test]
+    [Arguments("after-receipt", false)]
+    [Arguments("after-receipt", true)]
+    [Arguments("queue-inserted", false)]
+    [Arguments("lost-wakeup", false)]
+    public async Task C672_prepared_runner_brief_reaches_its_session_while_a_land_holds_the_lease(string cut, bool busy)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        host.Capacity = 2;
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var lease = new HoldableLease();
+        var slot = new AdapterSlot();
+        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
+            Delegation = new DelegationSettings { MaxConcurrentTasks = 32, AllowedRoots = ["C:\\", "/"] },
+            ConfigureServices = services => ConfigureDelivery(services, host, slot, lease),
+        });
+        // Hold boot-ready for the deferred arms, so the brief cannot be typed before the cut.
+        var deferDelivery = busy || cut is "queue-inserted" or "lost-wakeup";
+        var ready = deferDelivery
+            ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+            : null;
+        slot.Adapter = harness.Adapter;
+        harness.Adapter.RegisterOnStart = harness.Runtime;
+        harness.Adapter.ReadyHold = ready;
+        harness.Adapter.OnSubmitted = async submitted =>
+        {
+            if (harness.Adapter.StartedSessionId is not Guid sid)
+                return;
+            await BridgeQueueHarness.InsertEntryAsync(
+                sid, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
+                connectionString: schema.ConnectionString);
+            await BridgeQueueHarness.InsertEntryAsync(
+                sid, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                connectionString: schema.ConnectionString);
+        };
+
+        var workspace = Path.Combine(harness.TempRoot, "workspace");
+        var taskId = Guid.NewGuid();
+        var mirror = "/work/worktrees/" + RemoteWorkspaceService.MirrorName(taskId);
+        await using (var seed = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            seed.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId, RootTaskId = taskId, Title = "remote recipient", Goal = "c672-brief-sentinel",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = workspace, RepoPath = workspace, WorktreePath = workspace,
+                WorktreeBranch = "feat/test-c672-delivery", RunnerId = host.AllowedRunnerId,
+                Status = AgentTaskStatus.Queued, ReplyTo = AgentTaskReplyTo.None,
+                CreatedAt = DateTime.UtcNow, ConcurrencyToken = Guid.NewGuid(),
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var waiters = harness.Provider.GetRequiredService<RepositoryLeaseWaiters>();
+        var common = Path.GetFullPath(workspace);
+        async Task<AgentTaskDispatcher.TickResult> TickAsync()
+        {
+            using var scope = harness.Provider.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .TickAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
+        }
+        async Task<AgentTask> ReadAsync()
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        }
+
+        // (1) A land holds the lease: crossing 1 is refused and the task waits for it.
+        lease.Held = true;
+        (await TickAsync()).HeldOnLease.ShouldBe(1);
+        (await ReadAsync()).Status.ShouldBe(AgentTaskStatus.Queued);
+        waiters.Snapshot(common).ShouldHaveSingleItem().TaskId.ShouldBe(taskId);
+
+        // (2) The gap: crossing 1, then the mirror off the tick.
+        lease.Held = false;
+        peer.Reply = frame => frame.Operation == PhoneHomeOperation.WorkspaceMirror
+            ? MirrorResult(frame, mirror)
+            : null;
+        (await TickAsync()).Dispatched.ShouldBe(0);
+        await harness.Provider.GetRequiredService<RemoteWorkspacePreparer>().WhenIdleAsync()
+            .WaitAsync(TimeSpan.FromSeconds(15));
+        var prepared = await ReadAsync();
+        prepared.Status.ShouldBe(AgentTaskStatus.Queued);
+        prepared.RemoteWorktreePath.ShouldBe(mirror);
+        waiters.IsEmpty.ShouldBeTrue();
+
+        // (3) The next land holds the lease: crossing 2 launches without it.
+        lease.Held = true;
+        var launched = await TickAsync();
+        launched.Dispatched.ShouldBe(1);
+        launched.HeldOnLease.ShouldBe(0);
+        waiters.IsEmpty.ShouldBeTrue();
+
+        await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+        var sessionId = task.AgentSessionId.ShouldNotBeNull();
+        var session = await read.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
+        session.RunnerId.ShouldBe(host.AllowedRunnerId);
+        session.RunnerCwd.ShouldBe(mirror);
+        (await read.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        (await read.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
+                .Select(e => e.Detail)
+                .ToListAsync())
+            .Count(d => d.Contains("repository mutation lease", StringComparison.Ordinal))
+            .ShouldBe(1, "only crossing 1 waited for the lease");
+        var queued = await read.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId);
+        queued.AgentSessionId.ShouldBe(sessionId);
+        queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        queued.Body.ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
+
+        var launchQueue = harness.Provider.GetRequiredService<AgentSessionLaunchQueue>();
+        if (busy)
+        {
+            await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, sessionId);
+            ready!.TrySetResult(true);
+            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        }
+        else if (deferDelivery)
+        {
+            await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+                schema.ConnectionString, harness, queued, sessionId, busy, cut);
+            ready!.TrySetResult(true);
+        }
+
+        await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        if (!deferDelivery || busy)
+        {
+            await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+                schema.ConnectionString, harness, queued, sessionId, busy, cut,
+                busyBeforeDelivery: busy);
+        }
+
+        // The one complete UserPrompt on the task's own session carries the task's own brief.
+        var prompts = await read.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt)
+            .ToListAsync();
+        prompts.ShouldHaveSingleItem().Text.ShouldNotBeNull()
+            .ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
+        harness.Adapter.StartedSessionId.ShouldBe(sessionId);
+    }
+
+    private static void ConfigureDelivery(
+        IServiceCollection services, PhoneHomeTestHost host, AdapterSlot slot, HoldableLease lease)
+    {
+        services.RemoveAll<IOptionsMonitor<AgentRegistrySettings>>();
+        services.RemoveAll<AgentRegistry>();
+        services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
+            new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+            {
+                DefaultDefinition = "claude",
+                GrokCredentialProbeEnabled = false,
+                Definitions =
+                {
+                    ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" },
+                },
+            }));
+        services.AddSingleton<AgentRegistry>();
+        services.RemoveAll<IAgentProtocolAdapterFactory>();
+        services.AddSingleton<IAgentProtocolAdapterFactory>(slot);
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), $"antiphon-c672-delivery-{Guid.NewGuid():N}"),
+        });
+        services.AddSingleton<IRepositoryMutationLease>(lease);
+        services.RemoveAll<ILandingGit>();
+        services.AddSingleton<ILandingGit, PushOnlyGit>();
+        services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
+        {
+            Enabled = true, AllowedRunnerId = host.AllowedRunnerId, AllowDelegatedTasks = true,
+            HostWorkspaceRoot = @"C:\src\Antiphon", CallbackOrigin = "https://antiphon.desktop.codeperf.net",
+            SharedSecret = "x", ClaudeAuthProbeEnabled = false,
+        }));
+        services.AddSingleton<PhoneHomeLaunchPolicy>();
+        services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+        services.AddSingleton<RemoteWorkspaceService>();
+        services.AddSingleton<RemoteWorkspacePreparer>();
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<AgentTaskDispatcher>();
+    }
+
+    /// <summary>The harness's fake TUI as the launch factory, filled once the harness exists.</summary>
+    private sealed class AdapterSlot : IAgentProtocolAdapterFactory
+    {
+        public FakeAgentProtocolAdapter? Adapter { get; set; }
+
+        public IAgentProtocolAdapter Create(AgentKind kind) =>
+            Adapter ?? throw new InvalidOperationException("The receipt adapter is not installed yet.");
     }
 
     private static PhoneHomeFrame MirrorResult(PhoneHomeFrame request, string path) =>
