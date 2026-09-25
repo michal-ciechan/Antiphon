@@ -1177,15 +1177,22 @@ public class AgentTaskPoolTests
                 "one kill that did not take is a retry, not yet an incident");
         }
 
+        var kills = stopper.Killed.Count(id => id == sessionId);
         for (var pass = 2; pass <= 3; pass++)
         {
             await using (var db = CreateContext(cs))
                 await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u =>
                     u.SetProperty(a => a.PoolIdleSince, DateTime.UtcNow.AddMinutes(-10)));
-            await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+            // A fresh scope per pass, as each dispatcher tick gets: a reused context would keep
+            // tracking the agent with the previous pass's PoolIdleSince and never see it age.
+            var (next, nextStopper, nextProvider) = CreateHarness(connectionString: cs);
+            using var nextOwnedProvider = nextProvider;
+            nextStopper.StopsSessionsIn = null;
+            await next.RetireIdleWarmAgentsAsync(CancellationToken.None);
+            kills += nextStopper.Killed.Count(id => id == sessionId);
         }
 
-        stopper.Killed.Count(id => id == sessionId).ShouldBe(3);
+        kills.ShouldBe(3);
         await using var final = CreateContext(cs);
         var stopped = await final.Agents.SingleAsync(a => a.Id == agentId);
         stopped.Status.ShouldBe(AgentStatus.Stopped, "the retry budget is spent; stop churning, keep the row");
