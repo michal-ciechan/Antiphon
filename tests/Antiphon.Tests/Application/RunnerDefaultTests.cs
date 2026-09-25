@@ -367,9 +367,12 @@ public sealed class RunnerDefaultPlacementTests
             global.GetString().ShouldBe(RunnerRequestIntent.DisplayRunnerId(saved.Task.RunnerId));
         else
         {
+            // A null global and a stored desktop alias are the same no-remote decision.
+            // The concurrent edit can commit either snapshot before this create reads it.
             saved.Task.RunnerSelectionSource.ShouldBeNull();
-            global.ValueKind.ShouldBe(JsonValueKind.Null);
             saved.Task.RunnerId.ShouldBeNull();
+            if (global.ValueKind != JsonValueKind.Null)
+                global.GetString().ShouldBe(RunnerRequestIntent.DisplayRunnerId(saved.Task.RunnerId));
         }
     }
 
