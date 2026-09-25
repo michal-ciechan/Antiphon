@@ -1,6 +1,8 @@
 # CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
 # Repository entries are fully-qualified class names. Adjacent reason comments are required.
 # Tripwire still accepts caller-supplied simple names. No substring or argument matching.
+# CARD-0665: real Git and database removal matrix; server2 measured 18 rows over five seconds.
+Antiphon.Tests.Application.AgentTaskLandRemovalMatrixTests
 # CARD-0487: historical allowance, pty integration cost.
 Antiphon.Tests.Application.SessionMessageQueuePtyIntegrationTests
 # CARD-0487: historical allowance, grok pty integration cost.
