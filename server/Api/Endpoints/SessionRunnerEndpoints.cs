@@ -185,32 +185,12 @@ public static class SessionRunnerEndpoints
                 directory.Disconnect(connection, reason);
                 var lifetimeSeconds = (connection.Clock.GetUtcNow() - connection.StartedAtUtc).TotalSeconds;
                 var recordedReason = connection.LastDisconnectReason ?? reason;
-                // The counts after PendingEvents stay in the text. A thirteenth named hole is dropped
-                // from the structured state, and the test reads SocketError from that state.
-                var pendingText =
-                    "socket {SocketState}; pending {PendingEvents} events / " + connection.PendingEventBytes
-                    + " bytes; live buffer " + connection.LiveBufferEvents
-                    + " events; in flight " + connection.InFlight
-                    + "; failing " + connection.PendingWaiters + " waiters";
+                string? wsError = null;
+                string? socketError = null;
                 if (transportFault is not null)
-                {
-                    var (wsError, socketError) = PhoneHomeTransportFault.Describe(transportFault);
-                    logger.LogWarning(
-                        "Phone-home connection {RunnerId} epoch {Epoch} ended: {Reason} after {LifetimeSeconds:0.0}s; "
-                        + pendingText + "; connection {ConnectionId} wsError {WsError} socketError {SocketError}",
-                        connection.RunnerId, connection.Epoch, recordedReason, lifetimeSeconds,
-                        connection.SocketState, connection.PendingEvents,
-                        connectionId, wsError, socketError);
-                }
-                else
-                {
-                    logger.LogWarning(
-                        "Phone-home connection {RunnerId} epoch {Epoch} ended: {Reason} after {LifetimeSeconds:0.0}s; "
-                        + pendingText + "; connection {ConnectionId}",
-                        connection.RunnerId, connection.Epoch, recordedReason, lifetimeSeconds,
-                        connection.SocketState, connection.PendingEvents,
-                        connectionId);
-                }
+                    (wsError, socketError) = PhoneHomeTransportFault.Describe(transportFault);
+                LogEnded(
+                    logger, connection, recordedReason, lifetimeSeconds, connectionId, wsError, socketError);
             }
             finally
             {
@@ -221,6 +201,53 @@ public static class SessionRunnerEndpoints
             if (fault is not null)
                 ExceptionDispatchInfo.Capture(fault).Throw();
         }).WithTags("SessionRunners");
+    }
+
+    /// <summary>
+    /// CARD-0679 D-1 / CARD-0716 D-6: one ended warning. The state is an explicit list because the
+    /// framework formatter drops a named hole once the line carries the connection id and both
+    /// transport codes, and the tests read those names off the structured state.
+    /// </summary>
+    private static void LogEnded(
+        ILogger logger,
+        PhoneHomeLiveConnection connection,
+        string reason,
+        double lifetimeSeconds,
+        string? connectionId,
+        string? wsError,
+        string? socketError)
+    {
+        var message =
+            $"Phone-home connection {connection.RunnerId} epoch {connection.Epoch} ended: {reason} after {lifetimeSeconds:0.0}s; "
+            + $"socket {connection.SocketState}; pending {connection.PendingEvents} events / {connection.PendingEventBytes} bytes; "
+            + $"live buffer {connection.LiveBufferEvents} events; in flight {connection.InFlight}; failing {connection.PendingWaiters} waiters; "
+            + $"connection {connectionId}";
+        if (wsError is not null)
+            message += $" wsError {wsError} socketError {socketError}";
+
+        var state = new List<KeyValuePair<string, object?>>
+        {
+            new("RunnerId", connection.RunnerId),
+            new("Epoch", connection.Epoch),
+            new("Reason", reason),
+            new("LifetimeSeconds", lifetimeSeconds),
+            new("SocketState", connection.SocketState),
+            new("PendingEvents", connection.PendingEvents),
+            new("PendingEventBytes", connection.PendingEventBytes),
+            new("LiveBufferEvents", connection.LiveBufferEvents),
+            new("InFlight", connection.InFlight),
+            new("Waiters", connection.PendingWaiters),
+            new("ConnectionId", connectionId),
+        };
+        if (wsError is not null)
+        {
+            state.Add(new("WsError", wsError));
+            state.Add(new("SocketError", socketError));
+        }
+
+        state.Add(new("{OriginalFormat}", message));
+        logger.Log(LogLevel.Warning, new EventId(0), state, exception: null, static (values, _) =>
+            values.LastOrDefault(pair => pair.Key == "{OriginalFormat}").Value as string ?? "");
     }
 
     /// <summary>
