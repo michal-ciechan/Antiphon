@@ -50,7 +50,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     public static async Task<PhoneHomeTestHost> StartAsync(
         TimeProvider? clock = null,
         string? connectionString = null,
-        PhoneHomeLimits? limits = null)
+        PhoneHomeLimits? limits = null,
+        Action<DbContextOptionsBuilder>? configureDbContext = null)
     {
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -72,11 +73,14 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         if (connectionString is not null)
         {
             builder.Services.AddDbContext<AppDbContext>(o =>
+            {
                 o.UseNpgsql(connectionString, npgsql =>
                 {
                     npgsql.MigrationsAssembly("Antiphon.Server");
                     npgsql.SetPostgresVersion(16, 0);
-                }));
+                });
+                configureDbContext?.Invoke(o);
+            });
         }
 
         builder.Services.AddSingleton(settings);

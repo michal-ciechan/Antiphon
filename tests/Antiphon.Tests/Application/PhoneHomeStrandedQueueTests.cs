@@ -697,7 +697,7 @@ public class PhoneHomeStrandedQueueTests
     /// The harness session owns a card mid-turn, the shape card reconciliation probes: a Running
     /// session, its streaming attempt, and the card's claim on it.
     /// </summary>
-    private static async Task<(Guid CardId, Guid AttemptId)> ClaimCardAsync(BridgeQueueHarness h, string connectionString)
+    internal static async Task<(Guid CardId, Guid AttemptId)> ClaimCardAsync(BridgeQueueHarness h, string connectionString)
     {
         var projectId = Guid.NewGuid();
         var boardId = Guid.NewGuid();
@@ -820,7 +820,7 @@ public class PhoneHomeStrandedQueueTests
         return h;
     }
 
-    private static PhoneHomeRecoveryPump Pump(
+    internal static PhoneHomeRecoveryPump Pump(
         PhoneHomeTestHost host, BridgeQueueHarness h, ILogger<PhoneHomeRecoveryPump>? logger = null) => new(
         host.Directory,
         Options.Create(new PhoneHomeRunnerSettings
@@ -834,7 +834,7 @@ public class PhoneHomeStrandedQueueTests
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
         logger ?? NullLogger<PhoneHomeRecoveryPump>.Instance);
 
-    private static RunnerSessionDto RunningOnRunner(Guid sessionId) =>
+    internal static RunnerSessionDto RunningOnRunner(Guid sessionId) =>
         new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
 
     /// <summary>
@@ -843,7 +843,7 @@ public class PhoneHomeStrandedQueueTests
     /// that turn's UserPrompt (and an immediate TurnEnd): the evidence the queue's delivery
     /// verification reads, all of it over the phone-home connection.
     /// </summary>
-    private static void EchoSubmittedPromptsToTranscript(PhoneHomeScriptedPeer peer, BridgeQueueHarness h)
+    internal static void EchoSubmittedPromptsToTranscript(PhoneHomeScriptedPeer peer, BridgeQueueHarness h)
     {
         var composer = new StringBuilder();
         var sequence = 0L;
@@ -954,7 +954,7 @@ public class PhoneHomeStrandedQueueTests
     }
 
     /// <summary>A local session on the target's card: the source of an @mention.</summary>
-    private static async Task<Guid> InsertMentionSourceAsync(string connectionString, Guid cardId)
+    internal static async Task<Guid> InsertMentionSourceAsync(string connectionString, Guid cardId)
     {
         var id = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -978,7 +978,7 @@ public class PhoneHomeStrandedQueueTests
     }
 
     /// <summary>A due one-shot prompt to the harness agent whose policy skips a down target.</summary>
-    private static async Task<Guid> SeedSkipWhenDownPromptAsync(string connectionString, Guid agentId, string prompt)
+    internal static async Task<Guid> SeedSkipWhenDownPromptAsync(string connectionString, Guid agentId, string prompt)
     {
         var now = DateTime.UtcNow;
         var dueAt = now.AddMinutes(-1);
@@ -1007,7 +1007,7 @@ public class PhoneHomeStrandedQueueTests
         return schedule.Id;
     }
 
-    private static async Task FireNowAsync(BridgeQueueHarness h, Guid scheduleId)
+    internal static async Task FireNowAsync(BridgeQueueHarness h, Guid scheduleId)
     {
         await using var scope = h.Provider.CreateAsyncScope();
         var schedules = scope.ServiceProvider.GetRequiredService<ScheduleService>();
@@ -1017,7 +1017,7 @@ public class PhoneHomeStrandedQueueTests
         await schedules.FireAsync(claim, CancellationToken.None);
     }
 
-    private sealed class UnusedScheduledCardActions : IScheduledCardActions
+    internal sealed class UnusedScheduledCardActions : IScheduledCardActions
     {
         public Task<bool> ApplyAutomatedMoveAsync(
             Guid cardId, CardStatus target, string reason, string movedBy, CancellationToken ct) =>
