@@ -50,7 +50,14 @@
   and batched prompts, even when the marked owner is stale or already settled. It cannot
   settle alongside a marked request. Machine fallback rejects channel framing only at the
   prompt opening or immediately after the batch context heading; quoted markers in genuine
-  task/Check report content do not suppress their text or attachments.
+  task/Check report content do not suppress their text or attachments. A complete earlier
+  channel body quoted inside a machine report also remains report content when the machine
+  row has its own complete opening receipt and eligible delivery-attempt floor. The same
+  ownership decision applies to main routing, TTL and machine gate 2; a channel substring
+  cannot settle an owed channel row or suppress that report. Machine batch context headings
+  are recognized, settled machine rows retain ownership on restart, and absent/stale machine
+  attempt evidence cannot override channel ownership. A real opening channel frame retains
+  its clipped/stale refusal even when its content quotes a complete machine report.
   An ambiguous or unmarked newline-elided answer stays owed for existing loss handling.
   TTL requires a matching turn's own completed boundary and usable assistant text; later
   unrelated turns cannot supply either. Machine header/task/check identity, specialist exact

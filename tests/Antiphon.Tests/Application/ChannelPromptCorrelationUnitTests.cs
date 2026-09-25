@@ -172,6 +172,65 @@ public class ChannelPromptCorrelationUnitTests
     }
 
     [Test]
+    public void C584_Repair2_MachineOwnershipRequiresCompleteAttempt()
+    {
+        var row = Row("[task deadbeef done] Repair report.\n```text\n"
+            + "[antiphon-channel:05840000000000000000000000000003] earlier channel body\n```");
+        row.Origin = QueuedMessageOrigin.Delegation;
+        row.Status = QueuedMessageStatus.Sent;
+        var prompt = Prompt(row, row.Body);
+        var tolerance = TimeSpan.FromSeconds(30);
+        bool Owns() => ChannelPromptCorrelation.MatchesMachineDelivery(row, prompt, tolerance);
+
+        Owns().ShouldBeTrue();
+        row.ChannelReplySettledAt = row.LastDeliveryStartedAt;
+        Owns().ShouldBeTrue("settlement does not erase durable ownership on restart");
+        prompt.Text = row.Body.Replace("\n", "");
+        Owns().ShouldBeTrue("Grok's newline deletion preserves machine delivery identity");
+        prompt.Text = ChannelPromptFormat.FormatBatch([row.Body], "[task cafe0001 done] another report");
+        Owns().ShouldBeTrue();
+        prompt.Text = prompt.Text.Replace("\n", "");
+        Owns().ShouldBeTrue();
+        foreach (var text in new[]
+        {
+            row.Body[..40], row.Body.Replace("earlier channel body", "changed channel body"),
+            "[antiphon-channel:05840000000000000000000000000004] " + row.Body,
+            ChannelPromptFormat.FormatBatch(["[antiphon-channel:clipped] " + row.Body], "next"),
+            "Operator prose quoting a machine report: " + row.Body,
+        })
+        {
+            prompt.Text = text;
+            Owns().ShouldBeFalse(text);
+        }
+        prompt.Text = row.Body;
+        prompt.Sequence = row.LastDeliveryBaselineSequence!.Value;
+        Owns().ShouldBeFalse("the report must be after its own delivery floor");
+        prompt.Sequence++;
+        row.DeliveryAttempts = 0;
+        Owns().ShouldBeFalse();
+        row.DeliveryAttempts = 1;
+        row.Status = QueuedMessageStatus.Pending;
+        Owns().ShouldBeFalse();
+        row.Status = QueuedMessageStatus.Sent;
+        prompt.AgentSessionId = Guid.NewGuid();
+        Owns().ShouldBeFalse();
+        prompt.AgentSessionId = row.AgentSessionId;
+        row.LastDeliveryBaselineSequence = null;
+        prompt.Timestamp = null;
+        Owns().ShouldBeFalse("ingestion time is not a native receipt timestamp");
+        prompt.Timestamp = row.LastDeliveryStartedAt!.Value.AddSeconds(-31);
+        Owns().ShouldBeFalse();
+        prompt.Timestamp = row.LastDeliveryStartedAt;
+        Owns().ShouldBeTrue();
+        row.LastDeliveryGeneration = row.LastDeliveryStartedAt!.Value.AddSeconds(1);
+        Owns().ShouldBeFalse();
+        row.LastDeliveryGeneration = null;
+        row.SentAt = row.LastDeliveryStartedAt;
+        row.LastDeliveryStartedAt = null;
+        Owns().ShouldBeFalse("a machine ownership override cannot invent an attempt from SentAt");
+    }
+
+    [Test]
     public void Grok_acp_preserves_literal_text()
     {
         var parts = ChannelPromptCorrelationTests.GrokParts(Guid.NewGuid(),
