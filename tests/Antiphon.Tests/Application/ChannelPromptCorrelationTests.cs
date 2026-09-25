@@ -465,17 +465,19 @@ public class ChannelPromptCorrelationTests
             (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
             h.Messaging.SentReplies.ShouldBeEmpty();
         }
-        var machine = await SeedMachineAsync(h, "[task deadbeef done] genuine later machine note");
-        var old = await h.SeedChannelCorrelationAsync("[task deadbeef done] genuine later machine note", $"telegram:{chat}");
-        await using var db = Db(h);
-        // Same historical text, but an ineligible delivery window: no suppression by substring.
-        await db.SessionQueuedMessages.Where(m => m.Id == old).ExecuteUpdateAsync(u => u
-            .SetProperty(m => m.ChannelReplySettledAt, DateTime.UtcNow)
-            .SetProperty(m => m.LastDeliveryBaselineSequence, long.MaxValue));
-        await ReplayAsync(h, "[task deadbeef done] genuine later machine note", "Machine follow-up.");
+        const string note = "[task deadbeef done] genuine later machine note";
+        var old = await h.SeedChannelCorrelationAsync(note, $"telegram:{chat}");
+        await ReplayAsync(h, note, "Earlier channel answer.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
-        h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Machine follow-up.");
+        (await RowAsync(h, old)).ChannelReplySettledAt.ShouldNotBeNull();
+        var oldFloor = (await RowAsync(h, old)).LastDeliveryBaselineSequence;
+        var machine = await DeliverMachineAsync(h, note, QueuedMessageOrigin.Delegation);
+        await ReplayAsync(h, note, "Machine follow-up.");
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.Count.ShouldBe(2);
+        h.Messaging.SentReplies.Last().Text.ShouldBe("Machine follow-up.");
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await RowAsync(h, old)).LastDeliveryBaselineSequence.ShouldBe(oldFloor);
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
     }
 
@@ -531,38 +533,127 @@ public class ChannelPromptCorrelationTests
     }
 
     [Test]
-    public Task C584_Repair_TaskReportQuotesMarker() => QuotedMarkerReportAsync(QueuedMessageOrigin.Delegation);
+    public Task C584_Repair_TaskReportQuotesMarker() =>
+        QuotedReportAsync(QueuedMessageOrigin.Delegation, fullBody: false, attachment: true);
 
     [Test]
-    public Task C584_Repair_CheckReportQuotesMarker() => QuotedMarkerReportAsync(QueuedMessageOrigin.Check);
+    public Task C584_Repair_CheckReportQuotesMarker() =>
+        QuotedReportAsync(QueuedMessageOrigin.Check, fullBody: false, attachment: true);
 
-    private static async Task QuotedMarkerReportAsync(QueuedMessageOrigin origin)
+    [Test]
+    public Task C584_Repair2_TaskReportQuotesFullBody() =>
+        QuotedReportAsync(QueuedMessageOrigin.Delegation, fullBody: true, attachment: false);
+
+    [Test]
+    public Task C584_Repair2_TaskReportQuotesFullBodyWithAttachment() =>
+        QuotedReportAsync(QueuedMessageOrigin.Delegation, fullBody: true, attachment: true);
+
+    [Test]
+    public Task C584_Repair2_CheckReportQuotesFullBody() =>
+        QuotedReportAsync(QueuedMessageOrigin.Check, fullBody: true, attachment: false);
+
+    [Test]
+    public Task C584_Repair2_CheckReportQuotesFullBodyWithAttachment() =>
+        QuotedReportAsync(QueuedMessageOrigin.Check, fullBody: true, attachment: true);
+
+    private static async Task QuotedReportAsync(QueuedMessageOrigin origin, bool fullBody, bool attachment)
     {
         await using var h = await HarnessAsync();
         var chat = await h.BindChannelAsync();
+        await h.InsertTurnAsync("earlier operator prompt", "earlier operator answer");
         var channel = await EnqueueAsync(h, chat, "earlier channel request");
-        var channelBody = (await RowAsync(h, channel)).Body;
-        var header = origin == QueuedMessageOrigin.Check ? "[check deadbeef #1]" : "[task deadbeef done]";
-        // Full literal channel bytes in a fenced quote are report content, not its outer identity.
-        var report = header + " Correlation repair report.\n```text\n" + channelBody + "\n```";
-        var machine = await h.SeedPendingMessageAsync(report, deliveryAttempts: 1, origin: origin,
-            status: QueuedMessageStatus.Sent, deliveryVerdict: DeliveryVerdict.Delivered,
-            conversationKey: "task:deadbeef");
-        await using var db = Db(h);
-        await db.SessionQueuedMessages.Where(m => m.Id == channel).ExecuteUpdateAsync(u => u
-            .SetProperty(m => m.ChannelReplySettledAt, DateTime.UtcNow)
-            .SetProperty(m => m.LastDeliveryBaselineSequence, long.MaxValue));
-        var attachment = Path.Combine(h.TempRoot, "repair-report.txt");
-        await File.WriteAllTextAsync(attachment, "test-owned report attachment");
-        await ReplayAsync(h, report, $"Repair verified.\n[[attach: {attachment}]]");
+        var channelRow = await RowAsync(h, channel);
+        channelRow.LastDeliveryBaselineSequence.ShouldNotBeNull();
+        channelRow.LastDeliveryStartedAt.ShouldNotBeNull();
+        channelRow.LastDeliveryGeneration.ShouldNotBeNull();
+        channelRow.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        await ReplayAsync(h, channelRow.Body, "Earlier channel answer.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
-        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Earlier channel answer.");
+        var settled = (await RowAsync(h, channel)).ChannelReplySettledAt;
+        settled.ShouldNotBeNull();
+
+        var header = origin == QueuedMessageOrigin.Check ? "[check deadbeef #1]" : "[task deadbeef done]";
+        var quoted = fullBody ? channelRow.Body : ChannelPromptCorrelation.OpeningMarker(channelRow.Body);
+        var report = header + " Correlation repair report.\n```text\n" + quoted + "\n```";
+        var machine = await DeliverMachineAsync(h, report, origin);
+        var path = Path.Combine(h.TempRoot, "repair-report.txt");
+        if (attachment)
+            await File.WriteAllTextAsync(path, "test-owned report attachment");
+        await ReplayAsync(h, report, "Repair verified." + (attachment ? $"\n[[attach: {path}]]" : ""));
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.Count.ShouldBe(2, "a full quoted channel body must not suppress a delivered report");
+        var reply = h.Messaging.SentReplies.Last();
         reply.ConversationId.ShouldBe(chat);
         reply.Text.ShouldBe("Repair verified.");
-        reply.Attachments.ShouldHaveSingleItem().Name.ShouldBe("repair-report.txt");
+        if (attachment)
+            reply.Attachments.ShouldHaveSingleItem().Name.ShouldBe("repair-report.txt");
+        else
+            reply.Attachments.ShouldBeEmpty();
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldNotBeNull();
+        var unchanged = await RowAsync(h, channel);
+        unchanged.ChannelReplySettledAt.ShouldBe(settled);
+        unchanged.LastDeliveryBaselineSequence.ShouldBe(channelRow.LastDeliveryBaselineSequence);
+        unchanged.LastDeliveryStartedAt.ShouldBe(channelRow.LastDeliveryStartedAt);
+        unchanged.LastDeliveryGeneration.ShouldBe(channelRow.LastDeliveryGeneration);
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.Count.ShouldBe(2, "a fresh dispatcher must not republish the report");
+    }
+
+    [Test]
+    public async Task C584_Repair2_QuotedBodyDoesNotSettleOwedChannel()
+    {
+        await using var h = await HarnessAsync();
+        var chat = await h.BindChannelAsync();
+        var channel = await EnqueueAsync(h, chat, "unanswered channel request");
+        var body = (await RowAsync(h, channel)).Body;
+        var report = "[task deadbeef done] Report quotes an earlier request:\n```text\n" + body + "\n```";
+        var machine = await DeliverMachineAsync(h, report, QueuedMessageOrigin.Delegation);
+        await ReplayAsync(h, report, "Machine answer only.");
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        (await RowAsync(h, channel)).ChannelReplySettledAt.ShouldBeNull("the report is not a channel receipt");
+        (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldNotBeNull();
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Machine answer only.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         h.Messaging.SentReplies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C584_Repair2_QuotedBodyIsNotChannelTtlEvidence()
+    {
+        await using var h = await HarnessAsync();
+        var chat = await h.BindChannelAsync();
+        var channel = await EnqueueAsync(h, chat, "unanswered channel request");
+        var body = (await RowAsync(h, channel)).Body;
+        await using var db = Db(h);
+        // Model unavailable earlier transcript history; retain both rows' actual attempt floors.
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId).ExecuteDeleteAsync();
+        var report = "[check deadbeef #1] Report quotes an earlier request:\n```text\n" + body + "\n```";
+        await DeliverMachineAsync(h, report, QueuedMessageOrigin.Check);
+        await ReplayAsync(h, report, "Check answer only.");
+        await AgeAsync(h, channel);
+        await Dispatcher(h).SweepStaleCorrelationsAsync(Ct);
+        var incident = await db.AgentIncidents.SingleAsync(i => i.AgentId == h.AgentId
+            && i.Kind == AgentIncidentKind.ChannelReplyLost);
+        incident.FailureReason.ShouldBe("StaleTtl", "a machine receipt is not evidence for the quoted channel request");
+    }
+
+    private static async Task<Guid> DeliverMachineAsync(BridgeQueueHarness h, string body,
+        QueuedMessageOrigin origin)
+    {
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        Guid id = default;
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, Ct,
+            origin: origin, conversationKey: "task:deadbeef", onCreated: value => id = value);
+        var row = await RowAsync(h, id);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        row.DeliveryAttempts.ShouldBe(1);
+        row.LastDeliveryStartedAt.ShouldNotBeNull();
+        row.LastDeliveryGeneration.ShouldNotBeNull();
+        if (floor > 0)
+            row.LastDeliveryBaselineSequence.ShouldBe(floor);
+        return id;
     }
 
     [Test]
@@ -585,9 +676,13 @@ public class ChannelPromptCorrelationTests
             await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
             h.Messaging.SentReplies.ShouldBeEmpty("clipped single and batch receipts retain channel framing");
         }
-        await db.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(u => u
-            .SetProperty(m => m.LastDeliveryBaselineSequence, long.MaxValue));
         await ReplayAsync(h, body);
+        // A later attempt cannot use the already recorded full receipt as its answer.
+        var retryFloor = await h.CurrentTranscriptMaxSequenceAsync();
+        await db.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(u => u
+            .SetProperty(m => m.DeliveryAttempts, 2)
+            .SetProperty(m => m.LastDeliveryStartedAt, DateTime.UtcNow)
+            .SetProperty(m => m.LastDeliveryBaselineSequence, retryFloor));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         h.Messaging.SentReplies.ShouldBeEmpty("a stale full channel receipt cannot become a task report");
         (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldBeNull();
