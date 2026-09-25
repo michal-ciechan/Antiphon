@@ -113,92 +113,7 @@ public sealed class AgentTaskReplyService
             if (DelayAfterOpenTaskLoadedAsync is not null)
                 await DelayAfterOpenTaskLoadedAsync(sessionId, ct);
 
-            var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
-
-            if (turn.Interrupted is { } interrupted)
-            {
-                await RecordInterruptedTurnAsync(db, task, interrupted, ct);
-                return;
-            }
-
-            if (turn.ApiErrorStub is { } stub)
-            {
-                // CARD-0071 S3 / CARD-0072 S5a-3: the marked turn was killed by the API itself.
-                // The error text is NOT a report. A retryable class defers (task stays Working,
-                // resume scheduled); NeedsHuman / exhausted / wall-parked still Fail.
-                await HandleApiErrorTurnAsync(scope.ServiceProvider, db, task, sessionId, stub, ct);
-                return;
-            }
-
-            if (turn.Report is not string report)
-            {
-                if (turn.PreReplyBoundary)
-                {
-                    _logger.LogDebug(
-                        "Session {SessionId}: newest boundary predates task {ShortId}'s reply watermark #{Watermark}; waiting for the answer turn",
-                        sessionId, DelegationReportFormatter.Short(task.Id), task.RepliedAtSequence);
-                    return;
-                }
-
-                if (turn.UncorrelatedReport)
-                {
-                    // A finished-looking turn we cannot attribute. Left at Debug this printed
-                    // nothing under an Information file sink, and three delegates that had done
-                    // their work sat Dispatched overnight with no record of why (CARD-0003).
-                    _logger.LogWarning(
-                        "Session {SessionId} ended a turn WITH a report but the prompt carried no "
-                        + "marker for task {ShortId} — not settling it. Either a human typed here, or "
-                        + "the brief's marker did not survive delivery and this task will strand.",
-                        sessionId, DelegationReportFormatter.Short(task.Id));
-                    await RecordUncorrelatedReportAsync(scope.ServiceProvider, db, task, sessionId, ct);
-                    return;
-                }
-
-                if (turn.DeferredForFinalMessage)
-                {
-                    // CARD-0046: this TurnEnd is the thinking record of a response whose text is
-                    // still in flight. Waiting is the whole fix — the text's own arrival re-triggers
-                    // us, and the dispatcher sweeps the grace if it never comes.
-                    _logger.LogDebug(
-                        "Session {SessionId} ended a turn for task {ShortId} but its own response has "
-                        + "not written text yet; deferring settlement",
-                        sessionId, DelegationReportFormatter.Short(task.Id));
-                    return;
-                }
-
-                if (turn.FinalMessageMissing)
-                {
-                    // Nothing to settle on AT ALL: the response that ended the turn wrote no text
-                    // and neither did the rest of the turn. Measured 1 in 180 — a lone end_turn
-                    // thinking record followed by "API Error: Connection lost mid-response". A
-                    // Succeeded with an empty report would be a lie, and leaving it Dispatched hides
-                    // it until the 10-minute watchdog; failing says what happened (CARD-0046 slice 3).
-                    await FailUnreportedTurnAsync(scope.ServiceProvider, db, task, sessionId, ct);
-                    return;
-                }
-
-                // The delegate hasn't produced text yet — Claude can write the stop marker before
-                // its reply, and the AssistantText arrival re-triggers us. Leave the task running.
-                _logger.LogDebug(
-                    "Session {SessionId} ended a turn with no report for task {ShortId}; still working",
-                    sessionId, DelegationReportFormatter.Short(task.Id));
-                return;
-            }
-
-            if (turn.FinalMessageMissing)
-            {
-                // Same as above, but there WAS other text: the report about to be stored is
-                // whatever the turn produced — most likely preamble, not a verdict. SettleAsync
-                // carries this all the way to the caller's note (CARD-0046 slice 3).
-                _logger.LogWarning(
-                    "Session {SessionId}: the turn-ending response for task {ShortId} never wrote its "
-                    + "own text within the {Grace}s grace; settling on {Chars:N0} characters of "
-                    + "mid-turn text instead",
-                    sessionId, DelegationReportFormatter.Short(task.Id),
-                    _settings.FinalMessageGraceSeconds, report.Length);
-            }
-
-            await SettleAsync(scope.ServiceProvider, db, task, report, turn, ct);
+            await JudgeOpenTaskAsync(scope.ServiceProvider, db, task, sessionId, onStillUncorrelated: null, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -206,6 +121,159 @@ public sealed class AgentTaskReplyService
             recoveryScope.ServiceProvider.GetService<CompletionNoteFlushQueue>()?.Recovery.RequestSweep();
             _logger.LogWarning(ex, "Failed to settle a delegated task for session {SessionId}", sessionId);
         }
+    }
+
+    /// <summary>
+    /// Fresh attribution for the delivery watchdog (CARD-0714). Holds this session's settle lock,
+    /// settles a recovered report through the normal path, and invokes
+    /// <paramref name="onStillUncorrelated"/> while the lock is still held. Does not call
+    /// <see cref="OnTurnEndAsync"/>.
+    /// </summary>
+    internal async Task<DeliveryWatchdogAttribution> RecheckForDeliveryWatchdogAsync(
+        Guid sessionId,
+        Guid taskId,
+        Func<CancellationToken, Task>? onStillUncorrelated,
+        CancellationToken ct)
+    {
+        var gate = _settleLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var task = await db.AgentTasks.FirstOrDefaultAsync(
+                t => t.Id == taskId && t.AgentSessionId == sessionId, ct);
+            if (task is null || task.Status != AgentTaskStatus.Dispatched)
+                return DeliveryWatchdogAttribution.NoLongerOpen;
+
+            TurnOutcome turn;
+            try
+            {
+                turn = await JudgeOpenTaskAsync(
+                    scope.ServiceProvider, db, task, sessionId, onStillUncorrelated, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Task {TaskId}: watchdog attribution recheck failed", taskId);
+                return DeliveryWatchdogAttribution.Indeterminate;
+            }
+
+            if (turn.UncorrelatedReport)
+                return DeliveryWatchdogAttribution.StillUncorrelated;
+            await db.Entry(task).ReloadAsync(ct);
+            return task.Status == AgentTaskStatus.Dispatched
+                ? DeliveryWatchdogAttribution.DeferredOrNoReport
+                : DeliveryWatchdogAttribution.Settled;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The settle decision for an already-loaded open task. When
+    /// <paramref name="onStillUncorrelated"/> is set, an uncorrelated verdict is handed to that
+    /// callback instead of <see cref="RecordUncorrelatedReportAsync"/>.
+    /// </summary>
+    private async Task<TurnOutcome> JudgeOpenTaskAsync(
+        IServiceProvider services,
+        AppDbContext db,
+        AgentTask task,
+        Guid sessionId,
+        Func<CancellationToken, Task>? onStillUncorrelated,
+        CancellationToken ct)
+    {
+        var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
+
+        if (turn.Interrupted is { } interrupted)
+        {
+            await RecordInterruptedTurnAsync(db, task, interrupted, ct);
+            return turn;
+        }
+
+        if (turn.ApiErrorStub is { } stub)
+        {
+            // CARD-0071 S3 / CARD-0072 S5a-3: the marked turn was killed by the API itself.
+            // The error text is NOT a report. A retryable class defers (task stays Working,
+            // resume scheduled); NeedsHuman / exhausted / wall-parked still Fail.
+            await HandleApiErrorTurnAsync(services, db, task, sessionId, stub, ct);
+            return turn;
+        }
+
+        if (turn.Report is not string report)
+        {
+            if (turn.PreReplyBoundary)
+            {
+                _logger.LogDebug(
+                    "Session {SessionId}: newest boundary predates task {ShortId}'s reply watermark #{Watermark}; waiting for the answer turn",
+                    sessionId, DelegationReportFormatter.Short(task.Id), task.RepliedAtSequence);
+                return turn;
+            }
+
+            if (turn.UncorrelatedReport)
+            {
+                // A finished-looking turn we cannot attribute. Left at Debug this printed
+                // nothing under an Information file sink, and three delegates that had done
+                // their work sat Dispatched overnight with no record of why (CARD-0003).
+                _logger.LogWarning(
+                    "Session {SessionId} ended a turn WITH a report but the prompt carried no "
+                    + "marker for task {ShortId} — not settling it. Either a human typed here, or "
+                    + "the brief's marker did not survive delivery and this task will strand.",
+                    sessionId, DelegationReportFormatter.Short(task.Id));
+                if (onStillUncorrelated is not null)
+                    await onStillUncorrelated(ct);
+                else
+                    await RecordUncorrelatedReportAsync(services, db, task, sessionId, ct);
+                return turn;
+            }
+
+            if (turn.DeferredForFinalMessage)
+            {
+                // CARD-0046: this TurnEnd is the thinking record of a response whose text is
+                // still in flight. Waiting is the whole fix — the text's own arrival re-triggers
+                // us, and the dispatcher sweeps the grace if it never comes.
+                _logger.LogDebug(
+                    "Session {SessionId} ended a turn for task {ShortId} but its own response has "
+                    + "not written text yet; deferring settlement",
+                    sessionId, DelegationReportFormatter.Short(task.Id));
+                return turn;
+            }
+
+            if (turn.FinalMessageMissing)
+            {
+                // Nothing to settle on AT ALL: the response that ended the turn wrote no text
+                // and neither did the rest of the turn. Measured 1 in 180 — a lone end_turn
+                // thinking record followed by "API Error: Connection lost mid-response". A
+                // Succeeded with an empty report would be a lie, and leaving it Dispatched hides
+                // it until the 10-minute watchdog; failing says what happened (CARD-0046 slice 3).
+                await FailUnreportedTurnAsync(services, db, task, sessionId, ct);
+                return turn;
+            }
+
+            // The delegate hasn't produced text yet — Claude can write the stop marker before
+            // its reply, and the AssistantText arrival re-triggers us. Leave the task running.
+            _logger.LogDebug(
+                "Session {SessionId} ended a turn with no report for task {ShortId}; still working",
+                sessionId, DelegationReportFormatter.Short(task.Id));
+            return turn;
+        }
+
+        if (turn.FinalMessageMissing)
+        {
+            // Same as above, but there WAS other text: the report about to be stored is
+            // whatever the turn produced — most likely preamble, not a verdict. SettleAsync
+            // carries this all the way to the caller's note (CARD-0046 slice 3).
+            _logger.LogWarning(
+                "Session {SessionId}: the turn-ending response for task {ShortId} never wrote its "
+                + "own text within the {Grace}s grace; settling on {Chars:N0} characters of "
+                + "mid-turn text instead",
+                sessionId, DelegationReportFormatter.Short(task.Id),
+                _settings.FinalMessageGraceSeconds, report.Length);
+        }
+
+        await SettleAsync(services, db, task, report, turn, ct);
+        return turn;
     }
 
     /// <summary>
@@ -2499,58 +2567,72 @@ public sealed class AgentTaskReplyService
         AppDbContext db, Guid sessionId, AgentTask task, CancellationToken ct)
     {
         var taskId = task.Id;
+        var selection = await TaskReportTurnSelector.SelectAsync(db, sessionId, task, ct);
+        if (selection.Skipped.Count > 0 || selection.Kind != TaskReportSelectionKind.None)
+        {
+            _logger.LogDebug(
+                "Task {TaskId} attribution kind {Kind} boundary {BoundarySequence} owning prompt {PromptSequence} skipped {Skipped}",
+                taskId,
+                selection.Kind,
+                selection.BoundarySequence,
+                selection.EffectiveOwnerSequence,
+                string.Join(",", selection.Skipped.Select(s => s.Sequence.ToString() + ":" + s.Reason)));
+        }
 
-        // The ROW, not just its sequence: settling correctly needs the turn-ending response's
-        // identity (ApiCallId) and when we actually stored it (CreatedAt) — see FinalMessageOf and
-        // ResolveFinalMessageState.
-        var end = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
-            .OrderByDescending(t => t.Sequence)
-            .FirstOrDefaultAsync(ct);
-        if (end is null)
+        switch (selection.Kind)
+        {
+            case TaskReportSelectionKind.None:
+                return TurnOutcome.Nothing;
+            case TaskReportSelectionKind.PreReply:
+                return new TurnOutcome(null, false, PreReplyBoundary: true);
+            case TaskReportSelectionKind.Interrupted:
+            {
+                var interrupted = await db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Sequence == selection.BoundarySequence)
+                    .Select(t => new { t.Sequence, t.Uuid, t.StopReason })
+                    .FirstAsync(ct);
+                return new TurnOutcome(
+                    null, false, Interrupted: new InterruptedFacts(interrupted.Sequence, interrupted.Uuid, interrupted.StopReason));
+            }
+            case TaskReportSelectionKind.Uncorrelated:
+            {
+                var barrierRows = await LoadTurnTextsAsync(
+                    db, sessionId, selection.RawPromptSequence!.Value, selection.NextRawPromptSequence, ct);
+                var barrierJoined = Join(barrierRows
+                    .Where(t => !TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, t.IsApiError))
+                    .Select(t => t.Text));
+                return new TurnOutcome(null, barrierJoined.Length > 0);
+            }
+        }
+
+        if (selection.BoundarySequence is not long boundarySequence
+            || selection.RawPromptSequence is not long rawPromptSequence
+            || selection.EffectiveOwnerSequence is not long promptSequence)
             return TurnOutcome.Nothing;
 
-        // CARD-0159: a cancelled boundary is idle (the queue already flushed) but never a report.
-        // Checked before the walk-back so we cannot settle on the interrupted turn's narration.
+        // The ROW, not just its sequence: settling correctly needs the turn-ending response's
+        // identity (ApiCallId) and when we actually stored it (CreatedAt).
+        var end = await db.TranscriptEntries.FirstAsync(
+            t => t.AgentSessionId == sessionId
+                && t.Sequence == boundarySequence
+                && t.Kind == TranscriptKinds.TurnEnd, ct);
+
+        // A selected task boundary that is cancelled is not permission to fall back.
         if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
             return new TurnOutcome(
                 null, false, Interrupted: new InterruptedFacts(end.Sequence, end.Uuid, end.StopReason));
 
-        var turnEnd = end.Sequence;
-
         var span = await LoadPromptsInSpanAsync(db, sessionId, task.DispatchedAt, ct);
-        // CARD-0135: the walk-back (and the nextPrompt cap below) may land on a QueuedUserPrompt.
-        // A drained queued_command has no accompanying user record, so this is the only prompt
-        // row a queued brief's turn has — and the only reason that report can settle at all.
-        var prompt = span.TurnPrompts.LastOrDefault(p => p.Sequence < turnEnd);
-        if (prompt?.Text is not string promptText)
-            return TurnOutcome.Nothing;
-        if (await GrokRulesRefreshService.IsRefreshPromptAsync(db, sessionId, promptText, ct))
-            return TurnOutcome.Nothing;
-
-        // CARD-0348: the answer to a Blocked task starts a NEW turn. Until it ends, the newest
-        // boundary is the one the block was settled from, and arm 0 re-handed it within one tick —
-        // re-Blocking the row on the stale report, after which the real done report could never
-        // settle (a571d6c1, 42bb5ffb, fbd37f59). On the PROMPT, not the boundary: a boundary with no
-        // new prompt in front of it (a restart marker) walks back to the old brief and would re-settle
-        // it too.
-        if (task.RepliedAtSequence is long replyWatermark && prompt.Sequence <= replyWatermark)
-            return new TurnOutcome(null, false, PreReplyBoundary: true);
-
-        var nextPrompt = span.TurnPrompts.FirstOrDefault(p => p.Sequence > prompt.Sequence)?.Sequence;
-
-        var query = db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.AssistantText
-                && t.Sequence > prompt.Sequence);
-        if (nextPrompt is long cap)
-            query = query.Where(t => t.Sequence < cap);
-
-        // Each row with the API response it belongs to: the report is one of those responses, not
-        // the whole turn (slice 2), and telling them apart is what ApiCallId is for.
-        var rows = await query.OrderBy(t => t.Sequence)
-            .Select(t => new TurnText(t.Text, t.ApiCallId, t.IsApiError))
-            .ToListAsync(ct);
+        // Identity text may arrive after housekeeping, up to the next real prompt.
+        // Joined fallback stops at the next raw prompt, including a reminder, so the
+        // acknowledgement cannot satisfy a missing final message.
+        var nextPrompt = selection.NextRealPromptSequence;
+        var rows = await LoadTurnTextsAsync(db, sessionId, rawPromptSequence, selection.NextRawPromptSequence, ct);
+        var sameWindow = promptSequence == rawPromptSequence
+            && selection.NextRealPromptSequence == selection.NextRawPromptSequence;
+        var identityRows = sameWindow
+            ? rows
+            : await LoadTurnTextsAsync(db, sessionId, promptSequence, selection.NextRealPromptSequence, ct);
 
         // An API-error stub's error string is never report material, whatever else happens below —
         // not the final message, not the joined fallback, not an "uncorrelated report" a human gets
@@ -2559,13 +2641,10 @@ public sealed class AgentTaskReplyService
         var texts = rows
             .Where(t => !TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, t.IsApiError))
             .ToList();
+        var identityTexts = identityRows
+            .Where(t => !TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, t.IsApiError))
+            .ToList();
         var joined = Join(texts.Select(t => t.Text));
-
-        // The marker gate. A human typing in this terminal produces a prompt without it — but so
-        // does a brief whose marker was eaten in transit, and those two look identical from here.
-        // Distinguishing them is not possible; SAYING SO is, which is the whole point of the flag.
-        if (!promptText.Contains(DelegationReportFormatter.TaskMarker(taskId), StringComparison.Ordinal))
-            return new TurnOutcome(null, joined.Length > 0);
 
         // CARD-0071 S3, checked the moment the turn is known to be OURS and before any other
         // verdict: a turn whose ending is an API-error stub is DEAD — the API killed it after
@@ -2598,7 +2677,7 @@ public sealed class AgentTaskReplyService
         // so a regression can be proved to come from here.
         var subagents = _settings.SubagentGraceMinutes <= 0
             ? new SubagentWait(0, null)
-            : await ResolveSubagentWaitAsync(db, sessionId, prompt.Sequence, nextPrompt, span, ct);
+            : await ResolveSubagentWaitAsync(db, sessionId, promptSequence, nextPrompt, span, ct);
         var abandonedSubagents = 0;
         if (subagents.Unanswered > 0)
         {
@@ -2624,7 +2703,7 @@ public sealed class AgentTaskReplyService
         // — and every one carries the response's stop_reason, so the boundary that reaches us first
         // is a bare TurnEnd with the report still milliseconds away. Settling here hands the caller
         // the mid-turn narration and discards the verdict (six delegates, 2026-08-13/14).
-        var finalMessage = FinalMessageOf(end, texts);
+        var finalMessage = FinalMessageOf(end, identityTexts);
 
         switch (ResolveFinalMessageState(end, finalMessage))
         {
@@ -2757,6 +2836,19 @@ public sealed class AgentTaskReplyService
     private static Task<TranscriptPromptSpan.Result> LoadPromptsInSpanAsync(
         AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct) =>
         TranscriptPromptSpan.LoadAsync(db, sessionId, dispatchedAt, ct);
+
+    private static async Task<List<TurnText>> LoadTurnTextsAsync(
+        AppDbContext db, Guid sessionId, long afterSequence, long? beforeSequence, CancellationToken ct)
+    {
+        var query = db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.AssistantText
+            && t.Sequence > afterSequence);
+        if (beforeSequence is long cap)
+            query = query.Where(t => t.Sequence < cap);
+        return await query.OrderBy(t => t.Sequence)
+            .Select(t => new TurnText(t.Text, t.ApiCallId, t.IsApiError))
+            .ToListAsync(ct);
+    }
 
     private static string Join(IEnumerable<string?> texts) =>
         string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();

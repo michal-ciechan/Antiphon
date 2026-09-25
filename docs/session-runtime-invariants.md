@@ -609,6 +609,10 @@ Established-session refresh failure holds queued work and records an error incid
 The initial implementation still needs the full crash/ownership, native-wire and live endurance
 verification specified by the plan. Do not infer acceptance from the FakeGrok E2E tests.
 
+### Report attribution across housekeeping turns (CARD-0714)
+
+Settlement and the deferred-report sweep share one selector. They walk `TurnEnd` rows from the newest and skip provider allowlisted housekeeping — a Grok `<system-reminder>` background-completion envelope, a queue-backed rules refresh on any provider, a Claude `<task-notification>` acknowledgement whose own assistant text lacks this task's closing report token, and the existing command and compaction echoes — together with that boundary's response. The selected boundary keeps its own `ApiCallId`. A newer real prompt without this task's marker is a barrier. A prompt at or below `RepliedAtSequence`, or with a known native timestamp at or before dispatch, cannot own the current attempt. A Claude notification whose own assistant text carries this task's closing token can still settle when the walk back reaches the marked brief and subagent grace allows it. That same allowlist keeps a completion reminder from superseding an API-error wall. The delivery watchdog re-runs that verdict after catch-up. Arm 2 fails only when the fresh verdict is still uncorrelated and an eligible incident already exists. That failure commit compares status, concurrency token, session, dispatch time and reply watermark; zero rows leaves the current attempt alone. Pinned by `TaskReportHousekeepingTests`, `TranscriptPromptSpanTests` (`C714_Grok_completion_is_housekeeping`, `C714_Grok_housekeeping_does_not_count_as_started`), `AgentTaskReplyIntegrationTests` `C714_*`, `AgentTaskDeliveryWatchdogTests` `C714_*`, and `CodexTranscriptNormalizerTests.C714_Metadata_cannot_create_a_housekeeping_prompt`.
+
 
 ## Standing conversation continuity (CARD-0466)
 
