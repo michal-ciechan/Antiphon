@@ -34,11 +34,13 @@ public partial class CardFileBoardLookupTests
     [Arguments("project-visibility")]
     [Arguments("board-opt-out")]
     [Arguments("board-opt-in")]
+    [Arguments("card-visibility")]
     public async Task Committed_change_invalidates_the_shared_lookup(string change)
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var world = new CardFilePrivacyWorld(isolated.ConnectionString);
         await world.InitializeAsync(enabledBoard: change != "board-opt-in");
+        var cardId = change == "card-visibility" ? await world.AddCardAsync() : Guid.Empty;
         await using var db = world.Db();
         using var provider = Events();
         var events = provider.GetRequiredService<IEventBus>();
@@ -55,8 +57,14 @@ public partial class CardFileBoardLookupTests
         await _lookup.GetAsync(read, default);
         counter.Reads.ShouldBe(0);
 
+        var generation = _lookup.Generation;
         switch (change)
         {
+            case "card-visibility":
+                var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+                await new CardService(db, null!, null!, null!, events, TimeProvider.System, null!, cardFiles: Service(world, db))
+                    .UpdateContentAsync(cardId, new(card.ConcurrencyToken, "revoke", CardFileVisibility: CardFileVisibility.Private), default);
+                break;
             case "board-create": await boards.CreateAsync(new(world.ProjectId, "Sibling"), default); break;
             // There is no board rename endpoint. Exercise the existing BoardChanged contract
             // after the committed write, as an importer/rename publisher must do.
@@ -66,7 +74,7 @@ public partial class CardFileBoardLookupTests
             case "board-delete": await boards.DeleteAsync(world.BoardId, default); break;
             case "board-archive": await boards.ArchiveAsync(world.BoardId, new("test"), default); break;
             case "board-unarchive": await boards.UnarchiveAsync(world.BoardId, new("test"), default); break;
-            case "project-create": await projects.CreateAsync(new("New", "https://example.invalid/new", null, false, false), default); break;
+            case "project-create": await projects.CreateAsync(new("New", "https://example.invalid/new", null, false, false, null, null), default); break;
             case "project-rename":
             case "project-visibility":
                 await projects.UpdateAsync(world.ProjectId, new("Renamed", "https://example.invalid/c408.git", null, false, false, world.Repo.Path, "master")
@@ -77,11 +85,12 @@ public partial class CardFileBoardLookupTests
             case "board-opt-out": await Service(world, db).UpdateSettingsAsync(world.BoardId, false, true, events, default); break;
             case "board-opt-in": await Service(world, db).UpdateSettingsAsync(world.BoardId, true, false, events, default); break;
         }
+        _lookup.Generation.ShouldBeGreaterThan(generation);
         // Settings returns status and can refill the shared cache before returning.
-        if (change is "board-opt-out" or "board-opt-in")
+        if (change is "board-opt-out" or "board-opt-in" or "card-visibility")
             counter.Lookups.ShouldBe(0);
         var actual = await _lookup.GetAsync(read, default);
-        if (change is not ("board-opt-out" or "board-opt-in")) counter.Lookups.ShouldBe(1);
+        if (change is not ("board-opt-out" or "board-opt-in" or "card-visibility")) counter.Lookups.ShouldBe(1);
         var fresh = await new CardFileBoardLookup().GetAsync(db, default);
         actual.Boards.SequenceEqual(fresh.Boards).ShouldBeTrue(change);
         counter.Reset();
