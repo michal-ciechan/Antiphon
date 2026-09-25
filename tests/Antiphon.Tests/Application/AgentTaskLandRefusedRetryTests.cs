@@ -359,7 +359,12 @@ public sealed class AgentTaskLandRefusedRetryTests
         Convert.ToInt32(entry.State["WorktreeList"]).ShouldBeLessThanOrEqualTo(4);
         Convert.ToInt32(entry.State["Inspections"]).ShouldBeLessThanOrEqualTo(2);
         Convert.ToInt32(entry.State["Processes"]).ShouldBeLessThanOrEqualTo(250);
-        Convert.ToInt32(entry.State["Remote"]).ShouldBeLessThanOrEqualTo(16);
+        // Remote round trips before cleanup: resolver observation (ls-remote+fetch) and its recheck, the target
+        // observation at creation, three protocol rechecks (entry, pre-reset, pre-push), the pre-push observation,
+        // the push and its confirming observation = 13. Guarded cleanup (unchanged, D-14) observes the remote three
+        // times (2 each), so the land total is 19; the plan estimated 16 from two cleanup observations.
+        h.Fixture.Git.Trace.Take(cleanupAt).Count(a => a[0] is "ls-remote" or "fetch" or "push").ShouldBeLessThanOrEqualTo(13);
+        Convert.ToInt32(entry.State["Remote"]).ShouldBeLessThanOrEqualTo(19);
         foreach (var phase in new[] { "reset=", "rebase=", "verify=", "push=", "canonical=", "cleanup=" })
             entry.Message.ShouldContain(phase);
         var refs = await h.Fixture.RequiredAsync(h.Fixture.Repository, "for-each-ref", "--format=%(refname)", "refs/antiphon/");

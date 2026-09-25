@@ -534,6 +534,9 @@ public sealed class AgentTaskLandService
         {
             var common = await _landingGit.CommonDirectoryAsync(task.RepoPath, ct);
             land = _protocol?.LandWorkspace?.PathFor(common);
+            // Only a real worktree can hold a lock; a foreign directory there is EnsureAsync's named refusal,
+            // never a permanent index_lock_path_error hold.
+            if (land is not null && !Path.Exists(Path.Combine(land, ".git"))) land = null;
             var targetRef = FullRef(task.MergeTargetRef ?? "master");
             var main = Infrastructure.Git.LandWorkspace.Scan(common).First(h => h.IsMain);
             if (main.SymbolicRef == targetRef) targetCheckout = main.WorktreePath ?? task.RepoPath;
