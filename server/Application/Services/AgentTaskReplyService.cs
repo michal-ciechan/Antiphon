@@ -881,8 +881,12 @@ public sealed class AgentTaskReplyService
                 ct, AlertSeverity.Error);
         }
 
+        // CARD-0691 D-2: a reported failed verdict releases exactly like Succeeded. The judgement is
+        // about the agent, not the verdict (see ReleaseDelegateAsync); skipping it left the delegate
+        // Running with no PoolIdleSince and no owner, invisible to the janitor, for days. Blocked
+        // still keeps: its session is the conversation the caller continues.
         var shouldRelease = task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
-            || task.Status == AgentTaskStatus.Succeeded;
+            || task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed;
         var killSession = task.FailureCode != AgentTaskFailureCode.CompletedWithoutProgress;
 
         await PersistDeliverThenReleaseAsync(
@@ -1991,7 +1995,8 @@ public sealed class AgentTaskReplyService
     /// directory, until the pool janitor retires it. Everything else pool-spawned (worktree
     /// delegates, dead sessions) retires now. A user's standing agent is never touched.
     ///
-    /// <para>Also runs when a task FAILS unreported (CARD-0046 slice 3). The judgement is about the
+    /// <para>Also runs when a task FAILS, unreported (CARD-0046 slice 3) or on a reported failed verdict
+    /// (CARD-0691 D-2). The judgement is about the
     /// agent, not the verdict: one response died, the session did not, so a live Shared delegate is
     /// as reusable as after any success — and skipping the release would leak it Busy forever,
     /// because settlement is the only thing that frees a delegate.</para>
@@ -2000,6 +2005,12 @@ public sealed class AgentTaskReplyService
     /// <c>return</c> leaving the Worktree row <c>Running</c> with no owner. That is a zombie by
     /// construction. The arm now marks the row Idle for the janitor without making it claimable
     /// (no reservation; reuse skips worktree-shaped directories) and without killing now.</para>
+    ///
+    /// <para>CARD-0691 D-3: the kill arm removes the row only once the session is verified terminal
+    /// (<see cref="PoolDelegateRelease"/>). A kill that threw or did not take keeps the row Idle for
+    /// the janitor and records one <see cref="AgentIncidentKind.DelegateReleaseUnresolved"/>. This
+    /// path is the fast one; the dispatcher's pool-release sweep enforces the same rule for any
+    /// terminal writer that never calls it.</para>
     /// </summary>
     private async Task ReleaseDelegateAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
@@ -2036,12 +2047,9 @@ public sealed class AgentTaskReplyService
                 _logger.LogWarning(
                     "Delegate '{Name}' pooled warm while session {Id} is mid-turn (task {ShortId} {Status}) — the janitor defers retirement while the turn remains active",
                     agent.Name, task.AgentSessionId, DelegationReportFormatter.Short(task.Id), task.Status);
-            agent.Status = AgentStatus.Idle;
-            agent.PoolIdleSince = now;
             // Reserved for ITS run first: the caller that just used it can send follow-up work to
             // the same context without racing the rest of the queue for the agent.
-            agent.PoolReservedForRootTaskId = task.RootTaskId;
-            agent.UpdatedAt = now;
+            PoolDelegateRelease.PoolWarm(agent, task.RootTaskId, now);
             _logger.LogInformation(
                 "Delegate '{Name}' pooled warm in {Dir} (reserved for run {Root} first)",
                 agent.Name, agent.WorkingDirectory, DelegationReportFormatter.Short(task.RootTaskId));
@@ -2054,10 +2062,7 @@ public sealed class AgentTaskReplyService
         // already gets. Clear the reservation: this is not a warm reuse candidate.
         if (!killSession)
         {
-            agent.Status = AgentStatus.Idle;
-            agent.PoolIdleSince = now;
-            agent.PoolReservedForRootTaskId = null;
-            agent.UpdatedAt = now;
+            PoolDelegateRelease.MarkIdleForJanitor(agent, now);
             if (task.Workspace == WorkspaceMode.Worktree)
             {
                 _logger.LogWarning(
@@ -2069,28 +2074,50 @@ public sealed class AgentTaskReplyService
             return;
         }
 
-        if (task.AgentSessionId is Guid sessionId)
+        var outcome = await PoolDelegateRelease.KillAndVerifyAsync(db, agent, task.AgentSessionId,
+            async (sessionId, token) =>
+            {
+                try
+                {
+                    ObserveWorktreeRelease(task, sessionId, "StopRequested");
+                    // CARD-0319: resolve the stopper from a NEW scope so KillAsync's SaveChanges
+                    // cannot flush this caller's still-dirty change tracker. AgentSessionService is
+                    // scoped and IDelegateSessionStopper is the same instance.
+                    await using var killScope = _scopeFactory.CreateAsyncScope();
+                    await killScope.ServiceProvider
+                        .GetRequiredService<IDelegateSessionStopper>()
+                        .KillAsync(sessionId, token);
+                    ObserveWorktreeRelease(task, sessionId, "StopReturned");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    ObserveWorktreeRelease(task, sessionId, "StopFailed");
+                    throw;
+                }
+            },
+            _logger, ct);
+        if (outcome == PoolDelegateRelease.KillOutcome.SessionTerminal)
         {
-            try
-            {
-                ObserveWorktreeRelease(task, sessionId, "StopRequested");
-                // CARD-0319: resolve the stopper from a NEW scope so KillAsync's SaveChanges
-                // cannot flush this caller's still-dirty change tracker. AgentSessionService is
-                // scoped and IDelegateSessionStopper is the same instance.
-                await using var killScope = _scopeFactory.CreateAsyncScope();
-                await killScope.ServiceProvider
-                    .GetRequiredService<IDelegateSessionStopper>()
-                    .KillAsync(sessionId, ct);
-                ObserveWorktreeRelease(task, sessionId, "StopReturned");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                ObserveWorktreeRelease(task, sessionId, "StopFailed");
-                _logger.LogWarning(ex, "Could not stop finished delegate session {SessionId}", sessionId);
-            }
+            db.Agents.Remove(agent);
+            return;
         }
 
-        db.Agents.Remove(agent);
+        // CARD-0691 D-3: the kill did not take, so this row is the live process's only owner.
+        // Keep it Idle for the janitor (which retries the kill at its TTL) and say so, instead of
+        // deleting it and leaving a session nothing will ever stop.
+        PoolDelegateRelease.MarkIdleForJanitor(agent, now);
+        _logger.LogWarning(
+            "Delegate '{Name}' kept Idle for the janitor: session {SessionId} is still live after the release kill (task {ShortId}, CARD-0691)",
+            agent.Name, task.AgentSessionId, DelegationReportFormatter.Short(task.Id));
+        if (task.AgentSessionId is Guid liveSession)
+        {
+            await RecordIncidentOnceAsync(
+                services, db, task, liveSession, AgentIncidentKind.DelegateReleaseUnresolved,
+                $"Delegate {agent.Name} was not released: its session is still live",
+                $"Task {DelegationReportFormatter.Short(task.Id)} settled {task.Status}; the release kill of session "
+                + $"{liveSession} did not end it, so the pool row was kept Idle for the janitor instead of deleted.",
+                ct, AlertSeverity.Error);
+        }
     }
 
     private void ObserveWorktreeRelease(AgentTask task, Guid sessionId, string step)

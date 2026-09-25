@@ -2846,6 +2846,22 @@ public sealed class AgentTaskService
             return;
         }
 
+        // CARD-0691 D-3: the row is the session's only owner. Several callers fail the task WITHOUT a
+        // kill (the overdue-deadline and dead-session sweeps say so in their reasons), and a kill can
+        // throw; deleting the row then left a live session nothing would ever stop. Keep it Idle for
+        // the janitor, which kills at its TTL and removes the row once the session is terminal.
+        var agentSession = Guid.TryParse(agent.PersistentSessionId, out var persistent) ? persistent : (Guid?)null;
+        if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, task.AgentSessionId, ct)
+            || (agentSession != task.AgentSessionId
+                && !await PoolDelegateRelease.IsSessionTerminalAsync(_db, agentSession, ct)))
+        {
+            PoolDelegateRelease.MarkIdleForJanitor(agent, UtcNow());
+            _logger.LogInformation(
+                "Task {ShortId} released pool delegate '{Name}' whose session is still live; left for the janitor",
+                DelegationReportFormatter.Short(task.Id), agent.Name);
+            return;
+        }
+
         _db.Agents.Remove(agent);
     }
 
