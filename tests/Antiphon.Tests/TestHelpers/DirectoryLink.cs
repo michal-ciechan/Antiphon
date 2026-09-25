@@ -45,7 +45,16 @@ internal sealed class DirectoryLink : IDisposable
 
     public void Dispose()
     {
-        if (IsLink(Path)) Directory.Delete(Path, recursive: false);
+        if (!IsLink(Path)) return;
+        try
+        {
+            Directory.Delete(Path, recursive: false);
+        }
+        catch (DirectoryNotFoundException) when (!OperatingSystem.IsWindows())
+        {
+            // rmdir refuses a symbolic link whose target is already gone. The link is still here.
+            File.Delete(Path);
+        }
     }
 
     private static bool IsLink(string path)
