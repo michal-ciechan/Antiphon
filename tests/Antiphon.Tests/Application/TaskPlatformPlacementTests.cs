@@ -280,6 +280,8 @@ public sealed class TaskPlatformPlacementTests
                 StartedAt = now,
                 LastSeenAt = now,
                 RunnerId = "server2",
+                RunnerStoreId = Guid.NewGuid(),
+                RunnerCwd = kit.RepoRoot,
             });
             seed.Agents.Add(new Agent
             {

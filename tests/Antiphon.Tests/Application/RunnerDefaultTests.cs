@@ -342,9 +342,12 @@ public sealed class RunnerDefaultPlacementTests
     {
         await using var world = await World.Open();
         var current = await world.Defaults.GetAsync(CancellationToken.None);
+        await using var editDb = world.Kit.Context();
+        var editor = new RunnerDefaultSettingsService(
+            editDb, Options.Create(world.Kit.Settings), TimeProvider.System, new MockEventBus(), world.Directory);
         var create = world.Create(new CreateAgentTaskRequest(
             "one snapshot", Role: AgentTaskRole.Code, AgentKind: AgentKind.Grok, Workspace: WorkspaceMode.Worktree));
-        var edit = world.Defaults.PutAsync(new PutRunnerDefaultsRequest(
+        var edit = editor.PutAsync(new PutRunnerDefaultsRequest(
             current.Revision, "desktop", [], "concurrent edit", "Human"), null, CancellationToken.None);
         await Task.WhenAll(create, edit);
         var saved = await world.Kit.ReadAsync((await create).Id);
@@ -352,7 +355,15 @@ public sealed class RunnerDefaultPlacementTests
         await using var db = world.Kit.Context();
         var revision = await db.RunnerRoutingRevisions.AsNoTracking()
             .SingleAsync(row => row.Revision == saved.Task.RunnerDefaultsRevision);
-        revision.SnapshotJson.ShouldContain(saved.Task.RunnerId is null ? "desktop" : saved.Task.RunnerId);
+        using var snapshot = JsonDocument.Parse(revision.SnapshotJson);
+        var global = snapshot.RootElement.GetProperty("globalRunnerId");
+        if (saved.Task.RunnerSelectionSource == RunnerSelectionSource.GlobalDefault)
+            global.GetString().ShouldBe(RunnerRequestIntent.DisplayRunnerId(saved.Task.RunnerId));
+        else
+        {
+            saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.Fallback);
+            global.ValueKind.ShouldBe(JsonValueKind.Null);
+        }
     }
 
     [Test]
@@ -618,6 +629,20 @@ file sealed class DefaultsHost : IAsyncDisposable
         builder.Services.AddLogging();
         var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
+        app.Use(async (ctx, next) =>
+        {
+            try
+            {
+                await next();
+            }
+            catch (Exception ex)
+            {
+                await File.AppendAllTextAsync(
+                    Path.Combine(Path.GetTempPath(), "c710-http.log"),
+                    ex + Environment.NewLine + "----" + Environment.NewLine);
+                throw;
+            }
+        });
         app.MapRunnerDefaultEndpoints();
         app.MapAgentTaskEndpoints();
         await app.StartAsync();

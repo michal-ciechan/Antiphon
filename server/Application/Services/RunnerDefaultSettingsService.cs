@@ -9,6 +9,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -177,7 +178,7 @@ public sealed class RunnerDefaultSettingsService
         {
             await _db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateConcurrencyException ex)
+        catch (DbUpdateException ex) when (IsDefaultsConflict(ex))
         {
             throw new ConflictException(
                 "Runner defaults were updated by someone else.",
@@ -336,6 +337,20 @@ public sealed class RunnerDefaultSettingsService
         if (RunnerRequestIntent.IsDesktopAlias(trimmed))
             return RunnerPlatformWire.DesktopId;
         return trimmed;
+    }
+
+    private static bool IsDefaultsConflict(DbUpdateException ex)
+    {
+        if (ex is DbUpdateConcurrencyException)
+            return true;
+        for (var current = ex.InnerException; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException pg
+                && pg.SqlState is PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.SerializationFailure)
+                return true;
+        }
+
+        return false;
     }
 
     private static bool Same(RunnerRoutingSettings row, string? global, List<(AgentKind AgentKind, string RunnerId)> kinds)
