@@ -310,9 +310,8 @@ public class PhoneHomeStrandedQueueTests
         var listed = h.Runtime.ListLiveSessions();
         listed.ShouldNotContain(quiet, "unconfirmed for four refresh intervals: past the stale bound");
         listed.ShouldContain(talking, "its output confirmed it this interval");
-        host.Logs.Entries.ShouldContain(
-            e => e.Level == LogLevel.Warning && e["ConsecutiveFailures"] is int n && n >= 3,
-            "repeated refresh failures are called out, not just logged one by one");
+        host.Logs.Entries.Any(e => e.Level == LogLevel.Warning && e["ConsecutiveFailures"] is int n && n >= 3)
+            .ShouldBeTrue("repeated refresh failures are called out, not just logged one by one");
 
         // One successful List confirms it again.
         peer.Reply = null;
