@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -17,9 +18,18 @@ public static class OperatorTokenFile
 {
     public const string Header = "X-Antiphon-Operator-Token";
 
-    /// <summary>CARD-0676 F-1 seam (inert until the fix slice): the configured token path.</summary>
-    public static string ConfiguredPath(IConfiguration configuration) =>
-        configuration["PhoneHomeRunner:OperatorTokenPath"] ?? "";
+    /// <summary>CARD-0676 F-1: the setting. It guards every operator surface, not only the runner.</summary>
+    public const string PathKey = "Operator:TokenPath";
+
+    /// <summary>The CARD-0653 key, still honoured when <see cref="PathKey"/> is not set.</summary>
+    public const string LegacyPathKey = "PhoneHomeRunner:OperatorTokenPath";
+
+    /// <summary>The configured token path: <see cref="PathKey"/>, else its legacy alias, else empty.</summary>
+    public static string ConfiguredPath(IConfiguration configuration)
+    {
+        var current = configuration[PathKey];
+        return string.IsNullOrWhiteSpace(current) ? configuration[LegacyPathKey] ?? "" : current;
+    }
 
     /// <summary>The configured path, or <see cref="DefaultPath"/> when none is set.</summary>
     public static string ResolvePath(string? configured) =>
@@ -40,8 +50,9 @@ public static class OperatorTokenFile
 
     /// <summary>
     /// Read the token, creating it with a fresh random value on first use. The value is written
-    /// to an owner-only temp file and renamed into place, so a concurrent reader sees either no
-    /// file or the whole token, never a file its creator still holds open.
+    /// to an owner-only temp file and published under the final name only if that name does not
+    /// exist yet, so a concurrent reader sees either no file or the whole token, and exactly one
+    /// first-use caller's token wins (CARD-0676). Every other caller reads the winner's file.
     /// </summary>
     public static string ReadOrCreate(string path)
     {
@@ -61,19 +72,51 @@ public static class OperatorTokenFile
                 stream.Flush(flushToDisk: true);
             }
 
-            File.Move(temp, full, overwrite: false);
-            return token;
+            if (TryPublish(temp, full))
+                return token;
         }
         catch (IOException) when (File.Exists(full))
         {
-            // Another caller renamed theirs into place first; theirs is the token.
-            return TryRead(full) ?? throw new InvalidOperationException("The operator token file is empty.");
+            // Windows: another caller's no-overwrite move took the name first.
         }
         finally
         {
             File.Delete(temp);
         }
+
+        // Another caller published theirs first; theirs is the token.
+        return TryRead(full) ?? throw new InvalidOperationException("The operator token file is empty.");
     }
+
+    /// <summary>
+    /// Give <paramref name="temp"/> the name <paramref name="full"/> only if that name is free, as
+    /// one atomic step; false when another caller holds it. Windows' no-overwrite move is that
+    /// step. On Unix .NET's <see cref="File.Move(string, string, bool)"/> checks and then renames
+    /// (measured: 8 tokens from 16 concurrent callers), so a hard link, which fails with EEXIST,
+    /// is used instead; the caller then deletes the temp name.
+    /// </summary>
+    private static bool TryPublish(string temp, string full)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            File.Move(temp, full, overwrite: false);
+            return true;
+        }
+
+        if (Link(temp, full) == 0)
+            return true;
+        var errno = Marshal.GetLastPInvokeError();
+        if (errno == EEXIST)
+            return false;
+        throw new IOException(
+            $"Could not publish the operator token file '{full}': {Marshal.GetPInvokeErrorMessage(errno)} (errno {errno}).");
+    }
+
+    // EEXIST is 17 on Linux and macOS alike.
+    private const int EEXIST = 17;
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link(string oldPath, string newPath);
 
     /// <summary>Constant-time comparison. An empty expectation never matches.</summary>
     public static bool Matches(string expected, string? provided)

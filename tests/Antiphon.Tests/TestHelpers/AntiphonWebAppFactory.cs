@@ -2,6 +2,7 @@ extern alias server;
 using ServerProgram = server::Program;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -119,7 +120,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
                 ["Delegation:OutputDistillerEnabled"] = "false",
                 ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),
                 ["Hangfire:ServerEnabled"] = "false",
-                ["PhoneHomeRunner:OperatorTokenPath"] = OperatorTokenPath,
+                [OperatorTokenFile.PathKey] = OperatorTokenPath,
             });
         });
 

@@ -13,6 +13,7 @@ using Microsoft.Extensions.Hosting;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
 using Testcontainers.PostgreSql;
 
@@ -624,6 +625,8 @@ public class AntiphonAppFixture
                     ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
                     ["Delegation:OutputDistillerEnabled"] = "false",
                     ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),
+                    // CARD-0676 F-2: this host's own operator token, never the machine's real file.
+                    [OperatorTokenFile.PathKey] = Path.Combine(_workspacePath, "operator-token"),
                 };
 
                 if (_diagnosticsDirectory is not null)

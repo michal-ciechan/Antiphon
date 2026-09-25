@@ -68,8 +68,9 @@ public sealed class PhoneHomeRunnerSettings
     public int OwnerCacheNegativeSeconds { get; set; } = 5;
 
     /// <summary>
-    /// CARD-0653: the owner-only file holding the operator credential for force-release. Empty
-    /// means <c>%LOCALAPPDATA%\Antiphon\operator-token</c> (else the XDG data home).
+    /// CARD-0653: the owner-only file holding the operator credential for every operator surface.
+    /// Empty means <c>%LOCALAPPDATA%\Antiphon\operator-token</c> (else the XDG data home). Set
+    /// from <c>Operator:TokenPath</c> first, this legacy key second (CARD-0676 F-1; Program.cs).
     /// </summary>
     public string OperatorTokenPath { get; set; } = "";
 
@@ -132,7 +133,7 @@ public static class PhoneHomeRunnerSettingsRules
         if (options.OwnerCacheNegativeSeconds < 0)
             failures.Add("PhoneHomeRunner:OwnerCacheNegativeSeconds must not be negative.");
         if (!string.IsNullOrWhiteSpace(options.OperatorTokenPath) && !Path.IsPathFullyQualified(options.OperatorTokenPath))
-            failures.Add("PhoneHomeRunner:OperatorTokenPath must be an absolute path.");
+            failures.Add("Operator:TokenPath (alias PhoneHomeRunner:OperatorTokenPath) must be an absolute path.");
         if (string.IsNullOrWhiteSpace(options.SlotReconcileCron))
             failures.Add("PhoneHomeRunner:SlotReconcileCron must be set when enabled.");
         try { options.Limits.Validate("PhoneHomeRunner:Limits"); }

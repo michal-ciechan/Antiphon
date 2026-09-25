@@ -46,9 +46,23 @@ public static class OperatorEndpoints
                 SameSite = SameSiteMode.Strict,
                 Path = "/hangfire",
                 MaxAge = OperatorDashboardSessions.SessionLifetime,
-                Secure = http.Request.IsHttps,
+                Secure = ArrivedOverHttps(http),
             });
             return Results.Redirect("/hangfire");
         }).WithTags("Operator");
+    }
+
+    /// <summary>
+    /// CARD-0676: Caddy terminates TLS and reaches Kestrel over plain http from loopback, so an
+    /// https <c>X-Forwarded-Proto</c> counts only from a loopback peer (the local proxy).
+    /// </summary>
+    private static bool ArrivedOverHttps(HttpContext http)
+    {
+        if (http.Request.IsHttps)
+            return true;
+        if (http.Connection.RemoteIpAddress is not { } peer || !System.Net.IPAddress.IsLoopback(peer))
+            return false;
+        var forwarded = http.Request.Headers["X-Forwarded-Proto"].ToString().Split(',')[0].Trim();
+        return string.Equals(forwarded, "https", StringComparison.OrdinalIgnoreCase);
     }
 }
