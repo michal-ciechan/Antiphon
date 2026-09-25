@@ -1,5 +1,7 @@
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using System.Net;
 using System.Net.Http.Json;
@@ -9,6 +11,9 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -259,14 +264,6 @@ public class PhoneHomeImmediateSendTests
             h.Runtime.SetTestPending(h.SessionId, null);
             await using var db = h.Db();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-            var originalBackend = session.SessionBackend;
-            session.SessionBackend = SessionBackend.Herdr;
-            await db.SaveChangesAsync();
-            h.Runtime.SetTestAgentStatus(h.SessionId, "blocked");
-            (await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, "blocked", MessageSendMode.Now, CancellationToken.None)))
-                .Message.ShouldContain("blocked in herdr");
-            h.Runtime.SetTestAgentStatus(h.SessionId, null);
-            session.SessionBackend = originalBackend;
             session.Status = SessionStatus.Starting;
             await db.SaveChangesAsync();
             (await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, "starting", MessageSendMode.Now, CancellationToken.None))).Message.ShouldContain("starting");
@@ -286,6 +283,28 @@ public class PhoneHomeImmediateSendTests
             modal.ModalBlocked.ShouldBeTrue();
             h.Bridge.Adapter.Inputs.ShouldBeEmpty();
         }
+        // Herdr's blocked gate needs the real per-session profile and advertised capability;
+        // the ordinary outage harness intentionally uses conservative pty ceilings.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var herdr = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton(sp => new PtyDeliveryProfile(
+                    sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PtyDeliveryProfile>.Instance,
+                    sp.GetRequiredService<IOptions<DelegationSettings>>(), TimeProvider.System, backendOverride: "inbox"));
+                services.AddSingleton<SessionDeliveryProfile>();
+            }
+        });
+        herdr.Runner.Capabilities = new("InboxConhost", "inbox", "test", false,
+            SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr]);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            await db.AgentSessions.Where(s => s.Id == herdr.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.SessionBackend, SessionBackend.Herdr));
+        herdr.Runtime.SetTestAgentStatus(herdr.SessionId, "blocked");
+        (await Should.ThrowAsync<ConflictException>(() => herdr.Queue.EnqueueAsync(herdr.SessionId, "blocked", MessageSendMode.Now, CancellationToken.None)))
+            .Message.ShouldContain("blocked in herdr");
+        herdr.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
