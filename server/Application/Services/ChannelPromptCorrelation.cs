@@ -86,6 +86,77 @@ internal static class ChannelPromptCorrelation
     public static bool Matches(SessionQueuedMessage row, TranscriptEntry prompt,
         TimeSpan tolerance, out string reason)
     {
+        reason = "wrong-origin";
+        if (row.Origin != QueuedMessageOrigin.Channel)
+            return false;
+        var marker = OpeningMarker(row.Body);
+        if (!HasEligibleAttempt(row, prompt, tolerance, allowLegacySentAt: marker is null, out reason))
+            return false;
+
+        if (marker is not null)
+        {
+            reason = "empty-marked-body";
+            if (string.IsNullOrWhiteSpace(WithoutOuterMarker(row.Body))) return false;
+            reason = "missing-marker";
+            if (!prompt.Text!.Contains(marker, StringComparison.Ordinal)) return false;
+            reason = "incomplete-marked-body";
+            if (!PromptSubmissionMatch.RequiresTextMatch(row.Body)
+                || !PromptSubmissionMatch.IsCompleteIn(row.Body, prompt.Text))
+                return false;
+        }
+        else
+        {
+            // Legacy compatibility is only for unmarked receipts. A legacy body can be wholly
+            // contained inside a marked member, even when its actual owner is stale, settled or
+            // absent from the candidate set. Never let that substring create another recipient.
+            // Complete markers also exclude provider-wrapped receipts and mixed inline batches.
+            reason = "legacy-marked-receipt";
+            if (HasMarkedTransportFrame(prompt.Text!) || ContainsMarker(prompt.Text!))
+                return false;
+            reason = "legacy-content-mismatch";
+            var expected = row.Body.ReplaceLineEndings("\n").Trim();
+            var actual = prompt.Text!.ReplaceLineEndings("\n").Trim();
+            // A short raw legacy 'done' cannot claim a task header. No weak arm and no lossy
+            // whitespace fallback for legacy traffic, including old Grok newline-elided turns.
+            if (!PromptSubmissionMatch.RequiresTextMatch(expected)
+                ? !string.Equals(expected, actual, StringComparison.Ordinal)
+                : !actual.Contains(expected, StringComparison.Ordinal))
+                return false;
+        }
+        reason = "matched";
+        return true;
+    }
+
+    /// <summary>
+    /// Resolve a channel-body quote only when the outer machine delivery has its own complete
+    /// receipt and original attempt floor. This is ownership evidence, not the machine route's
+    /// separate task-id/header publication rule. Settled machine rows remain evidence on restart.
+    /// </summary>
+    public static bool MatchesMachineDelivery(SessionQueuedMessage row, TranscriptEntry prompt,
+        TimeSpan tolerance)
+    {
+        if (row.Status != QueuedMessageStatus.Sent
+            || row.Origin is not (QueuedMessageOrigin.Delegation or QueuedMessageOrigin.Check
+                or QueuedMessageOrigin.System or QueuedMessageOrigin.Scheduled)
+            || !HasEligibleAttempt(row, prompt, tolerance, allowLegacySentAt: false, out _)
+            || HasMarkedTransportFrame(prompt.Text!)
+            || !PromptSubmissionMatch.RequiresTextMatch(row.Body))
+            return false;
+
+        var expected = PromptSubmissionMatch.Normalize(row.Body);
+        var actual = PromptSubmissionMatch.Normalize(prompt.Text!);
+        // Machine batches use the same heading as channel batches. Their first complete member
+        // identifies the outer delivery; a machine body quoted later in channel prose does not.
+        if (actual.StartsWith(ChannelPromptFormat.BatchContextMarker, StringComparison.Ordinal))
+            actual = actual[ChannelPromptFormat.BatchContextMarker.Length..].TrimStart();
+        return actual.StartsWith(expected, StringComparison.Ordinal)
+            || actual.Replace(" ", "", StringComparison.Ordinal)
+                .StartsWith(expected.Replace(" ", "", StringComparison.Ordinal), StringComparison.Ordinal);
+    }
+
+    private static bool HasEligibleAttempt(SessionQueuedMessage row, TranscriptEntry prompt,
+        TimeSpan tolerance, bool allowLegacySentAt, out string reason)
+    {
         reason = "not-prompt";
         if (prompt.Kind is not (TranscriptKinds.UserPrompt or TranscriptKinds.QueuedUserPrompt))
             return false;
@@ -93,7 +164,7 @@ internal static class ChannelPromptCorrelation
             || TranscriptKinds.IsCompactionContinuationPrompt(prompt.Kind, prompt.Text))
             return false;
         reason = "wrong-session";
-        if (row.AgentSessionId != prompt.AgentSessionId || row.Origin != QueuedMessageOrigin.Channel)
+        if (row.AgentSessionId != prompt.AgentSessionId)
             return false;
         reason = "empty-body";
         if (string.IsNullOrWhiteSpace(row.Body) || string.IsNullOrWhiteSpace(prompt.Text))
@@ -102,7 +173,6 @@ internal static class ChannelPromptCorrelation
         if (row.DeliveryAttempts <= 0)
             return false;
 
-        var marker = OpeningMarker(row.Body);
         reason = "before-generation";
         if (row.LastDeliveryGeneration is { } generation && prompt.Timestamp is { } native
             && native < generation)
@@ -116,43 +186,13 @@ internal static class ChannelPromptCorrelation
         {
             // SentAt is a compatibility floor only for an old unmarked row. Late-confirm can
             // replace it; native time (never ingestion CreatedAt) must use the original attempt.
-            var started = row.LastDeliveryStartedAt ?? (marker is null ? row.SentAt : null);
+            var started = row.LastDeliveryStartedAt ?? (allowLegacySentAt ? row.SentAt : null);
             if (started is null || prompt.Timestamp is not { } timestamp
                 || timestamp < started.Value - tolerance)
                 return false;
         }
 
-        if (marker is not null)
-        {
-            reason = "empty-marked-body";
-            if (string.IsNullOrWhiteSpace(WithoutOuterMarker(row.Body))) return false;
-            reason = "missing-marker";
-            if (!prompt.Text.Contains(marker, StringComparison.Ordinal)) return false;
-            reason = "incomplete-marked-body";
-            if (!PromptSubmissionMatch.RequiresTextMatch(row.Body)
-                || !PromptSubmissionMatch.IsCompleteIn(row.Body, prompt.Text))
-                return false;
-        }
-        else
-        {
-            // Legacy compatibility is only for unmarked receipts. A legacy body can be wholly
-            // contained inside a marked member, even when its actual owner is stale, settled or
-            // absent from the candidate set. Never let that substring create another recipient.
-            // Complete markers also exclude provider-wrapped receipts and mixed inline batches.
-            reason = "legacy-marked-receipt";
-            if (HasMarkedTransportFrame(prompt.Text) || ContainsMarker(prompt.Text))
-                return false;
-            reason = "legacy-content-mismatch";
-            var expected = row.Body.ReplaceLineEndings("\n").Trim();
-            var actual = prompt.Text.ReplaceLineEndings("\n").Trim();
-            // A short raw legacy 'done' cannot claim a task header. No weak arm and no lossy
-            // whitespace fallback for legacy traffic, including old Grok newline-elided turns.
-            if (!PromptSubmissionMatch.RequiresTextMatch(expected)
-                ? !string.Equals(expected, actual, StringComparison.Ordinal)
-                : !actual.Contains(expected, StringComparison.Ordinal))
-                return false;
-        }
-        reason = "matched";
+        reason = "eligible-attempt";
         return true;
     }
 

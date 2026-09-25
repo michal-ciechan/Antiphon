@@ -41,7 +41,10 @@ note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` not
 prompt — delivered as a follow-up to the most recent conversation, text and any `[[attach:]]`
 files, unless the whole reply is exactly `NO_REPLY`. Follow-up matching is by task id (and the
 note's first line), so a Grok transcript that joined the header onto the body still delivers.
-Quoting a channel marker inside a task or Check report does not suppress that follow-up.
+Quoting a channel marker or a complete earlier channel body inside a task or Check report
+does not suppress that follow-up. A complete outer machine receipt with its own persisted
+delivery-attempt floor owns the report's turn; the quoted channel body supplies no channel
+reply or TTL evidence. This also preserves attachments and duplicate suppression on restart.
 The fallback guard recognizes the opening channel marker, or the marker immediately after
 the batch context heading, including a clipped marker in that position.
 A bootstrap, restart or compaction note is

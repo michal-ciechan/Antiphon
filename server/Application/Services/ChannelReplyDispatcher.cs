@@ -775,6 +775,24 @@ public sealed class ChannelReplyDispatcher
                 _logger.LogDebug("Channel correlation {MessageId} on session {SessionId}: {Reason}; prompt {Sequence}, floor {Floor}",
                     row.Id, row.AgentSessionId, reason, prompt.Sequence, row.LastDeliveryBaselineSequence);
         }
+        // A complete earlier Channel body can occur inside a genuine task/Check report. Its
+        // marker and lower floor alone do not give that historical row ownership of this turn.
+        // Require the outer machine delivery's own full receipt and attempt evidence. Keep this
+        // decision here so main routing, TTL and machine gate 2 cannot disagree about ownership.
+        if (matches.Count > 0 && !ChannelPromptCorrelation.HasMarkedTransportFrame(prompt.Text!))
+        {
+            var machines = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == prompt.AgentSessionId
+                    && (m.Origin == QueuedMessageOrigin.Delegation || m.Origin == QueuedMessageOrigin.Check
+                        || m.Origin == QueuedMessageOrigin.System || m.Origin == QueuedMessageOrigin.Scheduled)
+                    && m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0
+                    && ((m.LastDeliveryBaselineSequence != null && m.LastDeliveryBaselineSequence < prompt.Sequence)
+                        || (m.LastDeliveryBaselineSequence == null && latestStart != null
+                            && m.LastDeliveryStartedAt <= latestStart)))
+                .ToListAsync(ct);
+            if (machines.Any(m => ChannelPromptCorrelation.MatchesMachineDelivery(m, prompt, _correlationTolerance)))
+                return [];
+        }
         var legacy = matches.Where(m => ChannelPromptCorrelation.OpeningMarker(m.Body) is null).ToList();
         if (legacy.Count > 1 && !legacy.All(m => ChannelPromptCorrelation.SameDeliveredBatch(legacy[0], m)))
         {
