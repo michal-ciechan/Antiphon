@@ -79,7 +79,9 @@
   precedes retry. Successful Enter-only recovery finishes the original attempt; failed recovery
   charges an attempt without moving the typing timestamp, baseline or generation. Parking bounds
   recovery, and any kill uses the generation captured before Enter. Backend-unreachable deferral
-  remains uncharged. A terminal task's Pending brief is canceled when never typed or when its
+  remains uncharged only when the unreachable write was the attempt's first: once the body or an
+  earlier Enter left, the loss keeps the attempt and its floor so the next flush late-confirms
+  before it types (CARD-0693; `SessionMessageQueuePhoneHomeDropTests`). A terminal task's Pending brief is canceled when never typed or when its
   generation changed; a possibly held body stays in recovery. Human SendNow retains expiry-only
   cancellation. Pinned by `SessionMessageQueueWedgedHeadTests`.
 
