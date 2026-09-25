@@ -135,3 +135,6 @@ Antiphon.Tests.Application.WorktreeDefaultCallerTests
 Antiphon.Tests.Application.RunnerTaskSettlementTests
 # CARD-0698: owned PostgreSQL database with 377k synthetic rows and actual query plans.
 Antiphon.Tests.Application.TranscriptHotPathQueryTests
+# CARD-0698: persisted-row oracle and actual concurrent migration/rollback in owned databases.
+Antiphon.Tests.Application.TranscriptWorkingStateQueryTests
+Antiphon.Tests.Application.TranscriptHotPathMigrationTests

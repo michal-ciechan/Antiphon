@@ -22,6 +22,83 @@ namespace Antiphon.Tests.Application;
 public partial class AgentSessionRuntimeTests
 {
     [Test]
+    public async Task C698_same_uuid_different_kinds_survive_replay_across_sessions_and_generations()
+    {
+        await using var first = await PersistFixture.CreateAsync();
+        await using var second = await PersistFixture.CreateAsync();
+        var batch = new[]
+        {
+            TranscriptEvent(first.SessionId, 1, TranscriptKinds.UserPrompt, "shared", "prompt"),
+            TranscriptEvent(first.SessionId, 2, TranscriptKinds.AssistantText, "shared", "answer"),
+            TurnEndEvent(TranscriptKinds.StopReasons.EndTurn, first.SessionId, "shared") with { Sequence = 3 }
+        };
+        (await first.Runtime.PersistTranscriptAsync(first.SessionId, batch)).AddedTurnBoundary.ShouldBeTrue();
+        (await first.RowsAsync()).Count.ShouldBe(3);
+        var generation = batch.Select(e => e with { Sequence = 1 }).Append(
+            TranscriptEvent(first.SessionId, 1, TranscriptKinds.ToolCall, "shared", "new generation")).ToArray();
+        var added = await first.Runtime.PersistTranscriptAsync(first.SessionId, generation);
+        added.AddedTurnBoundary.ShouldBeFalse();
+        added.LastStoredSeq.ShouldBe(4);
+        (await first.Runtime.PersistTranscriptAsync(first.SessionId, generation)).LastStoredSeq.ShouldBeNull();
+        var rows = await first.RowsAsync();
+        rows.Select(r => r.Kind).ShouldBe([TranscriptKinds.UserPrompt, TranscriptKinds.AssistantText,
+            TranscriptKinds.TurnEnd, TranscriptKinds.ToolCall]);
+        rows.Select(r => r.Sequence).ShouldBe([1L, 2L, 3L, 4L]);
+        (await second.Runtime.PersistTranscriptAsync(second.SessionId,
+            batch.Select(e => e with { SessionId = second.SessionId }).ToArray())).AddedTurnBoundary.ShouldBeTrue();
+        (await second.RowsAsync()).Count.ShouldBe(3);
+    }
+
+    [Test]
+    public async Task C698_1025_uuid_keys_are_bounded_and_replays_preserve_every_pair_and_sequence()
+    {
+        var capture = new TranscriptCommandCapture();
+        await using var f = await PersistFixture.CreateAsync(capture);
+        await f.Runtime.PersistTranscriptAsync(f.SessionId,
+            [TranscriptEvent(f.SessionId, 2000, TranscriptKinds.ToolResult, "key-0", "previous generation")]);
+        var entries = Enumerable.Range(0, 1025).Select(i =>
+            TranscriptEvent(f.SessionId, i + 1, TranscriptKinds.ToolResult, $"key-{i}", "synthetic")).ToList();
+        entries.Insert(512, entries[0]);
+        entries.Insert(513, entries[0] with { Kind = TranscriptKinds.ToolCall });
+        entries.Add(entries[512]);
+        entries.Add(entries[514] with { Kind = TranscriptKinds.AssistantText });
+        var expected = entries.Select(e => (e.Uuid, e.Kind)).ToHashSet();
+        capture.Clear();
+        var result = await f.Runtime.PersistTranscriptAsync(f.SessionId, entries);
+        var commands = capture.Membership.ToArray();
+        commands.Length.ShouldBe(3);
+        commands.SelectMany(c => c.Parameters).Where(p => p.Value is IEnumerable<string>)
+            .Select(p => ((IEnumerable<string>)p.Value!).Count()).ShouldBe([512, 512, 1]);
+        var rows = await f.RowsAsync();
+        rows.Count.ShouldBe(expected.Count);
+        rows.Select(r => (r.Uuid, r.Kind)).ToHashSet().SetEquals(expected).ShouldBeTrue();
+        rows.Select(r => r.Sequence).ShouldBe(Enumerable.Range(2000, expected.Count).Select(i => (long)i));
+        result.LastStoredSeq.ShouldBe(1999 + expected.Count);
+        capture.Clear();
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, entries)).LastStoredSeq.ShouldBeNull();
+        capture.Membership.Count().ShouldBe(3);
+        (await f.RowsAsync()).Count.ShouldBe(expected.Count);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
+    [Test]
+    public async Task C698_null_uuid_batches_dedup_by_sequence_without_a_uuid_read()
+    {
+        var capture = new TranscriptCommandCapture();
+        await using var f = await PersistFixture.CreateAsync(capture);
+        var first = TranscriptEvent(f.SessionId, 5, TranscriptKinds.AssistantText, "unused", "original") with { Uuid = null };
+        var entries = new[] { first, first with { Text = "duplicate" }, first with { Sequence = 6 } };
+        capture.Clear();
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, entries)).LastStoredSeq.ShouldBe(6);
+        capture.Membership.ShouldBeEmpty();
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, entries)).LastStoredSeq.ShouldBeNull();
+        capture.Membership.ShouldBeEmpty();
+        var rows = await f.RowsAsync();
+        rows.Select(r => r.Sequence).ShouldBe([5L, 6L]);
+        rows.ShouldAllBe(r => r.Uuid == null && r.Text == "original");
+    }
+
+    [Test]
     public async Task C561_a_NUL_in_tool_result_text_persists_as_U_FFFD()
     {
         await using var f = await PersistFixture.CreateAsync();

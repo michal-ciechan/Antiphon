@@ -22,7 +22,7 @@ public class TranscriptHotPathQueryTests
             foreach (var command in commands)
             {
                 var plan = await f.ExplainAsync(command);
-                f.Record($"uuid-{count}", new { command.Sql, plan });
+                f.Record($"uuid-{count}-{Array.IndexOf(commands.ToArray(), command)}", new { command = command.Evidence(), plan });
                 TranscriptPlanAssertions.UuidSeek(plan);
             }
             commands.Count.ShouldBe((count + 511) / 512);
@@ -41,7 +41,7 @@ public class TranscriptHotPathQueryTests
             // Capture baseline plans too, before the intentional two-commands assertion fails.
             var plans = new List<System.Text.Json.JsonElement>();
             foreach (var command in commands) plans.Add(await f.ExplainAsync(command));
-            f.Record($"working-{count}", new { commandCount = commands.Count, sql = commands.Select(c => c.Sql), plans });
+            f.Record($"working-{count}", new { commandCount = commands.Count, commands = commands.Select(c => c.Evidence()), plans });
             commands.Count.ShouldBe(1, "a working batch must read a single statement snapshot");
             TranscriptPlanAssertions.WorkingSeeks(plans.Single());
         }
@@ -54,17 +54,17 @@ public class TranscriptHotPathQueryTests
         foreach (var generic in new[] { false, true })
         {
             foreach (var count in new[] { 1, 512, 1025 })
-                foreach (var command in await f.MembershipAsync(count))
+                foreach (var (command, index) in (await f.MembershipAsync(count)).Select((c, i) => (c, i)))
                 {
                     var plan = await f.ExplainAsync(command, generic);
-                    f.Record($"prepared-uuid-{count}-{generic}", new { command.Sql, plan });
+                    f.Record($"prepared-uuid-{count}-{generic}-{index}", new { command = command.Evidence(), plan });
                     TranscriptPlanAssertions.UuidSeek(plan);
                 }
             foreach (var count in new[] { 1, 32 })
             {
                 var command = (await f.WorkingAsync(count)).ShouldHaveSingleItem();
                 var plan = await f.ExplainAsync(command, generic);
-                f.Record($"prepared-working-{count}-{generic}", new { command.Sql, plan });
+                f.Record($"prepared-working-{count}-{generic}", new { command = command.Evidence(), plan });
                 TranscriptPlanAssertions.WorkingSeeks(plan);
             }
         }
@@ -89,9 +89,9 @@ public class TranscriptHotPathQueryTests
             await ExecuteAsync(connection, working);
         }
         foreach (var command in catchup) await ExecuteAsync(connection, command);
-        var after = await CountersAsync(f.ConnectionString, connection);
-        f.Record("scan-counters", new { before, after, delta = after - before, singletonProbes = 100, mixedBatches = 100, catchupKeys = 1025 });
-        (after - before).ShouldBe(0);
+        var after = await CountersAsync(f.ConnectionString, connection, before.Indexed + 203);
+        f.Record("scan-counters", new { before, after, delta = after.Sequential - before.Sequential, singletonProbes = 100, mixedBatches = 100, catchupKeys = 1025 });
+        (after.Sequential - before.Sequential).ShouldBe(0);
 
         // Destructive plan controls are confined to this disposable database.
         await using var drop = new NpgsqlCommand("""
@@ -115,15 +115,31 @@ public class TranscriptHotPathQueryTests
         while (await reader.ReadAsync()) { }
     }
 
-    private static async Task<long> CountersAsync(string connectionString, NpgsqlConnection producer)
+    private sealed record Counters(long Sequential, long Indexed);
+
+    private static async Task<Counters> CountersAsync(string connectionString, NpgsqlConnection producer, long minimumIndexed = 0)
     {
         await using (var flush = new NpgsqlCommand("SELECT pg_stat_force_next_flush()", producer))
             await flush.ExecuteNonQueryAsync();
         await using var observer = new NpgsqlConnection(connectionString);
         await observer.OpenAsync();
-        await using var read = new NpgsqlCommand("""
-            SELECT seq_scan FROM pg_stat_user_tables WHERE relname = 'TranscriptEntries'
-            """, observer);
-        return (long)(await read.ExecuteScalarAsync())!;
+        // A positive index-counter delta proves the producer's statistics reached this fresh
+        // observer; zero sequential scans alone could otherwise be an unpublished snapshot.
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            await using var read = new NpgsqlCommand("""
+                SELECT seq_scan, COALESCE(idx_scan, 0) FROM pg_stat_user_tables WHERE relname = 'TranscriptEntries'
+                """, observer);
+            Counters counters;
+            await using (var reader = await read.ExecuteReaderAsync())
+            {
+                (await reader.ReadAsync()).ShouldBeTrue();
+                counters = new(reader.GetInt64(0), reader.GetInt64(1));
+            }
+            if (counters.Indexed >= minimumIndexed) return counters;
+            clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "the producer's scan counters must be published");
+            await Task.Delay(50);
+        }
     }
 }

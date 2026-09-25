@@ -1229,6 +1229,25 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Sequence");
 
+            // UUID is shared by normalized kinds from one native line: deliberately nonunique.
+            entity.HasIndex(t => new { t.AgentSessionId, t.Uuid })
+                .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Uuid")
+                .IncludeProperties(t => t.Kind)
+                .HasFilter("\"Uuid\" IS NOT NULL")
+                .IsCreatedConcurrently();
+
+            // A separate MODEL name keeps this partial index from replacing the unique index
+            // above on the same properties. Both boundary maxima remain independently indexed.
+            entity.HasIndex(t => new { t.AgentSessionId, t.Sequence },
+                    "IX_TranscriptEntries_End_AgentSessionId_Sequence")
+                .HasDatabaseName("IX_TranscriptEntries_End_AgentSessionId_Sequence")
+                .HasFilter(TranscriptWorkingStateQuery.EndPredicate)
+                .IsCreatedConcurrently();
+            entity.HasIndex(t => new { t.AgentSessionId, t.Timestamp })
+                .HasDatabaseName("IX_TranscriptEntries_End_AgentSessionId_Timestamp")
+                .HasFilter($"({TranscriptWorkingStateQuery.EndPredicate}) AND \"Timestamp\" IS NOT NULL")
+                .IsCreatedConcurrently();
+
             // CARD-0072: the recovery sweep adopts IsApiError = true TurnEnd rows. Without a
             // partial index that is a growing full-table scan every minute.
             entity.HasIndex(t => t.IsApiError)
