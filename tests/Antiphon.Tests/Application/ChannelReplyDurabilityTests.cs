@@ -470,6 +470,7 @@ public class ChannelReplyDurabilityTests
                 ApiErrorClass = "rate_limit",
                 ApiErrorStatus = 429,
                 CreatedAt = DateTime.UtcNow,
+                Timestamp = now.UtcDateTime, // the captured native time, independent of ingestion day
             });
             db.TranscriptEntries.Add(new TranscriptEntry
             {
@@ -485,6 +486,7 @@ public class ChannelReplyDurabilityTests
                 ApiErrorClass = "rate_limit",
                 ApiErrorStatus = 429,
                 CreatedAt = DateTime.UtcNow,
+                Timestamp = now.UtcDateTime, // the captured native time, independent of ingestion day
             });
             await db.SaveChangesAsync();
         }

@@ -253,7 +253,7 @@ public class ChannelPromptCorrelationTests
         // Owed elsewhere, with a genuine earlier attempt; it must not settle with this batch.
         var other = await h.SeedPendingMessageAsync(Envelope + "unrelated third message", deliveryAttempts: 1,
             baselineSequence: 0, origin: QueuedMessageOrigin.Channel, status: QueuedMessageStatus.Sent,
-            conversationKey: $"telegram:{chat}");
+            deliveryVerdict: DeliveryVerdict.Delivered, conversationKey: $"telegram:{chat}");
         var machine = await SeedMachineAsync(h, "[task deadbeef done]");
         await ReplayAsync(h, typed.Replace("\n", ""));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
@@ -481,7 +481,8 @@ public class ChannelPromptCorrelationTests
 
     private static Task<Guid> SeedMachineAsync(BridgeQueueHarness h, string body) =>
         h.SeedPendingMessageAsync(body, deliveryAttempts: 1, origin: QueuedMessageOrigin.Delegation,
-            status: QueuedMessageStatus.Sent, conversationKey: "task:deadbeef");
+            status: QueuedMessageStatus.Sent, deliveryVerdict: DeliveryVerdict.Delivered,
+            conversationKey: "task:deadbeef");
 
     private sealed class FailingProducer : IAntiphonMessagingProducer
     {
