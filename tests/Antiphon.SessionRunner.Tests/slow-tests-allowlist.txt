@@ -5,3 +5,5 @@ Antiphon.SessionRunner.Tests.RunnerRestartHealthTests
 Antiphon.SessionRunner.Tests.TranscriptAdoptionSafetyTests
 # CARD-0476 real-shell preflight cache safety, two shells
 Antiphon.SessionRunner.Tests.RunnerRestartPreflightSafetyTests
+# CARD-0589 V-9: two real pwsh build-slot wrappers hold a 5 s lease each against a loopback broker.
+Antiphon.SessionRunner.Tests.BuildSlotEndToEndTests
