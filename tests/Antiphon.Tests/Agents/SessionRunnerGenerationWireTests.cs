@@ -154,6 +154,24 @@ public class SessionRunnerGenerationWireTests
     }
 
     [Test]
+    public async Task A_null_sessions_body_lists_as_empty_and_required_reads_still_throw()
+    {
+        var sessionId = Guid.NewGuid();
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("null", Encoding.UTF8, "application/json"),
+        });
+        var client = Client(handler);
+
+        (await client.ListAsync(CancellationToken.None)).ShouldBeEmpty();
+        handler.Requests.Select(r => r.RequestUri!.AbsolutePath).ShouldBe(["/sessions"]);
+
+        await Should.ThrowAsync<InvalidOperationException>(() => client.GetAsync(sessionId, CancellationToken.None));
+        await Should.ThrowAsync<InvalidOperationException>(() => client.GetBufferAsync(sessionId, CancellationToken.None));
+        await Should.ThrowAsync<InvalidOperationException>(() => client.GetTranscriptAsync(sessionId, CancellationToken.None));
+    }
+
+    [Test]
     public async Task C514_Lost_conditional_reply_is_unknown()
     {
         var sessionId = Guid.NewGuid();
