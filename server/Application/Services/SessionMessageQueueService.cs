@@ -3139,7 +3139,11 @@ public sealed partial class SessionMessageQueueService
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);
         }
-        catch (Exception ex) when (IsHerdrUnreachable(ex))
+        // CARD-0693: BackendUnreachable is a refund (attempt and floor cleared), so it is only ever
+        // the attempt's FIRST write. Once any earlier write left (the S6 Esc here; the body before
+        // the Enter and re-Enter below), the loss propagates to the transport-failure revert, which
+        // keeps the attempt and its floor so the next flush late-confirms before it types again.
+        catch (Exception ex) when (IsHerdrUnreachable(ex) && !overlayDismissed)
         {
             return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
         }
@@ -3195,14 +3199,9 @@ public sealed partial class SessionMessageQueueService
             : default;
 
         await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
-        try
-        {
-            await _runtime.SendInputAsync(sessionId, "\r", ct);
-        }
-        catch (Exception ex) when (IsHerdrUnreachable(ex))
-        {
-            return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
-        }
+        // CARD-0693: the body already left, so an unreachable runner here is not a refund (see
+        // the body write above): it propagates and the attempt keeps its floor.
+        await _runtime.SendInputAsync(sessionId, "\r", ct);
 
         if (confirmTranscript)
         {
@@ -3442,14 +3441,9 @@ public sealed partial class SessionMessageQueueService
                         + "(attempt {Attempt} of {Max}). This never re-types the body — if the first Enter did "
                         + "submit, the composer is empty and this is a no-op",
                         sessionId, entersSent + 1, _verification.SubmitAttempts);
-                    try
-                    {
-                        await _runtime.SendInputAsync(sessionId, "\r", ct);
-                    }
-                    catch (Exception ex) when (IsHerdrUnreachable(ex))
-                    {
-                        return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
-                    }
+                    // CARD-0693: never the attempt's first write (the caller's Enter went first), so
+                    // an unreachable runner propagates rather than refunding the attempt.
+                    await _runtime.SendInputAsync(sessionId, "\r", ct);
                     entersSent++;
                     lastEnter = UtcNow();
                 }
