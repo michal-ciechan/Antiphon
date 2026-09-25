@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -93,6 +94,8 @@ public sealed class RunnerCatalogueTests
                 StartedAt = now,
                 LastSeenAt = now,
                 RunnerId = "runner-a",
+                RunnerStoreId = Guid.NewGuid(),
+                RunnerCwd = "/work/runner-a",
             });
             db.AgentTasks.Add(TaskRow(now, "runner-a", AgentTaskStatus.Queued, AgentTaskRole.Code, remotePrep: true));
             db.AgentTasks.Add(TaskRow(now, null, AgentTaskStatus.Working, AgentTaskRole.Code, remotePrep: false));
@@ -135,7 +138,10 @@ public sealed class RunnerCatalogueTests
         directory.Platform = "windows";
         await using var readDb = kit.Context();
         var detail = await kit.Service(readDb).GetAsync(created.Id, CancellationToken.None);
-        var json = JsonSerializer.Serialize(detail.Summary, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var json = JsonSerializer.Serialize(detail.Summary, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
+        });
         using var doc = JsonDocument.Parse(json);
         doc.RootElement.GetProperty("requiredPlatform").GetString().ShouldBe("Linux");
         doc.RootElement.GetProperty("runnerId").GetString().ShouldBe("server2");

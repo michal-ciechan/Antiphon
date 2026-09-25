@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -96,27 +97,49 @@ public sealed class MultiRunnerRecoveryTests
     [Test]
     public async Task Reconnect_replays_only_owned_transcripts()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var secretA = "secret-a-" + Guid.NewGuid().ToString("N");
         var secretB = "secret-b-" + Guid.NewGuid().ToString("N");
-        await using var host = await PhoneHomeTestHost.StartAsync(configured: Pair(secretA, secretB));
+        await using var host = await PhoneHomeTestHost.StartAsync(
+            connectionString: schema.ConnectionString, configured: Pair(secretA, secretB));
         host.Capacity = 2;
+        await using var runtime = TranscriptRuntime(schema.ConnectionString);
+        var storeA = Guid.NewGuid();
+        var storeB = Guid.NewGuid();
         var sessionA = Guid.NewGuid();
         var sessionB = Guid.NewGuid();
-        await using var peerA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA);
-        await using var peerB = await host.ConnectPeerAsync(runnerId: "runner-b", secret: secretB);
-        peerA.Sessions.Add(new RunnerSessionDto(sessionA, 1, DateTime.UtcNow, "Running", null, "", 0));
-        peerB.Sessions.Add(new RunnerSessionDto(sessionB, 1, DateTime.UtcNow, "Running", null, "", 0));
-        var pump = Pump(host);
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            db.AgentSessions.Add(Session(sessionA, "runner-a", now, storeA));
+            db.AgentSessions.Add(Session(sessionB, "runner-b", now, storeB));
+            await db.SaveChangesAsync();
+        }
+
+        await using var peerA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
+        await using var peerB = await host.ConnectPeerAsync(runnerId: "runner-b", secret: secretB, storeId: storeB);
+        peerA.Sessions.Add(new RunnerSessionDto(sessionA, 1, now, "Running", null, "", 1));
+        peerB.Sessions.Add(new RunnerSessionDto(sessionB, 1, now, "Running", null, "", 1));
+        peerA.Transcripts[sessionA] = Transcript(sessionA);
+        peerB.Transcripts[sessionB] = Transcript(sessionB);
+        var pump = new PhoneHomeRecoveryPump(
+            host.Directory,
+            Options.Create(new PhoneHomeRunnerSettings { Enabled = true, CatchUpRetrySeconds = 30 }),
+            runtime.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<PhoneHomeRecoveryPump>.Instance);
         (await pump.RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
         peerA.Socket.Abort();
-        await using var nextA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA);
-        nextA.Sessions.Add(new RunnerSessionDto(sessionA, 1, DateTime.UtcNow, "Running", null, "", 0));
+        await WaitUntilAsync(() =>
+            host.Directory.SnapshotLive("runner-a") is null || !host.Directory.SnapshotLive("runner-a")!.SocketOpen);
+        await using var nextA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
+        nextA.Sessions.Add(new RunnerSessionDto(sessionA, 1, now, "Running", null, "", 1));
+        nextA.Transcripts[sessionA] = Transcript(sessionA);
         (await pump.RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
         nextA.RequestCount(PhoneHomeOperation.Transcript).ShouldBeGreaterThan(0);
-        var foreign = nextA.Incoming.Any(frame =>
+        nextA.Incoming.Any(frame =>
             frame.Operation == PhoneHomeOperation.Transcript
-            && frame.Payload?.ToString().Contains(sessionB.ToString(), StringComparison.Ordinal) == true);
-        foreign.ShouldBeFalse("runner A's reconnect does not ask for runner B's session");
+            && frame.Payload?.ToString().Contains(sessionB.ToString(), StringComparison.Ordinal) == true)
+            .ShouldBeFalse("runner A's reconnect does not ask for runner B's session");
         peerB.Incoming.Any(frame =>
             frame.Operation == PhoneHomeOperation.Transcript
             && frame.Payload?.ToString().Contains(sessionA.ToString(), StringComparison.Ordinal) == true)
@@ -208,7 +231,7 @@ public sealed class MultiRunnerRecoveryTests
         return ready();
     }
 
-    private static AgentSession Session(Guid id, string runnerId, DateTime now) => new()
+    private static AgentSession Session(Guid id, string runnerId, DateTime now, Guid? storeId = null) => new()
     {
         Id = id,
         DefinitionName = "grok",
@@ -221,7 +244,31 @@ public sealed class MultiRunnerRecoveryTests
         StartedAt = now,
         LastSeenAt = now,
         RunnerId = runnerId,
+        RunnerStoreId = storeId ?? Guid.NewGuid(),
+        RunnerCwd = "/work/" + runnerId,
     };
+
+    private static ServiceProvider TranscriptRuntime(string connectionString)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString, npgsql =>
+        {
+            npgsql.MigrationsAssembly("Antiphon.Server");
+            npgsql.SetPostgresVersion(16, 0);
+        }));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<ISessionRunnerClient, PhoneHomeTestHost.RecordingLocalClient>();
+        services.AddSingleton<AgentSessionRuntime>();
+        return services.BuildServiceProvider();
+    }
+
+    private static RunnerTranscriptDto Transcript(Guid sessionId) =>
+        new(sessionId, [new RunnerTranscriptEvent(
+            sessionId, 1, TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("N"), null,
+            DateTimeOffset.UtcNow, "user", "owned", null, null, null, null, null)], 1);
 
     private static PhoneHomeRunnerSettings Pair(string secretA, string secretB) => new()
     {
