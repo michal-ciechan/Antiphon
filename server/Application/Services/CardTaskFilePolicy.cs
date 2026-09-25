@@ -81,7 +81,7 @@ public sealed partial class CardTaskFileService
         if (string.IsNullOrWhiteSpace(path)) return;
         var root = Path.GetFullPath(path);
         _repository.ValidatePath(root, root);
-        var boards = await _db.Boards.AsNoTracking().Include(b => b.Project).ToListAsync(ct);
+        var boards = await LookupBoardsAsync(ct);
         foreach (var board in boards.Where(b => b.ProjectId == projectId))
         {
             var slug = await UniqueBoardSlugAsync(board, ct, ignorePins: true);
@@ -201,7 +201,7 @@ public sealed partial class CardTaskFileService
         try
         {
         // Compare all project targets, including legacy unpinned owners, before pinning/mutating.
-        var others = await _db.Boards.AsNoTracking().Include(b => b.Project).Where(b => b.Id != board.Id).ToListAsync(ct);
+        var others = (await LookupBoardsAsync(ct)).Where(b => b.Id != board.Id).ToList();
         foreach (var other in others)
         {
             var otherRoot = other.CardFilesRepositoryPath ?? other.Project.LocalRepositoryPath;
@@ -311,6 +311,7 @@ public sealed partial class CardTaskFileService
             if (value == true) await ValidateEnableAsync(board, ct);
             board.SyncCardFiles = value!.Value;
             await _db.SaveChangesAsync(ct);
+            InvalidateBoardLookups();
             await events.PublishToAllAsync("BoardChanged", new { boardId, projectId = board.ProjectId }, ct);
         }
         return await StatusUnderGateAsync(board, ct);
@@ -338,7 +339,7 @@ public sealed partial class CardTaskFileService
         using var lease = await EnterProjectAsync(projectId, true, null, ct);
         var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == projectId, ct)
             ?? throw new NotFoundException(nameof(Project), projectId);
-        var boards = await _db.Boards.AsNoTracking().Include(b => b.Project).Where(b => b.ProjectId == projectId).ToListAsync(ct);
+        var boards = (await LookupBoardsAsync(ct)).Where(b => b.ProjectId == projectId).ToList();
         var warnings = new HashSet<string>(StringComparer.Ordinal);
         if (string.IsNullOrWhiteSpace(project.LocalRepositoryPath)) return [];
         try
@@ -346,8 +347,7 @@ public sealed partial class CardTaskFileService
             var root = Path.GetFullPath(project.LocalRepositoryPath);
             _repository.ValidatePath(root, root);
             if (!Directory.Exists(root) || !await _git.IsRepositoryAsync(root, ct)) return ["card_files_ignore_missing"];
-            var enabledOwners = (await _db.Boards.AsNoTracking().Include(b => b.Project)
-                .Where(b => b.SyncCardFiles).ToListAsync(ct)).Where(b =>
+            var enabledOwners = (await LookupBoardsAsync(ct)).Where(b => b.SyncCardFiles &&
                     !string.IsNullOrWhiteSpace(b.CardFilesRepositoryPath ?? b.Project.LocalRepositoryPath)
                     && string.Equals(Path.GetFullPath(b.CardFilesRepositoryPath ?? b.Project.LocalRepositoryPath!), root, StringComparison.OrdinalIgnoreCase)).ToList();
             if (install && enabledOwners.Count == 0)

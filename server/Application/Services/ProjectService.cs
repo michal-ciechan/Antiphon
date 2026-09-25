@@ -102,6 +102,8 @@ public class ProjectService
         await _db.SaveChangesAsync(cancellationToken);
         _readinessCache?.Remove(project.Id);
 
+        if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id }, cancellationToken);
+
         _logger.LogInformation("Created project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
         return await WithWarningsAsync(project, true, cancellationToken);
@@ -223,6 +225,7 @@ public class ProjectService
             await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(ct);
         }, cancellationToken);
         _readinessCache?.Remove(id);
+        if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = id, deleted = true }, cancellationToken);
 
         _logger.LogInformation(
             "Deleted project {ProjectName} ({ProjectId}) with {BoardCount} board(s) and {CardCount} card(s)",

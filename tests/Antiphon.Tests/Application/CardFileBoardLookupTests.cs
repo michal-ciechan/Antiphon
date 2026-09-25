@@ -15,8 +15,10 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [NotInParallel]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class CardFileBoardLookupTests
+public partial class CardFileBoardLookupTests
 {
+    private readonly CardFileBoardLookup _lookup = new();
+
     [Test]
     public async Task Repeated_inspection_has_no_board_lookup_queries()
     {
@@ -30,7 +32,8 @@ public class CardFileBoardLookupTests
         first.Directory.ShouldBe("docs/cards/board");
         queries.Lookups.ShouldBeGreaterThan(0);
         queries.Reset();
-        (await service.GetStatusAsync(world.BoardId, default)).Directory.ShouldBe(first.Directory);
+        await using var otherScope = Context(isolated.ConnectionString, queries);
+        (await Service(world, otherScope).GetStatusAsync(world.BoardId, default)).Directory.ShouldBe(first.Directory);
         queries.Lookups.ShouldBe(0);
     }
 
@@ -75,9 +78,9 @@ public class CardFileBoardLookupTests
         new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions(connection))
             .AddInterceptors(queries).Options);
 
-    private static CardTaskFileService Service(CardFilePrivacyWorld world, AppDbContext db) => new(db, world.Gate,
+    private CardTaskFileService Service(CardFilePrivacyWorld world, AppDbContext db) => new(db, world.Gate,
         new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), NullLogger<CardTaskFileService>.Instance,
-        new CardFileTestRepository(), Options.Create(new CardFileSyncSettings { IntervalSeconds = 0 }));
+        new CardFileTestRepository(), Options.Create(new CardFileSyncSettings { IntervalSeconds = 0 }), _lookup);
 
     private sealed class QueryCounter : DbCommandInterceptor
     {

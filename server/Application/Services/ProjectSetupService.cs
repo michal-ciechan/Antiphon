@@ -342,6 +342,9 @@ public sealed class ProjectSetupService
             }
 
             await transaction.CommitAsync(ct);
+            // Service events above precede this outer commit. Discard any lookup
+            // another scope filled while the new owners were still uncommitted.
+            _cardFiles?.InvalidateBoardLookups();
         }
 
         if (request.StartAgent && agent is not null)
