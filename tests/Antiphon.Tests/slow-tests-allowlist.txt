@@ -133,3 +133,5 @@ Antiphon.Tests.Application.WorktreeDefaultContinuationTests
 Antiphon.Tests.Application.WorktreeDefaultCallerTests
 # CARD-0657: real reply-service settlement with a bare origin, desktop worktree and runner clone.
 Antiphon.Tests.Application.RunnerTaskSettlementTests
+
+Antiphon.Tests.Application.AgentTaskLandPublicationTests
