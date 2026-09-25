@@ -139,3 +139,5 @@ Antiphon.Tests.Application.TranscriptHotPathQueryTests
 Antiphon.Tests.Application.TranscriptWorkingStateQueryTests
 # CARD-0698: concurrent index creation, populated upgrade and rollback in isolated PostgreSQL.
 Antiphon.Tests.Application.TranscriptHotPathMigrationTests
+
+Antiphon.Tests.Application.AgentTaskLandPublicationTests

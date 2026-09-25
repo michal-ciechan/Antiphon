@@ -17,6 +17,7 @@ internal static class TestWorkerModes
         new(PostLandMutationDeliveryWorker.Marker, PostLandMutationDeliveryWorker.RunAsync),
         new(LandQueueRaceWorker.Marker, LandQueueRaceWorker.RunAsync),
         new(CheckCompactionCrashWorker.Marker, CheckCompactionCrashWorker.RunAsync),
+        new(LandingRemovalCrashWorker.Marker, LandingRemovalCrashWorker.RunAsync),
     ];
 
     internal static (Mode Mode, string Payload)? Requested()
