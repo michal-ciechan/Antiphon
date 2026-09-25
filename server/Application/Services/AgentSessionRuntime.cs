@@ -308,6 +308,10 @@ public sealed class AgentSessionRuntime
             if (changed)
                 await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+            // CARD-0664 D-2/D-3: this generation has ended (whoever closed it); release after the commit.
+            if (session.Status is SessionStatus.Stopped or SessionStatus.Failed
+                && scope.ServiceProvider.GetService<WorkspaceUseAdmission>() is { } admission)
+                await admission.ReleaseSessionConsumersAsync(sessionId, CancellationToken.None);
             if (changedAgentId is Guid agentId)
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
             return SessionExitDisposition.Applied;

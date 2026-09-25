@@ -933,6 +933,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
         var cwd = occupant.Cwd is { Length: > 0 } processCwd
             ? Path.GetFullPath(processCwd)
             : Path.GetFullPath(agent.WorkingDirectory);
+        var sessionId = inspect.NativeSessionId ?? Guid.NewGuid();
+        WorkspaceReservationSnapshot? admitted = null;
         if (_workspaceUse is not null)
         {
             var branch = "";
@@ -951,92 +953,103 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     cwd = owned.WorktreePath;
             }
 
-            await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
+            // CARD-0664 A8: the adopted session owns the row, so its exit, kill or failed attach ends it.
+            admitted = await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
                 WorkspaceReservationKey.For(cwd, branch, repo),
-                WorkspaceReservationKind.Launch, null), ct);
+                WorkspaceReservationKind.Launch, null, sessionId), ct);
         }
-        var sessionId = inspect.NativeSessionId ?? Guid.NewGuid();
-        var existing = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         AgentSession session;
-        if (existing is not null)
+        var workspaceKey = "none";
+        try
         {
-            var owner = await _db.Agents.FirstOrDefaultAsync(
-                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
-            var ours = (existing.StandingAgentId is null || existing.StandingAgentId == agent.Id)
-                && owner is not null
-                && owner.Id == agent.Id
-                && existing.CardId is null
-                && existing.WorktreeId is null
-                && existing.Status is SessionStatus.Stopped or SessionStatus.Failed
-                && string.Equals(
-                    Path.GetFullPath(existing.Cwd), cwd,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-            if (ours && !agent.IsPoolDelegate)
-                ours = (await new StandingSessionOwnership(_db).ResolveAsync(existing, ct)).Owner == agent.Id;
-            if (!ours)
+            var existing = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (existing is not null)
             {
-                var ownerName = existing.CardId is not null
-                    ? "a card session"
-                    : owner?.Name ?? "another agent";
-                throw new ConflictException(
-                    $"session {sessionId:D} is owned by {ownerName}",
-                    HerdrProblemTypes.SessionIdTaken);
+                var owner = await _db.Agents.FirstOrDefaultAsync(
+                    a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+                var ours = (existing.StandingAgentId is null || existing.StandingAgentId == agent.Id)
+                    && owner is not null
+                    && owner.Id == agent.Id
+                    && existing.CardId is null
+                    && existing.WorktreeId is null
+                    && existing.Status is SessionStatus.Stopped or SessionStatus.Failed
+                    && string.Equals(
+                        Path.GetFullPath(existing.Cwd), cwd,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+                if (ours && !agent.IsPoolDelegate)
+                    ours = (await new StandingSessionOwnership(_db).ResolveAsync(existing, ct)).Owner == agent.Id;
+                if (!ours)
+                {
+                    var ownerName = existing.CardId is not null
+                        ? "a card session"
+                        : owner?.Name ?? "another agent";
+                    throw new ConflictException(
+                        $"session {sessionId:D} is owned by {ownerName}",
+                        HerdrProblemTypes.SessionIdTaken);
+                }
+
+                session = existing;
+                session.StandingAgentId ??= agent.IsPoolDelegate ? null : agent.Id;
+                var resumeNow = UtcNow();
+                session.Status = SessionStatus.Starting;
+                session.StartedAt = occupant.StartTimeUtc ?? resumeNow;
+                session.LastSeenAt = resumeNow;
+                session.EndedAt = null;
+                session.ExitCode = null;
+                session.FailureReason = null;
+                session.RestartFailureKind = null;
+                session.InteractiveLaunchCompletedAt = null;
+                session.SessionBackend = SessionBackend.Herdr;
+                session.AgentKind = agent.Kind;
+                session.Cwd = cwd;
+                session.TuiProfileRevisionId = null;
+                session.EffectiveModelId = null;
+                session.ComposedBundleStamp = null;
+                session.InstructionFileStamp = null;
+            }
+            else
+            {
+                var definitionName = _agentRegistry.Settings.DefaultDefinition;
+                var now = UtcNow();
+                session = new AgentSession
+                {
+                    Id = sessionId,
+                    StandingAgentId = agent.IsPoolDelegate ? null : agent.Id,
+                    CardId = null,
+                    WorktreeId = null,
+                    DefinitionName = definitionName,
+                    AgentKind = agent.Kind,
+                    SessionBackend = SessionBackend.Herdr,
+                    Status = SessionStatus.Starting,
+                    Cwd = cwd,
+                    Cols = 120,
+                    Rows = 30,
+                    CreatedAt = now,
+                    StartedAt = occupant.StartTimeUtc ?? now,
+                    LastSeenAt = now,
+                    TuiProfileRevisionId = null,
+                    EffectiveModelId = null,
+                    ComposedBundleStamp = null,
+                    InstructionFileStamp = null,
+                };
+                _db.AgentSessions.Add(session);
             }
 
-            session = existing;
-            session.StandingAgentId ??= agent.IsPoolDelegate ? null : agent.Id;
-            var resumeNow = UtcNow();
-            session.Status = SessionStatus.Starting;
-            session.StartedAt = occupant.StartTimeUtc ?? resumeNow;
-            session.LastSeenAt = resumeNow;
-            session.EndedAt = null;
-            session.ExitCode = null;
-            session.FailureReason = null;
-            session.RestartFailureKind = null;
-            session.InteractiveLaunchCompletedAt = null;
-            session.SessionBackend = SessionBackend.Herdr;
-            session.AgentKind = agent.Kind;
-            session.Cwd = cwd;
-            session.TuiProfileRevisionId = null;
-            session.EffectiveModelId = null;
-            session.ComposedBundleStamp = null;
-            session.InstructionFileStamp = null;
-        }
-        else
-        {
-            var definitionName = _agentRegistry.Settings.DefaultDefinition;
-            var now = UtcNow();
-            session = new AgentSession
+            await _db.SaveChangesAsync(ct);
+
+            if (_herdrContext is not null)
             {
-                Id = sessionId,
-                StandingAgentId = agent.IsPoolDelegate ? null : agent.Id,
-                CardId = null,
-                WorktreeId = null,
-                DefinitionName = definitionName,
-                AgentKind = agent.Kind,
-                SessionBackend = SessionBackend.Herdr,
-                Status = SessionStatus.Starting,
-                Cwd = cwd,
-                Cols = 120,
-                Rows = 30,
-                CreatedAt = now,
-                StartedAt = occupant.StartTimeUtc ?? now,
-                LastSeenAt = now,
-                TuiProfileRevisionId = null,
-                EffectiveModelId = null,
-                ComposedBundleStamp = null,
-                InstructionFileStamp = null,
-            };
-            _db.AgentSessions.Add(session);
+                var opts = await _herdrContext.ResolveAsync(session, agent, agent.Name, ct);
+                workspaceKey = opts.WorkspaceKey;
+            }
         }
-
-        await _db.SaveChangesAsync(ct);
-
-        var workspaceKey = "none";
-        if (_herdrContext is not null)
+        catch
         {
-            var opts = await _herdrContext.ResolveAsync(session, agent, agent.Name, ct);
-            workspaceKey = opts.WorkspaceKey;
+            // CARD-0664 D-4 shape: a refused adoption releases only its own admission, never the
+            // rows of a session it does not own (session_id_taken).
+            if (_workspaceUse is not null)
+                await _workspaceUse.ReleaseAsync(admitted, CancellationToken.None);
+            throw;
         }
 
         var transcriptFormat = agent.Kind switch
@@ -1066,6 +1079,9 @@ public sealed class AgentControlService : ICompactionContinuationResume
             session.LastSeenAt = session.EndedAt.Value;
             SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             await _db.SaveChangesAsync(CancellationToken.None);
+            // CARD-0664 D-6: the adopted session failed; its rows end with it (after the save).
+            if (_workspaceUse is not null)
+                await _workspaceUse.ReleaseSessionConsumersAsync(sessionId, CancellationToken.None);
             throw;
         }
 

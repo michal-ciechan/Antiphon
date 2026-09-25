@@ -72,6 +72,17 @@ classes in `docs/superpowers/plans/2026-09-19-card-0459-worktree-cleanup-plan.md
 false in shipped config. Do not treat `PruneStaleAsync` or a shorter TTL as cleanup authority.
 CARD-0452 ignored-content policy is unchanged; residue tests must not add a production override.
 
+CARD-0664 (consumer-slot release) builds to `bin-c664-a/`, `bin-c664-b1/` and `bin-c664-b2/` and
+runs the plan's Checkpoints over `WorkspaceReservationLivenessTests` (Unit), `WorktreeRetirementRaceTests`,
+`TaskWorktreeRetirementTests`, `WorktreeResidueSweepTests`, `WorktreeResidueRecoveryTests`,
+`AgentTaskSettlementRaceTests`, `AgentTaskLandRequestTests`, `AgentTaskLandRefusedRetryTests`,
+`SessionGenerationExitTests` and `AgentAttachHerdrTests`
+(`docs/superpowers/plans/2026-09-24-card-0664-consumer-slot-release-plan.md`). New `C664_*` tests
+age a `Launch` row by writing `CreatedAt`; they never shorten `LaunchGraceMinutes` or switch the
+journal to a fake clock. `AgentAttachHerdrTests` does not run on Linux: on server2 (2026-09-25) its
+first test blocked forever in `StartFake()` waiting for `FakeHerdrServer` to listen, at ~0 CPU and
+before any test body ran. Leave it out of a Linux filter and run it on Windows.
+
 ## Fast lane (CARD-0110 / CARD-0475 S5)
 
 CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation. Since CARD-0604 the server2 runner owns a **nested** Docker daemon of its own, so Testcontainers works there unmodified (the mapped port and the test process share one network namespace); `scripts/verify-card0604-dind-runner.ps1` is the local harness that proves that image on Docker Desktop before server2 ever sees it.

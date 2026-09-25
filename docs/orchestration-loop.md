@@ -1172,7 +1172,14 @@ leftovers and unknown receipts. CARD-0459 adds typed `SettledTask` retirement (e
 retries of a confirmed publication. The Hangfire job `antiphon:worktree-residue` (daily 10:00
 Europe/London) is the only scheduler; `WorktreeJanitorHostedService` is no longer registered.
 `PruneStaleAsync` remains fail-closed (`typed_removal_authority_required`). Shortening TTL or
-invoking the janitor does not grant deletion authority. `WorktreeResidue:Execute` ships false;
+invoking the janitor does not grant deletion authority. A retirement claim is refused by a
+workspace-use `Launch` row only while that row's owner is live (CARD-0664): a task that is
+Queued/Dispatched/Working/Blocked or has a pending land, a session that is
+Created/Starting/Running/Stopping, or a row younger than `WorktreeResidue:LaunchGraceMinutes`
+(default 15). Other `Launch` rows are orphans; the claim releases them. Task settlement, cancel
+and dispatch failure, land outcome, session exit, kill and launch failure, and a refused
+admitting operation release their rows after their own commit. Herdr adoption attributes its row
+to the adopted session. `WorktreeResidue:Execute` ships false;
 activation is a commissioned deploy after Review/land. CARD-0452's ignored-content guard is
 unchanged. Failed-add
 rollback and stale-registration healing retain uncertain state for inspection. They no longer

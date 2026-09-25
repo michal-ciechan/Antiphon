@@ -414,6 +414,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
             if (evidenceTransaction is not null)
                 await evidenceTransaction.CommitAsync(CancellationToken.None);
+            // CARD-0664 D-2: the ended status is committed unless a caller's transaction still holds it;
+            // then the row is an orphan after grace and the reconcile releases it.
+            if (_db.Database.CurrentTransaction is null)
+                await ReleaseSessionConsumersAsync(sessionId);
             // to offering recovery controls instead of a dead terminal.
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
 
@@ -1369,6 +1373,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
 
         await db.SaveChangesAsync(ct);
+        // CARD-0664 D-2/D-3: the session is Stopped or Failed and committed; its Launch rows end with it.
+        await ReleaseSessionConsumersAsync(sessionId);
         await _eventBus.PublishToGroupAsync(
             AgentSessionGroups.Session(sessionId),
             "SessionExited",
@@ -2967,6 +2973,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return WorkflowDefinitionParser.ParseYamlDefinition(activeDefinition.Content).Hooks;
 
         return WorkflowDefinitionParser.ParseYamlHooks(activeDefinition.Content);
+    }
+
+    /// <summary>CARD-0664 D-2/D-3: best-effort release of an ended session's Launch rows after its commit.</summary>
+    private async Task ReleaseSessionConsumersAsync(Guid sessionId)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        if (scope.ServiceProvider.GetService<WorkspaceUseAdmission>() is { } admission)
+            await admission.ReleaseSessionConsumersAsync(sessionId, CancellationToken.None);
     }
 
     private async Task AdmitWorkspaceAsync(AgentSession session, CancellationToken ct)
