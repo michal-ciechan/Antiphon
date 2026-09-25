@@ -50,7 +50,8 @@ describe('AttentionPanel', () => {
       server.use(http.get('/api/sessions/:id/transcript', ({ params }) => {
         reads.push(String(params.id))
         return HttpResponse.json({ sessionId: params.id, lastSequence: 1, entries: [{
-          sequence: 1, kind: 'AssistantText', text: 'Transcript evidence for the ownerless session',
+          sequence: 1, kind: 'AssistantText', text: reads.length === 1
+            ? 'Transcript evidence for the ownerless session' : 'Updated transcript evidence',
           timestamp: '2026-08-17T09:00:00Z',
         }] })
       }))
@@ -67,6 +68,7 @@ describe('AttentionPanel', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
       await userEvent.click(within(row).getByRole('button', { name: `Open ${kind}` }))
       expect(await screen.findByRole('dialog', { name: /Session inspection/ })).toBeInTheDocument()
+      expect(await screen.findByText('Updated transcript evidence')).toBeInTheDocument()
     },
   )
 
