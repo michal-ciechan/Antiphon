@@ -398,9 +398,11 @@ public sealed class SessionReconciliationService
     /// (cascade delete, a manual reap), and a session nobody can name is still somebody's work.</item>
     /// <item><b>Failed</b> — RE-ADOPT, on positive evidence. This is the default because the case
     /// that created the pass was a healthy session wrongly declared dead.</item>
-    /// <item><b>Stopped</b> — the ONLY auto-kill arm: an operator already expressed stop intent and
+    /// <item><b>Stopped</b> — an auto-kill arm: an operator already expressed stop intent and
     /// the kill evidently did not take, so retry it.</item>
-    /// <item><b>Starting/Running/Stopping</b> — pass 1's business; the DB and the runner agree the
+    /// <item><b>Stopping</b> — the same stop intent, with a kill that threw or has not landed (CARD-0691
+    /// D-4): once the row is older than <c>StoppingRetryAfterSeconds</c>, retry it the same way.</item>
+    /// <item><b>Starting/Running</b> — pass 1's business; the DB and the runner agree the
     /// session is live.</item>
     /// </list>
     /// </summary>
@@ -433,6 +435,9 @@ public sealed class SessionReconciliationService
             {
                 SessionStatus.Failed => await TryReAdoptAsync(row, runnerSession, now, ct),
                 SessionStatus.Stopped => await RetryFailedKillAsync(row, runnerSession, ct),
+                // CARD-0691 D-4: a Stopping row is the same prior stop intent whose kill threw or did
+                // not take; after the retry window it gets the same re-issued kill.
+                SessionStatus.Stopping when StoppingRetryIsDue(row, now) => await RetryFailedKillAsync(row, runnerSession, ct),
                 _ => 0,
             };
         }
@@ -835,10 +840,15 @@ public sealed class SessionReconciliationService
     }
 
     /// <summary>
-    /// The one arm that may end a process: the row says Stopped, so an operator already asked for
-    /// this session to go, and the kill evidently did not take. Retrying that kill enacts a decision
+    /// The one arm that may end a process: the row says Stopped (or has said Stopping past the retry
+    /// window, CARD-0691), so a stop was already asked for this session, and the kill evidently did
+    /// not take. Retrying that kill enacts a decision
     /// that was already made — it never infers one.
     /// </summary>
+    private bool StoppingRetryIsDue(AgentSession row, DateTime now) =>
+        _settings.StoppingRetryAfterSeconds > 0
+        && now - row.LastSeenAt > TimeSpan.FromSeconds(_settings.StoppingRetryAfterSeconds);
+
     private async Task<int> RetryFailedKillAsync(
         AgentSession row, SessionRunnerSessionDto runnerSession, CancellationToken ct)
     {
@@ -846,17 +856,17 @@ public sealed class SessionReconciliationService
         {
             await _runnerClient.KillAsync(row.Id, ct);
             _logger.LogWarning(
-                "Reconciliation re-issued the kill for session {SessionId}: the DB says Stopped but the "
-                + "runner was still running it (pid {Pid})", row.Id, Describe(runnerSession));
+                "Reconciliation re-issued the kill for session {SessionId}: the DB says {Status} but the "
+                + "runner was still running it (pid {Pid})", row.Id, row.Status, Describe(runnerSession));
             return 1;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "Re-issuing the kill for stopped session {SessionId} failed", row.Id);
+            _logger.LogError(ex, "Re-issuing the kill for {Status} session {SessionId} failed", row.Status, row.Id);
             await _alerts.RaiseAsync(
                 new AlertRaise(
                     AlertSeverity.Error, "reconciler", "A stopped session is still running",
-                    Detail: $"Session {row.Id} is Stopped in the database but the session runner is still "
+                    Detail: $"Session {row.Id} is {row.Status} in the database but the session runner is still "
                         + $"running it, and re-issuing the kill failed: {ex.Message}",
                     DedupKey: $"reconciler:kill:{row.Id}",
                     SessionId: row.Id),

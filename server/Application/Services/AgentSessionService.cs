@@ -1427,6 +1427,38 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         return killed;
     }
 
+    /// <summary>
+    /// CARD-0691 D-4: the kill never reached (or never came back from) the runner. The row stays
+    /// Stopping — the stop intent is real (CARD-0256), and Running would lose it while Failed is the
+    /// reconciler's re-adopt arm — and says why, with <c>LastSeenAt</c> starting the reconciler's
+    /// retry window (<c>SessionReconciliation:StoppingRetryAfterSeconds</c>). A runner-bound session
+    /// also gets the CARD-0679 D-7 generation-conditional kill intent, which the slot reconcile sends
+    /// once that runner is back, because the local reconciler pass cannot see a remote runner.
+    /// Recording never replaces the kill failure the caller is about to see.
+    /// </summary>
+    private async Task RecordUndeliveredKillAsync(AppDbContext db, AgentSession session, Exception ex)
+    {
+        try
+        {
+            session.FailureReason = ColumnText.Clip("kill not delivered: " + ex.Message, 2000);
+            session.LastSeenAt = UtcNow();
+            await db.SaveChangesAsync(CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(session.RunnerId))
+            {
+                await RunnerSlotService.RecordDeferredKillAsync(
+                    db, session.RunnerId, session.Id, SessionGeneration.Normalize(session.StartedAt),
+                    $"settlement/operator kill after transport loss: {ex.Message}", CancellationToken.None);
+            }
+        }
+        catch (Exception recordEx)
+        {
+            _logger.LogError(recordEx, "Recording the undelivered kill of session {SessionId} failed", session.Id);
+        }
+
+        _logger.LogWarning(ex,
+            "Kill of session {SessionId} was not delivered; the row stays Stopping for the reconciler's retry", session.Id);
+    }
+
     public async Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct)
     {
         // CARD-0319: never flush a caller's still-dirty change tracker. Settlement used to mark
@@ -1506,12 +1538,24 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         session.LastSeenAt = UtcNow();
         await db.SaveChangesAsync(ct);
 
-        var killed = await _runtime.KillAsync(
-            sessionId,
-            TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
-            ct);
+        bool killed;
+        SessionRunnerSessionDto runnerSession;
+        try
+        {
+            killed = await _runtime.KillAsync(
+                sessionId,
+                TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
+                ct);
+            runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // An HttpClient timeout arrives as a TaskCanceledException with nothing cancelled, so
+            // only a cancellation of our own token skips the record.
+            await RecordUndeliveredKillAsync(db, session, ex);
+            throw;
+        }
 
-        var runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
         var exitReason = runnerSession.ExitReason;
         session.ExitCode = runnerSession.ExitCode;
         await _runtime.DisposeSessionAsync(sessionId);
