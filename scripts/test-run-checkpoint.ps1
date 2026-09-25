@@ -47,6 +47,10 @@ if ($env:C585_RUN_EXIT) { $runCode = [int]$env:C585_RUN_EXIT }
 exit $runCode
 '@
 
+# CARD-0589: the offline stand-in for the runner's /build-slots (scripts/fixtures/c589-slot-shim.ps1),
+# shared with scripts/test-build-slot.ps1.
+$script:SlotShim = Join-Path $script:Fixtures 'c589-slot-shim.ps1'
+
 function New-C585Case {
     param([string]$Name)
     $root = Join-Path $ResultsDirectory ($Name + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -56,6 +60,7 @@ function New-C585Case {
     return [pscustomobject]@{
         Root = $root
         Shim = $shim
+        SlotShim = $script:SlotShim
         Log = (Join-Path $root 'calls.log')
         ResultsRoot = (Join-Path $root 'results')
     }
@@ -75,7 +80,12 @@ function Invoke-C585Runner {
         [string]$Stamp = '',
         [string]$ResultsRoot = '',
         [string[]]$MsBuildProperty,
-        [string]$Platform = ''
+        [string]$Platform = '',
+        [switch]$Slot,
+        [string]$SlotScript = 'granted',
+        [string]$SlotWaitSeconds = '',
+        [string]$SlotGraceSeconds = '',
+        [string]$SlotRetryMs = '10'
     )
     if ([string]::IsNullOrWhiteSpace($ResultsRoot)) { $ResultsRoot = $Fx.ResultsRoot }
     $env:C585_SHIM_LOG = $Fx.Log
@@ -84,6 +94,16 @@ function Invoke-C585Runner {
     $env:C585_RUN_EXIT = [string]$RunExit
     $env:C585_STAMP = $Stamp
     $env:C671_PLATFORM = $Platform
+    # CARD-0589: every run has a slot shim and a dead endpoint, so no case can reach a real runner.
+    # C585 cases pass -NoSlot (their dotnet arguments stay exactly the pre-CARD-0589 ones);
+    # C589 cases pass -Slot and script the broker's answers.
+    $env:ANTIPHON_BUILD_SLOTS_URL = 'http://127.0.0.1:1/build-slots'
+    $env:C589_SLOT_SHIM = $Fx.SlotShim
+    $env:C589_SLOT_LOG = $Fx.Log
+    $env:C589_SLOT_SCRIPT = $SlotScript
+    $env:C589_SLOT_WAIT_SECONDS = $SlotWaitSeconds
+    $env:C589_SLOT_GRACE_SECONDS = $SlotGraceSeconds
+    $env:C589_SLOT_RETRY_MS = $SlotRetryMs
     $callArgs = @(
         '-NoProfile', '-NonInteractive', '-File', $script:Runner,
         '-Name', $Name,
@@ -95,6 +115,7 @@ function Invoke-C585Runner {
         '-DotnetShim', $Fx.Shim
     )
     if ($NoBuild) { $callArgs += '-NoBuild' }
+    if (-not $Slot) { $callArgs += '-NoSlot' }
     foreach ($property in @($MsBuildProperty)) {
         if ($property) { $callArgs += @('-MsBuildProperty', $property) }
     }
@@ -113,6 +134,9 @@ function Invoke-C585Runner {
         $env:C585_RUN_EXIT = $null
         $env:C585_STAMP = $null
         $env:C671_PLATFORM = $null
+        foreach ($name in @('ANTIPHON_BUILD_SLOTS_URL', 'C589_SLOT_SHIM', 'C589_SLOT_LOG', 'C589_SLOT_SCRIPT', 'C589_SLOT_WAIT_SECONDS', 'C589_SLOT_GRACE_SECONDS', 'C589_SLOT_RETRY_MS')) {
+            Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
+        }
     }
     $lines = @($output | ForEach-Object { [string]$_ })
     $calls = @()
@@ -136,7 +160,7 @@ function Test-C585_Green {
     $line = [string]($r.Checkpoint | Select-Object -First 1)
     Assert-C487 -Cond ($line -match 'build=ok ' -and $line -match 'executed=3 passed=3 failed=0 skipped=0') `
         -Name 'C585 Green line reports build=ok and executed=3 passed=3 failed=0 skipped=0' -Detail $line
-    Assert-C487 -Cond ($line -match 'trx=.+run\.trx$') -Name 'C585 Green line names the fresh TRX it parsed' -Detail $line
+    Assert-C487 -Cond ($line -match 'trx=.+run\.trx slot=skipped waited=0s$') -Name 'C585 Green line names the fresh TRX it parsed' -Detail $line
     $executed = @($r.Lines | Where-Object { $_ -match '^EXECUTED ' })
     Assert-C487 -Cond ($executed.Count -eq 3 -and ($executed -join ' ') -match 'C585SampleTests\.alpha_is_green') `
         -Name 'C585 Green prints the executed Class.Method roster' -Detail ($executed -join ' | ')
@@ -277,12 +301,15 @@ function Test-C585_NoBuild {
 function Test-C585_LineFormat {
     $fx = New-C585Case -Name 'lineformat'
     $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx
+    # CARD-0589: the BUILD SLOT lines (here 'skipped by -NoSlot') come first, before any dotnet call;
+    # the report line is the first line after them and now ends with the slot outcome.
+    $report = @($r.Lines | Where-Object { $_ -notmatch '^BUILD SLOT ' })
     $first = ''
-    if ($r.Lines.Count -gt 0) { $first = [string]$r.Lines[0] }
+    if ($report.Count -gt 0) { $first = [string]$report[0] }
     $last = ''
     if ($r.Lines.Count -gt 0) { $last = [string]$r.Lines[$r.Lines.Count - 1] }
-    Assert-C487 -Cond ($first -match '^CHECKPOINT CP-1 commit=[0-9a-f]{40} build=(ok|reused) filter=.+ executed=\d+ passed=\d+ failed=\d+ skipped=\d+ trx=.+$') `
-        -Name 'C585 LineFormat first line is the pinned CHECKPOINT report line' -Detail $first
+    Assert-C487 -Cond ($first -match '^CHECKPOINT CP-1 commit=[0-9a-f]{40} build=(ok|reused) filter=.+ executed=\d+ passed=\d+ failed=\d+ skipped=\d+ trx=.+ slot=(granted|unleased|unlimited|skipped) waited=\d+s$' -and [string]$r.Lines[0] -ceq 'BUILD SLOT skipped by -NoSlot') `
+        -Name 'C585 LineFormat first line is the pinned CHECKPOINT report line' -Detail ($r.Lines -join ' | ')
     Assert-C487 -Cond ($last -match '^CHECKPOINT CP-1 EXIT CODE: \d$') -Name 'C585 LineFormat last line is the exit-code trailer' -Detail $last
 }
 
@@ -388,7 +415,108 @@ function Test-C585_MsBuildInvalid {
     }
 }
 
-$script:C585ExpectedRows = 62
+# CARD-0589 V-4: the row takes a host build slot before its build/run and releases it after. The
+# slot shim scripts the broker; it logs into the same calls.log as the dotnet shim, so the order
+# POST -> build -> run -> DELETE is checked on one timeline. The dotnet shim runs under pwsh -File,
+# whose binder splits -maxcpucount:N into '-maxcpucount N' in its log (the real dotnet gets it whole).
+$script:C589Label = 'CP-1@tests/Antiphon.Tests'
+$script:C589Lease = 'c5890000-0000-4000-8000-000000000001'
+
+function Get-C589Order {
+    param($Result)
+    return @($Result.Calls | ForEach-Object {
+        if ($_ -like 'SLOT POST *') { 'POST' } elseif ($_ -like 'SLOT DELETE *') { 'DELETE' } elseif ($_ -match '^build ') { 'build' } elseif ($_ -match '^run ') { 'run' }
+    }) -join ','
+}
+
+function Test-C589_SlotGranted {
+    $fx = New-C585Case -Name 'slot-granted'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'granted'
+    $build = Get-C671Call (Get-C585BuildCalls -Result $r)
+    $run = Get-C671Call (Get-C585RunCalls -Result $r)
+    $line = [string]($r.Checkpoint | Select-Object -First 1)
+    Assert-C487 -Cond ($r.Exit -eq 0) -Name 'C589 SlotGranted exit code 0' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ($build -ceq ($script:C671Build + ' -maxcpucount 3 --nologo')) `
+        -Name 'C589 SlotGranted build carries the grant -maxcpucount' -Detail $build
+    Assert-C487 -Cond ($run -cnotmatch 'maxcpucount') -Name 'C589 SlotGranted the --no-build run carries no -maxcpucount' -Detail $run
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch ('^BUILD SLOT granted lease=' + $script:C589Lease + ' waited=\d+s maxcpucount=3$') }).Count -eq 1) `
+        -Name 'C589 SlotGranted prints the BUILD SLOT granted line' -Detail $r.Text
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,build,run,DELETE' -and @($r.Calls | Where-Object { $_ -ceq ('SLOT DELETE ' + $script:C589Lease) }).Count -eq 1) `
+        -Name 'C589 SlotGranted releases the lease after the run' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond (@($r.Calls | Where-Object { $_ -clike ('SLOT POST label=' + $script:C589Label + ' pid=*') }).Count -eq 1) `
+        -Name 'C589 SlotGranted asks under the row label' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond ($line -match ' slot=granted waited=\d+s$' -and @($r.Lines | Where-Object { $_ -cmatch ('^BUILD SLOT released lease=' + $script:C589Lease + ' held=\d+s$') }).Count -eq 1) `
+        -Name 'C589 SlotGranted CHECKPOINT line reports slot=granted' -Detail $r.Text
+}
+
+function Test-C589_SlotWaitsThenGranted {
+    $fx = New-C585Case -Name 'slot-waits'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'busy,memory_floor,granted'
+    $line = [string]($r.Checkpoint | Select-Object -First 1)
+    Assert-C487 -Cond ($r.Exit -eq 0) -Name 'C589 SlotWaitsThenGranted exit code 0' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch ('^BUILD SLOT waiting label=' + [regex]::Escape($script:C589Label) + ' position=1 occupied=2/2 elapsed=\d+m$') }).Count -ge 1) `
+        -Name 'C589 SlotWaitsThenGranted prints a BUILD SLOT waiting line while busy' -Detail $r.Text
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT waiting label=.+ reason=memory_floor available=1000MB floor=6144MB position=1 elapsed=\d+m$' }).Count -eq 1) `
+        -Name 'C589 SlotWaitsThenGranted names the memory floor while below it' -Detail $r.Text
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,POST,POST,build,run,DELETE') `
+        -Name 'C589 SlotWaitsThenGranted builds only after the grant' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT granted lease=\S+ waited=\d+s maxcpucount=3$' }).Count -eq 1 -and $line -match ' slot=granted waited=\d+s$') `
+        -Name 'C589 SlotWaitsThenGranted reports waited= on the grant and the CHECKPOINT line' -Detail $r.Text
+}
+
+function Test-C589_SlotTimeout {
+    $fx = New-C585Case -Name 'slot-timeout'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'busy' -SlotWaitSeconds '1' -SlotRetryMs '50'
+    Assert-C487 -Cond ($r.Exit -eq 4) -Name 'C589 SlotTimeout exit code 4' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C585BuildCalls -Result $r).Count -eq 0 -and (Get-C585RunCalls -Result $r).Count -eq 0) `
+        -Name 'C589 SlotTimeout invokes no dotnet' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT timeout after 1s position=1$' }).Count -eq 1) `
+        -Name 'C589 SlotTimeout prints the timeout line with its queue position' -Detail $r.Text
+    Assert-C487 -Cond (@($r.Calls | Where-Object { $_ -like 'SLOT DELETE *' }).Count -eq 0 -and @($r.Calls | Where-Object { $_ -like 'SLOT POST *' }).Count -ge 2) `
+        -Name 'C589 SlotTimeout polled and holds nothing to release' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond ([string]$r.Lines[$r.Lines.Count - 1] -ceq 'CHECKPOINT CP-1 EXIT CODE: 4') `
+        -Name 'C589 SlotTimeout trailer names exit code 4' -Detail $r.Text
+}
+
+function Test-C589_SlotUnreachable {
+    foreach ($case in @(@{ Script = 'unreachable'; Tag = 'no answer' }, @{ Script = 'notfound'; Tag = 'old runner 404' })) {
+        $fx = New-C585Case -Name ('slot-unreachable-' + $case.Script)
+        $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript $case.Script -SlotGraceSeconds '0'
+        $build = Get-C671Call (Get-C585BuildCalls -Result $r)
+        $line = [string]($r.Checkpoint | Select-Object -First 1)
+        Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch '^BUILD SLOT unleased reason=runner_unreachable maxcpucount=4 last=' }).Count -eq 1) `
+            -Name ('C589 SlotUnreachable {0} prints the unleased line' -f $case.Tag) -Detail $r.Text
+        Assert-C487 -Cond ($build -ceq ($script:C671Build + ' -maxcpucount 4 --nologo') -and $r.Exit -eq 0 -and $line -match ' slot=unleased waited=\d+s$') `
+            -Name ('C589 SlotUnreachable {0} still builds with the fallback -maxcpucount 4' -f $case.Tag) -Detail ('exit={0} build={1} {2}' -f $r.Exit, $build, $r.Text)
+        Assert-C487 -Cond (@($r.Calls | Where-Object { $_ -like 'SLOT DELETE *' }).Count -eq 0) `
+            -Name ('C589 SlotUnreachable {0} releases nothing' -f $case.Tag) -Detail ($r.Calls -join ' | ')
+    }
+    $fail = New-C585Case -Name 'slot-unreachable-red'
+    $f = Invoke-C585Runner -Fx $fail -Trx $script:FailuresTrx -RunExit 1 -Platform 'windows' -Slot -SlotScript 'unreachable' -SlotGraceSeconds '0'
+    Assert-C487 -Cond ($f.Exit -eq 1) -Name 'C589 SlotUnreachable the exit code follows the run' -Detail ('exit={0} {1}' -f $f.Exit, $f.Text)
+}
+
+function Test-C589_NoBuildStillLeases {
+    $fx = New-C585Case -Name 'slot-nobuild'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'granted' -NoBuild
+    $line = [string]($r.Checkpoint | Select-Object -First 1)
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,run,DELETE') `
+        -Name 'C589 NoBuildStillLeases a -NoBuild row acquires and releases around its run' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond ($r.Exit -eq 0 -and $line -match 'build=reused ' -and $line -match ' slot=granted waited=\d+s$') `
+        -Name 'C589 NoBuildStillLeases line reports build=reused and slot=granted' -Detail $r.Text
+}
+
+function Test-C589_NoSlotSkips {
+    $fx = New-C585Case -Name 'slot-noslot'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows'
+    $build = Get-C671Call (Get-C585BuildCalls -Result $r)
+    Assert-C487 -Cond ([string]$r.Lines[0] -ceq 'BUILD SLOT skipped by -NoSlot' -and @($r.Calls | Where-Object { $_ -like 'SLOT *' }).Count -eq 0) `
+        -Name 'C589 NoSlotSkips -NoSlot asks the broker nothing and says so' -Detail ($r.Lines -join ' | ')
+    Assert-C487 -Cond ($r.Exit -eq 0 -and $build -ceq ($script:C671Build + ' --nologo') -and ([string]($r.Checkpoint | Select-Object -First 1)) -match ' slot=skipped waited=0s$') `
+        -Name 'C589 NoSlotSkips builds with no -maxcpucount and reports slot=skipped' -Detail ('exit={0} build={1} {2}' -f $r.Exit, $build, $r.Text)
+}
+
+$script:C585ExpectedRows = 62 + 28
 
 if (-not (Test-Path -LiteralPath $script:Runner)) { throw ('missing ' + $script:Runner) }
 
@@ -397,7 +525,7 @@ if ($Case) {
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
     & $fn
 } else {
-    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C585_')) { & $fn }
+    foreach ($fn in @(Get-C487CaseFunctions -Prefix 'C585_') + @(Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-checkpoint-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { $script:C585ExpectedRows })
