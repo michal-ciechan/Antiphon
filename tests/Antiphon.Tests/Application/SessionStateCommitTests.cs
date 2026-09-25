@@ -141,6 +141,7 @@ public class SessionStateCommitTests
         metrics.GetProperty("ingestCalls").GetInt64().ShouldBe(14);
         metrics.GetProperty("committedRows").GetInt64().ShouldBe(13);
         metrics.GetProperty("duplicateBatches").GetInt64().ShouldBe(1);
+        f.Commands.Snapshot()["identity"].ShouldBe(14);
         await AssertDurableAsync(f);
     }
 

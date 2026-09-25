@@ -103,8 +103,9 @@ try
 
     // Database
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseNpgsql(
+    builder.Services.AddSingleton<SessionStateCommandMetrics>();
+    builder.Services.AddDbContext<AppDbContext>((services, options) =>
+        options.AddInterceptors(services.GetRequiredService<SessionStateCommandMetrics>()).UseNpgsql(
             connectionString,
             npgsqlOptions =>
             {

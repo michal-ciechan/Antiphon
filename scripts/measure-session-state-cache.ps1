@@ -180,8 +180,16 @@ function Get-WindowDelta {
         }
         if ($cacheDelta.ingestCalls -gt 0) { $perIngest = $transcriptReads / $cacheDelta.ingestCalls }
     }
+    $efDelta = $null
+    if ($Start.runtime.ContainsKey('efReadAttempts') -and $End.runtime.ContainsKey('efReadAttempts')) {
+        $efDelta = @{}
+        foreach ($path in @('seed','pins','fallback','identity','binding')) {
+            $efDelta[$path] = [long]$End.runtime.efReadAttempts[$path] - [long]$Start.runtime.efReadAttempts[$path]
+            if ($efDelta[$path] -lt 0) { throw 'Negative EF counter delta invalidated the window.' }
+        }
+    }
     return @{ seconds = $seconds; serverCores = $serverCpu; postgresContainerCores = $postgresCpu; statements = @($deltas);
-        transcriptSelectCalls = $transcriptReads; cacheDelta = $cacheDelta; transcriptSelectsPerIngest = $perIngest }
+        transcriptSelectCalls = $transcriptReads; cacheDelta = $cacheDelta; efReadAttemptDelta = $efDelta; transcriptSelectsPerIngest = $perIngest }
 }
 
 function Capture-Evidence {
