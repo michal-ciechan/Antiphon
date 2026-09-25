@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Api.Endpoints;
@@ -116,6 +117,46 @@ public sealed class RunnerDefaultsWireTests
         var task = await db.AgentTasks.SingleAsync(t => t.Id == body.Id);
         task.RunnerId.ShouldBe("server2");
         task.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task Missing_required_fields_refuse_without_clearing()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, null);
+        var current = await Read<RunnerDefaultsDto>(await host.Client.GetAsync("/api/runner-defaults"));
+        var seeded = await host.Client.PutAsJsonAsync("/api/runner-defaults", new PutRunnerDefaultsRequest(
+            current!.Revision, "server2", [], "Seed a global the next body must not clear.", "Human"), Json);
+        var saved = await Read<RunnerDefaultsDto>(seeded);
+        saved!.GlobalRunnerId.ShouldBe("server2");
+
+        foreach (var missing in new[] { "globalRunnerId", "expectedRevision", "kindDefaults", "reason", "provenance" })
+        {
+            using var body = new StringContent(BodyWithout(saved.Revision, missing), Encoding.UTF8, "application/json");
+            var refused = await host.Client.PutAsync("/api/runner-defaults", body);
+            var text = await refused.Content.ReadAsStringAsync();
+            refused.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity, missing + " " + text);
+            var after = await Read<RunnerDefaultsDto>(await host.Client.GetAsync("/api/runner-defaults"));
+            after!.Revision.ShouldBe(saved.Revision, missing);
+            after.GlobalRunnerId.ShouldBe("server2", missing);
+        }
+
+        var cleared = await host.Client.PutAsJsonAsync("/api/runner-defaults", new PutRunnerDefaultsRequest(
+            saved.Revision, null, [], "An explicit null clears the global default.", "Human"), Json);
+        (await Read<RunnerDefaultsDto>(cleared)).GlobalRunnerId.ShouldBeNull();
+    }
+
+    private static string BodyWithout(long revision, string missing)
+    {
+        var fields = new (string Name, string Json)[]
+        {
+            ("expectedRevision", revision.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            ("globalRunnerId", "\"server2\""),
+            ("kindDefaults", "[]"),
+            ("reason", "\"keep the current default\""),
+            ("provenance", "\"Human\""),
+        };
+        return "{" + string.Join(',', fields.Where(field => field.Name != missing).Select(field => $"\"{field.Name}\":{field.Json}")) + "}";
     }
 
     private static async Task<T> Read<T>(HttpResponseMessage response, HttpStatusCode expected = HttpStatusCode.OK)
@@ -305,6 +346,19 @@ public sealed class RunnerDefaultPlacementTests
         saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
         saved.Task.RunnerId.ShouldBeNull();
         saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.KindDefault);
+    }
+
+    [Test]
+    public async Task Global_desktop_default_keeps_global_source()
+    {
+        await using var world = await World.Open();
+        await world.Put("desktop", []);
+        var created = await world.Create(new CreateAgentTaskRequest(
+            "desktop global is still a choice", Role: AgentTaskRole.Code, AgentKind: AgentKind.Grok,
+            Workspace: WorkspaceMode.Worktree));
+        var saved = await world.Kit.ReadAsync(created.Id);
+        saved.Task.RunnerId.ShouldBeNull();
+        saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.GlobalDefault);
     }
 
     [Test]
