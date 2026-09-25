@@ -29,6 +29,7 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     public required PhoneHomeTestHost Host { get; init; }
     public required BridgeQueueHarness Bridge { get; set; }
     public required PendingInventoryProbe Probe { get; init; }
+    public required OutageQueueClock QueueClock { get; init; }
     public required FakeTimeProvider Clock { get; init; }
     public Guid SourceId { get; private set; }
     public Guid CardId { get; private set; }
@@ -39,19 +40,22 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     public MentionRouteDiagnostics Diagnostics => Bridge.Provider.GetRequiredService<MentionRouteDiagnostics>();
     public AgentMentionRouter Router => Bridge.Provider.GetRequiredService<AgentMentionRouter>();
     private readonly CancellationTokenSource _stop = new();
+    private readonly List<Antiphon.Server.Infrastructure.Agents.SessionRunner.PhoneHomeRecoveryPump> _pumps = [];
     private OutageApiFactory? _api;
     public HttpClient Http => (_api ??= new OutageApiFactory(this)).CreateClient();
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
 
-    public static async Task<PhoneHomeOutageHarness> CreateAsync(bool remote = true)
+    public static async Task<PhoneHomeOutageHarness> CreateAsync(bool remote = true, bool warmEmpty = false)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var probe = new PendingInventoryProbe();
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString,
             configureDbContext: o => o.AddInterceptors(probe));
-        var bridge = await CreateBridgeAsync(host, schema.ConnectionString);
-        var h = new PhoneHomeOutageHarness { Schema = schema, Host = host, Bridge = bridge, Probe = probe, Clock = clock };
+        if (warmEmpty) host.Directory.UnknownRemoteSessionIds().ShouldBeEmpty();
+        var queueClock = new OutageQueueClock();
+        var bridge = await CreateBridgeAsync(host, schema.ConnectionString, clock: queueClock);
+        var h = new PhoneHomeOutageHarness { Schema = schema, Host = host, Bridge = bridge, Probe = probe, Clock = clock, QueueClock = queueClock };
         if (remote)
         {
             bridge.Runtime.TryRemove(bridge.SessionId, out _).ShouldBeTrue();
@@ -68,9 +72,9 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     }
 
     private static Task<BridgeQueueHarness> CreateBridgeAsync(PhoneHomeTestHost host, string connectionString,
-        Guid? sessionId = null, Guid? agentId = null) => BridgeQueueHarness.CreateAsync(new()
+        Guid? sessionId = null, Guid? agentId = null, TimeProvider? clock = null) => BridgeQueueHarness.CreateAsync(new()
     {
-        ConnectionString = connectionString, AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        TimeProvider = clock, ConnectionString = connectionString, AlwaysOn = false, PreserveDatabaseOnDispose = true,
         AttachSessionId = sessionId, AttachAgentId = agentId,
         ConfigureServices = s =>
         {
@@ -93,8 +97,10 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
         var sessionId = SessionId;
         var agentId = Bridge.AgentId;
         if (_api is not null) { await _api.DisposeAsync(); _api = null; }
+        foreach (var pump in _pumps) await pump.EndPumpForTest();
+        _pumps.Clear();
         await Bridge.DisposeAsync();
-        Bridge = await CreateBridgeAsync(Host, Schema.ConnectionString, sessionId, agentId);
+        Bridge = await CreateBridgeAsync(Host, Schema.ConnectionString, sessionId, agentId, QueueClock);
         Bridge.Runtime.TryRemove(sessionId, out _).ShouldBeTrue();
     }
 
@@ -103,7 +109,9 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
         var peer = await Host.ConnectPeerAsync();
         if (includeTarget) peer.Sessions.Add(PhoneHomeStrandedQueueTests.RunningOnRunner(SessionId));
         PhoneHomeStrandedQueueTests.EchoSubmittedPromptsToTranscript(peer, Bridge);
-        (await PhoneHomeStrandedQueueTests.Pump(Host, Bridge).RunCycleAsync(_stop.Token)).ShouldBeTrue();
+        var pump = PhoneHomeStrandedQueueTests.Pump(Host, Bridge);
+        _pumps.Add(pump);
+        (await pump.RunCycleAsync(_stop.Token)).ShouldBeTrue();
         return peer;
     }
 
@@ -126,6 +134,39 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     {
         await using var db = Db();
         return await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == SessionId).OrderBy(m => m.Sequence).ToListAsync();
+    }
+
+    public async Task<bool> MentionAsync(string target, string text, Guid? occurrenceId = null)
+    {
+        await using var scope = Bridge.Provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AgentChannelService>()
+            .RouteMentionAsync(SourceId, new AgentMention(target, text), occurrenceId ?? Guid.NewGuid(), CancellationToken.None);
+    }
+
+    public async Task<SessionQueuedMessage> PendingAsync(string body, bool attempted = false)
+    {
+        await Queue.EnqueueAsync(SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None, deliverIfIdle: false);
+        await using var db = Db();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == SessionId && m.Body == body);
+        if (attempted)
+        {
+            row.DeliveryAttempts = 1;
+            row.LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-2);
+            row.LastDeliveryGeneration = (await db.AgentSessions.SingleAsync(s => s.Id == SessionId)).StartedAt;
+            row.LastDeliveryBaselineSequence = 1;
+            row.DeliveryVerdict = DeliveryVerdict.NoTranscriptRecord;
+            row.DeliveryVerdictAt = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+        return row;
+    }
+
+    public async Task WarmEmptyAsync()
+    {
+        await using var db = Db();
+        await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Created));
+        Runtime.ListLiveOrUnknownSessions().ShouldNotContain(SessionId);
+        await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
     }
 
     public async Task AssertReceiptAsync(string body, int count = 1)
@@ -167,6 +208,7 @@ internal sealed class PhoneHomeOutageHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel();
+        foreach (var pump in _pumps) await pump.EndPumpForTest();
         if (_api is not null) await _api.DisposeAsync();
         await Bridge.DisposeAsync();
         await Host.DisposeAsync();
@@ -206,4 +248,11 @@ internal sealed class PendingInventoryProbe : DbCommandInterceptor
         }
         return result;
     }
+}
+
+internal sealed class OutageQueueClock : TimeProvider
+{
+    private TimeSpan _offset;
+    public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+    public void Advance(TimeSpan span) => _offset += span;
 }

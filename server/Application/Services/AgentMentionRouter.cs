@@ -213,7 +213,7 @@ public sealed class AgentMentionRouter : IDisposable
                 {
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var service = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
-                    await service.RouteMentionAsync(command.SourceSessionId, command.Mention, _cts.Token);
+                    await service.RouteMentionAsync(command.SourceSessionId, command.Mention, command.OccurrenceId, _cts.Token);
                 }
                 catch (OperationCanceledException) when (_cts.IsCancellationRequested)
                 {
@@ -234,7 +234,7 @@ public sealed class AgentMentionRouter : IDisposable
         }
     }
 
-    private sealed record MentionRouteCommand(Guid SourceSessionId, AgentMention Mention);
+    private sealed record MentionRouteCommand(Guid SourceSessionId, AgentMention Mention, Guid OccurrenceId);
 
     private sealed class PendingMentionState
     {
@@ -246,7 +246,7 @@ public sealed class AgentMentionRouter : IDisposable
 
     private void EnqueueCommand(Guid sourceSessionId, AgentMention mention)
     {
-        if (_commands.Writer.TryWrite(new MentionRouteCommand(sourceSessionId, mention)))
+        if (_commands.Writer.TryWrite(new MentionRouteCommand(sourceSessionId, mention, Guid.NewGuid())))
         {
             Record(sourceSessionId, MentionRouteDiagnostics.CommandEnqueued, $"target={mention.Target}");
             return;

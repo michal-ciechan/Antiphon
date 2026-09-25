@@ -14,6 +14,7 @@ public sealed class AgentChannelService
     private static readonly SessionStatus[] SourceStatuses = [SessionStatus.Starting, SessionStatus.Running];
     private static readonly SessionStatus[] TargetStatuses = [SessionStatus.Running];
 
+    private readonly SessionMessageQueueService? _queue;
     private readonly AppDbContext _db;
     private readonly AgentSessionRuntime _runtime;
     private readonly CardService _cardService;
@@ -27,8 +28,10 @@ public sealed class AgentChannelService
         CardService cardService,
         IEventBus eventBus,
         ILogger<AgentChannelService> logger,
-        MentionRouteDiagnostics? diagnostics = null)
+        MentionRouteDiagnostics? diagnostics = null,
+        SessionMessageQueueService? queue = null)
     {
+        _queue = queue;
         _db = db;
         _runtime = runtime;
         _cardService = cardService;
@@ -56,10 +59,11 @@ public sealed class AgentChannelService
         await PublishMessageAsync(source, target, message.Trim(), routedByMention: false, ct);
     }
 
-    public async Task<bool> RouteMentionAsync(
-        Guid sourceSessionId,
-        AgentMention mention,
-        CancellationToken ct)
+    public Task<bool> RouteMentionAsync(Guid sourceSessionId, AgentMention mention, CancellationToken ct) =>
+        RouteMentionAsync(sourceSessionId, mention, Guid.NewGuid(), ct);
+
+    internal async Task<bool> RouteMentionAsync(
+        Guid sourceSessionId, AgentMention mention, Guid occurrenceId, CancellationToken ct)
     {
         Record(sourceSessionId, MentionRouteDiagnostics.RouteStarted, $"target={mention.Target}");
         var source = await _db.AgentSessions
@@ -112,9 +116,23 @@ public sealed class AgentChannelService
         var message = string.IsNullOrWhiteSpace(mention.Message)
             ? $"@{mention.Target}"
             : mention.Message.Trim();
-        await _runtime.SendInputAsync(target.Id, FormatInput(source, message), ct);
-        Record(sourceSessionId, MentionRouteDiagnostics.InputSent, $"target={target.Id:N}");
-        await PublishMessageAsync(source, target, message, routedByMention: true, ct);
+        var queue = _queue ?? throw new InvalidOperationException("Mention routing requires the session queue.");
+        var messageId = await queue.EnqueueMentionAsync(target.Id, FormatInput(source, message), occurrenceId, ct);
+        Record(sourceSessionId, MentionRouteDiagnostics.Queued, $"target={target.Id:N} queue={messageId:N}");
+        // Acceptance is durable. Activity and prompt transport cannot undo it or mint another row.
+        try
+        {
+            await PublishMessageAsync(source, target, message, routedByMention: true, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        try
+        {
+            await queue.FlushIfIdleAsync(target.Id, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Accepted mention {MessageId} awaits queue recovery", messageId);
+        }
         Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=true");
         return true;
     }
@@ -150,15 +168,14 @@ public sealed class AgentChannelService
 
     private async Task<AgentSession> LoadLiveTargetSessionAsync(Guid sessionId, CancellationToken ct)
     {
-        var liveSessionIds = _runtime.ListLiveOrUnknownSessions().ToHashSet();
-        if (!liveSessionIds.Contains(sessionId))
-            throw new NotFoundException(nameof(AgentSession), sessionId);
-
-        return await _db.AgentSessions
+        var session = await _db.AgentSessions
             .AsNoTracking()
             .Include(s => s.Card)
             .FirstOrDefaultAsync(s => s.Id == sessionId && TargetStatuses.Contains(s.Status), ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+        if (!_runtime.IsLiveOrUnknown(session))
+            throw new NotFoundException(nameof(AgentSession), sessionId);
+        return session;
     }
 
     private async Task<AgentSession> LoadSourceSessionAsync(Guid sessionId, CancellationToken ct)
@@ -187,11 +204,12 @@ public sealed class AgentChannelService
             .AsNoTracking()
             .Include(s => s.Card)
             .Where(s => s.Id != source.Id
-                && liveSessionIds.Contains(s.Id)
                 && TargetStatuses.Contains(s.Status)
                 && s.Card.BoardId == source.Card.BoardId)
             .ToListAsync(ct);
 
+        sessions = sessions.Where(s => _runtime.IsAcceptedRunnerBinding(s.RunnerId)
+            && (_runtime.RemoteInventoryPending(s.RunnerId) || liveSessionIds.Contains(s.Id))).ToList();
         var matches = sessions
             .Where(s => s.DefinitionName.Equals(normalized, StringComparison.OrdinalIgnoreCase))
             .ToList();

@@ -26,6 +26,7 @@ public sealed class MentionRouteDiagnostics
     public const string RouteStarted = "route-started";
     public const string SourceQueryReturned = "source-query-returned";
     public const string TargetQueryReturned = "target-query-returned";
+    public const string Queued = "queued";
     public const string InputSent = "input-sent";
     public const string EventPublished = "event-published";
     public const string RouteReturned = "route-returned";

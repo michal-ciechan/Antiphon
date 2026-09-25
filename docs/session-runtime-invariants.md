@@ -1,5 +1,33 @@
 # Session runtime invariants
 
+- **Accepted @mentions are durable queued input (CARD-0696).** The router allocates an occurrence
+  ID; acceptance commits one `WhenIdle` row with origin `Mention` and freezes its target and body.
+  Replaying that ID validates the destination/body and never resets an attempt. Separate identical
+  mentions stay separate turns. Queue startup, turn-end and stranded recovery deliver the row,
+  including to a non-AlwaysOn session after a runner outage. `ChannelMessage` activity and `queued`
+  diagnostics mean accepted, not submitted; only complete matching UserPrompt evidence confirms
+  delivery. The debounce buffer before acceptance is still in memory. Explicit channel sends keep
+  their immediate contract.
+
+- **Immediate phone-home refusals preserve state (CARD-0696).** Mode Now, send-now and durable
+  immediate enqueue check the current connection's recovery, socket and lease before mutating
+  input state. A definitely unsent body returns 503 `phone_home_unavailable`: Now creates no row,
+  send-now retains the entire prior row/attempt, and durable immediate enqueue removes only its
+  own provisional row. Body-written or in-flight uncertainty retains attempt evidence for normal
+  recovery; an unavailable Enter is never a refundable body attempt. Local readiness/Herdr/modal
+  refusals and confirmed-gone sessions retain their own contracts.
+
+- **Pending inventory has a five-second freshness bound (CARD-0696).** Before the accepted
+  runner's first successful List, one single-flight bootstrap projection caches its active bound
+  IDs, including an empty result, for five seconds after load completion. Failures are throttled
+  for five seconds: previous successful knowledge survives; a cold failure propagates. The
+  connection gate is never held over database I/O, and authoritative recovery wins a concurrent
+  load. After recovery the directory uses connection inventory and tombstones, never this cache.
+  A cached negative is not proof of death: callers with a session row use its active status and
+  accepted RunnerId. Terminal rows stay terminal. The TTL never limits how long an outage's
+  sessions remain unknown. CARD-0701 may replace this membership loader; it holds no transcript
+  or working-state cache.
+
 - **A queued runner spill is owned by its message row (CARD-0647 follow-up).** The row
   persists the exact file body and a runner-relative path derived from its Id before
   the first Input, including SendNow. The bytes stay until a complete matching UserPrompt

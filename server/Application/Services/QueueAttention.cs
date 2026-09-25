@@ -85,7 +85,8 @@ internal static class QueueAttention
     public static Expression<Func<SessionQueuedMessage, bool>> MachineOriginNeedsAttention(
         int maxAttempts, DateTime strandedCutoff, DateTime ageFloor, DateTime windowFloor) =>
         And(m => m.Origin == QueuedMessageOrigin.Delegation
-                || m.Origin == QueuedMessageOrigin.Supervision,
+                || m.Origin == QueuedMessageOrigin.Supervision
+                || m.Origin == QueuedMessageOrigin.Mention,
             NeedsAttention(maxAttempts, strandedCutoff, ageFloor, windowFloor));
 
     private static Expression<Func<T, bool>> Or<T>(
