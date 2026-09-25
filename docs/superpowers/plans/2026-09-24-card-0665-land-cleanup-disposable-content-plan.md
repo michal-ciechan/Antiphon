@@ -454,3 +454,52 @@ restores the whole tree). Test fakes trace that operation as
 fake's path removal now descends through links like Git for Windows, which makes
 `C665_UnlistedLinkIsRemovedWithoutTraversal` red against the Round A deletion (CP-R3o). CP-4a
 gains two `C665_*` methods (fourteen), CP-4b two (nine).
+
+### Round A repair 4 verification (review e0e5e480)
+
+The Code brief explicitly adds both full matrix classes and the Unit lane to CP-4a,
+CP-4b, CP-5a and CP-5b. All commands use bounded Git execution; on server2 the checkpoint
+wrapper is invoked with a producer-owned PATH shim that execs Git under `timeout`.
+The runner now has Git 2.47.3, so the earlier 2.39.5 qualification blocker is absent.
+The extra baseline rows below are commissioned triage, not new acceptance requirements.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-R4-baseline | repair 3 (`96da2576`) | `tests/Antiphon.Tests -> bin-c665-r4/` | review-reproduction | `/*/*/AgentTaskLandCheckpointMatrixTests/C448_V19*` | review item 2 | 18 executed; identify exact failing cuts | 18 | 7 |
+| CP-R4-prior | repair 2 (`5f4161c5`) | `tests/Antiphon.Tests -> bin-c665-r4-prior/` | inherited-triage | `/*/*/AgentTaskLandCheckpointMatrixTests/C448_V19*` | review item 2 | compare the exact same method at the requested prior SHA | 18 | 7 |
+| CP-R4r | repair-4 red tests | `tests/Antiphon.Tests -> bin-c665-r4/` | repair-4-red | `/*/*/(LandingRemovalPolicyControlTests*)\|(AgentTaskLandPublicationTests*)\|(AgentTaskLandCheckpointMatrixTests*)/C665_*` | review items 1, 2, 4 | 32 results; six new unit recovery rows and eight notification rows fail at their behavioral assertions; two real worker-death rows reach their cuts; one Windows sharing row unavailable on Linux | 31 | 7 |
+| CP-4a | repair 4 | `tests/Antiphon.Tests -> bin-c665-r4/` | gate-green | `/*/*/LandingRemovalPolicyControlTests/*` | V-2, R-1, review item 1 | all rows, no new failures | 60 | 3 |
+| CP-4b | repair 4 | `CP-4a`, `--no-build` | cleanup-green | `/*/*/WorktreeGuardedCleanupTests/*` | V-3, R-1 | all rows, no new failures | 30 | 8 |
+| CP-5a | repair 4 | `CP-4a`, `--no-build` | land-green-v04 | `/*/*/AgentTaskLandPublicationTests/C448_V04*` | V-4 | all three rows pass | 3 | 2 |
+| CP-5b | repair 4 | `CP-4a`, `--no-build` | land-green-c665 | `/*/*/AgentTaskLandPublicationTests/C665_*` | V-4, review item 4 | ten rows pass, including eight producer-to-recipient deliveries | 10 | 4 |
+| CP-R4-checkpoint | repair 4 | `CP-4a`, `--no-build` | full-checkpoint-matrix | `/*/*/AgentTaskLandCheckpointMatrixTests/*` | review items 1, 2 | all 43 rows pass, including both actual worker deaths | 43 | 8 |
+| CP-R4-removal | repair 4 | `CP-4a`, `--no-build` | full-removal-matrix | `/*/*/AgentTaskLandRemovalMatrixTests/*` | review item 3 | 50 results; held-file row requires Windows | 49 | 8 |
+| CP-R4-publication | repair 4 | `CP-4a`, `--no-build` | full-publication-class | `/*/*/AgentTaskLandPublicationTests/*` | Final profile, full affected class | every row executes, no failures | 1 | 9 |
+| CP-U | repair 4 | `CP-4a`, `--no-build` | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | no new failures; the brief names the GitWorkspace one-liner and browser PDF failures as inherited | 1 | 5 |
+
+The registration recovery tests distinguish a failed read from a failed administrative
+move. A fault after the move, or uncertainty about registration, keeps the set-aside tree
+and record. A positive live registration allows restoration. The real worker tests stop
+on either side of the actual administrative drop, then use fresh services to recover:
+a live registration restores intact bytes and respects the consumed command slot; a
+completed drop resumes deletion of the recorded tree. Neither case invents a receipt.
+
+V19 C16 uses a typed post-unregistration hook that verifies the real admin directory and
+Git registration are absent. Its interruption is cancellation so the ordinary cleanup
+error handlers cannot swallow it. C14/C15 use drain-side failure settlement after the
+published coordinate refusal; historical publication stays attached to its original
+coordinates. C17 asserts the actual administrative drop and absence of the completed
+set-aside. V18 uses `bin-private/settings.local.json` as its protected sentinel. V20's
+Windows held-file row checks refusal at move-aside, before unregister is called.
+
+V-4 now follows both `protected:` and `retained=` from a real landing outcome into its
+immutable notification and the keyed queue row, through before-enqueue and lost-insert-
+acknowledgement cuts, with busy and already eligible recipients. Each of the eight rows
+requires an actual delivery attempt and the matching complete destination UserPrompt
+past the attempt floor. A prior cleanup capture is present, so the compact diagnostic
+envelope cannot silently discard the new detail. Round A's test retention seam copies
+and verifies real bytes; production retention policy remains Round B's responsibility.
+
+Windows junction semantics and the three Windows sharing-lock rows remain Windows Review
+work when Code runs on Linux. Every PC remains pending for method-scoped SourceLanding
+Mutation; ordinary green and nightly do not discharge it.

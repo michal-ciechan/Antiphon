@@ -134,4 +134,5 @@ Antiphon.Tests.Application.WorktreeDefaultCallerTests
 # CARD-0657: real reply-service settlement with a bare origin, desktop worktree and runner clone.
 Antiphon.Tests.Application.RunnerTaskSettlementTests
 
+# CARD-0665: real landing, capture recovery and complete caller delivery (two lands per row).
 Antiphon.Tests.Application.AgentTaskLandPublicationTests

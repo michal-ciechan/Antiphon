@@ -940,7 +940,8 @@ public sealed class AgentTaskLandService
         SetLandingEvidence(terminal, op);
         _db.AgentTaskEvents.Add(terminal);
         CompleteRequest(task, request, terminal);
-        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCapture, unlandedSiblings, op?.LastReason);
+        AddNotification(task, request, terminal, LandNotificationKind.Outcome, notificationCapture, unlandedSiblings,
+            AppendDetail(op?.LastReason ?? "cleanup complete", cleanupDetail));
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         if (_db.Database.CurrentTransaction is { } open) await open.CommitAsync(ct);
