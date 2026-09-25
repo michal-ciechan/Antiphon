@@ -50,6 +50,16 @@ public sealed class ClaudeTokenRefreshOptInTests
     }
 
     [Test]
+    [Arguments("verify-switch")]
+    [Arguments("verify-env")]
+    public async Task Verify_parent_threads_the_refresh_request_past_the_dot_source(string mode)
+    {
+        var run = await ProbeAsync(mode);
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.BwCalled.ShouldBeTrue(run.Output);
+    }
+
+    [Test]
     public void Deploy_parent_calls_the_gate_and_the_switch_is_threaded()
     {
         var bridge = DockerStackDocuments.Read("scripts/c590-real.ps1");
@@ -100,13 +110,40 @@ public sealed class ClaudeTokenRefreshOptInTests
         Directory.CreateDirectory(empty);
         var marker = Path.Combine(root, "bw-called.txt");
         var bw = Path.Combine(bwDir, "bw");
-        await File.WriteAllTextAsync(bw, "#!/bin/sh\nprintf 'called\\n' >> \"$C737_MARKER\"\nexit 2\n");
         if (OperatingSystem.IsWindows())
-            throw new InvalidOperationException("the bw stand-in is a shell script");
-        File.SetUnixFileMode(bw, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        {
+            // pwsh resolves bw.cmd through PATHEXT on Windows.
+            bw += ".cmd";
+            await File.WriteAllTextAsync(bw, "@echo called>>\"%C737_MARKER%\"\r\n@exit /b 2\r\n");
+        }
+        else
+        {
+            await File.WriteAllTextAsync(bw, "#!/bin/sh\nprintf 'called\\n' >> \"$C737_MARKER\"\nexit 2\n");
+            File.SetUnixFileMode(bw, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
 
         var probe = Path.Combine(root, "probe.ps1");
-        await File.WriteAllTextAsync(probe, """
+        var extraArgs = new List<string>();
+        if (mode is "verify-switch" or "verify-env")
+        {
+            // The real leading lines of verify-docker-stack.ps1, up to and including the line that
+            // sets the script variable, so moving the copy after the dot-source turns this red.
+            var scriptsDir = Path.Combine(C590Harness.RepoRoot, "scripts");
+            var lines = File.ReadAllLines(Path.Combine(scriptsDir, "verify-docker-stack.ps1"));
+            var last = Array.FindIndex(lines, l => l.Contains("$script:C628RefreshClaudeToken =", StringComparison.Ordinal));
+            last.ShouldBeGreaterThan(0, "the script variable assignment was not found");
+            var head = string.Join("\n", lines.Take(last + 1)).Replace("$PSScriptRoot", "'" + scriptsDir + "'");
+            var manifestPath = Path.Combine(root, "manifest.json");
+            await File.WriteAllTextAsync(manifestPath, "{\"evidenceRoot\":\"x\"}");
+            await File.WriteAllTextAsync(probe, head + "\n}\n"
+                + "$env:BW_SESSION = 'c737-not-a-vault-session'\n"
+                + "$env:PATH = $env:C737_BWDIR + [IO.Path]::PathSeparator + $env:PATH\n"
+                + "[void](Invoke-C628ClaudeTokenOnDeploy -Manifest ([pscustomobject]@{}))\n"
+                + "exit 0\n");
+            extraArgs.AddRange(["-Case", "x", "-Manifest", manifestPath]);
+            if (mode == "verify-switch") extraArgs.Add("-RefreshClaudeToken");
+        }
+        else await File.WriteAllTextAsync(probe, """
             $ErrorActionPreference = 'Continue'
             Remove-Item Env:ANTIPHON_REFRESH_CLAUDE_TOKEN -ErrorAction SilentlyContinue
             Remove-Item Env:BW_SESSION -ErrorAction SilentlyContinue
@@ -152,8 +189,11 @@ public sealed class ClaudeTokenRefreshOptInTests
         psi.Environment["C737_SCRIPT"] = Path.Combine(C590Harness.RepoRoot, "scripts", "c590-real.ps1");
         psi.Environment.Remove("BW_SESSION");
         psi.Environment.Remove("ANTIPHON_REFRESH_CLAUDE_TOKEN");
-        foreach (var arg in new[] { "-NoProfile", "-File", probe })
+        psi.Environment.Remove("ANTIPHON_C590_STUB");
+        foreach (var arg in new[] { "-NoProfile", "-File", probe }.Concat(extraArgs))
             psi.ArgumentList.Add(arg);
+        if (mode == "verify-env")
+            psi.Environment["ANTIPHON_REFRESH_CLAUDE_TOKEN"] = "1";
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("pwsh did not start");
         var stdout = await process.StandardOutput.ReadToEndAsync();
