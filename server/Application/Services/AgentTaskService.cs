@@ -28,6 +28,7 @@ public sealed class AgentTaskService
     private readonly DelegationSettings _settings;
     private readonly IEventBus _eventBus;
     private readonly IDelegateSessionStopper _sessions;
+    private readonly AgentSessionRuntime? _runtime;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskService> _logger;
     // CARD-0136. Optional so every harness that predates this card keeps constructing this.
@@ -107,7 +108,8 @@ public sealed class AgentTaskService
         ISessionRunnerDirectory? runners = null,
         DelegationWorktreeService? worktrees = null,
         // CARD-0666. Optional. Absent, a caller start ref is checked only at dispatch, locally.
-        StartRefAvailability? startRefs = null)
+        StartRefAvailability? startRefs = null,
+        AgentSessionRuntime? runtime = null)
     {
         _startRefs = startRefs;
         _worktrees = worktrees;
@@ -121,6 +123,7 @@ public sealed class AgentTaskService
         _settings = settings.Value;
         _eventBus = eventBus;
         _sessions = sessions;
+        _runtime = runtime;
         _timeProvider = timeProvider;
         _logger = logger;
         _quotaGate = quotaGate;
@@ -2817,7 +2820,7 @@ public sealed class AgentTaskService
             return;
 
         var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == id, ct);
-        if (agent is not { IsPoolDelegate: true })
+        if (agent is null || !PoolDelegateRelease.CanRelease(agent))
             return;
 
         if (task.AgentSessionId is null)
@@ -2851,9 +2854,9 @@ public sealed class AgentTaskService
         // throw; deleting the row then left a live session nothing would ever stop. Keep it Idle for
         // the janitor, which kills at its TTL and removes the row once the session is terminal.
         var agentSession = Guid.TryParse(agent.PersistentSessionId, out var persistent) ? persistent : (Guid?)null;
-        if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, task.AgentSessionId, ct)
+        if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, task.AgentSessionId, _runtime, ct)
             || (agentSession != task.AgentSessionId
-                && !await PoolDelegateRelease.IsSessionTerminalAsync(_db, agentSession, ct)))
+                && !await PoolDelegateRelease.IsSessionTerminalAsync(_db, agentSession, _runtime, ct)))
         {
             PoolDelegateRelease.MarkIdleForJanitor(agent, UtcNow());
             _logger.LogInformation(

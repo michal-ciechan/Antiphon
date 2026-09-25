@@ -1548,12 +1548,21 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ct);
             runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception ex)
         {
-            // An HttpClient timeout arrives as a TaskCanceledException with nothing cancelled, so
-            // only a cancellation of our own token skips the record.
+            // Stopping is already durable. Caller cancellation cannot erase the outstanding kill:
+            // remote reconciliation needs its generation intent just as it does after transport loss.
             await RecordUndeliveredKillAsync(db, session, ex);
             throw;
+        }
+
+        if (runnerSession.Status != "Exited" && runnerSession.ExitCode is null)
+        {
+            // A kill response is not an exit. Retain the adapter, attempt and workspace ownership
+            // until a later retry or exit observer confirms the process is gone.
+            await RecordUndeliveredKillAsync(db, session,
+                new InvalidOperationException("Agent process did not exit within the configured grace period."));
+            return;
         }
 
         var exitReason = runnerSession.ExitReason;

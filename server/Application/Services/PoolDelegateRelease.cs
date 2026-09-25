@@ -20,12 +20,15 @@ internal static class PoolDelegateRelease
 {
     internal enum KillOutcome
     {
-        /// <summary>The session row is Stopped/Failed (or absent): the agent row may go.</summary>
+        /// <summary>The session is terminal and no live or unknown runtime owner remains.</summary>
         SessionTerminal,
 
         /// <summary>The kill threw or did not end the session: keep the row.</summary>
         SessionStillLive,
     }
+
+    internal static bool CanRelease(Agent agent) => agent.IsPoolDelegate && !agent.AlwaysOn
+        && agent.BoardId is null && agent.StandingSpecialistRole is null && agent.StandingSpecialistOwnerId is null;
 
     /// <summary>Warm pool state, reserved for the run that just used it (settlement's rule).</summary>
     internal static void PoolWarm(Agent agent, Guid reservedForRootTaskId, DateTime now)
@@ -46,20 +49,25 @@ internal static class PoolDelegateRelease
     }
 
     /// <summary>
-    /// True when nothing is known to still be running for <paramref name="sessionId"/>: no id, no
-    /// row, or a row that is Stopped/Failed. Created/Starting/Running/Stopping are not terminal —
-    /// Stopping is exactly the row whose kill threw. A fresh no-tracking read, so a kill that
-    /// committed through its own isolated context is seen.
+    /// A terminal row is necessary, but a live or unknown runtime session vetoes removal. Failed
+    /// can describe a launch/kill failure while the process still lives (CARD-0056/0679). A missing
+    /// row is not exit evidence. Read fresh so isolated kills and exit observers are visible.
+    /// Without runtime evidence, only a locally recorded Stopped row is accepted.
     /// </summary>
-    internal static async Task<bool> IsSessionTerminalAsync(AppDbContext db, Guid? sessionId, CancellationToken ct)
+    internal static async Task<bool> IsSessionTerminalAsync(
+        AppDbContext db, Guid? sessionId, AgentSessionRuntime? runtime, CancellationToken ct)
     {
         if (sessionId is not Guid id)
             return true;
-        var status = await db.AgentSessions.AsNoTracking()
+        var session = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == id)
-            .Select(s => (SessionStatus?)s.Status)
+            .Select(s => new { s.Status, s.RunnerId })
             .FirstOrDefaultAsync(ct);
-        return status is null or SessionStatus.Stopped or SessionStatus.Failed;
+        if (session is null || session.Status is not (SessionStatus.Stopped or SessionStatus.Failed))
+            return false;
+        return runtime is not null
+            ? !runtime.IsLiveOrUnknown(id, session.RunnerId)
+            : session.RunnerId is null && session.Status == SessionStatus.Stopped;
     }
 
     /// <summary>
@@ -68,7 +76,7 @@ internal static class PoolDelegateRelease
     /// </summary>
     internal static async Task<KillOutcome> KillAndVerifyAsync(
         AppDbContext db, Agent agent, Guid? sessionId, Func<Guid, CancellationToken, Task> kill,
-        ILogger logger, CancellationToken ct)
+        ILogger logger, AgentSessionRuntime? runtime, CancellationToken ct)
     {
         if (sessionId is Guid sid)
         {
@@ -82,7 +90,7 @@ internal static class PoolDelegateRelease
             }
         }
 
-        return await IsSessionTerminalAsync(db, sessionId, ct)
+        return await IsSessionTerminalAsync(db, sessionId, runtime, ct)
             ? KillOutcome.SessionTerminal
             : KillOutcome.SessionStillLive;
     }
