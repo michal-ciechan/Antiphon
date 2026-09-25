@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Security;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,7 @@ public static class OperatorEndpoints
 {
     public const string SessionsPath = "/api/operator/dashboard-sessions";
     public const string LoginPath = "/api/operator/dashboard-login";
+    public const string ShutdownPath = "/api/operator/shutdown";
 
     public static void MapOperatorEndpoints(this WebApplication app)
     {
@@ -31,6 +33,26 @@ public static class OperatorEndpoints
             var expiresAt = clock.GetUtcNow() + OperatorDashboardSessions.NonceLifetime;
             var nonce = sessions.IssueNonce();
             return Results.Ok(new OperatorDashboardLoginDto($"{LoginPath}?nonce={nonce}", expiresAt));
+        }).WithTags("Operator");
+
+        app.MapPost(ShutdownPath, (
+            HttpContext http,
+            OperatorShutdownRequest? body,
+            OperatorShutdownCoordinator coordinator,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            IOptions<OperatorSettings> op) =>
+        {
+            OperatorCredential.Require(
+                http, settings.Value,
+                "Shutdown requires the operator token (scripts/restart-apphost.ps1 sends it).");
+            if (body?.Reason is { Length: > 200 })
+                throw new ValidationException("reason", "Shutdown reason must be at most 200 characters.");
+            var reason = body?.Reason;
+            var drainSeconds = op.Value.ShutdownDrainSeconds;
+            http.Response.OnCompleted(() => coordinator.StopAsync(reason));
+            return Results.Json(
+                new OperatorShutdownDto(true, Environment.ProcessId, drainSeconds, 0),
+                statusCode: StatusCodes.Status202Accepted);
         }).WithTags("Operator");
 
         app.MapGet(LoginPath, (HttpContext http, OperatorDashboardSessions sessions) =>

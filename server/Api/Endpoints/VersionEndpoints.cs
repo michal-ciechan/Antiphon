@@ -15,7 +15,7 @@ public static class VersionEndpoints
         app.MapGet("/api/version", () => Results.Ok(new AntiphonVersionDto(
             AntiphonVersion.Sha,
             AntiphonVersion.Informational,
-            [AntiphonCapabilities.LandV2])))
+            [AntiphonCapabilities.LandV2, AntiphonCapabilities.OperatorShutdownV1])))
             .WithTags("Version");
     }
 }

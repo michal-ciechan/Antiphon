@@ -264,6 +264,10 @@ try
         .ValidateOnStart();
     builder.Services.AddSingleton<AgentRegistry>();
     builder.Services.AddSingleton<IAgentProtocolAdapterFactory, AgentProtocolAdapterFactory>();
+    builder.Services.AddSingleton<IValidateOptions<OperatorSettings>, OperatorSettingsValidator>();
+    builder.Services.AddOptions<OperatorSettings>()
+        .Bind(builder.Configuration.GetSection("Operator"))
+        .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<PhoneHomeRunnerSettings>, PhoneHomeRunnerSettingsValidator>();
     builder.Services.AddOptions<PhoneHomeRunnerSettings>()
         .Bind(builder.Configuration.GetSection("PhoneHomeRunner"))
@@ -438,6 +442,8 @@ try
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
     builder.Services.AddSingleton<ILaunchOwnership>(sp => sp.GetRequiredService<AgentSessionLaunchQueue>());
+    builder.Services.AddSingleton<ILaunchDrain>(sp => sp.GetRequiredService<AgentSessionLaunchQueue>());
+    builder.Services.AddSingleton<OperatorShutdownCoordinator>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddSingleton<OrchestratorWorkspaceFactGatherer>();
