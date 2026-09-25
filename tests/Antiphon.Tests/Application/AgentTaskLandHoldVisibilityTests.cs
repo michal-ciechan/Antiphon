@@ -34,7 +34,15 @@ public sealed class AgentTaskLandHoldVisibilityTests
         await h.InitializeAsync();
         await h.AddSourceAsync();
         using var alias = writer.EndsWith("-alias", StringComparison.Ordinal)
-            ? new OwnedJunction(Path.Combine(h.Fixture.Root, "writer-alias"), writer == "source-alias" ? h.Fixture.Source : h.Fixture.Repository) : null;
+            ? DirectoryLink.TryCreate(
+                Path.Combine(h.Fixture.Root, "writer-alias"),
+                writer == "source-alias" ? h.Fixture.Source : h.Fixture.Repository)
+            : null;
+        if (writer.EndsWith("-alias", StringComparison.Ordinal) && alias is null)
+        {
+            Skip.Test("This host cannot create a directory junction or symbolic link.");
+            return;
+        }
         var inaccessible = Path.Combine(h.Fixture.Root, "unknown-writer");
         if (writer == "inaccessible") Directory.CreateDirectory(inaccessible);
         var failedIdentity = 0;
@@ -197,17 +205,4 @@ public sealed class AgentTaskLandHoldVisibilityTests
         (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == kind)).ShouldBe(1);
     }
 
-    private sealed class OwnedJunction : IDisposable
-    {
-        public string Path { get; }
-        public OwnedJunction(string path, string target)
-        {
-            Path = path;
-            var start = new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var arg in new[] { "/c", "mklink", "/J", path, target }) start.ArgumentList.Add(arg);
-            using var process = System.Diagnostics.Process.Start(start)!;
-            process.WaitForExit(); process.ExitCode.ShouldBe(0, process.StandardError.ReadToEnd());
-        }
-        public void Dispose() => Directory.Delete(Path, false);
-    }
 }
