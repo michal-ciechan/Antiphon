@@ -43,13 +43,13 @@ public sealed class RunCheckpointScriptTests
 
     /// <summary>CARD-0615 V-1: quoted comma-separated <c>-Expect</c> rosters normalize at their edges only.</summary>
     [Test]
-    public Task C585_QuotedExpect() => RunCaseAsync("C585_QuotedExpect", 6,
+    public Task C585_QuotedExpect() => ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C585", "C585_QuotedExpect", 6, [
         "C585 QuotedExpect single quotes match",
         "C585 QuotedExpect double quotes match",
         "C585 QuotedExpect mixed quotes and whitespace match",
         "C585 QuotedExpect missing token stays red",
         "C585 QuotedExpect interior quote stays significant",
-        "C585 QuotedExpect empty quoted tokens retain compatibility");
+        "C585 QuotedExpect empty quoted tokens retain compatibility"], 300);
 
     [Test]
     public Task C585_BadOutputPath() => RunCaseAsync("C585_BadOutputPath", 10,
