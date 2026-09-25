@@ -18,6 +18,23 @@ namespace Antiphon.Tests.Application;
 public sealed partial class PostLandMutationDeliveryTests
 {
     [Test]
+    public async Task C699_Committed_settlement_signals_the_task_even_when_publication_is_interrupted()
+    {
+        var cut = new SettlementPublicationCut();
+        await using var settled = await SettleMutationAsync(new()
+        {
+            ConfigureServices = services => services.AddSingleton<LandDeliveryBoundary>(cut),
+        });
+        cut.Hits.ShouldBe(1);
+        var signals = settled.Bridge.Provider.GetRequiredService<CompletionNoteFlushQueue>().Recovery
+            .Take(DateTime.UtcNow);
+        signals.Tasks.ShouldContain(settled.World.TaskId, "settlement must signal before any note publication succeeds");
+        await using var db = settled.World.Host.CreateContext();
+        (await db.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task C699_Recovery_error_sweeps_other_missed_events_without_waiting_fifteen_minutes()
     {
         var commands = new RecoveryCommands();
@@ -166,7 +183,7 @@ public sealed partial class PostLandMutationDeliveryTests
             await db.SessionQueuedMessages.Where(m => m.SourceTaskId == settled.World.TaskId).ExecuteDeleteAsync();
         commands.Sql.Clear();
         var clock = new RecoveryClock();
-        using var worker = RecoveryWorker(settled.Bridge, clock);
+        using var worker = RecoveryWorker(settled.Bridge, clock, new CompletionNoteFlushQueue());
         await worker.StartAsync(default);
         try
         {
@@ -195,7 +212,7 @@ public sealed partial class PostLandMutationDeliveryTests
             await db.SessionQueuedMessages.Where(m => m.SourceTaskId == settled.World.TaskId).ExecuteDeleteAsync();
         commands.Sql.Clear();
         var clock = new RecoveryClock();
-        using var worker = RecoveryWorker(settled.Bridge, clock);
+        using var worker = RecoveryWorker(settled.Bridge, clock, new CompletionNoteFlushQueue());
         await worker.StartAsync(default);
         try
         {
@@ -211,10 +228,22 @@ public sealed partial class PostLandMutationDeliveryTests
         finally { await worker.StopAsync(default); }
     }
 
-    private static CompletionNoteWorkHostedService RecoveryWorker(BridgeQueueHarness h, TimeProvider clock) => new(
+    private static CompletionNoteWorkHostedService RecoveryWorker(BridgeQueueHarness h, TimeProvider clock,
+        CompletionNoteFlushQueue? flushes = null) => new(
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
-        h.Provider.GetRequiredService<CompletionNoteFlushQueue>(), new SpecialistFailureQueue(), clock,
+        flushes ?? h.Provider.GetRequiredService<CompletionNoteFlushQueue>(), new SpecialistFailureQueue(), clock,
         NullLogger<CompletionNoteWorkHostedService>.Instance);
+
+    private sealed class SettlementPublicationCut : LandDeliveryBoundary
+    {
+        public int Hits;
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (boundary != "settlement-saved") return Task.CompletedTask;
+            Hits++;
+            throw new InvalidOperationException("owned interruption after settlement commit before publication");
+        }
+    }
 
     private sealed class RecoveryClock : TimeProvider
     {
