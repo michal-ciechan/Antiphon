@@ -146,7 +146,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         // not a raw WebSocketException from the send. Every throw before the frame is written is
         // the never-sent code; only a waiter the close finds after its write is in flight.
         if (Volatile.Read(ref _closedReason) is not null || _socket.State != WebSocketState.Open)
-            throw NotSent(operation, Volatile.Read(ref _closedReason) ?? $"socket {_socket.State}");
+            throw ClosedBeforeSend(operation, Volatile.Read(ref _closedReason) ?? $"socket {_socket.State}");
         if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
             or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.KillGeneration
             or PhoneHomeOperation.ClearBuffer or PhoneHomeOperation.Resize)
@@ -160,7 +160,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _waiters[id] = waiter;
         // A dispose that ran between the check above and the registration never saw this waiter.
         if (Volatile.Read(ref _closedReason) is { } raced && _waiters.TryRemove(id, out _))
-            throw NotSent(operation, raced);
+            throw ClosedBeforeSend(operation, raced);
         Interlocked.Increment(ref _inFlight);
         var frame = new PhoneHomeFrame(
             PhoneHomeFrameKind.Request, Epoch, id, operation,
@@ -186,7 +186,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 // A close can dispose the send gate between a completed write and its Release: that
                 // frame left, so it is in flight, never the never-sent code the queue refunds.
                 var closedReason = Volatile.Read(ref _closedReason) ?? $"send failed: {ex.GetType().Name}";
-                throw written ? InFlight(operation, closedReason) : NotSent(operation, closedReason);
+                throw written ? ClosedInFlight(operation, closedReason) : ClosedBeforeSend(operation, closedReason);
             }
 
             // CARD-0629: this used to wait on Timeout.Infinite. A runner that never answers one
@@ -350,7 +350,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         foreach (var (id, waiter) in _waiters)
         {
             if (_waiters.TryRemove(id, out _))
-                waiter.Reply.TrySetException(InFlight(waiter.Operation, closedReason));
+                waiter.Reply.TrySetException(ClosedInFlight(waiter.Operation, closedReason));
         }
         try
         {
@@ -362,11 +362,11 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _send.Dispose();
     }
 
-    private PhoneHomeTransportException NotSent(PhoneHomeOperation operation, string reason) =>
+    private PhoneHomeTransportException ClosedBeforeSend(PhoneHomeOperation operation, string reason) =>
         new(PhoneHomeProblemTypes.ConnectionClosedBeforeSend,
             $"Phone-home connection to {RunnerId} (epoch {Epoch}) closed before {operation} was sent: {reason}");
 
-    private PhoneHomeTransportException InFlight(PhoneHomeOperation operation, string reason) =>
+    private PhoneHomeTransportException ClosedInFlight(PhoneHomeOperation operation, string reason) =>
         new(PhoneHomeProblemTypes.ConnectionClosedInFlight,
             $"Phone-home connection to {RunnerId} (epoch {Epoch}) closed while {operation} was in flight: {reason}");
 
