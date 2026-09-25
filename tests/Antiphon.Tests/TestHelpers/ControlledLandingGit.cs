@@ -521,6 +521,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     private LandingGitResult Dispatch(string repository, IReadOnlyList<string> args)
     {
         if (args.Count == 0) throw Unsupported(args);
+        if (IsLand(repository)) return DispatchLand(args);
         if (args[0] == "rev-parse") return RevParse(repository, args);
         if (args[0] == "symbolic-ref") return SymbolicRef(repository, args);
         if (args[0] == "show-ref") return ShowRef(args);
@@ -544,7 +545,6 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             WriteHeadFiles();
             return new(0, "", "");
         }
-        if (IsLand(repository)) return DispatchLand(args);
         if (args[0] == "ls-remote")
         {
             var fullRef = args[^1];
