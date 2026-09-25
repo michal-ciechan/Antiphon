@@ -116,14 +116,18 @@ All controls below remain **PENDING**, scoped to the named method for later Muta
 
 Use one migration owner on the deployment host, preferably while the old API is serving. The
 old binary remains compatible. The generated Up creates UUID, end/sequence and end/timestamp
-indexes serially, all with `CREATE INDEX CONCURRENTLY`. The unique session/sequence index and
+indexes serially, all with `CREATE INDEX CONCURRENTLY IF NOT EXISTS`. Repair 1 first renames
+each invalid original to its reserved `_invalid` name, then drops that name with a separate
+`DROP INDEX CONCURRENTLY IF EXISTS`. The conditional rename, drop and create are separate
+transaction-suppressed commands; concurrent DDL cannot run inside the conditional block.
+The unique session/sequence index and
 the API-error partial index remain intact. There is no transcript rewrite or backfill.
 
 Generate a **non-idempotent**, migration-specific script with the repository-local CLI from
 the reviewed build. The `from` migration is `20260924151156_AddLandHoldNotificationOwner`;
 the `to` migration is `20260925081051_AddTranscriptHotPathIndexes`. The reviewed export is
 `.antiphon/card0698-checkpoints/migration-up.sql`. Inspect transaction boundaries:
-all three concurrent creates must be outside `BEGIN`/`START TRANSACTION`; a later transaction
+all concurrent creates and drops must be outside `BEGIN`/`START TRANSACTION`; a later transaction
 around the migration-history insert is allowed. Do not use `--idempotent` or `psql -1`.
 
 Apply through the deployment host's approved libpq service/password-file configuration (no
@@ -148,17 +152,19 @@ Before applying, and after any error, inspect `__EFMigrationsHistory` plus `pg_i
 - `IX_TranscriptEntries_End_AgentSessionId_Timestamp`
 
 If already recorded and valid, do not replay. If unrecorded after partial creation, check exact
-definitions and ownership, then drop only these new indexes concurrently, one statement at a
-time outside transactions, before rerunning the reviewed script. No blind `IF NOT EXISTS`,
-manual migration-history stamp, or removal of an existing pre-change index is appropriate.
+definitions and ownership, then rerun the repaired migration. It drops/recreates invalid indexes
+and preserves valid originals without changing their OIDs. It also finishes a cleanup interrupted
+after the rename. The `_invalid` names are reserved for this migration; the Up guard refuses a
+valid or unrelated relation there. `IF NOT EXISTS` does not validate an arbitrary existing valid
+index's definition. Never stamp migration history manually or remove a pre-change index.
 
 ## Rollback and activation
 
-Roll back the binary first and leave valid additive indexes installed. The generated Down uses
-ordinary `DROP INDEX` inside the migrator's transaction; its isolated round trip is a data
-compatibility test, **not** an online removal recipe. If index removal is later necessary, use
-a separately reviewed `DROP INDEX CONCURRENTLY` operation per index outside a transaction,
-with the same ownership/definition checks and migration-history reconciliation through EF.
+Roll back the binary first and leave valid additive indexes installed. The repaired Down uses
+one transaction-suppressed `DROP INDEX CONCURRENTLY IF EXISTS` per original and cleanup name,
+so interruption after any drop can retry. Its isolated round trip is a data compatibility test;
+do not remove these indexes merely to roll back code. Any later removal still needs the same
+ownership/definition checks and migration-history reconciliation through EF.
 
 After landing, the caller uses the canonical desktop checkout and restart runbook, verifies
 `/api/version` SHA and `land-v2`, then verifies migration history and all three valid/ready index
