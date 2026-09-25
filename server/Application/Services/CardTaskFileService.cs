@@ -206,6 +206,20 @@ public sealed partial class CardTaskFileService
 
     public void InvalidateBoardLookups() => _boardLookup.Invalidate();
 
+    /// <summary>
+    /// Code returned when <paramref name="fromSha"/>..<paramref name="toSha"/> adds or modifies
+    /// an opted-out board's pinned card directory; null when that diff does not.
+    /// </summary>
+    public Task<string?> OptedOutLandRefusalAsync(
+        string repositoryPath, string fromSha, string toSha, CancellationToken ct)
+    {
+        _ = repositoryPath;
+        _ = fromSha;
+        _ = toSha;
+        _ = ct;
+        return Task.FromResult<string?>(null);
+    }
+
     private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct, bool ignorePins = false) =>
         (await _boardLookup.GetAsync(_db, ct)).UniqueSlug(board, ignorePins);
 
