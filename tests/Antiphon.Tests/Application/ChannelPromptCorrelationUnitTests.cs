@@ -103,6 +103,13 @@ public class ChannelPromptCorrelationUnitTests
         Match(row, Prompt(row, "done")).ShouldBeTrue();
         row.Body = "legacy instruction: ab cd";
         Match(row, Prompt(row, "legacy instruction: a bcd")).ShouldBeFalse();
+        foreach (var housekeeping in new[] { "<command-name>/clear</command-name>", "This session is being continued from a previous conversation that ran out of context." })
+        {
+            row.Body = housekeeping;
+            Match(row, Prompt(row, housekeeping)).ShouldBeFalse();
+        }
+        row.Body = ChannelPromptCorrelation.Mark(row.Id, "");
+        Match(row, Prompt(row, row.Body)).ShouldBeFalse();
     }
 
     [Test]

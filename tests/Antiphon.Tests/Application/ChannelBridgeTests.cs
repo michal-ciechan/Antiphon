@@ -1105,6 +1105,7 @@ public class ChannelBridgeTests
             {
                 Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
                 Kind = kind, Text = text, StopReason = stopReason, CreatedAt = DateTime.UtcNow,
+                Timestamp = DateTime.UtcNow, // provider-native receipt time for unobservable attempts
             });
             await db.SaveChangesAsync();
         }
@@ -1138,6 +1139,7 @@ public class ChannelBridgeTests
                     Text = text,
                     StopReason = stopReason,
                     CreatedAt = now,
+                    Timestamp = now,
                 });
             }
             await db.SaveChangesAsync();
@@ -1155,7 +1157,7 @@ public class ChannelBridgeTests
                 new TranscriptEntry
                 {
                     Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
-                    Kind = TranscriptKinds.UserPrompt, Text = prompt, CreatedAt = now,
+                    Kind = TranscriptKinds.UserPrompt, Text = prompt, CreatedAt = now, Timestamp = now,
                 },
                 new TranscriptEntry
                 {

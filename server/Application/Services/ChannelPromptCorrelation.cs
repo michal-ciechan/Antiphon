@@ -64,6 +64,9 @@ internal static class ChannelPromptCorrelation
         reason = "not-prompt";
         if (prompt.Kind is not (TranscriptKinds.UserPrompt or TranscriptKinds.QueuedUserPrompt))
             return false;
+        if (TranscriptKinds.IsLocalCommandRecord(prompt.Kind, prompt.Text)
+            || TranscriptKinds.IsCompactionContinuationPrompt(prompt.Kind, prompt.Text))
+            return false;
         reason = "wrong-session";
         if (row.AgentSessionId != prompt.AgentSessionId || row.Origin != QueuedMessageOrigin.Channel)
             return false;

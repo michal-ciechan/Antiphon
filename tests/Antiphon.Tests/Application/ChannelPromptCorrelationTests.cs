@@ -254,7 +254,7 @@ public class ChannelPromptCorrelationTests
         var other = await h.SeedPendingMessageAsync(Envelope + "unrelated third message", deliveryAttempts: 1,
             baselineSequence: 0, origin: QueuedMessageOrigin.Channel, status: QueuedMessageStatus.Sent,
             conversationKey: $"telegram:{chat}");
-        await SeedMachineAsync(h, "[task deadbeef done] this is a separate note");
+        var machine = await SeedMachineAsync(h, "[task deadbeef done]");
         await ReplayAsync(h, typed.Replace("\n", ""));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
@@ -262,6 +262,7 @@ public class ChannelPromptCorrelationTests
         (await RowAsync(h, a)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, b)).ChannelReplySettledAt.ShouldNotBeNull();
         (await RowAsync(h, other)).ChannelReplySettledAt.ShouldBeNull();
+        (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldBeNull("channel input owns the quoted header");
     }
 
     [Test]
@@ -336,6 +337,10 @@ public class ChannelPromptCorrelationTests
         owned.Body.ShouldContain(TypedBodySpill.InboxRelativePath(remoteId.ToString("D")));
         owned.RemoteSpillBody.ShouldBe(source);
         courier.IsStaged(remote.SessionId).ShouldBeFalse("binding acknowledged the exact staged bytes");
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
+            remote.Queue.SpillQueueBodyAsync(remote.SessionId, owned.Body + new string('x', 1024),
+                remoteId.ToString("D"), Envelope.TrimEnd(), remoteDb, Ct));
+        (await RowAsync(remote, remoteId)).RemoteSpillBody.ShouldBe(source);
         var receivedBytes = "";
         remote.Adapter.OnSubmitted = async submitted =>
         {
@@ -407,6 +412,21 @@ public class ChannelPromptCorrelationTests
         (await RowAsync(h, first)).ChannelReplySettledAt.ShouldBeNull();
         (await RowAsync(h, second)).ChannelReplySettledAt.ShouldBeNull();
         h.Messaging.SentReplies.Count.ShouldBe(1);
+        var batchStart = DateTime.UtcNow;
+        var batchFloor = await h.CurrentTranscriptMaxSequenceAsync();
+        const string legacyA = Envelope + "legacy delivered batch member A";
+        const string legacyB = Envelope + "legacy delivered batch member B";
+        var batchA = await h.SeedPendingMessageAsync(legacyA, deliveryAttempts: 1,
+            baselineSequence: batchFloor, lastDeliveryStartedAt: batchStart,
+            origin: QueuedMessageOrigin.Channel, status: QueuedMessageStatus.Sent, conversationKey: $"telegram:{chat}");
+        var batchB = await h.SeedPendingMessageAsync(legacyB, deliveryAttempts: 1,
+            baselineSequence: batchFloor, lastDeliveryStartedAt: batchStart,
+            origin: QueuedMessageOrigin.Channel, status: QueuedMessageStatus.Sent, conversationKey: $"telegram:{chat}");
+        await ReplayAsync(h, ChannelPromptFormat.FormatBatch([legacyA], legacyB));
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        (await RowAsync(h, batchA)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await RowAsync(h, batchB)).ChannelReplySettledAt.ShouldNotBeNull();
+        h.Messaging.SentReplies.Count.ShouldBe(2);
         await h.Queue.EnqueueDeliveringNowAsync(h.SessionId, "tracked Channel input", Ct, QueuedMessageOrigin.Channel);
         var tracked = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == h.SessionId)
             .OrderByDescending(m => m.Sequence).FirstAsync();
