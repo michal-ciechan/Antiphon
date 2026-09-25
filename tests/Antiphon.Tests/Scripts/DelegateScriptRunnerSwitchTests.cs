@@ -57,7 +57,7 @@ public sealed class DelegateScriptRunnerSwitchTests
 
     private static string Block(string script)
     {
-        var start = script.IndexOf("if (-not [string]::IsNullOrWhiteSpace($Runner)) {", StringComparison.Ordinal);
+        var start = script.IndexOf("if (-not [string]::IsNullOrWhiteSpace($Runner) -and -not $runnerIsDesktop) {", StringComparison.Ordinal);
         start.ShouldBeGreaterThan(0, "the -Runner guard block exists");
         var end = script.IndexOf("$verificationFields", start, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(start);
