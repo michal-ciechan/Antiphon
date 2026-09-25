@@ -65,9 +65,11 @@ public sealed class LandVerificationBuildSlotTests
     {
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var client = new FakeSessionRunnerClient();
+        var answers = 0;
         client.BuildSlotAcquire = _ =>
         {
-            time.Advance(TimeSpan.FromMinutes(45));
+            if (Interlocked.Increment(ref answers) == 1)
+                time.Advance(TimeSpan.FromMinutes(45));
             return null;
         };
         var lines = new List<string>();
