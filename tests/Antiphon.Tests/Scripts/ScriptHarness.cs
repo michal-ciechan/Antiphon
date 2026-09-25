@@ -8,15 +8,12 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-0585 S6 (D-7): the C487-style harness wrapper, lifted out of
 /// <see cref="NightlyVerificationContractTests"/> so <see cref="RunCheckpointScriptTests"/> reuses
-/// the same body and cleanup. The default timeout is 120 s; longer cases supply their own budget.
+/// the same body and cleanup. Cases that launch several PowerShell children have a 300 s budget.
 /// </summary>
 internal static class ScriptHarness
 {
     /// <summary>Runs one named case of a C487-style harness and requires its exact PASS inventory for <paramref name="prefix"/>.</summary>
-    internal static Task RunHarnessCaseAsync(string harness, string prefix, string caseName, int expectedRows, params string[] requiredRows)
-        => RunHarnessCaseAsync(harness, prefix, caseName, expectedRows, requiredRows, 120);
-
-    internal static async Task RunHarnessCaseAsync(string harness, string prefix, string caseName, int expectedRows, string[] requiredRows, int timeoutSeconds)
+    internal static async Task RunHarnessCaseAsync(string harness, string prefix, string caseName, int expectedRows, params string[] requiredRows)
     {
         var results = Path.Combine(Path.GetTempPath(), prefix.ToLowerInvariant() + "-nightly-" + Guid.NewGuid().ToString("N"));
         var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", harness);
@@ -28,7 +25,7 @@ internal static class ScriptHarness
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("pwsh did not start.");
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(300));
             await process.WaitForExitAsync(timeout.Token);
             var output = await stdout + await stderr;
 
