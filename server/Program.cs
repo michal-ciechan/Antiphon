@@ -262,6 +262,8 @@ try
     builder.Services.AddSingleton<IValidateOptions<PhoneHomeRunnerSettings>, PhoneHomeRunnerSettingsValidator>();
     builder.Services.AddOptions<PhoneHomeRunnerSettings>()
         .Bind(builder.Configuration.GetSection("PhoneHomeRunner"))
+        // CARD-0676 F-1: Operator:TokenPath, with PhoneHomeRunner:OperatorTokenPath as its alias.
+        .Configure(o => o.OperatorTokenPath = OperatorTokenFile.ConfiguredPath(builder.Configuration))
         .ValidateOnStart();
     builder.Services.AddSingleton<PhoneHomeLaunchPolicy>();
     // CARD-0658: one-time dashboard login links and the dashboard sessions they create.

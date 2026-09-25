@@ -199,7 +199,7 @@ qualification artifact record the destination only as `sha256(chatId)[..16]`. Na
 `X-Antiphon-Operator-Token`. The value is 32 random bytes (hex) in an owner-only file the server creates
 at startup or on first use: `%LOCALAPPDATA%\Antiphon\operator-token` on Windows (protected ACL, one allow
 rule for the server's own account, same pattern as the key ring), else `$XDG_DATA_HOME/antiphon/operator-token`
-(mode 0600). Override with `PhoneHomeRunner:OperatorTokenPath` (absolute). `scripts/runner-slots.ps1` reads it
+(mode 0600). Override with `Operator:TokenPath` (absolute; the CARD-0653 key `PhoneHomeRunner:OperatorTokenPath` is still honoured as an alias when it is unset, CARD-0676). First-use creation publishes the value only under a free name (a no-overwrite move on Windows, a hard link on Unix), so concurrent first callers all get the one token. `scripts/runner-slots.ps1` reads it
 (`ANTIPHON_OPERATOR_TOKEN_FILE` overrides the path) and never prints it; the server compares it in constant
 time and never logs it. Rotate by deleting the file and restarting the server. A loopback client address is not
 a credential: the public vhost reaches Kestrel through Caddy and Vite as loopback, and `X-Forwarded-*` is
@@ -210,7 +210,7 @@ live dashboard session cookie, and nothing else; there is no address check. The 
 `scripts/hangfire-dashboard.ps1`: it sends the header to `POST /api/operator/dashboard-sessions`, which answers a
 one-time login link (`/api/operator/dashboard-login?nonce=...`, single use, two minutes), and opens that link in
 the default browser. Redeeming it sets `antiphon-operator-dashboard` (`HttpOnly`, `SameSite=Strict`,
-`Path=/hangfire`, `Max-Age` 12 hours, `Secure` over HTTPS) and redirects to `/hangfire`. The server keeps only
+`Path=/hangfire`, `Max-Age` 12 hours, `Secure` over HTTPS, including HTTPS terminated by the local proxy: `X-Forwarded-Proto: https` from a loopback peer, CARD-0676) and redirects to `/hangfire`. The server keeps only
 SHA-256 hashes of nonces and session ids, in memory; a restart ends every dashboard session. The script prints
 neither the token nor the link.
 
