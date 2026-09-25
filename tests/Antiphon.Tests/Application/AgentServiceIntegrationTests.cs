@@ -616,10 +616,13 @@ public class AgentServiceIntegrationTests
     {
         await using var db = CreateContext();
         var stopper = new RecordingSessionStopper { StopsSessionsIn = TestDbFixture.ConnectionString };
-        var service = CreateService(db, new MockEventBus(), sessions: stopper);
-        var agent = await service.CreateAsync(
+        var agent = await CreateService(db, new MockEventBus()).CreateAsync(
             new CreateAgentRequest(UniqueAgentName("Live Claude"), "D:/src/app"), CancellationToken.None);
         var sessionId = await SeedAgentSessionAsync(agent.Id, SessionStatus.Running);
+        // A fresh context, as the DELETE request gets: the create context still tracks the row
+        // without the session pointer seeded above.
+        await using var deleteDb = CreateContext();
+        var service = CreateService(deleteDb, new MockEventBus(), sessions: stopper);
         try
         {
             await service.DeleteAsync(agent.Id, CancellationToken.None);
@@ -641,10 +644,13 @@ public class AgentServiceIntegrationTests
     {
         await using var db = CreateContext();
         var stopper = new RecordingSessionStopper();
-        var service = CreateService(db, new MockEventBus(), sessions: stopper);
-        var agent = await service.CreateAsync(
+        var agent = await CreateService(db, new MockEventBus()).CreateAsync(
             new CreateAgentRequest(UniqueAgentName("Stubborn Claude"), "D:/src/app"), CancellationToken.None);
         var sessionId = await SeedAgentSessionAsync(agent.Id, SessionStatus.Running);
+        // A fresh context, as the DELETE request gets: the create context still tracks the row
+        // without the session pointer seeded above.
+        await using var deleteDb = CreateContext();
+        var service = CreateService(deleteDb, new MockEventBus(), sessions: stopper);
         try
         {
             var refused = await Should.ThrowAsync<ConflictException>(() =>
