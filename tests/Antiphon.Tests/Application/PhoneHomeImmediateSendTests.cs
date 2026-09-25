@@ -15,6 +15,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [NotInParallel("MessageQueue")]
 public class PhoneHomeImmediateSendTests
 {
@@ -192,19 +193,25 @@ public class PhoneHomeImmediateSendTests
     [Test]
     public async Task In_flight_send_and_caller_cancellation_are_not_safe_refusals()
     {
-        foreach (var cancel in new[] { false, true })
+        foreach (var phase in new[] { "body", "enter", "cancel" })
         {
             await using var h = await PhoneHomeOutageHarness.CreateAsync();
             var row = await h.PendingAsync("uncertain body");
             await using var peer = await h.RecoverAsync();
             h.Runtime.Register(h.SessionId, h.Bridge.Adapter);
+            var cancel = phase == "cancel";
             using var caller = new CancellationTokenSource();
             var client = new RunnerScopedSessionRunnerClient(h.Host.Directory, h.Host.AllowedRunnerId);
             h.Bridge.Adapter.BeforeInput = async (input, ct) =>
             {
+                if (phase == "enter" && input != "\r")
+                {
+                    await client.SendInputAsync(h.SessionId, input, ct);
+                    return;
+                }
                 peer.SilentFor(PhoneHomeOperation.Input);
                 var send = client.SendInputAsync(h.SessionId, input, ct);
-                await PhoneHomeOutageHarness.UntilAsync(() => peer.RequestCount(PhoneHomeOperation.Input) == 1);
+                await PhoneHomeOutageHarness.UntilAsync(() => peer.RequestCount(PhoneHomeOperation.Input) == (phase == "enter" ? 2 : 1));
                 if (cancel) caller.Cancel(); else await h.DisconnectAsync(peer);
                 await send;
             };

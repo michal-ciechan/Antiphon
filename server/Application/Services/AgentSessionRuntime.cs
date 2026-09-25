@@ -1211,15 +1211,22 @@ public sealed class AgentSessionRuntime
     /// WhenIdle reply stayed Pending and send-now answered 409.
     /// </summary>
     public IReadOnlyList<Guid> ListLiveSessions() =>
+        ListLocalLiveSessions()
+            .Concat(_directory?.LiveRemoteSessionIds() ?? [])
+            .Distinct()
+            .ToList();
+
+    internal IReadOnlySet<Guid> ListLocalLiveSessions() =>
         _runnerClient.ListAsync(CancellationToken.None)
             .GetAwaiter()
             .GetResult()
             .Where(session => session.Status is "Running" or "Starting")
             .Select(session => session.SessionId)
             .Concat(_testAdapters.Keys)
-            .Concat(_directory?.LiveRemoteSessionIds() ?? [])
-            .Distinct()
-            .ToList();
+            .ToHashSet();
+
+    internal IReadOnlyList<string> PendingRunnerIds() =>
+        _directory?.KnownRunnerIds.Where(RemoteInventoryPending).ToArray() ?? [];
 
     /// <summary>
     /// CARD-0679 (review 87af1bf6): phone-home sessions whose liveness is unknown, neither in
@@ -1269,9 +1276,7 @@ public sealed class AgentSessionRuntime
         session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping
         && IsAcceptedRunnerBinding(session.RunnerId)
         && (string.IsNullOrWhiteSpace(session.RunnerId) || session.RunnerId == PhoneHomeProtocol.LocalRunnerId
-            ? _testAdapters.ContainsKey(session.Id)
-                || (_directory?.Local ?? _runnerClient).ListAsync(CancellationToken.None).GetAwaiter().GetResult()
-                    .Any(s => s.SessionId == session.Id && s.Status is "Running" or "Starting")
+            ? ListLocalLiveSessions().Contains(session.Id)
             : IsLiveOrUnknown(session.Id, session.RunnerId));
 
     internal bool IsAcceptedRunnerBinding(string? runnerId) =>
