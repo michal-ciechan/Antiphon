@@ -23,6 +23,12 @@ internal static class LandOperationFactory
         var local = await ReadBranchAsync(git, coordinates.RepositoryPath, coordinates.SourceFullRef, ct);
         if (local.Reason is not null) return new(null, local.Reason);
         if (local.Sha != request.LocalBeforeSha) return new(null, "source_changed");
+        var derivation = IsLegacyDerivation(previous, local.Sha!, expected);
+        // Revalidate even after a saved Resolved checkpoint: a schema-3 preparation never moves the
+        // source branch and therefore cannot authorize a different input through predecessor lineage.
+        if (local.Sha != expected && !derivation
+            && !(request.SourceRelationship == LandSourceRelationship.Behind && request.RemoteSourceSha == expected))
+            return new(null, "reviewed_source_mismatch");
 
         LandingDestination destination;
         try { destination = await git.DestinationAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct); }
@@ -61,8 +67,6 @@ internal static class LandOperationFactory
             gitDirectory = Path.Combine(common, "worktrees", Path.GetFileName(worktreePath));
         }
 
-        var derivation = previous is { RebasedSourceSha: { } prepared } && prepared == local.Sha
-            && prepared != expected && previous.OriginalSourceSha == expected;
         var op = new AgentTaskLanding
         {
             Id = id, TaskId = task.Id, SchemaVersion = 3, Phase = LandPhase.Inspected,
@@ -90,6 +94,10 @@ internal static class LandOperationFactory
         };
         return new(op, null);
     }
+
+    internal static bool IsLegacyDerivation(AgentTaskLanding? previous, string local, string expected) =>
+        previous is { SchemaVersion: 2, Active: true, RebasedSourceSha: { } prepared }
+        && prepared == local && prepared != expected && previous.OriginalSourceSha == expected;
 
     /// <summary>One <c>show-ref</c>; on failure a second one tells absence (exit 2) from an error.</summary>
     public static async Task<(string? Sha, string? Reason)> ReadBranchAsync(ILandingGit git, string repository,

@@ -384,13 +384,18 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var current = checkout is null
             ? await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct)
             : await CommitAsync(checkout, "HEAD", ct);
-        if (current == verified) return null; // already there (a schema-2 land advanced it before its push)
+        if (current == verified)
+        {
+            // Already advanced is also a proven local identity (including schema-2 recovery).
+            op.LocalTargetAfterSha = current;
+            return null;
+        }
         if (!await IsAncestorAsync(op.RepositoryPath, current, verified, ct)) return "canonical_diverged";
         // CARD-0642 R1 carried over: the HEAD-file read is the last check before the mutation, because another
         // process can switch a worktree onto the target unseen while the ancestry check runs.
-        var (again, _) = ScanTarget(op);
+        var (again, currentCheckout) = ScanTarget(op);
         if (again is not null) return again;
-        if ((checkout is null) != (HeadsOf(op).First(h => h.IsMain).SymbolicRef != op.TargetFullRef))
+        if (!GitIndexLock.PathsEqual(checkout, currentCheckout))
             return "canonical_checkout_changed";
         LandingGitResult advanced;
         if (checkout is null)
@@ -437,8 +442,9 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var heads = HeadsOf(op);
         var elsewhere = heads.FirstOrDefault(h => !h.IsMain && h.SymbolicRef == op.TargetFullRef);
         if (elsewhere is not null) return ("target_checked_out_elsewhere", elsewhere.WorktreePath ?? elsewhere.AdminDirectory);
+        var unknown = heads.FirstOrDefault(h => h.SymbolicRef is null && h.Sha is null);
+        if (unknown is not null) return ("canonical_checkout_unknown", unknown.WorktreePath ?? unknown.AdminDirectory);
         var main = heads.First(h => h.IsMain);
-        if (main.SymbolicRef is null && main.Sha is null) return ("canonical_checkout_unknown", main.WorktreePath);
         if (main.SymbolicRef != op.TargetFullRef) return (null, null);
         return main.WorktreePath is null ? ("canonical_checkout_unknown", null) : (null, main.WorktreePath);
     }
