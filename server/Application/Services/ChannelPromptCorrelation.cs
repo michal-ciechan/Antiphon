@@ -29,6 +29,31 @@ internal static class ChannelPromptCorrelation
     public static string WithoutOuterMarker(string body) =>
         OpeningMarker(body) is { } marker ? body[marker.Length..].TrimStart() : body;
 
+    /// <summary>
+    /// The queue writes a marker at the start of a single prompt/spill, or immediately after
+    /// the batch context heading. Keep even a clipped marker in that position out of the
+    /// machine-note route; a marker quoted later in a task/Check report is just report content.
+    /// </summary>
+    public static bool HasMarkedTransportFrame(string body)
+    {
+        var opening = body.TrimStart();
+        if (opening.StartsWith(ChannelPromptFormat.BatchContextMarker, StringComparison.Ordinal))
+            opening = opening[ChannelPromptFormat.BatchContextMarker.Length..].TrimStart();
+        return opening.StartsWith(Prefix, StringComparison.Ordinal);
+    }
+
+    private static bool ContainsMarker(string body)
+    {
+        var start = 0;
+        while ((start = body.IndexOf(Prefix, start, StringComparison.Ordinal)) >= 0)
+        {
+            if (OpeningMarker(body[start..]) is not null)
+                return true;
+            start += Prefix.Length;
+        }
+        return false;
+    }
+
     public static bool IsSpillPointer(string body) => OpeningMarker(body) is { } marker
         && Guid.TryParseExact(marker.AsSpan(Prefix.Length, 32), "N", out var id)
         && body.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal)
@@ -110,6 +135,13 @@ internal static class ChannelPromptCorrelation
         }
         else
         {
+            // Legacy compatibility is only for unmarked receipts. A legacy body can be wholly
+            // contained inside a marked member, even when its actual owner is stale, settled or
+            // absent from the candidate set. Never let that substring create another recipient.
+            // Complete markers also exclude provider-wrapped receipts and mixed inline batches.
+            reason = "legacy-marked-receipt";
+            if (HasMarkedTransportFrame(prompt.Text) || ContainsMarker(prompt.Text))
+                return false;
             reason = "legacy-content-mismatch";
             var expected = row.Body.ReplaceLineEndings("\n").Trim();
             var actual = prompt.Text.ReplaceLineEndings("\n").Trim();

@@ -1213,7 +1213,7 @@ public sealed class ChannelReplyDispatcher
             return;
         // A marked channel prompt that failed completeness/floors must not fall through to a
         // quoted task/check header and publish as a machine note.
-        if (promptText.Contains("[antiphon-channel:", StringComparison.Ordinal))
+        if (ChannelPromptCorrelation.HasMarkedTransportFrame(promptText))
             return;
 
         var candidates = await db.SessionQueuedMessages

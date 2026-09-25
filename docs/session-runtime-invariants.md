@@ -46,6 +46,11 @@
   wrapped; attempted legacy rows keep full LF-normalized ordinal matching, with original
   SentAt as a fallback only when attempt metadata is absent. Short raw legacy bodies need
   whole-prompt equality, and multiple legacy candidates need common delivered-batch evidence.
+  Legacy matching refuses receipts containing a complete channel marker, including wrapped
+  and batched prompts, even when the marked owner is stale or already settled. It cannot
+  settle alongside a marked request. Machine fallback rejects channel framing only at the
+  prompt opening or immediately after the batch context heading; quoted markers in genuine
+  task/Check report content do not suppress their text or attachments.
   An ambiguous or unmarked newline-elided answer stays owed for existing loss handling.
   TTL requires a matching turn's own completed boundary and usable assistant text; later
   unrelated turns cannot supply either. Machine header/task/check identity, specialist exact
