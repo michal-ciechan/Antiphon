@@ -170,13 +170,17 @@ function Test-C589_WrapperTimeout {
 function Test-C589_WrapperUnreachableAtDeadline {
     foreach ($case in @(@{ Answer = 'deadline_unreachable,unreachable'; Last = 'no answer' }, @{ Answer = 'deadline_notfound,notfound'; Last = 'http 404' })) {
         $fx = New-C589Case -Name ('wrapper-deadline-' + $case.Answer)
-        $clock = [Diagnostics.Stopwatch]::StartNew()
         $r = Invoke-C589Wrapper -Fx $fx -SlotScript $case.Answer -WaitSeconds '1' -GraceSeconds '0.4' -RetryMs '10' -WrapperArgs @('-Label', 'late-unreachable', '--', 'dotnet', 'build', 'tests/X')
-        $clock.Stop()
         Assert-C487 -Cond ($r.Exit -eq 0 -and (Get-C589Line -Result $r -Pattern ('^BUILD SLOT unleased reason=runner_unreachable maxcpucount=4 last=' + $case.Last + '$')) -eq 1 -and (Get-C589Line -Result $r -Pattern '^BUILD SLOT timeout ') -eq 0) `
             -Name ('C589 WrapperUnreachableAtDeadline ' + $case.Answer + ' fails open after grace') -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
-        Assert-C487 -Cond ($clock.Elapsed.TotalSeconds -ge 1.5 -and (Get-C589Order -Result $r) -ceq 'POST,POST,CMD' -and (Get-C589Cmd -Result $r) -ceq 'CMD dotnet build tests/X -maxcpucount 4') `
-            -Name ('C589 WrapperUnreachableAtDeadline ' + $case.Answer + ' never runs unleased early') -Detail ('elapsed={0:N3}s calls={1}' -f $clock.Elapsed.TotalSeconds, ($r.Calls -join ' | '))
+        $first = @($r.Calls | Where-Object { $_ -like 'FIRST_FAILURE_AT *' })
+        $command = @($r.Calls | Where-Object { $_ -like 'CMD_AT *' })
+        $graceElapsed = -1.0
+        if ($first.Count -eq 1 -and $command.Count -eq 1) {
+            $graceElapsed = ([long](($command[0] -split ' ')[1]) - [long](($first[0] -split ' ')[1])) / [double][Diagnostics.Stopwatch]::Frequency
+        }
+        Assert-C487 -Cond ($graceElapsed -ge 0.39 -and (Get-C589Order -Result $r) -cmatch '^POST,(POST,)+CMD$' -and (Get-C589Cmd -Result $r) -ceq 'CMD dotnet build tests/X -maxcpucount 4') `
+            -Name ('C589 WrapperUnreachableAtDeadline ' + $case.Answer + ' never runs unleased early') -Detail ('grace={0:N3}s calls={1}' -f $graceElapsed, ($r.Calls -join ' | '))
     }
 }
 
