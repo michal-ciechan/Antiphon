@@ -523,6 +523,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             CreatedAt = sent,
             SentAt = sent,
             DeliveryAttempts = 1,
+            LastDeliveryStartedAt = sent,
+            LastDeliveryBaselineSequence = await CurrentTranscriptMaxSequenceAsync(sid),
         });
         await db.SaveChangesAsync();
         return id;

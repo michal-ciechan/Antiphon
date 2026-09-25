@@ -28,7 +28,8 @@ internal static class TypedBodySpill
         AgentKind AgentKind = AgentKind.ClaudeCode,
         string? EnvelopePrefix = null,
         string? ApiFallback = null,
-        ILogger? Logger = null);
+        ILogger? Logger = null,
+        string? ChannelMarker = null);
 
     public readonly record struct Result(string ToType, bool Spilled)
     {
@@ -63,14 +64,24 @@ internal static class TypedBodySpill
         if (written is null)
         {
             if (!string.IsNullOrWhiteSpace(request.ApiFallback))
-                return new Result(BuildPointer(body, body.Length, request.ApiFallback, request.AgentKind, request.EnvelopePrefix), Spilled: true);
+                return PointerResult(request, body, request.ApiFallback);
             return Result.Inline(body);
         }
 
         var relative = string.IsNullOrWhiteSpace(request.RelativeSpillPath)
             ? written
             : request.RelativeSpillPath;
-        return new Result(BuildPointer(body, body.Length, relative, request.AgentKind, request.EnvelopePrefix), Spilled: true);
+        return PointerResult(request, body, relative);
+    }
+
+    private static Result PointerResult(Request request, string body, string where)
+    {
+        var pointer = BuildPointer(body, body.Length, where, request.AgentKind,
+            request.EnvelopePrefix, request.ChannelMarker);
+        if (request.ChannelMarker is not null && Encoding.UTF8.GetByteCount(pointer) > request.CeilingBytes)
+            throw new Exceptions.ValidationException(nameof(request.Body),
+                "The marked channel spill pointer exceeds this transport's single-write ceiling.");
+        return new Result(pointer, Spilled: true);
     }
 
     /// <summary>
@@ -80,6 +91,7 @@ internal static class TypedBodySpill
     /// </summary>
     public static string? TryReadChannelEnvelope(string? body)
     {
+        if (body is not null) body = ChannelPromptCorrelation.WithoutOuterMarker(body);
         if (string.IsNullOrEmpty(body) || body[0] != '[')
             return null;
 
@@ -117,7 +129,7 @@ internal static class TypedBodySpill
     }
 
     private static string BuildPointer(
-        string body, int fullLength, string where, AgentKind agentKind, string? envelopePrefix)
+        string body, int fullLength, string where, AgentKind agentKind, string? envelopePrefix, string? channelMarker)
     {
         var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var display = joins ? $"'{where}'" : where;
@@ -144,6 +156,9 @@ internal static class TypedBodySpill
 
         if (!string.IsNullOrWhiteSpace(envelopePrefix))
             pointer = envelopePrefix.Trim() + "\n\n" + pointer;
+
+        if (channelMarker is not null)
+            pointer = channelMarker + " " + pointer;
 
         return joins ? DelegationReportFormatter.FlattenForJoiningComposer(pointer) : pointer;
     }

@@ -29,6 +29,28 @@
   sessions remain unknown. CARD-0701 may replace this membership loader; it holds no transcript
   or working-state cache.
 
+- **Channel replies require complete attempt-scoped identity (CARD-0584).** Every newly
+  persisted Channel row carries a server-owned `[antiphon-channel:<queue-id:N>]` outer marker
+  before input. User prose cannot select it. Main routing, TTL and machine follow-up gate 2
+  use the same row-aware matcher: matching session, a submitted UserPrompt/QueuedUserPrompt,
+  literal full marker and complete body, never a 120/200-character head alone. Normalized
+  whitespace and whitespace deletion are permitted only for marked rows. Sequence must be
+  above LastDeliveryBaselineSequence; without that baseline, original native Timestamp must
+  meet LastDeliveryStartedAt minus the configured queue clock tolerance. CreatedAt is not
+  native time. A native timestamp before the recorded LastDeliveryGeneration is rejected;
+  a later standing resume does not invalidate an already completed prior-generation turn.
+  Late-confirm's later SentAt never replaces the original attempt floor.
+  Inline batches retain all member markers. Oversized batches persist the head's same complete
+  marked pointer on every member, preserving the chat envelope, owned file and retry bytes.
+  Marker bytes count toward transport ceilings. Only untouched legacy Pending rows may be
+  wrapped; attempted legacy rows keep full LF-normalized ordinal matching, with original
+  SentAt as a fallback only when attempt metadata is absent. Short raw legacy bodies need
+  whole-prompt equality, and multiple legacy candidates need common delivered-batch evidence.
+  An ambiguous or unmarked newline-elided answer stays owed for existing loss handling.
+  TTL requires a matching turn's own completed boundary and usable assistant text; later
+  unrelated turns cannot supply either. Machine header/task/check identity, specialist exact
+  equality, queue weak-body confirmation and input encoding remain separate contracts.
+
 - **A queued runner spill is owned by its message row (CARD-0647 follow-up).** The row
   persists the exact file body and a runner-relative path derived from its Id before
   the first Input, including SendNow. The bytes stay until a complete matching UserPrompt
@@ -476,7 +498,7 @@ cleanup authority. The observation remains before the repository lease.
 ### Gotcha #86
 
 - **A machine-triggered turn's plain text is a follow-up, gated by origin and opted out with `NO_REPLY`** (CARD-0338, family of #54). After the Channel-origin match/settle path has had first claim, `DispatchMachineTurnFollowUpAsync` publishes the turn as a follow-up `ChannelReply` to the session's newest Channel conversation when the owning prompt matches a **Sent** injection row of origin Delegation / Check / Scheduled (the default `ChannelBridge:MachineTurnTextOrigins`; empty = attachments only). Exact `NO_REPLY` with no attach markers is silence and does not claim. System stays marker-only unless explicitly listed. An unmatched human-shaped prompt never sends and raises no incident (the Warning incident stays marker-only). Do not read catalog `LastMessageAt` / chat silence as agent idleness — that column is inbound only; `LastReplyAt` is the last outbound reply, and `working` is transcript-derived. Pinned by `ChannelMachineTurnTextTests`, `ChannelBridgeTests` LastReplyAt stamp, `ChatChannelServiceTests`.
-- **Follow-up match is task id plus the queued body's first line, not 120-char body containment** (CARD-0397). Grok/PtyHost records `UserPrompt` with newlines joined out (`"header\n\nbody"` → `"headerbody"`), so a 120-char probe that crossed `\n\n` missed every short `[task done]` header. Delegation rows match `SourceTaskId`; Check rows match `SourceTaskId` or `ConversationKey` (`check:{guid:N}`); otherwise the first line of `Body` is the probe. Gate 2 does not silent-return on an injection-shaped owning prompt (`[task ` / `[check ` / `[antiphon-` / `[scheduled:` / `[System note from Antiphon:` / `[session `). An injection-shaped attach-marker miss is Error `UnmatchedInjection`, not Warning `UnmatchedHuman`. Do not change global `PromptsMatch` (Channel-origin dispatch and the TTL sweep stay newline-preserving). Pinned by `ChannelMachineTurnMatchTests`, `ChannelFollowUpAttachmentTests` flatten/Gate 2/`UnmatchedInjection` pins, `ChannelMachineTurnTextTests` flatten pin.
+- **Follow-up match is task id plus the queued body's first line, not 120-char body containment** (CARD-0397). Grok/PtyHost records `UserPrompt` with newlines joined out (`"header\n\nbody"` → `"headerbody"`), so a 120-char probe that crossed `\n\n` missed every short `[task done]` header. Delegation rows match `SourceTaskId`; Check rows match `SourceTaskId` or `ConversationKey` (`check:{guid:N}`); otherwise the first line of `Body` is the probe. Gate 2 does not silent-return on an injection-shaped owning prompt (`[task ` / `[check ` / `[antiphon-` / `[scheduled:` / `[System note from Antiphon:` / `[session `). An injection-shaped attach-marker miss is Error `UnmatchedInjection`, not Warning `UnmatchedHuman`. CARD-0584 replaces Channel attribution with its attempt-scoped whole-body rule; the machine header probe remains separate. Marked channel input is recognized before injection heuristics, including when it quotes task/check prose. Pinned by `ChannelMachineTurnMatchTests`, `ChannelFollowUpAttachmentTests` flatten/Gate 2/`UnmatchedInjection` pins, `ChannelMachineTurnTextTests` flatten pin.
 
 ### Gotcha #85
 

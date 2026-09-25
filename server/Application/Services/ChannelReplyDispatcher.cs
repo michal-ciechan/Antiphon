@@ -134,19 +134,24 @@ public sealed class ChannelReplyDispatcher
     private readonly Settings.ChannelBridgeSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ChannelReplyDispatcher> _logger;
+    private readonly TimeSpan _correlationTolerance;
 
     public ChannelReplyDispatcher(
         IServiceScopeFactory scopeFactory,
         IAntiphonMessagingProducer producer,
         IOptions<Settings.ChannelBridgeSettings> settings,
         TimeProvider timeProvider,
-        ILogger<ChannelReplyDispatcher> logger)
+        ILogger<ChannelReplyDispatcher> logger,
+        IOptions<Settings.SupervisionSettings>? supervision = null)
     {
         _scopeFactory = scopeFactory;
         _producer = producer;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _correlationTolerance = TimeSpan.FromSeconds(Math.Max(0,
+            (supervision?.Value ?? new Settings.SupervisionSettings()).DeliveryVerification
+                .UnobservableBaselineConfirmClockToleranceSeconds));
     }
 
     /// <summary>
@@ -315,8 +320,8 @@ public sealed class ChannelReplyDispatcher
         // are skipped. A BATCHED turn (several queued channel messages coalesced into one body)
         // matches — and settles — every constituent row by containment, exactly as the in-memory
         // queue did: the row's Body IS the string the bridge enqueued and the queue typed.
-        var normalizedTurn = Normalize(promptText);
-        var matches = open.Where(m => PromptsMatch(Normalize(m.Body), normalizedTurn)).ToList();
+        var matchedIds = (await MatchChannelRowsAsync(db, userPrompt, ct)).Select(m => m.Id).ToHashSet();
+        var matches = open.Where(m => matchedIds.Contains(m.Id)).ToList();
         if (matches.Count == 0)
         {
             // The 2026-08-17 hole. This used to be a bare `return` — the one place that knew a
@@ -707,37 +712,77 @@ public sealed class ChannelReplyDispatcher
     private async Task<(LossReason Reason, TranscriptEntry? Prompt, int AssistantChars)> ClassifyTtlLossAsync(
         AppDbContext db, SessionQueuedMessage message, CancellationToken ct)
     {
-        var sentAt = message.SentAt ?? message.CreatedAt;
         var candidates = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == message.AgentSessionId
-                && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                && (t.Timestamp ?? t.CreatedAt) >= sentAt)
-            .OrderBy(t => t.Sequence)
-            .ToListAsync(ct);
-
-        var normalizedBody = Normalize(message.Body);
-        var prompt = candidates.FirstOrDefault(t =>
-            t.Text is string text && PromptsMatch(normalizedBody, Normalize(text)));
+                && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
+            .OrderBy(t => t.Sequence).ToListAsync(ct);
+        TranscriptEntry? prompt = null;
+        foreach (var candidate in candidates)
+        {
+            if (!ChannelPromptCorrelation.Matches(message, candidate, _correlationTolerance, out _))
+                continue;
+            if ((await MatchChannelRowsAsync(db, candidate, ct)).Any(m => m.Id == message.Id))
+            {
+                prompt = candidate;
+                break;
+            }
+        }
         if (prompt is null)
             return (LossReason.StaleTtl, null, 0);
 
-        var hasTurnEnd = await db.TranscriptEntries.AnyAsync(
-            t => t.AgentSessionId == message.AgentSessionId
-                && t.Kind == TranscriptKinds.TurnEnd
-                && t.Sequence > prompt.Sequence, ct);
-        if (!hasTurnEnd)
+        var next = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
+            db, message.AgentSessionId, prompt.Sequence, ct);
+        var ends = await db.TranscriptEntries.Where(t => t.AgentSessionId == message.AgentSessionId
+            && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence
+            && (next == null || t.Sequence < next)).OrderBy(t => t.Sequence).ToListAsync(ct);
+        var completed = false;
+        foreach (var end in ends)
+        {
+            if ((await TranscriptTurnWindow.FindOwningPromptAsync(db, message.AgentSessionId, end.Sequence, ct))?.Id == prompt.Id)
+            {
+                completed = true;
+                break;
+            }
+        }
+        if (!completed)
             return (LossReason.TurnIncomplete, prompt, 0);
 
-        var (_, entries) = await QueryTurnWindowAsync(
-            db, message.AgentSessionId, prompt.Sequence, afterSeq: prompt.Sequence, ct);
-        var assistantChars = entries
-            .Where(e => !string.IsNullOrWhiteSpace(e.Text))
-            .Sum(e => e.Text!.Length);
-        if (assistantChars == 0)
+        var (text, _, apiError) = await ExtractTurnResponseAsync(db, message.AgentSessionId, prompt.Sequence, ct);
+        if (apiError || string.IsNullOrWhiteSpace(text))
             return (LossReason.TurnIncomplete, prompt, 0);
+        return (LossReason.TurnUnmatched, prompt, text.Length);
+    }
 
-        return (LossReason.TurnUnmatched, prompt, assistantChars);
+    // Include settled rows: they still own their turn after a process restart. Limit candidates
+    // to this session and the attempt window before looking at text, including in machine gate 2.
+    private async Task<List<SessionQueuedMessage>> MatchChannelRowsAsync(
+        AppDbContext db, TranscriptEntry prompt, CancellationToken ct)
+    {
+        var latestStart = prompt.Timestamp?.Add(_correlationTolerance);
+        var rows = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == prompt.AgentSessionId && m.Origin == QueuedMessageOrigin.Channel
+                && m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0
+                && ((m.LastDeliveryBaselineSequence != null && m.LastDeliveryBaselineSequence < prompt.Sequence)
+                    || (m.LastDeliveryBaselineSequence == null && latestStart != null
+                        && (m.LastDeliveryStartedAt ?? m.SentAt) <= latestStart)))
+            .ToListAsync(ct);
+        var matches = new List<SessionQueuedMessage>();
+        foreach (var row in rows)
+        {
+            if (ChannelPromptCorrelation.Matches(row, prompt, _correlationTolerance, out var reason))
+                matches.Add(row);
+            else
+                _logger.LogDebug("Channel correlation {MessageId} on session {SessionId}: {Reason}; prompt {Sequence}, floor {Floor}",
+                    row.Id, row.AgentSessionId, reason, prompt.Sequence, row.LastDeliveryBaselineSequence);
+        }
+        var legacy = matches.Where(m => ChannelPromptCorrelation.OpeningMarker(m.Body) is null).ToList();
+        if (legacy.Count > 1 && !legacy.All(m => ChannelPromptCorrelation.SameDeliveredBatch(legacy[0], m)))
+        {
+            _logger.LogWarning("Ambiguous legacy channel correlation on session {SessionId}, prompt {Sequence}: {Count} rows remain unclaimed",
+                prompt.AgentSessionId, prompt.Sequence, legacy.Count);
+            matches.RemoveAll(m => legacy.Contains(m));
+        }
+        return matches;
     }
 
     /// <summary>
@@ -826,7 +871,7 @@ public sealed class ChannelReplyDispatcher
                     + $"unanswered because {why}.";
                 if (reason == LossReason.TurnUnmatched && unmatchedPrompt?.Text is string promptBody)
                 {
-                    var excerpt = ColumnText.Clip(Normalize(promptBody), 80);
+                    var excerpt = ColumnText.Clip(Normalize(ChannelPromptCorrelation.RemoveMarkers(promptBody)), 80);
                     incidentMessage += $" Unmatched prompt: \"{excerpt}\".";
                 }
                 incidentMessage += " Someone in that chat asked a question and got silence.";
@@ -925,6 +970,7 @@ public sealed class ChannelReplyDispatcher
     private (string Text, IReadOnlyList<OutboundAttachment> Attachments) PrepareReplyBody(
         string responseText, Guid sessionId, IReadOnlyList<string>? extraPaths = null)
     {
+        responseText = ChannelPromptCorrelation.RemoveMarkers(responseText);
         var (text, explicitPaths) = ChannelContracts.ExtractAttachments(responseText);
         var paths = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1163,14 +1209,11 @@ public sealed class ChannelReplyDispatcher
 
         // Gate 2: the main path already owns this turn (Channel-origin prompt match). Its
         // attachments went with it, or CARD-0071 / NO_REPLY withheld them on purpose.
-        var channelBodies = await db.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel)
-            .Select(m => m.Body)
-            .ToListAsync(ct);
-        // Injection-shaped prompts skip this return: a short Channel body ("done") is a
-        // substring of `[task … done]` and would otherwise silent-drop a follow-up (CARD-0397).
-        if (!ChannelContracts.IsAntiphonInjectionPrompt(promptText)
-            && channelBodies.Any(b => PromptsMatch(Normalize(b), normalizedTurn)))
+        if ((await MatchChannelRowsAsync(db, userPrompt, ct)).Count > 0)
+            return;
+        // A marked channel prompt that failed completeness/floors must not fall through to a
+        // quoted task/check header and publish as a machine note.
+        if (promptText.Contains("[antiphon-channel:", StringComparison.Ordinal))
             return;
 
         var candidates = await db.SessionQueuedMessages
@@ -1320,7 +1363,7 @@ public sealed class ChannelReplyDispatcher
     private static bool MatchesHeaderLine(SessionQueuedMessage row, string normalizedTurn)
     {
         var header = ChannelContracts.HeaderProbe(row.Body);
-        return header.Length > 0 && PromptsMatch(header, normalizedTurn);
+        return header.Length > 0 && MachineHeaderProbeMatches(header, normalizedTurn);
     }
 
     private bool AdmitsMachineTurnText(IReadOnlyList<SessionQueuedMessage> matches)
@@ -1556,19 +1599,9 @@ public sealed class ChannelReplyDispatcher
         return (nextPromptSeq, entries);
     }
 
-    // The delivered prompt and the transcript's UserPrompt should be byte-identical, but hooks can
-    // append suffixes and long prompts may be normalised — match on a generous probe. EVERY match
-    // settles: a batched turn's body contains several owed prompts, and each must be closed by the
-    // one reply. Non-matches simply stay owed (there is no queue to preserve order in any more).
-    private static bool PromptsMatch(string pending, string turn)
-    {
-        var probe = pending.Length <= 120 ? pending : pending[..120];
-        // Containment, not prefix: an unbatched turn IS the pending prompt (plus possible hook
-        // suffixes); a batched turn embeds it after the batch markers. A human-typed turn contains
-        // neither — the 120-char enveloped probe ([Telegram "…" — …] …) is not something a human
-        // types into the terminal by accident.
-        return turn.Contains(probe, StringComparison.Ordinal);
-    }
+    // The independent machine-note header contract (CARD-0397), never channel attribution.
+    private static bool MachineHeaderProbeMatches(string header, string turn) =>
+        turn.Contains(header.Length <= 120 ? header : header[..120], StringComparison.Ordinal);
 
     private static string Normalize(string s) =>
         s.ReplaceLineEndings("\n").Trim();
