@@ -13,11 +13,7 @@ public sealed class RemoteLaunchAlreadyExitedException : Exception
 {
     public RemoteLaunchAlreadyExitedException(
         string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason)
-        : base(string.Create(CultureInfo.InvariantCulture,
-            $"Remote launch of session {sessionId} on runner '{runnerId}' already ran and exited before its "
-            + $"acknowledgement arrived (exit code {exitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}, "
-            + $"reason {(string.IsNullOrWhiteSpace(runnerExitReason) ? exitReason.ToString() : runnerExitReason)}); "
-            + "the same generation is not started again."))
+        : base(Describe(runnerId, sessionId, exitCode, exitReason, runnerExitReason))
     {
         RunnerId = runnerId;
         SessionId = sessionId;
@@ -29,4 +25,13 @@ public sealed class RemoteLaunchAlreadyExitedException : Exception
     public Guid SessionId { get; }
     public int? ExitCode { get; }
     public AgentExitReason ExitReason { get; }
+
+    private static string Describe(
+        string runnerId, Guid sessionId, int? exitCode, AgentExitReason exitReason, string runnerExitReason)
+    {
+        var code = exitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown";
+        var reason = string.IsNullOrWhiteSpace(runnerExitReason) ? exitReason.ToString() : runnerExitReason;
+        return $"Remote launch of session {sessionId} on runner '{runnerId}' already ran and exited before its "
+            + $"acknowledgement arrived (exit code {code}, reason {reason}); the same generation is not started again.";
+    }
 }
