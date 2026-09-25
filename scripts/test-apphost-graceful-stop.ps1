@@ -314,12 +314,19 @@ function Test-T4 {
 }
 
 function Test-T5 {
+    # Unbound named arguments are ignored without CmdletBinding, so a missing
+    # switch still kills and leaves no graceful trace. The parameter has to exist.
+    $declared = Select-String -LiteralPath (Join-Path $here 'restart-apphost.ps1') -Pattern 'SkipGracefulStop' -SimpleMatch
     $fx = New-C716Fixture -Config @{ gracefulClass = 'accepted'; gracefulPid = 4242; gracefulAlivePolls = 2 }
     try {
         $r = Invoke-C716Restart -Root $fx.Root -Arguments @('-TimeoutSec', '8', '-SkipGracefulStop')
-        $ok = ((Count-C716Kind $r.Trace 'graceful') -eq 0) -and ((Count-C716Kind $r.Trace 'stop-tree') -ge 1)
+        $ok = ($null -ne $declared) -and
+            ((Count-C716Kind $r.Trace 'graceful') -eq 0) -and
+            ((Count-C716Kind $r.Trace 'stop-tree') -ge 1)
         if ($ok) { Write-Pass 'T-5' }
-        else { Write-Fail 'T-5' ("graceful=$(Count-C716Kind $r.Trace 'graceful') stopTree=$(Count-C716Kind $r.Trace 'stop-tree') exit=$($r.ExitCode); $($r.Text)") }
+        else {
+            Write-Fail 'T-5' ("declared=$([bool]($null -ne $declared)) graceful=$(Count-C716Kind $r.Trace 'graceful') stopTree=$(Count-C716Kind $r.Trace 'stop-tree') exit=$($r.ExitCode); $($r.Text)")
+        }
     } catch {
         Write-Fail 'T-5' $_.Exception.Message
     } finally {
@@ -363,8 +370,11 @@ function Test-T7 {
         if ($null -ne $errs) { $n = @($errs).Count }
         if ($n -ne 0) { $reasons += ('pwsh parse {0} errors={1}' -f (Split-Path $f -Leaf), $n) }
     }
-    $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    if (Test-Path -LiteralPath $ps51) {
+    $ps51 = $null
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+    if ($ps51 -and (Test-Path -LiteralPath $ps51)) {
         foreach ($f in $files) {
             $cmd = '& { $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile(''' + $f.Replace('''', '''''') + ''', [ref]$null, [ref]$e); if ($null -eq $e) { 0 } else { @($e).Count } }'
             $out = & $ps51 -NoProfile -NonInteractive -Command $cmd
