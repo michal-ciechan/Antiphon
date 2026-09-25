@@ -99,7 +99,9 @@ public partial class CardFileBoardLookupTests
         using var hosted = new CardTaskFileSyncHostedService(scopes,
             Options.Create(new CardFileSyncSettings { Enabled = true, IntervalSeconds = 60, OptedOutReinspectionMinutes = 15 }),
             NullLogger<CardTaskFileSyncHostedService>.Instance, _lookup, time);
+        var beforeStart = _lookup.Reinspection;
         await hosted.StartAsync(default);
+        await WaitForReinspectionAsync(beforeStart);
         (await PublishingService(prepared).SyncAllAsync()).Single().Policy!.RemovalPending.ShouldBeFalse();
         (await PublishingService(prepared).SyncAllAsync()).ShouldBeEmpty();
         await LeaveHeadOnlyExportAsync(prepared);
