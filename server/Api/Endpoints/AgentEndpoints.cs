@@ -114,6 +114,8 @@ public static class AgentEndpoints
             return Results.Ok(await service.UpdateAsync(id, request, cancellationToken));
         });
 
+        // CARD-0691 D-5: stops the agent's live session first; 409 agent_delete_session_live when it
+        // is still live afterwards (the row is kept, never orphaning the process).
         agents.MapDelete("/{id:guid}", async (
             Guid id,
             AgentService service,

@@ -805,6 +805,8 @@ public sealed class AgentService
                 throw new ConflictException("Stop the specialist and let its owned work settle before deleting it.", "specialist_delete_busy");
         }
 
+        await StopLiveSessionBeforeDeleteAsync(agent, ct);
+
         // Release the agent's hold on any cards and drop its workflow runs. CardWorkflowRun.AgentId
         // uses Restrict, so the runs must be removed explicitly before the agent can be deleted.
         var now = UtcNow();
@@ -843,6 +845,42 @@ public sealed class AgentService
         foreach (var card in assignedCards)
             await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
     }
+
+    /// <summary>
+    /// CARD-0691 D-5: an agent row is its session's only owner (<c>AgentSession</c> has no FK to it, just
+    /// <c>PersistentSessionId</c>), so deleting the row while the session runs leaves a process nothing
+    /// will stop. Stop a Starting/Running/Stopping session first as the operator's own request, and
+    /// refuse with 409 <c>agent_delete_session_live</c> when it is still live afterwards (the stop
+    /// threw, did not take, or no stopper is wired) — the row is kept rather than orphaning it.
+    /// </summary>
+    private async Task StopLiveSessionBeforeDeleteAsync(Agent agent, CancellationToken ct)
+    {
+        if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId)
+            || !await SessionIsLiveAsync(sessionId, ct))
+            return;
+
+        if (_sessions is not null)
+        {
+            try
+            {
+                await _sessions.KillAsync(sessionId, SessionTerminationSource.OperatorRequest, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Stopping session {SessionId} before deleting agent '{Name}' failed",
+                    sessionId, agent.Name);
+            }
+        }
+
+        if (await SessionIsLiveAsync(sessionId, ct))
+            throw new ConflictException(
+                $"Agent '{agent.Name}' still has a live session ({sessionId}): it could not be stopped, so the "
+                + "agent was not deleted. Stop the session, then delete the agent.",
+                "agent_delete_session_live");
+    }
+
+    private Task<bool> SessionIsLiveAsync(Guid sessionId, CancellationToken ct) =>
+        _db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId && LiveSessionStatuses.Contains(s.Status), ct);
 
     public async Task<AgentDetailDto> AssignCardAsync(Guid id, AssignAgentCardRequest request, CancellationToken ct)
     {
