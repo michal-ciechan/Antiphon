@@ -373,6 +373,40 @@ public class CodexTranscriptNormalizerTests
         await Assert.That(first.Select(p => p.Uuid).Distinct().Count()).IsEqualTo(first.Count);
     }
 
+    /// <summary>
+    /// CARD-0714: compaction, response_item and unknown metadata inserted around a captured TUI
+    /// turn are synthetic controls. They must not create a prompt or change the real identities.
+    /// </summary>
+    [Test]
+    public async Task C714_Metadata_cannot_create_a_housekeeping_prompt()
+    {
+        var baseline = NormalizeFixture("codex-tui-turn.jsonl")
+            .Where(p => p.Kind is TranscriptKinds.UserPrompt or TranscriptKinds.AssistantText or TranscriptKinds.TurnEnd)
+            .Select(p => (p.Kind, p.Uuid, p.Text, p.ApiCallId))
+            .ToList();
+        var lines = ReadFixtureLines("codex-tui-turn.jsonl").ToList();
+        lines.InsertRange(2,
+        [
+            """{"timestamp":"2026-08-20T15:16:31.000Z","type":"event_msg","payload":{"type":"context_compacted","synthetic":"C714-control"}}""",
+            """{"timestamp":"2026-08-20T15:16:31.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"synthetic duplicate user C714-control"}]}}""",
+            """{"timestamp":"2026-08-20T15:16:31.200Z","type":"compacted","payload":{"synthetic":"C714-control"}}""",
+            """{"timestamp":"2026-08-20T15:16:31.300Z","type":"unknown_metadata","payload":{"synthetic":"C714-control"}}""",
+            """{"timestamp":"2026-08-20T15:16:31.400Z","type":"event_msg","payload":{"type":"task_started","synthetic":"C714-control"}}""",
+            """{"timestamp":"2026-08-20T15:16:31.500Z","type":"turn_context","payload":{"synthetic":"C714-control"}}""",
+        ]);
+
+        var normalizer = new CodexTranscriptNormalizer();
+        var parts = new List<TranscriptPart>();
+        foreach (var line in lines)
+            parts.AddRange(normalizer.Normalize(line));
+
+        parts.Where(p => p.Kind is TranscriptKinds.UserPrompt or TranscriptKinds.AssistantText or TranscriptKinds.TurnEnd)
+            .Select(p => (p.Kind, p.Uuid, p.Text, p.ApiCallId))
+            .ShouldBe(baseline);
+        parts.ShouldNotContain(p => p.Text != null && p.Text.Contains("C714-control", StringComparison.Ordinal));
+        await Task.CompletedTask;
+    }
+
     /// <summary>A half-written line while Codex appends is normal, not an error.</summary>
     [Test]
     public async Task Malformed_and_empty_lines_are_skipped_without_throwing()

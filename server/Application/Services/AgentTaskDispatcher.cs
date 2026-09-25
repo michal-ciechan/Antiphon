@@ -1937,6 +1937,8 @@ public sealed class AgentTaskDispatcher
 
             string reason = "";
             var withholdKill = false;
+            var arm2Committed = false;
+            var arm2NotificationId = Guid.Empty;
             if (!started || briefNeverTyped)
             {
                 // CARD-0085: an empty TranscriptEntries table is not evidence the work did not
@@ -1999,21 +2001,66 @@ public sealed class AgentTaskDispatcher
                         && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)
                     .Select(i => new { i.SessionId, i.CreatedAt })
                     .ToListAsync(ct);
-                if (!uncorrelated.Any(i =>
-                    UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt)))
-                    continue;
+                var eligibleIncident = uncorrelated.Any(i =>
+                    UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt));
 
-                // The opposite failure to the one above, and the one that actually stranded three
-                // tasks overnight (2026-08-11): the session ran, worked and REPORTED, but no turn
-                // could be matched to the task, so nothing ever settled it. Starting is not the
-                // test of a healthy task — settling is. Without this branch the check above waves
-                // it through forever on the strength of a transcript it cannot use.
-                // CARD-0117 S1: scoped to THIS task via UncorrelatedReportEvidence, not the session.
-                reason =
+                // CARD-0714: recheck after catch-up, before an incident is allowed to kill.
+                // A marked report with no incident is settled here too. A missing reply service
+                // defers arm 2 instead of trusting the historical incident.
+                if (DelayBeforeArm2RecheckAsync is { } beforeRecheck)
+                    await beforeRecheck(sessionId, ct);
+
+                if (_replies is null)
+                {
+                    if (eligibleIncident)
+                    {
+                        _logger.LogWarning(
+                            "Task {ShortId}: delivery watchdog deferring arm 2; reply attribution is unavailable for a fresh verdict",
+                            DelegationReportFormatter.Short(task.Id));
+                    }
+
+                    continue;
+                }
+
+                var observed = new Arm2Attempt(
+                    task.Id, task.AgentSessionId, task.ConcurrencyToken, task.DispatchedAt, task.RepliedAtSequence);
+                var wrote = false;
+                var arm2Reason =
                     $"Delegate reported but the result could not be attributed: {(int)timeout.TotalMinutes} "
                     + "minutes after dispatch the session has ended a turn with a report whose prompt "
                     + "carries no task marker (most likely the brief was mangled in delivery). The work "
                     + $"may be real — read session {sessionId} before re-running this task.";
+                var notificationIdForArm2 = Guid.NewGuid();
+                try
+                {
+                    await _replies.RecheckForDeliveryWatchdogAsync(
+                        sessionId,
+                        task.Id,
+                        async ct2 =>
+                        {
+                            if (!eligibleIncident)
+                                return;
+                            if (DelayBeforeArm2ConditionalWriteAsync is { } beforeWrite)
+                                await beforeWrite(sessionId, ct2);
+                            wrote = await TryFailArm2ConditionalAsync(
+                                task, arm2Reason, notificationIdForArm2, observed, ct2);
+                        },
+                        ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex, "Task {ShortId}: attribution recheck failed; withholding arm 2",
+                        DelegationReportFormatter.Short(task.Id));
+                    continue;
+                }
+
+                if (!wrote)
+                    continue;
+
+                reason = arm2Reason;
+                arm2Committed = true;
+                arm2NotificationId = notificationIdForArm2;
             }
 
             // CARD-0117 D9: negative transcript evidence about a mid-turn session is not grounds
@@ -2027,8 +2074,12 @@ public sealed class AgentTaskDispatcher
 
             // The Failed commit must carry the caller's immutable delivery obligation.
             // Queue insertion and even this process may fail after that commit.
-            var notificationId = Guid.NewGuid();
-            await FailAsync(task, reason, ct, deliveryFailureNotificationId: notificationId);
+            // Arm 2 already committed inside the settle lock; kill and delivery stay outside it.
+            var notificationId = arm2Committed ? arm2NotificationId : Guid.NewGuid();
+            if (!arm2Committed)
+                await FailAsync(task, reason, ct, deliveryFailureNotificationId: notificationId);
+            else
+                await _db.Entry(task).ReloadAsync(ct);
 
             if (!withholdKill)
             {
@@ -2742,6 +2793,28 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     internal Func<Guid, CancellationToken, Task>? CatchUpOverride { get; set; }
 
+    /// <summary>The reply singleton this dispatcher settles through. Tests share it with the watchdog.</summary>
+    internal AgentTaskReplyService? Replies => _replies;
+
+    /// <summary>
+    /// Test hook: after a started task is chosen for arm 2, before the settle lock is taken
+    /// (CARD-0714). Null in production.
+    /// </summary>
+    internal Func<Guid, CancellationToken, Task>? DelayBeforeArm2RecheckAsync { get; set; }
+
+    /// <summary>
+    /// Test hook: after a fresh uncorrelated verdict, still inside the settle lock, before the
+    /// arm-2 conditional update (CARD-0714). Null in production.
+    /// </summary>
+    internal Func<Guid, CancellationToken, Task>? DelayBeforeArm2ConditionalWriteAsync { get; set; }
+
+    private readonly record struct Arm2Attempt(
+        Guid TaskId,
+        Guid? SessionId,
+        Guid Token,
+        DateTime? DispatchedAt,
+        long? RepliedAtSequence);
+
     /// <summary>
     /// CARD-0153 test seam. Production is null. Tests set this so the ninth clock throws and
     /// <see cref="TickResult.SweepFailures"/> can be shown to count it without taking the other
@@ -3331,23 +3404,67 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
-            var end = await _db.TranscriptEntries.AsNoTracking()
-                .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd)
-                .OrderByDescending(e => e.Sequence)
-                .Select(e => new { e.Sequence, e.ApiCallId, e.CreatedAt, e.Kind, e.StopReason })
-                .FirstOrDefaultAsync(ct);
-            if (end is null)
-                continue; // no boundary at all — nothing has been deferred here
-
-            var owningPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(_db, sessionId, end.Sequence, ct);
-            if (await GrokRulesRefreshService.IsRefreshPromptAsync(_db, sessionId, owningPrompt?.Text, ct))
+            if (!tasksBySession.TryGetValue(sessionId, out var openForSelection))
                 continue;
 
-            // CARD-0159: a cancelled TurnEnd is an idle boundary, never a report. Re-invoking
-            // settlement on it after the grace would recreate the incident — Succeeded on the
-            // interrupted turn's narration. Skip both arms; the task stays Working.
-            if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
+            (long Sequence, string? ApiCallId, DateTime CreatedAt, string? Kind, string? StopReason)? end = null;
+            TaskReportSelection? sweepSelection = null;
+            Guid? sweepTaskId = null;
+            foreach (var open in openForSelection)
+            {
+                var taskRow = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == open.Id, ct);
+                if (taskRow is null)
+                    continue;
+
+                TaskReportSelection selection;
+                try
+                {
+                    selection = await TaskReportTurnSelector.SelectAsync(_db, sessionId, taskRow, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogDebug(
+                        ex, "Task {ShortId}: deferred sweep could not attribute a boundary; withholding this pass",
+                        DelegationReportFormatter.Short(open.Id));
+                    continue;
+                }
+
+                if (selection.Kind == TaskReportSelectionKind.PreReply)
+                {
+                    _logger.LogDebug(
+                        "Task {ShortId}: marked report at boundary {Sequence} predates the reply watermark #{Watermark}; not re-handing",
+                        DelegationReportFormatter.Short(open.Id), selection.BoundarySequence, taskRow.RepliedAtSequence);
+                    continue;
+                }
+
+                if (selection.Kind is not (TaskReportSelectionKind.Selected or TaskReportSelectionKind.Uncorrelated)
+                    || selection.BoundarySequence is not long boundarySequence)
+                    continue;
+
+                var row = await _db.TranscriptEntries.AsNoTracking()
+                    .Where(e => e.AgentSessionId == sessionId && e.Sequence == boundarySequence)
+                    .Select(e => new { e.Sequence, e.ApiCallId, e.CreatedAt, e.Kind, e.StopReason })
+                    .FirstOrDefaultAsync(ct);
+                // A cancelled task boundary is idle, never a report. Housekeeping cancels were
+                // already skipped by the selector.
+                if (row is null || !TranscriptKinds.IsReportBoundary(row.Kind, row.StopReason))
+                    continue;
+
+                end = (row.Sequence, row.ApiCallId, row.CreatedAt, row.Kind, row.StopReason);
+                sweepSelection = selection;
+                sweepTaskId = taskRow.Id;
+                _logger.LogDebug(
+                    "Task {TaskId} sweep selected boundary {BoundarySequence} owning prompt {PromptSequence} skipped {Skipped}",
+                    taskRow.Id,
+                    selection.BoundarySequence,
+                    selection.EffectiveOwnerSequence,
+                    string.Join(",", selection.Skipped.Select(s => s.Sequence.ToString() + ":" + s.Reason)));
+                break;
+            }
+
+            if (end is null || sweepSelection is null)
                 continue;
+            var boundary = end.Value;
 
             var now = UtcNow();
             var rehandSeconds = _settings.ReportSweepRehandSeconds;
@@ -3357,40 +3474,35 @@ public sealed class AgentTaskDispatcher
             // not after SubagentGraceMinutes. Identity, not a prose heuristic.
             if (tasksBySession.TryGetValue(sessionId, out var sessionTasks))
             {
-                var markedTexts = await _db.TranscriptEntries.AsNoTracking()
-                    .Where(e => e.AgentSessionId == sessionId
-                        && e.Kind == TranscriptKinds.AssistantText
-                        && e.Text != null
-                        && e.Text.Contains("[antiphon-report:"))
-                    .Select(e => e.Text!)
-                    .ToListAsync(ct);
+                var markedTexts = sweepSelection.Kind == TaskReportSelectionKind.Selected
+                    ? await TaskReportTurnSelector.LoadResponseTextsAsync(
+                        _db, sessionId, sweepSelection, boundary.ApiCallId, ct)
+                    : [];
                 Guid? markedTaskId = null;
-                foreach (var candidate in sessionTasks)
+                if (sweepTaskId is Guid selectedId)
                 {
                     foreach (var text in markedTexts)
                     {
-                        if (!DelegationReportFormatter.TryFindReportToken(candidate.Id, text, out _))
+                        if (!DelegationReportFormatter.TryFindReportToken(selectedId, text, out _))
                             continue;
-                        markedTaskId = candidate.Id;
+                        markedTaskId = selectedId;
                         break;
                     }
-                    if (markedTaskId is not null)
-                        break;
                 }
 
                 if (markedTaskId is Guid tid)
                 {
                     var marked = sessionTasks.First(t => t.Id == tid);
-                    if (marked.RepliedAtSequence is long replyWatermark && end.Sequence <= replyWatermark)
+                    if (marked.RepliedAtSequence is long replyWatermark && boundary.Sequence <= replyWatermark)
                     {
                         _logger.LogDebug(
                             "Task {ShortId}: marked report at boundary {Sequence} predates the reply watermark #{Watermark}; not re-handing",
-                            DelegationReportFormatter.Short(tid), end.Sequence, replyWatermark);
+                            DelegationReportFormatter.Short(tid), boundary.Sequence, replyWatermark);
                         continue;
                     }
 
                     if (_sweepMarks is not null
-                        && !_sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
+                        && !_sweepMarks.ShouldHandOff(sessionId, boundary.Sequence, lastEntryAt: null, now, rehandSeconds))
                     {
                         continue;
                     }
@@ -3411,16 +3523,16 @@ public sealed class AgentTaskDispatcher
                         _logger.LogWarning(
                             "Task {ShortId}: marked report already in transcript at boundary {Sequence} — "
                             + "settlement already in flight, not re-entering",
-                            DelegationReportFormatter.Short(tid), end.Sequence);
-                        _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
+                            DelegationReportFormatter.Short(tid), boundary.Sequence);
+                        _sweepMarks?.RecordHandOff(sessionId, boundary.Sequence, lastEntryAt: null, now);
                         continue;
                     }
 
                     _logger.LogWarning(
                         "Task {ShortId}: marked report already in transcript at boundary {Sequence} — "
                         + "re-invoking settlement",
-                        DelegationReportFormatter.Short(tid), end.Sequence);
-                    _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
+                        DelegationReportFormatter.Short(tid), boundary.Sequence);
+                    _sweepMarks?.RecordHandOff(sessionId, boundary.Sequence, lastEntryAt: null, now);
                     await _replies.OnTurnEndAsync(sessionId, ct);
                     swept++;
                     continue;
@@ -3430,7 +3542,7 @@ public sealed class AgentTaskDispatcher
             // (1) The turn-ending response never wrote its own text. No id to wait on, or still
             // inside the grace, means nothing was deferred. CreatedAt, never the record's
             // Timestamp: that one is backdated up to 30 s (CARD-0046).
-            if (finalMessageArmed && end.ApiCallId is string apiCallId && end.CreatedAt <= cutoff)
+            if (finalMessageArmed && boundary.ApiCallId is string apiCallId && boundary.CreatedAt <= cutoff)
             {
                 var landed = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
                     e => e.AgentSessionId == sessionId
@@ -3439,14 +3551,14 @@ public sealed class AgentTaskDispatcher
                 if (!landed)
                 {
                     if (_sweepMarks is null
-                        || _sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
+                        || _sweepMarks.ShouldHandOff(sessionId, boundary.Sequence, lastEntryAt: null, now, rehandSeconds))
                     {
                         _logger.LogWarning(
                             "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
                             + "settling on what the turn produced",
                             sessionId, _settings.FinalMessageGraceSeconds);
                         await _replies.OnTurnEndAsync(sessionId, ct);
-                        _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
+                        _sweepMarks?.RecordHandOff(sessionId, boundary.Sequence, lastEntryAt: null, now);
                         swept++;
                     }
                     continue;
@@ -3470,7 +3582,7 @@ public sealed class AgentTaskDispatcher
                     if (now - nudgedAt < TimeSpan.FromMinutes(_settings.UnmarkedWaitingMinutes))
                         continue;
                     if (candidate.ReportNudgedSequence is not long nudgedSeq
-                        || end.Sequence != nudgedSeq)
+                        || boundary.Sequence != nudgedSeq)
                         continue;
                     if (await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
                         continue;
@@ -3480,7 +3592,7 @@ public sealed class AgentTaskDispatcher
                         + "at boundary {Sequence} — blocking as UnmarkedWaiting",
                         DelegationReportFormatter.Short(candidate.Id),
                         _settings.UnmarkedWaitingMinutes,
-                        end.Sequence);
+                        boundary.Sequence);
                     await _replies.BlockUnmarkedWaitingAsync(sessionId, ct);
                     swept++;
                     blockedWaiting = true;
@@ -3502,14 +3614,14 @@ public sealed class AgentTaskDispatcher
             if (lastEntryAt is DateTime quietSince && quietSince <= subagentCutoff)
             {
                 if (_sweepMarks is null
-                    || _sweepMarks.ShouldHandOff(sessionId, end.Sequence, quietSince, now, rehandSeconds))
+                    || _sweepMarks.ShouldHandOff(sessionId, boundary.Sequence, quietSince, now, rehandSeconds))
                 {
                     _logger.LogDebug(
                         "Session {SessionId}: silent for {Grace}+ minutes — re-checking settlement for "
                         + "background subagents that never reported",
                         sessionId, _settings.SubagentGraceMinutes);
                     await _replies.OnTurnEndAsync(sessionId, ct);
-                    _sweepMarks?.RecordHandOff(sessionId, end.Sequence, quietSince, now);
+                    _sweepMarks?.RecordHandOff(sessionId, boundary.Sequence, quietSince, now);
                     swept++;
                 }
             }
@@ -5826,6 +5938,80 @@ public sealed class AgentTaskDispatcher
     {
         var observed = await _progressGit!.ObserveExactRefAsync(repo, fullRef, null, taskId, ct);
         return new ProgressRemoteBaseline(observed.State, observed.Sha, observed.EndpointFingerprint, observed.Reason);
+    }
+
+    /// <summary>
+    /// Arm 2's failure commit (CARD-0714). <see cref="AgentTask.ConcurrencyToken"/> is not an EF
+    /// concurrency token, so the update itself compares status, token, session, dispatch time
+    /// and reply watermark. Zero rows rolls back with no event, notification, release or kill.
+    /// </summary>
+    private async Task<bool> TryFailArm2ConditionalAsync(
+        AgentTask task, string reason, Guid notificationId, Arm2Attempt observed, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var newToken = Guid.NewGuid();
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var updated = await _db.AgentTasks
+            .Where(t => t.Id == observed.TaskId
+                && t.Status == AgentTaskStatus.Dispatched
+                && t.ConcurrencyToken == observed.Token
+                && t.AgentSessionId == observed.SessionId
+                && t.DispatchedAt == observed.DispatchedAt
+                && t.RepliedAtSequence == observed.RepliedAtSequence)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, AgentTaskStatus.Failed)
+                .SetProperty(t => t.FailureReason, reason)
+                .SetProperty(t => t.CompletedAt, now)
+                .SetProperty(t => t.ConcurrencyToken, newToken), ct);
+        if (updated != 1)
+        {
+            await tx.RollbackAsync(ct);
+            _logger.LogInformation(
+                "Task {ShortId}: arm 2 conditional update matched no row; leaving the current attempt",
+                DelegationReportFormatter.Short(observed.TaskId));
+            return false;
+        }
+
+        _db.Entry(task).State = EntityState.Detached;
+        task.Status = AgentTaskStatus.Failed;
+        task.FailureReason = reason;
+        task.CompletedAt = now;
+        task.ConcurrencyToken = newToken;
+
+        var failedEvent = new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Failed,
+            Detail = reason.Length <= 4000 ? reason : reason[..4000],
+            At = now,
+        };
+        _db.AgentTaskEvents.Add(failedEvent);
+        if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
+        {
+            var note = DelegationReportFormatter.BuildCompletionNote(
+                task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+            _db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = notificationId,
+                TaskId = task.Id,
+                SourceEventId = failedEvent.Id,
+                Kind = LandNotificationKind.DeliveryFailure,
+                ReplyTo = task.ReplyTo,
+                ParentSessionId = task.ParentSessionId,
+                Body = note.Body,
+                ContentDigest = DelegationNoteDigest.Compute(reason),
+                CreatedAt = now,
+                NextAttemptAt = now,
+                State = LandNotificationState.Queued,
+            });
+        }
+
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        _db.AgentTasks.Attach(task);
+        await ReleaseTaskConsumersAsync(task);
+        return true;
     }
 
     private async Task FailAsync(

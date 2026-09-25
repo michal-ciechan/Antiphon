@@ -602,10 +602,25 @@ public sealed class ApiErrorRecoveryService
     private static async Task<bool> IsWallSupersededAsync(
         AppDbContext db, Guid sessionId, long stubSequence, CancellationToken ct)
     {
+        var sessionKind = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct) ?? AgentKind.Raw;
+        var rulesIds = (await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.System
+                && m.RulesRefreshKey != null)
+            .Select(m => m.Id)
+            .ToListAsync(ct)).ToHashSet();
+
         var later = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId && t.Sequence > stubSequence)
+            .OrderBy(t => t.Sequence)
             .Select(t => new { t.Kind, t.Text, t.IsApiError, t.StopReason, t.Sequence })
             .ToListAsync(ct);
+        // A Grok completion reminder (or a backed rules header) and the turn it ends are
+        // not the session moving on. A real prompt still supersedes, as before.
+        var housekeepingTurn = false;
         foreach (var t in later)
         {
             if (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt)
@@ -614,6 +629,12 @@ public sealed class ApiErrorRecoveryService
                     continue;
                 if (TranscriptKinds.IsCompactionContinuationPrompt(t.Kind, t.Text))
                     continue;
+                if (TaskReportHousekeeping.IsAllowlistedPrompt(sessionKind, t.Text, rulesIds))
+                {
+                    housekeepingTurn = true;
+                    continue;
+                }
+
                 return true;
             }
 
@@ -622,7 +643,11 @@ public sealed class ApiErrorRecoveryService
             if (t.Kind == TranscriptKinds.TurnEnd
                 && t.IsApiError != true
                 && string.Equals(t.StopReason, "end_turn", StringComparison.OrdinalIgnoreCase))
+            {
+                if (housekeepingTurn)
+                    continue;
                 return true;
+            }
         }
 
         var latestTask = await db.AgentTasks.AsNoTracking()

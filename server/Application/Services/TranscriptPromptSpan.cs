@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -59,37 +60,63 @@ internal static class TranscriptPromptSpan
 
     /// <param name="TurnPrompts">
     /// Typed or queued prompt records a turn could actually be answering, in sequence order.
+    /// Time-filtered and housekeeping-filtered, including the provider allowlist (CARD-0714).
     /// </param>
     /// <param name="Notifications">
-    /// The background-subagent notifications among them — skipped as turn prompts, kept because
-    /// they are what proves a launch came back (CARD-0046 slice 4).
+    /// The background-subagent notifications among the time-filtered rows — skipped as turn
+    /// prompts, kept because they are what proves a launch came back (CARD-0046 slice 4).
+    /// </param>
+    /// <param name="RawPrompts">
+    /// Every typed or queued prompt row, including housekeeping and prompts whose native
+    /// timestamp is at or before dispatch. Settlement uses these as delimiters and as the
+    /// pre-dispatch candidate the time check then rejects. Existing consumers keep reading
+    /// <see cref="TurnPrompts"/>.
     /// </param>
     internal sealed record Result(
-        IReadOnlyList<PromptRow> TurnPrompts, IReadOnlyList<PromptRow> Notifications);
+        IReadOnlyList<PromptRow> TurnPrompts,
+        IReadOnlyList<PromptRow> Notifications,
+        IReadOnlyList<PromptRow> RawPrompts);
 
     internal static async Task<Result> LoadAsync(
         AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct)
     {
-        var rows = await db.TranscriptEntries
+        var sessionKind = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct) ?? AgentKind.Raw;
+
+        var rows = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                && (dispatchedAt == null || t.Timestamp == null || t.Timestamp > dispatchedAt))
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt))
             .OrderBy(t => t.Sequence)
             .Select(t => new PromptRow(t.Sequence, t.Text, t.Timestamp, t.Kind))
             .ToListAsync(ct);
 
+        var inWindow = rows
+            .Where(r => dispatchedAt == null || r.Timestamp == null || r.Timestamp > dispatchedAt)
+            .ToList();
+
         // The wrappers are the PROOF that a raw "/compact …" line was a command rather than a
         // prompt that happens to start with a slash — so the names come out of the span itself.
-        var invoked = rows
+        var invoked = inWindow
             .Select(r => TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, r.Text))
             .OfType<string>()
             .ToHashSet(StringComparer.Ordinal);
 
+        var rulesIds = (await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.System
+                && m.RulesRefreshKey != null)
+            .Select(m => m.Id)
+            .ToListAsync(ct)).ToHashSet();
+
         return new Result(
-            rows.Where(r => !IsHousekeepingPrompt(r.Text, invoked)).ToList(),
-            rows.Where(r => TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, r.Text))
-                .ToList());
+            inWindow.Where(r => !IsHousekeepingPrompt(r.Text, invoked)
+                && !TaskReportHousekeeping.IsAllowlistedPrompt(sessionKind, r.Text, rulesIds)).ToList(),
+            inWindow.Where(r => TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, r.Text))
+                .ToList(),
+            rows);
     }
 
     /// <summary>

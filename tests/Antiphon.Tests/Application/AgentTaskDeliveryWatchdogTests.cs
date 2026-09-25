@@ -32,7 +32,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [NotInParallel]
 [Category("Slow")]
-public class AgentTaskDeliveryWatchdogTests
+public partial class AgentTaskDeliveryWatchdogTests
 {
     [Test]
     public async Task Explicit_runner_transcript_mismatch_fails_the_task_but_does_not_kill_the_session()
@@ -438,9 +438,12 @@ public class AgentTaskDeliveryWatchdogTests
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
         var sessionId = task.AgentSessionId!.Value;
         await SeedTranscriptEntryAsync(sessionId);
-        // CARD-0117 D9: a UserPrompt without a TurnEnd reads working, and the kill is withheld.
-        // Arm 2 is not being deleted — the kill still fires on an idle session. The incident is
-        // stamped AFTER DispatchedAt so S1's scope predicate still matches.
+        // CARD-0714: arm 2 requires a fresh uncorrelated verdict, so the fixture includes the
+        // unmarked assistant response it claims. The incident is stamped AFTER DispatchedAt.
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText,
+            "I finished the investigation. The prompt I answered did not carry the task marker.",
+            DateTime.UtcNow.AddSeconds(-40));
         await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow.AddSeconds(-30));
         await SeedUncorrelatedIncidentAsync(sessionId, minutesAgo: 5);
 
@@ -639,7 +642,17 @@ public class AgentTaskDeliveryWatchdogTests
         var (harness, stopper) = CreateHarness();
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
         var sessionId = task.AgentSessionId!.Value;
-        await SeedWorkingSinceAsync(sessionId, task.DispatchedAt!.Value);
+        var dispatched = task.DispatchedAt!.Value;
+        // A finished unmarked turn, then a later prompt so the session is working again.
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt, "what is in this directory?", dispatched.AddMinutes(1));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText,
+            "A directory listing that is not this task's report.", dispatched.AddMinutes(2));
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, dispatched.AddMinutes(3));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt, "[delegated task] still typing the next turn",
+            dispatched.AddMinutes(4));
         await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Sent);
         await SeedUncorrelatedIncidentAsync(sessionId, minutesAgo: 5);
 

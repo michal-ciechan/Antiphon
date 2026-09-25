@@ -158,6 +158,70 @@ public class TranscriptPromptSpanTests
             .ShouldBeFalse();
     }
 
+    [Test]
+    public async Task C714_Grok_completion_is_housekeeping()
+    {
+        var (sessionId, dispatchedAt) = await SeedSessionAsync();
+        await MarkKindAsync(sessionId, AgentKind.Grok);
+        var at = dispatchedAt.AddMinutes(1);
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, "the real brief", 1, at);
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, Card0714Transcript.Reminder, 2, at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "<task-notification>\n<tool-use-id>toolu_span</tool-use-id>\n</task-notification>",
+            3, at);
+
+        await using var db = CreateContext();
+        var span = await TranscriptPromptSpan.LoadAsync(db, sessionId, dispatchedAt, CancellationToken.None);
+        span.TurnPrompts.ShouldHaveSingleItem().Text.ShouldBe("the real brief");
+        span.Notifications.ShouldHaveSingleItem().Text.ShouldContain("<task-notification>");
+        span.RawPrompts.ShouldContain(row => row.Text == Card0714Transcript.Reminder);
+    }
+
+    [Test]
+    public async Task C714_Grok_housekeeping_does_not_count_as_started()
+    {
+        var (sessionId, dispatchedAt) = await SeedSessionAsync();
+        await MarkKindAsync(sessionId, AgentKind.Grok);
+        var rulesId = Guid.NewGuid();
+        var header = GrokRulesRefreshService.Header(rulesId);
+        await using (var db = CreateContext())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = rulesId,
+                AgentSessionId = sessionId,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.System,
+                Status = QueuedMessageStatus.Sent,
+                CreatedAt = dispatchedAt,
+                SentAt = dispatchedAt,
+                DeliveryAttempts = 1,
+                RulesRefreshKey = "launch:" + Guid.NewGuid().ToString("N"),
+                Body = header,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, header, 1, dispatchedAt.AddMinutes(1));
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, Card0714Transcript.Reminder, 2, dispatchedAt.AddMinutes(2));
+
+        await using var verify = CreateContext();
+        var span = await TranscriptPromptSpan.LoadAsync(verify, sessionId, dispatchedAt, CancellationToken.None);
+        span.TurnPrompts.ShouldBeEmpty();
+        span.RawPrompts.Count.ShouldBe(2);
+        (await TranscriptPromptSpan.HasTurnPromptSinceAsync(verify, sessionId, dispatchedAt, CancellationToken.None))
+            .ShouldBeFalse();
+    }
+
+    private static async Task MarkKindAsync(Guid sessionId, AgentKind kind)
+    {
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.AgentKind = kind;
+        await db.SaveChangesAsync();
+    }
+
     private static async Task<(Guid SessionId, DateTime DispatchedAt)> SeedSessionAsync(
         DateTime? dispatchedAt = null)
     {
