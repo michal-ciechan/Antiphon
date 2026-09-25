@@ -391,6 +391,90 @@ public sealed class DispatchHoldVisibilityTests
     }
 
     [Test]
+    public async Task C672_lease_hold_registers_a_waiter_and_dispatch_clears_it()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        var lease = new FakeLease { Held = true };
+        await using var world = CreateWorld(schema.ConnectionString, clock, lease);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        var kept = await SeedQueuedAsync(schema, workspace.Path, agentId, t0, repoPath: workspace.Path);
+        var canceled = await SeedQueuedAsync(schema, workspace.Path, agentId, t0.AddMilliseconds(1), repoPath: workspace.Path);
+        var common = await world.WaiterKeyAsync(workspace.Path);
+
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).HeldOnLease.ShouldBe(2);
+        var first = world.Waiters.Snapshot(common);
+        first.Count.ShouldBe(2);
+        first.ShouldAllBe(w => w.Purpose == RepositoryLeasePurposes.Dispatch);
+        first.ShouldAllBe(w => w.Since == clock.GetUtcNow());
+        first.Select(w => w.TaskId).ShouldBe([kept.Id, canceled.Id], ignoreOrder: true);
+
+        await using (var db = CreateContext(schema))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == canceled.Id);
+            row.Status = AgentTaskStatus.Canceled;
+            row.CompletedAt = t0;
+            await db.SaveChangesAsync();
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        var second = world.Waiters.Snapshot(common).ShouldHaveSingleItem();
+        second.TaskId.ShouldBe(kept.Id);
+        second.Since.ShouldBe(new DateTimeOffset(t0, TimeSpan.Zero), "a repeat refusal keeps the first instant");
+
+        lease.Held = false;
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var released = await world.Dispatcher.TickAsync(CancellationToken.None);
+        released.Dispatched.ShouldBe(1);
+        released.HeldOnLease.ShouldBe(0);
+        world.Waiters.Snapshot(common).ShouldBeEmpty();
+        world.Waiters.IsEmpty.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C672_held_aged_carries_the_per_class_wait_ledger()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0.AddSeconds(350), TimeSpan.Zero));
+        var lease = new FakeLease { Held = true };
+        await using var world = CreateWorld(schema.ConnectionString, clock, lease);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0.AddSeconds(-10), repoPath: workspace.Path);
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTaskEvents.AddRange(
+                Event(queued.Id, AgentTaskEventType.Held, DispatchHoldDetails.LeaseOccupiedUnknown, t0),
+                Event(queued.Id, AgentTaskEventType.Held, DispatchHoldDetails.RemoteMirrorRequested("server2", t0), t0.AddSeconds(120)),
+                Event(queued.Id, AgentTaskEventType.Held, DispatchHoldDetails.LeaseOccupiedUnknown, t0.AddSeconds(150)));
+            await db.SaveChangesAsync();
+        }
+
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var aged = (await AgedAsync(verify, queued.Id)).ShouldHaveSingleItem();
+        aged.Detail.ShouldStartWith(DispatchHoldDetails.WarningPrefix);
+        aged.Detail.ShouldContain("leaseWait=320s");
+        aged.Detail.ShouldContain("prepWait=30s");
+        aged.Detail.ShouldContain("runnerWait=0s");
+        aged.Detail.ShouldContain("capWait=0s");
+        aged.Detail.ShouldContain("otherWait=0s");
+        aged.Detail.ShouldContain("class=lease");
+        aged.Detail.ShouldContain("running=");
+        aged.Detail.ShouldContain("occupants=");
+        aged.Detail.IndexOf("occupants=", StringComparison.Ordinal)
+            .ShouldBeLessThan(aged.Detail.IndexOf("leaseWait=", StringComparison.Ordinal));
+        DispatchHoldDetails.Reason(aged.Detail).ShouldBe(DispatchHoldDetails.LeaseOccupiedUnknown);
+    }
+
+    [Test]
     [Arguments(0, 900, false)]
     [Arguments(300, 300, false)]
     [Arguments(900, 300, false)]
@@ -659,6 +743,22 @@ public sealed class DispatchHoldVisibilityTests
         : IAsyncDisposable
     {
         public AgentTaskDispatcher Dispatcher { get; } = dispatcher;
+
+        /// <summary>CARD-0672: the turnstile the dispatcher registers lease refusals in.</summary>
+        public RepositoryLeaseWaiters Waiters => provider.GetRequiredService<RepositoryLeaseWaiters>();
+
+        /// <summary>The key the dispatcher uses: the repository's common directory, else the full path.</summary>
+        public async Task<string> WaiterKeyAsync(string repository)
+        {
+            try
+            {
+                return await provider.GetRequiredService<ILandingGit>().CommonDirectoryAsync(repository, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                return Path.GetFullPath(repository);
+            }
+        }
 
         public async ValueTask DisposeAsync()
         {

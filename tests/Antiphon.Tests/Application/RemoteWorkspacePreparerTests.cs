@@ -265,6 +265,116 @@ public sealed class RemoteWorkspacePreparerTests
         task.RemoteWorktreePath.ShouldBe(mirror, "a late mirror must stay known to retirement");
     }
 
+    [Test]
+    [Arguments("prepared")]
+    [Arguments("unprepared")]
+    [Arguments("repair-source")]
+    [Arguments("snapshot")]
+    [Arguments("interim")]
+    public async Task C672_prepared_task_launches_while_a_land_holds_the_lease(string arm)
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var mirror = "/work/worktrees/c672-" + arm;
+        Guid? repairOwner = arm == "repair-source" ? await rig.SeedOwnerAsync() : null;
+        Guid? snapshotOperation = arm == "snapshot" ? await rig.SeedLandingAsync(await rig.SeedOwnerAsync()) : null;
+        var taskId = await rig.SeedAsync(t =>
+        {
+            t.RemoteWorktreePath = arm == "unprepared" ? null : mirror;
+            t.RepairSourceTaskId = repairOwner;
+            t.SourceLandingOperationId = snapshotOperation;
+            if (arm == "interim")
+                t.VerificationRound = VerificationRound.Interim;
+        });
+        rig.Lease.Held = true;
+
+        await rig.TickAsync().WaitAsync(TickBound);
+
+        var task = await rig.ReadTaskAsync(taskId);
+        var held = await rig.EventsAsync(taskId, AgentTaskEventType.Held);
+        if (arm == "prepared")
+        {
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            rig.Sink.Specs.ShouldHaveSingleItem().Cwd.ShouldBe(mirror);
+            held.ShouldNotContain(e => e.Detail.Contains("repository mutation lease", StringComparison.Ordinal));
+            rig.Waiters.IsEmpty.ShouldBeTrue();
+        }
+        else
+        {
+            task.Status.ShouldBe(AgentTaskStatus.Queued);
+            held.ShouldHaveSingleItem().Detail.ShouldBe(DispatchHoldDetails.LeaseHeldByOwner(
+                rig.Lease.HolderTaskId, RepositoryLeasePurposes.Land, rig.Lease.AcquiredAt));
+            rig.Sink.Specs.ShouldBeEmpty();
+            rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(0);
+        }
+    }
+
+    [Test]
+    public async Task C672_three_queued_runner_tasks_cross_the_lease_once_and_launch_behind_the_next_land()
+    {
+        await using var rig = await Rig.StartAsync(capacity: 3);
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var ids = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            // Each its own desktop worktree and branch, as three real tasks would have.
+            var worktree = Directory.CreateDirectory(Path.Combine(rig.WorkspacePath, $"wt-{i}")).FullName;
+            ids.Add(await rig.SeedAsync(t =>
+            {
+                t.WorktreePath = worktree;
+                t.WorktreeBranch = $"feat/test-remote-prep-{i}";
+            }));
+        }
+        var common = Path.GetFullPath(rig.WorkspacePath);
+
+        // (1) A land holds the lease: every first crossing is refused and waits for it.
+        rig.Lease.Held = true;
+        (await rig.TickAsync().WaitAsync(TickBound)).HeldOnLease.ShouldBe(3);
+        foreach (var id in ids)
+        {
+            (await rig.EventsAsync(id, AgentTaskEventType.Held)).ShouldHaveSingleItem().Detail
+                .ShouldContain("repository mutation lease");
+        }
+        var waiting = rig.Waiters.Snapshot(common);
+        waiting.Select(w => w.TaskId).ShouldBe(ids, ignoreOrder: true);
+        waiting.ShouldAllBe(w => w.Purpose == RepositoryLeasePurposes.Dispatch);
+
+        // (2) The gap: each crosses once, the preparer mirrors all three off the tick.
+        rig.Lease.Held = false;
+        await rig.TickAsync().WaitAsync(TickBound);
+        rig.Waiters.IsEmpty.ShouldBeTrue();
+        foreach (var id in ids)
+        {
+            (await rig.EventsAsync(id, AgentTaskEventType.Held)).Last().Detail
+                .ShouldStartWith(DispatchHoldDetails.RemoteMirrorRequestedPrefix);
+        }
+        for (var n = 1; n <= 3; n++)
+        {
+            var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, n);
+            await rig.Peer.EmitAsync(MirrorResult(request, "/work/worktrees/c672-mirror-" + n));
+        }
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        foreach (var id in ids)
+            (await rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldNotBeNull();
+        var heldBefore = new Dictionary<Guid, int>();
+        foreach (var id in ids)
+            heldBefore[id] = (await rig.EventsAsync(id, AgentTaskEventType.Held)).Count;
+
+        // (3) The next land holds the lease again: the prepared launches do not need it.
+        rig.Lease.Held = true;
+        var launched = await rig.TickAsync().WaitAsync(TickBound);
+        launched.Dispatched.ShouldBe(3);
+        launched.HeldOnLease.ShouldBe(0);
+        foreach (var id in ids)
+        {
+            var task = await rig.ReadTaskAsync(id);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            (await rig.EventsAsync(id, AgentTaskEventType.Held)).Count.ShouldBe(heldBefore[id]);
+        }
+        rig.Sink.Specs.Count.ShouldBe(3);
+        rig.Waiters.IsEmpty.ShouldBeTrue();
+    }
+
     private static PhoneHomeFrame MirrorResult(PhoneHomeFrame request, string path) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(path), PhoneHomeFraming.Json));
@@ -289,11 +399,17 @@ public sealed class RemoteWorkspacePreparerTests
         public DateTime Now => Clock.GetUtcNow().UtcDateTime;
         public RemoteWorkspacePreparer Preparer => Provider.GetRequiredService<RemoteWorkspacePreparer>();
 
-        public static async Task<Rig> StartAsync(Action<DelegationSettings>? tweak = null, bool recovered = true)
+        /// <summary>CARD-0672: the repository mutation lease every dispatch in this rig sees.</summary>
+        public HoldableLease Lease { get; } = new();
+        public RepositoryLeaseWaiters Waiters => Provider.GetRequiredService<RepositoryLeaseWaiters>();
+
+        public static async Task<Rig> StartAsync(
+            Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1)
         {
             var rig = new Rig { _tweak = tweak, _recovered = recovered };
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock);
+            rig.Host.Capacity = capacity;
             rig.Peer = await rig.Host.ConnectPeerAsync();
             rig.Live = await rig.Host.WaitLiveAsync();
             if (recovered)
@@ -370,19 +486,51 @@ public sealed class RemoteWorkspacePreparerTests
             await db.SaveChangesAsync();
         }
 
-        public async Task<Guid> SeedAsync()
+        public async Task<Guid> SeedAsync(Action<AgentTask>? tweak = null)
         {
             var now = Now;
             var id = Guid.NewGuid();
             await using var db = NewDb();
-            db.AgentTasks.Add(new AgentTask
+            // CARD-0672: RepoPath makes the claim consult the rig's lease, as production does.
+            var task = new AgentTask
             {
                 Id = id, RootTaskId = id, Title = "remote task", Goal = "reply",
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.Grok,
                 ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
-                WorkingDirectory = WorkspacePath, WorktreePath = WorkspacePath, WorktreeBranch = "feat/test-remote-prep",
+                WorkingDirectory = WorkspacePath, RepoPath = WorkspacePath, WorktreePath = WorkspacePath,
+                WorktreeBranch = "feat/test-remote-prep",
                 RunnerId = RunnerId, Status = AgentTaskStatus.Queued,
                 ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
+            };
+            tweak?.Invoke(task);
+            db.AgentTasks.Add(task);
+            await db.SaveChangesAsync();
+            return id;
+        }
+
+        /// <summary>A settled Worktree task a repair or a verification snapshot can name.</summary>
+        public async Task<Guid> SeedOwnerAsync()
+        {
+            var id = Guid.NewGuid();
+            await using var db = NewDb();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "owner", Goal = "owner", Role = AgentTaskRole.Code,
+                Workspace = WorkspaceMode.Worktree, WorkingDirectory = WorkspacePath, RepoPath = WorkspacePath,
+                WorktreeBranch = "feat/test-remote-owner", Status = AgentTaskStatus.Succeeded,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = Now, CompletedAt = Now,
+            });
+            await db.SaveChangesAsync();
+            return id;
+        }
+
+        public async Task<Guid> SeedLandingAsync(Guid ownerId)
+        {
+            var id = Guid.NewGuid();
+            await using var db = NewDb();
+            db.AgentTaskLandings.Add(new AgentTaskLanding
+            {
+                Id = id, TaskId = ownerId, CreatedAt = Now, UpdatedAt = Now,
             });
             await db.SaveChangesAsync();
             return id;
@@ -449,6 +597,7 @@ public sealed class RemoteWorkspacePreparerTests
             {
                 WorktreeBasePath = Path.Combine(Path.GetTempPath(), $"antiphon-remote-prep-{Guid.NewGuid():N}"),
             });
+            services.AddSingleton<IRepositoryMutationLease>(Lease);
             services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings
             {
                 Enabled = true, AllowedRunnerId = Host.AllowedRunnerId, AllowDelegatedTasks = true,
@@ -485,6 +634,34 @@ public sealed class RemoteWorkspacePreparerTests
             Specs.Add(spec);
     }
 
+    /// <summary>
+    /// CARD-0672: a lease a test holds on behalf of a running land. While held, every acquire is
+    /// refused and the owner reads as a Known <c>land</c> holder, as the real lease reports one.
+    /// </summary>
+    internal sealed class HoldableLease : IRepositoryMutationLease
+    {
+        public bool Held { get; set; }
+        public Guid HolderTaskId { get; } = Guid.NewGuid();
+        public DateTimeOffset AcquiredAt { get; } = DateTimeOffset.FromUnixTimeSeconds(1_790_000_000);
+
+        public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) =>
+            Task.FromResult(Held ? null : (RepositoryLease?)new TrivialLease(repository));
+
+        public bool Owns(RepositoryLease lease, string commonDirectory) => lease is TrivialLease;
+
+        public Task<RepositoryLeaseOwner?> FindOwnerAsync(string repository, CancellationToken ct) =>
+            Task.FromResult<RepositoryLeaseOwner?>(Held
+                ? new RepositoryLeaseOwner(RepositoryLeaseOwnerState.Known, HolderTaskId, RepositoryLeasePurposes.Land,
+                    Guid.NewGuid(), AcquiredAt)
+                : RepositoryLeaseOwner.Unknown);
+
+        private sealed class TrivialLease(string repository) : RepositoryLease
+        {
+            public override string CommonDirectory { get; } = Path.GetFullPath(repository);
+            public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class PushOnlyGit : ILandingGit
     {
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
@@ -497,7 +674,8 @@ public sealed class RemoteWorkspacePreparerTests
         public Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
         public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => throw new NotSupportedException();
-        public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
+        public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) =>
+            Task.FromResult(Path.GetFullPath(repository));
         public Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
         public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct) => throw new NotSupportedException();

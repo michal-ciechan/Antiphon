@@ -162,6 +162,69 @@ public sealed class DispatchHeldAttentionTests
         second.ShouldBe(first);
     }
 
+    [Test]
+    public async Task C672_dispatch_held_item_names_the_dominant_hold_class()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var now = UtcMs();
+        var leaseAt = now.AddSeconds(-350);
+        var (task, _) = await SeedQueuedHeldAsync(schema, now.AddSeconds(-400), leaseAt,
+            detail: DispatchHoldDetails.LeaseOccupiedUnknown);
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Held,
+                Detail = DispatchHoldDetails.RunnerAtCapacity("server2", 1, 1), At = leaseAt.AddSeconds(200),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var item = (await ReadAsync(schema, now)).ShouldHaveSingleItem();
+        item.HoldClass.ShouldBe("lease");
+        item.Evidence.ShouldContain("leaseWait=200s");
+        item.Evidence.ShouldContain("runnerWait=150s");
+        item.Evidence.ShouldContain("class=lease");
+        item.Headline.ShouldContain(DispatchHoldDetails.RunnerAtCapacity("server2", 1, 1));
+    }
+
+    [Test]
+    [Arguments(20, false)]
+    [Arguments(301, true)]
+    public async Task C672_land_yield_hold_is_not_an_attention_item_before_the_warning_age(int ageSeconds, bool expected)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var now = UtcMs();
+        var since = now.AddSeconds(-ageSeconds);
+        await using (var db = CreateContext(schema))
+        {
+            var id = Guid.NewGuid();
+            var request = new AgentTaskLandRequest
+            {
+                Id = Guid.NewGuid(), TaskId = id, RequestedAt = since, LastEvaluatedAt = now, LastProgressAt = since,
+                State = LandRequestState.Held, IsPending = true, HeldSince = since,
+                HoldReasonCode = AgentTaskLandService.LeaseYieldedToDispatchCode,
+                HoldDetail = "Land yields the repository mutation lease to 1 queued dispatch(es): abcd1234 (dispatch); resumes within Delegation:LandSweepSeconds.",
+            };
+            var task = new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "yielding land", Goal = "land", Role = AgentTaskRole.Code,
+                AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded, CreatedAt = since.AddMinutes(-10),
+                CompletedAt = since,
+            };
+            db.AgentTasks.Add(task);
+            await db.SaveChangesAsync();
+            task.LandRequestedAt = since;
+            task.CurrentLandRequestId = request.Id;
+            db.AgentTaskLandRequests.Add(request);
+            await db.SaveChangesAsync();
+        }
+
+        var items = await ReadAllAsync(schema, now);
+        items.Count(i => i.Kind == AttentionKind.LandHeld).ShouldBe(expected ? 1 : 0);
+    }
+
     private static async Task<(AgentTask Task, Guid CardId)> SeedQueuedHeldAsync(
         IsolatedTestSchema schema, DateTime createdAt, DateTime heldAt, string? detail = null)
     {
@@ -196,7 +259,10 @@ public sealed class DispatchHeldAttentionTests
         return (task, card.Id);
     }
 
-    private static async Task<List<AttentionItemDto>> ReadAsync(IsolatedTestSchema schema, DateTime now)
+    private static async Task<List<AttentionItemDto>> ReadAsync(IsolatedTestSchema schema, DateTime now) =>
+        (await ReadAllAsync(schema, now)).Where(i => i.Kind == AttentionKind.DispatchHeld).ToList();
+
+    private static async Task<List<AttentionItemDto>> ReadAllAsync(IsolatedTestSchema schema, DateTime now)
     {
         await using var db = CreateContext(schema);
         var clock = new FakeTimeProvider(new DateTimeOffset(now, TimeSpan.Zero));
@@ -208,7 +274,7 @@ public sealed class DispatchHeldAttentionTests
             clock,
             NullLogger<AttentionService>.Instance)
             .GetAsync(CancellationToken.None, includeProgressProbe: false);
-        return result.Items.Where(i => i.Kind == AttentionKind.DispatchHeld).ToList();
+        return result.Items.ToList();
     }
 
     private static DateTime UtcMs()

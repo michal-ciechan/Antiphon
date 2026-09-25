@@ -88,6 +88,7 @@ internal static class DelegationTestServices
         services.TryAddSingleton<WorktreeGuardedCleanup>();
         services.TryAddSingleton<GuardedWorktreeRemoval>();
         services.TryAddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
+        services.TryAddSingleton<RepositoryLeaseWaiters>();
         services.TryAddScoped<AgentTaskLandingState>();
         services.TryAddSingleton<ILandingVerifier, LandingVerifier>();
         services.TryAddScoped<AgentTaskLandingProtocol>();
