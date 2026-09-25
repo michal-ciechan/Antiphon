@@ -112,19 +112,15 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     // CARD-0679 D-10: what this connection knows the runner holds live. Every change takes a stamp,
     // so a List sent before a launch ack or an exit does not undo them. An exit leaves a tombstone
     // for its generation, so neither a late ack nor a List brings that generation back (review
-    // 57fa2e6a: the exit event can be pumped before the ack's continuation runs). Each live entry
-    // keeps when the runner last confirmed it, so a cache no List refreshes ages out instead of
-    // vouching for a lost session for as long as heartbeats hold the lease.
+    // 57fa2e6a: the exit event can be pumped before the ack's continuation runs). Tombstones last
+    // as long as this connection, the only inventory a reply on it can write, so no continuation is
+    // late enough to outlive one (review 87af1bf6: a ten-minute tombstone could). Each live entry
+    // keeps when the runner last confirmed it, so a cache no List refreshes ages out of "live" into
+    // "unknown" instead of vouching for a lost session for as long as heartbeats hold the lease.
     private readonly object _inventoryGate = new();
     private readonly Dictionary<Guid, InventoryEntry> _inventory = new();
     private readonly Dictionary<Guid, Tombstone> _tombstones = new();
     private long _inventoryStamp;
-
-    /// <summary>
-    /// How long a tombstone outlives its exit: longer than any request's reply timeout, so no ack
-    /// or List sent before the exit can still be answered after the tombstone is dropped.
-    /// </summary>
-    internal static readonly TimeSpan TombstoneRetention = TimeSpan.FromMinutes(10);
 
     /// <summary>
     /// CARD-0679 D-10: the sessions the runner last reported Running/Starting, kept current by the
@@ -139,6 +135,23 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         {
             return _inventory
                 .Where(entry => maxAge is not { } age || now - entry.Value.ConfirmedAt <= age)
+                .Select(entry => entry.Key)
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): the entries <see cref="KnownLiveSessions"/> leaves out for age
+    /// (none when <paramref name="maxAge"/> is null). Not confirmed live, and not seen to end
+    /// either: the directory reports them as unknown.
+    /// </summary>
+    public IReadOnlyCollection<Guid> UnconfirmedSessions(TimeSpan? maxAge)
+    {
+        var now = Clock.GetUtcNow();
+        lock (_inventoryGate)
+        {
+            return _inventory
+                .Where(entry => maxAge is { } age && now - entry.Value.ConfirmedAt > age)
                 .Select(entry => entry.Key)
                 .ToArray();
         }
@@ -177,12 +190,6 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 if (entry.Stamp <= readStamp && !listed.Contains(id))
                     _inventory.Remove(id);
             }
-
-            foreach (var (id, tombstone) in _tombstones.ToArray())
-            {
-                if (now - tombstone.At > TombstoneRetention)
-                    _tombstones.Remove(id);
-            }
         }
     }
 
@@ -218,7 +225,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 && prior.Generation is { } priorGeneration && generation is { } exitGeneration
                 && SessionGeneration.Compare(priorGeneration, exitGeneration) > 0)
                 ended = priorGeneration;
-            _tombstones[sessionId] = new Tombstone(ended, stamp, Clock.GetUtcNow());
+            _tombstones[sessionId] = new Tombstone(ended, stamp);
 
             if (_inventory.TryGetValue(sessionId, out var entry)
                 && !(entry.Generation is { } liveGeneration && generation is { } goneGeneration
@@ -253,7 +260,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 
     private readonly record struct InventoryEntry(DateTime? Generation, long Stamp, DateTimeOffset ConfirmedAt);
 
-    private readonly record struct Tombstone(DateTime? Generation, long Stamp, DateTimeOffset At);
+    private readonly record struct Tombstone(DateTime? Generation, long Stamp);
 
     /// <summary>
     /// CARD-0679 D-1: records why this connection ended. The first writer wins, so the route's

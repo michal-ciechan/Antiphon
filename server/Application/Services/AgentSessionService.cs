@@ -1415,7 +1415,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             throw new ConflictException($"Agent session '{sessionId}' has no card and cannot be resumed.");
         if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             throw new ConflictException($"Agent session '{sessionId}' is already active.");
-        if (_runtime.ListLiveSessions().Contains(sessionId))
+        // CARD-0679: a runner that may still hold it (unknown) is not free to resume either.
+        if (_runtime.IsLiveOrUnknown(sessionId, session.RunnerId))
             throw new ConflictException($"Agent session '{sessionId}' is already running.");
 
         var activeOtherSession = await _db.AgentSessions.AnyAsync(
