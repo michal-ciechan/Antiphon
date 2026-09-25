@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -66,6 +67,15 @@ public sealed class AgentTaskLandAdmissionControlledTests
             services.AddScoped<AgentTaskService>();
             services.AddScoped<AgentTaskDispatcher>();
             services.AddScoped<DispatchBaseWarningIntentService>();
+            // A follow-up Code worktree captures a progress baseline on dispatch. The real
+            // TaskProgressGit runs in these controlled directories, which are not a repository,
+            // and git exits 128. This test is the admission claim, so the baseline is answered
+            // from the fixture seed.
+            var progress = new FakeTaskProgressGit { CommonDirectory = h.Git.CommonDir };
+            progress.HeadsByPath[h.Git.Source] = h.Git.SeedSha;
+            progress.LocalRefs["HEAD"] = h.Git.SeedSha;
+            services.RemoveAll<ITaskProgressGit>();
+            services.AddSingleton<ITaskProgressGit>(progress);
         };
         await h.InitializeAsync();
         h.Services.GetServices<IHostedService>().ShouldBeEmpty("this fixture never starts a launch worker or real Program");
