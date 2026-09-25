@@ -103,6 +103,15 @@ before any test body ran. Leave it out of a Linux filter and run it on Windows.
 
 CARD-0590's Linux image, roster, and session-created stack are in [docker-stack.md](docker-stack.md). Those checkpoints are ordinary Docker evidence. They do not run SourceLanding Mutation. Since CARD-0604 the server2 runner owns a **nested** Docker daemon of its own, so Testcontainers works there unmodified (the mapped port and the test process share one network namespace); `scripts/verify-card0604-dind-runner.ps1` is the local harness that proves that image on Docker Desktop before server2 ever sees it.
 
+CARD-0700's 2026-09-25 server2 run reproduced 20 card-file integration failures on
+unchanged production code (baseline parent `fbdc3c6e66c7e35d01260cb64f49a404809b55a6`).
+CARD-0713 tracks four Git-hook fault cases in `CardFileGitFailureAcceptanceTests`
+(hooks lack executable permission), six junction cases in `CardFilePrivacyGitTests`
+and `CardFilePrivacyPathTests`, and ten `CardFilePrivacyScriptTests` cases displaying
+remote Windows paths through a nonexistent local `C:` drive. This is separate
+from CARD-0681's Unit-lane portability work. See the
+[measured baseline and checkpoint report](investigations/2026-09-25-card-0700-cached-board-lookups.md).
+
 ### Default Code/Review recipe
 
 Build once into a producer-owned isolated output (forward slash on `OutputPath`). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
