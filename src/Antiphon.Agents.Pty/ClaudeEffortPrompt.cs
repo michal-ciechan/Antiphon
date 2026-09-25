@@ -143,6 +143,11 @@ public static class ClaudeEffortPrompt
     /// runner-side adapter logs through the server logger at Information level, so a 50 ms
     /// heartbeat would be pure noise.
     /// </param>
+    /// <param name="time">
+    /// An <see cref="IManualTimeProvider"/> measures the budget and the settle gaps on that clock:
+    /// each wait advances it by exactly the requested duration, so a stalled scheduler cannot
+    /// spend the budget. Any other provider, including null, keeps the wall-clock stopwatch.
+    /// </param>
     public static async Task<ClaudeEffortResolution> ResolveAsync(
         Func<CancellationToken, Task<string>> snapshotScreen,
         Func<string, CancellationToken, Task> write,
@@ -152,10 +157,23 @@ public static class ClaudeEffortPrompt
         Action<string>? trace = null,
         TimeProvider? time = null)
     {
-        _ = time;
-        var clock = Stopwatch.StartNew();
+        var manual = time as IManualTimeProvider;
+        var clock = manual is null ? Stopwatch.StartNew() : null;
+        TimeSpan Elapsed() => manual is null ? clock!.Elapsed : manual.Elapsed;
+        Task WaitAsync(TimeSpan delay, CancellationToken waitToken)
+        {
+            if (manual is null)
+                return Task.Delay(delay, waitToken);
+            waitToken.ThrowIfCancellationRequested();
+            if (delay > TimeSpan.Zero)
+                manual.Advance(delay);
+            return Task.CompletedTask;
+        }
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        bounded.CancelAfter(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1));
+        // A manual clock is the budget. A wall-clock CancelAfter would still expire under load
+        // and report the deadline before the logical settle gaps had elapsed.
+        if (manual is null)
+            bounded.CancelAfter(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1));
         var token = bounded.Token;
         ClaudeEffortMenu? original = null;
         var target = ClaudeEffortOption.Unknown;
@@ -181,7 +199,7 @@ public static class ClaudeEffortPrompt
             target = original.Select(intent);
             if (target == ClaudeEffortOption.Unknown || original.Highlight == ClaudeEffortOption.Unknown)
                 return Result(false, "ambiguous intent or highlight; input withheld");
-            await Task.Delay(ClaudeTrustDialogKeys.HighlightSettle, token);
+            await WaitAsync(ClaudeTrustDialogKeys.HighlightSettle, token);
             var nextEnter = TimeSpan.Zero;
             var navigation = 0;
             // The last frame that qualified for clearance. Clearance needs a settled PAIR: one
@@ -195,7 +213,7 @@ public static class ClaudeEffortPrompt
                 held = kept is not null;
                 if (changed) trace?.Invoke($"effort settle: polls={polls} clear={clear} last={gate} kept={(held ? "yes" : "no")}");
             }
-            while (clock.Elapsed < budget)
+            while (Elapsed() < budget)
             {
                 polls++;
                 var screen = lastScreen = await snapshotScreen(token);
@@ -229,7 +247,7 @@ public static class ClaudeEffortPrompt
                         clear = 1;
                         Note(unsettled ? "unsettled" : null);
                     }
-                    await Task.Delay(50, token);
+                    await WaitAsync(TimeSpan.FromMilliseconds(50), token);
                     continue;
                 }
                 kept = null;
@@ -239,7 +257,7 @@ public static class ClaudeEffortPrompt
                 string? key = null;
                 if (menu.Highlight != target && enters == 0 && navigation < ClaudeTrustDialogKeys.HighlightNextCandidates.Length)
                     key = ClaudeTrustDialogKeys.HighlightNextCandidates[navigation++];
-                else if (enters < 3 && clock.Elapsed >= nextEnter)
+                else if (enters < 3 && Elapsed() >= nextEnter)
                 {
                     if (menu.Highlight != target) return Result(false, "intended highlight not reached; Enter withheld");
                     key = "\r";
@@ -252,10 +270,10 @@ public static class ClaudeEffortPrompt
                         return Result(false, "fresh dialog identity or highlight changed; input withheld");
                     token.ThrowIfCancellationRequested();
                     await write(key, token);
-                    if (key == "\r") { enters++; nextEnter = clock.Elapsed + ClaudeTrustDialogKeys.HighlightSettle; }
-                    else await Task.Delay(ClaudeTrustDialogKeys.HighlightSettle, token);
+                    if (key == "\r") { enters++; nextEnter = Elapsed() + ClaudeTrustDialogKeys.HighlightSettle; }
+                    else await WaitAsync(ClaudeTrustDialogKeys.HighlightSettle, token);
                 }
-                await Task.Delay(50, token);
+                await WaitAsync(TimeSpan.FromMilliseconds(50), token);
             }
             return Result(false, "settle deadline exhausted");
         }
