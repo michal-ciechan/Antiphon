@@ -394,6 +394,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.FailureReason = ex.Message;
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
+            // R5 repair: the runner ran this generation and it exited on its own; record that exit
+            // rather than a platform stop.
+            if (ex is RemoteLaunchAlreadyExitedException exited)
+            {
+                session.ExitCode = exited.ExitCode;
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exited.ExitReason));
+            }
             SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             if (ex is AgentLaunchBlockedException blocked)
             {
@@ -503,6 +510,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
                     break;
                 }
+                // R5 repair (review 137c1631): a re-sent Launch whose first send landed, ran and
+                // exited. The launch happened and ended: no retry, no second start, and nothing left
+                // on the runner to kill, so the adapter is released without the kill path.
+                catch (RemoteLaunchAlreadyExitedException exited) when (remoteRunnerId is not null)
+                {
+                    _logger.LogWarning(
+                        "Remote launch of session {SessionId} on runner {RunnerId} already ran and exited "
+                        + "(exit code {ExitCode}, reason {ExitReason}) before its re-send on attempt {Attempt}",
+                        session.Id, remoteRunnerId, exited.ExitCode, exited.ExitReason, attempt);
+                    if (adapter is not null)
+                        await adapter.DisposeAsync();
+                    adapter = null;
+                    throw;
+                }
                 // A re-attach wraps its Get failure ("Cannot attach: ..."), so its cause is read too.
                 catch (Exception ex) when (remoteRunnerId is not null
                     && !ct.IsCancellationRequested
@@ -510,14 +531,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                         || (reattach && ex.InnerException is { } cause && PhoneHomeTransportLoss.Is(cause))))
                 {
                     var phase = acked ? RemoteLaunchTransportLostException.PostAck : RemoteLaunchTransportLostException.PreAck;
+                    // The loss itself, not the attach wrapper, whose text says the runner does not
+                    // know a session it does hold.
+                    var loss = PhoneHomeTransportLoss.Is(ex) ? ex : ex.InnerException!;
                     launchMayHaveLanded |= acked
-                        || ex is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosedInFlight };
+                        || loss is PhoneHomeTransportException { Code: PhoneHomeProblemTypes.ConnectionClosedInFlight };
                     // Never a kill: the session the runner holds is the one a retry re-attaches to.
                     var attachable = adapter is null or IAttachableProtocolAdapter;
                     if (adapter is not null)
                         await adapter.DisposeAsync();
                     adapter = null;
-                    await RecordLaunchTransportLossAsync(session, remoteRunnerId, phase, attempt, ex, ct);
+                    await RecordLaunchTransportLossAsync(session, remoteRunnerId, phase, attempt, loss, ct);
 
                     int? timedOutAfter = null;
                     if (attempt <= retries && (!acked || attachable))
@@ -534,7 +558,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     }
 
                     var lost = new RemoteLaunchTransportLostException(
-                        remoteRunnerId, phase, attempt, retries, waited, timedOutAfter, ex);
+                        remoteRunnerId, phase, attempt, retries, waited, timedOutAfter, loss);
                     // The runner holds (or may hold) the session under this generation and no
                     // connection can carry the kill now, so it is sent when the runner is back.
                     if (launchMayHaveLanded)

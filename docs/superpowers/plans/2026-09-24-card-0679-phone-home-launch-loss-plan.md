@@ -299,6 +299,26 @@ Against an older runner, the pre-ack retry's duplicate Launch still receives
 `runner_internal_error`; the desktop treats any non-transport error on a retry as a real failure
 (kill path, which D-6/D-7 make effective). No string matching on the detail text.
 
+**R5 repair (review 137c1631).** A pre-ack re-send can arrive after the first Launch landed, ran
+and exited; the live-only check above let the runtime relaunch it (an exited id may be relaunched
+for `--resume`), so one generation ran twice. `LaunchAsync` now answers a Launch whose session id
+and generation match a listed **Exited** session with an Error frame `409`,
+`PhoneHomeProblemTypes.SessionAlreadyExited = "phone_home_session_already_exited"`, whose payload is
+the exited `RunnerSessionDto` (exit code and reason); a different generation still relaunches and
+R2's live duplicate ack is unchanged. `PhoneHomeRunnerClient.StartAsync` turns that frame into
+`RemoteLaunchAlreadyExitedException`; the D-8 loop releases the adapter without a kill and does not
+retry, and `LaunchInteractiveAsync` marks the row Failed with a reason naming the runner, exit code
+and reason, `ExitCode` set and `TerminationSource` from the exit reason (`ProcessExit`), no deferred
+kill, `RestartFailureKind` as for any process that exits before ready (`Unknown`). The D-8 loop also
+reads a re-attach's wrapped loss through its wrapper for the reason and the in-flight test. The
+fence holds only while the runner lists the exited session: a `ReleaseSlot` or a runner restart
+forgets it. Tests: `PhoneHomeCommandDispatcherTests`
+`Duplicate_launch_of_an_exited_session_with_the_same_generation_starts_no_second_process` and
+`Launch_of_an_exited_session_under_a_new_generation_still_relaunches`; `PhoneHomeLaunchTransportTests`
+`Pre_ack_resend_answered_already_exited_ends_the_launch_without_a_second_start`,
+`Zero_retries_after_an_in_flight_pre_ack_loss_fail_at_once_with_a_deferred_kill` and
+`Second_loss_during_reattach_is_read_through_its_wrapper_and_exhausts_the_retries`.
+
 Rejected: a desktop-side `GetAsync` before every retried Launch to decide between attach and
 launch (a second request on a fresh connection that can itself drop; the runner is the authority
 on what it holds, and the idempotent ack makes the decision unnecessary).
