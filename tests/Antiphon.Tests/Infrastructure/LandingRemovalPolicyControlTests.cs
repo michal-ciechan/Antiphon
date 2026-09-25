@@ -488,6 +488,79 @@ public sealed class LandingRemovalPolicyControlTests
         File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("private work");
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C665_PostDropQueryFailureKeepsSetAsideAndRecord(bool persistent)
+    {
+        using var f = new RemovalFixture();
+        var queries = 0;
+        f.BeforeRegistrationQuery = () =>
+        {
+            if (!f.Registered && (++queries == 1 || persistent)) throw new IOException("registration read unavailable");
+        };
+        var result = await f.RemoveAsync(gate: true);
+        result.IsClean.ShouldBeFalse();
+        queries.ShouldBeGreaterThan(0);
+        f.Registered.ShouldBeFalse();
+        Directory.Exists(f.Source).ShouldBeFalse("a completed drop must never restore an unregistered source tree");
+        File.ReadAllText(Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "keep.txt")).ShouldBe("private work");
+        f.SetAsideRecords().ShouldHaveSingleItem();
+        f.BranchPresent.ShouldBeTrue();
+        f.BeforeRegistrationQuery = null;
+        (await f.RemoveAsync(gate: true)).IsClean.ShouldBeTrue();
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+        f.BranchPresent.ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("io")]
+    [Arguments("timeout")]
+    [Arguments("cancel")]
+    public async Task C665_FaultAfterActualDropKeepsRecoverableTree(string fault)
+    {
+        using var f = new RemovalFixture();
+        f.AfterUnregister = () => throw fault switch
+        {
+            "io" => new IOException("lost drop acknowledgement"),
+            "timeout" => new TimeoutException("lost drop acknowledgement"),
+            _ => new OperationCanceledException("lost drop acknowledgement"),
+        };
+        if (fault == "cancel") await Should.ThrowAsync<OperationCanceledException>(() => f.RemoveAsync(gate: true));
+        else (await f.RemoveAsync(gate: true)).IsClean.ShouldBeFalse();
+        f.Registered.ShouldBeFalse();
+        Directory.Exists(f.Source).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "keep.txt")).ShouldBe("private work");
+        f.SetAsideRecords().ShouldHaveSingleItem();
+        f.BranchPresent.ShouldBeTrue();
+        f.AfterUnregister = null;
+        (await f.RemoveAsync(gate: true)).IsClean.ShouldBeTrue();
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C665_UnknownRegistrationAfterFaultKeepsLiveTreeSetAside()
+    {
+        using var f = new RemovalFixture();
+        f.BeforeUnregister = () => throw new IOException("drop outcome unavailable");
+        f.BeforeRegistrationQuery = () =>
+        {
+            if (!Directory.Exists(f.Source)) throw new IOException("registration unavailable");
+        };
+        (await f.RemoveAsync(gate: true)).IsClean.ShouldBeFalse();
+        f.Registered.ShouldBeTrue();
+        Directory.Exists(f.Source).ShouldBeFalse("an unknown outcome cannot authorize restoration");
+        f.SetAsideRecords().ShouldHaveSingleItem();
+        File.ReadAllText(Path.Combine(f.SetAsideTrees().ShouldHaveSingleItem(), "keep.txt")).ShouldBe("private work");
+        f.BeforeUnregister = null;
+        f.BeforeRegistrationQuery = null;
+        (await f.RemoveAsync(gate: true)).IsClean.ShouldBeTrue();
+        f.SetAsideTrees().ShouldBeEmpty();
+        f.SetAsideRecords().ShouldBeEmpty();
+    }
+
     private sealed class RecordingRetention(RemovalFixture fixture) : IWorktreeEvidenceRetention
     {
         public List<(int Evidence, int AtInspection)> Calls { get; } = [];
@@ -526,6 +599,8 @@ public sealed class LandingRemovalPolicyControlTests
         public bool Registered { get; set; } = true;
         /// <summary>Runs between the move-aside and the registration drop.</summary>
         public Action? BeforeUnregister { get; set; }
+        public Action? AfterUnregister { get; set; }
+        public Action? BeforeRegistrationQuery { get; set; }
         public string[] UnregisterVector => ["worktree", "remove", "--registration-only", Source];
         public string[] SetAsideTrees() => Directory.GetDirectories(Root, ".source.removing-*");
         public string[] SetAsideRecords()
@@ -578,9 +653,12 @@ public sealed class LandingRemovalPolicyControlTests
         {
             LandingGitResult result;
             if (args[0] == "worktree" && args[1] == "list")
+            {
+                BeforeRegistrationQuery?.Invoke();
                 result = new(0, Registered
                     ? $"worktree {Source}\0HEAD {Sha}\0branch {Request.Source.SourceFullRef}\0\0"
                     : $"worktree {Root}\0HEAD {Sha}\0branch refs/heads/master\0\0", "");
+            }
             else if (args[0] == "worktree" && args[1] == "remove")
             {
                 // Retained so a regression to `git worktree remove <path>` is caught: like Git for
@@ -622,6 +700,7 @@ public sealed class LandingRemovalPolicyControlTests
             if (Directory.Exists(worktreePath) || File.Exists(worktreePath))
                 return Task.FromResult(new LandingGitResult(1, "", "worktree_path_recreated"));
             Registered = false;
+            AfterUnregister?.Invoke();
             return Task.FromResult(new LandingGitResult(0, "", ""));
         }
         private static void DeleteFollowingLinks(string directory)

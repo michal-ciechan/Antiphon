@@ -131,6 +131,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
         public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
+        public Func<string, Task>? BeforeUnregister { get; set; }
+        public Func<string, Task>? AfterUnregister { get; set; }
+        public List<string> RegistrationDrops { get; } = [];
         protected override void ConfigureProcess(ProcessStartInfo start)
         {
             start.Environment["HOME"] = home;
@@ -174,10 +177,20 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         {
             var arguments = UnregisterVector(worktreePath);
             Trace.Add(arguments);
+            if (BeforeUnregister is not null) await BeforeUnregister(gitDirectory);
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
             var result = await base.UnregisterWorktreeAsync(repository, worktreePath, gitDirectory, ct);
+            if (result.Succeeded)
+            {
+                Directory.Exists(gitDirectory).ShouldBeFalse("the real administrative entry was dropped");
+                var observed = await base.RunAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct);
+                observed.Succeeded.ShouldBeTrue();
+                ParseRegistrations(observed.Output).ShouldNotContain(r => PathsEqual(r.Path, worktreePath));
+                RegistrationDrops.Add(worktreePath);
+                if (AfterUnregister is not null) await AfterUnregister(gitDirectory);
+            }
             LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.Diagnostic });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;

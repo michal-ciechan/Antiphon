@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -184,10 +185,15 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         if (commandCut)
         {
             var fired = false;
+            if (cut == "C16") h.Fixture.Git.AfterUnregister = _ =>
+            {
+                fired = true;
+                throw new InterruptedBoundary();
+            };
             h.Fixture.Git.AfterCommand = (_, args, result) =>
             {
                 if (!fired && result.Succeeded && (cut switch
-                    { "C12" => args[0] == "push", "C16" => args.Contains("worktree") && args.Contains("remove"),
+                    { "C12" => args[0] == "push", "C16" => false,
                       _ => args[0] == "update-ref" && args.Contains("-d") }))
                 { fired = true; throw new InterruptedBoundary(); }
                 return Task.CompletedTask;
@@ -195,6 +201,7 @@ public sealed class AgentTaskLandCheckpointMatrixTests
             await Should.ThrowAsync<InterruptedBoundary>(() => h.RunAsync());
             fired.ShouldBeTrue();
             h.Fixture.Git.AfterCommand = null;
+            h.Fixture.Git.AfterUnregister = null;
         }
         else
         {
@@ -205,6 +212,25 @@ public sealed class AgentTaskLandCheckpointMatrixTests
             h.Fault.Triggered.ShouldBeTrue();
         }
         var before = (await h.OperationAsync()).ShouldNotBeNull();
+        var aside = WorktreeSetAside.SetAsidePath(h.Fixture.Source);
+        if (cut is "C16" or "C17")
+        {
+            h.Fixture.Git.RegistrationDrops.ShouldHaveSingleItem().ShouldBe(h.Fixture.Source);
+            Directory.Exists(before.GitDirectory).ShouldBeFalse();
+            (await h.Fixture.Git.RegistrationsAsync(h.Fixture.Repository, default))
+                .ShouldNotContain(r => LandingGit.PathsEqual(r.Path, h.Fixture.Source));
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+            if (cut == "C16")
+            {
+                WorktreeSetAside.Read(before.CommonDirectory, h.Fixture.Source).ShouldNotBeNull();
+                (await File.ReadAllTextAsync(Path.Combine(aside, "feature.txt"))).ShouldBe("valuable feature\n");
+            }
+            else
+            {
+                Directory.Exists(aside).ShouldBeFalse();
+                WorktreeSetAside.Read(before.CommonDirectory, h.Fixture.Source).ShouldBeNull();
+            }
+        }
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "branch", "equal-sha-alternative", source);
         await using (var db = h.CreateContext())
         {
@@ -215,17 +241,111 @@ public sealed class AgentTaskLandCheckpointMatrixTests
         }
         h.Fixture.Git.Trace.Clear();
         await h.RestartServicesAsync();
-        await h.RunAsync();
+        if (before.RemoteConfirmedAt is not null)
+        {
+            // Published coordinate refusal escapes to the drain's durable failure settlement.
+            var refusal = await Should.ThrowAsync<Exception>(() => h.RunAsync());
+            refusal.Message.ShouldBe("pending_operation_coordinates_changed");
+            await h.FailAsync(refusal);
+        }
+        else await h.RunAsync();
         var after = (await h.OperationAsync()).ShouldNotBeNull();
         after.Id.ShouldBe(before.Id);
-        after.LastReason.ShouldBe("pending_operation_coordinates_changed");
+        after.LastReason.ShouldBe(before.RemoteConfirmedAt is null ? "pending_operation_coordinates_changed"
+            : LandFailureDiagnostic.InterruptedAfterPublication);
         after.RemoteConfirmedAt.ShouldBe(before.RemoteConfirmedAt, "a historical receipt is retained, never transferred to new coordinates");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("merge") || a[0] == "push" || a.Contains("remove") || a.Contains("-d"));
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "refs/heads/equal-sha-alternative")).Trim().ShouldBe(source);
         if (cut != "C17") (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(source);
         if (cut is not ("C16" or "C17")) Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        if (cut == "C16")
+        {
+            WorktreeSetAside.Read(before.CommonDirectory, h.Fixture.Source).ShouldNotBeNull();
+            (await File.ReadAllTextAsync(Path.Combine(aside, "feature.txt"))).ShouldBe("valuable feature\n");
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        }
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
-    private sealed class InterruptedBoundary : Exception;
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C665_WorkerDeathKeepsRecordedTreeAcrossActualRegistrationDrop(bool dropped)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var source = await h.AddSourceAsync();
+        var ready = Path.Combine(h.Fixture.Root, "removal-ready.json");
+        var script = Path.Combine(h.Fixture.Root, "removal-worker.ps1");
+        await File.WriteAllTextAsync(script, """
+            $ErrorActionPreference = 'Stop'
+            $assembly = [Reflection.Assembly]::LoadFrom($args[0])
+            $method = $assembly.GetType('Antiphon.Tests.TestHelpers.LandingSafetyHarness', $true).GetMethod('RunCrashWorkerAsync', [Reflection.BindingFlags]'Public,Static')
+            $method.Invoke($null, [object[]]@($args[1], $args[2], $args[3], $args[4])).GetAwaiter().GetResult()
+            """);
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in new[] { "-NoProfile", "-File", script, typeof(LandingSafetyHarness).Assembly.Location,
+            h.Fixture.Root, h.Fixture.TaskId.ToString(), dropped ? "C665-after-drop" : "C665-before-drop", ready })
+            start.ArgumentList.Add(arg);
+        start.Environment["ANTIPHON_C448_TEST_CONNECTION"] = h.Schema.ConnectionString;
+        using var worker = System.Diagnostics.Process.Start(start)!;
+        var output = worker.StandardOutput.ReadToEndAsync();
+        var error = worker.StandardError.ReadToEndAsync();
+        try
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            while (!File.Exists(ready) && !worker.HasExited) await Task.Delay(100, budget.Token);
+            File.Exists(ready).ShouldBeTrue(worker.HasExited ? await error : "real removal boundary not reached");
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            op.Phase.ShouldBe(LandPhase.CleanupStarted);
+            var aside = WorktreeSetAside.SetAsidePath(h.Fixture.Source);
+            var record = WorktreeSetAside.Read(op.CommonDirectory, h.Fixture.Source).ShouldNotBeNull();
+            record.SetAsidePath.ShouldBe(aside);
+            record.GitDirectory.ShouldBe(op.GitDirectory);
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+            Directory.Exists(op.GitDirectory).ShouldBe(!dropped);
+            var rows = await h.Fixture.Git.RegistrationsAsync(h.Fixture.Repository, default);
+            rows.Any(r => LandingGit.PathsEqual(r.Path, h.Fixture.Source)).ShouldBe(!dropped);
+            (await File.ReadAllTextAsync(Path.Combine(aside, "feature.txt"))).ShouldBe("valuable feature\n");
+            worker.Kill(entireProcessTree: true);
+            await worker.WaitForExitAsync(budget.Token);
+            await h.RestartServicesAsync();
+            await h.RunAsync();
+            var recovered = (await h.OperationAsync()).ShouldNotBeNull();
+            recovered.Id.ShouldBe(op.Id);
+            recovered.RemoteConfirmedAt.ShouldBe(op.RemoteConfirmedAt);
+            if (!dropped)
+            {
+                // Recovery restores the intact tree, then respects the previously spent command
+                // slot. A new request is needed to authorize another registration drop.
+                recovered.LastReason.ShouldBe("cleanup_command_slot_spent");
+                Directory.Exists(op.GitDirectory).ShouldBeTrue();
+                (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Source, "feature.txt"))).ShouldBe("valuable feature\n");
+                WorktreeSetAside.Read(op.CommonDirectory, h.Fixture.Source).ShouldBeNull();
+                await h.RepostAsync();
+                await h.RunAsync();
+                recovered = (await h.OperationAsync()).ShouldNotBeNull();
+            }
+            recovered.Cleanup.ShouldBe(LandCleanupStatus.Complete, recovered.LastReason);
+            Directory.Exists(aside).ShouldBeFalse();
+            Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+            Directory.Exists(op.GitDirectory).ShouldBeFalse();
+            WorktreeSetAside.Read(op.CommonDirectory, h.Fixture.Source).ShouldBeNull();
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", op.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
+            await h.Fixture.AssertRemoteSourceAsync();
+        }
+        finally
+        {
+            if (!worker.HasExited) worker.Kill(entireProcessTree: true);
+            await worker.WaitForExitAsync();
+            await Task.WhenAll(output, error);
+        }
+    }
+
+    // Cleanup intentionally catches ordinary failures. Cancellation models an interruption that
+    // escapes the coordinator; real worker death is covered separately below.
+    private sealed class InterruptedBoundary : OperationCanceledException;
 }
