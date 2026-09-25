@@ -203,7 +203,7 @@ public class AgentTaskLandStageOutcomeTests
     }
 
     [Test]
-    public async Task locked_source_is_refused_before_publication()
+    public async Task locked_source_lands_and_keeps_its_worktree_as_cleanup_residue()
     {
         using var repo = new ScratchGitRepo("antiphon-land-so-residue");
         using var remote = new TemporaryDirectory("antiphon-land-so-reresidue");
@@ -225,13 +225,15 @@ public class AgentTaskLandStageOutcomeTests
         await RequestHeadAsync(land, task);
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
+        // CARD-0688 D-2 / I-3: the source is the branch ref, so a locked task worktree no longer blocks publication;
+        // guarded cleanup refuses the locked registration and keeps the worktree (was registration_unavailable).
         var rows = await RowsAsync(db, task.Id);
-        rows.ShouldBeEmpty("locked source registration is refused at identity inspection");
+        rows.Select(o => (o.Stage, o.Outcome)).ShouldContain((OrchestrationStage.Cleanup, StageOutcomeKind.Failed));
         var outcome = await db.AgentTaskEvents.AsNoTracking()
-            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused);
-        outcome.Detail.ShouldContain("registration_unavailable");
+            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandedWithResidue);
+        outcome.Detail.ShouldContain("registration_locked");
         Directory.Exists(task.WorktreePath).ShouldBeTrue();
-        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).Ok.ShouldBeFalse();
+        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).Ok.ShouldBeTrue();
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
 
         var queued = await RequestHeadAsync(land, task);
