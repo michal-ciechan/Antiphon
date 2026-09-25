@@ -79,7 +79,9 @@ public partial class CardFileBoardLookupTests
         using var hosted = new CardTaskFileSyncHostedService(scopes,
             Options.Create(new CardFileSyncSettings { Enabled = true, IntervalSeconds = 60, OptedOutReinspectionMinutes = 15 }),
             NullLogger<CardTaskFileSyncHostedService>.Instance, _lookup, time);
+        var beforeStart = _lookup.Reinspection;
         await hosted.StartAsync(default);
+        await WaitForReinspectionAsync(beforeStart);
         (await prepared.Service.SyncAllAsync()).Single().Policy!.RemovalPending.ShouldBeFalse();
         (await prepared.Service.SyncAllAsync()).ShouldBeEmpty();
         await StageExportAsync(prepared);
@@ -252,6 +254,17 @@ public partial class CardFileBoardLookupTests
         var db = Context(prepared.ConnectionString, new QueryCounter());
         var service = Service(prepared.World, db, autoCommit);
         return new SweepScopeHandle(db, service);
+    }
+
+    private async Task WaitForReinspectionAsync(long previous)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (_lookup.Reinspection == previous)
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException("Startup reinspection did not run.");
+            await Task.Delay(20);
+        }
     }
 
     private static async Task AdvanceTickAsync(FakeTimeProvider time, SweepScopes scopes, TimeSpan interval)
