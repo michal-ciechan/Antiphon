@@ -52,8 +52,8 @@ public sealed class RunnerDefaultGuidanceTests
         {
             var text = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", name));
             text.ShouldContain("-Platform Windows");
-            text.ShouldNotContain("CP-13", $"{name} must not name this card's Windows rows");
-            text.ShouldNotContain("server2", $"{name} must not embed a fleet location");
+            text.Contains("CP-13", StringComparison.Ordinal).ShouldBeFalse(name + " names CP-13");
+            text.Contains("server2", StringComparison.Ordinal).ShouldBeFalse(name + " names server2");
         }
     }
 
