@@ -9,6 +9,20 @@ $ErrorActionPreference = 'Continue'
 
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
 
+function Invoke-AppHostGracefulStop {
+    param([int]$TimeoutSec = 5, [string]$Reason)
+    $trace = Join-Path ([System.IO.Path]::GetTempPath()) 'apphost-graceful-stop-seam.jsonl'
+    @{ kind = 'graceful'; class = 'unreachable' } | ConvertTo-Json -Compress | Add-Content -LiteralPath $trace -Encoding ASCII
+    return [pscustomobject]@{ Class = 'unreachable'; Pid = $null; Detail = 'seamed' }
+}
+
+function Wait-AppHostProcessExit {
+    param([int]$ProcessId, [int]$TimeoutSec)
+    $trace = Join-Path ([System.IO.Path]::GetTempPath()) 'apphost-graceful-stop-seam.jsonl'
+    @{ kind = 'wait-exit'; pid = $ProcessId } | ConvertTo-Json -Compress | Add-Content -LiteralPath $trace -Encoding ASCII
+    return $null
+}
+
 $script:passed = 0
 $script:failed = 0
 $script:failures = @()

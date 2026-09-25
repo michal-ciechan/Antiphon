@@ -44,6 +44,17 @@ the new code never goes live. Linked worktrees refuse by default (exit 3);
 return to the main checkout. `-AllowWorktree` deliberately overrides that guard
 and controls the shared stack.
 
+Before that force-kill, and only after the restart lock is held and SHA admission
+has passed, the script POSTs `http://localhost:17202/api/operator/shutdown` with
+the operator token (`ANTIPHON_OPERATOR_TOKEN_FILE`, otherwise
+`%LOCALAPPDATA%\Antiphon\operator-token`) and waits up to `-GracefulStopTimeoutSec`
+(default 20) for the returned server PID to exit. It prints
+`graceful stop accepted; server PID ...` or `graceful stop <class>: <detail>; forcing`.
+`-SkipGracefulStop` goes straight to the kill. The first restart after this change
+lands still talks to the previous server, which answers 404 (`unsupported`); the
+script prints that and force-kills. Exit codes and both locks are unchanged, and
+the graceful wait is not charged against `TimeoutSec`. The token is never printed.
+
 **Job Object rule:** do not launch AppHost as a child of an agent tool job or
 nested shell inside a kill-on-close Windows Job Object. Closing that job can kill
 an apparently healthy stack. A new window is not proof of independent ownership.

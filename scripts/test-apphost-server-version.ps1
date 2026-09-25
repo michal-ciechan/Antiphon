@@ -188,6 +188,14 @@ function Write-C495Seams {
         'function Get-DockerVerdict { param([int]$TimeoutSec=10)'
         '  return [pscustomobject]@{ Healthy = $true; Summary = ''seamed''; Detail = @() }'
         '}'
+        'function Invoke-AppHostGracefulStop { param([int]$TimeoutSec = 5, [string]$Reason)'
+        '  Write-C495Trace ''graceful'' @{ class = ''unreachable''; timeout = $TimeoutSec }'
+        '  return [pscustomobject]@{ Class = ''unreachable''; Pid = $null; Detail = ''seamed'' }'
+        '}'
+        'function Wait-AppHostProcessExit { param([int]$ProcessId, [int]$TimeoutSec)'
+        '  Write-C495Trace ''wait-exit'' @{ pid = $ProcessId; timeout = $TimeoutSec }'
+        '  return $null'
+        '}'
     )
     $seamsPath = Join-Path $Root 'seams.ps1'
     $seams | Set-Content -LiteralPath $seamsPath -Encoding ASCII

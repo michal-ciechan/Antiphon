@@ -2,7 +2,7 @@
 .SYNOPSIS
     Start Antiphon via the Aspire AppHost (dashboard mode).
     - Postgres: Aspire-managed container (persistent named volume)
-    - Server + Client: true daemons — survive AppHost exit, log to <repo>/logs/
+    - Server + Client: live and die with the AppHost; logs under <repo>/logs/
     - Dashboard: URL parsed from log (Aspire assigns it; opens automatically)
     - OTLP:      http://localhost:17206  (fixed)
     - Control API: http://localhost:17207/control/{name}/start|stop|restart

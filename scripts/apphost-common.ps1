@@ -839,3 +839,116 @@ function Format-AppHostGitIndexLockNote {
     }
     return "NOTE: git index lock ($kind) present at $($Lock.Path) (age ${h}h ${m}m ${s}s, $($Lock.Length) bytes). $liveness. Remove it with: Remove-Item '$($Lock.Path)'. Never remove a lock while a git process older than it is running."
 }
+
+function Get-AppHostOperatorTokenPath {
+    $path = $env:ANTIPHON_OPERATOR_TOKEN_FILE
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $path = Join-Path (Join-Path $env:LOCALAPPDATA 'Antiphon') 'operator-token'
+    }
+    return $path
+}
+
+function Get-AppHostErrorStatusCode {
+    param($ErrorRecord)
+    $responses = @()
+    try { if ($ErrorRecord.Exception.Response) { $responses += $ErrorRecord.Exception.Response } } catch { }
+    try {
+        if ($ErrorRecord.Exception.InnerException -and $ErrorRecord.Exception.InnerException.Response) {
+            $responses += $ErrorRecord.Exception.InnerException.Response
+        }
+    } catch { }
+    foreach ($resp in $responses) {
+        try {
+            if ($null -ne $resp.StatusCode) { return [int]$resp.StatusCode }
+        } catch { }
+    }
+    $message = ''
+    try { $message = [string]$ErrorRecord.Exception.Message } catch { }
+    if ($message -match '\b([45]\d{2})\b') { return [int]$Matches[1] }
+    return $null
+}
+
+function Test-AppHostUnreachableMessage {
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $true }
+    return [bool]($Message -match '(?i)timed out|timeout|task was canceled|task was cancelled|operation was canceled|operation was cancelled|connection refused|actively refused|unable to connect|no connection|name or service not known|no such host|network is unreachable|connection reset')
+}
+
+function ConvertTo-AppHostSafeDetail {
+    param([string]$Text, [string]$Token)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return 'request failed' }
+    $safe = $Text
+    if (-not [string]::IsNullOrEmpty($Token)) { $safe = $safe.Replace($Token, '[redacted]') }
+    $safe = ($safe -replace '[\r\n]+', ' ').Trim()
+    if ($safe.Length -gt 180) { $safe = $safe.Substring(0, 180) }
+    return $safe
+}
+
+function Invoke-AppHostGracefulStop {
+    param([int]$TimeoutSec = 5, [string]$Reason)
+    $tokenPath = Get-AppHostOperatorTokenPath
+    if ([string]::IsNullOrWhiteSpace($tokenPath) -or -not (Test-Path -LiteralPath $tokenPath)) {
+        return [pscustomobject]@{ Class = 'refused'; Pid = $null; Detail = 'token file missing' }
+    }
+    $token = $null
+    try { $token = (Get-Content -LiteralPath $tokenPath -Raw -ErrorAction Stop) } catch {
+        return [pscustomobject]@{ Class = 'refused'; Pid = $null; Detail = 'token file unreadable' }
+    }
+    if ($null -ne $token) { $token = $token.Trim() }
+    if ([string]::IsNullOrEmpty($token)) {
+        return [pscustomobject]@{ Class = 'refused'; Pid = $null; Detail = 'token file empty' }
+    }
+    $body = (@{ reason = $Reason } | ConvertTo-Json -Compress)
+    try {
+        $response = Invoke-WebRequest -Uri 'http://localhost:17202/api/operator/shutdown' -Method Post -Headers @{ 'X-Antiphon-Operator-Token' = $token } -Body $body -ContentType 'application/json' -UseBasicParsing -TimeoutSec $TimeoutSec
+        $code = [int]$response.StatusCode
+        if ($code -eq 202) {
+            $pidValue = $null
+            try {
+                $parsed = $response.Content | ConvertFrom-Json
+                $prop = $parsed.PSObject.Properties['pid']
+                if ($null -eq $prop) { $prop = $parsed.PSObject.Properties['Pid'] }
+                if ($null -ne $prop -and $null -ne $prop.Value) { $pidValue = [int]$prop.Value }
+            } catch {
+                return [pscustomobject]@{ Class = 'error'; Pid = $null; Detail = 'shutdown body was not json' }
+            }
+            if ($null -eq $pidValue) {
+                return [pscustomobject]@{ Class = 'error'; Pid = $null; Detail = 'shutdown body had no pid' }
+            }
+            return [pscustomobject]@{ Class = 'accepted'; Pid = $pidValue; Detail = $null }
+        }
+        if ($code -eq 404) { return [pscustomobject]@{ Class = 'unsupported'; Pid = $null; Detail = 'http 404' } }
+        if ($code -eq 403) { return [pscustomobject]@{ Class = 'refused'; Pid = $null; Detail = 'http 403' } }
+        return [pscustomobject]@{ Class = 'error'; Pid = $null; Detail = ('http {0}' -f $code) }
+    } catch {
+        $code = Get-AppHostErrorStatusCode $_
+        if ($code -eq 404) { return [pscustomobject]@{ Class = 'unsupported'; Pid = $null; Detail = 'http 404' } }
+        if ($code -eq 403) { return [pscustomobject]@{ Class = 'refused'; Pid = $null; Detail = 'http 403' } }
+        if ($null -ne $code) { return [pscustomobject]@{ Class = 'error'; Pid = $null; Detail = ('http {0}' -f $code) } }
+        $message = ''
+        try { $message = [string]$_.Exception.Message } catch { }
+        if (Test-AppHostUnreachableMessage $message) {
+            $detail = 'connection failed'
+            if ($message -match '(?i)timed out|timeout|canceled|cancelled') { $detail = 'timeout' }
+            return [pscustomobject]@{ Class = 'unreachable'; Pid = $null; Detail = $detail }
+        }
+        return [pscustomobject]@{ Class = 'error'; Pid = $null; Detail = (ConvertTo-AppHostSafeDetail $message $token) }
+    }
+}
+
+function Wait-AppHostProcessExit {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [int]$TimeoutSec = 20
+    )
+    $started = [datetime]::UtcNow
+    while ($true) {
+        if (-not (Test-ProcessAlive -ProcessId $ProcessId)) {
+            $elapsed = [math]::Floor(([datetime]::UtcNow - $started).TotalSeconds)
+            if ($elapsed -lt 0) { $elapsed = 0 }
+            return [int]$elapsed
+        }
+        if (([datetime]::UtcNow - $started).TotalSeconds -ge $TimeoutSec) { return $null }
+        Wait-AppHostPollInterval -Seconds 1
+    }
+}
