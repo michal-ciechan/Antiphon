@@ -47,6 +47,41 @@ public sealed class LandVerificationBuildSlotTests
     }
 
     [Test]
+    public async Task The_test_run_reuses_the_capped_build_artifacts()
+    {
+        var f = new Fixture();
+        f.Client.BuildSlotAcquire = _ => new RunnerBuildSlotAnswer(new BuildSlotGrant(Lease, 3, 1, 2, DateTime.UtcNow.AddMinutes(90)));
+
+        var result = await f.VerifyAsync("/*/*/SomeTests/*");
+
+        result.Ok.ShouldBeTrue(result.Tail);
+        var build = f.Commands.Single(c => c[0] == "build");
+        var run = f.Commands.Single(c => c[0] == "run");
+        run.Take(6).ShouldBe(["run", "--project", "tests/Antiphon.Tests", "--no-build", "--artifacts-path", build[Array.IndexOf(build, "--artifacts-path") + 1]]);
+    }
+
+    [Test]
+    public async Task An_unreachable_answer_at_the_wait_deadline_times_out_before_the_grace()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var client = new FakeSessionRunnerClient();
+        client.BuildSlotAcquire = _ =>
+        {
+            time.Advance(TimeSpan.FromMinutes(45));
+            return null;
+        };
+        var lines = new List<string>();
+        var gate = new SessionRunnerBuildSlotGate(client, time,
+            Options.Create(new LandingSettings { BuildSlotWaitMinutes = 45, BuildSlotUnreachableGraceSeconds = 60 }));
+
+        var hold = await gate.AcquireAsync("deadline", lines.Add, CancellationToken.None);
+
+        hold.Outcome.ShouldBe(BuildSlotHoldOutcome.Timeout);
+        lines.ShouldContain(l => l.StartsWith("BUILD SLOT timeout after 45m", StringComparison.Ordinal));
+        lines.ShouldNotContain(l => l.StartsWith("BUILD SLOT unleased", StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task The_lease_is_released_after_a_build_failure_and_nothing_else_runs()
     {
         var f = new Fixture { BuildOk = false };

@@ -25,5 +25,6 @@ switch ($answer) {
     'busy' { return @{ Status = 409; Body = '{"type":"build_slot_busy","title":"build_slot_busy","status":409,"occupied":2,"budget":2,"queuePosition":1,"retryAfterMs":10}' } }
     'memory_floor' { return @{ Status = 409; Body = '{"type":"build_slot_memory_floor","title":"build_slot_memory_floor","status":409,"availableMb":1000,"floorMb":6144,"queuePosition":1,"retryAfterMs":10}' } }
     'notfound' { return @{ Status = 404; Body = '' } }
+    'deadline_unreachable' { Start-Sleep -Milliseconds 1100; return @{ Status = 0; Body = ''; Error = 'connection refused (shim)' } }
     default { return @{ Status = 0; Body = ''; Error = 'connection refused (shim)' } }
 }
