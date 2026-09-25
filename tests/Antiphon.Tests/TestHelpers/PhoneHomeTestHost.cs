@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -51,13 +52,16 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         TimeProvider? clock = null,
         string? connectionString = null,
         PhoneHomeLimits? limits = null,
-        Action<DbContextOptionsBuilder>? configureDbContext = null)
+        Action<DbContextOptionsBuilder>? configureDbContext = null,
+        TimeSpan? shutdownTimeout = null)
     {
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(host.Logs);
         builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0));
+        if (shutdownTimeout is { } timeout)
+            builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = timeout);
         var settings = Options.Create(new PhoneHomeRunnerSettings
         {
             Enabled = true,
@@ -287,6 +291,11 @@ internal sealed record CapturedLog(
 internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
 {
     public ClientWebSocket Socket { get; } = new();
+
+    /// <summary>CARD-0716 D-1: completed when the server's close frame arrives, with its status and description.</summary>
+    public TaskCompletionSource<(WebSocketCloseStatus? Status, string? Description)> CloseObserved { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public List<PhoneHomeFrame> Incoming { get; } = [];
     public List<PhoneHomeFrame> Launches { get; } = [];
     public List<PhoneHomeFrame> Inputs { get; } = [];
@@ -364,7 +373,10 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
             {
                 var frame = await PhoneHomeFraming.ReadFrameAsync(Socket, 16 * 1024 * 1024, ct);
                 if (frame is null)
+                {
+                    CloseObserved.TrySetResult((Socket.CloseStatus, Socket.CloseStatusDescription));
                     break;
+                }
                 Incoming.Add(frame);
                 if (frame.Kind != PhoneHomeFrameKind.Request)
                     continue;
