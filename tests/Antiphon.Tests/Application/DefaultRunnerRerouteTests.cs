@@ -45,7 +45,9 @@ public sealed class DefaultRunnerRerouteTests
             // before the runner-kind conflict. The row is still untouched.
             var refused = await Should.ThrowAsync<ValidationException>(() => TaskService(db, workspace.Path)
                 .RerouteAsync(taskId, AgentKind.OpenCode, AgentModelLevel.Frontier, CancellationToken.None));
-            refused.Message.ShouldContain("not a delegate kind", Case.Sensitive, status.ToString());
+            refused.Code.ShouldBe("validation_failed", status.ToString());
+            string.Join(" ", refused.Errors.SelectMany(pair => pair.Value))
+                .ShouldContain("not a delegate kind", Case.Sensitive, status.ToString());
 
             await using var verify = CreateContext(schema);
             var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
