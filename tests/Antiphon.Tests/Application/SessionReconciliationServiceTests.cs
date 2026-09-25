@@ -869,6 +869,68 @@ public class SessionReconciliationServiceTests
     }
 
     /// <summary>
+    /// CARD-0691 D-4: a Stopping row is a stop intent whose kill threw or did not take. Neither pass
+    /// owned it (pass 1 closes it only once the runner reports it gone), so the runner could serve it
+    /// for hours. Past the retry window the kill is re-issued, exactly as for a Stopped row.
+    /// </summary>
+    [Test]
+    public async Task Stopping_session_the_runner_still_serves_past_the_retry_window_gets_the_kill_reissued()
+    {
+        var marker = NewMarker();
+        try
+        {
+            // LastSeenAt is the seed's StartedAt, an hour ago: far past the 60 s default window.
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Stopping, staleAgent: true, agentStatus: AgentStatus.Stopped);
+
+            await using var db = CreateContext();
+            var runner = RunnerRunning(sessionId, startedAt);
+            var service = BuildService(db, runner, new MockEventBus(), new RecordingAlertService());
+
+            await service.ScanAsync(CancellationToken.None);
+
+            runner.Killed.ShouldBe([sessionId]);
+            runner.KillGenerationCalls.ShouldBeEmpty();
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status
+                .ShouldBe(SessionStatus.Stopping, "the runner's exit, not this pass, closes the row");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Stopping_session_inside_the_retry_window_is_left_alone()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Stopping, staleAgent: true, agentStatus: AgentStatus.Stopped);
+            await using (var seed = CreateContext())
+                await seed.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u =>
+                    u.SetProperty(s => s.LastSeenAt, DateTime.UtcNow.AddSeconds(-10)));
+
+            await using var db = CreateContext();
+            var runner = RunnerRunning(sessionId, startedAt);
+            var service = BuildService(db, runner, new MockEventBus(), new RecordingAlertService());
+
+            await service.ScanAsync(CancellationToken.None);
+
+            runner.Killed.ShouldBeEmpty("a kill issued seconds ago may still be landing");
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status
+                .ShouldBe(SessionStatus.Stopping);
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    /// <summary>
     /// A running session the database has no row for at all (the second leak found on 2026-08-16 —
     /// its owning agent's trail was cascade-deleted). Alert only: nothing here knows what it is, and
     /// a session nobody can name is still somebody's work. The operator reaps it from the UI.

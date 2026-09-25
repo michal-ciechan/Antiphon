@@ -629,4 +629,12 @@ public enum AgentIncidentKind
     /// A save that fails after the runner has already released is finished from this row.
     /// </summary>
     RunnerSlotReleaseIntent = 75,
+
+    /// <summary>
+    /// CARD-0691 D-3: a pool delegate was due for release (settlement, the dispatcher's pool-release
+    /// sweep, or the janitor) and its session did not end after the kill, so the agent row was kept
+    /// (Idle for the janitor, or Stopped after the retry budget) instead of being deleted while its
+    /// process lived on. Error; one per (agent, session).
+    /// </summary>
+    DelegateReleaseUnresolved = 76,
 }

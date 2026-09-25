@@ -34,6 +34,13 @@ public sealed class SessionReconciliationSettings
     public int AgentGraceMs { get; set; } = 120_000;
 
     /// <summary>
+    /// CARD-0691 D-4: a session row left <c>Stopping</c> (its kill threw or did not take) that the
+    /// runner still serves gets the kill re-issued once it has been this long since the row was last
+    /// written. Zero or less disables the retry arm.
+    /// </summary>
+    public int StoppingRetryAfterSeconds { get; set; } = 60;
+
+    /// <summary>
     /// Whether the third pass may write a DB-dead-but-runner-alive session back to Running
     /// (CARD-0056). Off leaves the mismatch visible as an alert and changes nothing.
     ///

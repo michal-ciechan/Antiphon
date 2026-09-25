@@ -182,6 +182,14 @@ public class Agent
     public DateTime? PoolIdleSince { get; set; }
 
     /// <summary>
+    /// CARD-0691 D-3: how many times the pool janitor has killed this delegate's session without the
+    /// session ending. Null until the first kill that did not take; after
+    /// <c>Delegation:PoolReleaseMaxKillRetries</c> the row is left Stopped with a
+    /// <c>DelegateReleaseUnresolved</c> incident instead of churning.
+    /// </summary>
+    public int? PoolKillRetries { get; set; }
+
+    /// <summary>
     /// The project scope under which this pool delegate's LIVE environment was resolved. Null
     /// means global-only. It is stamped when a pool session launches (and restamped only when that
     /// row is relaunched), then fences warm reuse: a live process cannot safely change environment

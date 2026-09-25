@@ -3028,6 +3028,97 @@ public partial class AgentTaskReplyIntegrationTests
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Blocked);
     }
 
+    // ---- CARD-0691 S1: a reported failed verdict releases; a live session keeps its row ---------
+
+    [Test]
+    public async Task a_failed_verdict_pools_a_shared_delegate_warm()
+    {
+        // D-2: the judgement is about the agent, not the verdict. A Shared delegate that reported
+        // failure is as reusable as one that reported success; skipping release leaked it Running.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"c691-{Guid.NewGuid():N}");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.Ephemeral = true; t.AgentId = agentId; });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        var factory = new TestScopeFactory();
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "Could not apply S1: the helper is missing.\n" + DelegationReportFormatter.ReportToken(task.Id, "failed"),
+            closingVerdict: false);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+        factory.Stopper.Killed.ShouldBeEmpty("a failed Shared delegate is pooled, not killed (CARD-0085)");
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle, "a reported failed verdict must release the delegate");
+        agent.PoolIdleSince.ShouldNotBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBe(task.RootTaskId);
+    }
+
+    [Test]
+    public async Task a_failed_verdict_stops_a_worktree_delegate()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"c691-{Guid.NewGuid():N}");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Ephemeral = true;
+            t.AgentId = agentId;
+            t.Workspace = WorkspaceMode.Worktree;
+        });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        var factory = new TestScopeFactory();
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "Could not apply S1: the helper is missing.\n" + DelegationReportFormatter.ReportToken(task.Id, "failed"),
+            closingVerdict: false);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+        factory.Stopper.Killed.ShouldBe([sessionId], "a failed Worktree delegate is retired like a succeeded one");
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Stopped);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse("the row goes once the session is terminal");
+    }
+
+    [Test]
+    public async Task a_kill_that_leaves_the_session_live_keeps_the_row_idle()
+    {
+        // D-3: the row is the process's only owner. Deleting it on a kill that did not take is the
+        // CARD-0221 zombie by construction; keep it Idle for the janitor and say so.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"c691-{Guid.NewGuid():N}");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Ephemeral = true;
+            t.AgentId = agentId;
+            t.Workspace = WorkspaceMode.Worktree;
+        });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        var factory = new TestScopeFactory();
+        factory.Stopper.StopsSessionsIn = null;
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        factory.Stopper.Killed.ShouldBe([sessionId]);
+        await using var verify = CreateContext();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+        var agent = await verify.Agents.SingleOrDefaultAsync(a => a.Id == agentId);
+        agent.ShouldNotBeNull("a pool row is never removed while its session is still live");
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldNotBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBeNull("a worktree delegate is not a warm reuse candidate");
+        var incidents = await verify.AgentIncidents
+            .Where(i => i.AgentId == agentId && i.Kind == AgentIncidentKind.DelegateReleaseUnresolved)
+            .ToListAsync();
+        incidents.ShouldHaveSingleItem().SessionId.ShouldBe(sessionId);
+        incidents[0].Severity.ShouldBe(AlertSeverity.Error);
+    }
+
     /// <summary>The pool checks the agent's session pointer - bind it like dispatch would have.</summary>
     private static async Task BindAgentSessionAsync(Guid agentId, Guid sessionId)
     {
@@ -4968,7 +5059,8 @@ public partial class AgentTaskReplyIntegrationTests
         private readonly ServiceProvider _provider;
 
         /// <summary>Records what the settle path asked to stop — the ephemeral-cleanup assertion.</summary>
-        public RecordingSessionStopper Stopper { get; } = new();
+        /// <remarks>Its kills close the session row like the real stopper does (CARD-0691 D-3).</remarks>
+        public RecordingSessionStopper Stopper { get; } = new() { StopsSessionsIn = TestDbFixture.ConnectionString };
 
         public TestScopeFactory(
             string? worktreeRoot = null,

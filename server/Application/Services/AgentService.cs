@@ -40,6 +40,7 @@ public sealed class AgentService
     private readonly SessionRunnerSettings _runnerSettings;
     private readonly PolicyRefreshSettings _policyRefresh;
     private readonly AgentPinnedInstructionService? _pins;
+    private readonly IDelegateSessionStopper? _sessions;
 
     public AgentService(
         AppDbContext db,
@@ -58,9 +59,13 @@ public sealed class AgentService
         AgentPinnedInstructionService? pins = null,
         // CARD-0604 D-2: optional for the same reason the rest are - a harness without it simply
         // cannot create a runner-bound agent, which is the safe direction.
-        PhoneHomeLaunchPolicy? phoneHome = null)
+        PhoneHomeLaunchPolicy? phoneHome = null,
+        // CARD-0691 D-5: delete stops the agent's live session first. Optional for the same reason;
+        // a harness without it cannot delete an agent whose session is live (409), never orphans one.
+        IDelegateSessionStopper? sessions = null)
     {
         _phoneHome = phoneHome;
+        _sessions = sessions;
         _db = db;
         _workflowRunFactory = workflowRunFactory;
         _eventBus = eventBus;
