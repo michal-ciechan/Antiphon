@@ -690,6 +690,99 @@ Amendments (R1):
   `host.Directory.SnapshotLive("server2")` stays null and `SnapshotLive("server2-temp")` stays
   null); a peer then connects to `server2` with its own ticket and becomes live.
 
+#### R2 (red first in `S3-tests`/`S4-tests`, CP-3; green in CP-4..CP-8)
+
+"Setup-red" means the red commit fails before the decisive assertion (the drain route is 404);
+such a row is a pin whose decisive red is its PC, not a stub. Rows marked **decisive** fail at the
+named assertion in CP-3 because the stub gate/field exists and answers today's behaviour.
+
+| ID | File :: method | CP | Red in CP-3 | Red mechanism (production line) |
+|---|---|---|---|---|
+| V-4 | `Application/PhoneHomeRollingRunnerTests.cs` :: `Drain_requires_the_operator_token_persists_the_state_and_survives_a_directory_rebuild` | CP-3/4 | setup (404) | `OperatorCredential.Require` in the drain handler → PC-24; `RunnerStateService` save before `ApplyState` → PC-23; `RunnerStateLoader` `ApplyState` per row → PC-22 |
+| V-5 | same file :: `A_draining_runner_still_serves_input_transcript_kill_and_release_for_its_sessions` | CP-3/4 | setup (404) | `Resolve` carries no drain check → PC-9 |
+| V-6 | same file :: `Default_placement_follows_the_drain_redirect_and_falls_back_without_one` | CP-3/4 | decisive (binds `server2`) | `DefaultRunnerRoutingPolicy.Decide` uses `ResolveForNewWork` → PC-14; `TryKindDefault` gate → PC-15; redirect-eligibility check → PC-13 |
+| V-7 | same file :: `A_queued_task_bound_to_a_draining_runner_is_rebound_to_the_redirect_before_claim` | CP-3/4 | setup (404) | rebind in `RemoteHoldForAsync` (`AgentTaskDispatcher.cs:936`): no-session predicate → PC-16; `WorkspaceRemove` call → PC-19; `RemoteWorktreePath` clear → PC-20; prep-backoff reset → PC-21 |
+| V-8 | same file :: `A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held` | CP-3/4 | setup (404) | claim gate `ResolveForNewWork` in `RemoteHoldForAsync` → PC-10; rebind eligibility → PC-18 |
+| V-9 | `Agents/PhoneHomeConnectionTests.cs` :: `Draining_changes_neither_dispatch_eligibility_nor_capacity` | CP-3/4 | decisive (`ResolveForNewWork` default body resolves) | directory gate → PC-8; `DispatchEligible` untouched by `ApplyState` → PC-36; `AcceptingNewWork` formula → PC-32 |
+| V-10 | `Application/PhoneHomeRollingRunnerTests.cs` :: `Clear_drain_restores_new_work_and_resets_the_retire_fields` | CP-3/4 | setup (404) | `drain/clear` token → PC-25 |
+| V-11 | `Agents/PhoneHomeConnectionTests.cs` :: `A_retired_runner_id_cannot_register_until_its_drain_is_cleared` | CP-3/4 | decisive (ticket issued; state seeded through `ApplyState`) | `Register` retired refusal → PC-31 |
+| V-12 | `Application/PhoneHomeStandingLaunchTests.cs` :: `Standing_agent_start_on_a_draining_runner_is_refused` | CP-3/4 | decisive (drain applied through `ApplyState`; launches) | `AgentControlService` standing start gate → PC-12 |
+| V-13 | `Application/PhoneHomeRollingRunnerTests.cs` :: `Status_reports_sessions_queued_tasks_and_runner_sessions_per_runner` | CP-3/4 | decisive (fields null) | `Sessions` counts every non-terminal status → PC-33; `QueuedTasks` → PC-34; `RunnerSessions` → PC-35 |
+| V-35 (new) | same file :: `A_source_landing_mutation_for_a_draining_runner_is_admitted_held_and_never_moved` | CP-3/4 | setup (404) | SourceLanding exclusion in the rebind → PC-17; `SourceLandingAdmission.RequireSupportAsync` keeps `Resolve` → PC-37 |
+| V-36 (new) | same file :: `A_rebound_task_waits_for_capacity_on_the_redirect_target` | CP-3/4 | setup (404) | target `DeclaredCapacity` still applied after a rebind → PC-38 |
+| V-37 (new) | same file :: `A_rebind_survives_a_failed_target_mirror_and_a_fresh_dispatcher_without_a_second_rebind` | CP-3/4 | setup (404) | rebind persisted before any target request → PC-40 |
+| V-38 (new) | same file :: `A_failed_workspace_remove_on_the_draining_runner_does_not_block_the_rebind` | CP-3/4 | setup (404) | remove failure caught and logged → PC-39 |
+| V-39 (new) | same file :: `A_message_queued_while_a_session_on_a_draining_runner_is_busy_is_delivered_after_its_turn` | CP-3/4 | setup (404) | `Resolve` carries no drain check (G-9; second test for PC-9) |
+| V-40 (new) | same file :: `Remote_prep_refuses_a_runner_that_began_draining_after_the_claim_check` | CP-3/4 | decisive (mirror requested) | `PrepareRemoteWorkspaceAsync` (`AgentTaskDispatcher.cs:5533`) uses `ResolveForNewWork` → PC-11 |
+| V-41 (new) | same file :: `Drain_redirect_validation_refuses_unknown_disabled_desktop_self_and_draining_targets` | CP-3/4 | setup (404) | `RunnerStateService` redirect checks → PC-26..PC-30 |
+| V-33a | `Scripts/RunnerDrainScriptTests.cs` :: `Script_is_ascii_offers_the_four_verbs_and_sends_the_token_without_printing_it` (three verbs in R2) | CP-8 | decisive (file missing) | the no-print rule → PC-41 |
+
+Amendments (R2):
+
+- **Seeding a drain without the route.** Rows marked decisive seed the drain with
+  `host.Directory.ApplyState(id, new RunnerState(Draining: true, ...))` (the S4-tests stub accepts
+  and stores it; the gate is today's), so they fail at behaviour, not at a 404. Route rows (V-4,
+  V-10, V-41) must go through the operator route.
+- **V-4** adds: the 403 arm posts `proxied: true` and asserts no `SessionRunnerStates` row; the
+  rebuilt directory is a second `PhoneHomeRunnerDirectory` over the same schema with
+  `RunnerStateLoader.StartAsync` run once.
+- **V-5** also reads `peerA.RequestCount(PhoneHomeOperation.List) >= 1` after
+  `GetInventoryAsync("server2")`, and the queued-message arm of DP-2: a message to S_A through
+  `SessionMessageQueueService` reaches `peerA.Inputs` and is delivered on its MS-4 `UserPrompt`.
+- **V-6** arms, each a fresh create read back through a fresh context: (a) global `server2`,
+  drained → `server2-temp` (eligible): `RunnerId == "server2-temp"`, Created contains
+  `source=default` and `reason=drain_redirect:server2`, no Warning event; (b) kind default
+  `Raw → server2`, same drain: `source=kind-default ... reason=drain_redirect:server2`; (c) drained
+  with a redirect to an offline `server2-temp`: `RunnerId == null`, `reason=runner_draining`, one
+  Warning; (d) drained without redirect: same as (c); (e) explicit `RunnerId: "server2"` create:
+  `RunnerId == "server2"`, `RunnerSelectionSource == ExplicitRemote`.
+- **V-7** seeds three tasks bound `server2`: T1 Queued default-placed with `RemoteWorktreePath`;
+  T2 Queued explicit (`ExplicitRemote`) with no path; T3 Dispatched with a Running session S_A.
+  One tick after the drain → `server2-temp`: T1 and T2 `RunnerId == "server2-temp"` and their
+  `RunnerSelectionSource` unchanged; T3 `RunnerId == "server2"`; `peerA.RequestCount(WorkspaceRemove)
+  == 1` (T1 only); T1 `RemoteWorktreePath` was cleared and then re-prepared on B
+  (`peerB.RequestCount(WorkspaceMirror) >= 1`); `peerA.Launches` empty; `peerB.Launches.Count == 2`
+  after at most 5 ticks; one event per moved task containing
+  `drain_redirect from=server2 to=server2-temp`. T1 is seeded with `RemotePrepFailures = 2` and
+  `DispatchNotBeforeAt = now + 10 min`; the launch on B within the 5 ticks (clock not advanced past
+  it) is PC-21's decisive assertion.
+- **V-8** asserts the Held detail starts with `DispatchHoldDetails.RunnerDraining` and contains
+  `server2`, `peerA.Launches` and `peerA.RequestCount(WorkspaceMirror)` are 0, `RunnerId ==
+  "server2"`, and exactly one Held event after two ticks (dedup).
+- **V-9** keeps the roster assertions and adds `status.acceptingNewWork == false` while
+  `dispatchEligible == true`.
+- **V-10** adds a 403 arm for `drain/clear` without the token (row still draining).
+- **V-11** posts the registration raw (`RegisterAsync` throws on non-2xx) and asserts 409 with
+  code `phone_home_runner_retired`; the seeded state has `RetiredAt`.
+- **V-13** seeds one Running and one Starting row bound `server2` (`sessions == 2`), one Queued
+  unlaunched task (`queuedTasks == 1`), and peer A lists one Running and one Exited session
+  (`runnerSessions == 1`: the count of non-`Exited` sessions, which is what `drain-old` waits on).
+- **V-35**: create a SourceLanding Mutation with explicit `RunnerId: "server2"` after the drain →
+  201 (admitted); one tick: `RunnerId == "server2"`, held `RunnerDraining`, no
+  `drain_redirect` event, `peerB` untouched.
+- **V-36**: `server2-temp` entry `MaxCapacity 1` and one Running row bound to it; drain `server2`
+  → `server2-temp`; tick: T1 rebound (`RunnerId == "server2-temp"`) and held on capacity
+  (`peerB.Launches.Count == 0`); the Running row goes terminal; tick: `peerB.Launches.Count == 1`.
+- **V-37**: peer B's first `WorkspaceMirror` answers an Error frame; tick 1 rebinds (event 1,
+  remove 1) and records the prep failure; a **new** dispatcher scope after the clock passes the
+  backoff: launch on B; totals `drain_redirect` events == 1 and `peerA.RequestCount(WorkspaceRemove) == 1`.
+- **V-38**: peer A answers `WorkspaceRemove` with an Error frame; tick: `RunnerId ==
+  "server2-temp"`, `RemoteWorktreePath` cleared, one Warning log naming the old path, launch on B.
+- **V-39**: S_A busy (a `UserPrompt` without `TurnEnd` in the transcript), drain `server2`, queue a
+  message for S_A: no `peerA` input while busy; insert `TurnEnd`; the queue delivers:
+  `peerA.Inputs` has the text and the MS-4 `UserPrompt` closes the queue row delivered.
+- **V-40** uses MS-5 (`DrainAfterClaimCheckDirectory`, a test decorator over `host.Directory`
+  that forwards every member and applies the drain to the inner directory right after the
+  first `ResolveForNewWork("server2")` call returns): one tick for a Queued task bound `server2`
+  without a path and without a redirect → `peerA.RequestCount(WorkspaceMirror) == 0`, task
+  `Queued` (not Failed), a Held/Requeued event naming the drain.
+- **V-41**: a third entry `server2-off` (`Enabled: false`); `POST .../server2/drain` with
+  `redirectTo` = `nope` (unknown), `server2-off` (disabled), `desktop`, `server2` (self), and
+  `server2-temp` while `server2-temp` is itself draining → each 409 `phone_home_redirect_invalid`
+  and the `server2` row is absent/unchanged; an empty and a 201-character reason → 400.
+
+MS-5 is added to the missing-setup list: `tests/Antiphon.Tests/TestHelpers/DrainAfterClaimCheckDirectory.cs`.
+
 ### Guards the regression
 
 - R-1 (all rounds): the regression classes listed under the roster run in the round's green
@@ -705,6 +798,43 @@ Amendments (R1):
 - G-5: D-4 — an unconfigured id is `NotFound` (404), never a default answer | PC-3
 - G-6: D-2 — equal secret values across entries validate | PC-6
 - G-7: D-2 — with equal secrets a ticket is bound to the id that registered it | PC-7
+
+R2 (G-n maps to PC-n from here on):
+
+- G-8: D-7 — `ResolveForNewWork` refuses a draining or retired slot | PC-8
+- G-9: D-7 — `Resolve` carries no drain check (sessions keep every call) | PC-9
+- G-10: D-7 — the dispatcher's claim gate (`RemoteHoldForAsync`) uses `ResolveForNewWork` | PC-10
+- G-11: D-7 — remote prep (`PrepareRemoteWorkspaceAsync`) uses `ResolveForNewWork` | PC-11
+- G-12: D-7 — a standing runner-bound agent start is refused on a draining runner | PC-12
+- G-13: D-8 — placement picks the redirect only when it is eligible and not draining | PC-13
+- G-14: D-8 — `Decide` never binds a draining global default | PC-14
+- G-15: D-8 — `TryKindDefault` never binds a draining kind default | PC-15
+- G-16: D-8 — a task with a session is never rebound | PC-16
+- G-17: D-8 — a SourceLanding task is never rebound | PC-17
+- G-18: D-8 — a rebind happens only to an eligible redirect (else hold) | PC-18
+- G-19: D-8 — the old mirror is removed through the draining runner | PC-19
+- G-20: D-8 — the rebind clears `RemoteWorktreePath` so the target prepares its own | PC-20
+- G-21: D-8 — the rebind resets `RemotePrepFailures`/`DispatchNotBeforeAt` | PC-21
+- G-22: D-6 — `RunnerStateLoader` applies every row at startup | PC-22
+- G-23: D-6 — the drain route persists the row (not directory memory only) | PC-23
+- G-24: D-9 — `drain` requires the operator token | PC-24
+- G-25: D-9 — `drain/clear` requires the operator token | PC-25
+- G-26: D-9 — redirect to an unknown id refused | PC-26
+- G-27: D-9 — redirect to a disabled entry refused | PC-27
+- G-28: D-9 — redirect to the desktop refused | PC-28
+- G-29: D-9 — redirect to the runner itself refused | PC-29
+- G-30: D-9 — redirect to a draining runner refused | PC-30
+- G-31: D-11 — a retired id cannot register until cleared | PC-31
+- G-32: D-10 — `AcceptingNewWork = DispatchEligible && !Draining && RetiredAt == null` | PC-32
+- G-33: D-10 — `Sessions` counts every non-terminal bound row | PC-33
+- G-34: D-10 — `QueuedTasks` counts Queued unlaunched bound tasks | PC-34
+- G-35: D-10 — `RunnerSessions` counts the runner's non-`Exited` sessions | PC-35
+- G-36: D-7/D-10 — a drain never changes `DispatchEligible` | PC-36
+- G-37: D-7 — SourceLanding admission keeps `Resolve` (admitted, then held) | PC-37
+- G-38: D-8 — a rebound task still passes the target's capacity gate | PC-38
+- G-39: D-8 — a failed `WorkspaceRemove` does not block the rebind | PC-39
+- G-40: D-8 — the rebind is persisted before any request to the target | PC-40
+- G-41: D-17 — `runner-drain.ps1` never prints the operator token | PC-41
 
 ### Positive controls
 
@@ -733,6 +863,39 @@ the named assertion, restore, green. Zero executed or a build error is not red.
 - PC-7: break G-7 by deleting `|| !string.Equals(ticket.RunnerId, runnerId, StringComparison.Ordinal)`
   from `ValidateTicket`; expect `PhoneHomeConnectionTests.Equal_secrets_do_not_let_a_server2_temp_ticket_connect_as_server2`
   red at `SnapshotLive("server2").ShouldBeNull()`.
+
+R2 (class prefix `PHRR` = `PhoneHomeRollingRunnerTests`, `PHC` = `PhoneHomeConnectionTests`):
+
+- PC-8: `ResolveForNewWork` body → `return Resolve(runnerId);`; `PHC.Draining_changes_neither_dispatch_eligibility_nor_capacity` red at `Should.Throw<ServiceUnavailableException>(() => ResolveForNewWork("server2"))`.
+- PC-9: add `if (SlotState(runnerId).Draining) throw new ServiceUnavailableException(..., RunnerDraining);` to `Resolve`; `PHRR.A_draining_runner_still_serves_input_transcript_kill_and_release_for_its_sessions` red at `peerA.RequestCount(Input) >= 1` (the call throws first).
+- PC-10: `RemoteHoldForAsync` calls `_directory.Resolve(task.RunnerId)` instead of `ResolveForNewWork`, and the rebind branch is skipped when no redirect; `PHRR.A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held` red at `peerA.Launches.ShouldBeEmpty()`.
+- PC-11: `PrepareRemoteWorkspaceAsync` calls `Resolve`; `PHRR.Remote_prep_refuses_a_runner_that_began_draining_after_the_claim_check` red at `peerA.RequestCount(WorkspaceMirror).ShouldBe(0)`.
+- PC-12: `AgentControlService` standing start calls `Resolve`; `PhoneHomeStandingLaunchTests.Standing_agent_start_on_a_draining_runner_is_refused` red at the 409 status assertion.
+- PC-13: drop `&& !target.Draining && target.DispatchEligible` from the redirect choice in `DefaultRunnerRoutingPolicy`; `PHRR.Default_placement_follows_the_drain_redirect_and_falls_back_without_one` red at arm (c) `RunnerId.ShouldBeNull()`.
+- PC-14: `Decide` checks the global default with `Resolve`; same method red at arm (a) `RunnerId.ShouldBe("server2-temp")`.
+- PC-15: `TryKindDefault` checks with `Resolve`; same method red at arm (b) `RunnerId.ShouldBe("server2-temp")`.
+- PC-16: drop `task.AgentSessionId == null` from the rebind predicate; `PHRR.A_queued_task_bound_to_a_draining_runner_is_rebound_to_the_redirect_before_claim` red at T3 `RunnerId.ShouldBe("server2")`.
+- PC-17: drop the SourceLanding exclusion from the rebind predicate; `PHRR.A_source_landing_mutation_for_a_draining_runner_is_admitted_held_and_never_moved` red at `RunnerId.ShouldBe("server2")`.
+- PC-18: rebind whenever `RedirectTo != null` (no eligibility check); `PHRR.A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held` red at the offline-redirect arm `RunnerId.ShouldBe("server2")`.
+- PC-19: delete the `WorkspaceRemove` call in the rebind; V-7's method red at `peerA.RequestCount(WorkspaceRemove).ShouldBe(1)`.
+- PC-20: delete `task.RemoteWorktreePath = null` in the rebind; V-7's method red at `peerB.RequestCount(WorkspaceMirror).ShouldBeGreaterThanOrEqualTo(1)`.
+- PC-21: delete the `RemotePrepFailures`/`DispatchNotBeforeAt` reset; V-7's method red at `peerB.Launches.Count.ShouldBe(2)`.
+- PC-22: `RunnerStateLoader.StartAsync` returns without calling `ApplyState`; V-4's method red at the rebuilt directory's `Should.Throw` on `ResolveForNewWork("server2")`.
+- PC-23: the drain handler calls `directory.ApplyState` and skips `SaveChangesAsync`; V-4's method red at the `SessionRunnerStates` row read (`ShouldNotBeNull`).
+- PC-24: remove `OperatorCredential.Require` from the drain handler; V-4's method red at `StatusCode.ShouldBe(Forbidden)`.
+- PC-25: remove it from the `drain/clear` handler; `PHRR.Clear_drain_restores_new_work_and_resets_the_retire_fields` red at the clear-without-token `ShouldBe(Forbidden)`.
+- PC-26..PC-30: delete, one at a time, the unknown / disabled / desktop / self / draining-target check in `RunnerStateService`'s redirect validation; `PHRR.Drain_redirect_validation_refuses_unknown_disabled_desktop_self_and_draining_targets` red at that arm's `StatusCode.ShouldBe(Conflict)` (five separate cycles; each arm asserts its own status before the next arm runs, and the test names the arm in the Shouldly message).
+- PC-31: delete the `RetiredAt` refusal in `Register`; `PHC.A_retired_runner_id_cannot_register_until_its_drain_is_cleared` red at `StatusCode.ShouldBe(Conflict)`.
+- PC-32: `AcceptingNewWork = DispatchEligible`; V-9's method red at `acceptingNewWork.ShouldBeFalse()`.
+- PC-33: `Sessions` counts `Status == Running` only; `PHRR.Status_reports_sessions_queued_tasks_and_runner_sessions_per_runner` red at `sessions.ShouldBe(2)`.
+- PC-34: `QueuedTasks` returns 0; same method red at `queuedTasks.ShouldBe(1)`.
+- PC-35: `RunnerSessions` counts every listed session; same method red at `runnerSessions.ShouldBe(1)`.
+- PC-36: `ApplyState` sets the live connection's `DispatchEligible = !state.Draining`; V-9's method red at `dispatchEligible.ShouldBeTrue()`.
+- PC-37: `SourceLandingAdmission.RequireSupportAsync` calls `ResolveForNewWork`; V-35's method red at the create `StatusCode.ShouldBe(Created)`.
+- PC-38: after a rebind the tick skips `DeclaredCapacity` for that task; `PHRR.A_rebound_task_waits_for_capacity_on_the_redirect_target` red at `peerB.Launches.Count.ShouldBe(0)`.
+- PC-39: rethrow the `WorkspaceRemove` failure; `PHRR.A_failed_workspace_remove_on_the_draining_runner_does_not_block_the_rebind` red at `RunnerId.ShouldBe("server2-temp")`.
+- PC-40: move the rebind's `SaveChangesAsync` after the target mirror request; `PHRR.A_rebind_survives_a_failed_target_mirror_and_a_fresh_dispatcher_without_a_second_rebind` red at `peerA.RequestCount(WorkspaceRemove).ShouldBe(1)` (the lost rebind repeats).
+- PC-41: add `Write-Host "token: $token"` after the token read in `scripts/runner-drain.ps1`; `RunnerDrainScriptTests.Script_is_ascii_offers_the_four_verbs_and_sends_the_token_without_printing_it` red at the no-print assertion.
 
 ### Execution and evidence
 
@@ -776,14 +939,14 @@ R1 floor = 6 + 5 = **11** minutes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-3 | S3-tests, S4-tests | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-red | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)/*` | V-4 to V-13 | 10 new + existing executed; the 10 new fail at their route/gate/rebind/status assertions | 31 | 6 |
-| CP-4 | S3, S4 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)\|(RunnerSlotEndpointTests*)\|(OperatorShutdownEndpointTests*)\|(RunnerCatalogueTests*)/*` | V-4 to V-13; operator-route, catalogue and connection regressions | all listed, 0 failed/skipped | 46 | 6 |
+| CP-3 | S3-tests, S4-tests | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-red | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)/*` | V-4 to V-13, V-35 to V-41 | 17 new + existing executed; all 17 new fail: V-6, V-9, V-11, V-12, V-13, V-40 at their decisive assertions (drain seeded through the `ApplyState` stub), the other 11 at the drain/clear route (404, setup-red pins); existing methods pass | 53 | 7 |
+| CP-4 | S3, S4 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)\|(RunnerSlotEndpointTests*)\|(OperatorShutdownEndpointTests*)\|(RunnerCatalogueTests*)/*` | V-4 to V-13, V-35 to V-41; operator-route, catalogue and connection regressions | all listed, 0 failed/skipped; 17 new methods | 68 | 7 |
 | CP-5 | S4 | CP-4 | placement-green | `/*/*/(DefaultRunnerCreateTests*)\|(DefaultRunnerEligibilityTests*)\|(DefaultRunnerPinTests*)\|(DefaultRunnerRerouteTests*)\|(RunnerDefaultTests*)\|(TaskPlatformDispatchTests*)\|(TaskPlatformPlacementTests*)\|(DispatcherRemotePrepStarvationTests*)/*` | D-7, D-8 regressions on placement and dispatch | all listed classes, 0 failed (the starvation method expands to 4 results) | 63 | 7 |
 | CP-6 | S4 | CP-4 | reconcile-green | `/*/*/(PhoneHomeReconciliationTests*)\|(SessionReconciliationServiceTests*)\|(PhoneHomePendingInventoryTests*)\|(PhoneHomeRecoveryEligibilityTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeEventPumpTests*)/*` | D-7 regressions on inventory and recovery | all listed classes, 0 failed (57 reconciliation methods expand to more results) | 87 | 6 |
 | CP-7 | S3 | n/a | migration-clean | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c727-ef -- dotnet ef migrations has-pending-model-changes --project server` | D-6 | exit 0, "No changes have been made to the model" | n/a | 2 |
 | CP-8 | S5 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-script-green | `/*/*/RunnerDrainScriptTests*/*` | V-33 (three verbs) | 1 executed, 0 failed | 1 | 3 |
 
-R2 floor = 6 + 6 + 7 + 6 + 2 + 3 = **30** minutes.
+R2 floor = 7 + 7 + 7 + 6 + 2 + 3 = **32** minutes.
 
 #### R3 checkpoints
 
