@@ -67,7 +67,13 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         var request = new HttpRequestMessage(HttpMethod.Get, relative);
         var settings = _resilience?.CurrentValue ?? new ResilienceSettings();
         var profile = operation == ResilienceOperations.RunnerList ? ResilienceProfiles.RunnerList : null;
-        budget ??= ResilienceBudget.Start(_time, settings, profile);
+        // The read client timeout is infinite while resilience is enabled, so the typed
+        // client's RequestTimeoutSeconds has to cap the pipeline or a read runs to 120s.
+        budget ??= ResilienceBudget.Start(
+            _time,
+            settings,
+            profile,
+            TimeSpan.FromSeconds(Math.Max(1, _settings.RequestTimeoutSeconds)));
         ResilienceRequest.Stamp(request, operation, budget);
         ResilienceRequest.CopyDefaultHeaders(_httpClient, request);
         return await client.SendAsync(request, ct).ConfigureAwait(false);
