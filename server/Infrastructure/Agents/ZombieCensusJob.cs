@@ -14,7 +14,7 @@ public sealed class ZombieCensusJob
     private readonly ZombieCensusService _service;
     private readonly ILogger<ZombieCensusJob> _logger;
 
-    public ZombieCensusJob(ZombieCensusService service, ILogger<ZombieCensusJob> logger)
+    public ZombieCensusJob(ZombieCensusService service, ILogger<ZombieCensusJob> logger, ZombieCensusState? state = null)
     {
         _service = service;
         _logger = logger;

@@ -404,6 +404,21 @@ public class ZombieCensusServiceTests
     }
 
     [Test]
+    public async Task the_job_stores_its_result_for_the_attention_feed()
+    {
+        await using var world = await World.CreateAsync();
+        var state = new ZombieCensusState();
+        var job = new ZombieCensusJob(world.Service, new ListLogger<ZombieCensusJob>(), state);
+        var result = await job.ExecuteAsync(CancellationToken.None);
+        state.Latest.ShouldBeSameAs(result);
+        state.Latest!.GeneratedAtUtc.ShouldBe(world.Clock.GetUtcNow());
+        world.Runner.ListException = new HttpRequestException("runner unavailable");
+        await Should.ThrowAsync<InvalidOperationException>(() => job.ExecuteAsync(CancellationToken.None));
+        state.Latest.ShouldBeSameAs(result);
+        world.Runner.KillCalls.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Job_prerequisite_failure_is_logged_Error_and_rethrown()
     {
         await using var world = await World.CreateAsync();
