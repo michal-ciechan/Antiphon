@@ -124,8 +124,33 @@ function Invoke-C585Runner {
     }
     Push-Location -LiteralPath $script:RepoRoot
     try {
-        $output = & pwsh @callArgs 2>&1
+        # Same literal-argv reason as Invoke-Dotnet in run-checkpoint.ps1: the -Filter
+        # value contains '*' and the call operator spends tens of seconds globbing it.
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = 'pwsh'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $script:RepoRoot
+        foreach ($token in @($callArgs)) { [void]$psi.ArgumentList.Add([string]$token) }
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $proc.WaitForExit()
+        $global:LASTEXITCODE = $proc.ExitCode
         $code = $LASTEXITCODE
+        $merged = [string]$stdoutTask.Result
+        $errText = [string]$stderrTask.Result
+        if (-not [string]::IsNullOrEmpty($errText)) {
+            if (-not [string]::IsNullOrEmpty($merged) -and -not $merged.EndsWith("`n")) { $merged += "`n" }
+            $merged += $errText
+        }
+        $output = @()
+        if (-not [string]::IsNullOrEmpty($merged)) {
+            $norm = $merged -replace "`r`n", "`n" -replace "`r", "`n"
+            if ($norm.EndsWith("`n")) { $norm = $norm.Substring(0, $norm.Length - 1) }
+            $output = @($norm -split "`n")
+        }
     } finally {
         Pop-Location
         $env:C585_SHIM_LOG = $null
