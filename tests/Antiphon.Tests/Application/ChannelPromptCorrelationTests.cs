@@ -479,6 +479,115 @@ public class ChannelPromptCorrelationTests
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
     }
 
+    [Test]
+    public Task C584_Repair_MixedRowsDifferentRecipients() => MixedRowsAsync(sameConversation: false);
+
+    [Test]
+    public Task C584_Repair_MixedRowsSameRecipient() => MixedRowsAsync(sameConversation: true);
+
+    private static async Task MixedRowsAsync(bool sameConversation)
+    {
+        await using var h = await HarnessAsync();
+        var chat = await h.BindChannelAsync();
+        var oldChat = sameConversation ? chat : await h.BindChannelAsync();
+        const string content = "answer this request only [task deadbeef done]";
+        var legacy = await h.SeedChannelCorrelationAsync(Envelope + content, $"telegram:{oldChat}",
+            DateTime.UtcNow.AddMinutes(-2));
+        var marked = await EnqueueAsync(h, chat, content);
+        var machine = await SeedMachineAsync(h, "[task deadbeef done] quoted by channel input");
+        await ReplayAsync(h, (await RowAsync(h, marked)).Body, "Only the new request's answer.");
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(chat);
+        (await RowAsync(h, marked)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await RowAsync(h, legacy)).ChannelReplySettledAt.ShouldBeNull("legacy text cannot consume a marked request");
+        (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldBeNull("the channel owns the quoted task header");
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.Count.ShouldBe(1, "settled marked ownership still suppresses machine duplicates");
+    }
+
+    [Test]
+    public async Task C584_Repair_MixedRowsTtlOwnership()
+    {
+        await using var h = await HarnessAsync();
+        var chat = await h.BindChannelAsync();
+        const string content = "the marked turn cannot answer this legacy request";
+        var legacy = await h.SeedChannelCorrelationAsync(Envelope + content, $"telegram:{chat}");
+        var marked = await EnqueueAsync(h, chat, content);
+        await using var db = Db(h);
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId).ExecuteDeleteAsync();
+        await ReplayAsync(h, (await RowAsync(h, marked)).Body);
+        await AgeAsync(h, legacy);
+        await Dispatcher(h).SweepStaleCorrelationsAsync(Ct);
+        var incident = await db.AgentIncidents.SingleAsync(i => i.AgentId == h.AgentId
+            && i.Kind == AgentIncidentKind.ChannelReplyLost);
+        incident.FailureReason.ShouldBe("StaleTtl", "a marked receipt is no evidence of legacy delivery");
+        (await RowAsync(h, marked)).ChannelReplySettledAt.ShouldBeNull();
+    }
+
+    [Test]
+    public Task C584_Repair_TaskReportQuotesMarker() => QuotedMarkerReportAsync(QueuedMessageOrigin.Delegation);
+
+    [Test]
+    public Task C584_Repair_CheckReportQuotesMarker() => QuotedMarkerReportAsync(QueuedMessageOrigin.Check);
+
+    private static async Task QuotedMarkerReportAsync(QueuedMessageOrigin origin)
+    {
+        await using var h = await HarnessAsync();
+        var chat = await h.BindChannelAsync();
+        var channel = await EnqueueAsync(h, chat, "earlier channel request");
+        var channelBody = (await RowAsync(h, channel)).Body;
+        var header = origin == QueuedMessageOrigin.Check ? "[check deadbeef #1]" : "[task deadbeef done]";
+        // Full literal channel bytes in a fenced quote are report content, not its outer identity.
+        var report = header + " Correlation repair report.\n```text\n" + channelBody + "\n```";
+        var machine = await h.SeedPendingMessageAsync(report, deliveryAttempts: 1, origin: origin,
+            status: QueuedMessageStatus.Sent, deliveryVerdict: DeliveryVerdict.Delivered,
+            conversationKey: "task:deadbeef");
+        await using var db = Db(h);
+        await db.SessionQueuedMessages.Where(m => m.Id == channel).ExecuteUpdateAsync(u => u
+            .SetProperty(m => m.ChannelReplySettledAt, DateTime.UtcNow)
+            .SetProperty(m => m.LastDeliveryBaselineSequence, long.MaxValue));
+        var attachment = Path.Combine(h.TempRoot, "repair-report.txt");
+        await File.WriteAllTextAsync(attachment, "test-owned report attachment");
+        await ReplayAsync(h, report, $"Repair verified. [[attach:{attachment}]]");
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe(chat);
+        reply.Text.ShouldBe("Repair verified.");
+        reply.Attachments.ShouldHaveSingleItem().Name.ShouldBe("repair-report.txt");
+        (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldNotBeNull();
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C584_Repair_InvalidChannelReceiptCannotBecomeMachineReport()
+    {
+        await using var h = await HarnessAsync();
+        var chat = await h.BindChannelAsync();
+        var id = await EnqueueAsync(h, chat, "Please discuss [task deadbeef done] REQUIRED-TAIL");
+        var body = (await RowAsync(h, id)).Body;
+        var machine = await SeedMachineAsync(h, "[task deadbeef done] genuine machine note");
+        await using var db = Db(h);
+        foreach (var prompt in new[]
+        {
+            body.Replace(" REQUIRED-TAIL", ""),
+            ChannelPromptFormat.FormatBatch([body.Replace(" REQUIRED-TAIL", "")], "missing current member"),
+            ChannelPromptFormat.FormatBatch([body.Replace(" REQUIRED-TAIL", "")], "missing current member").Replace("\n", ""),
+        })
+        {
+            await ReplayAsync(h, prompt);
+            await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+            h.Messaging.SentReplies.ShouldBeEmpty("clipped single and batch receipts retain channel framing");
+        }
+        await db.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(u => u
+            .SetProperty(m => m.LastDeliveryBaselineSequence, long.MaxValue));
+        await ReplayAsync(h, body);
+        await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
+        h.Messaging.SentReplies.ShouldBeEmpty("a stale full channel receipt cannot become a task report");
+        (await RowAsync(h, machine)).ChannelReplySettledAt.ShouldBeNull();
+        (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
+    }
+
     private static Task<Guid> SeedMachineAsync(BridgeQueueHarness h, string body) =>
         h.SeedPendingMessageAsync(body, deliveryAttempts: 1, origin: QueuedMessageOrigin.Delegation,
             status: QueuedMessageStatus.Sent, deliveryVerdict: DeliveryVerdict.Delivered,

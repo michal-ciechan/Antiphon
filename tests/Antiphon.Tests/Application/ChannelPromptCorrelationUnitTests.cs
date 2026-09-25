@@ -155,6 +155,23 @@ public class ChannelPromptCorrelationUnitTests
     }
 
     [Test]
+    public void C584_Repair_LegacyCannotClaimMarkedPrompt()
+    {
+        var row = Row("[Telegram direct message — Tester 10:00] identical legacy content");
+        var marked = "[antiphon-channel:05840000000000000000000000000003] " + row.Body;
+        foreach (var text in new[]
+        {
+            marked, "provider framing " + marked + " end framing",
+            ChannelPromptFormat.FormatBatch([marked], marked),
+            ChannelPromptFormat.FormatBatch([marked], marked).Replace("\n", ""),
+        })
+            Match(row, Prompt(row, text)).ShouldBeFalse(text);
+        Match(row, Prompt(row, row.Body)).ShouldBeTrue("unmarked compatibility still works");
+        Match(row, Prompt(row, ChannelPromptFormat.FormatBatch([row.Body], "another legacy message")))
+            .ShouldBeTrue("unmarked batching still works");
+    }
+
+    [Test]
     public void Grok_acp_preserves_literal_text()
     {
         var parts = ChannelPromptCorrelationTests.GrokParts(Guid.NewGuid(),
