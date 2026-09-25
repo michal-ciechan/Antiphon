@@ -199,7 +199,20 @@ docker compose -f docker-compose.dev.yml up -d
 ```
 
 Brings up `antiphon-postgres` on **17280** and Redpanda on **19092**. A
-fresh machine is on that local Redpanda and needs nothing — the AppHost
+Postgres restart after a Compose change is `docker compose -f docker-compose.dev.yml up -d postgres`;
+keep the `antiphon_pgdata` volume. The desktop Compose service preloads
+`pg_stat_statements` (`track=top`, `max=5000`), and the server's EF migrations
+create its extension in the `antiphon` database. Check both after the server starts:
+
+```powershell
+docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SHOW shared_preload_libraries;'
+docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT extname FROM pg_extension WHERE extname = ''pg_stat_statements'';'
+```
+
+The first result must include `pg_stat_statements`; the second must return one row.
+The [query and reset commands](logs.md#desktop-postgres-query-statistics) are in the log inventory.
+
+A fresh machine is on that local Redpanda and needs nothing — the AppHost
 only forwards a live broker when `AntiphonMessaging:BootstrapServers` is
 set in the AppHost's own user-secrets (or gitignored
 `Antiphon.AppHost/appsettings.Development.json`). Only Postgres is
