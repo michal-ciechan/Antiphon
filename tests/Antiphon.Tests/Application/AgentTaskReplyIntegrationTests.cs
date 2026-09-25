@@ -3165,6 +3165,7 @@ public partial class AgentTaskReplyIntegrationTests
         {
             var row = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
             row.IsPoolDelegate = true;
+            row.Status = AgentStatus.Running;
             if (alwaysOn) row.BoardId = null;
             await db.SaveChangesAsync();
         }
