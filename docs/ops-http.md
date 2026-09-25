@@ -274,6 +274,12 @@ transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the de
 The three row-derived conditions include server2. The Windows OS census remains local-only.
 `RunnerConsulted` refers to the local list; remote evidence uses CARD-0679's cached inventory.
 All four conditions are read-only and offer inspection, never automatic cleanup.
+Overlapping session leak conditions produce one row per session: `SessionStopStuck` takes
+precedence over `PoolDelegateUnreleased`, then `SessionUnowned`; the other conditions' evidence
+is attached to that row. Session-only inspection opens `/attention?session=<id>` and reads the
+transcript. Census inspection opens `/attention?census=zombie-census:<class>` and shows the full
+`censusCandidates` list from the same dated snapshot, including candidates beyond the five-example
+preview and links to identified sessions. A resolved condition disappears on the next feed read.
 
 `POST /api/agents/{id}/stop` is the front door for a named agent; `POST /api/sessions/{id}/kill`
 kills one session and records `OperatorRequest` as the termination source. The session summary

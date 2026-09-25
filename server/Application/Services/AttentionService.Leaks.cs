@@ -8,6 +8,22 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed partial class AttentionService
 {
+    private async Task<List<AttentionItemDto>> BuildSessionLeakItemsAsync(
+        DateTime now, IReadOnlyList<SessionRunnerSessionDto>? localInventory,
+        HashSet<Guid> remoteLive, HashSet<Guid> remoteUnknown, CancellationToken ct)
+    {
+        // A failed stop explains why a release/ownership leak persists. Keep that condition
+        // first, then the more specific pool release condition, with all other evidence attached.
+        var items = await BuildSessionStopStuckItemsAsync(now, localInventory, remoteLive, remoteUnknown, ct);
+        items.AddRange(await BuildPoolDelegateUnreleasedItemsAsync(now, remoteLive, remoteUnknown, ct));
+        items.AddRange(await BuildSessionUnownedItemsAsync(now, remoteLive, remoteUnknown, ct));
+        return items.GroupBy(i => i.SessionId).Select(group => group.First() with
+        {
+            Evidence = string.Join("\n", group.Select((item, index) => index == 0 ? item.Evidence
+                : $"Also {item.Kind}: {item.Headline} {item.Evidence}")),
+        }).ToList();
+    }
+
     // CARD-0691: these are read-time projections, never another cleanup path.
     private async Task<List<AttentionItemDto>> BuildPoolDelegateUnreleasedItemsAsync(
         DateTime now, HashSet<Guid> remoteLive, HashSet<Guid> remoteUnknown, CancellationToken ct)
@@ -158,7 +174,7 @@ public sealed partial class AttentionService
                     + string.Join("; ", group.Take(5).Select(r => $"pid={r.Pid}/agent={r.AgentName}/session={r.SessionId?.ToString() ?? "unknown"}")),
                 result.GeneratedAtUtc.UtcDateTime, null, [AttentionAction.OpenDrawer],
                 ModelKind: modelKinds.Count == 1 ? modelKinds[0] : null,
-                ConditionKey: $"zombie-census:{group.Key}");
+                ConditionKey: $"zombie-census:{group.Key}", CensusCandidates: group.ToList());
         }).ToList();
     }
 

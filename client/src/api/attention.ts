@@ -191,6 +191,8 @@ export type AttentionAction =
   | 'Continue'
 
 export interface AttentionItemDto {
+  /** Full candidate class from the same dated snapshot as the census row's preview. */
+  censusCandidates?: ZombieCensusCandidate[] | null
   conditionKey?: string | null
   landRequestId?: string | null
   landNotificationId?: string | null
@@ -221,6 +223,24 @@ export interface AttentionItemDto {
   /** Rolled-up spend for the task and everything under it, when the row is task-scoped. */
   subtreeCostUsd: number | null
   actions: AttentionAction[]
+}
+
+export interface ZombieCensusCandidate {
+  pid: number
+  exe: string
+  startUtc: string | null
+  workingSetGb: number
+  cpuDeltaPercent: number | null
+  identityMethod: string
+  sessionId: string | null
+  dbStatus: string
+  agentName: string
+  class: string
+  failedRules: string[]
+  futureAction: string
+  runnerClaimed: boolean
+  treeKillPid: number
+  isCandidate: boolean
 }
 
 export interface AttentionDto {
