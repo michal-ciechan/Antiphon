@@ -89,6 +89,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         }
 
         builder.Services.AddSingleton(settings);
+        builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.Configure<OperatorSettings>(_ => { });
         builder.Services.AddSingleton<ILaunchDrain, IdleLaunchDrain>();
         builder.Services.AddSingleton<OperatorShutdownCoordinator>();
