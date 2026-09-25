@@ -69,7 +69,7 @@ public sealed class AgentTaskLandCheckpointMatrixTests
                 { fired = true; throw new InterruptedBoundary(); }
                 return Task.CompletedTask;
             };
-            await Should.ThrowAsync<InterruptedBoundary>(() => h.RunAsync());
+            await Should.ThrowAsync<OperationCanceledException>(() => h.RunAsync());
             fired.ShouldBeTrue();
             h.Fixture.Git.AfterCommand = null;
         }
@@ -198,7 +198,7 @@ public sealed class AgentTaskLandCheckpointMatrixTests
                 { fired = true; throw new InterruptedBoundary(); }
                 return Task.CompletedTask;
             };
-            await Should.ThrowAsync<InterruptedBoundary>(() => h.RunAsync());
+            await Should.ThrowAsync<OperationCanceledException>(() => h.RunAsync());
             fired.ShouldBeTrue();
             h.Fixture.Git.AfterCommand = null;
             h.Fixture.Git.AfterUnregister = null;
@@ -341,6 +341,7 @@ public sealed class AgentTaskLandCheckpointMatrixTests
     }
 
     // Cleanup intentionally catches ordinary failures. Cancellation models an interruption that
-    // escapes the coordinator; the worker-death rows also exercise abrupt process exit.
+    // escapes the coordinator; async continuations may surface it as TaskCanceledException.
+    // Each caller also requires its exact hook to have fired. Worker-death rows exercise abrupt exit.
     private sealed class InterruptedBoundary : OperationCanceledException;
 }
