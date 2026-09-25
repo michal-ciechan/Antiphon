@@ -14,9 +14,9 @@
   input state. A definitely unsent body returns 503 `phone_home_unavailable`: Now creates no row,
   send-now retains the entire prior row/attempt, and durable immediate enqueue removes only its
   own provisional row. This includes a refusal of the proactive overlay Esc before the first body
-  write; the same exact restoration applies. Body-written or in-flight uncertainty retains attempt evidence for normal
-  recovery; an unavailable Enter is never a refundable body attempt. Local readiness/Herdr/modal
-  refusals and confirmed-gone sessions retain their own contracts.
+  write; the same exact restoration applies. Body-written or in-flight uncertainty retains attempt
+  evidence for normal recovery; an unavailable Enter is never a refundable body attempt. Local
+  readiness/Herdr/modal refusals and confirmed-gone sessions retain their own contracts.
 
 - **Pending inventory has a five-second freshness bound (CARD-0696).** Before the accepted
   runner's first successful List, one single-flight bootstrap projection caches its active bound
