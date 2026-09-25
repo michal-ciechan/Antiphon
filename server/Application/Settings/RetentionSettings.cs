@@ -8,7 +8,7 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class RetentionSettings
 {
-    public int TranscriptRetentionDays { get; set; } = 30;
+    public int TranscriptRetentionDays { get; set; } = 7;
 
     public int QueuedMessageRetentionDays { get; set; } = 30;
 

@@ -117,7 +117,7 @@
     "ModelOverrides": {}
   },
   "Retention": {
-    "TranscriptRetentionDays": 30,
+    "TranscriptRetentionDays": 7,
     "QueuedMessageRetentionDays": 30,
     "SessionRetentionDays": 90,
     "TaskRetentionDays": 180,

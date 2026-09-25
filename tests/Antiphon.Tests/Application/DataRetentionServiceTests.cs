@@ -132,6 +132,31 @@ public class DataRetentionServiceTests
     }
 
     [Test]
+    public async Task Default_transcript_window_prunes_after_seven_days_but_keeps_six_day_history()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var staleAt = DaysAgo(8);
+            var recentAt = DaysAgo(6);
+            var staleSession = await SeedSessionAsync(marker, SessionStatus.Stopped, staleAt);
+            var recentSession = await SeedSessionAsync(marker, SessionStatus.Stopped, recentAt);
+            var staleTranscript = await SeedTranscriptAsync(staleSession, 1, TranscriptKinds.UserPrompt, staleAt);
+            var recentTranscript = await SeedTranscriptAsync(recentSession, 1, TranscriptKinds.UserPrompt, recentAt);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneTranscriptsAsync(CancellationToken.None);
+
+            (await ExistsAsync(staleTranscript)).ShouldBeFalse();
+            (await ExistsAsync(recentTranscript)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task A_stale_stopped_session_that_is_an_agents_PersistentSessionId_is_excluded()
     {
         var marker = NewMarker();
@@ -259,7 +284,7 @@ public class DataRetentionServiceTests
             await using var db = CreateContext();
             var result = await CreateService(db, new RetentionSettings
             {
-                TranscriptRetentionDays = 30,
+                TranscriptRetentionDays = 7,
                 QueuedMessageRetentionDays = 0,
             }).RunOnceAsync(CancellationToken.None);
 

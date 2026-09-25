@@ -1,5 +1,8 @@
 # CARD-0044 — Retention for TranscriptEntries (and the three sibling tables): plan
 
+CARD-0698 later shortened the transcript window from 30 to 7 days. The dated measurements below
+remain as originally recorded; the described active transcript default reflects that change.
+
 **One nightly-ish retention pass, per-table windows, and — the load-bearing decision — transcript
 deletion is per-session all-or-nothing, never a partial trim.** Partial trims of a session's history
 are not merely risky, they are *actively harmful* under the current ingestion design (§2), and
@@ -22,7 +25,7 @@ Two consequences for the design:
   stale today, so the first prune deletes little — retention is a steady-state cap, not a one-shot
   cleanup, and the 57.5k rows on the 203 dead sessions become eligible as they age. The pass that
   eventually removes the mass is the **session-row** deletion at 90d (§4), whose FK cascade takes
-  the transcripts with it; the 30d transcript pass covers the 30–90d window.
+  the transcripts with it; the 7d transcript pass covers the 7–90d window.
 - Row age within a session is mixed (663 of 18,815 Stopped-session rows are >30d), which is exactly
   the shape a naive `WHERE CreatedAt < cutoff` would partially trim. It must not (§2).
 
@@ -70,7 +73,7 @@ batching and per-session logging) when **all** of:
    carry one today). This guards the CARD-0056 re-adoption path (which re-adopts *Failed* rows) and
    any operator resume of an agent's current-but-stopped session.
 3. **Activity-relative cutoff**, per the card's suggestion: the session's newest transcript row
-   (`MAX(CreatedAt)`) *and* its `LastSeenAt` are both older than `TranscriptRetentionDays` (30).
+   (`MAX(CreatedAt)`) *and* its `LastSeenAt` are both older than `TranscriptRetentionDays` (7).
    Keying off the session's own last activity, not wall-clock alone, means a session is never
    caught mid-history: either its whole story is stale or none of it is deleted.
 
@@ -80,7 +83,7 @@ CARD-0055 delivery confirmation and late-confirm (`WaitForTranscriptConfirmAsync
 ones; `DelegationUsageRollup.ForSessionAsync` is read at task settle time and its result is stamped
 onto the `AgentTask` row (`CostUsd` etc.), so pruning a settled session's transcript later loses no
 cost data; `AgentTaskReplyService` correlation and `DelegateCheckProbe` read only running tasks'
-sessions. The one visible loss is intended: the UI transcript view of a >30d-dead session renders
+sessions. The one visible loss is intended: the UI transcript view of a >7d-dead session renders
 empty. (Optional nicety, not in scope: a "transcript pruned by retention" note in the session view.)
 
 ### Queued-message pass: settled rows only
@@ -104,7 +107,7 @@ NULL)`.
 ### Service shape — follow the incident/alert precedent, one pass for everything
 
 - **`RetentionSettings`** (new, bound to `"Retention"` in `Program.cs`, next to
-  `SupervisionSettings`/`AlertsSettings` at `Program.cs:130`): `TranscriptRetentionDays = 30`,
+  `SupervisionSettings`/`AlertsSettings` at `Program.cs:130`): `TranscriptRetentionDays = 7`,
   `QueuedMessageRetentionDays = 30`, `SessionRetentionDays = 90`, `TaskRetentionDays = 180`,
   `SweepHours = 6`. Convention: a value `<= 0` disables that table's pass (an explicit off-switch,
   unlike the audit knob's silent deadness the card complains about).
@@ -131,7 +134,7 @@ cascades `TranscriptEntries` (**CASCADE**, `AppDbContext.cs:1037`) and `SessionQ
 (**CASCADE**, `:1064`), and nulls `RunAttempts.AgentSessionId` (**SET NULL**, `:1098`) and
 `Cards.OwnerSessionId` (**SET NULL**). Nothing cascades *into* sessions that matters here. The
 interaction with the transcript pass is benign and useful: the session-row delete is the mechanism
-that ultimately removes the 57.5k-row mass; the slice-1 transcript pass only covers the 30–90d gap.
+that ultimately removes the 57.5k-row mass; the slice-1 transcript pass only covers the 7–90d gap.
 
 Two references are **loose Guids with no FK** and would dangle: `AgentTask.AgentSessionId` and
 `AgentTask.ParentSessionId` (index but no constraint, `AppDbContext.cs:1283`), and
