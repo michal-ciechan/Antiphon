@@ -27,7 +27,7 @@ public static class ResilienceRegistration
     public static IServiceCollection AddAntiphonResilience(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<ResilienceSettings>()
-            .Bind(configuration.GetSection(ResilienceSettings.SectionName))
+            .Configure(settings => BindReplacingAllowlists(settings, configuration))
             .ValidateOnStart();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<ResilienceSettings>, ResilienceSettingsValidator>());
         services.TryAddSingleton<ResilienceTelemetry>();
@@ -55,6 +55,28 @@ public static class ResilienceRegistration
         }
 
         return services;
+    }
+
+    /// <summary>
+    /// The configuration binder appends indexed values onto an array that already holds the
+    /// built-in defaults, so a narrower list cannot remove entries. Clear first, then restore
+    /// each default only when that key was not configured.
+    /// </summary>
+    internal static void BindReplacingAllowlists(ResilienceSettings settings, IConfiguration configuration)
+    {
+        var section = configuration.GetSection(ResilienceSettings.SectionName);
+        settings.Http ??= new ResilienceHttpSettings();
+        settings.Database ??= new ResilienceDatabaseSettings();
+        settings.Http.AllowedStatusCodes = [];
+        settings.Http.AllowedSocketErrors = [];
+        settings.Database.AllowedSqlStates = [];
+        section.Bind(settings);
+        if (!section.GetSection("Http:AllowedStatusCodes").Exists())
+            settings.Http.AllowedStatusCodes = [.. ResilienceHttpSettings.DefaultStatusCodes];
+        if (!section.GetSection("Http:AllowedSocketErrors").Exists())
+            settings.Http.AllowedSocketErrors = [.. ResilienceHttpSettings.DefaultSocketErrors];
+        if (!section.GetSection("Database:AllowedSqlStates").Exists())
+            settings.Database.AllowedSqlStates = [.. ResilienceDatabaseSettings.DefaultSqlStates];
     }
 
     public static MeterProviderBuilder AddAntiphonResilienceMetrics(this MeterProviderBuilder builder) =>
