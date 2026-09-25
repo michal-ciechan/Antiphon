@@ -1309,6 +1309,9 @@ public class AppDbContext : DbContext
             entity.Property(m => m.ContentDigest).HasColumnType("text");
             entity.Property(m => m.NoteHeader).HasColumnType("text");
             entity.Property(m => m.HoldUntil).IsRequired(false);
+            entity.HasIndex(m => m.Id).HasDatabaseName("IX_SessionQueuedMessages_CompletionWakeup")
+                .HasFilter("\"Status\" = 0 AND \"DeliveryAttempts\" = 0 "
+                    + "AND \"SourceTaskId\" IS NOT NULL AND \"ContentDigest\" IS NOT NULL");
             entity.Property(m => m.CreatedAt).IsRequired();
             entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
 
@@ -1774,6 +1777,10 @@ public class AppDbContext : DbContext
             entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
             entity.Property(t => t.CompletionNoteDigest).HasColumnType("text");
             entity.Property(t => t.CompletionNoteQueuedAt).IsRequired(false);
+            entity.HasIndex(t => t.Id).HasDatabaseName("IX_AgentTasks_MissingCompletionNote")
+                .HasFilter("\"CompletionNoteQueuedAt\" IS NULL AND \"SourceLandingOperationId\" IS NOT NULL "
+                    + "AND \"ParentSessionId\" IS NOT NULL AND \"ReplyTo\" = 1 AND \"Result\" IS NOT NULL "
+                    + "AND \"Status\" IN (4, 5, 6)");
             entity.Property(t => t.DistilledResult).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverablePath).HasMaxLength(1000);

@@ -1,5 +1,15 @@
 # Session runtime invariants
 
+- **Completion recovery is event driven (CARD-0699).** Committed sourced settlement, completion
+  publication and delivery failures wake the completion worker. Its durable backstop runs at
+  startup, after failures, and every fifteen minutes. It walks bounded ID pages of unstamped
+  sourced terminal results using a partial index; stamped history never enters recovery or
+  legacy stamp repair. Queue insertion and the task stamp still commit together, and the
+  existing digest/session lock prevents replay. Pending completion holds wake at their recorded
+  deadline or distillation release, including after startup; caller turn-end remains the normal
+  busy-session delivery trigger. Wakeup overflow requests a sweep, and repeated failures back
+  off to sixty seconds. These wakeups are hints, never transcript-confirmed delivery receipts.
+
 - **Accepted @mentions are durable queued input (CARD-0696).** The router allocates an occurrence
   ID; acceptance commits one `WhenIdle` row with origin `Mention` and freezes its target and body.
   Replaying that ID validates the destination/body and never resets an attempt. Separate identical

@@ -5869,8 +5869,11 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>CARD-0664 D-2/D-3: best-effort release of a failed task's Launch rows after its commit.</summary>
-    private Task ReleaseTaskConsumersAsync(AgentTask task) =>
-        _workspaceUse?.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None) ?? Task.CompletedTask;
+    private Task ReleaseTaskConsumersAsync(AgentTask task)
+    {
+        _queue.CompletionSettled(task);
+        return _workspaceUse?.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None) ?? Task.CompletedTask;
+    }
 
     internal enum ReuseOutcome
     {

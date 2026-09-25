@@ -202,6 +202,8 @@ public sealed class AgentTaskReplyService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            using var recoveryScope = _scopeFactory.CreateScope();
+            recoveryScope.ServiceProvider.GetService<CompletionNoteFlushQueue>()?.Recovery.RequestSweep();
             _logger.LogWarning(ex, "Failed to settle a delegated task for session {SessionId}", sessionId);
         }
     }
@@ -1906,37 +1908,44 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id), task.Status);
         }
 
-        // CARD-0664 D-2/D-3: the settlement is committed; give back the task's Launch rows.
-        // Best-effort, and never on Blocked (the owner is still live).
-        if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled
-            && services.GetService<WorkspaceUseAdmission>() is { } workspaceUse)
-            await workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);
-
-        if (services.GetService<LandDeliveryBoundary>() is { } saved)
-            await saved.ReachedAsync("settlement-saved", task.Id, task.Id, ct);
-        if (afterPersist is not null)
-            await afterPersist(ct);
-
-        if (completion is not null)
-            await DeliverCompletionObligationAsync(completion, ct);
-        else if (durableCompletion)
+        try
         {
-            await using var deliveryScope = _scopeFactory.CreateAsyncScope();
-            var store = deliveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var notificationId = await store.AgentTaskLandNotifications.AsNoTracking()
-                .Where(n => n.TaskId == task.Id && n.Kind == LandNotificationKind.TaskCompletion
-                    && n.ContentDigest == DelegationNoteDigest.Compute(report))
-                // A reopened task can report identical text. Prefer this transaction's
-                // exact obligation; after a concurrency loss use the newest persisted one.
-                .OrderByDescending(n => n.Id == completionNotificationId)
-                .ThenByDescending(n => n.CreatedAt)
-                .Select(n => n.Id).FirstAsync(ct);
-            await deliveryScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
-                .ReconcileAsync(notificationId, ct);
+            // CARD-0664 D-2/D-3: the settlement is committed; give back the task's Launch rows.
+            // Best-effort, and never on Blocked (the owner is still live).
+            if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled
+                && services.GetService<WorkspaceUseAdmission>() is { } workspaceUse)
+                await workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);
+
+            if (services.GetService<LandDeliveryBoundary>() is { } saved)
+                await saved.ReachedAsync("settlement-saved", task.Id, task.Id, ct);
+            if (afterPersist is not null)
+                await afterPersist(ct);
+
+            if (completion is not null)
+                await DeliverCompletionObligationAsync(completion, ct);
+            else if (durableCompletion)
+            {
+                await using var deliveryScope = _scopeFactory.CreateAsyncScope();
+                var store = deliveryScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var notificationId = await store.AgentTaskLandNotifications.AsNoTracking()
+                    .Where(n => n.TaskId == task.Id && n.Kind == LandNotificationKind.TaskCompletion
+                        && n.ContentDigest == DelegationNoteDigest.Compute(report))
+                    // A reopened task can report identical text. Prefer this transaction's
+                    // exact obligation; after a concurrency loss use the newest persisted one.
+                    .OrderByDescending(n => n.Id == completionNotificationId)
+                    .ThenByDescending(n => n.CreatedAt)
+                    .Select(n => n.Id).FirstAsync(ct);
+                await deliveryScope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>()
+                    .ReconcileAsync(notificationId, ct);
+            }
+            else
+                await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git);
+            await PublishAsync(task, ct);
         }
-        else
-            await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git);
-        await PublishAsync(task, ct);
+        finally
+        {
+            services.GetRequiredService<SessionMessageQueueService>().CompletionSettled(task);
+        }
 
         if (!release)
             return;
@@ -2242,7 +2251,7 @@ public sealed class AgentTaskReplyService
                     }
                 }
             }
-            // The hosted owner also scans persisted raw completions after missed/full wakeups.
+            // Publication schedules the finite hold deadline; settlement also wakes an idle caller.
             scope.ServiceProvider.GetService<CompletionNoteFlushQueue>()?.TryEnqueue(parentSession);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

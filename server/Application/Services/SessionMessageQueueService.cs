@@ -44,6 +44,7 @@ public sealed partial class SessionMessageQueueService
     private readonly SessionDeliveryProfile? _sessionProfile;
     private readonly ILogger<SessionMessageQueueService> _logger;
     private readonly CapacityRecoveryService? _capacityRecovery;
+    private readonly CompletionNoteFlushQueue? _completionNotes;
 
     public SessionMessageQueueService(
         IServiceScopeFactory scopeFactory,
@@ -59,7 +60,8 @@ public sealed partial class SessionMessageQueueService
         CapacityRecoveryService? capacityRecovery = null,
         // CARD-0604 G-21. Absent, a remote spill still never writes a desktop file; it simply
         // types the whole body instead, which is the safe direction.
-        RemoteSpillCourier? remoteSpills = null)
+        RemoteSpillCourier? remoteSpills = null,
+        CompletionNoteFlushQueue? completionNotes = null)
     {
         _remoteSpills = remoteSpills;
         _ptyProfile = ptyProfile;
@@ -73,7 +75,21 @@ public sealed partial class SessionMessageQueueService
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _logger = logger;
         _capacityRecovery = capacityRecovery;
+        _completionNotes = completionNotes;
     }
+
+    internal void CompletionSettled(AgentTask task)
+    {
+        if (task.SourceLandingOperationId is not null && task.Result is not null
+            && task.ParentSessionId is not null && task.ReplyTo == AgentTaskReplyTo.Session
+            && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
+            _completionNotes?.Recovery.Check(task.Id);
+    }
+
+    internal void CompletionDeliveryFailed() => _completionNotes?.Recovery.RequestSweep();
+
+    internal void CompletionHoldReleased(Guid sessionId) =>
+        _completionNotes?.Recovery.ScheduleFlush(sessionId, DateTime.MinValue);
 
     /// <summary>
     /// Process-wide pty ceilings (CARD-0037) — no-profile / test fallback. Delivery paths that
@@ -684,6 +700,12 @@ public sealed partial class SessionMessageQueueService
             if (completionTx is not null)
                 await completionTx.CommitAsync(ct);
 
+            if (origin == QueuedMessageOrigin.Delegation && sourceTaskId is Guid publishedTask && contentDigest is not null)
+            {
+                _completionNotes?.Recovery.Check(publishedTask);
+                _completionNotes?.Recovery.ScheduleFlush(sessionId, holdUntil ?? DateTime.MinValue);
+            }
+
             onCreated?.Invoke(row.Id);
             if (sourceLandNotificationId is not null && afterLandQueueInsert is not null)
                 await afterLandQueueInsert(row.Id, ct);
@@ -711,6 +733,12 @@ public sealed partial class SessionMessageQueueService
                     "Canceled Supervision compact {MessageId} on session {SessionId}: session is working",
                     row.Id, sessionId);
             }
+        }
+        catch
+        {
+            if (origin == QueuedMessageOrigin.Delegation && sourceTaskId is not null)
+                CompletionDeliveryFailed();
+            throw;
         }
         finally
         {
@@ -2774,6 +2802,7 @@ public sealed partial class SessionMessageQueueService
     // path to it failed, and a kill issued over that same path would fail too.
     private async Task RecordTransportFailureAsync(Guid sessionId, Exception failure, CancellationToken ct)
     {
+        CompletionDeliveryFailed();
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -4162,6 +4191,7 @@ public sealed partial class SessionMessageQueueService
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct,
         DateTime? capturedGeneration = null, bool enterOnlyRecovery = false)
     {
+        CompletionDeliveryFailed();
         if (messageIds is { Count: > 0 })
         {
             await using var rulesScope = _scopeFactory.CreateAsyncScope();
