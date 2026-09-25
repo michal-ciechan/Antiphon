@@ -185,6 +185,9 @@ Other measured transcript queries remain identifiable: `LandNoteReceipt.Prompts:
 
 ## Deployment and acceptance
 
+Code implementation, checkpoint evidence and concrete migration/rollback notes are maintained in
+[the S0-S3 verification record](../../investigations/2026-09-25-card-0698-code-verification.md).
+
 The Code stage proves the query/migration in isolation; the caller's desktop deployment lane proves the live CPU result. Server2 Plan/Code must not restart the desktop stack from this worktree.
 
 1. Complete scoped Code and separate Review, publish through the normal land path. Record the exact landed and intended deployment SHAs. From the canonical desktop checkout, verify its HEAD contains the land; after an out-of-band push update it using the runbook. Apply the reviewed additive migration as in D-5 or account explicitly for its startup cost.

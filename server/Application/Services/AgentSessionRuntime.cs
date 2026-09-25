@@ -847,12 +847,18 @@ public sealed class AgentSessionRuntime
             // lines themselves, so they survive re-numbering, and history re-emitted on adoption
             // dedups cleanly. Entries without a uuid keep the old sequence-dedup.
             var incomingUuids = entries.Where(e => e.Uuid is not null).Select(e => e.Uuid!).ToHashSet();
-            var seenUuids = (await db.TranscriptEntries
-                    .Where(t => t.AgentSessionId == sessionId && t.Uuid != null && incomingUuids.Contains(t.Uuid!))
+            var seenUuids = new HashSet<(string Uuid, string Kind)>();
+            // A catch-up snapshot can contain the whole history. Bound each index probe without
+            // changing the (UUID, kind) identity or event order; one DbContext is used serially.
+            // Chunk emits no batches for an empty set, so null-UUID-only input needs no UUID read.
+            foreach (var uuidBatch in incomingUuids.Chunk(512))
+            {
+                var existing = await db.TranscriptEntries
+                    .Where(t => t.AgentSessionId == sessionId && t.Uuid != null && uuidBatch.Contains(t.Uuid!))
                     .Select(t => new { t.Uuid, t.Kind })
-                    .ToListAsync())
-                .Select(x => (x.Uuid!, x.Kind))
-                .ToHashSet();
+                    .ToListAsync();
+                seenUuids.UnionWith(existing.Select(x => (x.Uuid!, x.Kind)));
+            }
             var incomingSeqs = entries.Where(e => e.Uuid is null).Select(e => e.Sequence).ToHashSet();
             var seenSeqs = incomingSeqs.Count == 0
                 ? []

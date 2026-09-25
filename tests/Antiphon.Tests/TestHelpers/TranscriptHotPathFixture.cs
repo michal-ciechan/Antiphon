@@ -118,7 +118,7 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
     {
         Capture.Clear();
         var entries = Enumerable.Range(0, keys).Select(n => new SessionRunnerTranscriptEvent(
-            SessionIds[0], n + 1, TranscriptKinds.AssistantText, $"uuid-{n}", null,
+            SessionIds[0], n + 1, TranscriptKinds.AssistantText, n % 97 == 0 ? $"missing-{n}" : $"uuid-{n}", null,
             DateTimeOffset.Parse("2026-01-01T00:00:00Z"), "assistant", "synthetic", null, null,
             null, null, null)).ToArray();
         await Runtime.PersistTranscriptAsync(SessionIds[0], entries);
@@ -194,7 +194,11 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
     }
 }
 
-internal sealed record CapturedTranscriptCommand(string Sql, NpgsqlParameter[] Parameters);
+internal sealed record CapturedTranscriptCommand(string Sql, NpgsqlParameter[] Parameters)
+{
+    public object Evidence() => new { Sql, parameters = Parameters.Select(p =>
+        new { p.ParameterName, type = p.NpgsqlDbType.ToString(), p.Value }) };
+}
 
 internal sealed class TranscriptCommandCapture : DbCommandInterceptor
 {
