@@ -320,7 +320,8 @@ waiting for it; the detail names the waiters' short ids and purposes. It resolve
 sweep, sends no caller note, and is a `LandHeld` attention item or a `LandAged` row only once the
 yield itself is older than `Delegation:LandWarningSeconds`. A land yields for at most
 `Delegation:LandYieldToDispatchMaxSeconds` (default 90, 0 disables) and then proceeds with one
-`Warning` "yield budget exhausted". Missing optional fields from an
+`Warning` "yield budget exhausted". Admission (or a terminal outcome) ends that budget, so a retry
+of the same request yields again on a fresh one. Missing optional fields from an
 older server print no false failure line. The Attention view
 projects held and aged requests and unresolved receipts independently of task openness.
 
