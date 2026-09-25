@@ -4015,6 +4015,8 @@ public sealed class AgentTaskDispatcher
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
         {
             await transaction.CommitAsync(ct);
+            // CARD-0664 D-2: the claim admitted a Launch row above; the Canceled status is committed now.
+            await ReleaseTaskConsumersAsync(claimed);
             return DispatchOneResult.NotClaimed;
         }
         var now = UtcNow();
@@ -4073,6 +4075,7 @@ public sealed class AgentTaskDispatcher
 
                 case ReuseOutcome.Expired:
                     await transaction.CommitAsync(ct);
+                    await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
                 case ReuseOutcome.WaitForAgent:
                     // The pinned agent is not Idle. For a pool delegate that means its last task
@@ -4343,12 +4346,16 @@ public sealed class AgentTaskDispatcher
             _db.ChangeTracker.Clear();
             // Rollback released the claim. A competing dispatcher may now own it, so the
             // recovery cancellation must be conditional again rather than saving a stale row.
-            await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
+            var canceled = await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
                 .Where(t => t.Id == claimed.Id && t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= UtcNow())
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                     .SetProperty(t => t.CompletedAt, UtcNow())
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
                     .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
+            // CARD-0664 D-2: the admission committed on its own scope and survived the rollback. Release
+            // only when this cancel won; a competing dispatcher that owns the task keeps its rows.
+            if (canceled > 0)
+                await ReleaseTaskConsumersAsync(claimed);
             return DispatchOneResult.NotClaimed;
         }
         claimed.Status = AgentTaskStatus.Dispatched;

@@ -2,6 +2,9 @@
 
 Date: 2026-09-24 · Stage: Investigate · Runner: server2 (Linux) · Source: `c8f4cdf9`
 
+Fix: [the CARD-0664 plan](../superpowers/plans/2026-09-24-card-0664-consumer-slot-release-plan.md)
+(owner-liveness claim with grace, explicit owner-end releases, startup and residue-run reconcile).
+
 ## Verdict
 
 **Confirmed.** Every workspace-use `Launch` reservation that production code takes stays
