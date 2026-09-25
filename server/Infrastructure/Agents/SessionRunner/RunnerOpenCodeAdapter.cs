@@ -129,7 +129,12 @@ public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter, IAttachablePr
         return _terminal.SnapshotScreenAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        // CARD-0679 R5 repair 2: a released adapter stops polling the runner for its exit.
+        _terminal.StopWatching();
+        return ValueTask.CompletedTask;
+    }
 
     private void EnsureStarted()
     {

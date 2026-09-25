@@ -52,6 +52,7 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly IProviderAuthProbe? _authProbe;
     private readonly object _mutationGate = new();
     private readonly ILogger _logger;
+    private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
     private RunnerWorkspaceService? _workspace;
 
     public PhoneHomeCommandDispatcher(
@@ -62,6 +63,7 @@ public sealed class PhoneHomeCommandDispatcher
         _settings = settings;
         _authProbe = authProbe;
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+        _launchGenerations = new PhoneHomeLaunchGenerationStore(settings.LaunchGenerationsPath);
     }
 
     /// <summary>
@@ -339,11 +341,30 @@ public sealed class PhoneHomeCommandDispatcher
                     409);
             }
 
+            // R5 repair 2 (review 18f52a40): the session table forgets a session on ReleaseSlot and on a
+            // runner restart, either of which can land inside the desktop's pre-ack retry window. The
+            // persisted watermark does not: a generation at or below the one already accepted for this
+            // id is refused, so it cannot start twice. A newer generation (a resume) passes.
+            if (launch.AcceptedStartedAt is { } generation
+                && _launchGenerations.Read(launch.SessionId) is { } accepted
+                && SessionGeneration.Compare(generation, accepted) <= 0)
+            {
+                throw new PhoneHomeAdmissionException(
+                    PhoneHomeProblemTypes.SessionGenerationAlreadyAccepted,
+                    $"Session '{launch.SessionId}' generation {SessionGeneration.Normalize(generation):O} is not newer than "
+                    + $"the generation {accepted:O} runner '{_settings.RunnerId}' already accepted for it, and the runner "
+                    + "no longer holds that session; it is not started again.",
+                    409);
+            }
+
             if (_runtime.OwnedSessionCount >= _settings.Capacity)
                 throw new PhoneHomeAdmissionException(
                     PhoneHomeProblemTypes.Capacity,
                     $"Phone-home capacity is {_settings.Capacity} session(s).",
                     409);
+            // Durable before the process exists: a crash between the two can only refuse a re-send.
+            if (launch.AcceptedStartedAt is { } accepting)
+                _launchGenerations.Record(launch.SessionId, accepting);
             var started = await _runtime.StartAsync(launch, ct);
             trace.Outcome = "started";
             return Result(request, started);

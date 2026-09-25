@@ -24,7 +24,10 @@ public sealed class RestartFailurePolicy
         if (chain.Any(e => e is AgentSessionService.ResumeTargetMissingException))
             return RestartFailureKind.ContinuityUnavailable;
         if (chain.Any(e => e is AgentLaunchBlockedException or ArgumentException
-            or System.ComponentModel.Win32Exception))
+            or System.ComponentModel.Win32Exception
+            // CARD-0679 R5 repair 2 (review 18f52a40): the runner confirmed the launch's process ran and
+            // exited before it was ready. A process failure, so it charges ConsecutiveFailures.
+            or RemoteLaunchAlreadyExitedException))
             return RestartFailureKind.LaunchOrProcessFailure;
         return RestartFailureKind.Unknown;
     }

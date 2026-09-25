@@ -209,6 +209,14 @@ public static class PhoneHomeProblemTypes
     /// </summary>
     public const string SessionAlreadyExited = "phone_home_session_already_exited";
 
+    /// <summary>
+    /// CARD-0679 R5 repair 2 (review 18f52a40): a Launch whose generation is equal to or older than
+    /// the one this runner already accepted for that session id, when the runner no longer lists the
+    /// session (its slot was released, or the runner restarted). The runner's persisted watermark is
+    /// the fence; the launch is refused and nothing starts.
+    /// </summary>
+    public const string SessionGenerationAlreadyAccepted = "phone_home_session_generation_already_accepted";
+
     /// <summary>CARD-0628 D-7: the provider CLI is not signed in on the runner.</summary>
     public const string ProviderSignInRequired = "provider_sign_in_required";
 
