@@ -146,3 +146,6 @@ Antiphon.Tests.Application.PhoneHomeImmediateSendTests
 
 # CARD-0665: real landing, capture recovery and complete caller delivery (two lands per row).
 Antiphon.Tests.Application.AgentTaskLandPublicationTests
+
+# CARD-0701: isolated PostgreSQL hot-path query budgets.
+Antiphon.Tests.Application.SessionStateCacheReadTests
