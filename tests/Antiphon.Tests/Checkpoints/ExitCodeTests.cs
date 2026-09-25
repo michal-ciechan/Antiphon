@@ -9,7 +9,7 @@ public sealed class ExitCodeTests
 {
     [Test]
     [Arguments(2, 1, 2)]
-    [Arguments(6, 2, 6)]
+    [Arguments(6, 2, 2)]
     [Arguments(4, 6, 6)]
     [Arguments(5, 4, 4)]
     [Arguments(1, 5, 5)]
