@@ -488,6 +488,7 @@ public sealed class AgentTaskLandPublicationTests
         op.CanonicalAdvancedAt.ShouldNotBeNull();
         op.CanonicalAdvanceReason.ShouldBeNull();
         op.LocalTargetBeforeSha.ShouldBe(h.Fixture.SeedSha);
+        op.LocalTargetAfterSha.ShouldBe(op.VerifiedSourceSha);
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim().ShouldBe(op.VerifiedSourceSha);
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(op.VerifiedSourceSha);
         (await TerminalAsync(h)).Detail.ShouldContain("canonical=advanced");
@@ -542,6 +543,98 @@ public sealed class AgentTaskLandPublicationTests
             || c.Arguments[0] == "update-ref" && c.Arguments.Contains(h.Fixture.TargetRef));
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
         (await TerminalAsync(h)).Detail.ShouldContain("canonical=target_checked_out_elsewhere");
+    }
+
+    [Test]
+    [Arguments("missing", false)]
+    [Arguments("malformed", false)]
+    [Arguments("empty-ref", false)]
+    [Arguments("directory", false)]
+    [Arguments("missing", true)]
+    [Arguments("malformed", true)]
+    [Arguments("locked", false)]
+    public async Task C688_Repair_UnknownLinkedHeadPreventsCanonicalAdvance(string fault, bool atMutation)
+    {
+        if (fault == "locked" && !OperatingSystem.IsWindows())
+            Skip.Test("Windows sharing denial is required for the locked HEAD row.");
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var alias = Path.Combine(h.Fixture.Root, "alias");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", alias, h.Fixture.SeedSha);
+        var admin = (await h.Fixture.RequiredAsync(alias, "rev-parse", "--absolute-git-dir")).Trim();
+        var head = Path.Combine(admin, "HEAD");
+        var original = await File.ReadAllTextAsync(head);
+        FileStream? holder = null;
+        var published = false;
+        var injected = false;
+        void Corrupt()
+        {
+            injected = true;
+            if (fault == "locked") holder = new FileStream(head, FileMode.Open, FileAccess.Read, FileShare.None);
+            else if (fault == "missing") File.Delete(head);
+            else if (fault == "directory") { File.Delete(head); Directory.CreateDirectory(head); }
+            else File.WriteAllText(head, fault == "empty-ref" ? "ref: \n" : "unreadable HEAD\n");
+        }
+        void Restore()
+        {
+            holder?.Dispose();
+            holder = null;
+            if (Directory.Exists(head)) Directory.Delete(head);
+            File.WriteAllText(head, original);
+        }
+        h.Fault.AfterAcknowledged = phase =>
+        {
+            if (phase == LandPhase.PublicationConfirmed)
+            {
+                published = true;
+                if (!atMutation) Corrupt();
+            }
+            if (phase == LandPhase.CleanupStarted) Restore();
+            return Task.CompletedTask;
+        };
+        h.Fixture.Git.BeforeCommand = (_, args) =>
+        {
+            if (atMutation && published && !injected && args[0] == "merge-base") Corrupt();
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        try
+        {
+            await h.RunAsync();
+            injected.ShouldBeTrue();
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+            op.CanonicalAdvanceReason.ShouldBe("canonical_checkout_unknown");
+            op.LocalTargetAfterSha.ShouldBeNull();
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+            h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("merge")
+                || c.Arguments[0] == "update-ref" && c.Arguments.Contains(h.Fixture.TargetRef));
+            (await TerminalAsync(h)).Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+        }
+        finally { Restore(); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C688_Repair_AlreadyCanonicalRecordsLocalIdentity(bool detached)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var sha = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "merge", "--ff-only", sha);
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+        if (detached) await h.Fixture.RequiredAsync(h.Fixture.Repository, "checkout", "--detach");
+        h.Fixture.Git.Commands.Clear();
+
+        await h.RunAsync();
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        op.LocalTargetAfterSha.ShouldBe(sha);
+        op.CanonicalAdvancedAt.ShouldNotBeNull();
+        h.Fixture.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("merge")
+            || c.Arguments[0] == "update-ref" && c.Arguments.Contains(h.Fixture.TargetRef));
     }
 
     [Test]

@@ -346,6 +346,7 @@ public sealed class AgentTaskLandRecoveryTests
     [Test]
     [Arguments("prepared")]
     [Arguments("local-target-advanced")]
+    [Arguments("push-started")]
     [Arguments("published")]
     public async Task C688_SchemaTwoOperationsOnResume(string phase)
     {
@@ -372,6 +373,7 @@ public sealed class AgentTaskLandRecoveryTests
                 h.Git.Commands.ShouldNotContain(c => c.Arguments[0] == "push" || c.Arguments.Contains("rebase"));
                 break;
             case "local-target-advanced":
+            case "push-started":
                 op.Publication.ShouldBe(LandPublicationOutcome.Landed);
                 h.Git.RemoteTarget.ShouldBe(rebased);
                 terminal.Detail.ShouldContain("canonical=already");
@@ -457,6 +459,7 @@ public sealed class AgentTaskLandRecoveryTests
         {
             Id = Guid.NewGuid(), TaskId = h.Git.TaskId, SchemaVersion = 2, Active = true, CreatedAt = now, UpdatedAt = now,
             Phase = phase switch { "prepared" => LandPhase.Prepared, "local-target-advanced" => LandPhase.LocalTargetAdvanced,
+                "push-started" => LandPhase.PushStarted,
                 _ => LandPhase.PublicationConfirmed },
             RepositoryPath = h.Git.Repository, CommonDirectory = Path.GetFullPath(h.Git.CommonDir), WorktreePath = h.Git.Source,
             GitDirectory = Path.GetFullPath(h.Git.SourceGitDirectory), SourceFullRef = h.Git.SourceRef,
@@ -490,6 +493,7 @@ public sealed class AgentTaskLandRecoveryTests
             op.ObservedRemoteTargetSha = rebased;
             op.ConfirmationMethod = "push-endpoint-read-fetch-ancestry";
         }
+        if (phase == "push-started") op.PushStartedAt = now;
         h.Git.SetPin(op.RecoveryRefPrefix + "/source", original);
         h.Git.SetPin(op.RecoveryRefPrefix + "/target-before", h.Git.SeedSha);
         h.Git.SetPin(op.RecoveryRefPrefix + "/prepared", rebased);
