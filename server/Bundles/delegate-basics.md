@@ -59,6 +59,14 @@ work itself: each one is here because ignoring it has already cost a real task.
   BACKSLASH loses itself to Windows argv quoting and creates a directory whose name ends in a space,
   which breaks the entire build with an error naming projects you never touched.
 
+- BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. `scripts/run-checkpoint.ps1` takes a slot
+  itself; run any other build or test driver (`dotnet build`, `dotnet test`, `dotnet run --project
+  tests/...`) as `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>`. The gate
+  waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver outside
+  it is an unlisted run Review flags. Exit 4 is a slot timeout: report the row as not run or end
+  `blocked`, never to retry unleased or with `-NoSlot`. CARD-0589: unbounded concurrent builds left
+  203 build processes and 1.1 GB free on one host.
+
 - VERIFY PRE-EXISTING RED BEFORE BLAMING YOURSELF. Stash your changes, or check out the base commit,
   and re-run the failure there. A failure you inherited is a fact for your report; a failure you
   caused is yours to fix. What you must never do is quietly widen a timeout, loosen an assertion or

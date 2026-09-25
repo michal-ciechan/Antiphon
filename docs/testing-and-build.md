@@ -277,6 +277,40 @@ PC cycles remain method-scoped work for post-land SourceLanding Mutation.
 
 `dotnet-ef` is a repo-local tool pinned in `.config/dotnet-tools.json`, not a machine-global install. Before any `dotnet ef` command in a worktree (Windows or the server2 runner), run `dotnet tool restore` from the repo root, then `dotnet ef migrations add <Name> --project server`. The pin is an exact version whose major matches the server's `Microsoft.EntityFrameworkCore.Design` reference (currently `9.*`, pinned `9.0.20`); bump the pin together with an EF Core major move. `DotnetToolManifestContractTests` guards the exact pin and the major match. The runner image needs no extra layer: restore writes to the runner user's `~/.nuget/packages` and reaches nuget.org the same way package restore does.
 
+### Build slots (CARD-0589)
+
+Nothing else bounds how many `dotnet build` / `dotnet run --project tests/*` drivers, MSBuild worker nodes, compilers and test hosts run at once across the sessions on one host; the outage behind CARD-0589 had 203 build processes and 1.1 GB free. Three layers do, cheapest first. Plan: [2026-09-25-card-0589-build-fanout-cap-plan.md](superpowers/plans/2026-09-25-card-0589-build-fanout-cap-plan.md).
+
+**`Directory.Build.rsp` at the repo root** carries `-nodeReuse:false`, so every invoker (a delegate's raw command, the wrappers, the land verifier, the nightly, `run-daemon.ps1`'s rebuild) leaves no MSBuild worker node behind. CP-1 measured it on the server2 Linux runner (SDK 10.0.401, 24 cores) building `tests/Antiphon.Messaging.Tests --no-incremental`: nine worker nodes at peak, every one started `/nodeReuse:false`, zero alive ten seconds after the driver exited (before this file, 17 orphaned `nodeReuse:true` nodes held 4.7 GB for up to 3.3 h). A `-maxcpucount:2` line in the rsp was **ignored**: the SDK prepends its own bare `-maxcpucount`, the diagnostic log still showed `MSBuildNodeCount = 24` and the peak stayed at nine. On the command line `-maxcpucount:3` gave `MSBuildNodeCount = 3`. So the rsp holds no count (`DirectoryBuildRspTests` pins that) and the per-build count comes from the grant. `UseSharedCompilation` stays on (the shared `VBCSCompiler` idles out after ten minutes).
+
+**The session runner brokers a host budget of build/test driver leases** at `/build-slots` (desktop `http://localhost:17204/build-slots`, the server2 container `http://127.0.0.1:8080/build-slots`). One lease is one driver invocation, held by the wrapper process that asked for it: `POST` grants `{ leaseId, maxCpuCount, occupied, budget, expiresAtUtc }` or answers 409 `build_slot_busy` (`occupied`, `budget`, `queuePosition`, `retryAfterMs`) or 409 `build_slot_memory_floor` (`availableMb`, `floorMb`); `DELETE /build-slots/{leaseId}` releases (404 `build_slot_unknown` once gone); `GET /build-slots` lists budget, occupancy, live memory, leases (`holderAlive`) and waiters. Waiters are served in FIFO order and a waiter silent for 60 s loses its place. A grant is refused while live available memory (`GlobalMemoryStatusEx` / `/proc/meminfo` `MemAvailable`) is below the floor, even with a free slot; a held lease is never revoked. The runner reaps a lease whose holder pid died or was recycled, or that is past its 90-minute TTL, on every acquire and every 30 s, and logs each reap. It kills nothing.
+
+Settings `SessionRunner:BuildSlots` (`Enabled`, `MaxConcurrent`, `MaxCpuCount`, `MinAvailableMemoryMb`, `LeaseTtlMinutes` 90, `RetryAfterMs` 15000, `WaiterSilenceMs` 60000, `SweepIntervalMs` 30000):
+
+| Host | `MaxConcurrent` | `MaxCpuCount` | `MinAvailableMemoryMb` | Where |
+|---|---:|---:|---:|---|
+| desktop | 2 | 4 | 6144 | code defaults (`BuildSlotSettings`) |
+| server2 | 4 | 6 | 16384 | `docker-compose.server2-runner.yml` `SessionRunner__BuildSlots__*` ([docker-stack.md](docker-stack.md)) |
+
+**How a delegate takes one.** `scripts/run-checkpoint.ps1` takes a slot itself for every row, `-NoBuild` rows included (the test host and its Postgres are the memory), after input validation and the fresh results directory, builds with the grant's `-maxcpucount:N`, and releases after the run; its `CHECKPOINT` line ends `slot=<granted|unleased|unlimited|skipped> waited=<s>s`. Any other driver goes through the wrapper:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label mutation-shard-1 -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-x/ --nologo
+```
+
+It adds the grant's `-maxcpucount:N` to `dotnet build|test|publish|pack|msbuild` unless the command already names `-m`/`-maxcpucount`, runs the command in the foreground and exits with its exit code. It never adds the switch to `dotnet run`: measured on SDK 10.0.401, `dotnet run -maxcpucount:2` hands `-maxcpucount:2` to the program as an argument. A wrapped `dotnet run` is leased and prints a `BUILD SLOT note:` line; build first and run with `--no-build` to cap its nodes. Under `pwsh -File` the wrapper reads its own raw command line after `--`, because the PowerShell binder splits `-m:2` into `-m` and `2`.
+
+The wait is visible in the transcript: `BUILD SLOT waiting label=<l> position=<n> occupied=<o>/<b> elapsed=<m>m` (or `reason=memory_floor available=<a>MB floor=<f>MB`) on each new reason and once a minute, then `BUILD SLOT granted lease=<id> waited=<s>s maxcpucount=<n>` and `BUILD SLOT released lease=<id> held=<s>s`. Two failure modes:
+
+- **Timeout** (busy or below the floor for the whole `-SlotWaitMinutes`, default 45): `BUILD SLOT timeout after 45m position=<n>`, **exit 4**, nothing built and no `dotnet` call. Report the row as not run, or end `blocked`; never retry it unleased or with `-NoSlot`.
+- **Unreachable runner** (connection refused, a timeout, or an old runner answering 404 on `/build-slots`) for 60 s: the command runs unleased at `-maxcpucount:4` and prints `BUILD SLOT unleased reason=runner_unreachable maxcpucount=4 last=<no answer|http 404>`, so Review can tell a budgeted run from an unbudgeted one. A delegate stalled behind a restarting runner is the CARD-0448 shape; the outage needs many concurrent builds, which nothing dispatches while the runner is down.
+
+`ANTIPHON_BUILD_SLOTS_URL` overrides the endpoint (an isolated runner; the tests' loopback broker). `-NoSlot` (`BUILD SLOT skipped by -NoSlot`, no lease, no `-maxcpucount`) is for an operator shell only. `SessionRunner__BuildSlots__Enabled=false` makes every acquire answer `unlimited` (`BUILD SLOT unlimited maxcpucount=<n>`, nothing held): the rollback lever, with deleting `Directory.Build.rsp` the other. A raw driver typed outside the gate still runs (with `-nodeReuse:false`); Review flags it as a checkpoint defect, the same shape as an unlisted run.
+
+**The desktop land verifier** takes a slot through the local runner (`SessionRunnerBuildSlotGate`) for its build and test run with the same rules: it waits at most `Landing:BuildSlotWaitMinutes` (30; a timeout is a `build-slot` verification failure with nothing built), builds with the grant's `-maxcpucount`, and an unreachable runner is never a land failure: it builds unleased at `-maxcpucount:4` after `Landing:BuildSlotUnreachableGraceSeconds` (60). Its `BUILD SLOT` lines go to the verifier observer and the server log with the land correlation. The nightly joins in CARD-0589 Round 2, with a detect-only build watchdog and the phone-home read/set of the budget.
+
+Offline seams, tests only: `C589_SLOT_SHIM` (a script answering in place of the HTTP call; `scripts/fixtures/c589-slot-shim.ps1` scripts `granted|unlimited|busy|memory_floor|notfound|unreachable` per `C589_SLOT_SCRIPT`), `C589_SLOT_WAIT_SECONDS`, `C589_SLOT_RETRY_MS`, `C589_SLOT_GRACE_SECONDS`, and the wrapper's `C589_COMMAND_SHIM`. Harnesses: `scripts/test-run-checkpoint.ps1` (`Test-C589_*`, `RunCheckpointScriptTests`) and `scripts/test-build-slot.ps1` (`BuildSlotScriptTests`); the cross-process proof is `BuildSlotEndToEndTests` against a loopback broker, never a production runner.
+
 ## Combined class filters (CARD-0403)
 
 For one invocation covering several named classes on the pinned TUnit 1.44 runner, use
