@@ -396,7 +396,7 @@ public partial class AttentionServiceTests
         public bool Pending { get; set; }
         public ISessionRunnerClient Local { get; } = new FakeRunnerClient();
         public IReadOnlyList<string> KnownRunnerIds => ["server2"];
-        public Guid? LiveStoreId => null;
+        public Guid? GetLiveStoreId(string? runnerId) => null;
         public ISessionRunnerClient Resolve(string? runnerId) => throw new NotSupportedException("Attention must use cached inventory");
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();

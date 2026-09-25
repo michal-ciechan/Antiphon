@@ -213,7 +213,11 @@ public sealed record CreateAgentTaskRequest(
     /// sibling's branch. At most 300 characters, no outer whitespace, control characters or a
     /// leading <c>-</c>; anything else is 422 <c>worktree_start_ref_invalid</c>.
     /// </summary>
-    string? WorktreeBaseRequestedRef = null);
+    string? WorktreeBaseRequestedRef = null,
+    /// <summary>
+    /// CARD-0710. Omitted inherits the card or follow-up. Explicit Any resets to Any.
+    /// </summary>
+    RequiredPlatform? RequiredPlatform = null);
 
 /// <summary>
 /// CARD-0544 D-3. A committed <c>docs/**/*.md</c> selection table: repository-relative path, full
@@ -332,7 +336,13 @@ public sealed record AgentTaskSummaryDto(
     Guid? BoardId = null,
     string? BoardName = null,
     /// <summary>CARD-0515. <c>Task</c>, <c>Card</c>, or <c>None</c> (unscoped).</summary>
-    AgentTaskScopeSource ScopeSource = AgentTaskScopeSource.None);
+    AgentTaskScopeSource ScopeSource = AgentTaskScopeSource.None,
+    RequiredPlatform RequiredPlatform = RequiredPlatform.Any,
+    string? RunnerId = null,
+    RequirementSource RequirementSource = RequirementSource.Default,
+    string? ObservedPlatform = null,
+    long? RunnerDefaultsRevision = null,
+    RunnerSelectionSource? RunnerSelectionSource = null);
 
 /// <summary>CARD-0515. Echo of the list/summary scope the caller selected.</summary>
 public sealed record AgentTaskScopeEchoDto(
@@ -564,7 +574,12 @@ public sealed record AgentTaskCreatedDto(
     /// task to antiphon-diagnose to replace the title. <c>delegate.ps1</c> prints
     /// <c>title: pending</c>. Creation never waits on the seat.
     /// </summary>
-    bool TitleDiagnosisQueued = false);
+    bool TitleDiagnosisQueued = false,
+    RequiredPlatform RequiredPlatform = RequiredPlatform.Any,
+    /// <summary>Canonical display id. Null storage is <c>desktop</c>.</summary>
+    string? RunnerId = null,
+    RequirementSource RequirementSource = RequirementSource.Default,
+    string? ObservedPlatform = null);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

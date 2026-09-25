@@ -391,7 +391,8 @@ public sealed class BoardService
                     NeedsHumanReview(card))
                 : null,
             card.Alias) { CardFileVisibility = card.CardFileVisibility, HasPrivateNotes = card.PrivateNotes.Length > 0,
-                CodeVerificationPolicy = card.CodeVerificationPolicy, ReviewVerificationPolicy = card.ReviewVerificationPolicy };
+                CodeVerificationPolicy = card.CodeVerificationPolicy, ReviewVerificationPolicy = card.ReviewVerificationPolicy,
+                RequiredPlatform = card.RequiredPlatform };
     }
 
     /// <summary>
@@ -483,7 +484,8 @@ public sealed class BoardService
             revision.Alias) { CardFileVisibility = revision.Kind == CardRevisionKind.ContentEdit ? revision.CardFileVisibility : null,
                 HasPrivateNotes = revision.Kind != CardRevisionKind.ContentEdit || revision.PrivateNotes is null ? null : revision.PrivateNotes.Length > 0,
                 CodeVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.CodeVerificationPolicy : null,
-                ReviewVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.ReviewVerificationPolicy : null };
+                ReviewVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.ReviewVerificationPolicy : null,
+                RequiredPlatform = revision.Kind == CardRevisionKind.ContentEdit ? revision.RequiredPlatform : null };
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)

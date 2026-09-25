@@ -87,4 +87,6 @@ public sealed record AgentLaunchSpec(
     global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
     int? CommandLineBudgetChars = null,
     global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    // CARD-0710. Canonical windows/linux when this launch is platform-constrained. Null keeps the legacy route.
+    string? RequiredPlatform = null);

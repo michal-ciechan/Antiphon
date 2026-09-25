@@ -68,6 +68,9 @@ public class CardRevision
     /// <summary>CARD-0544. The SUPERSEDED Review verification policy.</summary>
     public CardVerificationPolicy? ReviewVerificationPolicy { get; set; }
 
+    /// <summary>CARD-0710. Superseded default task platform. Null on revisions written before the column existed.</summary>
+    public RequiredPlatform? RequiredPlatform { get; set; }
+
     /// <summary>The SUPERSEDED labels, same jsonb shape as <see cref="Card.LabelsJson"/>.</summary>
     public string? LabelsJson { get; set; }
 

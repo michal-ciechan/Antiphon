@@ -236,6 +236,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
+        // Before the launch lock's session work, and before custody: a mismatched OS must not
+        // create a session, mutate custody, materialize Grok files or start a child.
+        RunnerPlatformLaunchGuard.RefuseBeforeLaunch(request.RequiredPlatform);
         var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
@@ -729,6 +732,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public IReadOnlyList<RunnerSessionDto> List() =>
         _sessions.Values.Select(session => session.ToDto()).OrderBy(session => session.StartedAt).ToList();
+
+    /// <summary>CARD-0710. Local <c>GET /capabilities</c>. Platform is this process, never a guess.</summary>
+    public RunnerCapabilitiesDto DescribeCapabilities(
+        RunnerBuildDto build, IReadOnlyList<string> sessionBackends, IReadOnlyList<string> features)
+    {
+        var decision = PtyBackendPolicy.Resolve();
+        var advertised = features.Contains(RunnerCapabilityFeatures.RequiredPlatformV1)
+            ? features
+            : features.Append(RunnerCapabilityFeatures.RequiredPlatformV1).ToArray();
+        return new RunnerCapabilitiesDto(
+            decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
+            SupportedTranscriptFormats, build, sessionBackends,
+            Version: build.CommitSha ?? "unknown",
+            Features: advertised,
+            VerificationCustodyBackend: VerificationCustodyBackend,
+            RunnerStoreId: RunnerStoreId,
+            Platform: RunnerPlatformWire.FromOperatingSystem());
+    }
 
     public RunnerSessionDto Get(Guid sessionId) => GetSession(sessionId).ToDto();
 

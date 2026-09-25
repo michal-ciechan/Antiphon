@@ -125,8 +125,9 @@ public static class PhoneHomeRunnerSettingsRules
         if (string.IsNullOrWhiteSpace(options.AllowedRunnerId) || options.AllowedRunnerId.Length > 64)
             failures.Add("PhoneHomeRunner:AllowedRunnerId must be a non-empty string of at most 64 characters.");
         // CARD-0659 D-1: "local" is the reserved desktop token in task creation and the directory.
-        else if (string.Equals(options.AllowedRunnerId.Trim(), PhoneHomeProtocol.LocalRunnerId, StringComparison.OrdinalIgnoreCase))
-            failures.Add($"PhoneHomeRunner:AllowedRunnerId must not be the reserved desktop id '{PhoneHomeProtocol.LocalRunnerId}'.");
+        else if (options.AllowedRunnerId.Trim().Equals(PhoneHomeProtocol.LocalRunnerId, StringComparison.OrdinalIgnoreCase)
+            || options.AllowedRunnerId.Trim().Equals(RunnerPlatformWire.DesktopId, StringComparison.OrdinalIgnoreCase))
+            failures.Add($"PhoneHomeRunner:AllowedRunnerId must not be the reserved desktop id '{PhoneHomeProtocol.LocalRunnerId}' or '{RunnerPlatformWire.DesktopId}'.");
         // CARD-0604 D-14: a pinned standing agent is still required when the runner is NOT a pool.
         // With AllowDelegatedTasks the dispatcher creates its own pool delegates, so pinning one
         // named agent would be a second, contradictory shape rather than a safety net.

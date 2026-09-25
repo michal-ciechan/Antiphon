@@ -144,6 +144,6 @@ public sealed class SourceLandingAdmissionTests
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => throw new NotSupportedException();
         public IReadOnlyList<string> KnownRunnerIds => ["server2"];
-        public Guid? LiveStoreId => Remote?.StoreId;
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : Remote?.StoreId;
     }
 }

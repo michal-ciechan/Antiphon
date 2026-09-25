@@ -37,12 +37,14 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             ? VerificationCustodyBackends.LinuxCgroup : null;
         if (custody is not null)
             features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
+        features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
         return new RunnerCapabilitiesDto(
             decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
             SessionRunnerRuntime.SupportedTranscriptFormats, _build, backends,
             Version: _build.CommitSha ?? "unknown",
             Features: features, VerificationCustodyBackend: custody,
-            RunnerStoreId: _runtime.RunnerStoreId);
+            RunnerStoreId: _runtime.RunnerStoreId,
+            Platform: RunnerPlatformWire.FromOperatingSystem());
     }
 
     public string? VerificationCustodyBackend =>

@@ -348,6 +348,7 @@ try
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();
     builder.Services.AddScoped<InterimVerificationPolicy>();
+    builder.Services.AddScoped<RunnerDefaultSettingsService>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<SourceLandingAdmission>();
     // CARD-0604 D-19 (Cut B): where a Mutation's verification snapshot physically lives. The
@@ -949,6 +950,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapModelAvailabilityEndpoints();
     app.MapSubscriptionUsageEndpoints();
     app.MapRoutingPinEndpoints();
+    app.MapRunnerDefaultEndpoints();
     app.MapStandingSpecialistRoutingEndpoints();
     app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();

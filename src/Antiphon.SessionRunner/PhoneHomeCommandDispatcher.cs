@@ -161,6 +161,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.List => Result(request, _runtime.List()),
                 PhoneHomeOperation.Get => Result(request, await _runtime.GetAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.Launch => await LaunchAsync(request, trace, ct),
+                PhoneHomeOperation.LaunchPlatformConstrained => await LaunchPlatformConstrainedAsync(request, trace, ct),
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
                 PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
                 PhoneHomeOperation.Snapshot => Result(request, _runtime.GetSnapshot(ReadSessionId(request))),
@@ -299,6 +300,19 @@ public sealed class PhoneHomeCommandDispatcher
             // this request. Cancellation stays cancellation; the receive pump decides what it means.
             return PhoneHomeErrorFrames.Internal(request, ex, _settings.Limits.MaxMessageUtf8Bytes);
         }
+    }
+
+    private async Task<PhoneHomeFrame> LaunchPlatformConstrainedAsync(
+        PhoneHomeFrame request, DispatchTrace trace, CancellationToken ct)
+    {
+        var launch = request.Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)
+            ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Launch body is required.", 400);
+        if (!RunnerPlatformWire.IsSpecific(launch.RequiredPlatform))
+            throw new PhoneHomeAdmissionException(
+                RunnerPlatformLaunchGuard.Invalid,
+                "A platform-constrained launch requires requiredPlatform windows or linux.",
+                409);
+        return await LaunchAsync(request, trace, ct);
     }
 
     private async Task<PhoneHomeFrame> LaunchAsync(PhoneHomeFrame request, DispatchTrace trace, CancellationToken ct)

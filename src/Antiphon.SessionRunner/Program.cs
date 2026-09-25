@@ -201,7 +201,6 @@ app.MapHealthChecks("/health");
 // than captured at startup so a runner restarted with a different flag reports the truth.
 app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunnerRuntime runtime) =>
 {
-    var decision = PtyBackendPolicy.Resolve();
     // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
     // herdr is advertised only when SessionRunner:Herdr:Enabled is true — an Enabled=false
     // runner must not claim herdr or the server's capability gate would green-light a launch
@@ -209,17 +208,12 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
     IReadOnlyList<string> sessionBackends = herdrSettings.Value.Enabled
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
-    IReadOnlyList<string>? features = herdrSettings.Value.Enabled
+    IReadOnlyList<string> features = herdrSettings.Value.Enabled
         ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, HerdrPaneDisposalCodes.BestEffortCapability, GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1]
         : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
     if (runtime.VerificationCustodyBackend is not null)
         features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
-    return Results.Ok(new RunnerCapabilitiesDto(
-        decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
-        SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends,
-        Version: runnerBuild.CommitSha ?? "unknown",
-        Features: features, VerificationCustodyBackend: runtime.VerificationCustodyBackend,
-        RunnerStoreId: runtime.RunnerStoreId));
+    return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
@@ -240,6 +234,7 @@ app.MapPost("/sessions/{id:guid}/executions/{executionId:guid}/seal", async (
 });
 
 app.MapSessionLaunchRoute();
+app.MapPlatformConstrainedLaunchRoute();
 
 app.MapPost("/herdr/placement/check", async (
     HerdrPlacementCheckRequest request,

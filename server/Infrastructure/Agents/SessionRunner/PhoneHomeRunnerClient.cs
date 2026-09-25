@@ -59,8 +59,17 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
         var request = _mapper.ToLaunchRequest(sessionId, spec);
+        var constrained = RunnerPlatformWire.IsSpecific(spec.RequiredPlatform);
+        var operation = constrained ? PhoneHomeOperation.LaunchPlatformConstrained : PhoneHomeOperation.Launch;
         var sent = _connection.BeginInventoryRead();
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.Launch, request, ct);
+        var frame = await _connection.RequestAsync(operation, request, ct);
+        if (constrained && frame.Kind == PhoneHomeFrameKind.Error
+            && frame.ErrorCode is PhoneHomeProblemTypes.UnsupportedOperation)
+        {
+            throw new ConflictException(
+                "The session runner does not enforce platform requirements.",
+                Antiphon.Server.Application.Services.RunnerPlatformProblems.EnforcementUnsupported);
+        }
         // CARD-0679 R5 repair: this generation already ran and exited on the runner (a re-sent
         // Launch whose first send landed). Typed, with the exit the runner recorded.
         if (frame is { Kind: PhoneHomeFrameKind.Error, ErrorCode: PhoneHomeProblemTypes.SessionAlreadyExited }

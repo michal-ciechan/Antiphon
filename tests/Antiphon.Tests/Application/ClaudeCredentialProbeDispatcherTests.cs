@@ -228,7 +228,7 @@ public sealed class ClaudeCredentialProbeDispatcherTests
     {
         public ISessionRunnerClient Local => client;
         public IReadOnlyList<string> KnownRunnerIds => ["local", "server2"];
-        public Guid? LiveStoreId => Guid.NewGuid();
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : Guid.NewGuid();
         public ISessionRunnerClient Resolve(string? runnerId) => client;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult<SessionRunnerOwner?>(null);

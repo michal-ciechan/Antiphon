@@ -236,7 +236,7 @@ public sealed class RemoteWorktreeMirrorTests
     {
         public ISessionRunnerClient Local => throw new NotSupportedException();
         public IReadOnlyList<string> KnownRunnerIds => [];
-        public Guid? LiveStoreId => null;
+        public Guid? GetLiveStoreId(string? runnerId) => null;
         public ISessionRunnerClient Resolve(string? runnerId) => throw new NotSupportedException("the sync path resolves no runner");
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();

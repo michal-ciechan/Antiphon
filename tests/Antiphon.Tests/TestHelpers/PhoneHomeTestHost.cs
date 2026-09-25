@@ -368,7 +368,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                 Incoming.Add(frame);
                 if (frame.Kind != PhoneHomeFrameKind.Request)
                     continue;
-                if (frame.Operation == PhoneHomeOperation.Launch)
+                if (frame.Operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained)
                     Launches.Add(frame);
                 if (frame.Operation == PhoneHomeOperation.Input)
                     Inputs.Add(frame);
@@ -376,7 +376,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                     _requestCounts.AddOrUpdate(op, 1, (_, n) => n + 1);
                 if (!AutoReply || (frame.Operation is { } silent && _silent.ContainsKey(silent)))
                     continue;
-                if (frame.Operation == PhoneHomeOperation.Launch && HeldLaunches > 0)
+                if (frame.Operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained && HeldLaunches > 0)
                 {
                     HeldLaunches--;
                     var heldFrame = frame;
@@ -414,7 +414,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                 "InboxConhost", "inbox", "test", false, Features: [], VerificationCustodyBackend: null),
             PhoneHomeOperation.List => Sessions,
             PhoneHomeOperation.Get => SessionFrom(request),
-            PhoneHomeOperation.Launch => LaunchFrom(request),
+            PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained => LaunchFrom(request),
             PhoneHomeOperation.Transcript => TranscriptFrom(request),
             PhoneHomeOperation.Buffer => new RunnerBufferDto(ReadSessionId(request), "", 0),
             PhoneHomeOperation.Snapshot => new RunnerSnapshotDto(ReadSessionId(request), "", "", 0, DateTime.UtcNow),

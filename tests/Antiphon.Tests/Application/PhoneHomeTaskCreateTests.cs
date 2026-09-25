@@ -127,7 +127,7 @@ public sealed class PhoneHomeTaskCreateTests
         public ProbeClient Client { get; } = new(answer);
         public ISessionRunnerClient Local => Client;
         public IReadOnlyList<string> KnownRunnerIds => ["server2"];
-        public Guid? LiveStoreId => Guid.NewGuid();
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : Guid.NewGuid();
         public ISessionRunnerClient Resolve(string? runnerId) => Client;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult<SessionRunnerOwner?>(null);

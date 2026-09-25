@@ -70,6 +70,7 @@ internal static class CardRevisionLog
             LabelsJson = card.LabelsJson,
             CodeVerificationPolicy = card.CodeVerificationPolicy,
             ReviewVerificationPolicy = card.ReviewVerificationPolicy,
+            RequiredPlatform = card.RequiredPlatform,
             Reason = Trimmed(reason),
             EditedBy = Trimmed(editedBy),
             CreatedAt = utcNow

@@ -80,6 +80,9 @@ public class AppDbContext : DbContext
     public DbSet<SubscriptionUsageSample> SubscriptionUsageSamples => Set<SubscriptionUsageSample>();
     public DbSet<ModelAvailabilityHold> ModelAvailabilityHolds => Set<ModelAvailabilityHold>();
     public DbSet<RoutingPin> RoutingPins => Set<RoutingPin>();
+    public DbSet<RunnerRoutingSettings> RunnerRoutingSettings => Set<RunnerRoutingSettings>();
+    public DbSet<RunnerKindDefault> RunnerKindDefaults => Set<RunnerKindDefault>();
+    public DbSet<RunnerRoutingRevision> RunnerRoutingRevisions => Set<RunnerRoutingRevision>();
     public DbSet<StandingSpecialistRouting> StandingSpecialistRoutings => Set<StandingSpecialistRouting>();
     public DbSet<StandingSpecialistCandidateState> StandingSpecialistCandidateStates => Set<StandingSpecialistCandidateState>();
     public DbSet<StandingSpecialistHealth> StandingSpecialistHealths => Set<StandingSpecialistHealth>();
@@ -961,6 +964,7 @@ public class AppDbContext : DbContext
             // CARD-0544: FullOnly on every existing card; only an explicit content edit opts in.
             entity.Property(c => c.CodeVerificationPolicy).IsRequired().HasDefaultValue(CardVerificationPolicy.FullOnly);
             entity.Property(c => c.ReviewVerificationPolicy).IsRequired().HasDefaultValue(CardVerificationPolicy.FullOnly);
+            entity.Property(c => c.RequiredPlatform).IsRequired().HasDefaultValue(RequiredPlatform.Any);
             entity.Property(c => c.Urgency).IsRequired().HasDefaultValue(CardUrgency.Normal);
             entity.Property(c => c.DueAt);
             entity.Property(c => c.UrgentSince);
@@ -1756,6 +1760,11 @@ public class AppDbContext : DbContext
             // CARD-0604 D-15: routing only. WorktreePath stays the canonical desktop worktree, so
             // landing, retirement and residue accounting never see a POSIX path.
             entity.Property(t => t.RunnerId).HasMaxLength(64);
+            entity.Property(t => t.RequiredPlatform).IsRequired().HasDefaultValue(RequiredPlatform.Any);
+            entity.Property(t => t.RequirementSource).IsRequired().HasDefaultValue(RequirementSource.Default);
+            entity.Property(t => t.ObservedPlatform).HasMaxLength(16);
+            entity.Property(t => t.PlacementReason).HasMaxLength(400);
+            entity.Property(t => t.RunnerSelectionSource);
             entity.Property(t => t.RemoteWorktreePath).HasMaxLength(1000);
             entity.Property(t => t.RemoteWorktreeResidue).HasMaxLength(1000);
             // CARD-0633 D-7: remote-prep backoff state, written only by RemoteWorkspacePreparer.
@@ -2027,6 +2036,39 @@ public class AppDbContext : DbContext
             entity.Property(c => c.CapabilityFingerprint).HasMaxLength(128);
             entity.Property(c => c.QualificationEvidenceJson).HasMaxLength(16000);
             // No cascading FK: removing an agent must retain the candidate's audit history.
+        });
+
+        modelBuilder.Entity<RunnerRoutingSettings>(entity =>
+        {
+            entity.ToTable("RunnerRoutingSettings");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.Id).HasMaxLength(32);
+            entity.Property(s => s.GlobalRunnerId).HasMaxLength(64);
+            entity.Property(s => s.LastReason).HasMaxLength(400);
+            entity.Property(s => s.LastProvenance).HasMaxLength(32);
+            entity.Property(s => s.Revision).IsConcurrencyToken();
+            entity.HasMany(s => s.KindDefaults).WithOne(k => k.Settings).HasForeignKey(k => k.SettingsId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasMany(s => s.Revisions).WithOne(r => r.Settings).HasForeignKey(r => r.SettingsId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<RunnerKindDefault>(entity =>
+        {
+            entity.ToTable("RunnerKindDefaults");
+            entity.HasKey(k => k.Id);
+            entity.Property(k => k.SettingsId).HasMaxLength(32);
+            entity.Property(k => k.RunnerId).IsRequired().HasMaxLength(64);
+            entity.HasIndex(k => new { k.SettingsId, k.AgentKind }).IsUnique();
+        });
+        modelBuilder.Entity<RunnerRoutingRevision>(entity =>
+        {
+            entity.ToTable("RunnerRoutingRevisions");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.SettingsId).HasMaxLength(32);
+            entity.Property(r => r.Reason).IsRequired().HasMaxLength(400);
+            entity.Property(r => r.Provenance).IsRequired().HasMaxLength(32);
+            entity.Property(r => r.SnapshotJson).IsRequired().HasColumnType("jsonb");
+            entity.HasIndex(r => new { r.SettingsId, r.Revision }).IsUnique();
         });
 
         modelBuilder.Entity<RoutingPin>(entity =>

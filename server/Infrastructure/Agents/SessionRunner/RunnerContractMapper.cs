@@ -27,7 +27,8 @@ public sealed class RunnerContractMapper
             GrokRulesPayload: spec.GrokRulesPayload,
             CommandLineBudgetChars: spec.CommandLineBudgetChars,
             VerificationBinding: spec.VerificationBinding,
-            AcceptedStartedAt: spec.AcceptedStartedAt);
+            AcceptedStartedAt: spec.AcceptedStartedAt,
+            RequiredPlatform: spec.RequiredPlatform);
 
     public SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

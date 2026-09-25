@@ -31,7 +31,7 @@ public sealed class DefaultRunnerEligibilityTests
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
         live.DispatchEligible.ShouldBeFalse("precondition: connected but not yet recovered");
-        host.Directory.LiveStoreId.ShouldBe(host.StoreId, "precondition: the store is known before recovery");
+        host.Directory.GetLiveStoreId(host.AllowedRunnerId).ShouldBe(host.StoreId, "precondition: the store is known before recovery");
         var kit = Kit(schema.ConnectionString, host);
         await using var db = kit.Context();
         var service = kit.Service(db);
@@ -77,7 +77,7 @@ public sealed class DefaultRunnerEligibilityTests
         (await kit.ReadAsync(fresh.Id)).Task.RunnerId.ShouldBe(host.AllowedRunnerId, "precondition: a live, recovered runner is selected");
 
         clock.Advance(TimeSpan.FromSeconds(91));
-        host.Directory.LiveStoreId.ShouldBe(host.StoreId, "the store id is still remembered after the lease lapsed");
+        host.Directory.GetLiveStoreId(host.AllowedRunnerId).ShouldBe(host.StoreId, "the store id is still remembered after the lease lapsed");
         host.Directory.KnownRunnerIds.ShouldContain(host.AllowedRunnerId);
 
         var stale = await service.CreateAsync(Request("c659 expired lease"), kit.Caller, CancellationToken.None);

@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-0659 V-4 (D-5). A task's host is fixed at create; a later model decision may move a remote
-/// task between Grok and Claude Code but never onto Codex, and never onto the desktop. Explicit
+/// task between Grok, Claude Code and Codex, and never onto the desktop. Explicit
 /// incompatible reroutes refuse without touching the row; automatic ones (queued rewalk, routing
 /// resume, usage wall) Block with a stable <c>runner_kind_unsupported</c> detail that keeps the
 /// runner, the original kind and the pin, and do so once per transition. The Block and the
@@ -42,7 +42,7 @@ public sealed class DefaultRunnerRerouteTests
             await using var db = CreateContext(schema);
 
             var refused = await Should.ThrowAsync<ConflictException>(() => TaskService(db, workspace.Path)
-                .RerouteAsync(taskId, AgentKind.Codex, AgentModelLevel.Frontier, CancellationToken.None));
+                .RerouteAsync(taskId, AgentKind.OpenCode, AgentModelLevel.Frontier, CancellationToken.None));
             refused.Code.ShouldBe("runner_kind_unsupported", status.ToString());
 
             await using var verify = CreateContext(schema);
