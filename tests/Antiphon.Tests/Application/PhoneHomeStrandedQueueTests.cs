@@ -478,9 +478,6 @@ public class PhoneHomeStrandedQueueTests
         const string prompt = "CARD-0679 scheduled prompt across a desktop restart";
         var scheduleId = await SeedSkipWhenDownPromptAsync(schema.ConnectionString, h.AgentId, prompt);
         h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId);
-        h.Runtime.ListLiveOrUnknownSessions().ShouldContain(h.SessionId,
-            "bound to the runner, not seen to end, and no runner has listed it either way");
-        h.Runtime.ListLiveOrUnknownSessions().ShouldNotContain(ended, "the desktop already saw this one end");
 
         await FireNowAsync(h, scheduleId);
 
@@ -492,6 +489,9 @@ public class PhoneHomeStrandedQueueTests
         }
         var queued = await ReadRowContainingAsync(schema.ConnectionString, h.SessionId, prompt);
         queued.Status.ShouldBe(QueuedMessageStatus.Pending, "nothing can reach the runner yet, so it waits");
+        h.Runtime.ListLiveOrUnknownSessions().ShouldContain(h.SessionId,
+            "bound to the runner, not seen to end, and no runner has listed it either way");
+        h.Runtime.ListLiveOrUnknownSessions().ShouldNotContain(ended, "the desktop already saw this one end");
 
         await using var peer = await host.ConnectPeerAsync();
         peer.Sessions.Add(RunningOnRunner(h.SessionId));
