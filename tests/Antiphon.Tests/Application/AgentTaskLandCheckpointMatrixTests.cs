@@ -341,6 +341,6 @@ public sealed class AgentTaskLandCheckpointMatrixTests
     }
 
     // Cleanup intentionally catches ordinary failures. Cancellation models an interruption that
-    // escapes the coordinator; real worker death is covered separately below.
+    // escapes the coordinator; the worker-death rows also exercise abrupt process exit.
     private sealed class InterruptedBoundary : OperationCanceledException;
 }

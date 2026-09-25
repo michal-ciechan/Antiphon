@@ -140,4 +140,5 @@ Antiphon.Tests.Application.TranscriptWorkingStateQueryTests
 # CARD-0698: concurrent index creation, populated upgrade and rollback in isolated PostgreSQL.
 Antiphon.Tests.Application.TranscriptHotPathMigrationTests
 
+# CARD-0665: real landing, capture recovery and complete caller delivery (two lands per row).
 Antiphon.Tests.Application.AgentTaskLandPublicationTests
