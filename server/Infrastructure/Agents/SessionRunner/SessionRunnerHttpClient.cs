@@ -79,11 +79,18 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         return await client.SendAsync(request, ct).ConfigureAwait(false);
     }
 
-    private async Task<T> ReadJsonAsync<T>(string relative, string operation, CancellationToken ct, ResilienceBudget? budget = null)
+    private async Task<T?> ReadJsonAsync<T>(string relative, string operation, CancellationToken ct, ResilienceBudget? budget = null)
+        where T : class
     {
         using var response = await SendReadAsync(relative, operation, ct, budget).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false)
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false);
+    }
+
+    private async Task<T> ReadRequiredJsonAsync<T>(string relative, string operation, CancellationToken ct, ResilienceBudget? budget = null)
+        where T : class
+    {
+        return await ReadJsonAsync<T>(relative, operation, ct, budget).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Session runner returned an empty response.");
     }
 
@@ -453,11 +460,11 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     }
 
     public async Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-        Map(await ReadJsonAsync<RunnerSessionDto>($"sessions/{sessionId:D}", ResilienceOperations.RunnerGet, ct));
+        Map(await ReadRequiredJsonAsync<RunnerSessionDto>($"sessions/{sessionId:D}", ResilienceOperations.RunnerGet, ct));
 
     public async Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
     {
-        var buffer = await ReadJsonAsync<RunnerBufferDto>(
+        var buffer = await ReadRequiredJsonAsync<RunnerBufferDto>(
             $"sessions/{sessionId:D}/buffer", ResilienceOperations.RunnerBuffer, ct);
         return new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence);
     }
@@ -480,7 +487,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
-        var transcript = await ReadJsonAsync<RunnerTranscriptDto>(
+        var transcript = await ReadRequiredJsonAsync<RunnerTranscriptDto>(
             $"sessions/{sessionId:D}/transcript", ResilienceOperations.RunnerTranscript, ct);
         return new SessionRunnerTranscriptDto(
             transcript.SessionId,
