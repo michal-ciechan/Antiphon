@@ -17,6 +17,10 @@ public static class OperatorTokenFile
 {
     public const string Header = "X-Antiphon-Operator-Token";
 
+    /// <summary>CARD-0676 F-1 seam (inert until the fix slice): the configured token path.</summary>
+    public static string ConfiguredPath(IConfiguration configuration) =>
+        configuration["PhoneHomeRunner:OperatorTokenPath"] ?? "";
+
     /// <summary>The configured path, or <see cref="DefaultPath"/> when none is set.</summary>
     public static string ResolvePath(string? configured) =>
         string.IsNullOrWhiteSpace(configured) ? DefaultPath() : configured;

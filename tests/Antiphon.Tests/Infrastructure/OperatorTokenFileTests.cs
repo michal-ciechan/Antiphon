@@ -4,7 +4,7 @@ using System.Security.Principal;
 using Antiphon.Server.Infrastructure.Security;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
+using Microsoft.Extensions.Configuration;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -44,12 +44,8 @@ public class OperatorTokenFileTests
     [Test]
     public async Task Concurrent_first_use_readers_all_get_the_one_token_and_none_throw()
     {
-        // CARD-0681: marked, not fixed. Off Windows this is red on a PRODUCTION race (CARD-0676):
-        // ReadOrCreate relies on File.Move(overwrite: false) failing when another caller renamed
-        // first, but on Unix several first-use callers' moves all succeed (server2: 8 distinct
-        // tokens from 16 readers, no IOException). Remove this skip with the CARD-0676 fix.
-        if (!OperatingSystem.IsWindows())
-            throw new SkipTestException("CARD-0676: OperatorTokenFile first-use rename is not exclusive on Unix");
+        // CARD-0676: runs on every platform. Off Windows .NET's File.Move(overwrite: false) is a
+        // check-then-rename, so several first-use callers' moves all succeeded (8 tokens from 16).
         const int Readers = 16;
         var root = Path.Combine(Path.GetTempPath(), "antiphon-operator-" + Guid.NewGuid().ToString("N"));
         try
@@ -90,6 +86,28 @@ public class OperatorTokenFileTests
         }
 
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Operator_TokenPath_is_the_setting_and_the_PhoneHomeRunner_key_is_its_alias()
+    {
+        // CARD-0676 F-1: the token guards every operator surface, so its key left PhoneHomeRunner.
+        var current = Path.Combine(Path.GetTempPath(), "operator-current");
+        var legacy = Path.Combine(Path.GetTempPath(), "operator-legacy");
+
+        OperatorTokenFile.ConfiguredPath(Config(("Operator:TokenPath", current))).ShouldBe(current);
+        OperatorTokenFile.ConfiguredPath(Config(("PhoneHomeRunner:OperatorTokenPath", legacy))).ShouldBe(legacy);
+        OperatorTokenFile.ConfiguredPath(Config(
+            ("Operator:TokenPath", current), ("PhoneHomeRunner:OperatorTokenPath", legacy))).ShouldBe(current);
+        OperatorTokenFile.ConfiguredPath(Config(
+            ("Operator:TokenPath", " "), ("PhoneHomeRunner:OperatorTokenPath", legacy))).ShouldBe(legacy);
+        OperatorTokenFile.ConfiguredPath(Config()).ShouldBe("");
+        await Task.CompletedTask;
+
+        static IConfiguration Config(params (string Key, string Value)[] pairs) =>
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(pairs.Select(p => new KeyValuePair<string, string?>(p.Key, p.Value)))
+                .Build();
     }
 
     [Test]
