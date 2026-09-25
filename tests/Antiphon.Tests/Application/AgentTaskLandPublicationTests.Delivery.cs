@@ -24,7 +24,12 @@ public sealed partial class AgentTaskLandPublicationTests
     [Arguments("retained", true, "before-enqueue")]
     [Arguments("retained", false, "queue-inserted")]
     [Arguments("retained", true, "queue-inserted")]
-    public async Task C665_CleanupDetailSurvivesNotificationRecoveryAndCompleteCallerPrompt(string detail, bool busy, string cut)
+    [Arguments("protected", false, "before-enqueue", "canonical_checkout_unknown")]
+    [Arguments("protected", true, "queue-inserted", "canonical_checkout_changed")]
+    [Arguments("retained", true, "before-enqueue", "canonical_checkout_unknown")]
+    [Arguments("retained", false, "queue-inserted", "canonical_checkout_changed")]
+    public async Task C665_CleanupDetailSurvivesNotificationRecoveryAndCompleteCallerPrompt(string detail, bool busy, string cut,
+        string? canonicalReason = null)
     {
         await using var h = new LandingSafetyHarness();
         // Round A still uses the retention seam. This double actually copies and verifies bytes;
@@ -55,6 +60,14 @@ public sealed partial class AgentTaskLandPublicationTests
             var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
             task.ReplyTo = AgentTaskReplyTo.Session;
             task.ParentSessionId = caller.SessionId;
+            if (canonicalReason is not null)
+            {
+                // A cleanup retry must preserve the published operation's activation warning.
+                var published = await db.AgentTaskLandings.SingleAsync(o => o.Id == first.Id);
+                published.CanonicalAdvanceReason = canonicalReason;
+                published.CanonicalAdvancedAt = null;
+                published.LocalTargetAfterSha = null;
+            }
             await db.SaveChangesAsync();
         }
         await h.RepostAsync();
@@ -70,6 +83,15 @@ public sealed partial class AgentTaskLandPublicationTests
             terminal.LandingOperationId.ShouldBe(first.Id);
             terminal.Detail.ShouldContain(expected);
             note.Body.ShouldContain(expected);
+            if (canonicalReason is not null)
+            {
+                terminal.Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+                terminal.Detail.ShouldContain("canonical=" + canonicalReason);
+                note.Body.ShouldContain("canonical=" + canonicalReason);
+                (await db.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId
+                    && e.Type == AgentTaskEventType.Warning).ToListAsync())
+                    .ShouldContain(e => e.Detail.Contains(canonicalReason));
+            }
             note.Body.ShouldContain("prior attempt request=");
             note.Body.ShouldContain(note.Id.ToString("N"));
             note.Body.ShouldContain(note.RequestId!.Value.ToString("N"));
@@ -134,6 +156,7 @@ public sealed partial class AgentTaskLandPublicationTests
             prompt.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence ?? 0);
             saved.ConfirmingPromptSequence.ShouldBe(prompt.Sequence);
             prompt.Text.ShouldContain(expected);
+            if (canonicalReason is not null) prompt.Text.ShouldContain("canonical=" + canonicalReason);
             PromptSubmissionMatch.IsCompleteIn(note.Body, caller.Adapter.SubmittedBodies.ShouldHaveSingleItem()).ShouldBeTrue();
         }
         await h.Fixture.AssertRemoteSourceAsync();

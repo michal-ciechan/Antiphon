@@ -26,6 +26,7 @@ public sealed class ControlledLandingGitTests
     [Arguments("ls-files --unexpected")]
     [Arguments("worktree list --porcelain -z extra")]
     [Arguments("worktree remove --force -- SOURCE")]
+    [Arguments("worktree remove -- SOURCE")]
     [Arguments("worktree lock SOURCE extra")]
     [Arguments("worktree lock OTHER")]
     [Arguments("fetch --force ENDPOINT refs/heads/master:refs/test/pin")]
@@ -94,6 +95,37 @@ public sealed class ControlledLandingGitTests
         using var git = new ControlledLandingGit();
         await Should.ThrowAsync<InvalidOperationException>(() =>
             git.RunAsync(git.Repository, ["definitely-not-a-git-command"], CancellationToken.None));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C688_UnregisterDropsHeadFilesWithoutTouchingSetAsideOrRecreatedPath(bool recreate)
+    {
+        using var git = new ControlledLandingGit();
+        var aside = Path.Combine(git.Root, "source-set-aside");
+        Directory.Move(git.Source, aside);
+        if (recreate) await File.WriteAllTextAsync(git.Source, "new owner bytes");
+        var observed = false;
+        git.AfterCommand = (_, args, result) =>
+        {
+            if (args.Contains("--registration-only"))
+            {
+                observed = true;
+                result.Succeeded.ShouldBe(!recreate);
+                File.Exists(Path.Combine(git.SourceGitDirectory, "HEAD")).ShouldBe(recreate);
+                File.ReadAllText(Path.Combine(aside, "keep.txt")).ShouldBe("seed\n");
+            }
+            return Task.CompletedTask;
+        };
+        var result = await git.UnregisterWorktreeAsync(git.Repository, git.Source, git.SourceGitDirectory, default);
+        observed.ShouldBeTrue();
+        result.Succeeded.ShouldBe(!recreate);
+        var registrations = await git.RequiredAsync(git.Repository, "worktree", "list", "--porcelain", "-z");
+        registrations.Contains(git.Source, StringComparison.Ordinal).ShouldBe(recreate);
+        if (recreate) (await File.ReadAllTextAsync(git.Source)).ShouldBe("new owner bytes");
+        else Directory.Exists(git.SourceGitDirectory).ShouldBeFalse();
+        (await File.ReadAllTextAsync(Path.Combine(aside, "keep.txt"))).ShouldBe("seed\n");
     }
 
     [Test]

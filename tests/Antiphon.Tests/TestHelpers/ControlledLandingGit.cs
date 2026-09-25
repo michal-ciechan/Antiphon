@@ -811,17 +811,18 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     {
         // Only the administrative entry goes; like production, the working tree is never touched.
         var path = args[^1];
-        if (Directory.Exists(path)) return new(1, "", "worktree_path_recreated");
-        foreach (var key in _worktrees.Keys.Where(k => PathsEqual(k, path)).ToArray())
-            _worktrees.Remove(key);
+        try { _ = File.GetAttributes(path); return new(1, "", "worktree_path_recreated"); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { }
         if (PathsEqual(path, Source))
         {
-            _sourcePresent = false;
             // Drop the administrative entry without traversing the source working tree.
             // The HEAD-file scan must observe the same boundary as the registration model.
             var retired = Antiphon.Server.Infrastructure.Git.WorktreeSetAside.RetiredAdminPath(CommonDir, path);
             Directory.CreateDirectory(Path.GetDirectoryName(retired)!);
             Directory.Move(SourceGitDirectory, retired);
+            _sourcePresent = false;
+            foreach (var key in _worktrees.Keys.Where(k => PathsEqual(k, path)).ToArray())
+                _worktrees.Remove(key);
             Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(retired);
         }
         return new(0, "", "");
