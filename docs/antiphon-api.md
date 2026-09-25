@@ -687,6 +687,7 @@ GET/POST /api/settings/providers/{id}/model-routing   PUT|DELETE /api/settings/m
 GET    /health                               liveness + PostgreSQL
 GET    /api/version                          build-time git SHA (CARD-0179) plus `capabilities` (CARD-0495 `land-v2`); /health stays the literal Healthy body
 POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
+GET    /api/diagnostics/session-state        CARD-0701 process/cache counters, live/unknown counts, sanitized pool flags (no transcript text)
 POST   /api/operator/dashboard-sessions      one-time Hangfire dashboard login link; needs X-Antiphon-Operator-Token (CARD-0658)
 GET    /api/operator/dashboard-login?nonce=  redeems the link once; sets the /hangfire session cookie, 302 to /hangfire
 ```

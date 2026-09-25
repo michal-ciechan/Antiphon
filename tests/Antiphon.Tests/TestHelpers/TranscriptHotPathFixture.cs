@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -220,10 +221,10 @@ internal sealed record CapturedTranscriptCommand(string Sql, NpgsqlParameter[] P
 
 internal sealed class TranscriptCommandCapture : DbCommandInterceptor
 {
-    private readonly List<CapturedTranscriptCommand> _commands = [];
+    private readonly ConcurrentQueue<CapturedTranscriptCommand> _commands = new();
     public IEnumerable<CapturedTranscriptCommand> Reads => _commands.Where(c =>
         c.Sql.Contains("\"TranscriptEntries\"", StringComparison.Ordinal) &&
-        c.Sql.TrimStart().StartsWith("SELECT", StringComparison.Ordinal));
+        Regex.IsMatch(c.Sql, @"(?m)^\s*SELECT\b"));
     public IEnumerable<CapturedTranscriptCommand> Membership => Reads.Where(c =>
         c.Sql.Contains("t.\"Uuid\", t.\"Kind\"", StringComparison.Ordinal));
     public void Clear() => _commands.Clear();
@@ -232,7 +233,7 @@ internal sealed class TranscriptCommandCapture : DbCommandInterceptor
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
         CancellationToken cancellationToken = default)
     {
-        _commands.Add(new CapturedTranscriptCommand(command.CommandText,
+        _commands.Enqueue(new CapturedTranscriptCommand(command.CommandText,
             command.Parameters.Cast<NpgsqlParameter>().Select(p => p.Clone()).ToArray()));
         return ValueTask.FromResult(result);
     }

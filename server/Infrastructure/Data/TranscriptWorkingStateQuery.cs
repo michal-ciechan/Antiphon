@@ -18,7 +18,7 @@ internal static class TranscriptWorkingStateQuery
         "OR (\"Kind\" = 'CompactBoundary' AND \"Text\" IS NOT NULL AND strpos(\"Text\", '(manual)') > 0)\n" +
         "OR (\"Kind\" = 'UserPrompt' AND \"Text\" IS NOT NULL AND \"Text\" LIKE '[Request interrupted%')";
 
-    private const string ActivityPredicate = """
+    internal const string ActivityPredicate = """
         a."Kind" NOT IN ('TurnEnd', 'TurnTitle', 'SessionRestartBoundary', 'QueuedUserPrompt',
                         'QueueEnqueue', 'QueueDequeue', 'QueueRemove', 'CompactBoundary')
         AND (a."Kind" <> 'UserPrompt' OR a."Text" IS NULL OR
@@ -67,7 +67,7 @@ internal static class TranscriptWorkingStateQuery
         {
             Value = sessionIds.ToArray()
         };
-        var rows = await db.Database.SqlQueryRaw<WorkingStateRow>(Sql, ids).ToListAsync(ct);
+        var rows = await db.Database.SqlQueryRaw<WorkingStateRow>(Sql, ids).TagWith("session-state.fallback").ToListAsync(ct);
         // Deliberately retain ToDictionary's rejection of duplicate requested IDs.
         return rows.ToDictionary(row => row.SessionId, row => row.Working);
     }

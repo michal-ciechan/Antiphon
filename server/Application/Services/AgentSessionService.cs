@@ -3001,28 +3001,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     {
         try
         {
-            if (!await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+            if (!await _runtime.WriteRestartBoundaryIfInterruptedAsync(sessionId, ct))
                 return false;
-
-            var now = UtcNow();
-            var maxSeq = await _db.TranscriptEntries
-                .Where(t => t.AgentSessionId == sessionId)
-                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
-            _db.TranscriptEntries.Add(new TranscriptEntry
-            {
-                Id = Guid.NewGuid(),
-                AgentSessionId = sessionId,
-                Sequence = maxSeq + 1,
-                Kind = TranscriptKinds.SessionRestartBoundary,
-                // Synthetic uuid so the (uuid, kind) dedup in PersistTranscriptAsync can never
-                // collide it with a real JSONL line.
-                Uuid = Guid.NewGuid().ToString("D"),
-                Timestamp = now,
-                Role = "system",
-                Text = "Session relaunched; the previous turn had been interrupted mid-flight.",
-                CreatedAt = now,
-            });
-            await _db.SaveChangesAsync(ct);
 
             _logger.LogInformation(
                 "Session {SessionId} relaunched with a mid-turn transcript; wrote a restart boundary so it reads idle",

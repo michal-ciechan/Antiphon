@@ -10,6 +10,44 @@
   busy-session delivery trigger. Wakeup overflow requests a sweep, and repeated failures back
   off to sixty seconds. These wakeups are hints, never transcript-confirmed delivery receipts.
 
+- **Working state is a committed projection (CARD-0701, Round 1).** Production queue gates/DTOs
+  and agent list/detail read the DI-owned `SessionStateStore`. Each read, runtime ingest and
+  synthetic restart boundary shares a per-session gate. PostgreSQL remains the record: publish
+  only after the append's own commit, fold actual stored rows (including clipped stubs), and
+  reseed after duplicate conflicts or ambiguous outcomes. A failed reseed is unavailable, never
+  idle. Source `SessionTranscript` events retain their existing live-event meaning; they are
+  not committed-state notifications. Existing queue/channel/task actions run after publication
+  and outside the state gate. Queue lock -> state gate is permitted; the inverse is forbidden.
+  Ingestion and retention refuse ambient/shared transactions that would publish before commit.
+  Retention holds the gate through deletion and reseed; session deletion yields Missing.
+
+  The server fold keeps independent end-sequence/end-timestamp maxima and only post-end activity,
+  using the exact SQL prefix rules without whitespace trimming. The runner's file-order classifier
+  is unchanged. Working state grants no liveness, kill, delivery receipt or settlement authority;
+  CARD-0679 live/unknown/gone and complete prompt matching still gate those actions.
+
+  Startup warms active sessions and sessions referenced by open tasks, queues or notes in batches
+  of at most 512 statement snapshots before hosted consumers start. A canceled reader cancels its
+  wait, not the shared seed. Missing/fault retries are throttled for five seconds after completion.
+  Defaults: 4,096 admitted sessions, terminal idle eviction after 15 minutes. Active entries and
+  held/awaited gates cannot be evicted. Over-capacity sessions use serialized uncached SQL loads;
+  pressure is measured. A minute pin-maintenance pass reads session/ownership metadata and warms
+  newly discovered IDs; it does not reload ready transcript summaries. Settings use `SessionState`.
+
+  This is one server process with multiple runners, not a multi-writer cache. Out-of-process SQL
+  transcript changes require a server restart before reads/actions resume. A new process seeds
+  from PostgreSQL under a new epoch. Roll back by reverting the Round 1 change and restarting the
+  canonical checkout; no migration or pool-setting change is needed. Npgsql resets remain enabled.
+  Remaining metadata readers, binding/UUID caches, revision waiters and UI invalidation belong to
+  Rounds 2/3. `GET /api/diagnostics/session-state` exposes metadata-only process/cache counters,
+  live/unknown counts and sanitized provider/pool flags. `Antiphon.SessionState` meters and SQL tags
+  `session-state.seed`, `.pins`, `.fallback`, `.identity` distinguish cold loads from residual reads.
+  Use `scripts/measure-session-state-cache.ps1 -Mode Capture -Phase Before|After -Round R1` on the
+  desktop with an immutable evidence root and sanitized `ContextPath`; the plan owns matched
+  windows and final acceptance. Context includes `openClients`, `workloadKey`, `siblingShas`; a
+  pre-feature baseline also needs `runtime` identity/live/unknown/version/pool observations.
+  Compare works offline. No reset, settings mutation, restart or synthetic prompt is performed.
+
 - **Accepted @mentions are durable queued input (CARD-0696).** The router allocates an occurrence
   ID; acceptance commits one `WhenIdle` row with origin `Mention` and freezes its target and body.
   Replaying that ID validates the destination/body and never resets an attempt. Separate identical

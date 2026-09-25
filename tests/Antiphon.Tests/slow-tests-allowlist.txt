@@ -152,3 +152,10 @@ Antiphon.Tests.Application.ChannelPromptCorrelationTests
 
 # CARD-0701: isolated PostgreSQL hot-path query budgets.
 Antiphon.Tests.Application.SessionStateCacheReadTests
+
+# CARD-0701: real PostgreSQL projection parity and fresh-container seeds.
+Antiphon.Tests.Application.SessionStateProjectionTests
+# CARD-0701: controlled commit/fallback races against isolated PostgreSQL.
+Antiphon.Tests.Application.SessionStateCommitTests
+# CARD-0701: real PostgreSQL startup, retention and concurrent load contracts.
+Antiphon.Tests.Application.SessionStateWarmupTests
