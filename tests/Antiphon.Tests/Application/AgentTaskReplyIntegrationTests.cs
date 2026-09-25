@@ -3119,6 +3119,73 @@ public partial class AgentTaskReplyIntegrationTests
         incidents[0].Severity.ShouldBe(AlertSeverity.Error);
     }
 
+    [Test]
+    public async Task C691_settlement_through_the_real_session_service_keeps_a_false_kill_owner()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false });
+        await using (var db = CreateContext())
+            await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(u => u
+                .SetProperty(a => a.IsPoolDelegate, true).SetProperty(a => a.BoardId, (Guid?)null));
+        var (task, sessionId) = await SeedDispatchedTaskAsync(h.TempRoot, configure: t =>
+        {
+            t.AgentId = h.AgentId;
+            t.Workspace = WorkspaceMode.Worktree;
+        });
+        await BindAgentSessionAsync(h.AgentId, sessionId);
+        var adapter = new FakeAgentProtocolAdapter { KillResult = false };
+        h.Runtime.Register(sessionId, adapter);
+        using var sessionScope = h.Provider.CreateScope();
+        using var factory = new TestScopeFactory(configureServices: services =>
+        {
+            services.AddSingleton(h.Runtime);
+            services.AddSingleton<IDelegateSessionStopper>(sessionScope.ServiceProvider.GetRequiredService<AgentSessionService>());
+        });
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var agent = await verify.Agents.SingleOrDefaultAsync(a => a.Id == h.AgentId);
+        agent.ShouldNotBeNull("a failed kill is not evidence the process ended");
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldNotBeNull();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Stopping);
+        adapter.KillCount.ShouldBe(1);
+        adapter.Disposed.ShouldBeFalse();
+        await h.Runtime.DisposeSessionAsync(sessionId);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C691_settlement_preserves_an_AlwaysOn_or_standing_pool_delegate(bool alwaysOn)
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = alwaysOn });
+        await using (var db = CreateContext())
+        {
+            var row = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+            row.IsPoolDelegate = true;
+            if (alwaysOn) row.BoardId = null;
+            await db.SaveChangesAsync();
+        }
+        var (task, sessionId) = await SeedDispatchedTaskAsync(h.TempRoot, configure: t =>
+        {
+            t.AgentId = h.AgentId;
+            t.Workspace = WorkspaceMode.Worktree;
+        });
+        await BindAgentSessionAsync(h.AgentId, sessionId);
+        using var factory = new TestScopeFactory();
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        factory.Stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == h.AgentId);
+        agent.Status.ShouldBe(AgentStatus.Running);
+        agent.PoolIdleSince.ShouldBeNull();
+    }
+
     /// <summary>The pool checks the agent's session pointer - bind it like dispatch would have.</summary>
     private static async Task BindAgentSessionAsync(Guid agentId, Guid sessionId)
     {
@@ -5069,7 +5136,8 @@ public partial class AgentTaskReplyIntegrationTests
             bool routingPins = false,
             RecordingGitWorkspaceService? gitSpy = null,
             Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? saveInterceptor = null,
-            LandDeliveryBoundary? boundary = null)
+            LandDeliveryBoundary? boundary = null,
+            Action<IServiceCollection>? configureServices = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
@@ -5113,6 +5181,7 @@ public partial class AgentTaskReplyIntegrationTests
             }));
             services.AddSingleton<MarkdownPdfRenderer>();
             services.AddSingleton<DeliverableBundleService>();
+            configureServices?.Invoke(services);
             _provider = services.BuildServiceProvider();
         }
 

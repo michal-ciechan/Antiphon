@@ -912,7 +912,7 @@ public class AgentSessionServiceIntegrationTests
     }
 
     [Test]
-    public async Task AgentSessionService_kill_force_kills_after_grace_period()
+    public async Task C691_kill_that_does_not_exit_keeps_the_runtime_and_attempt_owned()
     {
         await using var db = CreateContext();
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-kill-timeout-{Guid.NewGuid():N}");
@@ -997,13 +997,13 @@ public class AgentSessionServiceIntegrationTests
             await service.KillAsync(session.Id, CancellationToken.None);
 
             adapter.Killed.ShouldBeTrue();
-            adapter.Disposed.ShouldBeTrue();
-            session.Status.ShouldBe(SessionStatus.Failed);
-            session.FailureReason.ShouldBe("Agent process did not exit within the configured grace period.");
-            attempt.Phase.ShouldBe(RunPhase.Failed);
-            attempt.ErrorDetails.ShouldBe(session.FailureReason);
-            eventBus.PublishedEvents.Single(e => e.EventName == "SessionExited")
-                .Group.ShouldBe(AgentSessionGroups.Session(session.Id));
+            adapter.Disposed.ShouldBeFalse("a failed kill must retain the live adapter for a retry");
+            session.Status.ShouldBe(SessionStatus.Stopping);
+            session.EndedAt.ShouldBeNull();
+            session.FailureReason.ShouldContain("did not exit");
+            attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+            runtime.IsLiveOrUnknown(session.Id, null).ShouldBeTrue();
+            eventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionExited");
         }
         finally
         {
@@ -1174,6 +1174,103 @@ public class AgentSessionServiceIntegrationTests
         {
             DeleteDirectoryBestEffort(tempRoot);
         }
+    }
+
+    [Test]
+    public async Task C691_delete_through_the_real_session_service_refuses_a_false_kill()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConfigureServices = services => services.AddScoped<IDelegateSessionStopper>(
+                sp => sp.GetRequiredService<AgentSessionService>()),
+        });
+        h.Adapter.KillResult = false;
+        using var scope = h.Provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentService>();
+
+        var refusal = await Should.ThrowAsync<ConflictException>(() => service.DeleteAsync(h.AgentId, CancellationToken.None));
+
+        refusal.Code.ShouldBe("agent_delete_session_live");
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == h.AgentId)).ShouldBeTrue();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Stopping);
+        h.Adapter.KillCount.ShouldBe(1);
+        h.Adapter.Disposed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C691_cancellation_after_Stopping_records_the_remote_deferred_kill()
+    {
+        await using var db = CreateContext();
+        var workspace = Directory.CreateTempSubdirectory("c691-cancel-");
+        try
+        {
+            var now = DateTime.UtcNow.AddMinutes(-5);
+            var session = new AgentSession
+            {
+                Id = Guid.NewGuid(), DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running, Cwd = workspace.FullName, CreatedAt = now, StartedAt = now,
+                LastSeenAt = now, RunnerId = $"c691-{Guid.NewGuid():N}"[..13],
+                RunnerStoreId = Guid.NewGuid(), RunnerCwd = workspace.FullName,
+            };
+            db.Add(session);
+            await db.SaveChangesAsync();
+            using var cancel = new CancellationTokenSource();
+            var adapter = new FakeAgentProtocolAdapter
+            {
+                BeforeKill = () => cancel.Cancel(),
+                ThrowOnKill = new OperationCanceledException(cancel.Token),
+            };
+            await using var provider = BuildProvider();
+            var (service, runtime) = BuildServiceWithFakes(db, new MockEventBus(), provider, adapter,
+                workspace.FullName, CreateSessionSettings(workspace.FullName));
+            runtime.Register(session.Id, adapter);
+    
+            await Should.ThrowAsync<OperationCanceledException>(() => service.KillAsync(session.Id, cancel.Token));
+    
+            await using var verify = CreateContext();
+            var stored = await verify.AgentSessions.SingleAsync(s => s.Id == session.Id);
+            stored.Status.ShouldBe(SessionStatus.Stopping);
+            var intent = (await verify.AgentIncidents.Where(i => i.SessionId == session.Id
+                && i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent).ToListAsync()).ShouldHaveSingleItem();
+            intent.FailureReason.ShouldBe($"pending:kill-generation:{session.RunnerId}:{SessionGeneration.Normalize(stored.StartedAt).Ticks}");
+            stored.FailureReason.ShouldContain("kill not delivered");
+            adapter.Disposed.ShouldBeFalse();
+        }
+        finally { DeleteDirectoryBestEffort(workspace.FullName); }
+    }
+
+    [Test]
+    [Arguments(SessionStatus.Failed)]
+    [Arguments(SessionStatus.Stopped)]
+    public async Task C691_delete_keeps_a_terminal_row_whose_remote_process_is_unknown(SessionStatus status)
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+                services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>());
+            },
+        });
+        await h.Runtime.DisposeSessionAsync(h.SessionId);
+        await using (var db = CreateContext())
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.Status, status).SetProperty(s => s.RunnerId, host.AllowedRunnerId)
+                .SetProperty(s => s.RunnerStoreId, host.StoreId).SetProperty(s => s.RunnerCwd, h.TempRoot));
+        h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId);
+        h.Runtime.IsLiveOrUnknown(h.SessionId, host.AllowedRunnerId).ShouldBeTrue();
+
+        using var scope = h.Provider.CreateScope();
+        var refusal = await Should.ThrowAsync<ConflictException>(() =>
+            scope.ServiceProvider.GetRequiredService<AgentService>().DeleteAsync(h.AgentId, CancellationToken.None));
+
+        refusal.Code.ShouldBe("agent_delete_session_live");
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == h.AgentId)).ShouldBeTrue();
     }
 
     private static void SkipIfNotWindows()

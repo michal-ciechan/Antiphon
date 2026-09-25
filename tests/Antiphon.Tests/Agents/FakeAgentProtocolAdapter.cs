@@ -181,6 +181,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     /// <summary>CARD-0691: when set, KillAsync throws this — a runner call that never landed.</summary>
     public Exception? ThrowOnKill { get; set; }
+    public Action? BeforeKill { get; set; }
 
     // ---- CARD-0056: teardown ORDER, not just teardown ------------------------------------------
     //
@@ -247,6 +248,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct)
     {
+        BeforeKill?.Invoke();
         Killed = true;
         KillCount++;
         _lifecycle.Add("Kill");

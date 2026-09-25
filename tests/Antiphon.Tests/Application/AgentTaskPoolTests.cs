@@ -1201,6 +1201,106 @@ public class AgentTaskPoolTests
             .ShouldHaveSingleItem().Kind.ShouldBe(AgentIncidentKind.DelegateReleaseUnresolved);
     }
 
+    [Test]
+    [Arguments(true, false)]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    [Arguments(false, true)]
+    public async Task C691_pool_sweeps_preserve_AlwaysOn_and_standing_agents(bool alwaysOn, bool janitor)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        { AlwaysOn = alwaysOn, ConnectionString = schema.ConnectionString });
+        await using (var db = CreateContext(schema.ConnectionString))
+        {
+            var row = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+            row.IsPoolDelegate = true;
+            if (alwaysOn) row.BoardId = null;
+            if (janitor)
+            {
+                row.Status = AgentStatus.Idle;
+                row.PoolIdleSince = DateTime.UtcNow.AddHours(-2);
+            }
+            await db.SaveChangesAsync();
+        }
+        await SeedTaskOnDelegateAsync(schema.ConnectionString, h.AgentId, h.SessionId, h.TempRoot,
+            AgentTaskStatus.Failed, DateTime.UtcNow.AddMinutes(-3));
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+
+        var acted = janitor ? await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None)
+            : await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None);
+
+        acted.ShouldBe(0);
+        stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.Agents.AnyAsync(a => a.Id == h.AgentId)).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C691_stale_sweep_keeps_failed_live_and_missing_session_owners(bool missing)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(schema.ConnectionString,
+            workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
+        await using (var db = CreateContext(schema.ConnectionString))
+        {
+            if (missing)
+            {
+                // A dangling owner pointer must not be mistaken for confirmed process exit.
+                sessionId = Guid.NewGuid();
+                await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u =>
+                    u.SetProperty(a => a.PersistentSessionId, sessionId.ToString()));
+            }
+            else
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u =>
+                    u.SetProperty(s => s.Status, SessionStatus.Failed));
+        }
+        var (dispatcher, _, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+        var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+        runtime.Register(sessionId, new Antiphon.Tests.Agents.FakeAgentProtocolAdapter());
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeTrue("live or unverified is not gone");
+        await runtime.DisposeSessionAsync(sessionId);
+    }
+
+    [Test]
+    public async Task C691_stale_sweep_keeps_a_failed_remote_owner_before_inventory_recovers()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        using var workspace = new TempWorkspace();
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(schema.ConnectionString,
+            workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
+        await using (var db = CreateContext(schema.ConnectionString))
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.Status, SessionStatus.Failed).SetProperty(s => s.RunnerId, host.AllowedRunnerId)
+                .SetProperty(s => s.RunnerStoreId, host.StoreId).SetProperty(s => s.RunnerCwd, workspace.Path));
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString,
+            configureServices: services =>
+            {
+                services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+                services.AddSingleton<ISessionRunnerClient>(new BridgeQueueHarness.EmptyRunnerClient());
+            });
+        using var ownedProvider = provider;
+        var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+        runtime.ListLiveSessions().ShouldNotContain(sessionId);
+        runtime.IsLiveOrUnknown(sessionId, host.AllowedRunnerId).ShouldBeTrue();
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeTrue();
+    }
+
     private static async Task<(Guid AgentId, Guid SessionId, AgentTask Task)> SeedUnreleasedDelegateAsync(
         string connectionString, string directory, AgentTaskStatus status, TimeSpan completedAgo,
         WorkspaceMode workspace = WorkspaceMode.Shared, bool sourced = false)
@@ -1293,7 +1393,7 @@ public class AgentTaskPoolTests
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider)
         CreateHarness(TimeProvider? timeProvider = null, string? connectionString = null,
-            List<RecordingLogEntry>? logs = null)
+            List<RecordingLogEntry>? logs = null, Action<IServiceCollection>? configureServices = null)
     {
         // CARD-0691 D-3: kills end the session like the real stopper, so a retired row can go.
         var stopper = new RecordingSessionStopper { StopsSessionsIn = connectionString ?? TestDbFixture.ConnectionString };
@@ -1337,6 +1437,7 @@ public class AgentTaskPoolTests
         services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();
 
+        configureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
         return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), stopper, provider);
     }
