@@ -31,6 +31,9 @@ export interface HomeTaskWorkerDto {
   costUsd: number
   dispatchedAt: string | null
   completedAt: string | null
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux'
+  runnerId?: string | null
+  observedPlatform?: string | null
 }
 
 export interface HomeTaskItemDto {
@@ -79,6 +82,9 @@ export interface HomeTaskItemDto {
   startedAt: string | null
   updatedAt: string
   completedAt: string | null
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux' | null
+  runnerId?: string | null
+  observedPlatform?: string | null
 }
 
 export interface HomeTasksDto {

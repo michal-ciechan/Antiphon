@@ -85,7 +85,8 @@ public sealed class HomeTaskService
                 c.CreatedAt,
                 c.StartedAt,
                 c.UpdatedAt,
-                c.CompletedAt))
+                c.CompletedAt,
+                c.RequiredPlatform))
             .ToListAsync(ct);
 
     private async Task<Dictionary<Guid, List<BoundRow>>> LoadBoundTasksAsync(CancellationToken ct)
@@ -108,7 +109,10 @@ public sealed class HomeTaskService
                 t.CompletedAt,
                 t.CreatedAt,
                 t.RepoPath,
-                t.WorkingDirectory))
+                t.WorkingDirectory,
+                t.RequiredPlatform,
+                t.RunnerId,
+                t.ObservedPlatform))
             .ToListAsync(ct);
 
         return rows
@@ -175,7 +179,10 @@ public sealed class HomeTaskService
                 t.WorktreePath,
                 t.CreatedAt,
                 t.DispatchedAt,
-                t.CompletedAt))
+                t.CompletedAt,
+                t.RequiredPlatform,
+                t.RunnerId,
+                t.ObservedPlatform))
             .ToListAsync(ct);
 
     private static RankedItem RankCard(
@@ -245,7 +252,10 @@ public sealed class HomeTaskService
             CreatedAt: card.CreatedAt,
             StartedAt: card.StartedAt,
             UpdatedAt: card.UpdatedAt,
-            CompletedAt: card.CompletedAt);
+            CompletedAt: card.CompletedAt,
+            RequiredPlatform: card.RequiredPlatform,
+            RunnerId: workerRow?.RunnerId,
+            ObservedPlatform: workerRow?.ObservedPlatform);
 
         var waitingSince = reason == HomeTaskHumanReason.Question
             ? workerRow?.CompletedAt ?? workerRow?.DispatchedAt ?? workerRow?.CreatedAt ?? card.UpdatedAt
@@ -306,7 +316,10 @@ public sealed class HomeTaskService
             CreatedAt: task.CreatedAt,
             StartedAt: task.DispatchedAt,
             UpdatedAt: task.CompletedAt ?? task.DispatchedAt ?? task.CreatedAt,
-            CompletedAt: task.CompletedAt);
+            CompletedAt: task.CompletedAt,
+            RequiredPlatform: task.RequiredPlatform,
+            RunnerId: task.RunnerId,
+            ObservedPlatform: task.ObservedPlatform);
 
         var waitingSince = task.CompletedAt ?? task.DispatchedAt ?? task.CreatedAt;
         var runningAt = task.DispatchedAt ?? task.CreatedAt;
@@ -396,7 +409,10 @@ public sealed class HomeTaskService
         row.AgentSessionId,
         row.CostUsd,
         row.DispatchedAt,
-        row.CompletedAt);
+        row.CompletedAt,
+        row.RequiredPlatform,
+        row.RunnerId,
+        row.ObservedPlatform);
 
     private static int Compare(RankedItem a, RankedItem b)
     {
@@ -489,7 +505,8 @@ public sealed class HomeTaskService
         DateTime CreatedAt,
         DateTime? StartedAt,
         DateTime UpdatedAt,
-        DateTime? CompletedAt);
+        DateTime? CompletedAt,
+        RequiredPlatform RequiredPlatform);
 
     private sealed record BoundRow(
         Guid CardId,
@@ -506,7 +523,10 @@ public sealed class HomeTaskService
         DateTime? CompletedAt,
         DateTime CreatedAt,
         string? RepoPath,
-        string WorkingDirectory);
+        string WorkingDirectory,
+        RequiredPlatform RequiredPlatform,
+        string? RunnerId,
+        string? ObservedPlatform);
 
     private sealed record TaskRow(
         Guid Id,
@@ -528,7 +548,10 @@ public sealed class HomeTaskService
         string? WorktreePath,
         DateTime CreatedAt,
         DateTime? DispatchedAt,
-        DateTime? CompletedAt);
+        DateTime? CompletedAt,
+        RequiredPlatform RequiredPlatform,
+        string? RunnerId,
+        string? ObservedPlatform);
 
     private sealed record RankedItem(
         HomeTaskItemDto Item,

@@ -102,7 +102,7 @@ function RevisionRow({ cardId, revision, columns }: { cardId: string; revision: 
           // never presented as an authenticated actor.
           <Text size="xs" c="dimmed">by {revision.editedBy} (self-reported)</Text>
         )}
-        {revision.kind === 'ContentEdit' && <><Text size="xs">Card-file visibility was {revision.cardFileVisibility ?? 'unknown'}</Text><SupersededContent revision={revision} /><PrivateNotesPanel key={`${cardId}:${revision.revisionNumber}`} cardId={cardId} revisionNumber={revision.revisionNumber} /></>}
+        {revision.kind === 'ContentEdit' && <><Text size="xs">Card-file visibility was {revision.cardFileVisibility ?? 'unknown'}</Text>{revision.requiredPlatform && <Text size="xs" data-testid="revision-platform">Default task platform was {revision.requiredPlatform}</Text>}<SupersededContent revision={revision} /><PrivateNotesPanel key={`${cardId}:${revision.revisionNumber}`} cardId={cardId} revisionNumber={revision.revisionNumber} /></>}
         {revision.kind === 'Reorder' && <SupersededReorder revision={revision} />}
         {revision.kind === 'Reopen' && <SupersededClose revision={revision} />}
       </Stack>

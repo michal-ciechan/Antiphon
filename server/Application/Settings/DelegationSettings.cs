@@ -30,12 +30,11 @@ public sealed class DelegationSettings
     public int MaxOpenTasks { get; set; } = 3;
 
     /// <summary>
-    /// CARD-0659 D-2. The session runner a fresh, runner-compatible delegated task uses when its
-    /// create request names no runner. Null, blank or <c>local</c> keeps every omitted request on
-    /// the desktop (the shipped default). Only the configured
-    /// <c>PhoneHomeRunner:AllowedRunnerId</c> with delegated tasks enabled can be selected; any
-    /// other value, or a runner that is not dispatch-eligible when the task is created, falls
-    /// back to the desktop with a recorded reason. It never replaces an explicit runner.
+    /// CARD-0659 import input only (CARD-0710 D-11). The first missing runtime-defaults row copies
+    /// this value into revision 1 with Migration provenance. After that row exists, including an
+    /// explicit null global, placement reads <c>GET /api/runner-defaults</c> and ignores this key.
+    /// Null, blank or <c>local</c> import as the built-in desktop fallback. Do not treat an edit
+    /// here as a live placement change.
     /// </summary>
     public string? DefaultRunnerId { get; set; }
 

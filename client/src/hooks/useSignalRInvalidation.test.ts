@@ -7,6 +7,19 @@ import { expect, it, vi } from 'vitest'
 import { renderHookWithProviders } from '../test/utils'
 import { useSignalRInvalidation } from './useSignalRInvalidation'
 
+it('runner default changes invalidate the settings queries', () => {
+  const callbacks = new Map<string, (p: object) => void>()
+  const connection = { on: vi.fn((event: string, callback: (p: object) => void) => callbacks.set(event, callback)), off: vi.fn() }
+  const ref = { current: connection as unknown as HubConnection }
+  const view = renderHookWithProviders(() => useSignalRInvalidation(ref))
+  view.queryClient.setQueryData(['runnerDefaults'], { revision: 1 })
+  view.queryClient.setQueryData(['runnerDefaultRevisions'], { revisions: [] })
+  act(() => callbacks.get('RunnerDefaultsChanged')!({ revision: 2 }))
+  expect(view.queryClient.getQueryState(['runnerDefaults'])?.isInvalidated).toBe(true)
+  expect(view.queryClient.getQueryState(['runnerDefaultRevisions'])?.isInvalidated).toBe(true)
+  view.unmount()
+})
+
 it('ID events invalidate policy, projects, card and explicit notes without copying payload text', () => {
   const callbacks = new Map<string, (p: object) => void>()
   const connection = { on: vi.fn((event: string, callback: (p: object) => void) => callbacks.set(event, callback)), off: vi.fn() }

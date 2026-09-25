@@ -37,6 +37,7 @@ import {
   ComplexityChainCellEditor,
   type ComplexityChainEditorTarget,
 } from './ComplexityChainCellEditor'
+import { RunnerDefaultsSection } from './RunnerDefaultsSection'
 import {
   CARD_PIN_SCOPE,
   COMPLEXITY_ROUTING_BOUNDARY,
@@ -76,6 +77,7 @@ export function RoutingSettingsTab() {
       </div>
       <AvailabilitySection />
       <UsageSection />
+      <RunnerDefaultsSection />
       <MatrixSection />
     </Stack>
   )

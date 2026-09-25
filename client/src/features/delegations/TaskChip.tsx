@@ -3,6 +3,7 @@ import { TbArrowBigUpLine, TbGitBranch, TbLock, TbSitemap } from 'react-icons/tb
 import type { AgentModelLevel } from '../../api/agents'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
 import type { AgentKind } from '../../api/boards'
+import { PlacementBadge } from './placement'
 import { scopeChipLabel } from './scopeVisuals'
 import {
   STATUS_COLOR,
@@ -102,6 +103,13 @@ export function TaskChip({
           </Tooltip>
         )}
         <TierBadge level={task.modelLevel} kind={task.agentKind} />
+        <PlacementBadge
+          platform={task.requiredPlatform}
+          runnerId={task.runnerId}
+          source={task.requirementSource}
+          observed={task.observedPlatform}
+          status={task.status}
+        />
         <Badge size="xs" variant="default">
           {task.role.toLowerCase()}
         </Badge>

@@ -32,6 +32,7 @@ import { getApiErrorMessage } from '../../../api/client'
 import type { HomeTaskItemDto } from '../../../api/homeTasks'
 import { ATTENTION_VISUALS } from '../../attention/attentionVisuals'
 import { importanceBadgeColor, stateLabel, urgencyBadgeColor } from '../../board/boardVisuals'
+import { PlacementBadge } from '../../delegations/placement'
 import { TierBadge } from '../../delegations/TaskChip'
 import { formatCost, shortId, STATUS_COLOR } from '../../delegations/taskVisuals'
 import { cardNumber } from '../../../shared/cardIdentifier'
@@ -120,6 +121,8 @@ export function TaskCard({
   const ready = item.group === 'Next' ? readinessFor(item, pipeline) : null
   const terminalLine =
     item.group === 'Done' && item.source === 'Card' ? firstNonBlankLine(item.terminalReason) : null
+  const placementPlatform = item.source === 'Delegation' ? item.requiredPlatform : item.worker?.requiredPlatform ?? item.requiredPlatform
+  const placementRunner = item.source === 'Delegation' ? item.runnerId : item.worker?.runnerId ?? null
 
   const onError = (fallback: string) => (error: unknown) =>
     notifications.show({ color: 'red', message: getApiErrorMessage(error, fallback) })
@@ -168,6 +171,12 @@ export function TaskCard({
               <Badge size="xs" variant="light" color={stateColor}>
                 {stateText}
               </Badge>
+              <PlacementBadge
+                platform={placementPlatform}
+                runnerId={placementRunner}
+                observed={item.source === 'Delegation' ? item.observedPlatform : item.worker?.observedPlatform}
+                status={item.source === 'Delegation' ? item.state : item.worker?.status}
+              />
               {reason && (
                 <Badge
                   size="xs"

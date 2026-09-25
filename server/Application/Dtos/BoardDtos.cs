@@ -180,7 +180,8 @@ public sealed record CreateCardRequest(
     IReadOnlyList<string>? Labels = null,
     string? Alias = null,
     string? PrivateNotes = null,
-    [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null);
+    [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null,
+    RequiredPlatform? RequiredPlatform = null);
 
 /// <param name="Reason">
 /// Why this card is moving. Optional, and deliberately NOT named for the close case: "no longer

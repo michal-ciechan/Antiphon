@@ -190,6 +190,14 @@ export interface AgentTaskSummaryDto {
   boardName?: string | null
   /** CARD-0515. Task, Card, or None (unscoped). */
   scopeSource?: AgentTaskScopeSource
+  /** CARD-0710. Frozen requirement. Omitted on an older server. */
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux'
+  /** Canonical runner. Null or desktop is the desktop. */
+  runnerId?: string | null
+  requirementSource?: 'Default' | 'Card' | 'Request' | 'FollowUp'
+  observedPlatform?: string | null
+  runnerDefaultsRevision?: number | null
+  runnerSelectionSource?: 'Explicit' | 'ExistingProcess' | 'KindDefault' | 'GlobalDefault' | 'Fallback' | null
 }
 
 export type AgentTaskScopeSource = 'Task' | 'Card' | 'None'
@@ -599,6 +607,10 @@ export interface CreateAgentTaskRequest {
   authority?: string | null
   /** CARD-0294 S3's switch; refused without authority. */
   autoContinue?: boolean
+  /** CARD-0710. Omitted inherits the card or follow-up. */
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux' | null
+  /** Omitted is automatic placement. desktop/local is the desktop. */
+  runnerId?: string | null
 }
 
 export interface AgentTaskCreatedDto {
@@ -619,6 +631,10 @@ export interface AgentTaskCreatedDto {
    * to replace the title. Optional: a server that predates the field simply omits it.
    */
   titleDiagnosisQueued?: boolean
+  requiredPlatform?: 'Any' | 'Windows' | 'Linux'
+  runnerId?: string | null
+  requirementSource?: string | null
+  observedPlatform?: string | null
 }
 
 /** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */

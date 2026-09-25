@@ -434,6 +434,13 @@ flaky test.
 
 Say this in the brief explicitly; do not assume the role name carries it.
 
+**Runner defaults are not model pins.** Read `GET /api/runner-defaults` and `GET /api/session-runners`
+when a fresh task needs a host. Normally omit `-Runner`. Pass `-Platform Windows` or `-Platform Linux`
+when the plan's checkpoints need that operating system (junctions, file-sharing, ConPTY/Herdr,
+Windows paths or CRLF, Windows-only E2E). `Any` means every required check can run on any admitted
+host. A settings change is GET then PUT with the current revision, a reason, and Human provenance.
+`Delegation:DefaultRunnerId` is import-only after the first runtime revision.
+
 **Routing pins beat RolePolicy.** A Human pin on a card+role (or a stage-wide pin for that role)
 is what the next `delegate.ps1` create reads; RolePolicy remains the provenance-less fallback when
 no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `routing_pin_human`).

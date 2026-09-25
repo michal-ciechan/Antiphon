@@ -182,6 +182,7 @@ public sealed class CardService : IScheduledCardActions
             UrgentSince = request.Urgency > CardUrgency.Normal ? now : null,
             LabelsJson = BoardService.SerializeLabels(request.Labels),
             Status = column.CardStatus,
+            RequiredPlatform = RequirePlatform(request.RequiredPlatform),
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -1659,6 +1660,16 @@ public sealed class CardService : IScheduledCardActions
         if (!TryNormalizeAlias(value, out var normalized, out var error))
             throw new ValidationException("Alias", error ?? "Alias is invalid.");
         return normalized;
+    }
+
+    private static RequiredPlatform RequirePlatform(RequiredPlatform? value)
+    {
+        if (value is not { } platform)
+            return RequiredPlatform.Any;
+        if (!Enum.IsDefined(platform))
+            throw new ValidationException(nameof(CreateCardRequest.RequiredPlatform),
+                "requiredPlatform must be Any, Windows or Linux.");
+        return platform;
     }
 
     private static void ValidateUpdateContentRequest(UpdateCardContentRequest request)

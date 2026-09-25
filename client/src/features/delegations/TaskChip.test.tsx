@@ -61,6 +61,12 @@ describe('TaskChip', () => {
     expect(screen.queryByText('Antiphon')).not.toBeInTheDocument()
   })
 
+  it('shows Any on a Linux host without claiming the task executed', () => {
+    renderWithProviders(<TaskChip task={{ ...task, status: 'Queued', requiredPlatform: 'Any', runnerId: 'server2', observedPlatform: 'linux', requirementSource: 'GlobalDefault' }} onOpen={() => {}} />)
+    expect(screen.getByTestId('placement')).toHaveTextContent('Any · server2')
+    expect(screen.queryByText(/executed/i)).not.toBeInTheDocument()
+  })
+
   it('labels a recovered elapsed time as unobserved', async () => {
     renderWithProviders(<TaskChip task={task} onOpen={() => {}} />)
 

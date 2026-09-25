@@ -476,6 +476,18 @@ worktree base. Detail records `worktreeBaseRequestedRef` (S4 create input; unuse
 > exhausts is **Blocked** (or 409 `routing_exhausted` with `refuseIfExhausted`).
 
 ```
+GET    /api/runner-defaults
+PUT    /api/runner-defaults                           expectedRevision, globalRunnerId, kindDefaults, reason, provenance
+GET    /api/runner-defaults/revisions?beforeRevision=&limit=
+GET    /api/session-runners                           desktop plus every configured runner
+```
+
+`PUT /api/runner-defaults` is one complete snapshot. `409 runner_defaults_revision_conflict` and
+`409 runner_defaults_human` write nothing. `Delegation:DefaultRunnerId` is imported once into
+revision 1 and is not a live placement control after that. A task's frozen `requiredPlatform` and
+`runnerId` are on the task summary; a card's `requiredPlatform` is its default for new tasks.
+
+```
 GET    /api/routing-pins?card=CARD-0304&role=Plan     active pins (card query includes stage-wide)
 PUT    /api/routing-pins                              upsert the grain (Human cannot be overwritten by Auto)
 DELETE /api/routing-pins/{id}                         clear (204 if already clear)
