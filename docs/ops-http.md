@@ -9,6 +9,8 @@ API); nothing here replaces that.
 
 For process logs, Hangfire history, server2 container output, deployment-evidence gaps and
 transcript retention, see the authoritative [log-source inventory](logs.md).
+For desktop Postgres query totals, use the
+[pg_stat_statements query and reset commands](logs.md#desktop-postgres-query-statistics).
 
 **Do not grep `MapGet` to find a route.** The one route this page cannot give you is a route this
 page says does not exist.

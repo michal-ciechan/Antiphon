@@ -16,6 +16,32 @@ This is the authoritative operator inventory for logs and transcript evidence. R
 
 The desktop server was initially unavailable during this verification and later recovered enough to serve Hangfire. Do not restart it from a worktree; use [the AppHost runbook](apphost-runbook.md) from the canonical checkout.
 
+## Desktop Postgres query statistics
+
+`docker-compose.dev.yml` preloads `pg_stat_statements` for the desktop's
+`antiphon-postgres` only. The server migration creates the extension in the
+`antiphon` database. From the canonical desktop checkout, list the top 20
+normalized queries by cumulative execution time:
+
+```powershell
+docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT query, calls, round(total_exec_time::numeric, 2) AS total_exec_ms, round(mean_exec_time::numeric, 2) AS mean_exec_ms FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;'
+```
+
+The times are milliseconds. To start a fresh measurement window, reset the
+counters for this Postgres instance (all databases and users); do this only
+when you intend to discard the existing measurements:
+
+```powershell
+docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT pg_stat_statements_reset();'
+```
+
+The Compose `antiphon` role is the database superuser and can reset the
+statistics. The extension can exist in databases without the library
+preloaded, including the separate E2E and test Postgres containers; querying
+the view there requires preload. The [server2 self-contained stack](docker-stack.md)
+also owns a separate Postgres service and is unchanged by the desktop Compose
+setting.
+
 ## Hangfire jobs and failures
 
 Hangfire is in-process and uses `Hangfire.InMemory`. The dashboard at `http://localhost:17202/hangfire` needs the operator token; open it with `scripts/hangfire-dashboard.ps1` (or check it with `scripts/logs.ps1 -Source hangfire`, which sends the token) and inspect **Failed** and **Recurring Jobs**. Job/history expiration is eight days (`Hangfire:HistoryRetentionDays`); a server restart loses it immediately. There is no durable Hangfire file log or supported API export. Correlate a job failure with `desktop-server` while it exists.
