@@ -15,7 +15,7 @@ public sealed class RunnerPlatformContractTests
     {
         var expected = RunnerPlatformWire.FromOperatingSystem();
         expected.ShouldNotBeNull();
-        var logRoot = TestSessionLogRoot.Create("c710-platform-contract");
+        var logRoot = TestSessionLogRoot.Create("c710-platform");
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false }),
             NullLogger<SessionRunnerRuntime>.Instance);
