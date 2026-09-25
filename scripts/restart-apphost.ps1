@@ -29,6 +29,9 @@
 .PARAMETER TimeoutSec         Seconds to wait for the dashboard + backend health (default 150).
 .PARAMETER LockMaxAgeMinutes  Ignore a lock older than this (default 15, the watchdog's number).
 .PARAMETER AllowWorktree      Intentionally allow a linked worktree to control the shared local stack.
+.PARAMETER GracefulStopTimeoutSec
+    Seconds to wait for the server PID after POST /api/operator/shutdown returns 202 (default 20).
+.PARAMETER SkipGracefulStop   Skip the graceful POST and go straight to the force-kill.
 
 .OUTPUTS
     Exit codes:
@@ -52,7 +55,9 @@ param(
     [int]$TimeoutSec = 150,
     [int]$LockMaxAgeMinutes,
     [switch]$AllowWorktree,
-    [string]$ExpectedServerSha
+    [string]$ExpectedServerSha,
+    [int]$GracefulStopTimeoutSec = 20,
+    [switch]$SkipGracefulStop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -174,6 +179,22 @@ try {
     $srPid = Get-AppHostPortOwners $sessionRunnerPort | Select-Object -First 1
     if ($srPid) { Write-Host "  preserving session-runner (PID $srPid on $sessionRunnerPort)" -ForegroundColor DarkGray }
     & (Join-Path $PSScriptRoot 'check-daemon-build.ps1')
+
+    # 0b) Ask the server to drain and stop. Refusals above never reach this, and
+    #     the wait is not charged against TimeoutSec. The force-kill below still runs.
+    if (-not $SkipGracefulStop) {
+        $graceful = Invoke-AppHostGracefulStop -TimeoutSec 5 -Reason 'restart-apphost'
+        if ($graceful.Class -eq 'accepted') {
+            $exited = Wait-AppHostProcessExit -ProcessId $graceful.Pid -TimeoutSec $GracefulStopTimeoutSec
+            if ($null -ne $exited) {
+                Write-Host "  graceful stop accepted; server PID $($graceful.Pid) exited after $($exited)s"
+            } else {
+                Write-Host "  graceful stop accepted; server PID $($graceful.Pid) still alive after ${GracefulStopTimeoutSec}s; forcing"
+            }
+        } else {
+            Write-Host "  graceful stop $($graceful.Class): $($graceful.Detail); forcing"
+        }
+    }
 
     # 1) Kill the AppHost wrapper + dotnet AppHost tree.
     $appHostPid = Read-PidFile $pidFile
