@@ -1226,9 +1226,9 @@ public class AgentSessionServiceIntegrationTests
             var (service, runtime) = BuildServiceWithFakes(db, new MockEventBus(), provider, adapter,
                 workspace.FullName, CreateSessionSettings(workspace.FullName));
             runtime.Register(session.Id, adapter);
-    
+
             await Should.ThrowAsync<OperationCanceledException>(() => service.KillAsync(session.Id, cancel.Token));
-    
+
             await using var verify = CreateContext();
             var stored = await verify.AgentSessions.SingleAsync(s => s.Id == session.Id);
             stored.Status.ShouldBe(SessionStatus.Stopping);

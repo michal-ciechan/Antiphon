@@ -41,6 +41,7 @@ public sealed class AgentService
     private readonly PolicyRefreshSettings _policyRefresh;
     private readonly AgentPinnedInstructionService? _pins;
     private readonly IDelegateSessionStopper? _sessions;
+    private readonly AgentSessionRuntime? _runtime;
 
     public AgentService(
         AppDbContext db,
@@ -62,10 +63,12 @@ public sealed class AgentService
         PhoneHomeLaunchPolicy? phoneHome = null,
         // CARD-0691 D-5: delete stops the agent's live session first. Optional for the same reason;
         // a harness without it cannot delete an agent whose session is live (409), never orphans one.
-        IDelegateSessionStopper? sessions = null)
+        IDelegateSessionStopper? sessions = null,
+        AgentSessionRuntime? runtime = null)
     {
         _phoneHome = phoneHome;
         _sessions = sessions;
+        _runtime = runtime;
         _db = db;
         _workflowRunFactory = workflowRunFactory;
         _eventBus = eventBus;
@@ -856,7 +859,7 @@ public sealed class AgentService
     private async Task StopLiveSessionBeforeDeleteAsync(Agent agent, CancellationToken ct)
     {
         if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId)
-            || !await SessionIsLiveAsync(sessionId, ct))
+            || await PoolDelegateRelease.IsSessionTerminalAsync(_db, sessionId, _runtime, ct))
             return;
 
         if (_sessions is not null)
@@ -872,15 +875,12 @@ public sealed class AgentService
             }
         }
 
-        if (await SessionIsLiveAsync(sessionId, ct))
+        if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, sessionId, _runtime, ct))
             throw new ConflictException(
                 $"Agent '{agent.Name}' still has a live session ({sessionId}): it could not be stopped, so the "
                 + "agent was not deleted. Stop the session, then delete the agent.",
                 "agent_delete_session_live");
     }
-
-    private Task<bool> SessionIsLiveAsync(Guid sessionId, CancellationToken ct) =>
-        _db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId && LiveSessionStatuses.Contains(s.Status), ct);
 
     public async Task<AgentDetailDto> AssignCardAsync(Guid id, AssignAgentCardRequest request, CancellationToken ct)
     {

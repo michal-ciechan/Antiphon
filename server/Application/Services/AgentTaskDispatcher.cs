@@ -6296,7 +6296,9 @@ public sealed class AgentTaskDispatcher
             return 0;
 
         var candidates = (await _db.Agents
-                .Where(a => a.IsPoolDelegate && a.Status != AgentStatus.Stopped
+                .Where(a => a.IsPoolDelegate && !a.AlwaysOn && a.BoardId == null
+                    && a.StandingSpecialistRole == null && a.StandingSpecialistOwnerId == null
+                    && a.Status != AgentStatus.Stopped
                     && a.PoolIdleSince == null && a.PersistentSessionId != null)
                 .ToListAsync(ct))
             .Select(a => (Agent: a, SessionId: Guid.TryParse(a.PersistentSessionId, out var sid) ? sid : (Guid?)null))
@@ -6377,7 +6379,7 @@ public sealed class AgentTaskDispatcher
             }
 
             var outcome = await PoolDelegateRelease.KillAndVerifyAsync(
-                _db, agent, sessionId, _sessions.KillAsync, _logger, ct);
+                _db, agent, sessionId, _sessions.KillAsync, _logger, _runtime, ct);
             if (outcome == PoolDelegateRelease.KillOutcome.SessionTerminal)
             {
                 FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
@@ -6416,7 +6418,9 @@ public sealed class AgentTaskDispatcher
     internal async Task<int> RetireIdleWarmAgentsAsync(CancellationToken ct)
     {
         var pool = await _db.Agents
-            .Where(a => a.IsPoolDelegate && a.Status != AgentStatus.Stopped)
+            .Where(a => a.IsPoolDelegate && !a.AlwaysOn && a.BoardId == null
+                    && a.StandingSpecialistRole == null && a.StandingSpecialistOwnerId == null
+                    && a.Status != AgentStatus.Stopped)
             .ToListAsync(ct);
         if (pool.Count == 0)
             return 0;
@@ -6541,6 +6545,8 @@ public sealed class AgentTaskDispatcher
                 continue;
             if (sourcedOwnerIds.Contains(row.Agent.Id))
                 continue;
+            if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, row.SessionId, _runtime, ct))
+                continue;
             stale.Add(row.Agent);
         }
 
@@ -6578,9 +6584,11 @@ public sealed class AgentTaskDispatcher
         {
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
-            // Session is already terminal in the DB. Do not KillAsync: Failed is
-            // SessionReconciliationService's re-adopt arm (CARD-0056), Stopped is its only
-            // auto-kill. The agent row is the junk this pass is for.
+            // Recheck immediately before removal: a Failed row may have been re-adopted, and a
+            // remote runner may have lost its inventory since candidate selection.
+            var sessionId = Guid.TryParse(agent.PersistentSessionId, out var parsedId) ? parsedId : (Guid?)null;
+            if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, sessionId, _runtime, ct))
+                continue;
             FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
             _logger.LogInformation(
                 "Swept stale pool delegate '{Name}' (session not live, no open task)",
@@ -6669,7 +6677,7 @@ public sealed class AgentTaskDispatcher
     private async Task<bool> KillPooledSessionAsync(Agent agent, CancellationToken ct)
     {
         var sessionId = Guid.TryParse(agent.PersistentSessionId, out var sid) ? sid : (Guid?)null;
-        return await PoolDelegateRelease.KillAndVerifyAsync(_db, agent, sessionId, _sessions.KillAsync, _logger, ct)
+        return await PoolDelegateRelease.KillAndVerifyAsync(_db, agent, sessionId, _sessions.KillAsync, _logger, _runtime, ct)
             == PoolDelegateRelease.KillOutcome.SessionTerminal;
     }
 

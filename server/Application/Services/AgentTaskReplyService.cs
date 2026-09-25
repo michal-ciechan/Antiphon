@@ -2020,7 +2020,7 @@ public sealed class AgentTaskReplyService
             return;
 
         var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
-        if (agent is null || !agent.IsPoolDelegate)
+        if (agent is null || !PoolDelegateRelease.CanRelease(agent))
             return;
 
         var sessionAlive = task.AgentSessionId is Guid sid
@@ -2095,7 +2095,7 @@ public sealed class AgentTaskReplyService
                     throw;
                 }
             },
-            _logger, ct);
+            _logger, services.GetService<AgentSessionRuntime>(), ct);
         if (outcome == PoolDelegateRelease.KillOutcome.SessionTerminal)
         {
             db.Agents.Remove(agent);

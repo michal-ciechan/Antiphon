@@ -271,6 +271,14 @@
   (dry-run; `-Execute -Class PoolExpired` acts on the pool's own contract); the Failed/Stopped
   runner-claimed shapes belong to `SessionReconciliationService`, not the script.
 
+- **Pool release needs confirmed exit (CARD-0691 R1 repair).** A failed kill keeps the session
+  Stopping, its adapter and attempt owned, and no SessionExited event is emitted. Pool release,
+  stale retirement and agent delete retain the owner when the session row is missing or runtime
+  liveness is live/unknown, even if the DB says Failed/Stopped. AlwaysOn, board-owned and standing
+  specialist agents are excluded from both pool sweeps and settlement release. Once Stopping is
+  saved, a remote kill interrupted by caller cancellation still records its generation-conditional
+  deferred kill with an uncancelled persistence token; reconciliation can retry when the runner returns.
+
 - **A bind-refusal recovery needs zero ingested rows and a `done` report** (CARD-0551): all three sweeps (delivery watchdog, dead-session reconciler, overdue Gate 3) attempt `RecoverFromBindRefusalAsync` only for a session with no ingested transcript row; the JSONL arm accepts a file only when a later assistant record ends with the task's `[antiphon-report:<id> done]` line; a file with the brief and no report withholds the watchdog's kill and fails the task with the file path. Live miss 2026-09-18: two mid-turn Reviews with 46 and 59 rows were written Succeeded at exactly the phase-clock boundary.
 
 ### Preserved Gotcha #27
