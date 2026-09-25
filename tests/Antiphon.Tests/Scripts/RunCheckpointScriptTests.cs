@@ -4,7 +4,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-0585 V-5..V-14. Each method runs the matching <c>Test-C585_*</c> case of
+/// CARD-0585 V-5..V-14 and CARD-0589 V-4. Each method runs the matching <c>Test-C585_*</c> or <c>Test-C589_*</c> case of
 /// <c>scripts/test-run-checkpoint.ps1</c> — an offline harness whose shim stands in for
 /// <c>dotnet</c> and copies a fixture TRX into the run's <c>--results-directory</c>, so no build
 /// and no test ever runs here. Exit 0 plus the case's named PASS inventory is the verdict.
@@ -121,6 +121,57 @@ public sealed class RunCheckpointScriptTests
         "C585 MsBuildInvalid OutputPath is refused before dotnet",
         "C585 MsBuildInvalid an embedded OutDir is refused before dotnet");
 
+    // ---- CARD-0589 V-4: the row takes a host build slot (scripted by the harness's slot shim) ----
+
+    [Test]
+    public Task C589_SlotGranted() => RunSlotCaseAsync("C589_SlotGranted", 7,
+        "C589 SlotGranted exit code 0",
+        "C589 SlotGranted build carries the grant -maxcpucount",
+        "C589 SlotGranted the --no-build run carries no -maxcpucount",
+        "C589 SlotGranted prints the BUILD SLOT granted line",
+        "C589 SlotGranted releases the lease after the run",
+        "C589 SlotGranted asks under the row label",
+        "C589 SlotGranted CHECKPOINT line reports slot=granted");
+
+    [Test]
+    public Task C589_SlotWaitsThenGranted() => RunSlotCaseAsync("C589_SlotWaitsThenGranted", 5,
+        "C589 SlotWaitsThenGranted exit code 0",
+        "C589 SlotWaitsThenGranted prints a BUILD SLOT waiting line while busy",
+        "C589 SlotWaitsThenGranted names the memory floor while below it",
+        "C589 SlotWaitsThenGranted builds only after the grant",
+        "C589 SlotWaitsThenGranted reports waited= on the grant and the CHECKPOINT line");
+
+    [Test]
+    public Task C589_SlotTimeout() => RunSlotCaseAsync("C589_SlotTimeout", 5,
+        "C589 SlotTimeout exit code 4",
+        "C589 SlotTimeout invokes no dotnet",
+        "C589 SlotTimeout prints the timeout line with its queue position",
+        "C589 SlotTimeout polled and holds nothing to release",
+        "C589 SlotTimeout trailer names exit code 4");
+
+    [Test]
+    public Task C589_SlotUnreachable() => RunSlotCaseAsync("C589_SlotUnreachable", 7,
+        "C589 SlotUnreachable no answer prints the unleased line",
+        "C589 SlotUnreachable no answer still builds with the fallback -maxcpucount 4",
+        "C589 SlotUnreachable no answer releases nothing",
+        "C589 SlotUnreachable old runner 404 prints the unleased line",
+        "C589 SlotUnreachable old runner 404 still builds with the fallback -maxcpucount 4",
+        "C589 SlotUnreachable old runner 404 releases nothing",
+        "C589 SlotUnreachable the exit code follows the run");
+
+    [Test]
+    public Task C589_NoBuildStillLeases() => RunSlotCaseAsync("C589_NoBuildStillLeases", 2,
+        "C589 NoBuildStillLeases a -NoBuild row acquires and releases around its run",
+        "C589 NoBuildStillLeases line reports build=reused and slot=granted");
+
+    [Test]
+    public Task C589_NoSlotSkips() => RunSlotCaseAsync("C589_NoSlotSkips", 2,
+        "C589 NoSlotSkips -NoSlot asks the broker nothing and says so",
+        "C589 NoSlotSkips builds with no -maxcpucount and reports slot=skipped");
+
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C585", caseName, expectedRows, requiredRows);
+
+    private static Task RunSlotCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
+        ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C589", caseName, expectedRows, requiredRows);
 }
