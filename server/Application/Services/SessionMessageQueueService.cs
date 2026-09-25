@@ -233,6 +233,9 @@ public sealed partial class SessionMessageQueueService
         }
         if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.SingleWriteMaxBytes)
             return body;
+        if (ChannelPromptCorrelation.IsSpillPointer(body))
+            throw new ValidationException(nameof(body),
+                "The marked channel spill pointer exceeds this transport's single-write ceiling.");
 
         string? cwd = null;
         string? runnerCwd = null;
