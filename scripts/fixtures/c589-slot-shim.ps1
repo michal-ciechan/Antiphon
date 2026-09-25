@@ -26,5 +26,6 @@ switch ($answer) {
     'memory_floor' { return @{ Status = 409; Body = '{"type":"build_slot_memory_floor","title":"build_slot_memory_floor","status":409,"availableMb":1000,"floorMb":6144,"queuePosition":1,"retryAfterMs":10}' } }
     'notfound' { return @{ Status = 404; Body = '' } }
     'deadline_unreachable' { Start-Sleep -Milliseconds 1100; return @{ Status = 0; Body = ''; Error = 'connection refused (shim)' } }
+    'deadline_notfound' { Start-Sleep -Milliseconds 1100; return @{ Status = 404; Body = '' } }
     default { return @{ Status = 0; Body = ''; Error = 'connection refused (shim)' } }
 }

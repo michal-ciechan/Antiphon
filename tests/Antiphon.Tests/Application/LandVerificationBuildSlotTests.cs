@@ -61,7 +61,7 @@ public sealed class LandVerificationBuildSlotTests
     }
 
     [Test]
-    public async Task An_unreachable_answer_at_the_wait_deadline_times_out_before_the_grace()
+    public async Task An_unreachable_answer_at_the_wait_deadline_gets_the_full_grace_before_failing_open()
     {
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var client = new FakeSessionRunnerClient();
@@ -74,7 +74,39 @@ public sealed class LandVerificationBuildSlotTests
         var gate = new SessionRunnerBuildSlotGate(client, time,
             Options.Create(new LandingSettings { BuildSlotWaitMinutes = 45, BuildSlotUnreachableGraceSeconds = 60 }));
 
-        var hold = await gate.AcquireAsync("deadline", lines.Add, CancellationToken.None);
+        var pending = gate.AcquireAsync("deadline", lines.Add, CancellationToken.None);
+        pending.IsCompleted.ShouldBeFalse("the first unreachable answer starts its own grace at the wait deadline");
+        for (var seconds = 5; seconds <= 55; seconds += 5)
+        {
+            time.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(1);
+            pending.IsCompleted.ShouldBeFalse($"the build must stay leased through {seconds}s of unreachable grace");
+        }
+        time.Advance(TimeSpan.FromSeconds(5));
+        var hold = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+
+        hold.Outcome.ShouldBe(BuildSlotHoldOutcome.Unleased);
+        hold.MaxCpuCount.ShouldBe(4);
+        hold.Waited.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMinutes(46));
+        lines.ShouldContain(l => l.StartsWith("BUILD SLOT unleased reason=runner_unreachable maxcpucount=4", StringComparison.Ordinal));
+        lines.ShouldNotContain(l => l.StartsWith("BUILD SLOT timeout", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task A_reachable_busy_runner_times_out_at_the_wait_deadline()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var client = new FakeSessionRunnerClient();
+        client.BuildSlotAcquire = _ =>
+        {
+            time.Advance(TimeSpan.FromMinutes(45));
+            return new RunnerBuildSlotAnswer(null, Busy: new BuildSlotBusy(2, 2, 1, 5000));
+        };
+        var lines = new List<string>();
+        var gate = new SessionRunnerBuildSlotGate(client, time,
+            Options.Create(new LandingSettings { BuildSlotWaitMinutes = 45, BuildSlotUnreachableGraceSeconds = 60 }));
+
+        var hold = await gate.AcquireAsync("busy", lines.Add, CancellationToken.None);
 
         hold.Outcome.ShouldBe(BuildSlotHoldOutcome.Timeout);
         lines.ShouldContain(l => l.StartsWith("BUILD SLOT timeout after 45m", StringComparison.Ordinal));

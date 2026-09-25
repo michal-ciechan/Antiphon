@@ -168,12 +168,16 @@ function Test-C589_WrapperTimeout {
 }
 
 function Test-C589_WrapperUnreachableAtDeadline {
-    $fx = New-C589Case -Name 'wrapper-deadline-unreachable'
-    $r = Invoke-C589Wrapper -Fx $fx -SlotScript 'deadline_unreachable' -WaitSeconds '1' -GraceSeconds '2' -WrapperArgs @('-Label', 'late-unreachable', '--', 'dotnet', 'build', 'tests/X')
-    Assert-C487 -Cond ($r.Exit -eq 4 -and (Get-C589Line -Result $r -Pattern '^BUILD SLOT timeout after 1s position=0$') -eq 1) `
-        -Name 'C589 WrapperUnreachableAtDeadline exits 4 when the first unreachable answer arrives at the wait deadline' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
-    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST' -and (Get-C589Line -Result $r -Pattern '^BUILD SLOT unleased ') -eq 0) `
-        -Name 'C589 WrapperUnreachableAtDeadline never starts a build before the full grace' -Detail ('calls={0} {1}' -f ($r.Calls -join ' | '), $r.Text)
+    foreach ($case in @(@{ Answer = 'deadline_unreachable,unreachable'; Last = 'no answer' }, @{ Answer = 'deadline_notfound,notfound'; Last = 'http 404' })) {
+        $fx = New-C589Case -Name ('wrapper-deadline-' + $case.Answer)
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-C589Wrapper -Fx $fx -SlotScript $case.Answer -WaitSeconds '1' -GraceSeconds '0.4' -RetryMs '10' -WrapperArgs @('-Label', 'late-unreachable', '--', 'dotnet', 'build', 'tests/X')
+        $clock.Stop()
+        Assert-C487 -Cond ($r.Exit -eq 0 -and (Get-C589Line -Result $r -Pattern ('^BUILD SLOT unleased reason=runner_unreachable maxcpucount=4 last=' + $case.Last + '$')) -eq 1 -and (Get-C589Line -Result $r -Pattern '^BUILD SLOT timeout ') -eq 0) `
+            -Name ('C589 WrapperUnreachableAtDeadline ' + $case.Answer + ' fails open after grace') -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+        Assert-C487 -Cond ($clock.Elapsed.TotalSeconds -ge 1.5 -and (Get-C589Order -Result $r) -ceq 'POST,POST,CMD' -and (Get-C589Cmd -Result $r) -ceq 'CMD dotnet build tests/X -maxcpucount 4') `
+            -Name ('C589 WrapperUnreachableAtDeadline ' + $case.Answer + ' never runs unleased early') -Detail ('elapsed={0:N3}s calls={1}' -f $clock.Elapsed.TotalSeconds, ($r.Calls -join ' | '))
+    }
 }
 
 function Test-C589_WrapperUnreachable {
