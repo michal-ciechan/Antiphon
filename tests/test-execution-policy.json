@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "policyHash": "ba3c0d8edfb1badc0feb6245d635510b75bd1ef012dca931d9fdde93e83e896c",
+  "policyHash": "922cce2a0064bebfc90e211fe33db10dc74cb61ecb5d9f050bd00ec669e10ada",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -575,6 +575,12 @@
     "set": {}
   },
   "scriptCensus": [
+    {
+      "id": "test-apphost-graceful-stop",
+      "path": "scripts/test-apphost-graceful-stop.ps1",
+      "disposition": "unattended",
+      "wildcard": false
+    },
     {
       "id": "test-apphost-lock-age",
       "path": "scripts/test-apphost-lock-age.ps1",
