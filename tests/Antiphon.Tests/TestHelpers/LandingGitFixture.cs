@@ -189,7 +189,10 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             if (result.Succeeded)
             {
                 Directory.Exists(gitDirectory).ShouldBeFalse("the real administrative entry was dropped");
-                var observed = await base.RunAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct);
+                // This independent test oracle is not a production cleanup command. Keep its
+                // real registration proof outside the land's measured operation scope (V-18).
+                var observer = new FixtureGit(home, taskId);
+                var observed = await observer.RunAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct);
                 observed.Succeeded.ShouldBeTrue();
                 ParseRegistrations(observed.Output).ShouldNotContain(r => PathsEqual(r.Path, worktreePath));
                 RegistrationDrops.Add(worktreePath);
