@@ -249,6 +249,11 @@ public class PhoneHomeLaunchTransportTests
         var launch = world.Launch();
         await world.WaitForRequestOrEndAsync(world.PeerA, PhoneHomeOperation.Snapshot, launch);
         world.PeerA.Socket.Abort();
+        // The loop is waiting for the runner. The first adapter's exit watcher polls Get every
+        // 250 ms until one fails; give it that failure before B exists, so the only Get B ever sees
+        // is the re-attach's.
+        await world.WaitForLossRecordedOrEndAsync(launch);
+        await Task.Delay(600);
 
         // The replacement connection drops under the re-attach's Get, which the attach wraps.
         await using var peerB = await world.ReconnectAsync(peer => peer.SilentFor(PhoneHomeOperation.Get));
