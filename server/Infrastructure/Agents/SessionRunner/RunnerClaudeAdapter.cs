@@ -19,6 +19,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
     private readonly AgentRegistrySettings _settings;
     private readonly DeliveryVerificationSettings _verification;
     private readonly ILogger? _logger;
+    private readonly TimeProvider? _time;
     private long _promptStartSequence;
     private bool _started;
     private string? _cwd;
@@ -29,12 +30,14 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         ISessionRunnerClient client,
         IOptions<AgentRegistrySettings> options,
         IOptions<SupervisionSettings>? supervisionSettings = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        TimeProvider? time = null)
     {
         _terminal = new RunnerTerminalSession(client);
         _settings = options.Value;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
         _logger = logger;
+        _time = time;
     }
 
     public Task<int> Exited => _terminal.Exited;
@@ -188,7 +191,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
                 TimeSpan.FromMilliseconds(_settings.ClaudeTrustPromptSettleMs),
                 TimeSpan.FromMilliseconds(_settings.ClaudeEffortPromptSettleMs),
                 TimeSpan.FromMilliseconds(_settings.ClaudeReadyMaxWaitMs)),
-            message => _logger?.LogInformation("Claude startup: {Detail}", message), Exited, ct);
+            message => _logger?.LogInformation("Claude startup: {Detail}", message), Exited, ct, _time);
         if (result.Outcome == ClaudeReadinessOutcome.EffortFailed)
             _launchBlock = new(AgentLaunchBlockKind.EffortDialogNotCleared, result.Detail);
         else if (result.Outcome == ClaudeReadinessOutcome.TrustFailed)

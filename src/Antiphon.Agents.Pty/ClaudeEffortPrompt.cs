@@ -42,6 +42,16 @@ public sealed record ClaudeEffortMenu(string Model, string Current, string Sugge
 
 public readonly record struct ClaudeEffortResolution(bool Cleared, string Detail);
 
+/// <summary>
+/// Settle waits advance <see cref="Elapsed"/> by exactly the requested duration.
+/// A stalled scheduler must not shrink a budget measured on this clock.
+/// </summary>
+internal interface IManualTimeProvider
+{
+    TimeSpan Elapsed { get; }
+    void Advance(TimeSpan duration);
+}
+
 /// <summary>The narrow startup-default picker, parsed as rows in one modal section.</summary>
 public static class ClaudeEffortPrompt
 {
@@ -139,8 +149,10 @@ public static class ClaudeEffortPrompt
         ClaudeEffortIntent intent,
         TimeSpan budget,
         CancellationToken ct,
-        Action<string>? trace = null)
+        Action<string>? trace = null,
+        TimeProvider? time = null)
     {
+        _ = time;
         var clock = Stopwatch.StartNew();
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1));
