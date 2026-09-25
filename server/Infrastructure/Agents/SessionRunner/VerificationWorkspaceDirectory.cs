@@ -28,7 +28,12 @@ public sealed class VerificationWorkspaceDirectory(
         if (client is not IVerificationWorkspaceTransport phoneHome)
             throw new Application.Exceptions.ServiceUnavailableException(
                 "The bound runner cannot host a verification workspace.", PhoneHomeProblemTypes.Unavailable);
-        var options = settings.Value;
-        return new RemoteVerificationWorkspace(phoneHome, options.RunnerRepository, options.RunnerWorkspace);
+        var resolved = PhoneHomeRunnerCatalog.Resolve(settings.Value);
+        var entry = resolved.FirstOrDefault(runner => string.Equals(runner.Id, runnerId, StringComparison.Ordinal))?.Entry
+            ?? (resolved.Count == 1 ? resolved[0].Entry : null);
+        if (entry is null)
+            throw new Application.Exceptions.ServiceUnavailableException(
+                "The bound runner has no workspace projection.", PhoneHomeProblemTypes.Unavailable);
+        return new RemoteVerificationWorkspace(phoneHome, entry.RunnerRepository, entry.RunnerWorkspace);
     }
 }

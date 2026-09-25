@@ -646,9 +646,11 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 EffectiveModelId = resolved.EffectiveModelId,
                 ComposedBundleStamp = composition.ComposedStamp,
                 InstructionFileStamp = composition.InstructionFileStamp,
-                RunnerId = _phoneHome?.IsRunnerBound(agent) == true ? _phoneHome.AllowedRunnerId : null,
-                RunnerStoreId = _phoneHome?.IsRunnerBound(agent) == true ? await ResolvePhoneHomeStoreIdAsync(agent.RunnerId, ct) : null,
-                RunnerCwd = _phoneHome?.IsRunnerBound(agent) == true ? _phoneHome.RunnerWorkspace : null,
+                RunnerId = _phoneHome?.BoundRunnerId(agent),
+                RunnerStoreId = _phoneHome?.BoundRunnerId(agent) is { } boundRunner
+                    ? await ResolvePhoneHomeStoreIdAsync(boundRunner, ct) : null,
+                RunnerCwd = _phoneHome?.BoundRunnerId(agent) is { } boundWorkspace
+                    ? _phoneHome.RunnerWorkspaceFor(boundWorkspace) : null,
             };
             _db.AgentSessions.Add(session);
             await _db.SaveChangesAsync(ct);

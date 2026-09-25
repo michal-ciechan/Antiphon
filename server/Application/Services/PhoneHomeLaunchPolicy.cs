@@ -20,7 +20,8 @@ public sealed class PhoneHomeLaunchPolicy
     /// worktree, no task) even on a runner that now also carries a pool.
     /// </summary>
     public bool IsPinnedAgent(Guid agentId) =>
-        _settings.Enabled && agentId == _settings.StandingAgentId && _settings.StandingAgentId != Guid.Empty;
+        agentId != Guid.Empty && PhoneHomeRunnerCatalog.Resolve(_settings)
+            .Any(runner => runner.Entry.StandingAgentId == agentId);
 
     /// <summary>
     /// CARD-0604 D-2/D-14. Any agent whose row names the allowed runner: the pinned agent, an
@@ -33,18 +34,56 @@ public sealed class PhoneHomeLaunchPolicy
     public bool IsRunnerBound(string? runnerId) =>
         _settings.Enabled
         && !string.IsNullOrWhiteSpace(runnerId)
-        && string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal);
+        && PhoneHomeRunnerCatalog.Resolve(_settings)
+            .Any(runner => string.Equals(runner.Id, runnerId.Trim(), StringComparison.Ordinal));
+
+    /// <summary>The configured entry for a pinned agent, or the agent's own runner id.</summary>
+    public string? BoundRunnerId(Agent agent)
+    {
+        if (!string.IsNullOrWhiteSpace(agent.RunnerId) && IsRunnerBound(agent.RunnerId))
+            return agent.RunnerId.Trim();
+        return PhoneHomeRunnerCatalog.Resolve(_settings)
+            .FirstOrDefault(runner => runner.Entry.StandingAgentId == agent.Id && agent.Id != Guid.Empty)?.Id;
+    }
+
+    public bool AllowsDelegatedTasks(string? runnerId) =>
+        IsRunnerBound(runnerId) && EntryFor(runnerId).AllowDelegatedTasks;
 
     public string AllowedRunnerId => _settings.AllowedRunnerId;
-    public string RunnerWorkspace => _settings.RunnerWorkspace;
-    public string RunnerRepository => _settings.RunnerRepository;
-    public bool AllowDelegatedTasks => _settings.Enabled && _settings.AllowDelegatedTasks;
-    public IReadOnlyList<string> RawExeAllowList => _settings.RawExeAllowList;
-    public bool ClaudeAuthProbeEnabled => _settings.ClaudeAuthProbeEnabled;
-    public string ChildClaudeHome => _settings.ChildClaudeHome;
-    public string ChildGrokHome => _settings.ChildGrokHome;
-    public string ChildCodexHome => _settings.ChildCodexHome;
-    public bool CodexAuthProbeEnabled => _settings.CodexAuthProbeEnabled;
+    public string RunnerWorkspace => RunnerWorkspaceFor(null);
+    public string RunnerRepository => RunnerRepositoryFor(null);
+    public bool AllowDelegatedTasks =>
+        PhoneHomeRunnerCatalog.Resolve(_settings) is { Count: 1 } one
+            ? one[0].Entry.AllowDelegatedTasks
+            : _settings.Enabled && _settings.AllowDelegatedTasks;
+    public IReadOnlyList<string> RawExeAllowList => EntryFor(null).RawExeAllowList;
+    public bool ClaudeAuthProbeEnabled => ClaudeAuthProbeEnabledFor(null);
+    public string ChildClaudeHome => ChildClaudeHomeFor(null);
+    public string ChildGrokHome => ChildGrokHomeFor(null);
+    public string ChildCodexHome => ChildCodexHomeFor(null);
+    public bool CodexAuthProbeEnabled => EntryFor(null).CodexAuthProbeEnabled;
+    public string ChildGrokHomeFor(string? runnerId) => EntryFor(runnerId).ChildGrokHome;
+    public string ChildClaudeHomeFor(string? runnerId) => EntryFor(runnerId).ChildClaudeHome;
+    public string ChildCodexHomeFor(string? runnerId) => EntryFor(runnerId).ChildCodexHome;
+    public string RunnerWorkspaceFor(string? runnerId) => EntryFor(runnerId).RunnerWorkspace;
+    public string RunnerRepositoryFor(string? runnerId) => EntryFor(runnerId).RunnerRepository;
+    public bool ClaudeAuthProbeEnabledFor(string? runnerId) => EntryFor(runnerId).ClaudeAuthProbeEnabled;
+
+    private PhoneHomeRunnerEntry EntryFor(string? runnerId)
+    {
+        var resolved = PhoneHomeRunnerCatalog.Resolve(_settings);
+        if (!string.IsNullOrWhiteSpace(runnerId))
+        {
+            var match = resolved.FirstOrDefault(runner =>
+                string.Equals(runner.Id, runnerId.Trim(), StringComparison.Ordinal));
+            if (match is not null)
+                return match.Entry;
+        }
+
+        if (resolved.Count == 1)
+            return resolved[0].Entry;
+        return PhoneHomeRunnerCatalog.FromLegacy(_settings);
+    }
 
     /// <summary>
     /// The kinds a runner takes without anyone having named it: default placement (CARD-0659) and
@@ -127,7 +166,7 @@ public sealed class PhoneHomeLaunchPolicy
         // CARD-0604: a runner-bound named or pool agent.
         if (delegatedTask)
         {
-            if (!_settings.AllowDelegatedTasks)
+            if (!EntryFor(agent.RunnerId).AllowDelegatedTasks)
                 throw new ConflictException("Delegated tasks are not enabled for the phone-home runner.", "phone_home_task_refused");
             if (!worktree)
                 throw new ConflictException("A runner-bound task must use a Worktree workspace.", "phone_home_worktree_refused");
@@ -161,7 +200,7 @@ public sealed class PhoneHomeLaunchPolicy
 
     public void EnsureExactHostRoot(string hostCwd)
     {
-        var configured = CanonicalHost(_settings.HostWorkspaceRoot);
+        var configured = CanonicalHost(EntryFor(null).HostWorkspaceRoot);
         var actual = CanonicalHost(hostCwd);
         if (!string.Equals(configured, actual, StringComparison.OrdinalIgnoreCase))
             throw new ConflictException("Only the configured host workspace root maps to /work.", "phone_home_cwd_refused");
@@ -203,22 +242,23 @@ public sealed class PhoneHomeLaunchPolicy
             }
         }
 
+        var entry = EntryFor(agent.RunnerId ?? BoundRunnerId(agent));
         var env = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal)
         {
-            ["GROK_HOME"] = _settings.ChildGrokHome,
-            ["CLAUDE_CONFIG_DIR"] = _settings.ChildClaudeHome,
-            ["ANTIPHON_API"] = _settings.CallbackOrigin,
+            ["GROK_HOME"] = entry.ChildGrokHome,
+            ["CLAUDE_CONFIG_DIR"] = entry.ChildClaudeHome,
+            ["ANTIPHON_API"] = entry.CallbackOrigin,
         };
         if (spec.Kind == AgentKind.Codex)
         {
             // CARD-0660 D-3: the runner's own home, never a desktop one in any spelling.
             foreach (var key in env.Keys.Where(key => string.Equals(key, "CODEX_HOME", StringComparison.OrdinalIgnoreCase)).ToArray())
                 env.Remove(key);
-            env["CODEX_HOME"] = _settings.ChildCodexHome;
+            env["CODEX_HOME"] = entry.ChildCodexHome;
         }
 
-        var exe = ProjectExe(spec.Exe, agent, pinned);
-        var cwd = string.IsNullOrWhiteSpace(runnerCwd) ? _settings.RunnerWorkspace : runnerCwd;
+        var exe = ProjectExe(spec.Exe, agent, pinned, entry);
+        var cwd = string.IsNullOrWhiteSpace(runnerCwd) ? entry.RunnerWorkspace : runnerCwd;
 
         return spec with
         {
@@ -236,7 +276,7 @@ public sealed class PhoneHomeLaunchPolicy
         };
     }
 
-    private string ProjectExe(string specExe, Agent agent, bool pinned)
+    private string ProjectExe(string specExe, Agent agent, bool pinned, PhoneHomeRunnerEntry entry)
     {
         // The desktop spells its paths with backslashes; take the file name the same way on any host.
         var fileName = Path.GetFileName(specExe.Replace('\\', '/'));
@@ -259,7 +299,7 @@ public sealed class PhoneHomeLaunchPolicy
         // list is the image's own, not the desktop's, and a host path that happens to end in the
         // same file name is not the same program.
         var posix = specExe.Replace('\\', '/');
-        var match = _settings.RawExeAllowList
+        var match = entry.RawExeAllowList
             .FirstOrDefault(allowed => string.Equals(allowed, posix, StringComparison.Ordinal));
         if (match is not null)
             return match;

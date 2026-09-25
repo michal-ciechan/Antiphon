@@ -9,6 +9,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -17,6 +18,18 @@ public static class SessionRunnerEndpoints
 {
     public static void MapSessionRunnerEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/session-runners", async (
+            HttpContext http,
+            PhoneHomeRunnerDirectory directory,
+            CancellationToken ct) =>
+        {
+            var db = http.RequestServices.GetService<AppDbContext>();
+            var delegation = http.RequestServices.GetService<IOptions<DelegationSettings>>()?.Value
+                ?? new DelegationSettings();
+            var prep = http.RequestServices.GetService<RemoteWorkspacePreparer>();
+            return Results.Ok(await SessionRunnerCatalogue.ListAsync(directory, db, delegation, prep, ct));
+        }).WithTags("SessionRunners");
+
         app.MapPost(PhoneHomeProtocol.RegisterPath, (
             HttpContext http,
             PhoneHomeRegistrationRequest request,
@@ -26,7 +39,7 @@ public static class SessionRunnerEndpoints
             if (!settings.Value.Enabled)
                 throw new ConflictException("Phone-home runner is disabled.", "phone_home_disabled");
             var secret = http.Request.Headers[PhoneHomeProtocol.SecretHeader].ToString();
-            if (!directory.AuthenticateSecret(secret))
+            if (!directory.AuthenticateSecret(request.RunnerId, secret))
                 throw new ForbiddenException("Runner authentication failed.");
             return Results.Ok(directory.Register(request));
         }).WithTags("SessionRunners");

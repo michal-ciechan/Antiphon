@@ -722,6 +722,27 @@ public sealed class AgentTaskDispatcher
                 siblingObservation = siblingGuard;
             }
 
+            // CARD-0710 D-5: a frozen platform is checked again before claim. A known mismatch
+            // blocks; missing or stale evidence leaves the task queued on the same runner.
+            if (await ClassifyRequiredPlatformAsync(task, ct) is { } platformGate)
+            {
+                if (platformGate.Block)
+                {
+                    await BlockAsync(task, platformGate.Detail, ct);
+                    continue;
+                }
+
+                heldThisTick.Add((task.Id, HoldKind.RunnerUnavailable));
+                if (await TraceHeldAsync(task, platformGate.Detail, lastHeld, ct))
+                {
+                    _logger.LogInformation(
+                        "Task {ShortId} held: {Detail}",
+                        DelegationReportFormatter.Short(task.Id), platformGate.Detail);
+                }
+
+                continue;
+            }
+
             // CARD-0633 D-5: a runner-bound task holds cheaply BEFORE any claim - a backoff after a
             // failed preparation, a preparation still in flight, or a runner that cannot take work.
             // Each is one deduplicated Held trace, never a Warning per tick.
@@ -3103,7 +3124,7 @@ public sealed class AgentTaskDispatcher
         if (string.IsNullOrWhiteSpace(claimed.RunnerId) || answer?.LoggedIn != false)
             return false;
 
-        var home = _phoneHome?.ChildGrokHome ?? "/state/grok";
+        var home = _phoneHome?.ChildGrokHomeFor(claimed.RunnerId) ?? "/state/grok";
         var reason = $"provider_sign_in_required: Grok is not signed in on runner '{claimed.RunnerId}' "
             + $"(GROK_HOME={home}). On {claimed.RunnerId} run "
             + "`docker exec -it -u 1654:1654 -e HOME=/home/app "
@@ -3148,7 +3169,7 @@ public sealed class AgentTaskDispatcher
     private async Task<Antiphon.SessionRunner.Contracts.RunnerProviderAuthDto?> ReadClaudeProviderAuthBeforeClaimAsync(
         AgentTask task, CancellationToken ct)
     {
-        if (_runners is null || _phoneHome?.ClaudeAuthProbeEnabled != true
+        if (_runners is null || _phoneHome?.ClaudeAuthProbeEnabledFor(task.RunnerId) != true
             || task.RunnerId is null || task.AgentKind != AgentKind.ClaudeCode)
             return null;
 
@@ -3185,13 +3206,13 @@ public sealed class AgentTaskDispatcher
         // container's CLAUDE_CODE_OAUTH_TOKEN is primary; an interactive login on the store is the
         // fallback; an Anthropic API key is never offered.
         var reason = $"Claude Code is not signed in on runner '{claimed.RunnerId}' "
-            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome}). Provide CLAUDE_CODE_OAUTH_TOKEN "
+            + $"(CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHomeFor(claimed.RunnerId)}). Provide CLAUDE_CODE_OAUTH_TOKEN "
             + "(from `claude setup-token`) to the runner container through the deploy environment and redeploy it; "
             + $"or, as the fallback, on {claimed.RunnerId} run "
             + "`docker exec -it -u 1654:1654 -e HOME=/home/app "
-            + $"-e CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHome} "
+            + $"-e CLAUDE_CONFIG_DIR={_phoneHome.ChildClaudeHomeFor(claimed.RunnerId)} "
             + "antiphon-runner-session-runner-1 claude auth login`. ANTHROPIC_API_KEY is never used. Then re-dispatch.";
-        var episodeKey = $"claude-home:{claimed.RunnerId}:{_phoneHome.ChildClaudeHome}";
+        var episodeKey = $"claude-home:{claimed.RunnerId}:{_phoneHome.ChildClaudeHomeFor(claimed.RunnerId)}";
         try
         {
             AgentSupervisorService? supervisor = null;
@@ -4283,6 +4304,19 @@ public sealed class AgentTaskDispatcher
             switch (await TryReuseWarmAgentAsync(claimed, now, ct))
             {
                 case ReuseOutcome.Reused:
+                    if (await ClassifyRequiredPlatformAsync(claimed, ct) is { } reuseGate)
+                    {
+                        if (reuseGate.Block)
+                        {
+                            await BlockAsync(claimed, reuseGate.Detail, ct);
+                            await transaction.CommitAsync(ct);
+                            return DispatchOneResult.NotClaimed;
+                        }
+
+                        await transaction.RollbackAsync(ct);
+                        return DispatchOneResult.HeldForAgent;
+                    }
+
                     await _db.SaveChangesAsync(ct);
                     await transaction.CommitAsync(ct);
                     await DeliverReuseMessagesAsync(claimed, ct);
@@ -4793,9 +4827,57 @@ public sealed class AgentTaskDispatcher
 
         if (_phoneHome?.IsRunnerBound(agent) == true)
             spec = _phoneHome.Project(spec, agent, remoteCwd);
+        spec = spec with { RequiredPlatform = WireRequiredPlatform(task.RequiredPlatform) };
         GrokLaunchArgs.EnsureWindowsRulesArgv(
             spec.Args, session.AgentKind, session.SessionBackend, spec.Env, $"Session {session.Id}");
         return spec;
+    }
+
+    private static string? WireRequiredPlatform(RequiredPlatform platform) => platform switch
+    {
+        RequiredPlatform.Windows => RunnerPlatformWire.Windows,
+        RequiredPlatform.Linux => RunnerPlatformWire.Linux,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Null when the frozen requirement can launch. Block is a known opposite platform.
+    /// Hold is missing evidence, an unrecovered runner, or a runner that no longer advertises
+    /// the enforcement feature.
+    /// </summary>
+    private async Task<(bool Block, string Detail)?> ClassifyRequiredPlatformAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.RequiredPlatform == RequiredPlatform.Any || _runners is null)
+            return null;
+        RunnerDescriptor? described;
+        try
+        {
+            described = await _runners.DescribeAsync(
+                string.IsNullOrWhiteSpace(task.RunnerId) ? null : task.RunnerId, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Platform revalidation failed for task {ShortId}", DelegationReportFormatter.Short(task.Id));
+            return (false, $"runner platform evidence for {task.RequiredPlatform} is not current");
+        }
+
+        var want = task.RequiredPlatform == RequiredPlatform.Windows
+            ? RunnerPlatformWire.Windows
+            : RunnerPlatformWire.Linux;
+        var observed = RunnerPlatformWire.Normalize(described?.Platform);
+        var name = RunnerRequestIntent.DisplayRunnerId(task.RunnerId);
+        if (observed is not null && !string.Equals(observed, want, StringComparison.Ordinal))
+            return (true, $"runner_platform_mismatch: runner '{name}' is {observed} and cannot run a {task.RequiredPlatform} task.");
+        if (observed is null || described is not { DispatchEligible: true })
+            return (false, $"runner platform evidence for {task.RequiredPlatform} is not current on '{name}'");
+        if (task.AgentSessionId is null
+            && described.Capabilities?.Features?.Contains(RunnerPlatformWire.Feature) != true)
+            return (false, $"runner '{name}' does not advertise {RunnerPlatformWire.Feature}");
+        return null;
     }
 
     internal const string BootWedgeFailedReason =
