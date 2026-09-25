@@ -55,49 +55,6 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     }
 
     [Test]
-    public async Task C488_AdvanceIntentGatesChild()
-    {
-        await using var h = new LandingProtocolHarness();
-        await h.InitializeAsync();
-        var b = h.Git.AdvanceRemoteSource();
-        h.Fault.RequestResolution = LandSourceResolutionState.AdvanceStarted;
-        await h.RequestAsync(expectedSourceSha: b);
-        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
-        await using var db = h.CreateContext();
-        (await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId && r.IsPending))
-            .SourceResolutionState.ShouldBe(LandSourceResolutionState.Observed);
-    }
-
-    [Test]
-    public async Task C488_SourceChildIdentityDurable()
-    {
-        await using var h = new LandingProtocolHarness();
-        await h.InitializeAsync();
-        var b = h.Git.AdvanceRemoteSource();
-        var started = false;
-        h.Git.BeforeCommand = async (_, args) =>
-        {
-            if (started) return null;
-            if (args.Contains("merge") && args.Contains("--ff-only"))
-            {
-                await using var observer = h.CreateContext();
-                var request = await observer.AgentTaskLandRequests.AsNoTracking()
-                    .SingleAsync(r => r.TaskId == h.Git.TaskId && r.IsPending);
-                request.SourceResolutionState.ShouldBe(LandSourceResolutionState.AdvanceStarted);
-                request.SourceAdvanceChildOperation.ShouldBe("source-ff");
-                request.LocalBeforeSha.ShouldBe(h.Git.SeedSha);
-                request.ExpectedSourceSha.ShouldBe(b);
-                started = true;
-            }
-            return null;
-        };
-        await h.RequestAsync(expectedSourceSha: b);
-        await h.RunQueuedAsync();
-        started.ShouldBeTrue();
-    }
-
-    [Test]
     public async Task C488_ResolvedCommitGatesOperation()
     {
         await using var h = new LandingProtocolHarness();
@@ -315,6 +272,9 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         failed.LastReason.ShouldBe("verification_failed");
         var p = failed.RebasedSourceSha.ShouldNotBeNull();
         p.ShouldNotBe(original);
+        // CARD-0688 D-7: schema 3 never moves the branch; derivation is the read-only acceptance of a branch that a
+        // schema-2 rebase moved to its witnessed P. Put the branch where that rebase would have left it.
+        h.Git.RewindSource(p);
         h.Verifier.Passed = true;
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();
@@ -493,6 +453,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Verifier.Passed = false;
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();
+        h.Git.RewindSource((await h.OperationAsync())!.RebasedSourceSha!); // D-7: the schema-2 branch position
         h.Verifier.Passed = true;
         h.Git.OwnedTrace.Clear();
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
@@ -846,7 +807,6 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     public async Task C488_SourceCheckpointCrashMatrix()
     {
         await C488_ObservedCommitGatesAdvance();
-        await C488_AdvanceIntentGatesChild();
         await C488_ResolvedCommitGatesOperation();
         await C488_OperationCommitGatesPreparation();
     }
@@ -865,7 +825,6 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     {
         await C488_RecoveryDestinationImmutable();
         await C488_StandingJournalBlocksSourceAdvance();
-        await C488_SourceChildIdentityDurable();
     }
 
     [Test]
