@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -48,7 +49,7 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
         var app = builder.Build();
         app.MapBuildSlotRoutes();
         await app.StartAsync();
-        var address = app.Services.GetRequiredService<IServer>().Features.GetRequiredFeature<IServerAddressesFeature>()
+        var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single();
         var uri = new Uri(address.TrimEnd('/') + "/");
         if (uri.Port is 17204 or 8080)
