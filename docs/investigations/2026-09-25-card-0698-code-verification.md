@@ -6,7 +6,62 @@ kind remains the replay identity. The end sequence and end timestamp are indepen
 both activity tests still apply to the same row. CARD-0699/0700, polling, retention, delivery,
 runner protocol and cached state are outside this change.
 
-## Verification
+## Repair 1 verification (task 8f5d5036)
+
+The retry defect is repaired in the existing CLI-scaffolded migration. For each of the three
+names, Up conditionally renames an invalid index to its reserved `_invalid` name, drops it
+concurrently in a separate command, and creates the original concurrently with `IF NOT EXISTS`.
+A valid original is retained. The conditional step is separate because PostgreSQL disallows
+[concurrent drops inside a transaction block](https://www.postgresql.org/docs/16/sql-dropindex.html).
+Down also uses separate concurrent `IF EXISTS` drops, including cleanup names. The generated
+Up's nine commands and Down's six commands all have `TransactionSuppressed=true`.
+
+Red-first tests were committed separately at `8bad5939c78ecad678666a561f8eb13cb43a9e7a`:
+seven executions, one clean-first-run pass and six expected assertion failures. Four retries
+reported `42P07` (existing relation), interruption after rename left a cleanup index behind,
+and partial Down reported `42704` (missing index). This extra build/filter was explicitly
+commissioned by the repair brief; it is separate from the original CP-1 baseline.
+
+CP-1/CP-2 passed at `4553a8a3a5f83dc2e459690cbedbdd66a9f01eb1`. CP-3/CP-4 passed at
+`c35978ffca51e8d818e958212cd9110212333e2f`; the intervening change only corrects the retry
+fixture to interrupt the actual generated CREATE commands instead of replaying `pg_get_indexdef`.
+The production repair is identical in both commits. The later documentation commit records
+these results without changing tested code.
+
+| Checkpoint | Executed | Passed | Failed | Skipped | Reruns |
+|---|---:|---:|---:|---:|---:|
+| CP-1, original query checks on implemented source | 2 | 2 | 0 | 0 | 0 |
+| CP-2, entire Unit lane | 2,999 | 2,999 | 0 | 28 unrelated | 0 |
+| CP-3, five full integration classes | 175 | 175 | 0 | 0 | 2 |
+| CP-4, persistence/replay manifest | 15 | 15 | 0 | 0 | 0 |
+
+CP-3 expands to 4 query, 12 working-state, 11 migration, 25 queue-service and 123 delivery
+verification cases. Its first run had 171 passes and four fixture assertion failures:
+reparsing `pg_get_indexdef` changed equivalent array-cast rendering. The correction retains
+all definition, OID, validity and data assertions. The next build exited with MSB4166 (a child
+node exited prematurely), without running tests; rebuilding with node reuse disabled succeeded.
+There were no other checkpoint retries. The duration tripwire found zero unlisted tests >=5s.
+The Unit skip roster matches the 28 unrelated platform/browser skips documented below;
+all ten `RunnerClaudeAdapterEffortPromptTests` cases passed, so Review's Enter-count failure
+did not recur.
+
+Real PostgreSQL retry evidence covers all three indexes invalid, each of the three possible
+valid survivors with two invalid indexes, a completely fresh schema, interruption after rename,
+and a partially completed Down. Invalid originals receive new OIDs; valid originals retain
+their OIDs (UUID 18037, end/sequence 19661, end/timestamp 19655 in their respective fixtures).
+All three final indexes are valid/ready/nonunique, definitions and row fingerprints match,
+and no cleanup names remain. The populated upgrade retained all 377,003 rows and took
+1,994 ms. Repeated production hot reads again recorded `seq_scan 0 -> 0`, `idx_scan 0 -> 11,849`.
+
+Full logs, fresh TRX files, retry OIDs, generated Up/Down SQL and plans are in
+`/work/worktrees/task-8f5d5036/.antiphon/card0698-repair/`; the full report is
+`/work/worktrees/task-8f5d5036/.antiphon/task-8f5d5036.md`.
+All task-owned `bin-c698-repair-*` outputs are removed after verification.
+Every PC remains **PENDING** for method-scoped SourceLanding Mutation. Desktop activation,
+live CPU/scan windows and transcript-confirmed delivery/replay acceptance remain caller-owned
+post-land work. This Code repair does not claim those results. Next stage: **Review**.
+
+## Original S0-S3 verification
 
 The checkpoint manifest is in
 [the plan](../superpowers/plans/2026-09-25-card-0698-postgres-load-plan.md#checkpoints).
