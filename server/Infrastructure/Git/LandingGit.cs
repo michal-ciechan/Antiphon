@@ -341,6 +341,9 @@ public class LandingGit : ILandingGit
         // The registration is gone; leftover administrative bytes go with the set-aside record.
         try { WorktreeNoFollowDelete.Delete(retired); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        // File I/O never passes ChangesRegistrations, so a cached worktree list would still name
+        // this path and the caller would put the tree back (CARD-0721).
+        Scope?.Invalidate(false);
         return new(0, "", "");
 
         static bool Exists(string path)

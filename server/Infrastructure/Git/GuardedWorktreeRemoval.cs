@@ -249,7 +249,12 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         }
         if (!removed.Succeeded) return ("worktree_remove_failed", outcome);
         var rows = await RegistrationsAsync(source.RepositoryPath, ct);
-        return (rows.Any(r => LandingGit.PathsEqual(r.Path, source.WorktreePath)) ? "worktree_removal_incomplete" : null, outcome);
+        if (!rows.Any(r => LandingGit.PathsEqual(r.Path, source.WorktreePath))) return (null, outcome);
+        // CARD-0721: the administrative entry is the registration. A list that still names the
+        // path after that entry is gone is stale. Restoring from it leaves an unregistered
+        // directory and deletes the set-aside record.
+        if (!RegistrationAdminPresent(gitDirectory)) return (null, outcome);
+        return ("worktree_removal_incomplete", outcome);
     }
 
     internal async Task<WorktreeRemoval> CompleteBranchAsync(WorktreeRemovalRequest request, WorktreeRemoval directory, CancellationToken ct)
@@ -264,7 +269,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             if (reason is not null) return Refuse(reason);
             if (!IsAbsent(source.WorktreePath)) return Refuse("source_recreated");
             var rows = await RegistrationsAsync(source.RepositoryPath, ct);
-            if (rows.Any(r => r.Branch == source.SourceFullRef)) return Refuse("source_checked_out");
+            if (rows.Any(r => r.Branch == source.SourceFullRef && LiveCheckout(r, request))) return Refuse("source_checked_out");
             var exists = await git.RunAsync(source.RepositoryPath, ["show-ref", "--exists", source.SourceFullRef], ct);
             if (exists.ExitCode == 2)
             {
@@ -400,6 +405,16 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
     /// <summary>CARD-0665 D-6: without a gate every ignored path is protected, as before.</summary>
     private WorktreeIgnoredContent Classify(LandSourceSnapshot snapshot) => ignored?.Classify(snapshot)
         ?? new([], [], [.. snapshot.IgnoredPaths.Order(StringComparer.Ordinal)]);
+
+    /// <summary>A stale list row for the tree just unregistered is not a checkout that still holds the branch.</summary>
+    private static bool LiveCheckout(LandingRegistration row, WorktreeRemovalRequest request) =>
+        !LandingGit.PathsEqual(row.Path, request.Source.WorktreePath) || RegistrationAdminPresent(request.GitDirectory);
+
+    private static bool RegistrationAdminPresent(string gitDirectory)
+    {
+        try { _ = File.GetAttributes(Path.Combine(gitDirectory, "gitdir")); return true; }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
+    }
 
     private static bool IsAbsent(string path)
     {

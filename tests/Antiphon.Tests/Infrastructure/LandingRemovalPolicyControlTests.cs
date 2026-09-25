@@ -530,6 +530,23 @@ public sealed class LandingRemovalPolicyControlTests
         result.IsClean.ShouldBeTrue(result.Residue);
     }
 
+    // A handle held inside the tree refuses the set-aside rename. The registration stays, so a
+    // later pass can retry. An unregistered directory with no set-aside record is the failure.
+    [Test]
+    public async Task C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded()
+    {
+        if (!OperatingSystem.IsWindows()) { Skip.Test("Sharing-mode locks are a Windows file-system behaviour."); return; }
+        using var f = new RemovalFixture();
+        await using var held = new FileStream(Path.Combine(f.Source, "keep.txt"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        var result = await f.RemoveAsync(gate: true);
+        var unregisteredOrphan = Directory.Exists(f.Source) && !f.Registered && f.SetAsideRecords().Length == 0;
+        unregisteredOrphan.ShouldBeFalse(result.Residue);
+        (result.IsClean || f.Registered || f.SetAsideRecords().Length > 0).ShouldBeTrue(result.Residue);
+        if (!result.IsClean) Directory.Exists(f.Source).ShouldBe(f.Registered);
+        if (Directory.Exists(f.Source))
+            File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
