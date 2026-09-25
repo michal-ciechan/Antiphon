@@ -57,7 +57,7 @@ public sealed class RunnerPlatformLaunchTests
     private static SessionRunnerRuntime Runtime() => new(
         Options.Create(new SessionRunnerSettings
         {
-            SessionLogPath = TestSessionLogRoot.Create("c710-platform-launch"),
+            SessionLogPath = TestSessionLogRoot.Create("c710-platform"),
             PtyHostLingerHours = 0.02,
             CpuWatchdogEnabled = false,
             PtyBackend = "inbox",

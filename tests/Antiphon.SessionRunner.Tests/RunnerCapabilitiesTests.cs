@@ -87,7 +87,10 @@ public class RunnerCapabilitiesTests
             {
                 var include = reference.Attribute("Include")?.Value;
                 if (!string.IsNullOrWhiteSpace(include))
-                    pending.Enqueue(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(project)!, include)));
+                {
+                    var relative = include.Replace('\\', Path.DirectorySeparatorChar);
+                    pending.Enqueue(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(project)!, relative)));
+                }
             }
         }
 
