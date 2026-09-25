@@ -427,6 +427,35 @@ public class PhoneHomeStrandedQueueTests
         stop.Cancel();
     }
 
+    // A desktop restart: no connection has answered for the runner yet, so the directory knows
+    // nothing either way about the sessions bound to it. Their liveness is unknown until the
+    // runner's first catch-up List.
+    [Test]
+    public async Task Before_the_runner_first_recovers_its_bound_sessions_are_not_missing()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        var (cardId, attemptId) = await ClaimCardAsync(h, schema.ConnectionString);
+        h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId);
+
+        await ReconcileCardsAsync(h);
+        await AssertClaimSurvivesAsync(schema.ConnectionString, h.SessionId, cardId, attemptId,
+            "no runner has answered since start: nothing confirms the session gone");
+
+        await using var peer = await host.ConnectPeerAsync();
+        using var stop = new CancellationTokenSource();
+        (await Pump(host, h).RunCycleAsync(stop.Token)).ShouldBeTrue("the first catch-up List answered");
+
+        await ReconcileCardsAsync(h);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId)).Status
+            .ShouldBe(SessionStatus.Failed, "absent from a connected runner's List: confirmed gone");
+        (await db.Cards.AsNoTracking().SingleAsync(c => c.Id == cardId)).OwnerSessionId.ShouldBeNull();
+        stop.Cancel();
+    }
+
     // Review 87af1bf6 finding 2. The guard against an exited generation coming back was a
     // tombstone kept for ten minutes. A reply already received (its request stamped before the
     // exit) whose continuation runs after that, under thread-pool starvation say, found no
