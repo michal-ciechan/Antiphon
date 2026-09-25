@@ -109,9 +109,10 @@ public class RunnerClaudeAdapterEffortPromptTests
     [Test]
     public async Task An_effort_dialog_that_never_clears_fails_within_its_budget()
     {
+        var clock = new ManualEffortClock();
         var fake = new EffortTestScreen { SwallowEnters = 100 };
         var client = new Client(fake);
-        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()));
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()), time: clock);
         await adapter.StartAsync(Spec(), CancellationToken.None);
         using var cts = new CancellationTokenSource();
         var task = adapter.WaitForReadyAsync(cts.Token);
@@ -124,9 +125,25 @@ public class RunnerClaudeAdapterEffortPromptTests
             // diagnosis, not just "settle deadline exhausted" (CARD-0449 D-4).
             foreach (var field in new[] { "requested=xhigh", "current=xhigh", "suggested=high", "selected=Keep", "Enter=3", "polls=", "last=parse" }) adapter.LaunchBlock.Reason.ShouldContain(field);
             fake.Writes.Count.ShouldBe(3); fake.Writes.All(w => w.Key == "\r").ShouldBeTrue(); fake.TokenWrites.ShouldBe(0);
+            // Three Enters fit in the 7s settle budget only when that budget is this clock.
+            // Wall-clock overrun used to exhaust it at Enter=2; the clock must reach the budget.
+            clock.Elapsed.ShouldBe(TimeSpan.FromMilliseconds(7000));
         }
         finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { }
             await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    private sealed class ManualEffortClock : TimeProvider, IManualTimeProvider
+    {
+        private long _ticks;
+        public TimeSpan Elapsed => TimeSpan.FromTicks(Volatile.Read(ref _ticks));
+        public void Advance(TimeSpan duration)
+        {
+            if (duration < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(duration));
+            Interlocked.Add(ref _ticks, duration.Ticks);
+        }
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch + Elapsed;
     }
 
     [Test, Arguments(false), Arguments(true)]

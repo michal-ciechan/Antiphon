@@ -18,7 +18,8 @@ public static class ClaudeStartupReadiness
     public static async Task<ClaudeReadinessResult> RunAsync(
         string probeToken, Func<CancellationToken, Task<string>> snapshotScreen,
         Func<string, CancellationToken, Task> write, ClaudeEffortIntent intent,
-        ClaudeReadinessOptions options, Action<string>? log, Task exited, CancellationToken ct)
+        ClaudeReadinessOptions options, Action<string>? log, Task exited, CancellationToken ct,
+        TimeProvider? time = null)
     {
         var clock = Stopwatch.StartNew();
         var enabled = options.Probe.Timeout > TimeSpan.Zero;
@@ -62,7 +63,7 @@ public static class ClaudeStartupReadiness
                     // "Claude startup:" line and the persisted launch-block reason carry the
                     // diagnosis without a diagnostic build.
                     var result = await ClaudeEffortPrompt.ResolveAsync(snapshotScreen, EffortWrite, intent,
-                        remaining < options.EffortBudget ? remaining : options.EffortBudget, token, log);
+                        remaining < options.EffortBudget ? remaining : options.EffortBudget, token, log, time);
                     detail = result.Detail;
                     log?.Invoke(detail);
                     if (!result.Cleared) return new(active, detail, writes);
