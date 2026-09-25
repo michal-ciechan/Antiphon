@@ -36,7 +36,7 @@ public sealed class WorktreeCleanupSettings
     /// <summary>Operator additions to <see cref="DefaultProtectedIgnored"/>.</summary>
     public string[]? ProtectedIgnored { get; set; }
 
-    /// <summary>Deleted with the tree by non-forcing <c>git worktree remove</c>.</summary>
+    /// <summary>Deleted with the tree by guarded removal's no-follow delete.</summary>
     public string[]? DisposableIgnored { get; set; }
 
     /// <summary>Evidence: byte-copied to the retained report root before the tree is removed.</summary>
