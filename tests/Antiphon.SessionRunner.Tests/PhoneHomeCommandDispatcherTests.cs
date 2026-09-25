@@ -515,7 +515,51 @@ public class PhoneHomeCommandDispatcherTests
             admitted.Kind.ShouldBe(PhoneHomeFrameKind.Result, exe + " is the image's codex and must be admitted: " + admitted.ErrorDetail);
         }
 
-        runtime.Started.Select(started => started.Exe).ShouldBe(["codex", "/usr/local/bin/codex"]);
+        runtime.Started.Select(started => started.Exe).ShouldBe(
+            ["/usr/local/bin/codex", "/usr/local/bin/codex"], "a bare codex is launched as the image's own path");
+    }
+
+    [Test]
+    public async Task Bare_codex_launches_the_image_path_never_a_competing_codex_earlier_on_path()
+    {
+        // Review of ff170389: the bare name used to reach the runtime unchanged, so which codex
+        // ran depended on PATH lookup in the child's environment. A real, executable codex placed
+        // first on the launch's PATH must never be the one launched.
+        var competing = Path.Combine(Path.GetTempPath(), "c660-competing-codex-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(competing);
+        try
+        {
+            var marker = Path.Combine(competing, "ran");
+            foreach (var name in new[] { "codex", "codex.cmd", "codex.exe" })
+            {
+                var fake = Path.Combine(competing, name);
+                File.WriteAllText(fake, $"#!/bin/sh\necho ran > '{marker}'\n");
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            var path = competing + Path.PathSeparator + "/usr/local/bin" + Path.PathSeparator + "/usr/bin";
+            var runtime = new RecordingRuntime();
+            var request = Request("codex", "/work") with
+            {
+                Env = new Dictionary<string, string> { ["PATH"] = path, ["CODEX_HOME"] = "/state/codex" },
+                TranscriptFormat = TranscriptFormats.Codex,
+            };
+
+            var reply = await Dispatcher(runtime, probe: new RecordingProbe(true)).DispatchAsync(Launch(request), CancellationToken.None);
+
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+            var started = runtime.Started.ShouldHaveSingleItem();
+            started.Exe.ShouldBe(PhoneHomeCommandDispatcher.ImageCodexPath, "the fixed image path, never a PATH lookup");
+            started.Exe.ShouldNotStartWith(competing);
+            started.Env.ShouldBe(request.Env, "the child's environment is not rewritten");
+            started.Args.ShouldBe(request.Args);
+            File.Exists(marker).ShouldBeFalse("the competing codex never ran");
+        }
+        finally
+        {
+            try { Directory.Delete(competing, recursive: true); } catch (IOException) { }
+        }
     }
 
     [Test]
