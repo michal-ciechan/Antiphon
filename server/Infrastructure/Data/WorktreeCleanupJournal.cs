@@ -26,7 +26,7 @@ public sealed class WorktreeCleanupJournal(IServiceScopeFactory scopes, TimeProv
             || operation.RepositoryPath != identity.RepositoryPath || operation.WorktreePath != identity.WorktreePath
             || operation.CommonDirectory != identity.CommonDirectory || operation.GitDirectory != identity.GitDirectory
             || operation.SourceFullRef != identity.SourceFullRef || operation.TargetFullRef != identity.TargetFullRef
-            || operation.VerifiedSourceSha != identity.SourceSha || operation.TargetBeforeSha != identity.TargetSha)
+            || AgentTaskLandingState.ExpectedDeletion(operation) != identity.SourceSha || operation.TargetBeforeSha != identity.TargetSha)
             throw new InvalidOperationException("cleanup_attempt_identity_mismatch");
         row = new WorktreeCleanupAttempt {
             Id = Guid.NewGuid(), RequestId = identity.RequestId, OperationId = identity.OperationId, TaskId = identity.TaskId,

@@ -385,6 +385,7 @@ public sealed class AgentTaskLandPublicationTests
             if (phase == LandPhase.CleanupStarted && cleanupAt < 0) cleanupAt = h.Fixture.Git.Commands.Count;
             return Task.CompletedTask;
         };
+        await h.RequestAsync(); // the harness reads the source HEAD for the expected SHA; the land does not
         h.Fixture.Git.Commands.Clear();
 
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);

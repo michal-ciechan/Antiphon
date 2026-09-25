@@ -798,9 +798,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
 
         var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed, op.LastReason);
         op.OriginalSourceSha.ShouldBe(remote);
         op.SourceLocalSha.ShouldBe(h.Git.SeedSha);
-        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
         h.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("merge") && string.Equals(
             Path.GetFullPath(c.Directory), Path.GetFullPath(h.Git.Source), StringComparison.OrdinalIgnoreCase));
         h.Git.Commands.ShouldContain(c => c.Arguments.SequenceEqual(new[] { "update-ref", "--no-deref", "-d", h.Git.SourceRef, h.Git.SeedSha }));
@@ -831,7 +831,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
 
         await h.RunQueuedAsync();
 
-        fired.ShouldBeGreaterThanOrEqualTo(0, "the land must reach recheck " + recheck);
+        fired.ShouldBeGreaterThanOrEqualTo(0, "the land must reach recheck " + recheck + "; stopped at " + (await h.OperationAsync())?.LastReason);
         h.Git.Commands.Skip(fired).ShouldNotContain(c => c.Arguments.Contains("rebase") || c.Arguments[0] == "push"
             || c.Arguments.Contains("reset"));
         var op = await h.OperationAsync();
@@ -861,7 +861,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
 
         await h.RunQueuedAsync();
 
-        fired.ShouldBeGreaterThanOrEqualTo(0, "the land must reach recheck " + recheck);
+        fired.ShouldBeGreaterThanOrEqualTo(0, "the land must reach recheck " + recheck + "; stopped at " + (await h.OperationAsync())?.LastReason);
         h.Git.Commands.Skip(fired).ShouldNotContain(c => c.Arguments.Contains("rebase") || c.Arguments[0] == "push"
             || c.Arguments.Contains("reset") || c.Arguments.Contains("merge"));
         var op = (await h.OperationAsync()).ShouldNotBeNull();
