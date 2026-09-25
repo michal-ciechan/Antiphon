@@ -226,9 +226,7 @@ public sealed class CodexRunnerImageContractTests
         var baseInit = DockerStackDocuments.Service(Read("docker-compose.yml"), "state-init");
         var server2Init = DockerStackDocuments.Service(Read("docker-compose.server2-runner.yml"), "state-init");
         MountsCodexHome(baseInit).ShouldBeFalse("the base state-init has no Codex home mount");
-        OptionalEnv(baseInit, "CODEX_HOME_REQUIRED").ShouldBeNull("the base state-init does not require a Codex home");
         MountsCodexHome(server2Init).ShouldBeTrue("the server2 state-init mounts the host Codex home");
-        OptionalEnv(server2Init, "CODEX_HOME_REQUIRED").ShouldBe("1", "the server2 state-init requires its Codex home");
 
         // The script's absolute roots move under a per-case $R and its fixed app uid becomes the
         // caller's, so an unprivileged shell runs every line. The quoted config heredoc is left
@@ -294,6 +292,10 @@ public sealed class CodexRunnerImageContractTests
         output.ShouldContain("server2-mounted home=700\n");
         output.ShouldContain("server2-mounted config=600 regular file\n");
         output.ShouldContain("--- config ---\n" + SeededConfig + "--- end ---\n");
+
+        // Only the server2 compose opts in to the refusal; the base (and child) never does.
+        OptionalEnv(baseInit, "CODEX_HOME_REQUIRED").ShouldBeNull("the base state-init does not require a Codex home");
+        OptionalEnv(server2Init, "CODEX_HOME_REQUIRED").ShouldBe("1", "the server2 state-init requires its Codex home");
     }
 
     [Test]
