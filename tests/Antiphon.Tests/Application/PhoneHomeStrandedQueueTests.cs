@@ -12,6 +12,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -208,6 +209,156 @@ public class PhoneHomeStrandedQueueTests
         stop.Cancel();
     }
 
+    // Review 57fa2e6a finding 1. The runner can write a session's exit event before the launch
+    // ack's continuation runs on the desktop: the pump records the exit, then the ack marked the
+    // dead session live again, and every ListLiveSessions() caller typed into it. Held here so the
+    // order is exact: the Launch is answered only after the pump has released the exit.
+    [Test]
+    public async Task Exit_seen_before_the_launch_ack_keeps_that_generation_dead()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        var pump = Pump(host, h);
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+        var launched = Guid.NewGuid();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        peer.HeldLaunches = 1;
+
+        var start = host.Directory.Resolve(host.AllowedRunnerId)
+            .StartAsync(launched, RawSpec(generation), CancellationToken.None);
+        await peer.WaitForAsync(PhoneHomeOperation.Launch);
+        var received = live.LiveBufferEvents;
+        await peer.EmitAsync(Event(live, SessionRunnerEventNames.SessionExited,
+            new RunnerSessionExitedEvent(launched, 1, nameof(AgentExitReason.Unknown), 0, generation)));
+        await WaitUntilAsync(() => live.LiveBufferEvents == received + 1 && live.PendingEvents == 0);
+        peer.ReleaseHeld();
+        var started = await start;
+
+        started.Status.ShouldBe("Running", "the ack itself still reads Running: it was written before the exit");
+        h.Runtime.ListLiveSessions().ShouldNotContain(launched,
+            "an ack for a generation whose exit was already seen does not bring it back");
+
+        // A List of a runner row still naming that generation Running is held to the same guard;
+        // the marker session shows the refresh's answer was applied.
+        var marker = Guid.NewGuid();
+        peer.Sessions.Add(RunningOnRunner(marker));
+        await RefreshAsync(clock, peer, pump, stop.Token);
+        await WaitUntilAsync(() => h.Runtime.ListLiveSessions().Contains(marker));
+        h.Runtime.ListLiveSessions().ShouldNotContain(launched, "the List may not resurrect an exited generation");
+
+        // The tombstone is per generation: a relaunch of the same session is live again.
+        peer.Sessions.RemoveAll(s => s.SessionId == launched);
+        peer.Sessions.Add(new RunnerSessionDto(launched, 2, DateTime.UtcNow, "Running", null, "", 0,
+            AcceptedStartedAt: SessionGeneration.Next(generation, DateTime.UtcNow)));
+        await RefreshAsync(clock, peer, pump, stop.Token);
+        await WaitUntilAsync(() => h.Runtime.ListLiveSessions().Contains(launched));
+        stop.Cancel();
+    }
+
+    // Review 57fa2e6a finding 2. Heartbeats kept the lease valid while every refresh List failed,
+    // so a session the runner had long since lost stayed "live" to every caller, forever.
+    [Test]
+    public async Task Inventory_entries_stop_counting_as_live_when_refreshes_keep_failing()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        var quiet = Guid.NewGuid();
+        var talking = Guid.NewGuid();
+        peer.Sessions.Add(RunningOnRunner(quiet));
+        peer.Sessions.Add(RunningOnRunner(talking));
+        using var logs = LoggerFactory.Create(b => b.AddProvider(host.Logs));
+        var pump = Pump(host, h, logs.CreateLogger<PhoneHomeRecoveryPump>());
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+        h.Runtime.ListLiveSessions().ShouldContain(quiet);
+        peer.Reply = frame => frame.Operation == PhoneHomeOperation.List
+            ? new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: "runner_internal_error", ErrorDetail: "List failed", StatusCode: 500)
+            : null;
+        var interval = TimeSpan.FromSeconds(new PhoneHomeRunnerSettings().InventoryRefreshSeconds);
+
+        for (var failed = 1; failed <= 4; failed++)
+        {
+            clock.Advance(interval);
+            await HeartbeatAsync(peer, live, clock);
+            if (failed >= 2)
+            {
+                // Output is the runner vouching for the session between Lists.
+                var received = live.LiveBufferEvents;
+                await peer.EmitAsync(Event(live, SessionRunnerEventNames.SessionOutput,
+                    new RunnerOutputEvent(talking, failed, "still here")));
+                await WaitUntilAsync(() => live.LiveBufferEvents == received + 1 && live.PendingEvents == 0);
+            }
+
+            (await pump.RunCycleAsync(stop.Token)).ShouldBeFalse();
+            var expected = failed;
+            await WaitUntilAsync(() => RefreshFailureLogs(host) == expected);
+            if (failed == 2)
+                h.Runtime.ListLiveSessions().ShouldContain(quiet, "two missed refreshes are inside the bound");
+        }
+
+        host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldNotBeNull("heartbeats kept the lease valid");
+        var listed = h.Runtime.ListLiveSessions();
+        listed.ShouldNotContain(quiet, "unconfirmed for four refresh intervals: past the stale bound");
+        listed.ShouldContain(talking, "its output confirmed it this interval");
+        host.Logs.Entries.ShouldContain(
+            e => e.Level == LogLevel.Warning && e["ConsecutiveFailures"] is int n && n >= 3,
+            "repeated refresh failures are called out, not just logged one by one");
+
+        // One successful List confirms it again.
+        peer.Reply = null;
+        clock.Advance(interval);
+        await HeartbeatAsync(peer, live, clock);
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeFalse();
+        await WaitUntilAsync(() => h.Runtime.ListLiveSessions().Contains(quiet));
+        stop.Cancel();
+    }
+
+    private static AgentLaunchSpec RawSpec(DateTime? acceptedStartedAt = null) => new(
+        DefinitionName: "raw",
+        Kind: AgentKind.Raw,
+        Exe: "/bin/sh",
+        Args: [],
+        Env: new Dictionary<string, string>(),
+        Cwd: "/work",
+        Cols: 120,
+        Rows: 30,
+        AcceptedStartedAt: acceptedStartedAt);
+
+    private static PhoneHomeFrame Event(PhoneHomeLiveConnection live, string name, object payload) => new(
+        PhoneHomeFrameKind.Event, live.Epoch, Guid.Empty, EventName: name,
+        Payload: JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
+
+    /// <summary>One refresh interval later: the next cycle sends a refresh List.</summary>
+    private static async Task RefreshAsync(
+        FakeTimeProvider clock, PhoneHomeScriptedPeer peer, PhoneHomeRecoveryPump pump, CancellationToken ct)
+    {
+        var lists = peer.RequestCount(PhoneHomeOperation.List);
+        clock.Advance(TimeSpan.FromSeconds(new PhoneHomeRunnerSettings().InventoryRefreshSeconds));
+        (await pump.RunCycleAsync(ct)).ShouldBeFalse();
+        await WaitUntilAsync(() => peer.RequestCount(PhoneHomeOperation.List) == lists + 1);
+    }
+
+    private static async Task HeartbeatAsync(PhoneHomeScriptedPeer peer, PhoneHomeLiveConnection live, FakeTimeProvider clock)
+    {
+        await peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, live.Epoch, Guid.NewGuid()));
+        var now = clock.GetUtcNow();
+        await WaitUntilAsync(() => live.LastHeartbeatUtc == now);
+    }
+
+    private static int RefreshFailureLogs(PhoneHomeTestHost host) => host.Logs.Entries.Count(e =>
+        e.Level == LogLevel.Warning
+        && e.Message.StartsWith("Phone-home inventory refresh List", StringComparison.Ordinal));
+
     /// <summary>
     /// The harness's session, re-bound to the phone-home runner and stripped of its in-process
     /// adapter (which the runtime always reports live): its liveness is the runner's alone, and
@@ -234,7 +385,8 @@ public class PhoneHomeStrandedQueueTests
         return h;
     }
 
-    private static PhoneHomeRecoveryPump Pump(PhoneHomeTestHost host, BridgeQueueHarness h) => new(
+    private static PhoneHomeRecoveryPump Pump(
+        PhoneHomeTestHost host, BridgeQueueHarness h, ILogger<PhoneHomeRecoveryPump>? logger = null) => new(
         host.Directory,
         Options.Create(new PhoneHomeRunnerSettings
         {
@@ -245,7 +397,7 @@ public class PhoneHomeStrandedQueueTests
             SharedSecret = host.Secret,
         }),
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
-        NullLogger<PhoneHomeRecoveryPump>.Instance);
+        logger ?? NullLogger<PhoneHomeRecoveryPump>.Instance);
 
     private static RunnerSessionDto RunningOnRunner(Guid sessionId) =>
         new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
