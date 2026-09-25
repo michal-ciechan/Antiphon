@@ -1319,6 +1319,11 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
 
+        // Start only queues a launch in this harness; no worker spawns it. Use an existing
+        // executable on every host so the launch admission guard does not depend on cmd.exe.
+        h.Provider.GetRequiredService<AgentRegistry>().Settings.Definitions["fake"].Exe =
+            Environment.ProcessPath ?? throw new InvalidOperationException("Missing test executable path");
+
         await h.SeedPendingMessageAsync("survive the fresh fallback");
 
         // End the old session so StartAsync creates a NEW session row (fresh=true skips resume;

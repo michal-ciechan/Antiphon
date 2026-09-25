@@ -95,7 +95,9 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
                      WHEN n % 10 = 3 THEN 'ToolResult' ELSE 'AssistantText' END,
                 CASE WHEN n % 19 = 0 THEN NULL ELSE 'uuid-' || (n / 2)::text END,
                 repeat('synthetic transcript ', CASE WHEN n % 7 = 0 THEN 40 ELSE 4 END),
-                CASE WHEN n % 40 = 0 THEN NULL
+                CASE WHEN (s = 1 AND n > 80000) OR (s = 127 AND n > 300)
+                          THEN timestamptz '2026-01-01 00:00:00+00' + interval '1 millisecond'
+                     WHEN n % 40 = 0 THEN NULL
                      ELSE timestamptz '2026-01-01 00:00:00+00' +
                         (CASE WHEN (s = 1 AND n > 80000) OR (s = 127 AND n > 300) THEN 1
                               WHEN n % 20 = 0 THEN n - 25 ELSE n END) * interval '1 millisecond' END,
@@ -135,6 +137,14 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
         var ids = count == 1 ? [SessionIds[0]] : SessionIds.Take(count - 3).Concat(SessionIds.TakeLast(3)).ToArray();
         var result = await SessionMessageQueueService.IsWorkingBatchAsync(db, ids, default);
         result.Count.ShouldBe(count);
+        result[SessionIds[0]].ShouldBeFalse();
+        if (count > 1)
+        {
+            result[SessionIds[1]].ShouldBeFalse("the 20k post-end tail is entirely timestamp-proven stale");
+            result[SessionIds[^3]].ShouldBeFalse();
+            result[SessionIds[^2]].ShouldBeTrue("no-end activity is still working");
+            result[SessionIds[^1]].ShouldBeFalse("no-end housekeeping stays idle");
+        }
         return Capture.Reads.ToArray();
     }
 
@@ -148,13 +158,14 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
             // PREPARE the actual SELECT, not EXPLAIN itself. Keep typed parameters in its plan.
             var sql = captured.Sql;
             for (var i = 0; i < captured.Parameters.Length; i++)
-                sql = Regex.Replace(sql, "@" + Regex.Escape(captured.Parameters[i].ParameterName) + @"\b", "$" + (i + 1));
+                sql = Regex.Replace(sql, "@" + Regex.Escape(captured.Parameters[i].ParameterName.TrimStart('@', ':')) + @"\b",
+                    _ => "$" + (i + 1));
             var types = captured.Parameters.Select(p => p.Value switch
             {
                 Guid => "uuid", Guid[] => "uuid[]", string => "text",
                 IEnumerable<string> => "text[]", _ => throw new NotSupportedException(p.NpgsqlDbType.ToString())
             });
-            command.CommandText = $"SET plan_cache_mode = force_generic_plan; PREPARE c698 ({string.Join(",", types)}) AS {sql}";
+            command.CommandText = $"DEALLOCATE ALL; SET plan_cache_mode = force_generic_plan; PREPARE c698 ({string.Join(",", types)}) AS {sql}";
             await command.ExecuteNonQueryAsync();
             command.CommandText = "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE c698 (" +
                 string.Join(",", captured.Parameters.Select(p => Literal(p.Value))) + ")";
@@ -165,6 +176,12 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
             command.Parameters.AddRange(captured.Parameters.Select(p => p.Clone()).ToArray());
         }
         using var json = JsonDocument.Parse((string)(await command.ExecuteScalarAsync())!);
+        if (generic)
+        {
+            command.CommandText = "SELECT generic_plans FROM pg_prepared_statements WHERE name = 'c698'";
+            ((long)(await command.ExecuteScalarAsync())!).ShouldBeGreaterThan(0,
+                "EXPLAIN must execute the separately prepared generic SELECT");
+        }
         return json.RootElement.Clone();
     }
 
@@ -198,7 +215,7 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
 internal sealed record CapturedTranscriptCommand(string Sql, NpgsqlParameter[] Parameters)
 {
     public object Evidence() => new { Sql, parameters = Parameters.Select(p =>
-        new { p.ParameterName, type = p.NpgsqlDbType.ToString(), p.Value }) };
+        new { p.ParameterName, type = p.NpgsqlDbType.ToString(), clrType = p.Value?.GetType().FullName, p.Value }) };
 }
 
 internal sealed class TranscriptCommandCapture : DbCommandInterceptor
