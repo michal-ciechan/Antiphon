@@ -1,0 +1,3 @@
+{"timestamp":"2026-09-25T10:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"please deploy\nthe latest build"}}
+{"timestamp":"2026-09-25T10:00:00Z","type":"event_msg","payload":{"type":"agent_message","message":"Deployment verified."}}
+{"timestamp":"2026-09-25T10:00:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"c584-turn","last_agent_message":"Deployment verified."}}

@@ -116,7 +116,7 @@ public class SessionMessageQueueSpillTests
 
         var typed = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
         typed.ShouldContain(TypedBodySpill.PointerHeadline);
-        typed.ShouldStartWith(envelope);
+        ChannelPromptCorrelation.WithoutOuterMarker(typed).ShouldStartWith(envelope);
         var probe = typed.Length <= 120 ? typed : typed[..120];
         typed.Contains(probe, StringComparison.Ordinal).ShouldBeTrue(
             "PromptsMatch: the stored/typed pointer's head is contained in the turn");

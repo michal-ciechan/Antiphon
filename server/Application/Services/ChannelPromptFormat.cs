@@ -6,7 +6,9 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// The frozen envelope grammar for channel-originated prompts — the single authority for how an
 /// inbound chat message is framed when typed into an agent's session, and for the batch markers
-/// used when several queued messages are delivered in one turn. Everything that renders, parses,
+    /// used when several queued messages are delivered in one turn. The queue adds the persisted
+    /// outer transport marker through ChannelPromptCorrelation after allocating the row ID.
+    /// Everything that renders, parses,
 /// or documents these shapes (bridge, queue batching, preamble text, fakeclaude, docs) references
 /// these members; nothing re-declares the strings.
 /// </summary>

@@ -1,0 +1,3 @@
+{"type":"user","uuid":"c584-string","timestamp":"2026-09-25T10:00:00Z","message":{"role":"user","content":"please deploy\nthe latest build"}}
+{"type":"user","uuid":"c584-block","timestamp":"2026-09-25T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"please deploy\nthe latest build"}]}}
+{"type":"attachment","uuid":"c584-queued","parentUuid":"c584-tool","timestamp":"2026-09-25T10:00:00Z","attachment":{"type":"queued_command","prompt":"please deploy\nthe latest build"}}

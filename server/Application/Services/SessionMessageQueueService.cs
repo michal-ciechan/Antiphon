@@ -135,6 +135,17 @@ public sealed partial class SessionMessageQueueService
         _remoteSpills.Ack(sessionId, staged);
     }
 
+    private static void HoldChannelSpillBytes(SessionQueuedMessage row, string source, string wire)
+    {
+        if (row.Origin != QueuedMessageOrigin.Channel || source == wire
+            || !ChannelPromptCorrelation.IsSpillPointer(wire))
+            return;
+        // The file contains the whole composed batch, not just its head member. Keep those
+        // exact bytes before replacing Body, including local spills and tracked SendNow.
+        row.RemoteSpillBody = source;
+        row.RemoteSpillRelativePath = TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+    }
+
     /// <summary>
     /// A spill pointer with no stored bytes is recovered from the source text when that text is
     /// still here, or from the frozen Completion batch when the pointer names one. Otherwise the
@@ -206,7 +217,8 @@ public sealed partial class SessionMessageQueueService
         string? channelEnvelope,
         AppDbContext? db,
         CancellationToken ct,
-        PtyDeliveryCeilings? ceilings = null, string? specialistInputPolicyJson = null)
+        PtyDeliveryCeilings? ceilings = null, string? specialistInputPolicyJson = null,
+        string? channelMarker = null)
     {
         ceilings ??= db is not null
             ? await CeilingsForSessionAsync(db, sessionId, ct)
@@ -249,6 +261,7 @@ public sealed partial class SessionMessageQueueService
         }
 
         var relative = TypedBodySpill.InboxRelativePath(fileStem);
+        channelMarker ??= ChannelPromptCorrelation.OpeningMarker(body);
 
         // CARD-0604 G-21. A REMOTE session's file is written by the RUNNER, inside the session's
         // own cwd, and the body travels with the Input frame that types the pointer. The desktop
@@ -267,7 +280,7 @@ public sealed partial class SessionMessageQueueService
                 // The relative path IS where the runner will put it, so the pointer is correct
                 // even though this process never touched a filesystem.
                 ApiFallback: relative,
-                Logger: _logger));
+                Logger: _logger, ChannelMarker: channelMarker));
             if (fit.Spilled)
                 _remoteSpills?.Stage(sessionId, runnerCwd!, new PhoneHomeInputSpill(relative, body));
             return fit.ToType;
@@ -284,7 +297,7 @@ public sealed partial class SessionMessageQueueService
             RelativeSpillPath: relative,
             AgentKind: kind,
             EnvelopePrefix: channelEnvelope,
-            Logger: _logger)).ToType;
+            Logger: _logger, ChannelMarker: channelMarker)).ToType;
     }
 
     /// <summary>
@@ -573,6 +586,8 @@ public sealed partial class SessionMessageQueueService
             // pointer and bytes to that Id in the same insert; neither can then be replaced by
             // a later brief for this busy session.
             var stagedBrief = BindStagedSpill(sessionId, row);
+            if (origin == QueuedMessageOrigin.Channel)
+                row.Body = ChannelPromptCorrelation.Mark(row.Id, row.Body);
             db.SessionQueuedMessages.Add(row);
             var stampCompletion = CompletionNoteStamp.IsCallerCompletionNote(
                 origin, sourceLandNotificationId, sourceTaskId, conversationKey);
@@ -709,15 +724,20 @@ public sealed partial class SessionMessageQueueService
                 CreatedAt = now,
                 Origin = origin,
             };
+            var staged = BindStagedSpill(sessionId, row);
+            if (origin == QueuedMessageOrigin.Channel)
+                row.Body = ChannelPromptCorrelation.Mark(row.Id, row.Body);
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);
+            if (staged is not null) _remoteSpills?.Ack(sessionId, staged);
 
             var nowBody = await SpillQueueBodyAsync(
-                sessionId, trimmed, row.Id.ToString("D"),
+                sessionId, row.Body, row.Id.ToString("D"),
                 origin == QueuedMessageOrigin.Channel
-                    ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
+                    ? TypedBodySpill.TryReadChannelEnvelope(row.Body)
                     : null,
                 db, ct);
+            HoldChannelSpillBytes(row, row.Body, nowBody);
             if (!ReferenceEquals(nowBody, trimmed) && nowBody != trimmed)
                 row.Body = nowBody;
             BindGeneratedSpill(sessionId, row, nowBody);
@@ -1127,12 +1147,14 @@ public sealed partial class SessionMessageQueueService
             }
 
             var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
+            ChannelPromptCorrelation.PrepareFirstAttempt(message);
             var sendNowBody = await SpillQueueBodyAsync(
                 sessionId, message.Body, message.Id.ToString("D"),
                 message.Origin == QueuedMessageOrigin.Channel
                     ? TypedBodySpill.TryReadChannelEnvelope(message.Body)
                     : null,
                 db, ct, specialistInputPolicyJson: message.SpecialistInputPolicyJson);
+            HoldChannelSpillBytes(message, message.Body, sendNowBody);
             if (sendNowBody != message.Body)
                 message.Body = sendNowBody;
             BindGeneratedSpill(sessionId, message, sendNowBody);
@@ -1972,6 +1994,13 @@ public sealed partial class SessionMessageQueueService
 
             foreach (var m in pending.Skip(1))
             {
+                // A shared channel spill is already one immutable delivery. Retyping a retry
+                // must not batch its pointers into a second spill or overwrite the owned file.
+                if (head.Origin == QueuedMessageOrigin.Channel
+                    && (ChannelPromptCorrelation.IsSpillPointer(head.Body)
+                        || ChannelPromptCorrelation.IsSpillPointer(m.Body))
+                    && (head.Body != m.Body || !ChannelPromptCorrelation.SameDeliveredBatch(head, m)))
+                    break;
                 if (m.SpecialistInputPolicyJson is not null
                     || m.Origin != head.Origin || m.ConversationKey != head.ConversationKey)
                     break;
@@ -1982,7 +2011,12 @@ public sealed partial class SessionMessageQueueService
             }
         }
 
-        var composed = run.Count == 1
+        foreach (var member in run)
+            ChannelPromptCorrelation.PrepareFirstAttempt(member);
+
+        var composed = run.Count == 1 || (head.Origin == QueuedMessageOrigin.Channel
+            && ChannelPromptCorrelation.IsSpillPointer(head.Body)
+            && run.All(m => m.Body == head.Body))
             ? head.Body
             : ChannelPromptFormat.FormatBatch(
                 run.Take(run.Count - 1).Select(m => m.Body).ToList(), run[^1].Body);
@@ -2013,7 +2047,10 @@ public sealed partial class SessionMessageQueueService
         var logicalBodies = run.ToDictionary(m => m.Id, m => m.Body);
         var body = committedWire ?? await SpillQueueBodyAsync(
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
-            head.SpecialistInputPolicyJson);
+            head.SpecialistInputPolicyJson,
+            channelMarker: head.Origin == QueuedMessageOrigin.Channel
+                ? ChannelPromptCorrelation.OpeningMarker(head.Body) : null);
+        HoldChannelSpillBytes(head, composed, body);
         BindGeneratedSpill(sessionId, head, body);
         if (!await HoldSpillBodyForDeliveryAsync(db, sessionId, head, body, ct))
             return FlushResult.Failed;

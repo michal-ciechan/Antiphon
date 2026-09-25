@@ -16,6 +16,24 @@ third-party client.
 
 ## What the chat sees
 
+Channel input is correlated by a persisted `[antiphon-channel:<full-guid>]` marker,
+the destination session and the original delivery attempt (CARD-0584). A real submitted
+prompt must contain the literal marker and the entire stored body; whitespace changes,
+including Grok's measured newline deletion, are tolerated only behind that identity.
+The marker is transport metadata, carries no authority and is removed from human replies.
+Addressing comes from the queue row, never from prompt text. Inline batches retain each
+member's marker; a spilled batch retains one shared marked pointer and its original file.
+Retries and process restarts reuse those persisted bytes.
+
+Already-attempted unmarked rows keep full LF-normalized ordinal matching with their
+original attempt floor (original SentAt only for old rows without attempt metadata).
+Ambiguous matches remain owed unless a common delivered batch is evidenced. An old
+unmarked Grok answer whose newlines were deleted cannot be recovered automatically.
+The normal loss handling remains responsible for it. TTL classification uses the same
+receipt rule and the matching turn's own completion/text window; a later unrelated
+answer cannot make an incomplete turn look answered. Queue confirmation and specialist
+Check's exact-input contract are separate and unchanged.
+
 The chat sees the turn that answers an inbound message, and the agent's reply to an Antiphon
 note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled
 prompt — delivered as a follow-up to the most recent conversation, text and any `[[attach:]]`
