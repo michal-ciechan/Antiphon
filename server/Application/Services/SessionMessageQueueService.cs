@@ -3139,11 +3139,10 @@ public sealed partial class SessionMessageQueueService
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);
         }
-        // CARD-0693: BackendUnreachable is a refund (attempt and floor cleared), so it is only ever
-        // the attempt's FIRST write. Once any earlier write left (the S6 Esc here; the body before
-        // the Enter and re-Enter below), the loss propagates to the transport-failure revert, which
-        // keeps the attempt and its floor so the next flush late-confirms before it types again.
-        catch (Exception ex) when (IsHerdrUnreachable(ex) && !overlayDismissed)
+        // CARD-0693: an unreachable body write is refundable even after an overlay Esc: no body
+        // byte has left. Once the body leaves, an unreachable Enter or re-Enter must keep the
+        // attempt and its floor so the next flush can recover without typing the body again.
+        catch (Exception ex) when (IsHerdrUnreachable(ex))
         {
             return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
         }

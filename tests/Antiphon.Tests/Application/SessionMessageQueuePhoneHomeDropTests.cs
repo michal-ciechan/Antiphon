@@ -117,6 +117,62 @@ public class SessionMessageQueuePhoneHomeDropTests
             .ShouldBe(0);
     }
 
+    // An Esc may dismiss an overlay before the body write. If that body write cannot leave,
+    // there is still no message text to duplicate, so the attempt and floor can be refunded.
+    [Test]
+    public async Task Drop_after_overlay_Esc_but_before_body_refunds_and_retries_once()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var peerA = await host.ConnectPeerAsync();
+        var liveA = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(liveA);
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, AgentKind.Grok));
+        }
+        h.Adapter.OverlayOpen = true;
+        var onA = new PhoneHomeRunnerClient(liveA);
+        h.Adapter.BeforeInput = async (input, ct) =>
+        {
+            if (input == Body)
+            {
+                peerA.Socket.Abort();
+                await WaitUntilAsync(() => !liveA.SocketOpen);
+            }
+            await onA.SendInputAsync(h.SessionId, input, ct);
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, Body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        peerA.RequestCount(PhoneHomeOperation.Input).ShouldBe(1, "only Esc reached the runner");
+        h.Adapter.Inputs.ShouldBe(["\u001b"]);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var row = await db.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.AgentSessionId == h.SessionId);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.DeliveryAttempts.ShouldBe(0);
+            row.LastDeliveryStartedAt.ShouldBeNull();
+            row.LastDeliveryBaselineSequence.ShouldBeNull();
+        }
+
+        await using var peerB = await host.ConnectPeerAsync();
+        await WaitUntilAsync(() => host.Directory.SnapshotLive() is { } l && !ReferenceEquals(l, liveA));
+        host.Directory.MarkRecovered(host.Directory.SnapshotLive()!);
+        h.Adapter.BeforeInput = (input, ct) =>
+            new RunnerScopedSessionRunnerClient(host.Directory, host.AllowedRunnerId)
+                .SendInputAsync(h.SessionId, input, ct);
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+
+        peerB.RequestCount(PhoneHomeOperation.Input).ShouldBe(2, "one body and one Enter");
+        h.Adapter.Inputs.ShouldBe(["\u001b", Body, "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe([Body]);
+    }
+
     // CARD-0693. The body reached the runner and sits in its composer; the connection is gone
     // before the submitting Enter, so the Enter never leaves ("phone-home unavailable"). A write
     // that never left is only a refund when nothing of the attempt left before it. Here the body
