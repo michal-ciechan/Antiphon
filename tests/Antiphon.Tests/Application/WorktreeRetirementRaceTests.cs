@@ -911,7 +911,8 @@ public sealed class WorktreeRetirementRaceTests
         await using var world = await RaceWorld.CreateAsync();
         world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
         var session = await world.SeedInteractiveSessionAsync();
-        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, session.StartedAt, world.LaunchSpec(session.Id), null);
+        var generation = await world.OwnStandingLaunchAsync(session.Id);
+        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
         await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
         world.Adapter.Started.ShouldBeTrue();
         (await world.ActiveSessionLaunchIdsAsync(session.Id)).Count.ShouldBe(1, "the launch admits one Launch row for the session");
@@ -932,7 +933,8 @@ public sealed class WorktreeRetirementRaceTests
         await using var world = await RaceWorld.CreateAsync();
         world.Adapter.ReadyResult = false;
         var session = await world.SeedInteractiveSessionAsync();
-        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, session.StartedAt, world.LaunchSpec(session.Id), null);
+        var generation = await world.OwnStandingLaunchAsync(session.Id);
+        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
         await world.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
 
         world.Adapter.Started.ShouldBeTrue();
@@ -1162,6 +1164,19 @@ public sealed class WorktreeRetirementRaceTests
                 .OrderBy(r => r.Id)
                 .Select(r => r.Id)
                 .ToListAsync();
+        }
+
+        /// <summary>
+        /// CARD-0664: point the standing agent at the session (the launch's authorization check) and
+        /// return the persisted generation the launch must carry.
+        /// </summary>
+        public async Task<DateTime> OwnStandingLaunchAsync(Guid sessionId)
+        {
+            await using var db = CreateDb();
+            var agent = await db.Agents.SingleAsync(a => a.Id == AgentId);
+            agent.PersistentSessionId = sessionId.ToString("D");
+            await db.SaveChangesAsync();
+            return (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId)).StartedAt;
         }
 
         public async Task<List<Guid>> ActiveSessionLaunchIdsAsync(Guid sessionId)
