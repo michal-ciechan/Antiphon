@@ -78,6 +78,34 @@ public sealed class CheckpointManifestDocumentationTests
         loop.ShouldContain("`EstimatedMinutes` column", Case.Insensitive);
     }
 
+    /// <summary>CARD-0589 V-6: the owner doc carries the build-slot contract a delegate and an operator need.</summary>
+    [Test]
+    public void the_doc_has_the_build_slots_section()
+    {
+        var doc = ReadRepoFile("docs", "testing-and-build.md");
+        var start = doc.IndexOf("### Build slots (CARD-0589)", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"{DocRelativePath} must have the \"### Build slots (CARD-0589)\" section");
+        var next = doc.IndexOf("\n## ", start, StringComparison.Ordinal);
+        var section = Collapse(next < 0 ? doc[start..] : doc[start..next]);
+        foreach (var phrase in new[]
+                 {
+                     "SessionRunner:BuildSlots", "ANTIPHON_BUILD_SLOTS_URL", "scripts/build-slot.ps1", "BUILD SLOT waiting",
+                     "BUILD SLOT unleased", "exit 4", "-NoSlot", "Directory.Build.rsp", "-nodeReuse:false", "MSBuildNodeCount",
+                 })
+            section.ShouldContain(phrase, Case.Sensitive, $"{DocRelativePath} Build slots section");
+    }
+
+    /// <summary>CARD-0589 V-6: Code reports each checkpoint row's slot outcome and wait.</summary>
+    [Test]
+    public void the_code_bundle_reports_slot_per_row()
+    {
+        var code = ReadCollapsed("server", "Bundles", "stage-code.md");
+        var checkpoints = code[code.IndexOf("CHECKPOINTS:", StringComparison.Ordinal)..];
+        checkpoints = checkpoints[..checkpoints.IndexOf("ROUND:", StringComparison.Ordinal)];
+        checkpoints.ShouldContain("slot=", Case.Sensitive, "the CHECKPOINTS sentence of server/Bundles/stage-code.md");
+        checkpoints.ShouldContain("waited=", Case.Sensitive, "the CHECKPOINTS sentence of server/Bundles/stage-code.md");
+    }
+
     [Test]
     public void the_review_bundle_names_each_checkpoint_defect()
     {
