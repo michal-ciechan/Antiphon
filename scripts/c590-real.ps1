@@ -1,7 +1,8 @@
 # CARD-0590 live server2 bridge. Dot-source from verify-docker-stack.ps1.
 # Executing this file with -Cp runs one plan checkpoint. ASCII only.
 param(
-    [string]$Cp = ''
+    [string]$Cp = '',
+    [switch]$RefreshClaudeToken
 )
 
 $ErrorActionPreference = 'Stop'
@@ -102,15 +103,41 @@ function Invoke-C590Ssh {
     return $LASTEXITCODE
 }
 
-# CARD-0628 D-1. deploy-parent's Claude setup-token: read from the vault item
-# antiphon/server2/claude-oauth-token (login.password) through the approved relay session
-# (BW_SESSION, else the ~/.bw-session pickup file the relay unlock writes) and streamed over SSH
-# STDIN into the server2 token file at 0600. Never argv, never echoed, never written to a desktop
-# file. A locked vault or a missing item is a warning, not a failure: any previously delivered file
-# is left as it was, and deploy-parent creates an empty one if none exists, so the runner reports
-# claudeAuth=logged-out. Returns whether a token was delivered.
+# CARD-0628 D-1 / CARD-0737. The vault read is opt-in. A normal deploy-parent does not call bw
+# and does not replace the server2 token file. -RefreshClaudeToken, manifest refreshClaudeToken,
+# or ANTIPHON_REFRESH_CLAUDE_TOKEN=1 streams vault item antiphon/server2/claude-oauth-token
+# (login.password) through the relay session (BW_SESSION, else ~/.bw-session) over SSH STDIN
+# into the server2 file at 0600. Never argv, never echoed, never written to a desktop file.
+# A locked vault or a missing item skips the refresh and leaves the previous file unchanged.
+# The host lane warns when that file is missing or empty. Returns whether a token was delivered.
 $script:C628ClaudeTokenItem = 'antiphon/server2/claude-oauth-token'
 $script:C628ClaudeTokenRemote = '/home/mc/antiphon-server2/secrets/claude_oauth_token'
+$script:C628RefreshSkipped = 'C628 ClaudeOAuthTokenRefreshSkipped: refresh skipped, previous file unchanged'
+
+function Test-C628ClaudeTokenRefreshRequested {
+    param($Manifest)
+    if ($script:C628RefreshClaudeToken) { return $true }
+    if ($env:ANTIPHON_REFRESH_CLAUDE_TOKEN -match '^(?i:1|true)$') { return $true }
+    if ($null -eq $Manifest) { return $false }
+    $names = @($Manifest.PSObject.Properties.Name)
+    if ($names -contains 'refreshClaudeToken' -and [string]$Manifest.refreshClaudeToken -match '^(?i:1|true)$') {
+        return $true
+    }
+    return $false
+}
+
+function Invoke-C628ClaudeTokenOnDeploy {
+    param(
+        $Manifest,
+        [switch]$Refresh
+    )
+    if ($Refresh) { $script:C628RefreshClaudeToken = $true }
+    if (-not (Test-C628ClaudeTokenRefreshRequested -Manifest $Manifest)) {
+        Write-Host 'Claude token: keeping the existing server2 file (no vault refresh requested)'
+        return $false
+    }
+    return Send-C628ClaudeOAuthToken
+}
 
 function Send-C628ClaudeOAuthToken {
     $session = $env:BW_SESSION
@@ -119,7 +146,7 @@ function Send-C628ClaudeOAuthToken {
         if (Test-Path -LiteralPath $pickup) { $session = (Get-Content -Raw -LiteralPath $pickup).Trim() }
     }
     if (-not $session -or -not (Get-Command bw -ErrorAction SilentlyContinue)) {
-        Write-Warning 'C628 ClaudeOAuthTokenUnavailable: vault locked or bw missing; the runner will report claudeAuth=logged-out'
+        Write-Warning $script:C628RefreshSkipped
         return $false
     }
     $previous = $env:BW_SESSION
@@ -128,7 +155,8 @@ function Send-C628ClaudeOAuthToken {
         $env:BW_SESSION = $session
         $token = (& bw get password $script:C628ClaudeTokenItem --nointeraction 2>$null | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $token) {
-            Write-Warning ('C628 ClaudeOAuthTokenUnavailable: vault item ' + $script:C628ClaudeTokenItem + ' not readable; the runner will report claudeAuth=logged-out')
+            $token = ''
+            Write-Warning $script:C628RefreshSkipped
             return $false
         }
         $target = $script:C628ClaudeTokenRemote
@@ -242,7 +270,7 @@ function Invoke-C590LiveCase {
     $tokenCopied = $false
     try {
         if ($Case -eq 'deploy-parent') {
-            [void](Send-C628ClaudeOAuthToken)
+            [void](Invoke-C628ClaudeTokenOnDeploy -Manifest $Manifest)
         }
 
         if ($Case -eq 'git-credential-smoke') {
@@ -338,7 +366,9 @@ function Invoke-C590PlanCheckpoint {
         throw "no live dispatcher for $Checkpoint filter"
     }
     $manifestPath = New-C590ManifestFile -EvidenceRoot $evidence -RunId $run -Sha $sha -Filter $row.Filter -Project $project -NoBuild $noBuild -MinExecuted $row.MinExecuted -Checkpoint $Checkpoint -Broker $broker
-    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'verify-docker-stack.ps1') -Case $case -Manifest $manifestPath
+    $verify = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'verify-docker-stack.ps1'), '-Case', $case, '-Manifest', $manifestPath)
+    if ($RefreshClaudeToken) { $verify += '-RefreshClaudeToken' }
+    & pwsh @verify
     exit $LASTEXITCODE
 }
 

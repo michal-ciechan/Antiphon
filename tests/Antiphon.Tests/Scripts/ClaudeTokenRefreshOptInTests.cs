@@ -71,6 +71,7 @@ public sealed class ClaudeTokenRefreshOptInTests
         bridge.Contains("claudeAuth=logged-out", StringComparison.Ordinal)
             .ShouldBeFalse("the desktop bridge must not claim the runner logged out");
         bridge.ShouldContain("[switch]$RefreshClaudeToken");
+        bridge.ShouldContain("ANTIPHON_REFRESH_CLAUDE_TOKEN");
         verify.ShouldContain("[switch]$RefreshClaudeToken");
         verify.ShouldContain("$script:C628RefreshClaudeToken");
 

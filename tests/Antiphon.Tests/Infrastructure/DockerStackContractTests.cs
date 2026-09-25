@@ -536,7 +536,8 @@ public sealed class DockerStackContractTests
         bridge.ShouldContain("$token | & ssh -o BatchMode=yes");
         bridge.ShouldContain("cat > '$target.tmp' && chmod 0600 '$target.tmp'");
         bridge.ShouldContain("if ($Case -eq 'deploy-parent') {");
-        bridge.ShouldContain("ClaudeOAuthTokenUnavailable");
+        bridge.ShouldContain("ClaudeOAuthTokenRefreshSkipped");
+        bridge.ShouldContain("Invoke-C628ClaudeTokenOnDeploy");
         foreach (var line in bridge.Replace("\r\n", "\n").Split('\n').Where(line => line.Contains("$token", StringComparison.Ordinal)))
         {
             line.Contains("Write-", StringComparison.Ordinal).ShouldBeFalse("the token is never written out: " + line.Trim());
