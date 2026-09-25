@@ -34,6 +34,15 @@ external SQL maintenance must publish an event or restart the process.
 - V-3: legacy opt-out cleanup before suppression and retry of pending Git residue.
 - R-1: full card-file classes, Unit lane, and complete affected mutation-producer
   classes. All PCs remain pending for method-scoped SourceLanding Mutation.
+- V-4: opted-out reinspection. A clean skip drops database work only. Every sweep
+  probes the pinned directory for markdown and runs one `git ls-files -s` per
+  repository; a hit unstages and deletes immediately. Startup, the 15-minute
+  backstop, and a restoring server git command still force a full reinspection.
+  Git in another repository leaves an unrelated board skipped. A land refuses
+  when the source diff adds or modifies an opted-out card directory. A server
+  whole-index commit reinspects that repository first. `GitMayRestoreWorktree`
+  treats `restore --staged` and mixed `reset` as not restoring, and `reset --hard`
+  as restoring.
 
 ### Checkpoints
 
@@ -134,12 +143,56 @@ test processes completed. The detached baseline checkout and task-local diagnost
 tool were also removed. The output inventory and full raw logs remain under
 `.antiphon/` in the task worktree.
 
+## Repair 2 (privacy blocker)
+
+Review c739cb90 found that a staged restore during the 15-minute skip could be
+committed. The skip now drops database work only. Each sweep probes skipped
+boards, a land refuses an opted-out card-directory diff, and a server
+whole-index commit reinspects that repository first. The historical verified
+commit `d0eb4ae3b4fb37465c7ca391992119041ff1e30e` is the cache implementation.
+The repair's verified code/test commit is `f32c03023dbac21c1621e85778abe8e2efe3e8ca`
+on `feat/card-task-77bbad75` in `/work/worktrees/task-77bbad75`.
+
+### Repair checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-R1 | red tests | tests/Antiphon.Tests -> bin-c700r/ | red-repair | `/*/*/CardFileBoardLookupTests/Repair2_*` | V-4 | sweep, tick, both commits, and land red | 9 | 8 |
+| CP-R2 | implementation | tests/Antiphon.Tests -> bin-c700r/ | repair | `/*/*/CardFileBoardLookupTests/Repair2_*` | V-4 | 23 passed, 0 failed | 23 | 6 |
+| CP-5 | implementation | CP-R2 rebuilt | card-files | `/*/*/(CardFile*)\|(CardTaskFile*)/*` | V-1,V-2,V-3,V-4 | roster; only the 20 CARD-0713 failures | 250 | 8 |
+| CP-6 | implementation | CP-5 | producers | `/*/*/(ProjectServiceTests*)\|(ProjectSetupServiceTests*)\|(ProjectDeletionTests*)\|(BoardProjectArchiveTests*)\|(BoardServiceIntegrationTests*)/*` | V-2 | five classes; one CARD-0715 failure | 30 | 3 |
+| CP-7 | implementation | CP-5 | unit | `/*/*/*/*[Category=Unit]` | R-1 | full lane, 0 failures | 1992 | 5 |
+
+CP-R1's first build did not compile (missing hosted-service using and `CommitSha`),
+and a dotnet shim then dropped `dotnet run`. Neither wrote a valid TRX. The
+recorded red run is the rebuild after those fixes. CP-5's first execution had one
+extra failure: the backstop re-clean raced startup. That test now waits for the
+startup generation. The rerun is the recorded line. CP-7's script exit 3 is a
+roster token (`CardFileBoardLookupTests`) that is Integration, not Unit. The TRX
+counters are the result. CP-R2 confirmed the five previously red cases before
+the card-file lane; it is the same filter as CP-R1 and is listed because it was run.
+
+```text
+CHECKPOINT CP-R1 commit=1ad0f4a2fcd3858cde48f814b4468b712ef3a108 build=ok filter=/*/*/CardFileBoardLookupTests/Repair2_* executed=23 passed=18 failed=5 skipped=0 trx=/work/worktrees/task-77bbad75/.antiphon/c700r-red/CP-R1-20260925-175826-7373/run.trx reruns=2
+CHECKPOINT CP-R2 commit=a02ace6adbffae044af699cecfe11362d7966665 build=ok filter=/*/*/CardFileBoardLookupTests/Repair2_* executed=23 passed=23 failed=0 skipped=0 trx=/work/worktrees/task-77bbad75/.antiphon/c700r-green/CP-R2-20260925-180826-ae6f/run.trx
+CHECKPOINT CP-5 commit=f32c03023dbac21c1621e85778abe8e2efe3e8ca build=ok filter=/*/*/(CardFile*)|(CardTaskFile*)/* executed=289 passed=269 failed=20 skipped=0 trx=/work/worktrees/task-77bbad75/.antiphon/c700r-files/CP-5-20260925-182047-e676/run.trx reruns=1
+CHECKPOINT CP-6 commit=f32c03023dbac21c1621e85778abe8e2efe3e8ca build=reused filter=/*/*/(ProjectServiceTests*)|(ProjectSetupServiceTests*)|(ProjectDeletionTests*)|(BoardProjectArchiveTests*)|(BoardServiceIntegrationTests*)/* executed=44 passed=43 failed=1 skipped=0 trx=/work/worktrees/task-77bbad75/.antiphon/c700r-producers/CP-6-20260925-183049-9519/run.trx
+CHECKPOINT CP-7 commit=f32c03023dbac21c1621e85778abe8e2efe3e8ca build=reused filter=/*/*/*/*[Category=Unit] executed=3120 passed=3120 failed=0 skipped=29 trx=/work/worktrees/task-77bbad75/.antiphon/c700r-unit/CP-7-20260925-183210-f826/run.trx
+```
+
+The 20 card-file failures are the CARD-0713 set (4 hook, 3 junction, 3 reparse,
+10 script). The producer failure is `setup_rejects_a_directory_already_owned_by_a_project`
+(CARD-0715). No new failures. All PCs remain pending for method-scoped
+SourceLanding Mutation. bin-c700r output was removed after these runs.
+
 ## Handoff
 
-The verified code/test commit is `d0eb4ae3b4fb37465c7ca391992119041ff1e30e`.
-The final follow-up commit adds only this report and the testing-guide note.
+The verified code/test commit is `f32c03023dbac21c1621e85778abe8e2efe3e8ca`.
+The cache implementation recorded above remains `d0eb4ae3b4fb37465c7ca391992119041ff1e30e`.
+This follow-up commit adds the repair evidence.
 
-Review the implementation and test evidence. The caller owns landing, restart,
-`/api/version` verification and desktop `pg_stat_statements` measurement. Ordinary
-runs do not discharge any SourceLanding Mutation obligation. Work proceeded under
-the standing operator authority; no additional approval was requested.
+Review the probe, the land refusal, and the whole-index reinspection. The caller
+owns landing. Restart the server after land; the runner does not host this sweep.
+Ordinary runs do not discharge any SourceLanding Mutation obligation. Work
+proceeded under the standing operator authority; no additional approval was
+requested.
