@@ -1,9 +1,12 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -188,6 +191,248 @@ public class SessionStateWarmupTests
         f.Capture.Clear(); clock.Advance(TimeSpan.FromMinutes(16));
         var state = await f.Store.ReadAsync(f.OtherId, default);
         state.Pinned.ShouldBeTrue(); f.SeedQueries.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Committed_board_delete_evicts_the_cached_working_entry()
+    {
+        var clock = new AdvancingClock();
+        await using var f = await SessionStateTestFixture.CreateAsync(clock: clock);
+        var graph = await WarmCardSessionAsync(f);
+        await using var db = f.Db();
+        await new BoardService(db, new MockEventBus(), TimeProvider.System).DeleteAsync(graph.BoardId, default);
+        await AssertDeletedSessionStaysMissingAsync(f, clock);
+    }
+
+    [Test]
+    public async Task Committed_project_delete_evicts_the_cached_working_entry()
+    {
+        var clock = new AdvancingClock();
+        await using var f = await SessionStateTestFixture.CreateAsync(clock: clock);
+        var graph = await WarmCardSessionAsync(f);
+        await using var db = f.Db();
+        await Projects(db).DeleteAsync(graph.ProjectId, force: true, default);
+        await AssertDeletedSessionStaysMissingAsync(f, clock);
+    }
+
+    [Test]
+    public async Task Rolled_back_board_delete_leaves_the_cached_snapshot()
+    {
+        var fault = new CommitFault { Before = true };
+        await using var f = await SessionStateTestFixture.CreateAsync(fault);
+        var before = await WarmCardSessionAsync(f);
+        fault.Armed = true;
+        await using var db = f.Db();
+        var ex = await Should.ThrowAsync<Exception>(() =>
+            new BoardService(db, new MockEventBus(), TimeProvider.System).DeleteAsync(before.BoardId, default));
+        ex.ToString().ShouldContain("planned rollback");
+        (await f.Store.ReadAsync(f.SessionId, default)).ShouldBe(before.Snapshot);
+        await using var verify = f.Db();
+        (await verify.AgentSessions.AnyAsync(s => s.Id == f.SessionId)).ShouldBeTrue();
+        (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == f.SessionId)).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Ambiguous_project_commit_reloads_instead_of_keeping_working()
+    {
+        var fault = new CommitFault { After = true };
+        await using var f = await SessionStateTestFixture.CreateAsync(fault);
+        var graph = await WarmCardSessionAsync(f);
+        fault.Armed = true;
+        await using var db = f.Db();
+        var ex = await Should.ThrowAsync<Exception>(() => Projects(db).DeleteAsync(graph.ProjectId, force: true, default));
+        ex.ToString().ShouldContain("planned ambiguous commit");
+        await using var verify = f.Db();
+        (await verify.AgentSessions.AnyAsync(s => s.Id == f.SessionId)).ShouldBeFalse();
+        var state = await f.Store.ReadAsync(f.SessionId, default);
+        state.Readiness.ShouldBe(SessionStateReadiness.Missing);
+        state.Working.ShouldBeFalse();
+        state.Count.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Cascade_delete_does_not_resurrect_a_committed_ingest()
+    {
+        var pause = new PauseAfterTranscriptSave();
+        await using var f = await SessionStateTestFixture.CreateAsync(pause);
+        var graph = await WarmCardSessionAsync(f);
+        pause.Armed = true;
+        var ingest = f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(2, uuid: "race-row")]);
+        await pause.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task? deleting = null;
+        await using var db = f.Db();
+        try
+        {
+            var wait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Store.NextGateWait = wait;
+            deleting = new BoardService(db, new MockEventBus(), TimeProvider.System).DeleteAsync(graph.BoardId, default);
+            var winner = await Task.WhenAny(deleting, wait.Task).WaitAsync(TimeSpan.FromSeconds(10));
+            f.Store.NextGateWait = null;
+            winner.ShouldBe(wait.Task, "cascade delete must take the session gate held by the in-flight ingest");
+        }
+        finally
+        {
+            pause.Release.TrySetResult();
+        }
+
+        await ingest;
+        deleting.ShouldNotBeNull();
+        await deleting;
+        await using var verify = f.Db();
+        (await verify.AgentSessions.AnyAsync(s => s.Id == f.SessionId)).ShouldBeFalse();
+        (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == f.SessionId)).ShouldBeFalse();
+        var state = await f.Store.ReadAsync(f.SessionId, default);
+        state.Readiness.ShouldBe(SessionStateReadiness.Missing);
+        state.Working.ShouldBeFalse();
+        state.Count.ShouldBe(0);
+        (await f.Services.GetRequiredService<SessionMessageQueueService>().GetQueueAsync(f.SessionId, default)).Working.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Retention_prune_drops_cached_working_state()
+    {
+        var clock = new AdvancingClock();
+        await using var f = await SessionStateTestFixture.CreateAsync(clock: clock);
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(1)]);
+        (await f.Store.ReadAsync(f.SessionId, default)).Working.ShouldBeTrue();
+        await using var db = f.Db();
+        var old = DateTime.UtcNow.AddDays(-200);
+        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(s =>
+            s.SetProperty(x => x.Status, SessionStatus.Stopped).SetProperty(x => x.LastSeenAt, old));
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId)
+            .ExecuteUpdateAsync(t => t.SetProperty(x => x.CreatedAt, old));
+        var audit = Options.Create(new AuditSettings());
+        var retention = new DataRetentionService(db, Options.Create(new RetentionSettings()), audit,
+            TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, audit), f.Store);
+        (await retention.PruneTranscriptsAsync(default)).ShouldBe(1);
+        for (var i = 0; i < 20; i++)
+        {
+            var empty = await f.Store.ReadAsync(f.SessionId, default);
+            empty.Count.ShouldBe(0);
+            empty.Working.ShouldBeFalse();
+            empty.Readiness.ShouldBe(SessionStateReadiness.Ready);
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        f.Store.CachedCount.ShouldBe(1, "continued reads keep the entry inside the idle window");
+        (await f.Store.ReadAsync(f.SessionId, default)).Working.ShouldBeFalse();
+        (await retention.PruneSessionsAsync(default)).ShouldBe(1);
+        for (var i = 0; i < 20; i++)
+        {
+            var missing = await f.Store.ReadAsync(f.SessionId, default);
+            missing.Readiness.ShouldBe(SessionStateReadiness.Missing);
+            missing.Working.ShouldBeFalse();
+            missing.Count.ShouldBe(0);
+        }
+    }
+
+    private static ProjectService Projects(AppDbContext db) =>
+        new(db, null!, Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance);
+
+    private static async Task AssertDeletedSessionStaysMissingAsync(SessionStateTestFixture f, AdvancingClock clock)
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            var state = await f.Store.ReadAsync(f.SessionId, default);
+            state.Readiness.ShouldBe(SessionStateReadiness.Missing);
+            state.Working.ShouldBeFalse();
+            state.Count.ShouldBe(0);
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var still = await f.Store.ReadAsync(f.SessionId, default);
+        still.Readiness.ShouldBe(SessionStateReadiness.Missing);
+        f.Store.CachedCount.ShouldBe(1, "the missing entry is still inside the idle window, so eviction did not clear it");
+        (await f.Services.GetRequiredService<SessionMessageQueueService>().GetQueueAsync(f.SessionId, default)).Working.ShouldBeFalse();
+        await using var verify = f.Db();
+        (await verify.AgentSessions.AnyAsync(s => s.Id == f.SessionId)).ShouldBeFalse();
+    }
+
+    private static async Task<CardGraph> WarmCardSessionAsync(SessionStateTestFixture f)
+    {
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, [f.Event(1)]);
+        var snapshot = await f.Store.ReadAsync(f.SessionId, default);
+        snapshot.Working.ShouldBeTrue();
+        await using var db = f.Db();
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
+        db.Projects.Add(new Project
+        {
+            Id = projectId,
+            Name = "c701-" + projectId.ToString("N"),
+            GitRepositoryUrl = "https://example.test/c701.git",
+            LocalRepositoryPath = Path.Combine(Path.GetTempPath(), "c701-" + projectId.ToString("N")),
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        db.Boards.Add(new Board
+        {
+            Id = boardId, ProjectId = projectId, Name = "c701", CreatedAt = now, UpdatedAt = now
+        });
+        db.BoardColumns.Add(new BoardColumn
+        {
+            Id = columnId, BoardId = boardId, StateKey = "backlog", Name = "Backlog",
+            CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now
+        });
+        db.Cards.Add(new Card
+        {
+            Id = cardId, BoardId = boardId, BoardColumnId = columnId, Identifier = "CARD-0701",
+            Title = "cache", CreatedAt = now, UpdatedAt = now
+        });
+        await db.SaveChangesAsync();
+        await db.AgentSessions.Where(s => s.Id == f.SessionId)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.CardId, cardId));
+        return new CardGraph(projectId, boardId, snapshot);
+    }
+
+    private readonly record struct CardGraph(Guid ProjectId, Guid BoardId, SessionStateSnapshot Snapshot);
+
+    private sealed class CommitFault : DbTransactionInterceptor
+    {
+        public bool Before { get; init; }
+        public bool After { get; init; }
+        public bool Armed;
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed && Before)
+                throw new InvalidOperationException("planned rollback");
+            return ValueTask.FromResult(result);
+        }
+
+        public override Task TransactionCommittedAsync(
+            DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed && After)
+                throw new InvalidOperationException("planned ambiguous commit");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class PauseAfterTranscriptSave : SaveChangesInterceptor
+    {
+        public bool Armed;
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (Armed && eventData.Context!.ChangeTracker.Entries<TranscriptEntry>().Any())
+            {
+                Armed = false;
+                Reached.TrySetResult();
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken);
+            }
+
+            return result;
+        }
     }
 
     private sealed class ControlledLoader(ISessionStateLoader inner) : ISessionStateLoader

@@ -92,6 +92,10 @@ public sealed class SessionStateStore : IDisposable
         catch { lease.Dispose(); throw; }
     }
 
+    // Tests set this to observe that a delete entered the gate without sleeping.
+    // A null signal changes nothing. The signal fires as the wait starts, including when the gate is busy.
+    internal TaskCompletionSource? NextGateWait;
+
     private async Task<Lease> AcquireAsync(Guid id, CancellationToken ct)
     {
         Entry entry;
@@ -107,7 +111,12 @@ public sealed class SessionStateStore : IDisposable
             }
             entry.Users++;
         }
-        try { await entry.Gate.WaitAsync(ct); return new Lease(this, entry); }
+        try
+        {
+            NextGateWait?.TrySetResult();
+            await entry.Gate.WaitAsync(ct);
+            return new Lease(this, entry);
+        }
         catch { Return(entry, releaseGate: false); throw; }
     }
 
