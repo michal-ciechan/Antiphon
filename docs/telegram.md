@@ -29,6 +29,8 @@ Already-attempted unmarked rows keep full LF-normalized ordinal matching with th
 original attempt floor (original SentAt only for old rows without attempt metadata).
 Ambiguous matches remain owed unless a common delivered batch is evidenced. An old
 unmarked Grok answer whose newlines were deleted cannot be recovered automatically.
+Legacy rows never consume a receipt containing a complete channel marker, including
+wrapped or batched receipts; a marked owner keeps its own marker and attempt requirements.
 The normal loss handling remains responsible for it. TTL classification uses the same
 receipt rule and the matching turn's own completion/text window; a later unrelated
 answer cannot make an incomplete turn look answered. Queue confirmation and specialist
@@ -38,7 +40,11 @@ The chat sees the turn that answers an inbound message, and the agent's reply to
 note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled
 prompt — delivered as a follow-up to the most recent conversation, text and any `[[attach:]]`
 files, unless the whole reply is exactly `NO_REPLY`. Follow-up matching is by task id (and the
-note's first line), so a Grok transcript that joined the header onto the body still delivers. A bootstrap, restart or compaction note is
+note's first line), so a Grok transcript that joined the header onto the body still delivers.
+Quoting a channel marker inside a task or Check report does not suppress that follow-up.
+The fallback guard recognizes the opening channel marker, or the marker immediately after
+the batch context heading, including a clipped marker in that position.
+A bootstrap, restart or compaction note is
 never delivered unless it carries `[[attach:]]`. Server-composed pings (blocked-task, decision,
 and `ChannelReplyLost` incident pages) also arrive through the same outbound topic when
 `Digest:Enabled` and the catalog row is `DigestEnabled`. Catalog `lastMessageAt` is the last
