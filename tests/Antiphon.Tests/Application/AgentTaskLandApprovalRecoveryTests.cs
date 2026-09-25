@@ -272,6 +272,12 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         // CARD-0688 D-7: schema 3 never moves the branch; derivation is the read-only acceptance of a branch that a
         // schema-2 rebase moved to its witnessed P. Put the branch where that rebase would have left it.
         h.Git.RewindSource(p);
+        await using (var db = h.CreateContext())
+        {
+            var stored = await db.AgentTaskLandings.SingleAsync(o => o.Id == failed.Id);
+            stored.SchemaVersion = 2;
+            await db.SaveChangesAsync();
+        }
         h.Verifier.Passed = true;
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();

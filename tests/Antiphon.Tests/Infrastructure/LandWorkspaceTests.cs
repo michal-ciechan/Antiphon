@@ -137,16 +137,45 @@ public sealed class LandWorkspaceTests
         var path = s.Workspace.PathFor(s.Common);
         (await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None)).Reason.ShouldBeNull();
         var lockPath = (await s.F.RequiredAsync(path, "rev-parse", "--path-format=absolute", "--git-path", "index.lock")).Trim();
-        await File.WriteAllBytesAsync(lockPath, []);
-        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow - TimeSpan.FromHours(1));
-        s.F.Git.Trace.Clear();
+        using (var holder = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read))
+        {
+            s.F.Git.Trace.Clear();
+            var state = await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None);
 
-        var state = await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None);
-
-        state.Reason.ShouldBe(GitIndexLock.StaleCode);
-        s.F.Git.Trace.ShouldNotContain(a => a.Contains("reset") || a.Contains("clean"));
-        File.Exists(lockPath).ShouldBeTrue("a refusal never deletes the lock");
+            state.Reason.ShouldBe(GitIndexLock.HeldCode);
+            s.F.Git.Trace.ShouldNotContain(a => a.Contains("reset") || a.Contains("clean"));
+            File.Exists(lockPath).ShouldBeTrue("a refusal never deletes the lock");
+            if (OperatingSystem.IsWindows())
+            {
+                Should.Throw<IOException>(() => File.Delete(lockPath));
+                Should.Throw<IOException>(() => File.Move(lockPath, lockPath + ".moved"));
+            }
+        } // Release our handle before deleting: Windows does not permit POSIX unlink semantics.
         File.Delete(lockPath);
+        (await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None)).Reason.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("reset")]
+    [Arguments("clean")]
+    public async Task C688_Repair_WindowsOpenFilePreventsResetOrCleanUntilReleased(string mutation)
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("Windows open handles deny delete and rename.");
+        await using var s = await Scene.CreateAsync();
+        var path = s.Workspace.PathFor(s.Common);
+        (await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None)).Reason.ShouldBeNull();
+        var held = Path.Combine(path, mutation == "reset" ? "keep.txt" : "untracked.txt");
+        await File.WriteAllTextAsync(held, "held bytes\n");
+        using (var holder = new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Should.Throw<IOException>(() => File.Delete(held));
+            Should.Throw<IOException>(() => File.Move(held, held + ".moved"));
+            var state = await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None);
+            state.Reason.ShouldBe(mutation == "reset" ? "land_worktree_reset_failed" : "land_worktree_clean_failed");
+            (await File.ReadAllTextAsync(held)).ShouldBe("held bytes\n");
+        }
+        (await s.Workspace.EnsureAsync(s.F.Repository, path, s.F.SeedSha, null, CancellationToken.None)).Reason.ShouldBeNull();
+        (await s.F.RequiredAsync(path, "status", "--porcelain=v1", "--untracked-files=all")).ShouldBeEmpty();
     }
 
     private sealed class Scene : IAsyncDisposable
