@@ -783,6 +783,90 @@ Amendments (R2):
 
 MS-5 is added to the missing-setup list: `tests/Antiphon.Tests/TestHelpers/DrainAfterClaimCheckDirectory.cs`.
 
+#### R3 (red first in `S6-tests`..`S9-tests`; live rows on the desktop lane)
+
+Seams R3 adds (missing setup, compiled in the red commits):
+
+- **MS-6** `PhoneHomeCommandDispatcher` gains optional `IHostApplicationLifetime? lifetime = null`
+  and `TimeProvider? time = null` constructor parameters (the 34 existing constructions compile
+  unchanged); the 250 ms stop delay is `time.Delay`-based. Tests pass a `RecordingLifetime`
+  (records `StopApplication` calls with the fake-clock instant) and a `FakeTimeProvider`; the
+  fake runtime's reply writer records the instant each reply frame is written.
+- **MS-7** `RunnerRetireJob` is constructed directly: `(IServiceScopeFactory, ISessionRunnerDirectory,
+  IOptions<PhoneHomeRunnerSettings>, TimeProvider, ILogger<RunnerRetireJob>)` with `RunAsync(ct)`;
+  `RunnerRetireJobTests` share one `FakeTimeProvider` between `PhoneHomeTestHost.StartAsync(clock:)`
+  and the job. **Lease hazard:** `RetireIdleSeconds` (120) exceeds the default `LeaseSeconds` (90),
+  so a live-peer arm built with the default lease would take the `idle_disconnected` branch after
+  the clock advance; live-peer arms use MS-1 `Pair(..., leaseSeconds: 3600)`, V-19 uses 90.
+- **MS-8** `PhoneHomeScriptedPeer` gains `Retires` (request frames of operation 27, decoded
+  `RunnerRetireRequest`) and a default `RunnerRetireResult` reply; a test can script
+  `phone_home_runner_busy` through `Reply`.
+- **MS-9** `BuildSlotBroker` already takes `IProcessLivenessProbe` and `TimeProvider`; S8 adds
+  `Renew(leaseId)` and the `HolderLiveness`/`RenewGraceSeconds`/`RenewEverySeconds` settings.
+  The wrapper renewer runs in `Start-ThreadJob`, whose runspace does not inherit functions: the
+  renewer must import `scripts/lib/build-slot.ps1` (or receive the endpoint and shim path as
+  arguments) so `C589_SLOT_SHIM` also answers the renew calls; the shim appends
+  `{"method","uri","at"}` lines to its log.
+
+| ID | File :: method | CP | Red in the red CP | Red mechanism (production line) |
+|---|---|---|---|---|
+| V-14 | SR `PhoneHomeCommandDispatcherTests.cs` :: `Retire_refuses_while_sessions_are_owned_unless_forced` | CP-9/10 | decisive (`phone_home_unsupported_operation`) | busy refusal → PC-42; forced `KillAllAsync` → PC-43 |
+| V-15 | same :: `Retire_reply_is_written_before_the_host_stops` | CP-9/10 | decisive (never stopped) | stop scheduled after the reply write → PC-44 |
+| V-16 | `Application/RunnerRetireJobTests.cs` :: `Draining_runner_with_retire_when_idle_is_retired_after_the_idle_window` | CP-11/12 | decisive (stub `RunAsync` throws) | min-drain check → PC-50; two-observation window → PC-51 |
+| V-17 | same :: `Live_session_queued_task_or_busy_answer_keeps_the_runner_draining` | CP-11/12 | decisive | bound-row check → PC-47; queued check → PC-48; inventory check → PC-49; busy clears `IdleObservedAt` → PC-53; `RetiredAt` only on a result → PC-56 |
+| V-18 | same :: `A_drain_without_retire_when_idle_is_never_retired` | CP-11/12 | decisive | `RetireWhenIdle` filter → PC-46; `Draining` filter → PC-45 |
+| V-19 | same :: `Disconnected_draining_runner_with_no_bound_rows_is_marked_retired_without_a_send` | CP-11/12 | decisive | lease-expired condition → PC-55; no-bound-rows condition → PC-54 |
+| V-20 | `Application/PhoneHomeRollingRunnerTests.cs` :: `Forced_retire_requires_the_operator_token_and_the_runner_id_confirmation` | CP-11/12 | setup (404) | token → PC-57; confirmation → PC-58 |
+| V-21 | same :: `Forced_retire_fails_bound_sessions_writes_an_incident_and_sends_a_forced_retire` | CP-11/12 | setup (404) | row failure → PC-60; incident → PC-61 |
+| V-22 | same :: `Forced_retire_of_a_runner_that_is_not_draining_is_refused` | CP-11/12 | setup (404) | draining precondition → PC-59 |
+| V-23 | same :: `Rolling_upgrade_moves_new_launches_to_server2_temp_keeps_server2_reachable_and_retires_server2_temp_when_idle` | CP-11/12 | decisive at the retire step (job stub) | integration pin; red via PC-51 and PC-9 (it is the brief's two-peer acceptance, not a separate guard) |
+| V-24 | SR `BuildSlotBrokerTests.cs` :: `Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness` | CP-13/14 | decisive (reaped by pid) | renew mode skips pid liveness → PC-63; grace reap → PC-64 |
+| V-25 | same :: `Renew_extends_a_held_lease_and_an_unknown_lease_answers_false` | CP-13/14 | decisive (stub) | `LastRenewedAt` update → PC-65 |
+| V-26 | SR `BuildSlotEndpointTests.cs` :: `Post_renew_answers_204_for_a_held_lease_and_404_otherwise` | CP-13/14 | decisive (404 both) | unknown → 404 → PC-67 |
+| V-27 | same :: `Build_slots_only_host_serves_health_and_build_slots_and_nothing_else` | CP-13/14 | decisive (`/sessions` 200) | `BuildSlotsOnly` branch → PC-68 |
+| V-28 | `Scripts/BuildSlotScriptTests.cs` :: `Wrapper_renews_a_renew_mode_grant_while_the_command_runs` | CP-15/16 | decisive (0 renews) | renew only when asked → PC-69; renewer started → PC-70; renewer stopped before release → PC-71 |
+| V-29 | `Infrastructure/DockerStackContractTests.cs` :: the three methods the roster names (+ the three slot-aware updates) | CP-17/18 | decisive (text) | override `restart: "no"` → PC-72; no `runner-state` in the override → PC-77; broker unprivileged → PC-78 |
+| V-30 | `Infrastructure/DindRunnerContractTests.cs` :: `Temp_override_keeps_the_base_healthcheck_and_secret_path` (new) + the two named existing methods | CP-17/18 | decisive (override file missing: the test reads it and fails at `File.Exists`) | → PC-80 |
+| V-31 | `Scripts/RemoteScriptContractTests.cs` :: the four methods the roster names | CP-17/18 | decisive (text) | no `--remove-orphans` → PC-73; keep set → PC-74; retired evidence → PC-75; `down -v` scoped to the temp project → PC-76; Grok store from `docker volume inspect` → PC-79 |
+| V-32 | `scripts/test-deploy-server2.ps1` T-1..T-6 | CP-19/20 | decisive (script missing) | eligibility wait → PC-81, PC-86; busy bound → PC-82; token precondition → PC-84; no-print → PC-85 |
+| V-33 | `Scripts/RunnerDrainScriptTests.cs` (retire verb added) | CP-17/18 | decisive (verb absent) | PC-41 (R2) |
+| L-1 | `deploy-server2.ps1 -Rolling -Phase deploy-temp` | CP-22 | live | red = nonzero exit or a missing evidence file |
+| L-2 | six `provider-auth` reads | CP-23 | live | **cannot go red by any code change**: an observation of the accepted login-contention risk; flagged as a stub in the PC sense, kept as risk evidence, guards none |
+| L-3 | `-Phase drain-old` .. `retire-temp` + log grep | CP-24 | live | red = nonzero exit, missing `retiredAt`, or a lock hit |
+
+Amendments (R3):
+
+- **V-15**: at fake `t0` the reply is recorded; `StopApplication` count is 0 at `t0 + 249 ms` and
+  1 at `t0 + 250 ms`, and its recorded instant is after the reply's. No wall-clock wait.
+- **V-16** boundary arms, one `FakeTimeProvider`: drain at `t0`; run at `t0+59 s` → `IdleObservedAt
+  == null`; run at `t0+60 s` → stamped, `peerB.Retires.Count == 0`; run at `+119 s` after the
+  stamp → still 0; run at `+120 s` → 1 with `Force == false`, `RetiredAt` set, `RetireReason ==
+  "idle"`; a third run at `+240 s` leaves `Retires.Count == 1`.
+- **V-17** arms: (a) peer B lists S_B `Running` → no stamp, no send; (b) a `Starting` desktop row
+  bound `server2-temp` while peer B lists nothing → no stamp; (c) a Queued unlaunched task bound →
+  no send, a log entry naming its id; (d) idle but peer B answers `phone_home_runner_busy` →
+  `RetiredAt == null` and `IdleObservedAt == null` after that run.
+- **V-18** arms: `server2` draining with `RetireWhenIdle == false` idle for two windows → no send;
+  a seeded row with `RetireWhenIdle == true`, `Draining == false` → no send.
+- **V-19** arms: peer B aborted with no bound rows, `LeaseSeconds 90`: at `+89 s` after the abort
+  `RetiredAt == null`; at `+90 s` `RetireReason == "idle_disconnected"`, `Retires` empty; a second
+  world with a bound Running row stays draining past the lease.
+- **V-21** adds a second world: peer B aborted (disconnected) with S_B bound → the route answers
+  200, S_B `Failed`, `RetireReason` starts with `forced:`, no frame sent.
+- **V-23** keeps the roster text and adds, at the drain of `server2`, the DP-2 message arm (a
+  queued message to S_A delivered on its MS-4 `UserPrompt` while `server2` drains) and asserts the
+  job's first run sends nothing (the two-observation window) before the second run's retire.
+- **V-24** boundaries: grant at `t0` with the pid probe answering dead; `t0+10 s` held;
+  `Renew` at `t0+60 s`; `t0+149 s` held; `t0+150 s` reaped (grace 90 s after the last renew).
+- **V-28** adds: no renew line after the release line in the shim log.
+- **V-30** new method (the roster's two existing methods only read the base file and cannot go red
+  on the override): the override text contains no `healthcheck:` and no `PhoneHome__SecretPath`.
+- **V-32 T-1** also asserts both drain bodies from `trace.jsonl`: `server2` with
+  `redirectTo:"server2-temp", retireWhenIdle:false`; `server2-temp` with `redirectTo:"server2",
+  retireWhenIdle:true`.
+- **V-32 T-2** has two arms: (a) temp status 404 → `TempRunnerNotEligible`, exit 2, no drain in
+  `trace.jsonl`; (b) 200 with `acceptingNewWork:false` until the bound → same.
+
 ### Guards the regression
 
 - R-1 (all rounds): the regression classes listed under the roster run in the round's green
@@ -835,6 +919,58 @@ R2 (G-n maps to PC-n from here on):
 - G-39: D-8 — a failed `WorkspaceRemove` does not block the rebind | PC-39
 - G-40: D-8 — the rebind is persisted before any request to the target | PC-40
 - G-41: D-17 — `runner-drain.ps1` never prints the operator token | PC-41
+
+R3:
+
+- G-42: D-12 — the runner refuses a non-forced retire while it owns sessions | PC-42
+- G-43: D-12 — a forced retire kills every session first | PC-43
+- G-44: D-12 — the host stops only after the reply frame is written | PC-44
+- G-45: D-13 — the job considers only `Draining` rows | PC-45
+- G-46: D-13 — the job considers only `RetireWhenIdle` rows (server2 is never retired) | PC-46
+- G-47: D-13 — idle requires no non-terminal bound session row | PC-47
+- G-48: D-13 — idle requires no Queued unlaunched bound task | PC-48
+- G-49: D-13 — idle requires runner inventory with no non-`Exited` session | PC-49
+- G-50: D-13 — idle requires `now >= DrainedAt + RetireMinDrainSeconds` | PC-50
+- G-51: D-13 — the retire is sent only on a second idle observation `RetireIdleSeconds` after the first | PC-51
+- G-52: D-13 — a row with `RetiredAt` is never sent a second retire | PC-52
+- G-53: D-13 — a `phone_home_runner_busy` answer clears `IdleObservedAt` | PC-53
+- G-54: D-13 — `idle_disconnected` requires no bound rows | PC-54
+- G-55: D-13 — `idle_disconnected` requires the lease to have expired (a reconnecting runner is not retired, which G-31 would make permanent) | PC-55
+- G-56: D-13 — `RetiredAt` is stamped only on a `RunnerRetireResult` | PC-56
+- G-57: D-14 — forced retire requires the operator token | PC-57
+- G-58: D-14 — forced retire requires `confirmRunnerId` equal to the path id | PC-58
+- G-59: D-14 — forced retire requires the runner to be draining | PC-59
+- G-60: D-14 — forced retire fails every non-terminal bound row with `SystemRequest` | PC-60
+- G-61: D-14 — forced retire writes one `RunnerForceRetired` incident | PC-61
+- G-62: D-14 — forced retire stamps `RetiredAt` when the runner is disconnected too | PC-62
+- G-63: D-16 — renew mode ignores pid liveness | PC-63
+- G-64: D-16 — renew mode reaps a lease not renewed within `RenewGraceSeconds` | PC-64
+- G-65: D-16 — `Renew` moves `LastRenewedAt` | PC-65
+- G-66: D-16/D-19 — `HolderLiveness` defaults to `pid` (desktop broker unchanged) | PC-66
+- G-67: D-16 — renew of an unknown lease is 404 | PC-67
+- G-68: D-16 — a `BuildSlotsOnly` host maps no phone-home or session routes | PC-68
+- G-69: D-16 — the wrapper renews only when the grant carries `RenewEverySeconds` | PC-69
+- G-70: D-16 — the wrapper renews while the command runs | PC-70
+- G-71: D-16 — the renewer stops before the release | PC-71
+- G-72: D-15 — the temp override sets `restart: "no"` | PC-72
+- G-73: D-17 — `deploy-temp-runner` never runs `--remove-orphans` | PC-73
+- G-74: D-17 — `deploy-parent` keeps the temp's and the broker's tags | PC-74
+- G-75: D-17 — `retire-temp-runner` refuses without `tempRetiredAt` | PC-75
+- G-76: D-17 — `down -v` is scoped to `antiphon-runner-temp` | PC-76
+- G-77: D-15 — the override never mounts `runner-state` (no shared store identity) | PC-77
+- G-78: D-16 — the broker is unprivileged | PC-78
+- G-79: D-15 — the Grok store path comes from `docker volume inspect` | PC-79
+- G-80: D-15 — the override keeps the base healthcheck and secret path | PC-80
+- G-81: D-17 — `deploy-temp` proceeds only on `acceptingNewWork:true` with the new `buildVersion` | PC-81
+- G-82: D-17 — `drain-old` never reaches `deploy-parent` while the old runner is busy | PC-82
+- G-83: D-13/D-17 — the wrapper drains `server2` with `retireWhenIdle:false` and `server2-temp` with `true` | PC-83
+- G-84: D-17 — a missing token file exits before any case runs | PC-84
+- G-85: D-17 — the wrapper never prints the token | PC-85
+- G-86: D-4 — a 404 status is not eligible in the wrapper | PC-86
+
+Totals: guards = 86, mapped = 86, missing = 0, duplicate PC maps = 0 (G-1..G-86 ↔ PC-1..PC-86;
+R1 maps G-2→PC-4, G-3→PC-5, G-4→PC-2, G-5→PC-3, a permutation). Not guards: V-23 (integration
+pin over G-9/G-51), L-2 (observation), T-4 (idempotent re-run convenience).
 
 ### Positive controls
 
@@ -897,6 +1033,59 @@ R2 (class prefix `PHRR` = `PhoneHomeRollingRunnerTests`, `PHC` = `PhoneHomeConne
 - PC-40: move the rebind's `SaveChangesAsync` after the target mirror request; `PHRR.A_rebind_survives_a_failed_target_mirror_and_a_fresh_dispatcher_without_a_second_rebind` red at `peerA.RequestCount(WorkspaceRemove).ShouldBe(1)` (the lost rebind repeats).
 - PC-41: add `Write-Host "token: $token"` after the token read in `scripts/runner-drain.ps1`; `RunnerDrainScriptTests.Script_is_ascii_offers_the_four_verbs_and_sends_the_token_without_printing_it` red at the no-print assertion.
 
+R3 (`CDT` = SR `PhoneHomeCommandDispatcherTests`, `RRJ` = `RunnerRetireJobTests`, `BSB` = SR
+`BuildSlotBrokerTests`, `BSE` = SR `BuildSlotEndpointTests`, `BSS` = `BuildSlotScriptTests`,
+`DSC` = `DockerStackContractTests`, `RSC` = `RemoteScriptContractTests`):
+
+- PC-42: drop the `OwnedSessionCount > 0 && !Force` refusal; `CDT.Retire_refuses_while_sessions_are_owned_unless_forced` red at the `phone_home_runner_busy` error-code assertion.
+- PC-43: skip `KillAllAsync` on a forced retire; same method red at `runtime.KillAllCalls.ShouldBe(1)`.
+- PC-44: call `StopApplication()` before returning the reply (no delay); `CDT.Retire_reply_is_written_before_the_host_stops` red at the `t0 + 249 ms` count `ShouldBe(0)`.
+- PC-45: drop `Draining` from the job's row filter; `RRJ.A_drain_without_retire_when_idle_is_never_retired` red at the not-draining arm `Retires.ShouldBeEmpty()`.
+- PC-46: drop `RetireWhenIdle` from the filter; same method red at the `server2` arm `Retires.ShouldBeEmpty()`.
+- PC-47: drop the non-terminal bound-row check; `RRJ.Live_session_queued_task_or_busy_answer_keeps_the_runner_draining` red at arm (b) `IdleObservedAt.ShouldBeNull()`.
+- PC-48: drop the Queued-task check; same method red at arm (c) `Retires.ShouldBeEmpty()`.
+- PC-49: drop the inventory check; same method red at arm (a) `IdleObservedAt.ShouldBeNull()`.
+- PC-50: drop the `RetireMinDrainSeconds` comparison; `RRJ.Draining_runner_with_retire_when_idle_is_retired_after_the_idle_window` red at the `t0+59 s` `IdleObservedAt.ShouldBeNull()`.
+- PC-51: compare `now >= IdleObservedAt` instead of `now >= IdleObservedAt + RetireIdleSeconds`; same method red at the `+119 s` `Retires.Count.ShouldBe(0)`.
+- PC-52: drop `RetiredAt == null` from the filter; same method red at the extra third run `Retires.Count.ShouldBe(1)` (V-16 adds that run).
+- PC-53: leave `IdleObservedAt` set on a busy answer; V-17's method red at arm (d) `IdleObservedAt.ShouldBeNull()`.
+- PC-54: stamp `idle_disconnected` without the bound-row check; `RRJ.Disconnected_draining_runner_with_no_bound_rows_is_marked_retired_without_a_send` red at the bound-row world's `RetiredAt.ShouldBeNull()`.
+- PC-55: treat `SnapshotLive(id) == null` as expired; same method red at the `+89 s` `RetiredAt.ShouldBeNull()`.
+- PC-56: stamp `RetiredAt` before the send and ignore the answer; V-17's method red at arm (d) `RetiredAt.ShouldBeNull()`.
+- PC-57: remove `OperatorCredential.Require` from the retire handler; `PHRR.Forced_retire_requires_the_operator_token_and_the_runner_id_confirmation` red at `ShouldBe(Forbidden)`.
+- PC-58: skip the `confirmRunnerId` comparison; same method red at `ShouldBe(BadRequest)`.
+- PC-59: skip the draining precondition; `PHRR.Forced_retire_of_a_runner_that_is_not_draining_is_refused` red at `ShouldBe(Conflict)`.
+- PC-60: skip failing bound rows; `PHRR.Forced_retire_fails_bound_sessions_writes_an_incident_and_sends_a_forced_retire` red at S_B `Status.ShouldBe(Failed)`.
+- PC-61: skip the incident; same method red at the incident count `ShouldBe(1)`.
+- PC-62: stamp `RetiredAt` only after a successful send; same method red at the disconnected-world arm `RetireReason.ShouldStartWith("forced:")` (V-21 adds that arm: peer B aborted, route 200).
+- PC-63: in renew mode still consult `_liveness`; `BSB.Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness` red at the `t0+10 s` held assertion.
+- PC-64: never reap in renew mode (TTL only); same method red at the `t0+150 s` reaped assertion.
+- PC-65: `Renew` returns true without touching `LastRenewedAt`; `BSB.Renew_extends_a_held_lease_and_an_unknown_lease_answers_false` red at `LastRenewedAt.ShouldBeGreaterThan(before)`.
+- PC-66: default `HolderLiveness` to `renew`; existing `BSB.A_dead_holder_is_reaped_on_the_next_acquire` red at its reaped assertion.
+- PC-67: answer 204 for any lease id; `BSE.Post_renew_answers_204_for_a_held_lease_and_404_otherwise` red at `ShouldBe(NotFound)`.
+- PC-68: map session routes regardless of `BuildSlotsOnly`; `BSE.Build_slots_only_host_serves_health_and_build_slots_and_nothing_else` red at `/sessions` `ShouldBe(NotFound)`.
+- PC-69: start the renewer for every grant; `BSS.Wrapper_renews_a_renew_mode_grant_while_the_command_runs` red at the pid-mode arm renew count `0`.
+- PC-70: never start the renewer; same method red at renew count `>= 2`.
+- PC-71: do not stop the thread job before `Exit-AntiphonBuildSlot`; same method red at "no renew after release" (the command shim sleeps 1 s after the release point is recorded, so a leaked renewer logs one).
+- PC-72: override `restart: unless-stopped`; `DSC.Temp_override_changes_only_runner_id_restart_broker_url_network_and_grok_store` red at the `restart: "no"` assertion.
+- PC-73: add `--remove-orphans` to the temp `up`; `RSC.Temp_deploy_never_removes_orphans_and_resolves_the_grok_store_from_the_volume` red at `ShouldNotContain("--remove-orphans")`.
+- PC-74: drop the temp sha from the keep set; `RSC.Deploy_parent_keeps_the_temp_and_broker_tags` red at its keep-set assertion.
+- PC-75: drop the `TempRunnerNotRetired` refusal; `RSC.Retire_temp_runner_requires_the_retired_evidence` red at `ShouldContain("TempRunnerNotRetired")`.
+- PC-76: `down -v` without `-p antiphon-runner-temp`; same method red at the project-scoped `down -v` assertion.
+- PC-77: add `runner-state:/state` to the override's volumes; `DSC.Temp_override_changes_only_...` red at "no `runner-state` mount".
+- PC-78: add `privileged: true` to `build-slots`; `DSC.Server2_broker_is_unprivileged_pinned_by_its_own_tag_and_on_the_external_network` red at the no-`privileged` assertion.
+- PC-79: hard-code `RUNNER_GROK_STORE_DIR=/var/lib/docker/volumes/antiphon-runner_runner-state/_data/grok`; `RSC.Temp_deploy_never_removes_orphans_...` red at `ShouldContain("docker volume inspect")`.
+- PC-80: add a `healthcheck:` block to the override; `DindRunnerContractTests.Temp_override_keeps_the_base_healthcheck_and_secret_path` red at `ShouldNotContain("healthcheck:")`.
+- PC-81: accept the temp on any 200; `test-deploy-server2.ps1` T-2 arm (b) FAIL (a drain appears in `trace.jsonl`).
+- PC-82: go on to `deploy-parent` when `-WaitIdleMinutes` elapses; T-3 FAIL (`deploy-parent` in the trace).
+- PC-83: post `retireWhenIdle: true` for `server2`; T-1 FAIL at the drain-body assertion (T-1 asserts both drain bodies).
+- PC-84: read the token lazily at the first POST; T-5 FAIL (`deploy-temp-runner` in the trace).
+- PC-85: `Write-Output` the token in the verbose line; T-6 FAIL (sentinel found in output).
+- PC-86: treat a 404 status as eligible; T-2 arm (a) FAIL.
+
+Non-TUnit PCs (81..86) run the whole `test-deploy-server2.ps1` (one command, ~1 min) and read the
+named case's `FAIL`; every other PC is one method-scoped TUnit filter.
+
 ### Execution and evidence
 
 Run each TUnit row with `pwsh -NoProfile -File scripts/run-checkpoint.ps1` and the exact filter,
@@ -954,14 +1143,14 @@ R2 floor = 7 + 7 + 7 + 6 + 2 + 3 = **32** minutes.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-9 | S6-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-red | `/*/*/PhoneHomeCommandDispatcherTests*/*` | V-14, V-15 | 2 new + 34 existing executed; V-14, V-15 fail at the unsupported-operation answer | 36 | 4 |
 | CP-10 | S6 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-14, V-15; dispatcher and connection regressions | all listed, 0 failed/skipped | 46 | 5 |
-| CP-11 | S7-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-red | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)/*` | V-16 to V-23 | 8 new + existing executed; the 8 new fail at their send/row/route/status assertions | 16 | 5 |
-| CP-12 | S7 | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-green | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)/*` | V-16 to V-23; slot, connection and directory regressions | all listed, 0 failed; 8 new methods, 0 skipped | 53 | 6 |
+| CP-11 | S7-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-red | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)/*` | V-16 to V-23 | 8 new + existing executed; V-16..V-19, V-23 fail at their decisive assertions (job stub), V-20..V-22 at the retire route (404, setup-red); existing pass | 23 | 5 |
+| CP-12 | S7 | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-green | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)/*` | V-16 to V-23; slot, connection and directory regressions | all listed, 0 failed; 8 new methods, 0 skipped | 61 | 6 |
 | CP-13 | S8-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | broker-red | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)/*` | V-24 to V-27 | 4 new + 15 existing executed; V-24 to V-27 fail at their reap/renew/route/mode assertions | 19 | 5 |
 | CP-14 | S8 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | broker-green | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(BuildSlotSettingsTests*)/*` | V-24 to V-27; broker regressions | all listed, 0 failed/skipped | 19 | 4 |
 | CP-15 | S8-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | wrapper-red | `/*/*/BuildSlotScriptTests*/*` | V-28 | 1 new + 7 existing executed; V-28 fails at the renew count | 8 | 4 |
 | CP-16 | S8 | `tests/Antiphon.Tests -> bin-c727-r3/` | wrapper-green | `/*/*/BuildSlotScriptTests*/*` | V-28; wrapper regressions | all listed, 0 failed/skipped | 8 | 3 |
-| CP-17 | S9-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-red | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)/*` | V-29 to V-31, V-33 | new and updated methods fail at their text assertions; unrelated methods pass | 162 | 5 |
-| CP-18 | S9 | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-green | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)\|(DockerStackDocumentationTests*)/*` | V-29 to V-31, V-33; compose, entrypoint, script and docs contracts | all listed, 0 failed/skipped | 172 | 5 |
+| CP-17 | S9-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-red | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)/*` | V-29 to V-31, V-33 | new and updated methods (incl. the new V-30 method) fail at their text assertions; unrelated methods pass | 163 | 5 |
+| CP-18 | S9 | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-green | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)\|(DockerStackDocumentationTests*)/*` | V-29 to V-31, V-33; compose, entrypoint, script and docs contracts | all listed, 0 failed/skipped | 173 | 5 |
 | CP-19 | S9-tests | n/a | deploy-script-red | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1` | V-32 | exit 1: the script under test is missing (T-1 to T-6 FAIL) | n/a | 1 |
 | CP-20 | S9 | n/a | deploy-script-green | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1` | V-32 | 6 cases, every `PASS`, exit 0 | n/a | 2 |
 | CP-21 | S10 | `tests/Antiphon.Tests -> bin-c727-r3/` | docs-green | `/*/*/DockerStackDocumentationTests*/*` | D-20 | all listed, 0 failed/skipped | 10 | 4 |
