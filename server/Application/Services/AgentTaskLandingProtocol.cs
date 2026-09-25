@@ -24,6 +24,9 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 {
     private readonly AgentTaskLandingState _state = new();
 
+    /// <summary>CARD-0688 D-11: wall seconds of this invocation's land-worktree reset(s), for the profile line.</summary>
+    internal double? LastResetSeconds { get; private set; }
+
     /// <summary>The land worktree seam; built from the Git settings when DI did not register one.</summary>
     internal ILandWorkspace? LandWorkspace { get; } = landWorkspace
         ?? (gitSettings?.Value is { WorktreeBasePath.Length: > 0 } ? new LandWorkspace(git, gitSettings, clock) : null);
@@ -179,9 +182,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 }
                 await RecheckRemoteSourceAsync(op, ct);
                 await RecheckSourceAsync(op, ct);
-                // The Rebase stage covers the land worktree reset; D-11 reports reset = LandWorkspaceReadyAt - RebaseStartedAt.
-                op.RebaseStartedAt = Now();
                 var land = await PrepareLandWorktreeAsync(op, InputSha(op), ct);
+                op.RebaseStartedAt = Now();
                 await TransitionAsync(op, LandPhase.RebaseStarted, ct);
                 await RecheckApprovalAsync(op, request, ct);
                 await RecheckSourceAsync(op, ct);
@@ -446,8 +448,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task<string> PrepareLandWorktreeAsync(AgentTaskLanding op, string sha, CancellationToken ct)
     {
         Require(!string.IsNullOrWhiteSpace(op.LandWorktreePath), "land_worktree_root_unavailable");
+        var started = clock.GetTimestamp();
         var ready = await RequireWorkspace().EnsureAsync(op.RepositoryPath, op.LandWorktreePath!, sha,
             (directory, arguments, token) => MutateAsync(op, directory, arguments, token), ct);
+        LastResetSeconds = (LastResetSeconds ?? 0) + clock.GetElapsedTime(started).TotalSeconds;
         if (ready.Reason is not null) throw new LandingRefusal(ready.Reason, ready.Detail);
         if (op.Phase == LandPhase.RecoveryPinned) op.LandWorkspaceReadyAt = Now();
         await SaveAsync(op, ct);
