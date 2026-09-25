@@ -384,6 +384,95 @@ public class AgentAttachHerdrTests
         }
     }
 
+    [Test]
+    public async Task C664_AttachAttributesLaunchReservationToAdoptedSession()
+    {
+        var tempRoot = NewTemp();
+        await using var fake = StartFake();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, fake);
+            var nativeId = Guid.NewGuid();
+            var cwd = Path.Combine(tempRoot, "cwd");
+            Directory.CreateDirectory(cwd);
+            using var grok = PinGrokHome(tempRoot, nativeId, cwd);
+            var pane = SeedGrokPane(fake, nativeId, cwd);
+            var agent = await CreateGrokHerdrAgentAsync(harness, cwd);
+
+            await harness.Control.AttachHerdrAsync(
+                agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
+
+            var launches = await ActiveLaunchesAtAsync(cwd);
+            launches.Count.ShouldBe(1, "the attach admits one Launch row for the adopted pane");
+            launches[0].SessionId.ShouldBe(nativeId);
+            launches[0].TaskId.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    [Arguments("runner-refusal")] [Arguments("session-id-taken")]
+    public async Task C664_AttachRefusedAfterAdmissionLeavesNoActiveLaunch(string shape)
+    {
+        var tempRoot = NewTemp();
+        await using var fake = StartFake();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, fake);
+            var nativeId = Guid.NewGuid();
+            var cwd = Path.Combine(tempRoot, "cwd");
+            Directory.CreateDirectory(cwd);
+            using var grok = shape == "runner-refusal" ? PinEmptyGrokHome(tempRoot) : PinGrokHome(tempRoot, nativeId, cwd);
+            var pane = SeedGrokPane(fake, nativeId, cwd);
+            var agent = await CreateGrokHerdrAgentAsync(harness, cwd);
+            if (shape == "session-id-taken")
+            {
+                var other = await CreateGrokHerdrAgentAsync(harness, cwd, nameSuffix: "c664-other");
+                await using var db = CreateContext();
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = nativeId, DefinitionName = "grok", AgentKind = AgentKind.Grok,
+                    SessionBackend = SessionBackend.Herdr, Status = SessionStatus.Stopped, Cwd = cwd,
+                    Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now, EndedAt = now,
+                });
+                (await db.Agents.SingleAsync(a => a.Id == other.Id)).PersistentSessionId = nativeId.ToString("D");
+                await db.SaveChangesAsync();
+            }
+
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                harness.Control.AttachHerdrAsync(
+                    agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None));
+
+            ex.Code.ShouldBe(shape == "runner-refusal" ? HerdrProblemTypes.TranscriptNotFound : HerdrProblemTypes.SessionIdTaken);
+            await using (var verify = CreateContext())
+                (await verify.WorkspaceUseReservations.AsNoTracking().ToListAsync())
+                    .Count(r => r.Kind == WorkspaceReservationKind.Launch && SameCanonicalPath(r.CanonicalPath, cwd))
+                    .ShouldBe(1, "the attach admitted its Launch row before it was refused");
+            (await ActiveLaunchesAtAsync(cwd)).ShouldBeEmpty("the refused attach releases its Launch row");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    private static async Task<List<WorkspaceUseReservation>> ActiveLaunchesAtAsync(string cwd)
+    {
+        await using var db = CreateContext();
+        return (await db.WorkspaceUseReservations.AsNoTracking()
+                .Where(r => r.Active && r.Kind == WorkspaceReservationKind.Launch)
+                .ToListAsync())
+            .Where(r => SameCanonicalPath(r.CanonicalPath, cwd))
+            .ToList();
+    }
+
+    private static bool SameCanonicalPath(string canonicalPath, string path) =>
+        WorkspaceReservationKey.PathsEqual(canonicalPath, WorkspaceReservationKey.NormalizePath(path));
+
     private static async Task<AgentDetailDto> CreateGrokHerdrAgentAsync(
         Harness harness, string cwd, string? nameSuffix = null)
     {
@@ -526,6 +615,9 @@ public class AgentAttachHerdrTests
         services.AddScoped<BoardService>();
         services.AddScoped<HerdrLaunchContextResolver>();
         services.AddScoped<AgentSupervisorService>();
+        // CARD-0664 A8: admission is live in this harness; CleanupAsync removes its temp-root rows.
+        services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+        services.AddScoped<WorkspaceUseAdmission>();
 
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
@@ -548,6 +640,7 @@ public class AgentAttachHerdrTests
             .Where(s => s.Cwd.StartsWith(tempRoot))
             .Select(s => s.Id)
             .ToListAsync();
+        await db.WorkspaceUseReservations.Where(r => r.CanonicalPath.StartsWith(tempRoot)).ExecuteDeleteAsync();
         await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
         await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
         await db.AgentIncidents.Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value)).ExecuteDeleteAsync();

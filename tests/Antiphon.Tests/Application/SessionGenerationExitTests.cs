@@ -269,6 +269,76 @@ public class SessionGenerationExitTests
     }
 
     [Test]
+    public async Task C664_RuntimeExitReleasesSessionLaunchRows()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-c664-exit-{Guid.NewGuid():N}");
+        var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-c664-exit-logs-{Guid.NewGuid():N}");
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            db.AgentSessions.Add(new Antiphon.Server.Domain.Entities.AgentSession
+            {
+                Id = sessionId, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30,
+                CreatedAt = generation, StartedAt = generation, LastSeenAt = generation,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)));
+        services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+        services.AddScoped<WorkspaceUseAdmission>();
+        await using var provider = services.BuildServiceProvider();
+        var runtime = new AgentSessionRuntime(
+            new MockEventBus(),
+            Options.Create(new Antiphon.Server.Application.Settings.AgentSessionSettings { SessionLogPath = logPath }),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<AgentSessionRuntime>.Instance);
+        Guid reservationId;
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var admitted = await scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>().TryAdmitConsumerAsync(
+                new WorkspaceReservationCommand(WorkspaceReservationKey.For(cwd, "", cwd), WorkspaceReservationKind.Launch, null, sessionId),
+                CancellationToken.None);
+            admitted.Accepted.ShouldBeTrue();
+            reservationId = admitted.Snapshot!.Id;
+        }
+
+        try
+        {
+            var stale = await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 0, AgentExitReason.ProcessExited, 0, AcceptedStartedAt: generation.AddMinutes(-1)),
+                CancellationToken.None);
+            stale.ShouldBe(SessionExitDisposition.Stale);
+            await using (var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+                (await verify.WorkspaceUseReservations.AsNoTracking().SingleAsync(r => r.Id == reservationId)).Active
+                    .ShouldBeTrue("a stale-generation exit does not end the session");
+
+            var applied = await runtime.ObserveExitAsync(
+                new SessionRunnerExitedEvent(sessionId, 0, AgentExitReason.ProcessExited, 0, AcceptedStartedAt: generation),
+                CancellationToken.None);
+            applied.ShouldBe(SessionExitDisposition.Applied);
+
+            await using var after = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            (await after.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Stopped);
+            var row = await after.WorkspaceUseReservations.AsNoTracking().SingleAsync(r => r.Id == reservationId);
+            row.Active.ShouldBeFalse("the matching exit releases the session's Launch rows");
+            row.ReleasedAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(logPath))
+                Directory.Delete(logPath, true);
+        }
+    }
+
+    [Test]
     public async Task C502_V5_matching_A_close_commits_first_and_B_resume_still_succeeds()
     {
         await using var scenario = await ExitScenario.CreateAsync(failed: false);
