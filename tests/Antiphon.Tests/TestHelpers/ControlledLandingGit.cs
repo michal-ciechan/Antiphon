@@ -39,6 +39,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     private bool _targetLocked;
     private bool _targetPrunable;
     private bool _sourcePresent = true;
+    private bool _targetDetached;
     private int? _existsErrorExit;
 
     public string Root { get; }
@@ -83,7 +84,9 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         Repository = Path.Combine(Root, "canonical");
         Source = Path.Combine(Root, "trees", "source");
         Remote = Path.Combine(Root, "remote.git");
-        CommonDir = Path.Combine(Root, "git-common");
+        // CARD-0688 D-12: a non-bare layout, so the main checkout is the parent of the common directory and
+        // the HEAD-file scan reads real files: <common>/HEAD and <common>/worktrees/<name>/{HEAD,gitdir}.
+        CommonDir = Path.Combine(Repository, ".git");
         GitDirectory = CommonDir;
         SourceGitDirectory = Path.Combine(CommonDir, "worktrees", "source");
         SourceRef = $"refs/heads/feat/card-task-{TaskId:N}";
@@ -116,6 +119,40 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         _targetIndex["keep.txt"] = "seed\n";
         _worktrees[Source] = new Worktree(Source, SourceRef, SeedSha);
         _worktrees[Repository] = new Worktree(Repository, TargetRef, SeedSha);
+        WriteHeadFiles();
+    }
+
+    /// <summary>CARD-0688: the land worktree once a <c>worktree add --detach</c> created it (a path under <c>trees/land</c>).</summary>
+    public string? Land { get; private set; }
+    public string? LandHead { get; private set; }
+    public string LandAdmin => Path.Combine(CommonDir, "worktrees", "land");
+
+    /// <summary>The HEAD file the scan reads for the main checkout: <c>ref: ...</c> or a SHA.</summary>
+    public string MainCheckoutHead() => File.ReadAllText(Path.Combine(CommonDir, "HEAD")).Trim();
+
+    /// <summary>Keeps the on-disk HEAD files in step with the modelled checkouts (the scan reads files, not this model).</summary>
+    private void WriteHeadFiles()
+    {
+        File.WriteAllText(Path.Combine(CommonDir, "HEAD"), _targetDetached ? _targetHead + "\n" : $"ref: {_targetBranch}\n");
+        if (_sourcePresent && _worktrees.ContainsKey(Source))
+        {
+            Directory.CreateDirectory(SourceGitDirectory);
+            File.WriteAllText(Path.Combine(SourceGitDirectory, "HEAD"), $"ref: {_sourceBranch}\n");
+            File.WriteAllText(Path.Combine(SourceGitDirectory, "gitdir"), Path.Combine(Source, ".git") + "\n");
+        }
+        if (Land is not null)
+        {
+            Directory.CreateDirectory(LandAdmin);
+            File.WriteAllText(Path.Combine(LandAdmin, "HEAD"), LandHead + "\n");
+            File.WriteAllText(Path.Combine(LandAdmin, "gitdir"), Path.Combine(Land, ".git") + "\n");
+        }
+    }
+
+    /// <summary>Detach the main checkout (the target is then checked out nowhere and advances by update-ref).</summary>
+    public void DetachTarget()
+    {
+        _targetDetached = true;
+        WriteHeadFiles();
     }
 
     public string SourceHead => _sourceHead;
@@ -189,7 +226,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
                 : PathsEqual(wt.Path, Repository) ? _targetLocked : false;
             var prunable = PathsEqual(wt.Path, Source) ? _sourcePrunable
                 : PathsEqual(wt.Path, Repository) ? _targetPrunable : false;
-            rows.Add(new(wt.Path, wt.Branch, wt.Head, locked, prunable));
+            rows.Add(new(wt.Path, wt.Branch.Length == 0 ? null : wt.Branch, wt.Head, locked || IsLand(wt.Path), prunable));
         }
         return Task.FromResult<IReadOnlyList<LandingRegistration>>(rows);
     }
@@ -231,7 +268,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     public Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var gitDir = IsSource(checkout) ? SourceGitDirectory : GitDirectory;
+        var gitDir = IsSource(checkout) ? SourceGitDirectory : IsLand(checkout) ? LandAdmin : GitDirectory;
         var path = Path.Combine(gitDir, "index.lock");
         var observed = GitIndexLock.Observe(path, DateTime.UtcNow, GitIndexLock.CensusGitProcesses());
         return Task.FromResult(new LandingIndexLockObservation(
@@ -279,6 +316,21 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         return new(_remoteSource, pin, CurrentFingerprint(), null);
     }
 
+    public async Task<LandingSourceRecheck> RecheckSourceRemoteAsync(string repository, string sourceFullRef, string expectedSha,
+        string expectedFingerprint, CancellationToken ct)
+    {
+        SourceRemoteRechecks++;
+        if (OnSourceRecheck is not null) await OnSourceRecheck(SourceRemoteRechecks);
+        var fingerprint = CurrentFingerprint();
+        if (fingerprint != expectedFingerprint) return new(null, fingerprint, "source_remote_endpoint_changed");
+        var read = await RunAsync(repository, ["ls-remote", "--refs", "--exit-code", _endpoint, sourceFullRef], ct);
+        if (read.ExitCode == 2) return new(null, fingerprint, "source_remote_missing");
+        if (!read.Succeeded) return new(null, fingerprint, "source_remote_unreadable");
+        var fields = read.Output.Trim().Split('\t');
+        return fields.Length == 2 && fields[1] == sourceFullRef ? new(fields[0], fingerprint, null)
+            : new(null, fingerprint, "source_remote_response_invalid");
+    }
+
     public void SetRemoteSource(string sha) => _remoteSource = sha;
 
     public string AdvanceRemoteSource()
@@ -312,6 +364,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         _sourceBranch = full;
         _refs[full] = _sourceHead;
         _worktrees[Source] = _worktrees[Source] with { Branch = full };
+        WriteHeadFiles();
     }
 
     public void SetEndpoint(string endpoint) => _endpoint = endpoint.Replace('\\', '/');
@@ -355,6 +408,10 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         var extra = Path.Combine(Root, "canonical-alias");
         Directory.CreateDirectory(extra);
         _worktrees[extra] = new Worktree(extra, TargetRef, _targetHead);
+        var admin = Path.Combine(CommonDir, "worktrees", "canonical-alias");
+        Directory.CreateDirectory(admin);
+        File.WriteAllText(Path.Combine(admin, "HEAD"), $"ref: {TargetRef}\n");
+        File.WriteAllText(Path.Combine(admin, "gitdir"), Path.Combine(extra, ".git") + "\n");
     }
 
     public void SetTargetLocked() => _targetLocked = true;
@@ -400,6 +457,14 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["worktree", "list", "--porcelain", "-z"] => true,
             ["worktree", "remove", "--", var path] => PathsEqual(path, Source),
             ["worktree", "lock", var path] => PathsEqual(path, Source),
+            ["worktree", "lock", "--reason", "antiphon-land", var path] => IsLandPath(path),
+            ["worktree", "add", "--detach", "--force", "--force", var path, var sha] => IsLandPath(path) && LooksOid(sha),
+            ["reset", "--hard", var sha] => LooksOid(sha),
+            ["clean", "-fdx"] => true,
+            ["rebase" or "cherry-pick" or "revert", "--quit"] => true,
+            ["cherry-pick" or "revert" or "merge", "--abort"] => true,
+            ["status", "--porcelain=v1", "-z", "--untracked-files=no"] => true,
+            ["update-ref", "--no-deref", var name, var sha, var expected] when name != "-d" => IsFullRef(name) && LooksOid(sha) && LooksOid(expected),
             ["fetch", "--no-tags", "--no-write-fetch-head", var endpoint, var spec] =>
                 endpoint == _endpoint && IsSourceOrTargetFetch(spec),
             ["ls-remote", "--refs", "--exit-code", var endpoint, var fullRef] =>
@@ -465,9 +530,21 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         if (args[0] == "worktree" && args.Count > 1 && args[1] == "remove") return WorktreeRemove(args);
         if (args[0] == "worktree" && args.Count > 1 && args[1] == "lock")
         {
-            _sourceLocked = true;
+            if (IsLandPath(args[^1])) File.WriteAllText(Path.Combine(LandAdmin, "locked"), "antiphon-land");
+            else _sourceLocked = true;
             return new(0, "", "");
         }
+        if (args[0] == "worktree" && args.Count > 1 && args[1] == "add")
+        {
+            Land = Path.GetFullPath(args[^2]);
+            LandHead = args[^1];
+            Directory.CreateDirectory(Land);
+            File.WriteAllText(Path.Combine(Land, ".git"), "gitdir: " + LandAdmin + "\n");
+            _worktrees[Land] = new Worktree(Land, "", LandHead);
+            WriteHeadFiles();
+            return new(0, "", "");
+        }
+        if (IsLand(repository)) return DispatchLand(args);
         if (args[0] == "ls-remote")
         {
             var fullRef = args[^1];
@@ -501,28 +578,11 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             return new(IsAncestor(source, observed) ? 0 : 1, "", "");
         }
         if (args[0] == "update-ref") return UpdateRef(args);
-        if (args.Contains("rebase") && args.Contains("--abort")) return new(0, "", "");
-        if (args.Contains("rebase"))
-        {
-            var onto = args[^1];
-            var rebased = NextOid();
-            _objects[rebased] = new Commit(rebased, [onto]);
-            _sourceHead = rebased;
-            _refs[_sourceBranch] = rebased;
-            _worktrees[Source] = _worktrees[Source] with { Head = rebased };
-            return new(0, "", "") { RebaseHeadSha = rebased };
-        }
+        // CARD-0688 D-12: no production caller rebases or fast-forwards the task worktree any more.
+        if (args.Contains("rebase") || args.Contains("merge") && IsSource(repository)) throw Unsupported(args);
         if (args.Contains("merge") && args.Contains("--ff-only"))
         {
             var sha = args[^1];
-            if (IsSource(repository))
-            {
-                _sourceHead = sha;
-                _refs[_sourceBranch] = sha;
-                _worktrees[Source] = _worktrees[Source] with { Head = sha };
-            }
-            else
-            {
                 _targetHead = sha;
                 _refs[TargetRef] = sha;
                 _worktrees[Repository] = _worktrees[Repository] with { Head = sha };
@@ -531,7 +591,6 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
                     _targetFiles["feature.txt"] = feature;
                     File.WriteAllText(Path.Combine(Repository, "feature.txt"), feature);
                 }
-            }
             return new(0, "", "");
         }
         if (args[0] == "diff")
@@ -575,6 +634,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
                 _targetBranch = full;
                 _worktrees[Repository] = _worktrees[Repository] with { Branch = full };
             }
+            WriteHeadFiles();
             return new(0, "", "");
         }
         if (args[0] == "add")
@@ -606,6 +666,47 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             if (dest == TargetRef || dest.EndsWith("/master", StringComparison.Ordinal)) _remoteTarget = sha;
             if (dest == SourceRef) _remoteSource = sha;
             return new(0, "", "");
+        }
+        throw Unsupported(args);
+    }
+
+    /// <summary>The detached land worktree: reset, clean, rebase (moving only the land HEAD), reads and aborts.</summary>
+    private LandingGitResult DispatchLand(IReadOnlyList<string> args)
+    {
+        switch (args)
+        {
+            case ["rev-parse", "--absolute-git-dir"]:
+                return new(0, LandAdmin + "\n", "");
+            case ["rev-parse", .., var revision] when revision is "HEAD" or "HEAD^{commit}":
+                return new(0, LandHead + "\n", "");
+            case ["symbolic-ref", "-q", "HEAD"]:
+                return new(1, "", "");
+            case ["status", ..]:
+                return new(0, "", "");
+            case ["reset", "--hard", var sha]:
+                if (!_objects.ContainsKey(sha)) return new(128, "", "git_exit_128");
+                LandHead = sha;
+                _worktrees[Land!] = _worktrees[Land!] with { Head = sha };
+                WriteHeadFiles();
+                return new(0, "", "");
+            case ["clean", "-fdx"]:
+                return new(0, "", "");
+            case [_, "--abort"] or [_, "--quit"]:
+                foreach (var marker in new[] { "rebase-merge", "rebase-apply", "sequencer" })
+                    if (Directory.Exists(Path.Combine(LandAdmin, marker))) Directory.Delete(Path.Combine(LandAdmin, marker), true);
+                return new(0, "", "");
+            case ["diff", "--name-only", "--diff-filter=U", "-z"]:
+                return new(0, "", "");
+        }
+        if (args.Contains("rebase"))
+        {
+            var onto = args[^1];
+            var rebased = NextOid();
+            _objects[rebased] = new Commit(rebased, [onto]);
+            LandHead = rebased;
+            _worktrees[Land!] = _worktrees[Land!] with { Head = rebased };
+            WriteHeadFiles();
+            return new(0, "", "") { RebaseHeadSha = rebased };
         }
         throw Unsupported(args);
     }
@@ -690,7 +791,9 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         {
             sb.Append("worktree ").Append(wt.Path).Append('\0');
             sb.Append("HEAD ").Append(wt.Head).Append('\0');
-            sb.Append("branch ").Append(wt.Branch).Append('\0');
+            if (wt.Branch.Length == 0) sb.Append("detached\0");
+            else sb.Append("branch ").Append(wt.Branch).Append('\0');
+            if (IsLand(wt.Path) && File.Exists(Path.Combine(LandAdmin, "locked"))) sb.Append("locked antiphon-land\0");
             if (PathsEqual(wt.Path, Source) && _sourceLocked) sb.Append("locked\0");
             if (PathsEqual(wt.Path, Source) && _sourcePrunable) sb.Append("prunable\0");
             if (PathsEqual(wt.Path, Repository) && _targetLocked) sb.Append("locked\0");
@@ -708,6 +811,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         if (PathsEqual(path, Source))
         {
             _sourcePresent = false;
+            if (Directory.Exists(SourceGitDirectory)) Directory.Delete(SourceGitDirectory, true);
             if (Directory.Exists(Source))
             {
                 foreach (var file in Directory.EnumerateFiles(Source, "*", SearchOption.AllDirectories))
@@ -740,6 +844,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             var rel = Path.GetRelativePath(root, path).Replace('\\', '/');
             if (rel.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase)
                 || rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase)
+                || rel.StartsWith(".git/", StringComparison.OrdinalIgnoreCase)
                 || rel.StartsWith("bin-", StringComparison.OrdinalIgnoreCase))
                 continue;
             if (!files.ContainsKey(rel) && !index.ContainsKey(rel) && !untracked.ContainsKey(rel)
@@ -812,6 +917,9 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     }
 
     private bool IsSource(string path) => PathsEqual(path, Source);
+    private bool IsLand(string path) => Land is not null && PathsEqual(path, Land);
+    private bool IsLandPath(string path) => Path.GetFullPath(path).StartsWith(
+        Path.Combine(Root, "trees", "land") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     private bool IsRemote(string path) => PathsEqual(path, Remote);
     private string WorktreePath(string repository) => IsSource(repository) ? Source : Repository;
     private string CurrentFingerprint() => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_endpoint)));

@@ -317,13 +317,17 @@ public sealed class AgentTaskLandService
                 .Where(e => e.AgentTaskId == task.Id && e.LandRequestId == request.Id && e.IsLandTerminal)
                 .OrderBy(e => e.At).LastOrDefault();
             var profile = gitScope.Profile;
+            var phases = PhaseSeconds(task.ActiveLandingId is Guid landed
+                ? _db.ChangeTracker.Entries<AgentTaskLanding>().Select(e => e.Entity).FirstOrDefault(o => o.Id == landed) : null);
             _logger.LogInformation(
                 "Land git profile task={TaskId} request={RequestId} outcome={Outcome} wallSeconds={WallSeconds} processes={Processes} "
                 + "worktreeList={WorktreeList} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} "
-                + "inspections={Inspections} remote={Remote} gitSeconds={GitSeconds}",
+                + "inspections={Inspections} remote={Remote} gitSeconds={GitSeconds} "
+                + "reset={Reset} rebase={Rebase} verify={Verify} push={Push} canonical={Canonical} cleanup={Cleanup}",
                 task.Id, request.Id, terminal is null ? outcome : $"{outcome}/{terminal.Type}",
                 Math.Round(wall.Elapsed.TotalSeconds, 2), profile.Processes, profile.WorktreeLists, profile.RegistrationHits,
-                profile.CanonicalHits, profile.Inspections, profile.RemoteRoundTrips, Math.Round(profile.GitSeconds, 2));
+                profile.CanonicalHits, profile.Inspections, profile.RemoteRoundTrips, Math.Round(profile.GitSeconds, 2),
+                phases.Reset, phases.Rebase, phases.Verify, phases.Push, phases.Canonical, phases.Cleanup);
         }
     }
 
@@ -400,7 +404,7 @@ public sealed class AgentTaskLandService
         // request must resolve again; otherwise remote movement is never observed and a retry can
         // inherit null remote fields, which disables every later remote check.
         var resumeExisting = !published && active is not null && active.Phase != LandPhase.Refused
-            && active.SchemaVersion == 2
+            && active.SchemaVersion is 2 or 3
             && GitObjectId.IsFull(active.SourceRemoteSha)
             && active.SourceRemoteFingerprint is { Length: 64 }
             && GitObjectId.IsFull(active.ReviewedSourceSha)
@@ -425,7 +429,7 @@ public sealed class AgentTaskLandService
             try
             {
                 var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock,
-                    _gitSettings is null ? null : Options.Create(_gitSettings))
+                    _gitSettings is null ? null : Options.Create(_gitSettings), _protocol.LandWorkspace)
                     .ResolveAsync(task, request, lease, ct);
                 if (resolved.StaleRequest) return LandRunResult.Complete;
                 if (resolved.Reason is not null)
@@ -491,10 +495,10 @@ public sealed class AgentTaskLandService
         Record(task, OrchestrationStage.Cleanup,
             op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed,
             DurationSeconds(op, OrchestrationStage.Cleanup), result.Reason ?? "cleanup complete");
-        var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
-            : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
+        var type = TerminalType(op);
         var (siblings, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
         var marker = UnlandedMarker(siblings);
+        if (CanonicalWarning(op) is { } canonical) warnings = [.. warnings, canonical];
         await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, siblings, ct);
         return LandRunResult.Complete;
     }
@@ -504,7 +508,26 @@ public sealed class AgentTaskLandService
         + $"source={op.OriginalSourceSha} reviewed={op.ReviewedSourceSha ?? op.OriginalSourceSha} verified={op.VerifiedSourceSha} -> {op.RemoteName}:{op.DestinationFullRef}; "
         + $"remote={op.ObservedRemoteTargetSha} confirmed at {op.RemoteConfirmedAt:O}; "
         + (op.PushStartedAt is null ? "no push attempted; " : $"push exit={op.PushExitCode?.ToString() ?? "unknown"}; ")
-        + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}");
+        + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}")
+        + (CanonicalOutcome(op) is { } canonical ? $"; canonical={canonical}" : "");
+
+    /// <summary>CARD-0688 D-4: <c>advanced</c>, <c>already</c> or the residue reason; null before the step ran.</summary>
+    internal static string? CanonicalOutcome(AgentTaskLanding op) =>
+        op.CanonicalAdvanceReason
+        ?? (op.CanonicalAdvancedAt is null ? null
+            : op.SchemaVersion == 3 && op.LocalTargetAfterSha is not null && op.LocalTargetAfterSha == op.VerifiedSourceSha
+                ? "advanced" : "already");
+
+    /// <summary>A published land whose canonical checkout did not advance is landed with residue (D-4).</summary>
+    internal static AgentTaskEventType TerminalType(AgentTaskLanding op) =>
+        op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
+        : op.Cleanup == LandCleanupStatus.Complete && op.CanonicalAdvanceReason is null ? AgentTaskEventType.Landed
+        : AgentTaskEventType.LandedWithResidue;
+
+    internal static string? CanonicalWarning(AgentTaskLanding op) => op.CanonicalAdvanceReason is not { } reason ? null
+        : $"Published {op.VerifiedSourceSha} to {op.RemoteName}:{op.DestinationFullRef}, but the canonical checkout "
+          + $"{op.TargetCheckoutPath ?? op.RepositoryPath} was not fast-forwarded ({reason}). Fix it there with `git pull --rebase`, "
+          + "then restart with scripts/restart-apphost.ps1 (CARD-0358 runbook). Publication is unaffected.";
 
     internal static string FormatSourceRefusal(AgentTaskLandRequest request, string reason) =>
         LandFailureDiagnostic.AppendInspection(
@@ -516,13 +539,12 @@ public sealed class AgentTaskLandService
         string.IsNullOrEmpty(detail) ? reason : reason + "; " + detail;
 
     /// <summary>
-    /// CARD-0543 V-11s: probe the source worktree when its directory still exists, and the
-    /// registered target checkout only when a worktree currently has the merge-target branch.
-    /// RepoPath is not probed unconditionally, so a lock in a detached canonical checkout does
-    /// not hold a land that will use update-ref (A-6). A registration lookup failure falls back
-    /// to RepoPath. A missing source-worktree directory is not a lock: cleanup never clears
-    /// <see cref="AgentTask.WorktreePath"/>, and probing it would turn
-    /// <c>index_lock_path_error</c> into a permanent <c>git_index_lock_held</c> hold.
+    /// CARD-0543 V-11s / CARD-0688 D-10: probe the source worktree when its directory still exists (cleanup
+    /// still mutates it), the land worktree when it exists, and the main checkout only when
+    /// <c>&lt;common&gt;/HEAD</c> names the merge target. No registration listing: the main checkout is a file
+    /// read. A missing source-worktree directory is not a lock: cleanup never clears
+    /// <see cref="AgentTask.WorktreePath"/>, and probing it would turn <c>index_lock_path_error</c> into a
+    /// permanent <c>git_index_lock_held</c> hold. A common-directory lookup failure falls back to RepoPath.
     /// </summary>
     private async Task<(string Code, string Detail)?> ProbeAdmissionIndexLockAsync(AgentTask task, CancellationToken ct)
     {
@@ -532,24 +554,25 @@ public sealed class AgentTaskLandService
             && await ProbeCheckoutIndexLockAsync(task.WorktreePath, ct) is { } source)
             return source;
 
-        string? targetCheckout = null;
+        string? land = null, targetCheckout = null;
         try
         {
+            var common = await _landingGit.CommonDirectoryAsync(task.RepoPath, ct);
+            land = _protocol?.LandWorkspace?.PathFor(common);
             var targetRef = FullRef(task.MergeTargetRef ?? "master");
-            var rows = (await _landingGit.RegistrationsAsync(task.RepoPath, ct))
-                .Where(r => r.Branch == targetRef).ToList();
-            if (rows.Count == 1 && !rows[0].Locked && !rows[0].Prunable)
-                targetCheckout = await _landingGit.CanonicalDirectoryAsync(rows[0].Path, ct);
+            var main = Infrastructure.Git.LandWorkspace.Scan(common).First(h => h.IsMain);
+            if (main.SymbolicRef == targetRef) targetCheckout = main.WorktreePath ?? task.RepoPath;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             targetCheckout = task.RepoPath;
         }
 
-        if (targetCheckout is not null
-            && !GitIndexLock.PathsEqual(targetCheckout, task.WorktreePath)
-            && await ProbeCheckoutIndexLockAsync(targetCheckout, ct) is { } target)
-            return target;
+        foreach (var checkout in new[] { land, targetCheckout })
+        {
+            if (checkout is null || GitIndexLock.PathsEqual(checkout, task.WorktreePath)) continue;
+            if (await ProbeCheckoutIndexLockAsync(checkout, ct) is { } hit) return hit;
+        }
         return null;
     }
 
@@ -839,9 +862,7 @@ public sealed class AgentTaskLandService
         {
             op!.LastReason = LandFailureDiagnostic.InterruptedAfterPublication;
             if (op.Cleanup != LandCleanupStatus.Complete) op.Cleanup = LandCleanupStatus.Pending;
-            var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
-                : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
-            await CompleteTerminalLockedAsync(task, request, type, FormatOutcome(op), [], null, ct);
+            await CompleteTerminalLockedAsync(task, request, TerminalType(op), FormatOutcome(op), [], null, ct);
             return;
         }
 
@@ -964,6 +985,18 @@ public sealed class AgentTaskLandService
         terminal.LandingPublication = op?.Publication;
         terminal.LandingCleanup = op?.Cleanup;
         terminal.LandingMode = op?.Mode;
+    }
+
+    /// <summary>CARD-0688 D-11: per-phase wall seconds from the operation's own timestamps; "-" when a phase did not run.</summary>
+    internal static (string Reset, string Rebase, string Verify, string Push, string Canonical, string Cleanup) PhaseSeconds(AgentTaskLanding? op)
+    {
+        static string Span(DateTime? start, DateTime? end) => start is { } s && end is { } e
+            ? Math.Round(Math.Max(0, (e - s).TotalSeconds), 2).ToString(System.Globalization.CultureInfo.InvariantCulture) : "-";
+        if (op is null) return ("-", "-", "-", "-", "-", "-");
+        return (Span(op.RebaseStartedAt, op.LandWorkspaceReadyAt),
+            Span(op.LandWorkspaceReadyAt ?? op.RebaseStartedAt, op.PreparedAt), Span(op.VerificationStartedAt, op.VerifiedAt),
+            Span(op.PushStartedAt, op.RemoteConfirmedAt), Span(op.CanonicalAdvanceStartedAt, op.CanonicalAdvancedAt ?? (op.CanonicalAdvanceReason is null ? null : op.CleanupStartedAt)),
+            Span(op.CleanupStartedAt, op.CleanupCompletedAt));
     }
 
     internal static int DurationSeconds(AgentTaskLanding? op, OrchestrationStage stage)
@@ -1283,11 +1316,12 @@ public sealed class AgentTaskLandService
         => await VerifyWithObserverAsync(worktree, filter, null, ct);
 
     internal static async Task<LandVerification> VerifyWithObserverAsync(string worktree, string? filter,
-        ILandingChildObserver? observer, CancellationToken ct)
+        ILandingChildObserver? observer, CancellationToken ct, string? artifactsPath = null)
     {
         // SDK artifacts isolate both bin and obj by project, outside the source checkout.
         // Unique owned outputs are retained; never recursively erase pre-existing bin-* paths.
-        var output = Path.Combine(Path.GetTempPath(), "antiphon-land-verify-" + Guid.NewGuid().ToString("N"));
+        // CARD-0688 D-9: a caller-supplied path is plumbing for R3; R1 always passes null.
+        var output = artifactsPath ?? Path.Combine(Path.GetTempPath(), "antiphon-land-verify-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(output);
         var build = await RunProcessAsync(worktree, observer, ct, "dotnet", "build", "--artifacts-path", output);
         if (!build.Ok) return LandVerification.Failure("build", Tail(build));
