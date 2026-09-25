@@ -29,6 +29,16 @@ import, so it cannot be pointed at another module.
 
 ## Decisions
 
+### CARD-0691 host lifetime follow-up (R2 pending)
+
+The separate Windows R2 round adds `SessionRunner:PtyHostExitWithOwner` (default false):
+an opt-in `--owner-pid` / `--owner-started` watch for test launches, preserving production
+hosts across runner restarts. Its shutdown acknowledgement with a live child must kill
+that child before exit, bound disposal, and arm `--exit-grace-sec` (default 30) as the
+hard-exit watchdog. Linger starts only after child exit. These are the R2 contract,
+not guarantees supplied by the R3 attention-feed change; R2's Windows checkpoints must
+pass before claiming them deployed.
+
 ### 1. Our own host, not a Porta.Pty fork, and not a resolver hack
 
 `ModernConPtyConnection` loads `CreatePseudoConsole`/`ClosePseudoConsole`/`ResizePseudoConsole` out

@@ -122,6 +122,8 @@ public sealed partial class AttentionService
     // service unchanged; production registers the options section, so DI always supplies it.
     private readonly CardWorkTransitionSettings _cardTransitions;
     private readonly ScheduleSettings _schedules;
+    private readonly ZombieCensusState? _censusState;
+    private readonly ISessionRunnerDirectory? _runnerDirectory;
 
     public AttentionService(
         AppDbContext db,
@@ -148,6 +150,8 @@ public sealed partial class AttentionService
         _workspaceProgress = workspaceProgress;
         _cardTransitions = cardTransitions?.Value ?? new CardWorkTransitionSettings();
         _schedules = schedules?.Value ?? new ScheduleSettings();
+        _censusState = censusState;
+        _runnerDirectory = runnerDirectory;
     }
 
     public async Task<AttentionDto> GetAsync(CancellationToken ct, bool includeProgressProbe = true)
@@ -218,6 +222,15 @@ public sealed partial class AttentionService
         items.AddRange(await BuildHerdrSupervisionHeldItemsAsync(ct));
         items.AddRange(await BuildStandingContinuityItemsAsync(ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
+        // One local List for both stop evidence and disagreement. Remote liveness is the
+        // CARD-0679 cached live/unknown inventory, never an RPC to an unavailable runner.
+        var runnerSessions = await TryListRunnerSessionsAsync(ct);
+        var remoteLive = (_runnerDirectory?.LiveRemoteSessionIds() ?? []).ToHashSet();
+        var remoteUnknown = (_runnerDirectory?.UnknownRemoteSessionIds() ?? []).ToHashSet();
+        items.AddRange(await BuildPoolDelegateUnreleasedItemsAsync(now, remoteLive, remoteUnknown, ct));
+        items.AddRange(await BuildSessionStopStuckItemsAsync(now, runnerSessions, remoteLive, remoteUnknown, ct));
+        items.AddRange(await BuildSessionUnownedItemsAsync(now, remoteLive, remoteUnknown, ct));
+        items.AddRange(await BuildZombieCensusItemsAsync(ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
         items.AddRange(await BuildCompactionContinuationItemsAsync(ct));
@@ -229,7 +242,6 @@ public sealed partial class AttentionService
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
         // flag that is hard-coded false is not a claim at all. ONE call: the diff below consumes this
         // same list rather than asking the runner a second question about the same moment.
-        var runnerSessions = await TryListRunnerSessionsAsync(ct);
         if (runnerSessions is not null)
         {
             // The sessions the task pass has just pronounced dead. A disagreement row about one of

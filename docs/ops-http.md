@@ -253,6 +253,26 @@ transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the de
 
 ## Killing
 
+`GET /api/attention` includes four CARD-0691 conditions, computed without taking action:
+
+- `PoolDelegateUnreleased` (44, Error): a live pool delegate with no open task, past twice
+  `Delegation:PoolReleaseGraceSeconds`. Warm, standing, sourced and mid-turn owners are excluded.
+- `SessionStopStuck` (45, Error): Stopping unchanged for five minutes, or an unresolved
+  generation-conditional deferred kill older than five minutes, even for a terminal session row.
+  Evidence names the kill intent and distinguishes confirmed live, confirmed absent and unknown.
+- `SessionUnowned` (46, Warning): a live session older than ten minutes with no card, standing
+  owner, agent pointer or open task. Remote sessions require confirmed live inventory; an
+  unknown CARD-0679 remote session is never inferred to be a leak.
+- `ZombieCensusReport` (47, Warning): one row per candidate class (PoolExpired, EndedButAlive,
+  Unclaimed) in the last successful local OS census, with count, up to five pid/agent/session
+  examples and generation time. Absent before the first successful run; a failed run retains
+  the previous timestamp. PtyHost surplus remains the existing `PtyHostCensusDiverged` alert
+  and `scripts/reap-orphaned-pty-hosts.ps1` surface, not a new census classifier.
+
+The three row-derived conditions include server2. The Windows OS census remains local-only.
+`RunnerConsulted` refers to the local list; remote evidence uses CARD-0679's cached inventory.
+All four conditions are read-only and offer inspection, never automatic cleanup.
+
 `POST /api/agents/{id}/stop` is the front door for a named agent; `POST /api/sessions/{id}/kill`
 kills one session and records `OperatorRequest` as the termination source. The session summary
 now carries `terminationSource`; `Unknown` on a row closed after CARD-0316 ships is a bug to
