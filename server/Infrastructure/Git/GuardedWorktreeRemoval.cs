@@ -71,6 +71,9 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     if (!WorktreeNoFollowDelete.Restore(aside, source.WorktreePath))
                         return Finish("worktree_removal_incomplete", "set-aside: " + aside);
                     WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
+                    // Restoring the directory does not change Git's administrative stamp. Refresh
+                    // the cached prunable flag before inspecting the restored checkout.
+                    await git.LiveRegistrationsAsync(source.RepositoryPath, ct);
                     return await RemoveDirectoryAsync(request, consumeSlot, clock, ct);
                 }
                 else
@@ -199,6 +202,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     directoryGone = false;
                     setAsideDetail = null;
                     WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
+                    await git.LiveRegistrationsAsync(source.RepositoryPath, ct);
                     return true;
                 }
             }
