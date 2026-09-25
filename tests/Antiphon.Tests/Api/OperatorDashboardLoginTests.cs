@@ -59,6 +59,42 @@ public class OperatorDashboardLoginTests
     [Test]
     public async Task Login_over_https_marks_the_cookie_Secure()
     {
+        var setCookie = await LoginSetCookieAsync(ctx => ctx.Request.Scheme = "https");
+
+        setCookie.ToLowerInvariant().ShouldContain("secure");
+    }
+
+    [Test]
+    public async Task Login_through_the_local_https_proxy_marks_the_cookie_Secure()
+    {
+        // CARD-0676: Caddy terminates TLS and reaches Kestrel over plain http from loopback.
+        var setCookie = await LoginSetCookieAsync(ctx =>
+        {
+            ctx.Request.Scheme = "http";
+            ctx.Request.Headers["X-Forwarded-Proto"] = "https";
+        });
+
+        setCookie.ToLowerInvariant().ShouldContain("secure");
+    }
+
+    [Test]
+    public async Task Login_over_http_or_with_a_forwarded_proto_from_a_remote_peer_is_not_Secure()
+    {
+        var plain = await LoginSetCookieAsync(ctx => ctx.Request.Scheme = "http");
+        var remote = await LoginSetCookieAsync(ctx =>
+        {
+            ctx.Request.Scheme = "http";
+            ctx.Connection.RemoteIpAddress = IPAddress.Parse("8.8.8.8");
+            ctx.Request.Headers["X-Forwarded-Proto"] = "https";
+        });
+
+        plain.ToLowerInvariant().ShouldNotContain("secure");
+        remote.ToLowerInvariant().ShouldNotContain("secure");
+    }
+
+    /// <summary>Issue a login link with the factory's token, redeem it, and return the Set-Cookie header.</summary>
+    private async Task<string> LoginSetCookieAsync(Action<HttpContext> configureLogin)
+    {
         var token = OperatorTokenFile.ReadOrCreate(_factory.OperatorTokenPath);
         var issued = await SendAsync(
             "POST", OperatorEndpoints.SessionsPath,
@@ -68,14 +104,12 @@ public class OperatorDashboardLoginTests
             .GetProperty("loginPath").GetString()!;
         var query = loginPath[OperatorEndpoints.LoginPath.Length..];
 
-        var login = await SendAsync(
-            "GET", OperatorEndpoints.LoginPath, query,
-            ctx => ctx.Request.Scheme = "https");
+        var login = await SendAsync("GET", OperatorEndpoints.LoginPath, query, configureLogin);
 
         login.Response.StatusCode.ShouldBe(302);
         var setCookie = login.Response.Headers.SetCookie.ToString();
         setCookie.ShouldStartWith(OperatorDashboardSessions.CookieName + "=");
-        setCookie.ToLowerInvariant().ShouldContain("secure");
+        return setCookie;
     }
 
     private Task<HttpContext> SendAsync(
