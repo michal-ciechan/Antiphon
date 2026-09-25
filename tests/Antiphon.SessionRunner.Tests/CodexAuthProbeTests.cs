@@ -82,6 +82,98 @@ public class CodexAuthProbeTests
     }
 
     [Test]
+    public async Task Symlinked_auth_file_is_not_presence_but_a_linked_home_is_judged_by_its_file()
+    {
+        // Review of ff170389: only a regular, non-link auth.json is presence. A link to a real
+        // credential file, a dangling link and a link to a directory are all signed out. The
+        // home itself being a link (as /state/codex is a bind mount) does not matter: only the
+        // final component is judged, with lstat semantics.
+        var root = NewHome();
+        try
+        {
+            var home = Path.Combine(root, "home");
+            var elsewhere = Path.Combine(root, "elsewhere");
+            Directory.CreateDirectory(home);
+            Directory.CreateDirectory(elsewhere);
+            var target = Path.Combine(elsewhere, "real-auth.json");
+            await File.WriteAllTextAsync(target, "{}");
+            var authPath = Path.Combine(home, "auth.json");
+            var linkedHome = Path.Combine(root, "linked-home");
+            if (!TryCreateSymlink(authPath, target, directory: false)
+                || !TryCreateSymlink(linkedHome, home, directory: true))
+            {
+                Skip.Test(
+                    "This host denied symlink creation (Windows without Developer Mode). The symlinked auth.json "
+                    + "refusal runs on the Linux runner, where CreateSymbolicLink needs no privilege.");
+                return;
+            }
+
+            var probe = new CodexAuthProbe(new PhoneHomeSettings { CodexHome = Posix(home) }, clock: new FakeTimeProvider(Now));
+
+            var toFile = await probe.ProbeAsync("codex", CancellationToken.None);
+            toFile.LoggedIn.ShouldBe(false, "a symlinked auth.json is not a regular file, even when its target is");
+            toFile.AuthMethod.ShouldBeNull();
+            toFile.Error.ShouldBeNull();
+
+            File.Delete(target);
+            var dangling = await probe.ProbeAsync("codex", CancellationToken.None);
+            dangling.LoggedIn.ShouldBe(false, "a dangling auth.json link is signed out");
+            dangling.AuthMethod.ShouldBeNull();
+
+            File.Delete(authPath);
+            TryCreateSymlink(authPath, elsewhere, directory: true).ShouldBeTrue();
+            var toDirectory = await probe.ProbeAsync("codex", CancellationToken.None);
+            toDirectory.LoggedIn.ShouldBe(false, "a link to a directory is signed out");
+
+            // The positive control: a regular auth.json in the same home, reached directly or
+            // through a linked home, is presence.
+            File.Delete(authPath);
+            await File.WriteAllTextAsync(authPath, "{}");
+            var regular = await probe.ProbeAsync("codex", CancellationToken.None);
+            regular.LoggedIn.ShouldBe(true, "a regular auth.json is presence");
+            regular.AuthMethod.ShouldBe("auth_file");
+
+            var viaLinkedHome = await new CodexAuthProbe(
+                    new PhoneHomeSettings { CodexHome = Posix(linkedHome) }, clock: new FakeTimeProvider(Now))
+                .ProbeAsync("codex", CancellationToken.None);
+            viaLinkedHome.LoggedIn.ShouldBe(true, "a linked or mounted home does not disqualify a regular file in it");
+        }
+        finally
+        {
+            DeleteHome(root);
+        }
+    }
+
+    [Test]
+    public async Task Link_attributes_from_the_seam_are_signed_out()
+    {
+        // The same rule through the metadata seam, so it holds on every host: ReparsePoint (a
+        // symlink on Unix; a symlink or junction on Windows) is not a regular file.
+        foreach (var attributes in new[]
+                 {
+                     FileAttributes.ReparsePoint,
+                     FileAttributes.ReparsePoint | FileAttributes.Normal,
+                     FileAttributes.ReparsePoint | FileAttributes.Directory,
+                 })
+        {
+            var probe = new CodexAuthProbe(
+                new PhoneHomeSettings { CodexHome = "/state/codex" }, getAttributes: _ => attributes, clock: new FakeTimeProvider(Now));
+            var dto = await probe.ProbeAsync("codex", CancellationToken.None);
+            dto.LoggedIn.ShouldBe(false, attributes.ToString());
+            dto.AuthMethod.ShouldBeNull(attributes.ToString());
+            dto.Error.ShouldBeNull(attributes.ToString());
+        }
+
+        foreach (var attributes in new[] { FileAttributes.Normal, FileAttributes.ReadOnly, FileAttributes.Archive })
+        {
+            var probe = new CodexAuthProbe(
+                new PhoneHomeSettings { CodexHome = "/state/codex" }, getAttributes: _ => attributes, clock: new FakeTimeProvider(Now));
+            var dto = await probe.ProbeAsync("codex", CancellationToken.None);
+            dto.LoggedIn.ShouldBe(true, attributes + " is a regular file");
+        }
+    }
+
+    [Test]
     public async Task Missing_directory_is_signed_out()
     {
         var root = Path.Combine(Path.GetTempPath(), "codex-auth-probe-absent-" + Guid.NewGuid().ToString("N"));
@@ -221,6 +313,22 @@ public class CodexAuthProbeTests
     }
 
     private static string Posix(string path) => path.Replace('\\', '/');
+
+    private static bool TryCreateSymlink(string link, string target, bool directory)
+    {
+        try
+        {
+            if (directory)
+                Directory.CreateSymbolicLink(link, target);
+            else
+                File.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
 
     private static void DeleteHome(string root)
     {
