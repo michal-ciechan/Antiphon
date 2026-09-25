@@ -116,7 +116,7 @@ SELECT json_build_object(
          (query LIKE '%"TurnEnd"%' AND query LIKE '%EXISTS%')) THEN 'working'
        WHEN query LIKE '%"TranscriptEntries"%' AND query LIKE '%"Uuid"%' AND query LIKE '%ANY%' THEN 'uuid'
        WHEN query LIKE '%"TranscriptEntries"%' AND query ~* '\mSELECT\M' THEN 'transcript-content'
-       WHEN query LIKE '%"AgentSessions"%' AND query LIKE '%"RunnerStoreId"%' AND query LIKE '%"RunnerCwd"%' THEN 'binding'
+       WHEN query ~ '^SELECT [a-z0-9_]+\."RunnerId", [a-z0-9_]+\."RunnerStoreId", [a-z0-9_]+\."RunnerCwd"[[:space:]]+FROM "AgentSessions"' THEN 'binding'
        WHEN query LIKE '%"Boards"%' AND query LIKE '%"ProjectId"%' THEN 'boards'
        WHEN query LIKE '%"AgentTasks"%' AND query LIKE '%CompletionNote%' AND query ~* '\mUPDATE\M' THEN 'completion-stamp'
        ELSE 'other'
@@ -169,7 +169,19 @@ function Get-WindowDelta {
     $serverCpu = ([double]$End.runtime.cpuSeconds - [double]$Start.runtime.cpuSeconds) / $seconds
     $postgresCpu = ([double]$End.postgres.containerCpuSeconds - [double]$Start.postgres.containerCpuSeconds) / $seconds
     if ($serverCpu -lt 0 -or $postgresCpu -lt 0) { throw 'Negative CPU delta invalidated the window.' }
-    return @{ seconds = $seconds; serverCores = $serverCpu; postgresContainerCores = $postgresCpu; statements = @($deltas) }
+    $cacheDelta = $null; $perIngest = $null
+    $transcriptReads = [long](($deltas | Where-Object transcriptSelect | Measure-Object calls -Sum).Sum)
+    if ($Start.runtime.ContainsKey('cache') -and $End.runtime.ContainsKey('cache')) {
+        if ($Start.runtime.cache.serverEpoch -ne $End.runtime.cache.serverEpoch) { throw 'Cache epoch changed inside the window.' }
+        $cacheDelta = @{}
+        foreach ($metric in @('hits','loads','loadFaults','evictions','capacityFallbacks','ingestCalls','committedRows','duplicateBatches')) {
+            $cacheDelta[$metric] = [long]$End.runtime.cache[$metric] - [long]$Start.runtime.cache[$metric]
+            if ($cacheDelta[$metric] -lt 0) { throw 'Negative cache counter delta invalidated the window.' }
+        }
+        if ($cacheDelta.ingestCalls -gt 0) { $perIngest = $transcriptReads / $cacheDelta.ingestCalls }
+    }
+    return @{ seconds = $seconds; serverCores = $serverCpu; postgresContainerCores = $postgresCpu; statements = @($deltas);
+        transcriptSelectCalls = $transcriptReads; cacheDelta = $cacheDelta; transcriptSelectsPerIngest = $perIngest }
 }
 
 function Capture-Evidence {
@@ -178,6 +190,10 @@ function Capture-Evidence {
     if (-not $ContextPath -or -not (Test-Path -LiteralPath $ContextPath)) { throw 'Capture requires a sanitized context JSON (openClients, workloadKey, siblingShas).' }
     $context = Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json -AsHashtable
     foreach ($key in @('openClients','workloadKey','siblingShas')) { if (-not $context.ContainsKey($key)) { throw "Context is missing $key." } }
+    if ([int]$context.openClients -lt 0 -or [string]::IsNullOrWhiteSpace($context.workloadKey)) { throw 'Context has invalid workload/client observations.' }
+    foreach ($sibling in @('CARD-0696','CARD-0698','CARD-0699','CARD-0700')) {
+        if ($context.siblingShas[$sibling] -notmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw "Context requires the observed deployed SHA for $sibling." }
+    }
     $worktrees = Invoke-Bounded 'git' @('-C', $PSScriptRoot, 'worktree', 'list', '--porcelain')
     $canonical = [regex]::Match($worktrees, '(?m)^worktree (.+)$').Groups[1].Value.Trim()
     if (-not $canonical) { throw 'Canonical checkout is unavailable.' }
@@ -230,6 +246,7 @@ function Compare-Evidence {
         $workingGate = $workingBefore -gt 0 -and $workingAfter -lt $workingBefore
         if ($Round -eq 'R3') { $workingGate = $workingBefore -gt 0 -and $workingAfter -le $workingBefore * 0.05 }
         $bindingGate = $Round -ne 'R3' -or ($bindingBefore -gt 0 -and $bindingAfter -le $bindingBefore * 0.05)
+        if ($a.cacheDelta -and ($a.cacheDelta.loadFaults -gt 0 -or $a.cacheDelta.capacityFallbacks -gt 0)) { $allGates = $false }
         $allGates = $allGates -and $workingGate -and $bindingGate
         $comparisons += @{ workload = $beforeWindow.workload; workingBefore = $workingBefore; workingAfter = $workingAfter;
             bindingBefore = $bindingBefore; bindingAfter = $bindingAfter; before = $b; after = $a }
@@ -246,7 +263,14 @@ function Compare-Evidence {
 }
 
 New-Item -ItemType Directory -Path $EvidenceRoot -Force | Out-Null
-if ($Mode -eq 'Acceptance' -and -not (Test-Path -LiteralPath $BaselinePath)) { throw 'Acceptance requires a previously saved baseline; the changed build cannot become before.' }
+if ($Mode -eq 'Acceptance') {
+    if (-not (Test-Path -LiteralPath $BaselinePath)) { throw 'Acceptance requires a previously saved baseline; the changed build cannot become before.' }
+    $baseline = Get-Content -LiteralPath $BaselinePath -Raw | ConvertFrom-Json -AsHashtable
+    if ($baseline.schemaVersion -ne 1 -or $baseline.phase -ne 'Before' -or $baseline.card -ne $PlanCard -or $baseline.windows.Count -ne 2) {
+        throw 'Acceptance baseline is incompatible.'
+    }
+    foreach ($window in $baseline.windows) { $null = Get-WindowDelta $window.start $window.end }
+}
 if ($Mode -eq 'Compare') {
     if (-not $AfterPath) { throw 'Compare requires AfterPath.' }
     $before = Get-Content -LiteralPath $BaselinePath -Raw | ConvertFrom-Json -AsHashtable

@@ -4767,7 +4767,7 @@ public sealed partial class SessionMessageQueueService
     // Internal so the agent list/detail can surface the SAME working signal on agent cards —
     // "Working" on a card must mean mid-turn right now, not merely "session started".
     private Task<bool> ReadWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
-        _states is null ? IsWorkingAsync(db, sessionId, ct) : _states.IsWorkingAsync(sessionId, ct);
+        _states is { Enabled: true } ? _states.IsWorkingAsync(sessionId, ct) : IsWorkingAsync(db, sessionId, ct);
 
     internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
         (await IsWorkingBatchAsync(db, [sessionId], ct))[sessionId];

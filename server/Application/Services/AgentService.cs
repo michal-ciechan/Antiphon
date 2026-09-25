@@ -108,7 +108,7 @@ public sealed class AgentService
             .Where(session => session.Dto.Status == SessionStatus.Running)
             .Select(session => session.Dto.Id)
             .ToList();
-        var working = _states is null
+        var working = _states is not { Enabled: true }
             ? await SessionMessageQueueService.IsWorkingBatchAsync(_db, runningSessionIds, ct)
             : await _states.IsWorkingBatchAsync(runningSessionIds, ct);
         var lastRefreshed = await LoadLastRefreshedAtAsync(agents.Select(a => a.Id), ct);
@@ -167,7 +167,7 @@ public sealed class AgentService
     /// </summary>
     private async Task<bool> IsSessionWorkingAsync(AgentSessionSummaryDto? live, CancellationToken ct) =>
         live is { Status: SessionStatus.Running }
-        && (_states is null ? await SessionMessageQueueService.IsWorkingAsync(_db, live.Id, ct)
+        && (_states is not { Enabled: true } ? await SessionMessageQueueService.IsWorkingAsync(_db, live.Id, ct)
             : await _states.IsWorkingAsync(live.Id, ct));
 
     public async Task<AgentDetailDto> GetByIdAsync(Guid id, CancellationToken ct)

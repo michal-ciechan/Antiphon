@@ -24,6 +24,7 @@ public sealed class SessionStateStore : IDisposable
     private long _revision;
     private long _hitCount, _loadCount, _faultCount, _evictionCount, _pressureCount, _ingestCount, _rowCount, _duplicateCount;
     public Guid ServerEpoch { get; } = Guid.NewGuid();
+    public bool Enabled => _settings.Enabled;
 
     public SessionStateStore(ISessionStateLoader loader, TimeProvider clock, IOptions<SessionStateSettings> settings)
     {
@@ -229,6 +230,8 @@ public sealed class SessionStateStore : IDisposable
         }
 
         public Task ReconcileAsync(bool reset, CancellationToken ct) => owner.LoadAsync([entry], reset, ct);
+        public void RecordIngest(long previousCount, bool duplicate) =>
+            owner.RecordIngest(Math.Max(0, Snapshot.Count - previousCount), duplicate);
         public void Dispose()
         {
             if (_disposed) return;
@@ -246,7 +249,7 @@ public sealed class SessionStateStore : IDisposable
 
     public object GetMetrics() => new
     {
-        serverEpoch = ServerEpoch, cachedSessions = CachedCount,
+        serverEpoch = ServerEpoch, enabled = Enabled, cachedSessions = CachedCount,
         hits = Interlocked.Read(ref _hitCount), loads = Interlocked.Read(ref _loadCount),
         loadFaults = Interlocked.Read(ref _faultCount), evictions = Interlocked.Read(ref _evictionCount),
         capacityFallbacks = Interlocked.Read(ref _pressureCount), ingestCalls = Interlocked.Read(ref _ingestCount),
