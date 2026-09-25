@@ -237,18 +237,16 @@ public sealed class CodexPhoneHomeCreateTests
         await using var verify = kit.Context();
         (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == explicitRemote.Id)).RunnerId.ShouldBe(Runner);
         (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == automatic.Id))
-            .RunnerId.ShouldBeNull("CARD-0660 D-10: Codex takes no default placement before S7");
+            .RunnerId.ShouldBe(Runner, "CARD-0710 D-10: a Codex worker inherits the runtime default");
         var created = await verify.AgentTaskEvents.AsNoTracking()
             .SingleAsync(e => e.AgentTaskId == automatic.Id && e.Type == AgentTaskEventType.Created);
         created.Detail.ShouldNotBeNull().ShouldContain(
-            "runner source=default requested=unset default=server2 selected=local reason=kind_not_supported", Case.Sensitive);
+            "runner source=default requested=unset default=server2 selected=server2 reason=eligible", Case.Sensitive);
 
-        // The persisted-kind dispatch fence admits what explicit create admitted; automatic kind
-        // moves onto a runner (reroute, rewalk, wall) still stop at Grok and Claude Code.
         DefaultRunnerRoutingPolicy.IsHostKindAdmitted(Runner, AgentKind.Codex).ShouldBeTrue();
         DefaultRunnerRoutingPolicy.IsHostKindAdmitted(Runner, AgentKind.OpenCode).ShouldBeFalse();
         DefaultRunnerRoutingPolicy.IsHostKindAdmitted(null, AgentKind.OpenCode).ShouldBeTrue();
-        DefaultRunnerRoutingPolicy.IsHostKindCompatible(Runner, AgentKind.Codex).ShouldBeFalse();
+        DefaultRunnerRoutingPolicy.IsHostKindCompatible(Runner, AgentKind.Codex).ShouldBeTrue();
         DefaultRunnerRoutingPolicy.IsHostKindCompatible(Runner, AgentKind.ClaudeCode).ShouldBeTrue();
     }
 
@@ -377,7 +375,7 @@ public sealed class CodexPhoneHomeCreateTests
         public List<string?> ResolveCalls { get; } = [];
         public ISessionRunnerClient Local => Client;
         public IReadOnlyList<string> KnownRunnerIds => [Runner];
-        public Guid? LiveStoreId => Guid.NewGuid();
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : Guid.NewGuid();
 
         public ISessionRunnerClient Resolve(string? runnerId)
         {

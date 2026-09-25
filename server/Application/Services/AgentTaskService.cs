@@ -73,6 +73,7 @@ public sealed class AgentTaskService
     private readonly DelegationWorktreeService? _worktrees;
     private readonly StartRefAvailability? _startRefs;
     private readonly CompletionNoteFlushQueue? _completionNotes;
+    private readonly RunnerDefaultSettingsService? _runnerDefaults;
     // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
@@ -111,10 +112,12 @@ public sealed class AgentTaskService
         // CARD-0666. Optional. Absent, a caller start ref is checked only at dispatch, locally.
         StartRefAvailability? startRefs = null,
         AgentSessionRuntime? runtime = null,
-        CompletionNoteFlushQueue? completionNotes = null)
+        CompletionNoteFlushQueue? completionNotes = null,
+        RunnerDefaultSettingsService? runnerDefaults = null)
     {
         _startRefs = startRefs;
         _completionNotes = completionNotes;
+        _runnerDefaults = runnerDefaults;
         _worktrees = worktrees;
         _runners = runners;
         _phoneHome = phoneHome;
@@ -1202,6 +1205,12 @@ public sealed class AgentTaskService
         // walk, the inherited standing-agent kind and workspace resolution, and before the remote
         // provider probe, SourceLanding custody admission and the insert. An explicit runner was
         // validated above and is only recorded; a selected default already satisfies those rules.
+        RunnerDefaultSnapshot? defaultsSnapshot = null;
+        if (_runnerDefaults is not null)
+        {
+            defaultsSnapshot = await _runnerDefaults.EnsureInitializedAsync(ct);
+            _defaultRunner.ApplySnapshot(defaultsSnapshot);
+        }
         var runnerDecision = _defaultRunner.Decide(runnerIntent, new DefaultRunnerShape(
             workspace,
             agentKind,
@@ -1215,6 +1224,39 @@ public sealed class AgentTaskService
             remoteRunnerId = selectedRunner;
         if (runnerDecision?.Warning is { } runnerWarning)
             warning = warning is null ? runnerWarning : warning + " " + runnerWarning;
+
+        var (requirement, requirementSource) = await ResolveRequirementAsync(
+            request, binding.CardId, followUpOfTaskId, ct);
+        string? observedPlatform = null;
+        if (requirement != RequiredPlatform.Any)
+        {
+            var pinnedHost = askedForExistingProcess || liveFollowUp || followUpOfTaskId is not null
+                || request.AgentId is not null;
+            if (runnerIntent.Source is RunnerRequestSource.ExplicitRemote or RunnerRequestSource.ExplicitLocal || pinnedHost)
+            {
+                var target = runnerIntent.Source == RunnerRequestSource.ExplicitLocal ? null : remoteRunnerId;
+                var described = await DescribePlacementAsync(target, ct);
+                RefuseExplicitPlatform(requirement, target, described);
+                observedPlatform = RunnerPlatformWire.Normalize(described?.Platform);
+            }
+            else
+            {
+                var described = await DescribePlacementAsync(remoteRunnerId, ct);
+                if (PlatformMatches(requirement, described))
+                    observedPlatform = RunnerPlatformWire.Normalize(described?.Platform);
+                else
+                {
+                    var match = await SelectPlatformCandidateAsync(requirement, ct);
+                    remoteRunnerId = match.RunnerId;
+                    observedPlatform = match.Platform;
+                    runnerDecision = match.Decision ?? runnerDecision;
+                }
+            }
+        }
+        else
+        {
+            observedPlatform = RunnerPlatformWire.Normalize((await DescribePlacementAsync(remoteRunnerId, ct))?.Platform);
+        }
 
         // CARD-0666. Last of the refusals, and before the row exists: a start SHA only origin has is
         // fetched HERE (bounded, journaled), never in the dispatch claim under the repository lease.
@@ -1284,6 +1326,19 @@ public sealed class AgentTaskService
             VerificationBaselineOutcomeId = verificationAdmission?.BaselineOutcomeId,
             VerificationAdmissionJson = verificationAdmission?.Serialize(),
             RunnerId = remoteRunnerId,
+            RequiredPlatform = requirement,
+            RequirementSource = requirementSource,
+            ObservedPlatform = observedPlatform,
+            RunnerDefaultsRevision = defaultsSnapshot?.Revision,
+            RunnerSelectionSource = runnerDecision?.Source switch
+            {
+                "explicit" or "explicit-local" => RunnerSelectionSource.Explicit,
+                "kind-default" => RunnerSelectionSource.KindDefault,
+                "default" => RunnerSelectionSource.GlobalDefault,
+                "fallback" => RunnerSelectionSource.Fallback,
+                _ => askedForExistingProcess ? RunnerSelectionSource.ExistingProcess : null,
+            },
+            PlacementReason = runnerDecision?.Reason,
             // CARD-0613 D-1/D-3. A caller StartRef is stored verbatim. CARD-0644 D-4 freezes a
             // retired Worktree tip into the same field; that SHA is derived after the public
             // StartRef conflict check, so a follow-up plus a caller StartRef still refuses.
@@ -1454,7 +1509,119 @@ public sealed class AgentTaskService
             FollowUpMessage: followUpMessage,
             Complexity: request.Complexity,
             Routing: routingWalk?.ToDto(),
-            TitleDiagnosisQueued: titleDiagnosisQueued);
+            TitleDiagnosisQueued: titleDiagnosisQueued,
+            RequiredPlatform: task.RequiredPlatform,
+            RunnerId: RunnerRequestIntent.DisplayRunnerId(task.RunnerId),
+            RequirementSource: task.RequirementSource,
+            ObservedPlatform: task.ObservedPlatform);
+    }
+
+    private async Task<(RequiredPlatform Requirement, RequirementSource Source)> ResolveRequirementAsync(
+        CreateAgentTaskRequest request, Guid? cardId, Guid? followUpId, CancellationToken ct)
+    {
+        if (request.RequiredPlatform is { } explicitValue)
+        {
+            if (!Enum.IsDefined(explicitValue))
+                throw new ValidationException(nameof(request.RequiredPlatform),
+                    "requiredPlatform must be Any, Windows or Linux.");
+            return (explicitValue, RequirementSource.Request);
+        }
+
+        if (followUpId is Guid priorId)
+        {
+            var prior = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Id == priorId)
+                .Select(t => (RequiredPlatform?)t.RequiredPlatform)
+                .FirstOrDefaultAsync(ct);
+            if (prior is { } frozen)
+                return (frozen, RequirementSource.FollowUp);
+        }
+
+        if (cardId is Guid bound)
+        {
+            var cardPlatform = await _db.Cards.AsNoTracking()
+                .Where(c => c.Id == bound)
+                .Select(c => (RequiredPlatform?)c.RequiredPlatform)
+                .FirstOrDefaultAsync(ct);
+            if (cardPlatform is { } fromCard)
+                return (fromCard, RequirementSource.Card);
+        }
+
+        return (RequiredPlatform.Any, RequirementSource.Default);
+    }
+
+    private async Task<RunnerDescriptor?> DescribePlacementAsync(string? runnerId, CancellationToken ct)
+    {
+        if (_runners is null)
+            return null;
+        return await _runners.DescribeAsync(runnerId, ct);
+    }
+
+    private static bool PlatformMatches(RequiredPlatform requirement, RunnerDescriptor? described)
+    {
+        var want = requirement switch
+        {
+            RequiredPlatform.Windows => RunnerPlatformWire.Windows,
+            RequiredPlatform.Linux => RunnerPlatformWire.Linux,
+            _ => null,
+        };
+        return want is not null
+            && string.Equals(RunnerPlatformWire.Normalize(described?.Platform), want, StringComparison.Ordinal);
+    }
+
+    private static void RefuseExplicitPlatform(RequiredPlatform requirement, string? runnerId, RunnerDescriptor? described)
+    {
+        var name = RunnerRequestIntent.DisplayRunnerId(runnerId);
+        if (!PlatformMatches(requirement, described))
+        {
+            var observed = RunnerPlatformWire.Normalize(described?.Platform);
+            if (observed is null)
+                throw new ConflictException(
+                    $"Runner '{name}' has no current platform evidence for a {requirement} task.",
+                    RunnerPlatformProblems.Unknown);
+            throw new ConflictException(
+                $"Runner '{name}' is {observed} and cannot run a {requirement} task.",
+                RunnerPlatformProblems.Mismatch);
+        }
+    }
+
+    private async Task<(string? RunnerId, string? Platform, DefaultRunnerDecision? Decision)> SelectPlatformCandidateAsync(
+        RequiredPlatform requirement, CancellationToken ct)
+    {
+        var desktop = await DescribePlacementAsync(null, ct);
+        if (PlatformMatches(requirement, desktop))
+        {
+            return (null, RunnerPlatformWire.Normalize(desktop?.Platform), new DefaultRunnerDecision(
+                null, "fallback", "unset", _defaultRunner.DefaultRunnerId, "platform_match", Warn: false));
+        }
+
+        if (_runners is not null)
+        {
+            foreach (var id in _runners.KnownRunnerIds
+                         .Where(id => !RunnerRequestIntent.IsDesktopAlias(id))
+                         .OrderBy(id => id, StringComparer.Ordinal))
+            {
+                RunnerDescriptor? described;
+                try
+                {
+                    described = await DescribePlacementAsync(id, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    continue;
+                }
+
+                if (described is { DispatchEligible: true } && PlatformMatches(requirement, described))
+                {
+                    return (id, RunnerPlatformWire.Normalize(described.Platform), new DefaultRunnerDecision(
+                        id, "fallback", "unset", _defaultRunner.DefaultRunnerId, "platform_match", Warn: false));
+                }
+            }
+        }
+
+        throw new ConflictException(
+            $"No eligible runner can run a {requirement} task.",
+            RunnerPlatformProblems.Unavailable);
     }
 
     private async Task<string?> CompletionHeaderAsync(Guid taskId, CancellationToken ct) =>
@@ -3410,7 +3577,13 @@ public sealed class AgentTaskService
             resolved.ProjectName,
             resolved.BoardId,
             resolved.BoardName,
-            resolved.Source);
+            resolved.Source,
+            task.RequiredPlatform,
+            RunnerRequestIntent.DisplayRunnerId(task.RunnerId),
+            task.RequirementSource,
+            task.ObservedPlatform,
+            task.RunnerDefaultsRevision,
+            task.RunnerSelectionSource);
     }
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)

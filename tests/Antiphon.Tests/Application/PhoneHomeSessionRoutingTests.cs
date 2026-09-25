@@ -250,7 +250,7 @@ public class PhoneHomeSessionRoutingTests
     {
         public ISessionRunnerClient Local => remote;
         public IReadOnlyList<string> KnownRunnerIds => ["local", "grok-linux"];
-        public Guid? LiveStoreId => session.RunnerStoreId;
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : session.RunnerStoreId;
         public ISessionRunnerClient Resolve(string? runnerId) => remote;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult<SessionRunnerOwner?>(new SessionRunnerOwner(session.RunnerId!, session.RunnerStoreId!.Value, session.RunnerCwd!));
@@ -266,7 +266,7 @@ public class PhoneHomeSessionRoutingTests
     {
         public ISessionRunnerClient Local => local;
         public IReadOnlyList<string> KnownRunnerIds => ["local", "grok-linux"];
-        public Guid? LiveStoreId => session.RunnerStoreId;
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : session.RunnerStoreId;
         public ISessionRunnerClient Resolve(string? runnerId) =>
             runnerId == "grok-linux"
                 ? throw new ServiceUnavailableException("offline", "phone_home_unavailable")

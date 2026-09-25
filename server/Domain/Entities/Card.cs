@@ -96,6 +96,12 @@ public class Card
     public CardVerificationPolicy ReviewVerificationPolicy { get; set; } = CardVerificationPolicy.FullOnly;
 
     /// <summary>
+    /// CARD-0710. Default task platform copied onto each new task. Any unless an edit sets it.
+    /// Not a prohibition on direct card session starts.
+    /// </summary>
+    public RequiredPlatform RequiredPlatform { get; set; } = RequiredPlatform.Any;
+
+    /// <summary>
     /// How many revisions this card has, and the allocator for the next
     /// <see cref="CardRevision.RevisionNumber"/>. Stored on the card rather than counted so that
     /// (a) the board GET can surface an "edited" affordance without a second query or a windowed

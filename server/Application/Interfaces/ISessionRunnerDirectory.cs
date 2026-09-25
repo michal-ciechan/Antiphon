@@ -5,6 +5,18 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public sealed record SessionRunnerOwner(string RunnerId, Guid RunnerStoreId, string RunnerCwd);
 
+/// <summary>CARD-0710. One catalogue row. <see cref="Platform"/> is windows, linux, or null.</summary>
+public sealed record RunnerDescriptor(
+    string RunnerId,
+    string DisplayName,
+    string? Platform,
+    DateTimeOffset? PlatformObservedAt,
+    bool Available,
+    bool DispatchEligible,
+    bool Stale,
+    int? Capacity,
+    RunnerCapabilitiesDto? Capabilities);
+
 public abstract record RunnerInventory
 {
     public sealed record Available(IReadOnlyList<SessionRunnerSessionDto> Sessions) : RunnerInventory;
@@ -34,7 +46,16 @@ public interface ISessionRunnerDirectory
     Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct);
     Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct);
     IReadOnlyList<string> KnownRunnerIds { get; }
-    Guid? LiveStoreId { get; }
+
+    /// <summary>
+    /// CARD-0710. Store identity of <paramref name="runnerId"/> only. A desktop id and an unknown
+    /// id are null. Never the first connected runner.
+    /// </summary>
+    Guid? GetLiveStoreId(string? runnerId);
+
+    /// <summary>CARD-0710. Current descriptor, or null when this directory does not know the id.</summary>
+    Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) =>
+        Task.FromResult<RunnerDescriptor?>(null);
 
     /// <summary>
     /// CARD-0653: seats the connected runner declared, or null when this directory cannot say.

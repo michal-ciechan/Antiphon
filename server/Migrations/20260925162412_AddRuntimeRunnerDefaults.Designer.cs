@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260925162412_AddRuntimeRunnerDefaults")]
+    partial class AddRuntimeRunnerDefaults
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1442,10 +1445,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("CardId")
                         .HasDatabaseName("IX_AgentTasks_CardId");
 
-                    b.HasIndex("Id")
-                        .HasDatabaseName("IX_AgentTasks_MissingCompletionNote")
-                        .HasFilter("\"CompletionNoteQueuedAt\" IS NULL AND \"SourceLandingOperationId\" IS NOT NULL AND \"ParentSessionId\" IS NOT NULL AND \"ReplyTo\" = 1 AND \"Result\" IS NOT NULL AND \"Status\" IN (4, 5, 6)");
-
                     b.HasIndex("LandRequestedAt")
                         .HasDatabaseName("IX_AgentTasks_LandRequestedAt")
                         .HasFilter("\"LandRequestedAt\" IS NOT NULL");
@@ -1973,16 +1972,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<bool>("BranchRemoved")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("CanonicalAdvanceReason")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<DateTime?>("CanonicalAdvanceStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("CanonicalAdvancedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("ChildOperation")
                         .HasColumnType("text");
 
@@ -2029,23 +2018,12 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<DateTime?>("LandWorkspaceReadyAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LandWorktreePath")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)");
-
                     b.Property<string>("LastReason")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
 
                     b.Property<string>("LocalTargetAfterSha")
                         .HasColumnType("text");
-
-                    b.Property<string>("LocalTargetBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("Mode")
                         .HasColumnType("integer");
@@ -2126,10 +2104,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("SourceFullRef")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<string>("SourceLocalSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<bool>("SourcePinned")
                         .HasColumnType("boolean");
@@ -5747,10 +5721,6 @@ namespace Antiphon.Server.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_SessionQueuedMessages_DeferredFromRunAttemptId")
                         .HasFilter("\"DeferredFromRunAttemptId\" IS NOT NULL");
-
-                    b.HasIndex("Id")
-                        .HasDatabaseName("IX_SessionQueuedMessages_CompletionWakeup")
-                        .HasFilter("\"Status\" = 0 AND \"DeliveryAttempts\" = 0 AND \"SourceTaskId\" IS NOT NULL AND \"ContentDigest\" IS NOT NULL");
 
                     b.HasIndex("SourceLandNotificationId")
                         .IsUnique()

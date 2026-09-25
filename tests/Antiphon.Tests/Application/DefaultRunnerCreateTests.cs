@@ -209,8 +209,6 @@ public sealed class DefaultRunnerCreateTests
 
         foreach (var (row, request, reason) in new (string, CreateAgentTaskRequest, string)[]
                  {
-                     ("codex", new CreateAgentTaskRequest("c659 codex", Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex),
-                         "kind_not_supported"),
                      ("shared", new CreateAgentTaskRequest("c659 shared", Role: AgentTaskRole.Code,
                          AgentKind: AgentKind.ClaudeCode, Workspace: WorkspaceMode.Shared), "workspace_not_worktree"),
                      ("readonly", new CreateAgentTaskRequest("c659 readonly", Role: AgentTaskRole.Review,
@@ -239,6 +237,16 @@ public sealed class DefaultRunnerCreateTests
         }
 
         kit.Directory.ResolveCalls.ShouldBeEmpty("an excluded shape is decided before the readiness gate");
+
+        // CARD-0710 D-10: a Codex worker is no longer excluded from the default runner.
+        var codex = await service.CreateAsync(
+            new CreateAgentTaskRequest("c710 codex worker", Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex),
+            kit.Caller, CancellationToken.None);
+        var codexSaved = await kit.ReadAsync(codex.Id);
+        codexSaved.Task.RunnerId.ShouldBe("server2");
+        codexSaved.Task.AgentKind.ShouldBe(AgentKind.Codex);
+        codexSaved.Created.ShouldContain(
+            "runner source=default requested=unset default=server2 selected=server2 reason=eligible", Case.Sensitive);
     }
 
     [Test]
@@ -463,7 +471,24 @@ internal sealed class DefaultRunnerKit
         public FakeRunnerClient Client { get; } = new(grokAuth);
         public ISessionRunnerClient Local => Client;
         public IReadOnlyList<string> KnownRunnerIds => ["local", "server2"];
-        public Guid? LiveStoreId => Guid.NewGuid();
+        public Guid? GetLiveStoreId(string? runnerId) => string.IsNullOrWhiteSpace(runnerId) ? null : Guid.NewGuid();
+
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(runnerId) || RunnerRequestIntent.IsDesktopAlias(runnerId))
+            {
+                return Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(
+                    "desktop", "Desktop", "windows", DateTimeOffset.UtcNow, true, true, false, null,
+                    new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                        Features: [RunnerPlatformWire.Feature], Platform: "windows")));
+            }
+
+            var platform = eligible ? "linux" : null;
+            return Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(
+                runnerId, runnerId, platform, DateTimeOffset.UtcNow, eligible, eligible, !eligible, null,
+                platform is null ? null : new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                    Features: [RunnerPlatformWire.Feature], Platform: platform)));
+        }
 
         public ISessionRunnerClient Resolve(string? runnerId)
         {

@@ -146,8 +146,18 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             GrokRulesPayload: spec.GrokRulesPayload,
             CommandLineBudgetChars: spec.CommandLineBudgetChars,
             VerificationBinding: spec.VerificationBinding,
-            AcceptedStartedAt: spec.AcceptedStartedAt);
-        var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
+            AcceptedStartedAt: spec.AcceptedStartedAt,
+            RequiredPlatform: spec.RequiredPlatform);
+        var path = RunnerPlatformWire.IsSpecific(spec.RequiredPlatform)
+            ? "sessions/platform-constrained"
+            : "sessions";
+        var response = await _httpClient.PostAsJsonAsync(path, request, JsonOptions, ct);
+        if (path != "sessions" && response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new ConflictException(
+                "The session runner does not enforce platform requirements.",
+                RunnerPlatformProblems.EnforcementUnsupported);
+        }
         // CARD-0341: a runner refusal (herdr_gkp_env_missing, pane_occupied, …) carries its reason
         // in problem-details; surface that as the typed exception so the launch path stores the
         // runner's detail in FailureReason rather than "status code does not indicate success".

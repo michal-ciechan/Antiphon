@@ -202,6 +202,27 @@ public class AgentTask
     /// </summary>
     public string? RunnerId { get; set; }
 
+    /// <summary>CARD-0710. Frozen at create. Card edits never move a queued or running task.</summary>
+    public RequiredPlatform RequiredPlatform { get; set; } = RequiredPlatform.Any;
+
+    /// <summary>CARD-0710. Why <see cref="RequiredPlatform"/> was chosen.</summary>
+    public RequirementSource RequirementSource { get; set; } = RequirementSource.Default;
+
+    /// <summary>
+    /// CARD-0710. The runner's reported OS at create. Null when it was not observed.
+    /// Never <see cref="RequiredPlatform.Any"/>.
+    /// </summary>
+    public string? ObservedPlatform { get; set; }
+
+    /// <summary>CARD-0710. Runtime defaults revision that placed a fresh task. Null on older rows.</summary>
+    public long? RunnerDefaultsRevision { get; set; }
+
+    /// <summary>CARD-0710. Which rule selected <see cref="RunnerId"/>.</summary>
+    public RunnerSelectionSource? RunnerSelectionSource { get; set; }
+
+    /// <summary>CARD-0710. Bounded reason the selected host won, including excluded preferences.</summary>
+    public string? PlacementReason { get; set; }
+
     /// <summary>
     /// The POSIX path of the runner-side MIRROR of <see cref="WorktreePath"/>, created by the
     /// runner from the branch this task pushed to origin. Null for a desktop task. The session's

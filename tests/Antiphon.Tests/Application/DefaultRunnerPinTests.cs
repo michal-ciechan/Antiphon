@@ -36,12 +36,12 @@ public sealed class DefaultRunnerPinTests
     {
         foreach (var (row, pin, request, hold, expectedKind, expectedRunner, reason) in new (string, PutRoutingPinRequest, CreateAgentTaskRequest, string?, AgentKind, string?, string)[]
                  {
-                     ("preferred pin on Codex stays local",
+                     ("preferred pin on Codex takes the default",
                          Pin(RoutingPinStrength.Preferred, (AgentKind.Codex, AgentModelLevel.High)),
-                         Code("c659 prefer codex"), null, AgentKind.Codex, null, "kind_not_supported"),
-                     ("required pin on Codex stays local",
+                         Code("c659 prefer codex"), null, AgentKind.Codex, "server2", "eligible"),
+                     ("required pin on Codex takes the default",
                          Pin(RoutingPinStrength.Required, (AgentKind.Codex, AgentModelLevel.High)),
-                         Code("c659 require codex"), null, AgentKind.Codex, null, "kind_not_supported"),
+                         Code("c659 require codex"), null, AgentKind.Codex, "server2", "eligible"),
                      ("preferred pin on Grok takes the default",
                          Pin(RoutingPinStrength.Preferred, (AgentKind.Grok, AgentModelLevel.High)),
                          Code("c659 prefer grok"), null, AgentKind.Grok, "server2", "eligible"),
@@ -51,9 +51,9 @@ public sealed class DefaultRunnerPinTests
                      ("multi-candidate: held Claude head, final Grok takes the default",
                          Pin(RoutingPinStrength.Required, (AgentKind.ClaudeCode, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier)),
                          Code("c659 walk to grok"), "fable", AgentKind.Grok, "server2", "eligible"),
-                     ("multi-candidate: held Claude head, final Codex stays local",
+                     ("multi-candidate: held Claude head, final Codex takes the default",
                          Pin(RoutingPinStrength.Required, (AgentKind.ClaudeCode, AgentModelLevel.Frontier), (AgentKind.Codex, AgentModelLevel.Frontier)),
-                         Code("c659 walk to codex"), "fable", AgentKind.Codex, null, "kind_not_supported"),
+                         Code("c659 walk to codex"), "fable", AgentKind.Codex, "server2", "eligible"),
                      ("ignored Codex pin: the request's Claude takes the default",
                          Pin(RoutingPinStrength.Required, (AgentKind.Codex, AgentModelLevel.High)),
                          Code("c659 ignore pin", AgentKind.ClaudeCode) with { IgnoreRoutingPin = true },

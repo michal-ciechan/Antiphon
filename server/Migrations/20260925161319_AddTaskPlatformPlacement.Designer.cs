@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260925161319_AddTaskPlatformPlacement")]
+    partial class AddTaskPlatformPlacement
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1442,10 +1445,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("CardId")
                         .HasDatabaseName("IX_AgentTasks_CardId");
 
-                    b.HasIndex("Id")
-                        .HasDatabaseName("IX_AgentTasks_MissingCompletionNote")
-                        .HasFilter("\"CompletionNoteQueuedAt\" IS NULL AND \"SourceLandingOperationId\" IS NOT NULL AND \"ParentSessionId\" IS NOT NULL AND \"ReplyTo\" = 1 AND \"Result\" IS NOT NULL AND \"Status\" IN (4, 5, 6)");
-
                     b.HasIndex("LandRequestedAt")
                         .HasDatabaseName("IX_AgentTasks_LandRequestedAt")
                         .HasFilter("\"LandRequestedAt\" IS NOT NULL");
@@ -1973,16 +1972,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<bool>("BranchRemoved")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("CanonicalAdvanceReason")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<DateTime?>("CanonicalAdvanceStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("CanonicalAdvancedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("ChildOperation")
                         .HasColumnType("text");
 
@@ -2029,23 +2018,12 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<DateTime?>("LandWorkspaceReadyAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LandWorktreePath")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)");
-
                     b.Property<string>("LastReason")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
 
                     b.Property<string>("LocalTargetAfterSha")
                         .HasColumnType("text");
-
-                    b.Property<string>("LocalTargetBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("Mode")
                         .HasColumnType("integer");
@@ -2126,10 +2104,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("SourceFullRef")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<string>("SourceLocalSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<bool>("SourcePinned")
                         .HasColumnType("boolean");
@@ -5300,111 +5274,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("RunAttempts", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunnerKindDefault", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("AgentKind")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("RunnerId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("SettingsId")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SettingsId", "AgentKind")
-                        .IsUnique();
-
-                    b.ToTable("RunnerKindDefaults", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunnerRoutingRevision", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CallerTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long?>("PreviousRevision")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Provenance")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<long>("Revision")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("SettingsId")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("SnapshotJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SettingsId", "Revision")
-                        .IsUnique();
-
-                    b.ToTable("RunnerRoutingRevisions", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunnerRoutingSettings", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("GlobalRunnerId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid?>("LastCallerTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("LastProvenance")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("LastReason")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<long>("Revision")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("RunnerRoutingSettings", (string)null);
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Schedule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5747,10 +5616,6 @@ namespace Antiphon.Server.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_SessionQueuedMessages_DeferredFromRunAttemptId")
                         .HasFilter("\"DeferredFromRunAttemptId\" IS NOT NULL");
-
-                    b.HasIndex("Id")
-                        .HasDatabaseName("IX_SessionQueuedMessages_CompletionWakeup")
-                        .HasFilter("\"Status\" = 0 AND \"DeliveryAttempts\" = 0 AND \"SourceTaskId\" IS NOT NULL AND \"ContentDigest\" IS NOT NULL");
 
                     b.HasIndex("SourceLandNotificationId")
                         .IsUnique()
@@ -8339,28 +8204,6 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Worktree");
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunnerKindDefault", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.RunnerRoutingSettings", "Settings")
-                        .WithMany("KindDefaults")
-                        .HasForeignKey("SettingsId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Settings");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunnerRoutingRevision", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.RunnerRoutingSettings", "Settings")
-                        .WithMany("Revisions")
-                        .HasForeignKey("SettingsId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Settings");
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Schedule", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
@@ -8687,13 +8530,6 @@ namespace Antiphon.Server.Migrations
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunAttempt", b =>
                 {
                     b.Navigation("TokenUsage");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunnerRoutingSettings", b =>
-                {
-                    b.Navigation("KindDefaults");
-
-                    b.Navigation("Revisions");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Schedule", b =>

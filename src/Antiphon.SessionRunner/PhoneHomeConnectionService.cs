@@ -211,7 +211,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                 continue;
 
             if (Volatile.Read(ref _inFlight) >= _settings.Limits.MaxInFlightRequests
-                && frame.Operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
+                && frame.Operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained or PhoneHomeOperation.Input
                     or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.ClearBuffer
                     or PhoneHomeOperation.Resize or PhoneHomeOperation.KillGeneration)
             {
@@ -349,7 +349,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     }
 
     private static bool IsMutation(PhoneHomeOperation? operation) =>
-        operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
+        operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained or PhoneHomeOperation.Input
             or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.ClearBuffer
             or PhoneHomeOperation.Resize or PhoneHomeOperation.KillGeneration;
 }

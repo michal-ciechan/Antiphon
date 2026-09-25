@@ -24,7 +24,9 @@ public sealed record RunnerLaunchRequest(
     GrokRulesPayload? GrokRulesPayload = null,
     int? CommandLineBudgetChars = null,
     VerificationExecutionBinding? VerificationBinding = null,
-    DateTime? AcceptedStartedAt = null)
+    DateTime? AcceptedStartedAt = null,
+    // CARD-0710. Canonical windows/linux, or null for Any and for older servers.
+    string? RequiredPlatform = null)
 {
     // Set only by the runner after materialization, never trusted from a caller.
     [System.Text.Json.Serialization.JsonIgnore]
@@ -162,6 +164,9 @@ public static class RunnerCapabilityFeatures
     /// there is no fallback to kill-generation or raw input.
     /// </summary>
     public const string CompactionContinuationStopV1 = CompactionContinuationStopCapability.Feature;
+
+    /// <summary>CARD-0710. This runner refuses a specific platform before creating a session.</summary>
+    public const string RequiredPlatformV1 = RunnerPlatformWire.Feature;
 }
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
@@ -968,7 +973,9 @@ public sealed record RunnerCapabilitiesDto(
     // CARD-0213: extra capability tokens (e.g. herdr-attach). Null = older runner = no evidence.
     IReadOnlyList<string>? Features = null,
     string? VerificationCustodyBackend = null,
-    Guid? RunnerStoreId = null);
+    Guid? RunnerStoreId = null,
+    // CARD-0710. Canonical windows/linux. Null on an older runner, or when the OS is neither.
+    string? Platform = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

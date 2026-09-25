@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -60,13 +61,13 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             ? [LocalRunnerId, _settings.AllowedRunnerId]
             : [LocalRunnerId];
 
-    public Guid? LiveStoreId
+    public Guid? GetLiveStoreId(string? runnerId)
     {
-        get
-        {
-            lock (_gate)
-                return SnapshotLive()?.RunnerStoreId ?? _liveStoreId;
-        }
+        if (string.IsNullOrWhiteSpace(runnerId)
+            || !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+            return null;
+        lock (_gate)
+            return SnapshotLive()?.RunnerStoreId ?? _liveStoreId;
     }
 
     public ISessionRunnerClient Resolve(string? runnerId)
@@ -180,6 +181,16 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             throw new ConflictException(
                 $"Phone-home capacity must be between 1 and {_settings.MaxCapacity}.",
                 PhoneHomeProblemTypes.Capacity);
+        var registeredPlatform = RunnerPlatformWire.Normalize(request.Platform);
+        var reportedPlatform = RunnerPlatformWire.Normalize(request.Capabilities?.Platform);
+        if (registeredPlatform is not null && reportedPlatform is not null
+            && !string.Equals(registeredPlatform, reportedPlatform, StringComparison.Ordinal))
+        {
+            throw new ConflictException(
+                $"Runner '{request.RunnerId}' registration platform {registeredPlatform} disagrees with capabilities {reportedPlatform}.",
+                RunnerPlatformProblems.Conflict);
+        }
+        var platform = reportedPlatform ?? registeredPlatform;
 
         lock (_gate)
         {
@@ -211,7 +222,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             _tickets[ticket] = new Ticket(
                 ticket, request.RunnerId, request.RunnerStoreId, request.ProcessBootId,
                 now.AddSeconds(_settings.TicketTtlSeconds),
-                request.Capacity, request.Platform, request.Capabilities, epoch);
+                request.Capacity, platform, request.Capabilities, epoch);
             _liveStoreId = request.RunnerStoreId;
             _liveBootId = request.ProcessBootId;
             _liveLeaseUntil = now.AddSeconds(_settings.LeaseSeconds);
@@ -394,6 +405,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
 
     public PhoneHomeRunnerStatusDto Status(string runnerId)
     {
+        if (!RunnerRequestIntent.IsDesktopAlias(runnerId)
+            && !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+            throw new NotFoundException("SessionRunner", runnerId);
         var live = SnapshotLive();
         var leaseExpired = live is not null && live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds));
         var available = live is not null && !leaseExpired && live.SocketOpen;
@@ -432,6 +446,47 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             LastDisconnectAtUtc: live?.LastDisconnectAtUtc ?? last?.AtUtc,
             Reconnects: reconnects,
             LastCatchUpMs: live?.LastCatchUpMs);
+    }
+
+    public async Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || RunnerRequestIntent.IsDesktopAlias(runnerId))
+        {
+            RunnerCapabilitiesDto? caps = null;
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(2));
+                caps = await _local.GetCapabilitiesAsync(timeout.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                caps = null;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                caps = null;
+            }
+
+            var platform = RunnerPlatformWire.Normalize(caps?.Platform);
+            var features = caps?.Features ?? [];
+            return new RunnerDescriptor(
+                RunnerPlatformWire.DesktopId, "Desktop", platform,
+                platform is null ? null : _clock.GetUtcNow(),
+                caps is not null, caps is not null && features.Contains(RunnerPlatformWire.Feature),
+                platform is null, null, caps);
+        }
+
+        if (!string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+            return null;
+        var live = SnapshotLive();
+        var observed = RunnerPlatformWire.Normalize(live?.Platform);
+        var eligible = live is { DispatchEligible: true, SocketOpen: true }
+            && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds));
+        return new RunnerDescriptor(
+            runnerId, runnerId, observed,
+            observed is null ? null : live?.LastHeartbeatUtc ?? _clock.GetUtcNow(),
+            eligible, eligible, !eligible, eligible ? live?.Capacity : null, live?.Capabilities);
     }
 
     public PhoneHomeLiveConnection? SnapshotLive()

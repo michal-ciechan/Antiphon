@@ -4531,7 +4531,7 @@ public sealed class AgentTaskDispatcher
             StartedAt = now,
             LastSeenAt = now,
             RunnerId = remoteCwd is null ? null : claimed.RunnerId,
-            RunnerStoreId = remoteCwd is null ? null : _runners?.LiveStoreId,
+            RunnerStoreId = remoteCwd is null ? null : _runners?.GetLiveStoreId(claimed.RunnerId),
             RunnerCwd = remoteCwd,
         };
         // G-20: the runner binding is all-or-none and is committed with the session row, before

@@ -147,6 +147,11 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Runner,
 
+    # CARD-0710. Create-only. Omitted inherits the card. Explicit Any is sent and resets the card default.
+    [Parameter(ParameterSetName = 'Create')]
+    [ValidateSet('Any', 'Windows', 'Linux')]
+    [string]$Platform,
+
     # Do not arm the PreToolUse deny hook in a sub-orchestrator's worktree (it blocks direct
     # Edit/Write with "delegate this instead"). Use when the orchestrator must write a plan file.
     [Parameter(ParameterSetName = 'Create')]
@@ -926,7 +931,11 @@ switch ($PSCmdlet.ParameterSetName) {
         # CARD-0604 D-15. Refused locally, before any POST, for the shapes the runner has no design
         # for: Shared/ReadOnly have no canonical desktop record to fast-forward, and -OnAgent /
         # -Agent continue an EXISTING process that is already somewhere else.
-        if (-not [string]::IsNullOrWhiteSpace($Runner)) {
+        $runnerIsDesktop = -not [string]::IsNullOrWhiteSpace($Runner) -and (
+            $Runner.Trim() -eq 'local' -or $Runner.Trim() -eq 'desktop' -or
+            $Runner.Trim().Equals('local', [StringComparison]::OrdinalIgnoreCase) -or
+            $Runner.Trim().Equals('desktop', [StringComparison]::OrdinalIgnoreCase))
+        if (-not [string]::IsNullOrWhiteSpace($Runner) -and -not $runnerIsDesktop) {
             if ($Shared -or $ReadOnly) {
                 Write-Error '-Runner requires a Worktree workspace; -Shared and -ReadOnly are refused.'
                 exit 2
@@ -946,6 +955,10 @@ switch ($PSCmdlet.ParameterSetName) {
             $body['runnerId'] = $Runner
             $body['workspace'] = 'Worktree'
         }
+        elseif ($runnerIsDesktop) {
+            $body['runnerId'] = 'desktop'
+        }
+        if ($PSBoundParameters.ContainsKey('Platform')) { $body['requiredPlatform'] = $Platform }
         if ($PSBoundParameters.ContainsKey('SourceLanding')) { $body['sourceLandingOperationId'] = $SourceLanding.ToString('D') }
         if ($PSBoundParameters.ContainsKey('RepairSource')) { $body['repairSourceTaskId'] = $RepairSource.ToString('D') }
         # CARD-0613. Mirrored locally, before any POST, for the combinations the server can never

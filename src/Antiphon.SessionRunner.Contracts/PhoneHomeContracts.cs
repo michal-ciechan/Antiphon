@@ -78,6 +78,12 @@ public enum PhoneHomeOperation
 
     /// <summary>CARD-0653 / CARD-0079: fresh compaction tail read over phone-home.</summary>
     ObserveCompaction = 25,
+
+    /// <summary>
+    /// CARD-0710. A specific platform requirement. An old runner has no such operation; the server
+    /// treats that as an enforcement refusal and does not retry <see cref="Launch"/>.
+    /// </summary>
+    LaunchPlatformConstrained = 26,
 }
 
 /// <summary>CARD-0604: read (and optionally seal) a tracked execution's custody on the runner.</summary>

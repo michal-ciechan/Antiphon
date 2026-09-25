@@ -22,13 +22,34 @@ public enum RunnerRequestSource
     ExplicitRemote = 2,
 }
 
-public sealed record RunnerRequestIntent(RunnerRequestSource Source, string? RemoteRunnerId)
+public sealed record RunnerRequestIntent(RunnerRequestSource Source, string? RemoteRunnerId, string? RequestedToken = null)
 {
     public const int MaxRunnerIdLength = 64;
 
-    /// <summary>Case-insensitive, like <c>delegate.ps1 -Runner local</c> is typed.</summary>
-    public static bool IsLocalToken(string? value) =>
-        value is not null && string.Equals(value.Trim(), PhoneHomeProtocol.LocalRunnerId, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Case-insensitive. <c>local</c> and <c>desktop</c> are the same explicit desktop choice.</summary>
+    public static bool IsLocalToken(string? value) => IsDesktopAlias(value);
+
+    public static bool IsDesktopAlias(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+        var trimmed = value.Trim();
+        return string.Equals(trimmed, PhoneHomeProtocol.LocalRunnerId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(trimmed, RunnerPlatformWire.DesktopId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Public catalogue id for a desktop alias: always <c>desktop</c>.</summary>
+    public static string DesktopPublicId => RunnerPlatformWire.DesktopId;
+
+    public static string? CanonicalRunnerId(string? runnerId)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || IsDesktopAlias(runnerId))
+            return null;
+        return runnerId.Trim();
+    }
+
+    public static string DisplayRunnerId(string? storedRunnerId) =>
+        string.IsNullOrWhiteSpace(storedRunnerId) ? DesktopPublicId : storedRunnerId;
 
     public static RunnerRequestIntent Parse(string? runnerId)
     {
@@ -37,9 +58,15 @@ public sealed record RunnerRequestIntent(RunnerRequestSource Source, string? Rem
         var trimmed = runnerId.Trim();
         if (DescribeInvalid(trimmed) is { } problem)
             throw new ValidationException(nameof(Dtos.CreateAgentTaskRequest.RunnerId), $"runnerId {problem}.", "runner_id_invalid");
-        return IsLocalToken(trimmed)
-            ? new RunnerRequestIntent(RunnerRequestSource.ExplicitLocal, null)
-            : new RunnerRequestIntent(RunnerRequestSource.ExplicitRemote, trimmed);
+        if (IsDesktopAlias(trimmed))
+        {
+            var token = string.Equals(trimmed, RunnerPlatformWire.DesktopId, StringComparison.OrdinalIgnoreCase)
+                ? RunnerPlatformWire.DesktopId
+                : PhoneHomeProtocol.LocalRunnerId;
+            return new RunnerRequestIntent(RunnerRequestSource.ExplicitLocal, null, token);
+        }
+
+        return new RunnerRequestIntent(RunnerRequestSource.ExplicitRemote, trimmed, trimmed);
     }
 
     /// <summary>Null when the identifier is acceptable; otherwise what is wrong with it.</summary>
@@ -112,7 +139,7 @@ public sealed class DefaultRunnerRoutingPolicy
     /// excludes Codex until S7, even though an explicit create may now place Codex on a runner.
     /// </summary>
     public static bool IsHostKindCompatible(string? runnerId, AgentKind kind) =>
-        string.IsNullOrWhiteSpace(runnerId) || PhoneHomeLaunchPolicy.IsAdmittedKind(kind);
+        string.IsNullOrWhiteSpace(runnerId) || PhoneHomeLaunchPolicy.IsWorkerAdmittedKind(kind);
 
     /// <summary>
     /// CARD-0660 D-7. The pre-claim fence on a task's PERSISTED kind: whatever an explicit
@@ -130,10 +157,11 @@ public sealed class DefaultRunnerRoutingPolicy
     public static string RunnerKindBlockedReason(string runnerId, AgentKind candidateKind, string candidateAlias) =>
         ComplexityRoutingService.RoutingExhaustedPrefix
         + $"{ReasonRunnerKindUnsupported} - the walk chose {candidateKind} {candidateAlias}, which runner '{runnerId}' "
-        + "cannot run (Grok or Claude Code only). The task keeps its runner, kind and pins. "
+        + "cannot run (Grok, Claude Code or Codex only). The task keeps its runner, kind and pins. "
         + "A human must choose; reroute to a runner-compatible kind.";
 
-    private readonly string? _defaultRunnerId;
+    private string? _defaultRunnerId;
+    private RunnerDefaultSnapshot? _snapshot;
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
     private readonly ISessionRunnerDirectory? _runners;
 
@@ -150,6 +178,15 @@ public sealed class DefaultRunnerRoutingPolicy
     /// <summary>The configured default, or null when unset/blank/<c>local</c> (automatic placement off).</summary>
     public string? DefaultRunnerId => _defaultRunnerId;
 
+    /// <summary>CARD-0710. Replace the legacy key with one committed runtime snapshot for this create.</summary>
+    public void ApplySnapshot(RunnerDefaultSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        _defaultRunnerId = snapshot.GlobalRunnerId is null || snapshot.GlobalRunnerId == RunnerPlatformWire.DesktopId
+            ? null
+            : snapshot.GlobalRunnerId;
+    }
+
     public static string? NormalizeDefault(string? configured) =>
         string.IsNullOrWhiteSpace(configured) || RunnerRequestIntent.IsLocalToken(configured)
             ? null
@@ -164,12 +201,17 @@ public sealed class DefaultRunnerRoutingPolicy
         switch (intent.Source)
         {
             case RunnerRequestSource.ExplicitLocal:
-                return new DefaultRunnerDecision(null, "explicit-local", PhoneHomeProtocol.LocalRunnerId,
+                return new DefaultRunnerDecision(null, "explicit-local", intent.RequestedToken ?? PhoneHomeProtocol.LocalRunnerId,
                     _defaultRunnerId, ReasonLocalRequested, Warn: false);
             case RunnerRequestSource.ExplicitRemote:
                 return new DefaultRunnerDecision(intent.RemoteRunnerId, "explicit", intent.RemoteRunnerId!,
                     _defaultRunnerId, ReasonRequested, Warn: false);
         }
+
+        if (_snapshot is not null
+            && _snapshot.KindDefaults.TryGetValue(shape.Kind, out var kindRunner)
+            && TryKindDefault(kindRunner, shape) is { } kindDecision)
+            return kindDecision;
 
         if (_defaultRunnerId is not { } configured)
             return null;
@@ -211,8 +253,13 @@ public sealed class DefaultRunnerRoutingPolicy
             return ReasonExistingProcess;
         if (shape.Workspace != WorkspaceMode.Worktree)
             return ReasonWorkspaceNotWorktree;
-        // CARD-0660 D-10: Codex is admitted for an explicit -Runner only; it takes no default until S7.
-        if (!PhoneHomeLaunchPolicy.IsAdmittedKind(shape.Kind))
+        // CARD-0710 D-10: a Codex worker is placed like Grok and Claude Code. Named agents stay
+        // on IsAdmittedKind. Orchestrators other than Claude Code, specialists and Codex
+        // SourceLanding are still excluded below.
+        if (!PhoneHomeLaunchPolicy.IsWorkerAdmittedKind(shape.Kind))
+            return ReasonKindNotSupported;
+        // Codex workers may be placed, but runner-side SourceLanding custody is still refused.
+        if (shape.Kind == AgentKind.Codex && shape.SourceLanding)
             return ReasonKindNotSupported;
         // A delegated sub-orchestrator on the runner is supported for Claude Code only.
         if (shape.TaskKind == AgentTaskKind.Orchestrator && shape.Kind != AgentKind.ClaudeCode)
@@ -226,6 +273,28 @@ public sealed class DefaultRunnerRoutingPolicy
         if (shape.SourceLanding && (shape.Role != AgentTaskRole.Mutation || shape.TaskKind != AgentTaskKind.Worker))
             return ReasonSourceLandingNotSupported;
         return null;
+    }
+
+    private DefaultRunnerDecision? TryKindDefault(string kindRunner, DefaultRunnerShape shape)
+    {
+        if (kindRunner == RunnerPlatformWire.DesktopId)
+            return new DefaultRunnerDecision(null, "kind-default", "unset", RunnerPlatformWire.DesktopId,
+                ReasonLocalRequested, Warn: false);
+        if (ExclusionFor(shape) is not null)
+            return null;
+        if (_phoneHome?.IsRunnerBound(kindRunner) != true || _phoneHome.AllowDelegatedTasks != true || _runners is null)
+            return null;
+        try
+        {
+            _runners.Resolve(kindRunner);
+        }
+        catch (HttpException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable
+                                       && ex is ServiceUnavailableException or ConflictException)
+        {
+            return null;
+        }
+
+        return new DefaultRunnerDecision(kindRunner, "kind-default", "unset", kindRunner, ReasonEligible, Warn: false);
     }
 
     private static DefaultRunnerDecision Local(string configured, string reason, bool warn) =>

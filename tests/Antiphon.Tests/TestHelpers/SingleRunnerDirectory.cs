@@ -44,5 +44,5 @@ internal sealed class SingleRunnerDirectory(
 
     public IReadOnlyList<string> KnownRunnerIds => remoteRunnerId is null ? [] : [remoteRunnerId];
 
-    public Guid? LiveStoreId => null;
+    public Guid? GetLiveStoreId(string? runnerId) => null;
 }

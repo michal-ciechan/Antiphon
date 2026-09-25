@@ -519,6 +519,7 @@ public sealed class CardService : IScheduledCardActions
         if (request.CardFileVisibility is { } visibility) card.CardFileVisibility = visibility;
         if (request.CodeVerificationPolicy is { } codePolicy) card.CodeVerificationPolicy = codePolicy;
         if (request.ReviewVerificationPolicy is { } reviewPolicy) card.ReviewVerificationPolicy = reviewPolicy;
+        if (request.RequiredPlatform is { } requiredPlatform) card.RequiredPlatform = requiredPlatform;
         if (request.Title is not null)
             card.Title = request.Title.Trim();
         if (request.Description is not null)
@@ -1671,6 +1672,8 @@ public sealed class CardService : IScheduledCardActions
             errors["codeVerificationPolicy"] = ["codeVerificationPolicy must be FullOnly or AllowInterim."];
         if (request.ReviewVerificationPolicy is { } reviewPolicy && !Enum.IsDefined(reviewPolicy))
             errors["reviewVerificationPolicy"] = ["reviewVerificationPolicy must be FullOnly or AllowInterim."];
+        if (request.RequiredPlatform is { } requiredPlatform && !Enum.IsDefined(requiredPlatform))
+            errors["requiredPlatform"] = ["requiredPlatform must be Any, Windows or Linux."];
         if (string.IsNullOrWhiteSpace(request.Reason))
             errors[nameof(request.Reason)] = ["A reason is required for a card correction."];
         RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
@@ -1686,7 +1689,8 @@ public sealed class CardService : IScheduledCardActions
             || request.ImportanceProvenance is not null
             || request.Alias is not null
             || request.CodeVerificationPolicy is not null
-            || request.ReviewVerificationPolicy is not null;
+            || request.ReviewVerificationPolicy is not null
+            || request.RequiredPlatform is not null;
         if (!hasContent)
         {
             errors[nameof(request.Title)] =

@@ -150,7 +150,7 @@ public class PhoneHomeReconciliationTests
     {
         public ISessionRunnerClient Local { get; } = new EmptyClient();
         public IReadOnlyList<string> KnownRunnerIds => ["local", "grok-linux"];
-        public Guid? LiveStoreId => null;
+        public Guid? GetLiveStoreId(string? runnerId) => null;
         public ISessionRunnerClient Resolve(string? runnerId) => Local;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(null);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
@@ -163,7 +163,7 @@ public class PhoneHomeReconciliationTests
         private int _calls;
         public ISessionRunnerClient Local { get; } = new EmptyClient();
         public IReadOnlyList<string> KnownRunnerIds => ["grok-linux"];
-        public Guid? LiveStoreId => null;
+        public Guid? GetLiveStoreId(string? runnerId) => null;
         public ISessionRunnerClient Resolve(string? runnerId) => Local;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(null);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);

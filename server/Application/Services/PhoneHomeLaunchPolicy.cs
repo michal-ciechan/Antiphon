@@ -54,10 +54,17 @@ public sealed class PhoneHomeLaunchPolicy
     public static bool IsAdmittedKind(AgentKind kind) => kind is AgentKind.Grok or AgentKind.ClaudeCode;
 
     /// <summary>
-    /// CARD-0660 D-7/D-10: the kinds a delegated Worktree task may run on a runner the caller named
-    /// explicitly (<c>-Runner</c>). Codex is admitted here, and only here, ahead of S7.
+    /// CARD-0710 D-10. Worker tasks of these kinds may be placed on a runner. Named agents stay on
+    /// <see cref="IsAdmittedKind"/>; this helper does not admit a Codex named agent.
     /// </summary>
-    public static bool IsExplicitRunnerTaskKind(AgentKind kind) => IsAdmittedKind(kind) || kind == AgentKind.Codex;
+    public static bool IsWorkerAdmittedKind(AgentKind kind) =>
+        IsAdmittedKind(kind) || kind == AgentKind.Codex;
+
+    /// <summary>
+    /// Kinds a delegated Worktree task may run on a runner. Codex workers are included; named
+    /// agents, orchestrators and SourceLanding keep their own gates.
+    /// </summary>
+    public static bool IsExplicitRunnerTaskKind(AgentKind kind) => IsWorkerAdmittedKind(kind);
 
     /// <summary>
     /// CARD-0660 D-8: the credential environment names a runner-bound Codex launch refuses. The

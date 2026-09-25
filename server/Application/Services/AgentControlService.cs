@@ -647,7 +647,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 ComposedBundleStamp = composition.ComposedStamp,
                 InstructionFileStamp = composition.InstructionFileStamp,
                 RunnerId = _phoneHome?.IsRunnerBound(agent) == true ? _phoneHome.AllowedRunnerId : null,
-                RunnerStoreId = _phoneHome?.IsRunnerBound(agent) == true ? await ResolvePhoneHomeStoreIdAsync(ct) : null,
+                RunnerStoreId = _phoneHome?.IsRunnerBound(agent) == true ? await ResolvePhoneHomeStoreIdAsync(agent.RunnerId, ct) : null,
                 RunnerCwd = _phoneHome?.IsRunnerBound(agent) == true ? _phoneHome.RunnerWorkspace : null,
             };
             _db.AgentSessions.Add(session);
@@ -1311,10 +1311,10 @@ public sealed class AgentControlService : ICompactionContinuationResume
             .FirstOrDefaultAsync(ct)
         ?? throw new NotFoundException(nameof(Agent), agentId);
 
-    private Task<Guid> ResolvePhoneHomeStoreIdAsync(CancellationToken ct)
+    private Task<Guid> ResolvePhoneHomeStoreIdAsync(string? runnerId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var storeId = _runnerDirectory?.LiveStoreId;
+        var storeId = _runnerDirectory?.GetLiveStoreId(runnerId);
         if (storeId is null || storeId == Guid.Empty)
             throw new ServiceUnavailableException(
                 "Phone-home runner store is unavailable.",

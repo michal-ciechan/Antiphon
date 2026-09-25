@@ -292,7 +292,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     internal static TimeSpan RequestTimeoutFor(PhoneHomeOperation operation) => operation switch
     {
         PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceRemove => TimeSpan.FromMinutes(5),
-        PhoneHomeOperation.Launch => TimeSpan.FromMinutes(2),
+        PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained => TimeSpan.FromMinutes(2),
         _ => TimeSpan.FromSeconds(60),
     };
 
@@ -303,7 +303,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         // the never-sent code; only a waiter the close finds after its write is in flight.
         if (Volatile.Read(ref _closedReason) is not null || _socket.State != WebSocketState.Open)
             throw ClosedBeforeSend(operation, Volatile.Read(ref _closedReason) ?? $"socket {_socket.State}");
-        if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.Input
+        if (!DispatchEligible && operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained or PhoneHomeOperation.Input
             or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.KillGeneration
             or PhoneHomeOperation.ClearBuffer or PhoneHomeOperation.Resize)
             throw new InvalidOperationException(Antiphon.Server.Application.Services.PhoneHomeTransportLoss.NotDispatchEligibleMessage);
