@@ -53,12 +53,11 @@ public class TranscriptHotPathMigrationTests
         await using var f = await TranscriptHotPathFixture.CreateAsync();
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
-        var definitions = await ReadCatalogAsync(f.ConnectionString);
         await db.GetService<IMigrator>().MigrateAsync(previous);
-        var index = definitions.Single(i => i.Name == NewIndexNames()[0]);
-        await CreateInterruptedIndexAsync(f, index.Definition);
+        var name = NewIndexNames()[0];
+        await CreateInterruptedIndexAsync(f, CreateIndexSql(db, name));
         await db.Database.ExecuteSqlRawAsync(
-            $"ALTER INDEX \"{index.Name}\" RENAME TO \"{index.Name}_invalid\";");
+            $"ALTER INDEX \"{name}\" RENAME TO \"{name}_invalid\";");
 
         await db.GetService<IMigrator>().MigrateAsync(current);
 
@@ -87,18 +86,17 @@ public class TranscriptHotPathMigrationTests
         await using var f = await TranscriptHotPathFixture.CreateAsync();
         await using var db = f.CreateDb();
         var (previous, current, _) = MigrationInfo(db);
-        var definitions = await ReadCatalogAsync(f.ConnectionString);
         await db.GetService<IMigrator>().MigrateAsync(previous);
         await AddIdentityRowsAsync(db, f.SessionIds[0]);
         var fingerprint = await FingerprintAsync(f.ConnectionString);
         var names = NewIndexNames();
         for (var i = 0; i < names.Length; i++)
         {
-            var definition = definitions.Single(d => d.Name == names[i]).Definition;
+            var sql = CreateIndexSql(db, names[i]);
             if (i == validIndex)
-                await db.Database.ExecuteSqlRawAsync(definition.Replace("CREATE INDEX ", "CREATE INDEX CONCURRENTLY "));
+                await db.Database.ExecuteSqlRawAsync(sql);
             else
-                await CreateInterruptedIndexAsync(f, definition);
+                await CreateInterruptedIndexAsync(f, sql);
         }
         var before = await ReadCatalogAsync(f.ConnectionString);
         before.Count.ShouldBe(3);
@@ -123,7 +121,17 @@ public class TranscriptHotPathMigrationTests
         f.Record("migration-retry", new { validIndex, before, after });
     }
 
-    private static async Task CreateInterruptedIndexAsync(TranscriptHotPathFixture f, string definition)
+    private static string CreateIndexSql(AppDbContext db, string name)
+    {
+        var (_, _, migration) = MigrationInfo(db);
+        // Use the actual CREATE that can be interrupted in production. Replaying
+        // pg_get_indexdef reparses casts and can change its next textual rendering.
+        return db.GetService<IMigrationsSqlGenerator>().Generate(migration.UpOperations, migration.TargetModel)
+            .Single(c => c.CommandText.StartsWith("CREATE INDEX CONCURRENTLY") &&
+                         c.CommandText.Contains($"\"{name}\"", StringComparison.Ordinal)).CommandText;
+    }
+
+    private static async Task CreateInterruptedIndexAsync(TranscriptHotPathFixture f, string sql)
     {
         await using var writer = new NpgsqlConnection(f.ConnectionString);
         await writer.OpenAsync();
@@ -133,8 +141,7 @@ public class TranscriptHotPathMigrationTests
         await builder.OpenAsync();
         await using (var budget = new NpgsqlCommand("SET statement_timeout = '1s'", builder))
             await budget.ExecuteNonQueryAsync();
-        await using var command = new NpgsqlCommand(
-            definition.Replace("CREATE INDEX ", "CREATE INDEX CONCURRENTLY "), builder);
+        await using var command = new NpgsqlCommand(sql, builder);
         // Real interrupted concurrent DDL leaves pg_index.indisvalid=false; never edit the catalog.
         var error = await Should.ThrowAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
         error.SqlState.ShouldBe(PostgresErrorCodes.QueryCanceled);
