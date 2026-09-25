@@ -72,7 +72,7 @@ public sealed class AgentTaskLandAdmissionControlledTests
         if (mode != "AlreadyPresent") await h.AddSourceAsync();
         if (mode == "ResumePublication")
         {
-            h.Fault.Phase = LandPhase.LocalTargetAdvanced;
+            h.Fault.Phase = LandPhase.PushStarted; // CARD-0688: the resumable pre-publication phase
             h.Fault.AfterCommit = true;
             await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
         }

@@ -200,8 +200,8 @@ public sealed class InterimVerificationLandGuardTests
             ("accepted-no-operation", null),
             ("prepared", LandPhase.Prepared),
             ("verified", LandPhase.Verified),
-            ("before-target-advance", LandPhase.TargetAdvanceStarted),
-            ("before-push", LandPhase.LocalTargetAdvanced),
+            // CARD-0688 D-4: schema 3 pushes from Verified; the pre-push checkpoint is PushStarted.
+            ("before-push", LandPhase.PushStarted),
         };
         var mutations = new (string Name, string Code)[]
         {
