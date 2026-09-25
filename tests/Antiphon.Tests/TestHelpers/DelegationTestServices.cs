@@ -128,8 +128,10 @@ internal static class DelegationTestServices
         var cleanup = new WorktreeGuardedCleanup(journal, diagnostics, probe, TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeGuardedCleanup>.Instance);
         var removalEvidence = new TestRemovalEvidence(db);
+        // Database-free fixtures have no durable task/artifact reader. Keep D-6's protect-all
+        // fallback there; database-backed fixtures use the production ignored-content gate.
         var guarded = new GuardedWorktreeRemoval(git, leases, removalEvidence, cleanup,
-            new WorktreeIgnoredContentGate(new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings())),
+            db is null ? null : new WorktreeIgnoredContentGate(new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings())),
                 new RefusingEvidenceRetention(), removalEvidence));
         var manager = new WorktreeManager(Options.Create(settings), TimeProvider.System,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, guarded, leases, git);
