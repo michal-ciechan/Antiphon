@@ -259,6 +259,14 @@ public class PhoneHomeImmediateSendTests
             h.Runtime.SetTestPending(h.SessionId, null);
             await using var db = h.Db();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            var originalBackend = session.SessionBackend;
+            session.SessionBackend = SessionBackend.Herdr;
+            await db.SaveChangesAsync();
+            h.Runtime.SetTestAgentStatus(h.SessionId, "blocked");
+            (await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, "blocked", MessageSendMode.Now, CancellationToken.None)))
+                .Message.ShouldContain("blocked in herdr");
+            h.Runtime.SetTestAgentStatus(h.SessionId, null);
+            session.SessionBackend = originalBackend;
             session.Status = SessionStatus.Starting;
             await db.SaveChangesAsync();
             (await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(h.SessionId, "starting", MessageSendMode.Now, CancellationToken.None))).Message.ShouldContain("starting");

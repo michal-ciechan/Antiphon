@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -120,10 +121,26 @@ public class PhoneHomeOutageMentionTests
         (await h.MentionAsync(h.SessionId.ToString("N")[..8], "frozen target")).ShouldBeTrue();
         var row = (await h.RowsAsync()).Single();
         await using var db = h.Db();
-        var sibling = await PhoneHomeStrandedQueueTests.InsertMentionSourceAsync(h.Schema.ConnectionString, h.CardId);
+        var originalCard = await db.Cards.Include(c => c.Board).Include(c => c.BoardColumn).SingleAsync(c => c.Id == h.CardId);
+        var otherBoard = (Board)db.Entry(originalCard.Board).CurrentValues.ToObject();
+        otherBoard.Id = Guid.NewGuid();
+        otherBoard.Name = "other-board";
+        var otherColumn = (BoardColumn)db.Entry(originalCard.BoardColumn).CurrentValues.ToObject();
+        otherColumn.Id = Guid.NewGuid();
+        otherColumn.BoardId = otherBoard.Id;
+        var otherCard = (Card)db.Entry(originalCard).CurrentValues.ToObject();
+        otherCard.Id = Guid.NewGuid();
+        otherCard.Identifier = "C696-OTHER";
+        otherCard.BoardId = otherBoard.Id;
+        otherCard.BoardColumnId = otherColumn.Id;
+        db.AddRange(otherBoard, otherColumn, otherCard);
+        await db.SaveChangesAsync();
+        var sibling = await PhoneHomeStrandedQueueTests.InsertMentionSourceAsync(h.Schema.ConnectionString, otherCard.Id);
         await db.AgentSessions.Where(s => s.Id == sibling).ExecuteUpdateAsync(u => u
             .SetProperty(s => s.DefinitionName, "fake").SetProperty(s => s.RunnerId, h.Host.AllowedRunnerId)
             .SetProperty(s => s.RunnerStoreId, h.Host.StoreId).SetProperty(s => s.RunnerCwd, h.Bridge.TempRoot));
+        (await h.MentionAsync(sibling.ToString("N")[..8], "other board")).ShouldBeFalse();
+        await db.AgentSessions.Where(s => s.Id == sibling).ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, h.CardId));
         (await h.MentionAsync("fake", "ambiguous")).ShouldBeFalse();
         await db.AgentSessions.Where(s => s.Id == h.SourceId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
         await h.RecreateGraphAsync();
