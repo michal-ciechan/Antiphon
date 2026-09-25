@@ -29,6 +29,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
     public LandDeliveryBoundary? Boundary { get; set; }
+    /// <summary>CARD-0672: the land service's delegation settings (the yield budget among them).</summary>
+    public DelegationSettings LandSettings { get; set; } = new();
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
     public async Task InitializeAsync()
@@ -279,9 +281,10 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             new RecordingSessionStopper(), Clock, NullLogger<AgentTaskService>.Instance);
         return new AgentTaskLandService(db, services.GetRequiredService<DelegationWorktreeService>(),
             tasks, Queue, Messages!, Events, Clock,
-            Options.Create(new DelegationSettings()), Logger,
+            Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
-            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git, Boundary);
+            Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git, Boundary,
+            leaseWaiters: Services.GetService<RepositoryLeaseWaiters>());
     }
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,

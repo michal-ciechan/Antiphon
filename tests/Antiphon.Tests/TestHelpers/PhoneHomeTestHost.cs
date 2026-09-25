@@ -32,6 +32,9 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     public Guid StoreId { get; } = Guid.NewGuid();
     public Guid BootId { get; } = Guid.NewGuid();
     public string AllowedRunnerId { get; } = "grok-linux";
+
+    /// <summary>CARD-0672: the session seats the next registration declares. Default one seat.</summary>
+    public int Capacity { get; set; } = 1;
     public RecordingLocalClient Local { get; } = new();
 
     /// <summary>CARD-0679 D-11: every log entry the host wrote, with its structured properties.</summary>
@@ -103,7 +106,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     }
 
     public PhoneHomeRegistrationRequest Registration(Guid? bootId = null, Guid? storeId = null, string? runnerId = null) =>
-        new(PhoneHomeProtocol.Version, runnerId ?? AllowedRunnerId, bootId ?? BootId, storeId ?? StoreId, "linux", 1, null);
+        new(PhoneHomeProtocol.Version, runnerId ?? AllowedRunnerId, bootId ?? BootId, storeId ?? StoreId, "linux", Capacity, null);
 
     public async Task<PhoneHomeRegistrationResponse> RegisterAsync(Guid? bootId = null, Guid? storeId = null, string? secret = null)
     {

@@ -1,0 +1,162 @@
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+/// <summary>
+/// CARD-0672 V-5 (D-2): a land yields at admission, before it acquires the repository mutation
+/// lease, while a queued dispatch (or a settlement sync) waits for that lease on the same
+/// repository - for at most <c>Delegation:LandYieldToDispatchMaxSeconds</c>. Real git through
+/// <see cref="LandingSafetyHarness"/>; the clock is fake so the budget is advanced, never slept.
+/// </summary>
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class AgentTaskLandDispatchYieldTests
+{
+    [Test]
+    [Arguments(RepositoryLeasePurposes.Dispatch)]
+    [Arguments(RepositoryLeasePurposes.WorktreeSettlement)]
+    public async Task C672_a_waiting_dispatch_holds_the_land_at_admission_until_it_clears(string purpose)
+    {
+        await using var h = await StartAsync();
+        var waiter = Guid.NewGuid();
+        h.Waiters.Register(await h.CommonAsync(), waiter, purpose, h.Clock.GetUtcNow());
+        h.Harness.Fixture.Git.Trace.Clear();
+
+        // (a) The land stands aside: Held with the yield code, one Held event, no caller note.
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        var request = await h.RequestAsync();
+        request.State.ShouldBe(LandRequestState.Held);
+        request.HoldReasonCode.ShouldBe(AgentTaskLandService.LeaseYieldedToDispatchCode);
+        request.HoldDetail.ShouldNotBeNull();
+        request.HoldDetail.ShouldContain(DelegationReportFormatter.Short(waiter));
+        request.HoldDetail.ShouldContain($"({purpose})");
+        request.HeldSince.ShouldBe(h.Clock.GetUtcNow().UtcDateTime);
+        request.HoldingTaskId.ShouldBeNull();
+        (await h.EventsAsync(AgentTaskEventType.Held)).ShouldHaveSingleItem().LandRequestId.ShouldBe(request.Id);
+        (await h.NotificationCountAsync()).ShouldBe(0);
+        h.Harness.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("push")
+            || a.Contains("worktree") || a.Contains("--ff-only"));
+        await using (var probe = await h.Harness.Services.GetRequiredService<IRepositoryMutationLease>()
+                         .TryAcquireAsync(h.Harness.Fixture.Repository, CancellationToken.None))
+        {
+            probe.ShouldNotBeNull("the yielding land never took the lease");
+        }
+
+        // (b) Re-picked while the waiter is still there: still Held, no second Held event.
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        (await h.EventsAsync(AgentTaskEventType.Held)).Count.ShouldBe(1);
+        (await h.RequestAsync()).HeldSince.ShouldBe(request.HeldSince);
+
+        // (c) The dispatch got its gap: the next pass is admitted and lands.
+        h.Waiters.Clear(waiter);
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Complete);
+        var released = (await h.EventsAsync(AgentTaskEventType.HeldReleased)).ShouldHaveSingleItem();
+        released.At.ShouldBeGreaterThan((await h.EventsAsync(AgentTaskEventType.Held)).Single().At);
+        await h.AssertLandedAsync();
+        (await h.EventsAsync(AgentTaskEventType.Warning)).ShouldNotContain(w => w.Detail.Contains("yield"));
+    }
+
+    [Test]
+    public async Task C672_yield_budget_exhausted_lands_with_one_warning()
+    {
+        await using var h = await StartAsync();
+        h.Waiters.Register(await h.CommonAsync(), Guid.NewGuid(), RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        h.Clock.Advance(TimeSpan.FromSeconds(89));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Held);
+        (await h.EventsAsync(AgentTaskEventType.Warning)).ShouldBeEmpty();
+
+        h.Clock.Advance(TimeSpan.FromSeconds(2));
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        var warning = (await h.EventsAsync(AgentTaskEventType.Warning))
+            .Where(w => w.Detail.Contains("yield")).ShouldHaveSingleItem();
+        warning.Detail.ShouldContain("yield budget exhausted after 91s");
+        warning.LandRequestId.ShouldBe((await h.RequestAsync()).Id);
+        (await h.EventsAsync(AgentTaskEventType.Held)).Count.ShouldBe(1);
+        await h.AssertLandedAsync();
+        h.Waiters.Any(await h.CommonAsync()).ShouldBeTrue("the land proceeds past the waiter; it never clears it");
+    }
+
+    [Test]
+    [Arguments("disabled")]
+    [Arguments("other-repository")]
+    public async Task C672_no_yield_when_disabled_or_waiting_on_another_repository(string arm)
+    {
+        await using var h = await StartAsync(maxSeconds: arm == "disabled" ? 0 : 90);
+        var common = arm == "other-repository"
+            ? Path.Combine(h.Harness.Fixture.Root, "another-repository", ".git")
+            : await h.CommonAsync();
+        h.Waiters.Register(common, Guid.NewGuid(), RepositoryLeasePurposes.Dispatch, h.Clock.GetUtcNow());
+
+        (await h.Harness.RunAsync()).ShouldBe(LandRunResult.Complete);
+
+        (await h.EventsAsync(AgentTaskEventType.Held)).ShouldBeEmpty();
+        (await h.EventsAsync(AgentTaskEventType.Warning)).ShouldNotContain(w => w.Detail.Contains("yield"));
+        await h.AssertLandedAsync();
+    }
+
+    private static async Task<World> StartAsync(int maxSeconds = 90)
+    {
+        var h = new LandingSafetyHarness();
+        var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        h.Clock = clock;
+        h.LandSettings = new() { LandYieldToDispatchMaxSeconds = maxSeconds };
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        return new World(h, clock);
+    }
+
+    private sealed class World(LandingSafetyHarness harness, FakeTimeProvider clock) : IAsyncDisposable
+    {
+        public LandingSafetyHarness Harness { get; } = harness;
+        public FakeTimeProvider Clock { get; } = clock;
+        public RepositoryLeaseWaiters Waiters => Harness.Services.GetRequiredService<RepositoryLeaseWaiters>();
+
+        public Task<string> CommonAsync() =>
+            Harness.Fixture.Git.CommonDirectoryAsync(Harness.Fixture.Repository, CancellationToken.None);
+
+        public async Task<AgentTaskLandRequest> RequestAsync()
+        {
+            await using var db = Harness.CreateContext();
+            return await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.TaskId == Harness.Fixture.TaskId);
+        }
+
+        public async Task<List<AgentTaskEvent>> EventsAsync(AgentTaskEventType type)
+        {
+            await using var db = Harness.CreateContext();
+            return await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == Harness.Fixture.TaskId && e.Type == type)
+                .OrderBy(e => e.At).ThenBy(e => e.Id)
+                .ToListAsync();
+        }
+
+        public async Task<int> NotificationCountAsync()
+        {
+            await using var db = Harness.CreateContext();
+            return await db.AgentTaskLandNotifications.CountAsync(
+                n => n.TaskId == Harness.Fixture.TaskId && n.Kind == LandNotificationKind.Held);
+        }
+
+        public async Task AssertLandedAsync()
+        {
+            new AgentTaskLandingState().HasPublication((await Harness.OperationAsync()).ShouldNotBeNull()).ShouldBeTrue();
+            await Harness.Fixture.AssertRemoteSourceAsync();
+        }
+
+        public ValueTask DisposeAsync() => Harness.DisposeAsync();
+    }
+}
