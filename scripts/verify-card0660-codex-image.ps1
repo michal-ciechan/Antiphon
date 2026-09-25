@@ -114,6 +114,7 @@ $isolation = @('--rm', '--network', 'none', '--env', 'PhoneHome__Enabled=false',
 
 function Invoke-Init([string] $evidenceName) {
     $initArgs = @('run', '--rm', '--network', 'none', '--user', '0:0', '--entrypoint', '/bin/sh',
+        '--env', 'CODEX_HOME_REQUIRED=1',
         '--mount', "type=volume,source=$workVolume,target=/work",
         '--mount', "type=volume,source=$stateVolume,target=/runner-state",
         '--mount', "type=volume,source=$codexVolume,target=/codex-home",

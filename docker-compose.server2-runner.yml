@@ -18,6 +18,11 @@ services:
     image: antiphon-server2/server:${SOURCE_SHA12:?SOURCE_SHA12 is required}
     user: "0:0"
     entrypoint: ["/bin/sh", "/stack/init-state.sh"]
+    environment:
+      # CARD-0660 Review 275c5757 D1: only this state-init requires the Codex home mount below;
+      # without it init-state.sh refuses CodexHomeNotMounted (43). The base docker-compose.yml
+      # (and the nested child built from it) has no Codex home and skips it.
+      CODEX_HOME_REQUIRED: "1"
     volumes:
       - work:/work
       - runner-state:/runner-state

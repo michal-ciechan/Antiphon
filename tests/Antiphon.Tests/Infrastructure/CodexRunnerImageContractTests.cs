@@ -384,8 +384,12 @@ public sealed class CodexRunnerImageContractTests
 
     private static string SeedBlock(string text)
     {
-        var seed = text[text.IndexOf("if [ ! -e \"$codex_config\" ]", StringComparison.Ordinal)..];
-        return seed[..(seed.IndexOf("\nfi\n", StringComparison.Ordinal) + 4)];
+        // The seed's own `fi`, at the indentation of its `if` (it nests inside the mounted branch).
+        var at = text.IndexOf("if [ ! -e \"$codex_config\" ]", StringComparison.Ordinal);
+        var indent = text[(text.LastIndexOf('\n', at) + 1)..at];
+        var close = "\n" + indent + "fi\n";
+        var seed = text[at..];
+        return seed[..(seed.IndexOf(close, StringComparison.Ordinal) + close.Length)];
     }
 
     private static string Section(string text, string from, string to)
