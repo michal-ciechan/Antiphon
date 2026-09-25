@@ -555,6 +555,7 @@ All tests are cross-platform: paths through `Path.Combine`, git through `Landing
   `WorktreeRemovalAuthorityTests`, `AgentTaskLandStageOutcomeTests`, `AgentTaskLandBoundaryTests`,
   `AgentTaskLandCleanupSafetyTests`, `WorktreeLandingCleanupRetryTests`, `AgentTaskLandRemovalMatrixTests`,
   `AgentTaskLandCheckpointMatrixTests`, `AgentTaskLandIdentityMatrixTests`, `WorktreeManagerTests`,
+  `WorktreeManagerSafetyTests`, `WorktreeManagerGitIntegrationTests`,
   `PostLandMutationWorktreeTests` (verification snapshots are created from `op.VerifiedSourceSha`, which
   is unchanged in meaning), `AgentTaskLandVerifierTests`, and the E2E `AgentTaskLandDeliveryE2ETests`
   (its fixture already has a main checkout on `master`, a bare origin and one task worktree; the land
@@ -597,7 +598,7 @@ floor, not a census.
 | CP-4 | S1-S7 | CP-1 | landing-real-protocol-a | `/*/*/(AgentTaskLandPublicationTests*)\|(AgentTaskLandPreparationIdentityTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandRecoveryTests*)\|(AgentTaskLandIndexLockTests*)/*` | V-4, V-5, V-6, V-7, V-8, V-12, V-13, V-15, V-16, V-18, V-19, R-1 | all listed, 0 failed | 52 | 14 |
 | CP-5 | S1-S7 | CP-1 | landing-real-protocol-b | `/*/*/(InterimVerificationLandGitTests*)\|(LandSourceIdentityTests*)\|(LandingSourceFreshnessTests*)\|(WorktreeRemovalAuthorityTests*)\|(AgentTaskLandStageOutcomeTests*)/*` | V-17, R-1 | all listed, 0 failed | 42 | 10 |
 | CP-6 | S1-S7 | CP-1 | landing-cleanup-slow | `/*/*/(AgentTaskLandBoundaryTests*)\|(AgentTaskLandCleanupSafetyTests*)\|(WorktreeLandingCleanupRetryTests*)\|(AgentTaskLandRemovalMatrixTests*)\|(AgentTaskLandCheckpointMatrixTests*)\|(AgentTaskLandIdentityMatrixTests*)/*` | R-1 (cleanup contract, D-6) | all listed, 0 failed | 36 | 10 |
-| CP-7 | S1-S7 | CP-1 | worktree-tooling | `/*/*/(WorktreeManagerTests*)\|(PostLandMutationWorktreeTests*)\|(AgentTaskLandVerifierTests*)/*` | V-1(e) companions, R-1 | all listed, 0 failed | 60 | 8 |
+| CP-7 | S1-S7 | CP-1 | worktree-tooling | `/*/*/(WorktreeManagerTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerGitIntegrationTests*)\|(PostLandMutationWorktreeTests*)\|(AgentTaskLandVerifierTests*)/*` | V-1(e) companions, R-1 | all listed, 0 failed | 60 | 8 |
 | CP-8 | S1-S7 | `tests/Antiphon.E2E -> bin-c688e/` | land-delivery-e2e | `/*/*/AgentTaskLandDeliveryE2ETests/*` | R-1 (real server child, isolated runner per docs/testing-and-build.md) | all listed, 0 failed | 23 | 25 |
 | CP-9 | S8-S9 | `tests/Antiphon.Tests -> bin-c688b/` | verification-unit | `/*/*/(LandVerificationInputsTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)/*` | V-20, V-21, R-2 | all listed, 0 failed | 32 | 5 |
 | CP-10 | S8-S9 | CP-9 | verification-skip-protocol | `/*/*/(AgentTaskLandVerificationSkipTests*)\|(AgentTaskLandPublicationTests*)\|(AgentTaskLandPreparationIdentityTests*)\|(AgentTaskLandRefusedRetryTests*)\|(InterimVerificationLandGitTests*)\|(LandingGitTests*)/*` | V-22, V-23, R-2 | all listed, 0 failed | 64 | 14 |
@@ -613,6 +614,12 @@ shows. Run each row with `scripts/run-checkpoint.ps1 -Name CP-n -Project <projec
 if the Code runner cannot satisfy that, the row is reported as not run with the reason and Review runs it
 on the desktop before the land. Unlisted runs need a stated reason; a compile error found by a row's own
 build is fixed and the same row rerun.
+
+R1 repair 1 roster correction (2026-09-25): `WorktreeManagerTests.cs` also declares
+`WorktreeManagerSafetyTests` and `WorktreeManagerGitIntegrationTests`. The original CP-7 filter
+selected only the first class and executed 51 rows. CP-7 now includes both omitted classes;
+its minimum remains 60. This expands the actual safety and real-Git coverage rather than
+lowering the floor or counting source-file attributes as executed tests.
 
 ### Cost
 
