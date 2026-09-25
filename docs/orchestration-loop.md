@@ -773,7 +773,8 @@ finish (server restarted); re-running" is informational. A land yields at admiss
 takes the repository mutation lease, while a queued dispatch waits for that lease (hold
 `repository_lease_yielded_to_dispatch`, CARD-0672); the sweep re-picks it within
 `Delegation:LandSweepSeconds`, and after `Delegation:LandYieldToDispatchMaxSeconds` (default 90)
-it proceeds with one `Warning` "yield budget exhausted". The yield is not a caller note.
+it proceeds with one `Warning` "yield budget exhausted"; admission ends the budget, so a retried
+request yields afresh. The yield is not a caller note.
 
 The in-process channel is one global single reader, not a queue per repository. A LandAged
 note for a request that is still waiting reports that snapshot. Position is one-based among
