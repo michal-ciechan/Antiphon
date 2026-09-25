@@ -19,6 +19,140 @@ namespace Antiphon.Tests.Application;
 public class TranscriptHotPathMigrationTests
 {
     [Test]
+    public async Task Retry_replaces_all_three_interrupted_invalid_indexes()
+    {
+        await VerifyRetryAsync(validIndex: null);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task Retry_preserves_a_valid_index_and_replaces_two_invalid_indexes(int validIndex)
+    {
+        await VerifyRetryAsync(validIndex);
+    }
+
+    [Test]
+    public async Task Clean_database_first_migration_creates_three_valid_indexes()
+    {
+        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var db = f.CreateDb();
+        var (_, current, _) = MigrationInfo(db);
+        // This fixture owns a cloned database, so exercise the complete first startup migration.
+        await db.Database.ExecuteSqlRawAsync("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+        await db.GetService<IMigrator>().MigrateAsync(current);
+        var catalog = await ReadCatalogAsync(f.ConnectionString);
+        catalog.Count.ShouldBe(3);
+        catalog.ShouldAllBe(i => i.Valid && i.Ready && !i.Unique);
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(current);
+    }
+
+    [Test]
+    public async Task Retry_finishes_cleanup_if_interrupted_after_invalid_index_rename()
+    {
+        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var db = f.CreateDb();
+        var (previous, current, _) = MigrationInfo(db);
+        var definitions = await ReadCatalogAsync(f.ConnectionString);
+        await db.GetService<IMigrator>().MigrateAsync(previous);
+        var index = definitions.Single(i => i.Name == NewIndexNames()[0]);
+        await CreateInterruptedIndexAsync(f, index.Definition);
+        await db.Database.ExecuteSqlRawAsync(
+            $"ALTER INDEX \"{index.Name}\" RENAME TO \"{index.Name}_invalid\";");
+
+        await db.GetService<IMigrator>().MigrateAsync(current);
+
+        var catalog = await ReadCatalogAsync(f.ConnectionString);
+        catalog.Count.ShouldBe(3);
+        catalog.ShouldAllBe(i => i.Valid && i.Ready);
+        await AssertNoCleanupIndexesAsync(db);
+    }
+
+    [Test]
+    public async Task Down_retries_after_an_index_was_already_dropped()
+    {
+        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var db = f.CreateDb();
+        var (previous, current, _) = MigrationInfo(db);
+        await db.Database.ExecuteSqlRawAsync($"DROP INDEX CONCURRENTLY \"{NewIndexNames()[0]}\";");
+        await Should.NotThrowAsync(() => db.GetService<IMigrator>().MigrateAsync(previous));
+        (await ReadCatalogAsync(f.ConnectionString)).ShouldBeEmpty();
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(current);
+        await db.GetService<IMigrator>().MigrateAsync(current);
+        (await ReadCatalogAsync(f.ConnectionString)).ShouldAllBe(i => i.Valid && i.Ready);
+    }
+
+    private static async Task VerifyRetryAsync(int? validIndex)
+    {
+        await using var f = await TranscriptHotPathFixture.CreateAsync();
+        await using var db = f.CreateDb();
+        var (previous, current, _) = MigrationInfo(db);
+        var definitions = await ReadCatalogAsync(f.ConnectionString);
+        await db.GetService<IMigrator>().MigrateAsync(previous);
+        await AddIdentityRowsAsync(db, f.SessionIds[0]);
+        var fingerprint = await FingerprintAsync(f.ConnectionString);
+        var names = NewIndexNames();
+        for (var i = 0; i < names.Length; i++)
+        {
+            var definition = definitions.Single(d => d.Name == names[i]).Definition;
+            if (i == validIndex)
+                await db.Database.ExecuteSqlRawAsync(definition.Replace("CREATE INDEX ", "CREATE INDEX CONCURRENTLY "));
+            else
+                await CreateInterruptedIndexAsync(f, definition);
+        }
+        var before = await ReadCatalogAsync(f.ConnectionString);
+        before.Count.ShouldBe(3);
+        before.Count(i => i.Valid).ShouldBe(validIndex.HasValue ? 1 : 0);
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(current);
+
+        await Should.NotThrowAsync(() => db.GetService<IMigrator>().MigrateAsync(current));
+
+        var after = await ReadCatalogAsync(f.ConnectionString);
+        after.Count.ShouldBe(3);
+        after.ShouldAllBe(i => i.Valid && i.Ready && !i.Unique);
+        foreach (var index in after)
+        {
+            var original = before.Single(i => i.Name == index.Name);
+            index.Definition.ShouldBe(original.Definition);
+            if (original.Valid) index.Oid.ShouldBe(original.Oid, "a valid index must survive without rebuilding");
+            else index.Oid.ShouldNotBe(original.Oid, "an invalid index must be dropped and recreated");
+        }
+        (await FingerprintAsync(f.ConnectionString)).ShouldBe(fingerprint);
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(current);
+        await AssertNoCleanupIndexesAsync(db);
+        f.Record("migration-retry", new { validIndex, before, after });
+    }
+
+    private static async Task CreateInterruptedIndexAsync(TranscriptHotPathFixture f, string definition)
+    {
+        await using var writer = new NpgsqlConnection(f.ConnectionString);
+        await writer.OpenAsync();
+        await using var transaction = await writer.BeginTransactionAsync();
+        await InsertAsync(writer, f.SessionIds[1], 1);
+        await using var builder = new NpgsqlConnection(f.ConnectionString);
+        await builder.OpenAsync();
+        await using (var budget = new NpgsqlCommand("SET statement_timeout = '1s'", builder))
+            await budget.ExecuteNonQueryAsync();
+        await using var command = new NpgsqlCommand(
+            definition.Replace("CREATE INDEX ", "CREATE INDEX CONCURRENTLY "), builder);
+        // Real interrupted concurrent DDL leaves pg_index.indisvalid=false; never edit the catalog.
+        var error = await Should.ThrowAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
+        error.SqlState.ShouldBe(PostgresErrorCodes.QueryCanceled);
+        await transaction.RollbackAsync();
+    }
+
+    private static async Task AssertNoCleanupIndexesAsync(AppDbContext db)
+    {
+        var cleanupNames = NewIndexNames().Select(n => n + "_invalid").ToArray();
+        var count = await db.Database.SqlQuery<int>($"""
+            SELECT count(*)::int AS "Value" FROM pg_class
+            WHERE relnamespace = 'public'::regnamespace AND relname = ANY ({cleanupNames})
+            """).SingleAsync();
+        count.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Generated_sql_and_model_preserve_unique_sequence_and_suppress_index_transactions()
     {
         await using var f = await TranscriptHotPathFixture.CreateAsync();
@@ -217,14 +351,14 @@ public class TranscriptHotPathMigrationTests
         return (string)(await command.ExecuteScalarAsync())!;
     }
 
-    private sealed record IndexInfo(string Name, bool Valid, bool Ready, bool Unique, long Bytes, string Definition);
+    private sealed record IndexInfo(string Name, bool Valid, bool Ready, bool Unique, long Bytes, string Definition, uint Oid);
 
     private static async Task<List<IndexInfo>> ReadCatalogAsync(string connectionString)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand("""
-            SELECT c.relname, i.indisvalid, i.indisready, i.indisunique, pg_relation_size(c.oid), pg_get_indexdef(c.oid)
+            SELECT c.relname, i.indisvalid, i.indisready, i.indisunique, pg_relation_size(c.oid), pg_get_indexdef(c.oid), c.oid
             FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid
             WHERE i.indrelid = '"TranscriptEntries"'::regclass AND c.relname = ANY (@names) ORDER BY c.relname
             """, connection);
@@ -232,7 +366,7 @@ public class TranscriptHotPathMigrationTests
         await using var reader = await command.ExecuteReaderAsync();
         var result = new List<IndexInfo>();
         while (await reader.ReadAsync()) result.Add(new(reader.GetString(0), reader.GetBoolean(1),
-            reader.GetBoolean(2), reader.GetBoolean(3), reader.GetInt64(4), reader.GetString(5)));
+            reader.GetBoolean(2), reader.GetBoolean(3), reader.GetInt64(4), reader.GetString(5), reader.GetFieldValue<uint>(6)));
         return result;
     }
 }
