@@ -1215,6 +1215,42 @@ public sealed class AgentSessionRuntime
             .Distinct()
             .ToList();
 
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): phone-home sessions whose liveness is unknown, neither in
+    /// <see cref="ListLiveSessions"/> nor confirmed gone (no exit, no kill, and no List from a
+    /// connected runner without them). Nothing destructive acts on one: it is not failed, its
+    /// attempt is not canceled and its card keeps its claim. Queued delivery keeps trying it.
+    /// Optional probes that act only on a confirmed live session (usage polls, compaction,
+    /// watchdog answers, policy relaunch) skip it until the runner confirms it again.
+    /// </summary>
+    public IReadOnlyList<Guid> ListUnknownSessions()
+    {
+        var unknown = _directory?.UnknownRemoteSessionIds() ?? [];
+        if (unknown.Count == 0)
+            return [];
+        var live = ListLiveSessions();
+        return unknown.Where(id => !live.Contains(id)).Distinct().ToList();
+    }
+
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): every session not confirmed gone, live or unknown. The set a
+    /// destructive "not live" decision (fail, cancel, clear a claim) and queued delivery read.
+    /// </summary>
+    public IReadOnlyList<Guid> ListLiveOrUnknownSessions() =>
+        ListLiveSessions()
+            .Concat(_directory?.UnknownRemoteSessionIds() ?? [])
+            .Distinct()
+            .ToList();
+
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): whether a session bound to <paramref name="runnerId"/> is live
+    /// or unknown, including the window before that remote runner's first catch-up List, when the
+    /// directory has no inventory to name it in.
+    /// </summary>
+    public bool IsLiveOrUnknown(Guid sessionId, string? runnerId) =>
+        (_directory?.RemoteInventoryPending(runnerId) ?? false)
+        || ListLiveOrUnknownSessions().Contains(sessionId);
+
     public bool TryGetLiveSnapshot(Guid sessionId, out AgentSessionLiveSnapshot snapshot)
     {
         try
@@ -1588,7 +1624,7 @@ public sealed class AgentSessionRuntime
         var sawDelta = false;
         while (UtcNow() < firstDeltaDeadline)
         {
-            if (!ListLiveSessions().Contains(sessionId))
+            if (!ListLiveOrUnknownSessions().Contains(sessionId))
                 return ManualTurnWaitResult.RuntimeMissing;
 
             if (GetRunnerSequenceOrDefault(sessionId, CancellationToken.None) > sequenceAtSubmit)
@@ -1613,7 +1649,7 @@ public sealed class AgentSessionRuntime
         while (UtcNow() < deadline)
         {
             await Task.Delay(ManualTurnPollInterval);
-            if (!ListLiveSessions().Contains(sessionId))
+            if (!ListLiveOrUnknownSessions().Contains(sessionId))
                 return ManualTurnWaitResult.RuntimeMissing;
 
             var currentSequence = GetRunnerSequenceOrDefault(sessionId, CancellationToken.None);

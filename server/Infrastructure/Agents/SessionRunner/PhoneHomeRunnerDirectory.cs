@@ -22,6 +22,10 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     private readonly object _gate = new();
     private readonly Dictionary<string, Ticket> _tickets = new(StringComparer.Ordinal);
     private PhoneHomeLiveConnection? _live;
+    // CARD-0679 (review 87af1bf6): the connection whose catch-up List last answered for the
+    // runner's sessions. Kept past its end: until a newer connection recovers, its inventory is
+    // the best knowledge there is, and those sessions are unknown rather than gone.
+    private PhoneHomeLiveConnection? _lastRecovered;
     private Guid? _liveStoreId;
     private Guid? _liveBootId;
     private DateTimeOffset _liveLeaseUntil;
@@ -256,6 +260,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             if (!ReferenceEquals(_live, connection))
                 return;
             connection.DispatchEligible = true;
+            _lastRecovered = connection;
         }
     }
 
@@ -328,6 +333,35 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             return [];
         return live.KnownLiveSessions(_settings.InventoryMaxAge);
+    }
+
+    /// <summary>
+    /// CARD-0679 (review 87af1bf6): sessions neither confirmed live nor confirmed gone. On the
+    /// current recovered connection, the entries past <see cref="PhoneHomeRunnerSettings.InventoryMaxAge"/>;
+    /// when that connection is not vouching (recovering, lease-expired, closed or gone), every entry
+    /// of the last recovered one, until a newer connection's catch-up List answers for them.
+    /// </summary>
+    public IReadOnlyCollection<Guid> UnknownRemoteSessionIds()
+    {
+        PhoneHomeLiveConnection? last;
+        lock (_gate)
+            last = _lastRecovered;
+        if (last is null)
+            return [];
+        var live = SnapshotLive();
+        if (live is not null && ReferenceEquals(live, last) && live.DispatchEligible && live.SocketOpen
+            && !live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            return live.UnconfirmedSessions(_settings.InventoryMaxAge);
+        return last.KnownLiveSessions();
+    }
+
+    public bool RemoteInventoryPending(string? runnerId)
+    {
+        // A runner this desktop does not accept can never answer, so its sessions are not held open.
+        if (!_settings.Enabled || !string.Equals(runnerId, _settings.AllowedRunnerId, StringComparison.Ordinal))
+            return false;
+        lock (_gate)
+            return _lastRecovered is null;
     }
 
     public PhoneHomeRunnerStatusDto Status(string runnerId)
