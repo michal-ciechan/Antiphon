@@ -127,7 +127,8 @@ public partial class CardFileBoardLookupTests
         await using var prepared = await PrepareRemovedExportAsync();
         await StageExportAsync(prepared);
         await File.WriteAllTextAsync(Path.Combine(prepared.Repo, "notes.txt"), "notes\n");
-        var git = new GitService(NullLogger<GitService>.Instance, _lookup);
+        var sweep = new CardFilePreCommitSweep((repo, token) => prepared.Service.SweepRepositoryAsync(repo, token));
+        var git = new GitService(NullLogger<GitService>.Instance, _lookup, sweep);
         (await git.CommitAllChangesAsync(prepared.Repo, "agent commit", default)).ShouldBeTrue();
         var head = await HeadNamesAsync(prepared.Repo);
         head.ShouldContain("notes.txt");
@@ -142,7 +143,8 @@ public partial class CardFileBoardLookupTests
         await StageExportAsync(prepared);
         await File.WriteAllTextAsync(Path.Combine(prepared.Repo, "notes.txt"), "notes\n");
         await GitOk(prepared.Repo, "add", "--", "notes.txt");
-        var git = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance, cardFiles: _lookup);
+        var sweep = new CardFilePreCommitSweep((repo, token) => prepared.Service.SweepRepositoryAsync(repo, token));
+        var git = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance, cardFiles: _lookup, preCommit: sweep);
         var commit = await git.CommitOnlyAsync(prepared.Repo, null, "whole index", [], default);
         commit.Code.ShouldBe(0, commit.Stderr);
         var head = await HeadNamesAsync(prepared.Repo);

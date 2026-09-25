@@ -14,7 +14,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     IRepositoryMutationLease leases, IWorktreeManager worktrees, ILandingVerifier verifier, TimeProvider clock,
     IWorktreeCleanupJournal? cleanupJournal = null, ILogger<AgentTaskLandingProtocol>? logger = null,
-    IOptions<GitSettings>? gitSettings = null)
+    IOptions<GitSettings>? gitSettings = null, CardTaskFileService? cardFiles = null)
 {
     private readonly AgentTaskLandingState _state = new();
 
@@ -280,6 +280,12 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 if (current != op.VerifiedSourceSha)
                 {
                     Require(await IsAncestorAsync(op.RepositoryPath, current, op.VerifiedSourceSha!, ct), "target_not_fast_forward");
+                    if (cardFiles is not null)
+                    {
+                        var blocked = await cardFiles.OptedOutLandRefusalAsync(
+                            op.RepositoryPath, current, op.VerifiedSourceSha!, ct);
+                        Require(blocked is null, blocked ?? "");
+                    }
                     // CARD-0642 R1: the checkout behind update-ref/merge comes from a fresh listing, never the
                     // land's cache, and that listing is the last check before the advance: another process can
                     // switch an existing worktree onto the target unseen, including during the ancestry check.

@@ -48,7 +48,17 @@ public sealed partial class CardTaskFileService
     {
         if (!_syncSettings.Enabled) return [];
         var lookup = await _boardLookup.GetAsync(_db, ct);
-        var ids = lookup.Boards.Where(_boardLookup.NeedsInspection).Select(b => b.Id).ToArray();
+        var ids = new List<Guid>();
+        var skipped = new List<CardFileBoardLookup.Entry>();
+        foreach (var board in lookup.Boards)
+        {
+            if (_boardLookup.NeedsInspection(board)) ids.Add(board.Id);
+            else skipped.Add(board);
+        }
+        // The clean-set skip is the database work. Every sweep still probes the pinned
+        // directory and one index listing per repository, and a hit rejoins full inspection.
+        foreach (var id in await ProbeSkippedAsync(skipped, ct))
+            if (!ids.Contains(id)) ids.Add(id);
         var results = new List<CardFileSyncBoardResult>();
         foreach (var id in ids)
         {
@@ -206,19 +216,128 @@ public sealed partial class CardTaskFileService
 
     public void InvalidateBoardLookups() => _boardLookup.Invalidate();
 
+    /// <summary>Reinspect opted-out boards in one repository and remove restored card files.</summary>
+    public async Task SweepRepositoryAsync(string repositoryPath, CancellationToken ct)
+    {
+        if (!_syncSettings.Enabled || string.IsNullOrWhiteSpace(repositoryPath)) return;
+        _boardLookup.RequestOptedOutReinspection(repositoryPath);
+        var lookup = await _boardLookup.GetAsync(_db, ct);
+        foreach (var board in lookup.Boards)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!BoardUsesRepository(board, repositoryPath) || !_boardLookup.NeedsInspection(board)) continue;
+            await SyncBoardAsync(board.Id, dryRun: false, ct);
+        }
+    }
+
     /// <summary>
-    /// Code returned when <paramref name="fromSha"/>..<paramref name="toSha"/> adds or modifies
-    /// an opted-out board's pinned card directory; null when that diff does not.
+    /// <c>opted_out_card_files</c> when <paramref name="fromSha"/>..<paramref name="toSha"/> adds or
+    /// modifies an opted-out board's card directory in <paramref name="repositoryPath"/>. Null when
+    /// the diff does not. A diff that cannot be read refuses, so a land does not publish unseen paths.
     /// </summary>
-    public Task<string?> OptedOutLandRefusalAsync(
+    public async Task<string?> OptedOutLandRefusalAsync(
         string repositoryPath, string fromSha, string toSha, CancellationToken ct)
     {
-        _ = repositoryPath;
-        _ = fromSha;
-        _ = toSha;
-        _ = ct;
-        return Task.FromResult<string?>(null);
+        if (!IsCommitId(fromSha) || !IsCommitId(toSha)) return "opted_out_card_files";
+        var lookup = await _boardLookup.GetAsync(_db, ct);
+        var prefixes = new List<string>();
+        foreach (var board in lookup.Boards)
+        {
+            if (board.SyncCardFiles || !BoardUsesRepository(board, repositoryPath)) continue;
+            prefixes.Add(string.IsNullOrWhiteSpace(board.CardFilesDirectorySlug)
+                ? "docs/cards/"
+                : $"docs/cards/{board.CardFilesDirectorySlug}/");
+        }
+        if (prefixes.Count == 0) return null;
+        var diff = await _git.DiffNamesAsync(repositoryPath, fromSha, toSha, ct);
+        if (!diff.Succeeded) return "opted_out_card_files";
+        foreach (var path in diff.Items)
+        {
+            var normalized = path.Replace('\\', '/');
+            if (prefixes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                return "opted_out_card_files";
+        }
+        return null;
     }
+
+    private async Task<IReadOnlyList<Guid>> ProbeSkippedAsync(
+        IReadOnlyList<CardFileBoardLookup.Entry> skipped, CancellationToken ct)
+    {
+        if (skipped.Count == 0) return [];
+        var dirty = new List<Guid>();
+        var byRepo = new Dictionary<string, List<(Guid Id, string Relative)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var board in skipped)
+        {
+            if (!TryPinnedDirectory(board, out var root, out var relative, out var absolute))
+            {
+                dirty.Add(board.Id);
+                continue;
+            }
+            try
+            {
+                if (Directory.Exists(absolute)
+                    && Directory.EnumerateFiles(absolute, "*.md", SearchOption.TopDirectoryOnly).Any())
+                    dirty.Add(board.Id);
+            }
+            catch (Exception) { dirty.Add(board.Id); }
+            if (!byRepo.TryGetValue(root, out var group))
+                byRepo[root] = group = [];
+            group.Add((board.Id, relative));
+        }
+        foreach (var (root, group) in byRepo)
+        {
+            ct.ThrowIfCancellationRequested();
+            var indexed = await _git.ListIndexedPathsAsync(root, group.Select(item => item.Relative).Distinct(StringComparer.Ordinal).ToArray(), ct);
+            if (!indexed.Succeeded)
+            {
+                foreach (var item in group)
+                    if (!dirty.Contains(item.Id)) dirty.Add(item.Id);
+                continue;
+            }
+            foreach (var item in group)
+            {
+                if (dirty.Contains(item.Id)) continue;
+                var prefix = item.Relative.TrimEnd('/') + "/";
+                if (indexed.Items.Any(path => path.Equals(item.Relative, StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                    dirty.Add(item.Id);
+            }
+        }
+        return dirty;
+    }
+
+    private static bool TryPinnedDirectory(CardFileBoardLookup.Entry board, out string root, out string relative, out string absolute)
+    {
+        root = "";
+        relative = "";
+        absolute = "";
+        var configured = board.CardFilesRepositoryPath ?? board.LocalRepositoryPath;
+        var slug = board.CardFilesDirectorySlug;
+        if (string.IsNullOrWhiteSpace(configured) || string.IsNullOrWhiteSpace(slug)) return false;
+        if (slug.Length > 60 || slug != CardTaskFileRenderer.BoardSlug(slug)) return false;
+        try { root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configured)); }
+        catch (Exception) { return false; }
+        relative = "docs/cards/" + slug;
+        absolute = Path.Combine(root, "docs", "cards", slug);
+        return true;
+    }
+
+    private static bool BoardUsesRepository(CardFileBoardLookup.Entry board, string repositoryPath)
+    {
+        var configured = board.CardFilesRepositoryPath ?? board.LocalRepositoryPath;
+        if (string.IsNullOrWhiteSpace(configured) || string.IsNullOrWhiteSpace(repositoryPath)) return false;
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(configured)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception) { return false; }
+    }
+
+    private static bool IsCommitId(string value) =>
+        value.Length is 40 or 64 && value.All(static c => c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
 
     private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct, bool ignorePins = false) =>
         (await _boardLookup.GetAsync(_db, ct)).UniqueSlug(board, ignorePins);

@@ -34,6 +34,7 @@ public sealed class DelegationWorktreeService
     private readonly GitSettings? _gitSettings;
     private readonly AppDbContext? _db;
     private readonly IVerificationWorkspaceDirectory? _verificationWorkspaces;
+    private readonly CardTaskFileService? _cardFiles;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
@@ -45,9 +46,11 @@ public sealed class DelegationWorktreeService
         IOptions<GitSettings>? gitSettings = null,
         AppDbContext? db = null,
         GatedCommitService? gatedCommit = null,
-        IVerificationWorkspaceDirectory? verificationWorkspaces = null)
+        IVerificationWorkspaceDirectory? verificationWorkspaces = null,
+        CardTaskFileService? cardFiles = null)
     {
         _verificationWorkspaces = verificationWorkspaces;
+        _cardFiles = cardFiles;
         _leases = leases;
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
@@ -677,6 +680,11 @@ public sealed class DelegationWorktreeService
         if (await ReadCleanTargetAsync(repo, target, ct) != expected) return "target_changed";
         if (!(await GitAsync(repo, ct, "merge-base", "--is-ancestor", expected, sourceSha)).Ok)
             return "target_not_fast_forward";
+        if (_cardFiles is not null)
+        {
+            var blocked = await _cardFiles.OptedOutLandRefusalAsync(repo, expected, sourceSha, ct);
+            if (blocked is not null) return blocked;
+        }
         var checkout = await FindCheckoutOfBranchAsync(repo, target[11..], ct);
         if (checkout != expectedCheckout) return "target_checkout_changed";
         var advance = checkout is null

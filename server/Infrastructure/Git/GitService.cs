@@ -14,6 +14,7 @@ public class GitService : IGitService
 {
     private readonly ILogger<GitService> _logger;
     private readonly CardFileBoardLookup? _cardFiles;
+    private readonly CardFilePreCommitSweep? _preCommit;
 
     /// <summary>
     /// Timeout for standard git operations (fetch, diff, checkout, etc.).
@@ -25,10 +26,12 @@ public class GitService : IGitService
     /// </summary>
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
-    public GitService(ILogger<GitService> logger, CardFileBoardLookup? cardFiles = null)
+    public GitService(ILogger<GitService> logger, CardFileBoardLookup? cardFiles = null,
+        CardFilePreCommitSweep? preCommit = null)
     {
         _logger = logger;
         _cardFiles = cardFiles;
+        _preCommit = preCommit;
     }
 
     /// <summary>
@@ -223,6 +226,8 @@ public class GitService : IGitService
 
     public async Task<bool> CommitAllChangesAsync(string worktreePath, string message, CancellationToken ct)
     {
+        if (_preCommit is not null)
+            await _preCommit.SweepAsync(worktreePath, ct);
         var status = await RunGitAsync(worktreePath, "status --porcelain", ct);
         if (string.IsNullOrWhiteSpace(status))
         {

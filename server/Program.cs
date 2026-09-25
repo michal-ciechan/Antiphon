@@ -448,6 +448,7 @@ try
     builder.Services.AddScoped<IScheduledCardActions>(sp => sp.GetRequiredService<CardService>());
     builder.Services.AddSingleton<CardTaskFileSyncGate>();
     builder.Services.AddSingleton<CardFileBoardLookup>();
+    builder.Services.AddSingleton<CardFilePreCommitSweep>();
     builder.Services.AddScoped<CardTaskFileService>();
     builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.ICardFileRepository, Antiphon.Server.Infrastructure.Git.CardFileRepository>();
     builder.Services.AddScoped<CardCommentService>();

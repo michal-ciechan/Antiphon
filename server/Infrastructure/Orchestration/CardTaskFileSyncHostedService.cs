@@ -10,7 +10,8 @@ namespace Antiphon.Server.Infrastructure.Orchestration;
 /// <summary>
 /// Periodic driver for <see cref="CardTaskFileService.SyncAllAsync"/> (CARD-0004). A 60 s tick
 /// and the manual endpoint are the steady triggers; there is no enqueue from <c>CardService</c>.
-/// Opted-out boards already found clean are swept again on startup, on
+/// Opted-out boards already found clean skip their database work. Each tick still probes those
+/// directories, and a full reinspection runs on startup, on
 /// <see cref="CardFileSyncSettings.OptedOutReinspectionMinutes"/>, and when server git restores
 /// that repository. <see cref="CardFileSyncSettings.IntervalSeconds"/> of 0 is manual-only: the
 /// tick and its backstop never start, and <c>POST /api/boards/{id}/card-files/sync</c> stays available.
