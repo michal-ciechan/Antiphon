@@ -531,5 +531,8 @@ public sealed class AgentTaskLandRecoveryTests
         return (op, request.Id);
     }
 
-    private sealed class SimulatedServerCrash : Exception;
+    // Cleanup turns ordinary exceptions into durable residue; those do not model a server
+    // interruption. Cancellation propagates through both cleanup catch boundaries, leaving
+    // the successful Git command unacknowledged for the new service graph to reconcile.
+    private sealed class SimulatedServerCrash : OperationCanceledException;
 }
