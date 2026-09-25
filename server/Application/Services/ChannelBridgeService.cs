@@ -315,7 +315,9 @@ public sealed class ChannelBridgeService : BackgroundService
     // their message. Original names are untrusted channel data — strip anything path-flavoured.
     private string SafeFileName(ChannelMessage message, Attachment attachment, int index)
     {
-        var original = Path.GetFileName(attachment.Name ?? "");
+        // Attachment names come from another machine: both path separators must be removed
+        // even when this server runs on a platform where backslash is a legal filename byte.
+        var original = Path.GetFileName((attachment.Name ?? "").Replace('\\', '/'));
         foreach (var c in Path.GetInvalidFileNameChars())
             original = original.Replace(c, '_');
         if (string.IsNullOrWhiteSpace(original))
