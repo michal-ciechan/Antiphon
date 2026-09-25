@@ -252,6 +252,57 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         }
     }
 
+    /// <summary>
+    /// CARD-0589: <c>POST /build-slots</c>. 200 is a grant, 409 a busy or memory-floor refusal (the
+    /// problem body's top-level members); anything else, including an old runner's 404 and a
+    /// connection failure, is null (cannot be asked).
+    /// </summary>
+    public async Task<RunnerBuildSlotAnswer?> AcquireBuildSlotAsync(BuildSlotRequest request, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync("build-slots", request, JsonOptions, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                var grant = await response.Content.ReadFromJsonAsync<BuildSlotGrant>(JsonOptions, ct);
+                return grant is null ? null : new RunnerBuildSlotAnswer(grant);
+            }
+            if (response.StatusCode != System.Net.HttpStatusCode.Conflict)
+                return null;
+            using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var root = problem.RootElement;
+            int Int(string name) => root.TryGetProperty(name, out var v) && v.TryGetInt32(out var i) ? i : 0;
+            long Long(string name) => root.TryGetProperty(name, out var v) && v.TryGetInt64(out var l) ? l : 0;
+            return (root.TryGetProperty("type", out var type) ? type.GetString() : null) switch
+            {
+                BuildSlotProblemTypes.Busy => new RunnerBuildSlotAnswer(null,
+                    Busy: new BuildSlotBusy(Int("occupied"), Int("budget"), Int("queuePosition"), Int("retryAfterMs"))),
+                BuildSlotProblemTypes.MemoryFloor => new RunnerBuildSlotAnswer(null,
+                    MemoryFloor: new BuildSlotMemoryFloor(Long("availableMb"), Long("floorMb"), Int("queuePosition"), Int("retryAfterMs"))),
+                _ => null,
+            };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or NotSupportedException
+                                       || (ex is TaskCanceledException && !ct.IsCancellationRequested))
+        {
+            return null;
+        }
+    }
+
+    /// <summary>CARD-0589: <c>DELETE /build-slots/{leaseId}</c>; the runner reaps the lease anyway when this process dies.</summary>
+    public async Task<bool> ReleaseBuildSlotAsync(Guid leaseId, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await _httpClient.DeleteAsync($"build-slots/{leaseId:D}", ct);
+            return response.StatusCode == System.Net.HttpStatusCode.NoContent;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || (ex is TaskCanceledException && !ct.IsCancellationRequested))
+        {
+            return false;
+        }
+    }
+
     public async Task<string?> GetHealthAsync(CancellationToken ct)
     {
         try

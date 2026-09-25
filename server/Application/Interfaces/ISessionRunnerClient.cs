@@ -133,5 +133,16 @@ public interface ISessionRunnerClient
     Task<CompactionTailObservation> ObserveCompactionAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(CompactionTailObservation.Unsupported());
 
+    /// <summary>
+    /// CARD-0589: ask the runner for a host build slot (<c>POST /build-slots</c>). Null when the
+    /// runner cannot be asked (unreachable, or an old runner without the route); the default so
+    /// untouched fakes read as unreachable and never as a grant.
+    /// </summary>
+    Task<RunnerBuildSlotAnswer?> AcquireBuildSlotAsync(BuildSlotRequest request, CancellationToken ct) =>
+        Task.FromResult<RunnerBuildSlotAnswer?>(null);
+
+    /// <summary>CARD-0589: <c>DELETE /build-slots/{leaseId}</c>; false when it was not released.</summary>
+    Task<bool> ReleaseBuildSlotAsync(Guid leaseId, CancellationToken ct) => Task.FromResult(false);
+
     IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct);
 }
