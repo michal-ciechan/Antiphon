@@ -1,10 +1,13 @@
+using Antiphon.Resilience;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Infrastructure.Resilience;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -13,35 +16,42 @@ public class LlmProviderService
     private readonly AppDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<LlmProviderService> _logger;
+    private readonly DatabaseResilienceExecutor _reads;
+    private readonly TimeProvider _time;
+    private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
 
     public LlmProviderService(
         AppDbContext db,
         IHttpClientFactory httpClientFactory,
-        ILogger<LlmProviderService> logger)
+        ILogger<LlmProviderService> logger,
+        DatabaseResilienceExecutor reads,
+        TimeProvider? time = null,
+        IOptionsMonitor<ResilienceSettings>? resilience = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _reads = reads;
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience;
     }
 
-    public async Task<List<LlmProviderDto>> GetAllAsync(CancellationToken cancellationToken)
-    {
-        var providers = await _db.LlmProviders
-            .OrderBy(p => p.Name)
-            .Select(p => ToDto(p))
-            .ToListAsync(cancellationToken);
+    public Task<List<LlmProviderDto>> GetAllAsync(CancellationToken cancellationToken) =>
+        _reads.ExecuteReadAsync(
+            ResilienceOperations.LlmProvidersList,
+            (db, ct) => db.LlmProviders.AsNoTracking().OrderBy(p => p.Name).Select(p => ToDto(p)).ToListAsync(ct),
+            cancellationToken);
 
-        return providers;
-    }
-
-    public async Task<LlmProviderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken)
-    {
-        var provider = await _db.LlmProviders
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
-            ?? throw new NotFoundException(nameof(LlmProvider), id);
-
-        return ToDto(provider);
-    }
+    public Task<LlmProviderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        _reads.ExecuteReadAsync(
+            ResilienceOperations.LlmProvidersGet,
+            async (db, ct) =>
+            {
+                var provider = await db.LlmProviders.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, ct)
+                    ?? throw new NotFoundException(nameof(LlmProvider), id);
+                return ToDto(provider);
+            },
+            cancellationToken);
 
     public async Task<LlmProviderDto> CreateAsync(
         CreateLlmProviderRequest request, CancellationToken cancellationToken)
@@ -263,11 +273,12 @@ public class LlmProviderService
 
     private async Task<TestProviderResult> TestOpenAiAsync(LlmProvider provider, CancellationToken cancellationToken)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = ProbeClient();
         var baseUrl = string.IsNullOrEmpty(provider.BaseUrl) ? "https://api.openai.com" : provider.BaseUrl;
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/v1/models");
         request.Headers.Add("Authorization", $"Bearer {provider.ApiKey}");
+        StampProbe(request, ResilienceOperations.ProviderProbeOpenAi);
 
         using var response = await client.SendAsync(request, cancellationToken);
 
@@ -282,10 +293,11 @@ public class LlmProviderService
 
     private async Task<TestProviderResult> TestOllamaAsync(LlmProvider provider, CancellationToken cancellationToken)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = ProbeClient();
         var baseUrl = string.IsNullOrEmpty(provider.BaseUrl) ? "http://localhost:11434" : provider.BaseUrl;
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/api/tags");
+        StampProbe(request, ResilienceOperations.ProviderProbeOllama);
 
         using var response = await client.SendAsync(request, cancellationToken);
 
@@ -296,6 +308,22 @@ public class LlmProviderService
 
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         return new TestProviderResult(false, $"Ollama returned {(int)response.StatusCode}: {body}");
+    }
+
+    private HttpClient ProbeClient()
+    {
+        var unnamed = _httpClientFactory.CreateClient();
+        var named = ResilienceReadClients.Select(
+            _httpClientFactory, unnamed, ResilienceClientNames.ProviderProbeRead);
+        if (!ReferenceEquals(named, unnamed))
+            unnamed.Dispose();
+        return named;
+    }
+
+    private void StampProbe(HttpRequestMessage request, string operation)
+    {
+        var budget = ResilienceBudget.Start(_time, _resilience?.CurrentValue ?? new ResilienceSettings(), profile: null);
+        ResilienceRequest.Stamp(request, operation, budget);
     }
 
     private static void ValidateRequest(string name, ProviderType providerType, string baseUrl)

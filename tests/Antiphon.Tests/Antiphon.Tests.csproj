@@ -13,6 +13,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.5.0" />
     <PackageReference Include="System.IO.Abstractions.TestingHelpers" Version="22.1.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.15.0" />
     <PackageReference Include="TUnit" Version="1.44.0" />
     <PackageReference Include="Shouldly" Version="4.*" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.*" />
@@ -51,6 +52,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" Aliases="global,server" />
+    <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />

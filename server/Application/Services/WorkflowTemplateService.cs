@@ -1,4 +1,6 @@
+using Antiphon.Resilience;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Infrastructure.Resilience;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
@@ -10,31 +12,41 @@ namespace Antiphon.Server.Application.Services;
 public class WorkflowTemplateService
 {
     private readonly AppDbContext _db;
+    private readonly DatabaseResilienceExecutor _reads;
 
-    public WorkflowTemplateService(AppDbContext db)
+    public WorkflowTemplateService(AppDbContext db, DatabaseResilienceExecutor reads)
     {
         _db = db;
+        _reads = reads;
     }
 
-    public async Task<List<WorkflowTemplateDto>> GetAllAsync(CancellationToken cancellationToken)
-    {
-        var templates = await _db.WorkflowTemplates
-            .Include(t => t.TemplateGroup)
-            .OrderBy(t => t.Name)
-            .ToListAsync(cancellationToken);
+    public Task<List<WorkflowTemplateDto>> GetAllAsync(CancellationToken cancellationToken) =>
+        _reads.ExecuteReadAsync(
+            ResilienceOperations.WorkflowTemplatesList,
+            async (db, ct) =>
+            {
+                var templates = await db.WorkflowTemplates
+                    .AsNoTracking()
+                    .Include(t => t.TemplateGroup)
+                    .OrderBy(t => t.Name)
+                    .ToListAsync(ct);
+                return templates.Select(ToDto).ToList();
+            },
+            cancellationToken);
 
-        return templates.Select(ToDto).ToList();
-    }
-
-    public async Task<WorkflowTemplateDto> GetByIdAsync(Guid id, CancellationToken cancellationToken)
-    {
-        var template = await _db.WorkflowTemplates
-            .Include(t => t.TemplateGroup)
-            .FirstOrDefaultAsync(t => t.Id == id, cancellationToken)
-            ?? throw new NotFoundException(nameof(WorkflowTemplate), id);
-
-        return ToDto(template);
-    }
+    public Task<WorkflowTemplateDto> GetByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        _reads.ExecuteReadAsync(
+            ResilienceOperations.WorkflowTemplatesGet,
+            async (db, ct) =>
+            {
+                var template = await db.WorkflowTemplates
+                    .AsNoTracking()
+                    .Include(t => t.TemplateGroup)
+                    .FirstOrDefaultAsync(t => t.Id == id, ct)
+                    ?? throw new NotFoundException(nameof(WorkflowTemplate), id);
+                return ToDto(template);
+            },
+            cancellationToken);
 
     public async Task<WorkflowTemplateDto> CreateAsync(
         CreateWorkflowTemplateRequest request, CancellationToken cancellationToken)

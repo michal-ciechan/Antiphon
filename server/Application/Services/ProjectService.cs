@@ -1,4 +1,6 @@
+using Antiphon.Resilience;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Resilience;
 using System.Net.Http.Headers;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -22,6 +24,8 @@ public class ProjectService
     private readonly ProjectReadinessCache? _readinessCache;
     private readonly IEventBus? _eventBus;
     private readonly DelegationSettings _delegation;
+    private readonly TimeProvider _time;
+    private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
 
     public ProjectService(
         AppDbContext db,
@@ -31,7 +35,9 @@ public class ProjectService
         ProjectReadinessCache? readinessCache = null,
         IEventBus? eventBus = null,
         CardTaskFileService? cardFiles = null,
-        IOptions<DelegationSettings>? delegation = null)
+        IOptions<DelegationSettings>? delegation = null,
+        TimeProvider? time = null,
+        IOptionsMonitor<ResilienceSettings>? resilience = null)
     {
         _db = db;
         _cardFiles = cardFiles;
@@ -41,6 +47,8 @@ public class ProjectService
         _readinessCache = readinessCache;
         _eventBus = eventBus;
         _delegation = delegation?.Value ?? new DelegationSettings();
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience;
     }
 
     public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken) =>
@@ -351,8 +359,15 @@ public class ProjectService
             if (gitRepositoryUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
                 gitRepositoryUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
             {
-                var client = _httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(10);
+                var unnamed = _httpClientFactory.CreateClient();
+                var client = ResilienceReadClients.Select(
+                    _httpClientFactory, unnamed, ResilienceClientNames.GitConnectivityRead);
+                if (!ReferenceEquals(client, unnamed))
+                    unnamed.Dispose();
+                var budget = ResilienceBudget.Start(
+                    _time, _resilience?.CurrentValue ?? new ResilienceSettings(), ResilienceProfiles.GitConnectivity);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deadline.CancelAfter(budget.Duration);
 
                 var url = gitRepositoryUrl.TrimEnd('/');
                 if (!url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
@@ -362,6 +377,7 @@ public class ProjectService
                 url += "/info/refs?service=git-upload-pack";
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                ResilienceRequest.Stamp(request, ResilienceOperations.GitConnectivity, budget);
 
                 // Add PAT auth directly on the request if the URL is on the configured GitHub host
                 if (_githubSettings.Enabled && !string.IsNullOrEmpty(_githubSettings.PersonalAccessToken))
@@ -377,7 +393,7 @@ public class ProjectService
                     }
                 }
 
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
 
                 if (response.IsSuccessStatusCode)
                 {
