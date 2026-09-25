@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -322,6 +323,156 @@ public class PhoneHomeStrandedQueueTests
         stop.Cancel();
     }
 
+    // Review 87af1bf6 finding 1. A session no List, ack or event confirmed for the stale bound is
+    // not known to be live, but nothing says it is gone either: the runner may simply be slow to
+    // answer a List while it keeps the session running. Card reconciliation read "not listed" as
+    // "not found" and failed the session, canceled its attempt and cleared the card's claim, with
+    // the runner process still running.
+    [Test]
+    public async Task Quiet_session_past_the_stale_bound_keeps_its_card_claim()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        var (cardId, attemptId) = await ClaimCardAsync(h, schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Sessions.Add(RunningOnRunner(h.SessionId));
+        var live = await host.WaitLiveAsync();
+        var pump = Pump(host, h);
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+        h.Runtime.ListLiveSessions().ShouldContain(h.SessionId);
+
+        await FailRefreshesPastTheStaleBoundAsync(clock, host, peer, live, pump, stop.Token);
+        h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId, "unconfirmed past the stale bound: not known live");
+
+        await ReconcileCardsAsync(h);
+
+        await AssertClaimSurvivesAsync(schema.ConnectionString, h.SessionId, cardId, attemptId,
+            "a session the runner has not been heard to lose is not missing");
+        stop.Cancel();
+    }
+
+    [Test]
+    public async Task Quiet_session_past_the_stale_bound_still_gets_its_stranded_prompt()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Sessions.Add(RunningOnRunner(h.SessionId));
+        EchoSubmittedPromptsToTranscript(peer, h);
+        var live = await host.WaitLiveAsync();
+        const string brief = "CARD-0679 stranded brief for a quiet phone-home session";
+        await h.Queue.EnqueueAsync(h.SessionId, brief, MessageSendMode.WhenIdle, CancellationToken.None,
+            origin: QueuedMessageOrigin.Delegation);
+        (await ReadRowAsync(schema.ConnectionString, h.SessionId, brief)).Status.ShouldBe(QueuedMessageStatus.Pending);
+        var pump = Pump(host, h);
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+
+        await FailRefreshesPastTheStaleBoundAsync(clock, host, peer, live, pump, stop.Token);
+        h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId, "unconfirmed past the stale bound: not known live");
+
+        var flushed = await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        flushed.ShouldBe(1, "a session not known to be gone keeps its queued work moving");
+        TypedCount(peer, brief).ShouldBe(1);
+        var row = await ReadRowAsync(schema.ConnectionString, h.SessionId, brief);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        stop.Cancel();
+    }
+
+    // The same rule across a reconnect: between a connection's end and the next connection's
+    // catch-up List nothing confirms a session either way. Only that List, from a connected
+    // runner, is the confirmed absence reconciliation may act on.
+    [Test]
+    public async Task A_reconnect_gap_is_not_a_confirmed_absence_but_the_next_catch_up_list_is()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        var (cardId, attemptId) = await ClaimCardAsync(h, schema.ConnectionString);
+        await using var peerA = await host.ConnectPeerAsync();
+        peerA.Sessions.Add(RunningOnRunner(h.SessionId));
+        var liveA = await host.WaitLiveAsync();
+        var pump = Pump(host, h);
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+        h.Runtime.ListLiveSessions().ShouldContain(h.SessionId);
+
+        peerA.Socket.Abort();
+        await WaitUntilAsync(() => !liveA.SocketOpen);
+        h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId, "a closed connection vouches for nothing");
+
+        await ReconcileCardsAsync(h);
+        await AssertClaimSurvivesAsync(schema.ConnectionString, h.SessionId, cardId, attemptId,
+            "a dropped connection is not the runner saying the session is gone");
+
+        // The runner comes back without it: that List is authoritative.
+        await using var peerB = await host.ConnectPeerAsync();
+        var liveB = await host.WaitLiveAsync();
+        liveB.ShouldNotBeSameAs(liveA);
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue("the catch-up List ran on the new connection");
+
+        await ReconcileCardsAsync(h);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId)).Status
+            .ShouldBe(SessionStatus.Failed, "absent from a connected runner's List: confirmed gone");
+        (await db.Cards.AsNoTracking().SingleAsync(c => c.Id == cardId)).OwnerSessionId.ShouldBeNull();
+        stop.Cancel();
+    }
+
+    // Review 87af1bf6 finding 2. The guard against an exited generation coming back was a
+    // tombstone kept for ten minutes. A reply already received (its request stamped before the
+    // exit) whose continuation runs after that, under thread-pool starvation say, found no
+    // tombstone and made the dead session live again. The continuation is modelled here by the
+    // exact calls PhoneHomeRunnerClient.StartAsync and the refresh List make with that stamp.
+    [Test]
+    public async Task A_late_reply_continuation_cannot_revive_an_exited_generation_however_late()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        var pump = Pump(host, h);
+        using var stop = new CancellationTokenSource();
+        (await pump.RunCycleAsync(stop.Token)).ShouldBeTrue();
+        var launched = Guid.NewGuid();
+        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+
+        // The Launch (and a List) went out, then the runner wrote the session's exit.
+        var sent = live.BeginInventoryRead();
+        var received = live.LiveBufferEvents;
+        await peer.EmitAsync(Event(live, SessionRunnerEventNames.SessionExited,
+            new RunnerSessionExitedEvent(launched, 1, nameof(AgentExitReason.Unknown), 0, generation)));
+        await WaitUntilAsync(() => live.LiveBufferEvents == received + 1 && live.PendingEvents == 0);
+
+        // An hour on, with the connection kept up and its inventory refreshed in between.
+        clock.Advance(TimeSpan.FromHours(1));
+        await HeartbeatAsync(peer, live, clock);
+        var marker = Guid.NewGuid();
+        peer.Sessions.Add(RunningOnRunner(marker));
+        await RefreshAsync(clock, peer, pump, stop.Token);
+        await WaitUntilAsync(() => h.Runtime.ListLiveSessions().Contains(marker));
+
+        // Now the replies' continuations run.
+        live.NoteSessionLive(launched, generation, sent)
+            .ShouldBeFalse("the ack names a generation whose exit was already seen");
+        live.ReplaceKnownLiveSessions([(marker, (DateTime?)DateTime.UtcNow), (launched, generation)], sent);
+
+        var listed = h.Runtime.ListLiveSessions();
+        listed.ShouldNotContain(launched, "no reply sent before the exit may make that generation live again");
+        listed.ShouldContain(marker);
+        stop.Cancel();
+    }
+
     private static AgentLaunchSpec RawSpec(DateTime? acceptedStartedAt = null) => new(
         DefinitionName: "raw",
         Kind: AgentKind.Raw,
@@ -352,6 +503,122 @@ public class PhoneHomeStrandedQueueTests
         await peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Heartbeat, live.Epoch, Guid.NewGuid()));
         var now = clock.GetUtcNow();
         await WaitUntilAsync(() => live.LastHeartbeatUtc == now);
+    }
+
+    /// <summary>
+    /// Every refresh List fails (heartbeats keep the lease) for one interval more than the stale
+    /// bound, so nothing confirms the cached inventory; every other request keeps its reply.
+    /// </summary>
+    private static async Task FailRefreshesPastTheStaleBoundAsync(
+        FakeTimeProvider clock, PhoneHomeTestHost host, PhoneHomeScriptedPeer peer, PhoneHomeLiveConnection live,
+        PhoneHomeRecoveryPump pump, CancellationToken ct)
+    {
+        var settings = new PhoneHomeRunnerSettings();
+        var replies = peer.Reply;
+        peer.Reply = frame => frame.Operation == PhoneHomeOperation.List
+            ? new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: "runner_internal_error", ErrorDetail: "List failed", StatusCode: 500)
+            : replies?.Invoke(frame);
+        for (var failed = 1; failed <= settings.InventoryStaleAfterRefreshes + 1; failed++)
+        {
+            var lists = peer.RequestCount(PhoneHomeOperation.List);
+            clock.Advance(TimeSpan.FromSeconds(settings.InventoryRefreshSeconds));
+            await HeartbeatAsync(peer, live, clock);
+            (await pump.RunCycleAsync(ct)).ShouldBeFalse();
+            await WaitUntilAsync(() => peer.RequestCount(PhoneHomeOperation.List) == lists + 1);
+        }
+
+        host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldNotBeNull("heartbeats kept the lease valid");
+    }
+
+    /// <summary>
+    /// The harness session owns a card mid-turn, the shape card reconciliation probes: a Running
+    /// session, its streaming attempt, and the card's claim on it.
+    /// </summary>
+    private static async Task<(Guid CardId, Guid AttemptId)> ClaimCardAsync(BridgeQueueHarness h, string connectionString)
+    {
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        db.Projects.Add(new Project
+        {
+            Id = projectId,
+            Name = $"c679-{cardId:N}",
+            GitRepositoryUrl = "https://example.invalid/repo.git",
+            BaseBranch = "master",
+            // The harness's orchestrator reconciles internal boards under its temp root only.
+            LocalRepositoryPath = h.TempRoot,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = $"board-{cardId:N}", CreatedAt = now, UpdatedAt = now });
+        db.BoardColumns.Add(new BoardColumn
+        {
+            Id = columnId,
+            BoardId = boardId,
+            StateKey = "in-progress",
+            Name = "In Progress",
+            ColumnOrder = 1,
+            CardStatus = CardStatus.InProgress,
+            IsActive = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.Cards.Add(new Card
+        {
+            Id = cardId,
+            BoardId = boardId,
+            BoardColumnId = columnId,
+            Identifier = $"C679-{cardId.ToString("N")[..8]}",
+            Title = "phone-home owned card",
+            Description = "seeded",
+            Status = CardStatus.InProgress,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        await db.AgentSessions.Where(s => s.Id == h.SessionId)
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, cardId));
+        db.RunAttempts.Add(new RunAttempt
+        {
+            Id = attemptId,
+            CardId = cardId,
+            AgentSessionId = h.SessionId,
+            AttemptNumber = 1,
+            Phase = RunPhase.StreamingTurn,
+            CreatedAt = now,
+            StartedAt = now,
+            LastEventAt = now,
+            PhaseStartedAt = now,
+            Prompt = "phone-home turn in flight",
+        });
+        await db.SaveChangesAsync();
+        await db.Cards.Where(c => c.Id == cardId).ExecuteUpdateAsync(u => u
+            .SetProperty(c => c.OwnerSessionId, h.SessionId)
+            .SetProperty(c => c.ConcurrencyToken, Guid.NewGuid()));
+        return (cardId, attemptId);
+    }
+
+    /// <summary>One orchestrator tick: its reconcile step probes every claimed card's session.</summary>
+    private static async Task ReconcileCardsAsync(BridgeQueueHarness h)
+    {
+        await using var scope = h.Provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<OrchestratorService>().PollTickAsync(CancellationToken.None);
+    }
+
+    private static async Task AssertClaimSurvivesAsync(
+        string connectionString, Guid sessionId, Guid cardId, Guid attemptId, string because)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
+        session.Status.ShouldBe(SessionStatus.Running, because);
+        session.FailureReason.ShouldBeNull(because);
+        (await db.Cards.AsNoTracking().SingleAsync(c => c.Id == cardId)).OwnerSessionId.ShouldBe(sessionId, because);
+        (await db.RunAttempts.AsNoTracking().SingleAsync(a => a.Id == attemptId)).Phase.ShouldBe(RunPhase.StreamingTurn, because);
     }
 
     private static int RefreshFailureLogs(PhoneHomeTestHost host) => host.Logs.Entries.Count(e =>
