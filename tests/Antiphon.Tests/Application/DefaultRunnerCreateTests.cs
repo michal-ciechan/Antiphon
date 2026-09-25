@@ -227,7 +227,9 @@ public sealed class DefaultRunnerCreateTests
 
             var saved = await kit.ReadAsync(created.Id);
             saved.Task.RunnerId.ShouldBeNull(row);
-            var source = reason == "existing_process" ? "existing-process" : "default";
+            // A retired follow-up is a fresh task. Its shape is still existing-process,
+            // recorded on the default decision. A live seat overwrites the source token.
+            var source = row is "agentId" or "agent name" or "live follow-up" ? "existing-process" : "default";
             saved.Created.ShouldContain(
                 $"runner source={source} requested=unset default=server2 selected=local reason={reason}", Case.Sensitive, row);
             DefaultRunnerKit.Occurrences(saved.Created, "runner source=").ShouldBe(1, row);
