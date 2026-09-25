@@ -1,548 +1,564 @@
-# CARD-0727: rolling session-runner upgrade, server2 first
+# CARD-0727: rolling session-runner upgrade with multiple runner ids, server2 first
 
-Date: 2026-09-25. Stage: Plan (task `00f66c8f`, written on the server2 Linux runner). Source
-inspected: `598a522f928778e34d785ba20a60b549ee46f399` (the task branch tip, which carries the
-investigation); `origin/master` was `7e912b7b` and differs only by CARD-0717 commits under
-`server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs` and its tests, none of
-which touch the files below. Investigation:
+Date: 2026-09-25. Stage: Plan, revision 2 (task `f908a771`, written on the server2 Linux runner;
+revision 1 was task `00f66c8f` at `25e41f35`). Source inspected: `origin/master` at `7e912b7b`
+(this worktree is `25e41f35`, master plus the two CARD-0727 docs commits) and the **CARD-0710
+Code branch** `origin/feat/card-task-8752034b` at `fdf3778a` (task `be035022` succeeded; task
+`8752034b`, "Final review + land-if-clean", was Dispatched at 21:30). Investigation:
 [2026-09-25-card-0727-rolling-runner-upgrade.md](../../investigations/2026-09-25-card-0727-rolling-runner-upgrade.md)
-(task b69ddb64). Neighbouring plans: [CARD-0716 graceful restart](2026-09-25-card-0716-graceful-restart-phone-home-plan.md)
-(operator token route shape, `PhoneHomeScriptedPeer.CloseObserved`, restart-resume),
-[CARD-0679 launch loss](2026-09-24-card-0679-phone-home-launch-loss-plan.md) (runner-scoped
-client, per-connection inventory, launch-generation watermark),
-[CARD-0633 remote prep](2026-09-23-card-0633-dispatcher-remote-prep-plan.md) (migration
-checkpoint shape). Next stage: **TestDesign**, which owns the final roster; the
-`## Verification design` below is the plan's closed list and red-first mechanism for it.
+(task b69ddb64). Task `dad7cd6a` (Custom, canceled after its Phase A) scoped the manual
+`server2-temp` deploy and found CARD-0729; its findings are quoted where they bind. Neighbouring
+plans: [CARD-0710 platform placement](2026-09-25-card-0710-task-platform-placement-plan.md)
+(D-6 runner collection, D-9 runtime runner defaults), [CARD-0716 graceful restart](2026-09-25-card-0716-graceful-restart-phone-home-plan.md)
+(operator token route shape), [CARD-0679 launch loss](2026-09-24-card-0679-phone-home-launch-loss-plan.md)
+(runner-scoped client, per-connection inventory). Next stage: **TestDesign**, which owns the final
+roster; the `## Verification design` below is the plan's closed list and red-first mechanism for it.
+
+**What this revision replaces.** The operator decided to keep ONE live connection per runner id.
+Revision 1's same-id multi-boot design (a `ProcessBootId`-keyed directory, `Standby`/`Accepting`
+boots, `MaxLiveBoots`, a `RunnerBoots` table, per-boot session stamping and routing) is dropped
+entirely. The rolling upgrade uses **multiple runner ids**: a temporary `server2-temp` runner in
+its own compose project, a per-runner Draining flag, and a Hangfire retire.
 
 No code, configuration, test or deployment changed during Plan. No live registration was sent.
-The caller's standing authority ("deploy a new image parallel to the current one, new work goes
-there, kill the old one once it finishes") covers everything designed here; nothing below needed
-a further go-ahead.
+The caller's standing authority ("make multiple runners top priority; the rolling upgrade should
+use the same mechanism") covers everything designed here; the one thing it does not settle is
+named in the report (the R1 dependency on CARD-0710 landing).
 
 ## Outcome and scope
 
-After this card a server2 deploy starts the new runner build in a second container while the old
-container keeps every session it hosts. The desktop directory holds both phone-home sockets under
-the one runner id `server2`. New launches go to the boot the operator promoted; every call for an
-existing session (input, buffer, transcript, kill, release, compaction stop) goes to the boot that
-launched it. The old boot is marked draining, takes no new claims, and is retired by Hangfire
-once it has no sessions. A forced retire exists behind an explicit confirmation. Status names each
-boot and its remaining sessions. Build slots on server2 come from one broker both containers reach
-through `ANTIPHON_BUILD_SLOTS_URL`.
+The operator's workflow, which this plan automates end to end:
+
+1. Deploy `server2-temp` on the new image, as its own runner id and its own compose project.
+2. Queue work there (`-Runner server2-temp`) to prove the new image.
+3. Drain `server2`, wait until it is idle, redeploy it, clear its drain.
+4. Drain `server2-temp` and retire it once it is idle.
 
 Three rounds, server2 only:
 
-- **R1** (server): the directory keeps one live connection per boot id; sessions record their boot;
-  per-session routing follows the boot; inventory, reconciliation and capacity become per boot;
-  the CARD-0679 watermark and the boot/store refusals stay meaningful.
-- **R2** (server, runner, compose, scripts): a draining boot; two slot services in the server2
-  compose file with their own nested store and `/tmp`, sharing `/work` and the credential homes; a
-  standalone build-slot broker; `deploy-parent-rolling` in `scripts/c590-remote.sh` with a thin
-  `scripts/deploy-server2.ps1 -Rolling` on the desktop; a cross-process lock on the shared checkout.
-- **R3** (server, runner, scripts): the `Retire` operation; the `RunnerBootRetireJob` Hangfire job;
-  the forced-retire route with confirmation; per-boot status; `scripts/runner-boots.ps1`.
+- **R1** (server config, tests, docs): the multi-runner mechanism is CARD-0710 D-6 as it lands
+  (`PhoneHomeRunner:Runners`, one `RunnerSlot` per id). R1 adds the `server2-temp` entry, this
+  card's own two-id routing pin on the real dispatcher graph, and the CARD-0729 HTTP contract
+  (an unknown id is 404 and never eligible).
+- **R2** (server): a durable per-runner Draining state with a redirect; a draining runner takes no
+  new claims, still serves every call for its sessions, and unlaunched work bound to it moves to
+  the redirect target so callers never change `-Runner` by hand.
+- **R3** (server, runner, compose, scripts): the `Retire` operation, the `RunnerRetireJob`
+  Hangfire job, the forced retire behind a confirmation, the temp compose project, the shared
+  build-slot broker with lease renewal, `deploy-server2.ps1 -Rolling`, `runner-drain.ps1`, and the
+  live proof on server2.
 
-Out of scope, named for the follow-up card (see the last section): the desktop runner on 17204,
-`restart-session-runner.ps1 -Rolling`, warm-pool reuse on a draining desktop process, the E2E
-random-port guard and `ProductionRunnerGuard`.
+Out of scope, kept for the follow-up card at the end: the desktop runner on 17204 and
+`restart-session-runner.ps1 -Rolling`; a runtime-editable runner catalogue (adding a runner id is
+still a settings change plus a server restart); rollback automation (the manual rollback is
+documented in D-18).
 
 ## Ground truth
 
-What the card assumes against what the code does at `598a522f`. Lines are from that commit.
+What the card, the brief and task dad7cd6a assume against what the code does. "master" is
+`7e912b7b`; "0710 tip" is `fdf3778a` on `origin/feat/card-task-8752034b`. Lines are from those
+commits.
 
-| # | The card or brief assumes | What the code does |
+| # | The card, brief or dad7cd6a assumes | What the code does |
 |---|---|---|
-| 1 | Two instances of `server2` can register as one logical runner. | `PhoneHomeRunnerDirectory` keeps a single `_live` (`PhoneHomeRunnerDirectory.cs:26`). `Register` refuses a different boot id while the live lease is unexpired with `phone_home_boot_conflict` (`:187-198`), and `AcceptConnect` disposes whatever socket it replaces as `superseded` (`:242-246`). `PhoneHomeConnectionTests.Live_boot_and_store_identity_cannot_be_replaced` (`tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs:163-193`) pins the refusal. |
-| 2 | A session knows which instance hosts it. | The binding is `RunnerId` + `RunnerStoreId` + `RunnerCwd`, all-or-none (`CK_AgentSessions_RunnerBinding_AllOrNone`, `AppDbContext.cs:1139`), stamped at claim from `_runners?.LiveStoreId` (`AgentTaskDispatcher.cs:4421-4423`) and, for standing agents, at `AgentControlService.cs:649-651`. There is no boot column. `SessionRunnerOwner` is `(RunnerId, RunnerStoreId, RunnerCwd)` (`ISessionRunnerDirectory.cs:6`). |
-| 3 | Messages reach the instance that hosts the session. | `RoutingSessionRunnerClient.Route` calls `Resolve(owner.RunnerId)` (`RoutingSessionRunnerClient.cs:85`), and every adapter holds a `RunnerScopedSessionRunnerClient` whose `Current` is `Resolve(RunnerId)` on each call (`RunnerScopedSessionRunnerClient.cs:30`). Both reach whichever socket is current. `Resolve` also refuses every call while `DispatchEligible` is false (`PhoneHomeRunnerDirectory.cs:79-80`). |
-| 4 | A "draining" state exists. | None. `DispatchEligible` is the only gate and it blocks input as well as launches (`PhoneHomeLiveConnection.cs:306-309` lists Launch, Input, ConditionalInput, KillGeneration, ClearBuffer, Resize). |
-| 5 | Inventory and reconciliation tolerate two instances. | `GetInventoryAsync` lists the one live socket (`:149-154`). The recovery pump follows `SnapshotLive()` only (`PhoneHomeRecoveryPump.cs:83`), a List replaces that connection's cached inventory (`PhoneHomeLiveConnection.ReplaceKnownLiveSessions`), and `ReconcileSessionsAsync` fails a live row the owner's inventory omits (`SessionReconciliationService.cs:209-247`). Owner match is runner id + store id (`PhoneHomeRecoveryPump.OwnerMatchesAsync`, `:384-397`). |
-| 6 | Capacity is per instance. | `DeclaredCapacity(runnerId)` is the one socket's `Capacity` (`:318-327`); `CountRunnerOccupancyAsync` counts every non-terminal row with that `RunnerId` plus prepared-but-unlaunched tasks (`AgentTaskDispatcher.cs:948-966`). The runner counts its own seats per process (`PhoneHomeCommandDispatcher.cs:360`). |
-| 7 | The CARD-0679 watermark is per runner generation. | It is per session id, in `launch-generations` beside the store id on the state volume (`PhoneHomeSettings.cs:23-26`; `PhoneHomeCommandDispatcher.cs:344-356`). Two processes on the same volume share it; the store id file is shared the same way (`PhoneHomeStoreIdentity.cs`). |
-| 8 | Retire can be automatic. | The runner has no stop operation; the closest are `/sessions/kill-all` (`src/Antiphon.SessionRunner/Program.cs:346`) and the server's own `OperatorShutdownCoordinator`. The container is `restart: unless-stopped` (`docker-compose.server2-runner.yml:46`, asserted by `DockerStackContractTests.Server2_runner_restarts_unless_stopped` and `c590-remote.sh:1348-1350`), and `dind-entrypoint.sh:172-185` exits when either child exits, so Docker starts it again. Hangfire runs on the desktop (`HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob`, cron `PhoneHomeRunner:SlotReconcileCron`). |
-| 9 | Status shows each generation. | `PhoneHomeRunnerStatusDto` has one `ProcessBootId`, one `Epoch` (`PhoneHomeContracts.cs:310-325`); `Status(runnerId)` reads `SnapshotLive()` (`:395-435`). |
-| 10 | Two containers can share the host. | Compose defines one `session-runner` (privileged, `init: true`, `dind-data:/var/lib/docker`, `/tmp/antiphon-pty-hosts` in the container's own `/tmp`, `work` and `runner-state` volumes, the Codex home bind at `/state/codex`) and `state-init`; `DockerStackContractTests.Server2_file_defines_only_runner_and_state_init` pins exactly those blocks (`:237-246`). `deploy-parent` runs `compose_host up -d --no-build --remove-orphans` (`c590-remote.sh:1257`) and retires every image tag but the deployed sha12 (`retire_superseded_server2_images`, `:990-1004`). |
-| 11 | Build slots can be shared. | `BuildSlotBroker` is process memory with a pid liveness sweep (`BuildSlotBroker.cs:162-172`) and a 90-minute TTL (`BuildSlotSettings.cs:25`); `Enabled: false` answers unlimited (`:61-64`). The wrapper's default endpoint is loopback and `ANTIPHON_BUILD_SLOTS_URL` overrides it (`scripts/lib/build-slot.ps1:26-29`). The wrapper runs the command in the foreground and never renews (`scripts/lib/build-slot.ps1:91-158`). A pid seen from another container's pid namespace is a different process. |
-| 12 | The shared checkout is safe for two writers. | `RunnerWorkspaceService.MirrorAsync` runs `git fetch origin <branch>` then reads `FETCH_HEAD` (`RunnerWorkspaceService.cs:93-108`) and `git worktree add`; removal is `git worktree remove --force` (`:175`). No process-level or file lock; `FETCH_HEAD` is one file per repository. |
-| 13 | The cgroup custody root is per container. | `CUSTODY_ROOT=antiphon-custody` (`dind-entrypoint.sh:19`, `LinuxCgroupCustodyProbe.CustodyRootName`) is a fixed path under cgroup v1, which on server2 is the host hierarchy seen by both containers. Executions are keyed by execution id under it. |
-| 14 | The test host can script two runners. | `PhoneHomeTestHost.ConnectPeerAsync(autoReply, bootId)` already takes a boot id and keeps one `StoreId` (`tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs:153-163`); `PhoneHomeScriptedPeer` records `Launches`, `Inputs`, `RequestCount(op)`, `Sessions` and `Transcripts` and answers List/Get/Input by default (`:304-460`). `PhoneHomeLaunchTransportTests.LaunchWorld` seeds a remote-bound row in an isolated schema with the real dispatcher graph (`:314-420`). |
-| 15 | Host-lane cases are routed automatically. | A live case reaches server2 only when it is in `$script:C590LiveCases` (`scripts/c590-real.ps1:10-40`) and has a stub arm in `scripts/verify-docker-stack.ps1` (`:170-232`); `RemoteScriptContractTests.Custody_containment_is_routed_to_the_remote_and_not_left_pending` enforces it. The operator token stays on the desktop (`Operator:TokenPath`), and `c590-real.ps1` streams only the Claude token to server2. |
+| 1 | `PhoneHomeRunnerSettings.AllowedRunnerId` must become a set (`AllowedRunnerIds`). | On master it is one string (`PhoneHomeRunnerSettings.cs:8`) and `Register` refuses every other id with `phone_home_runner_mismatch` (`PhoneHomeRunnerDirectory.cs:175`). On the 0710 tip it is a **map**: `PhoneHomeRunner:Runners` of `PhoneHomeRunnerEntry` (own `SharedSecret`, `HostWorkspaceRoot`, homes, `AllowDelegatedTasks`, `MaxCapacity`, `CallbackOrigin`; `PhoneHomeRunnerSettings.cs:118-144`), `PhoneHomeRunnerCatalog.Resolve/Configured/FromLegacy` normalise the legacy singleton into one entry (`:148-208`), and `ValidateMapped` requires unique ids and unique pins but allows two entries with the same secret value (`:300-345`). The brief's set is superseded by the map; a second shape would be the "string array only" alternative 0710 rejected. |
+| 2 | Live connection, store/boot/epoch, pending inventory, disconnect record, seats and Status must be kept per runner id. | 0710 tip: `PhoneHomeRunnerDirectory` keeps a `Dictionary<string, RunnerSlot>` (`:28`, class at `:583-599`) with `Live`, `LastRecovered`, `StoreId`, `BootId`, `LeaseUntil`, `Epoch`, `Reconnects`, `LastDisconnect`, registered platform, capabilities and capacity; `Register` and `AcceptConnect` act on the requested id's slot (`:195-296`); `AuthenticateSecret(runnerId, secret)` checks that entry's secret (`:182-193`); `GetLiveStoreId(runnerId)` replaces `LiveStoreId` (`:77`; interface `ISessionRunnerDirectory.cs`); `LiveRemoteSessionIds`/`UnknownRemoteSessionIds` are unions over slots (`:372-448`); `PendingRunnerSessionInventory` is keyed by id; `PhoneHomeRecoveryPump` runs one `Cycle` per runner with its own pump, catch-up retry and refresh (`RunOneAsync`, `Cycle` class). `MultiRunnerDirectoryTests` (7), `MultiRunnerRecoveryTests` (7) and `MultiRunnerProjectionTests` (4) pin it. |
+| 3 | CARD-0729: `Status(runnerId)` ignores its argument; `GET /api/session-runners/server2-temp/status` is a false pass. | True on master (`Status` reads the single `_live`, `:395-435`). On the 0710 tip `Status` throws `NotFoundException("SessionRunner", id)` for an id not in the map (`:459-468`) and answers a not-available DTO with `DisconnectReason: "desktop"` for the desktop alias; `MultiRunnerDirectoryTests.Inventory_status_capacity_and_store_are_keyed` asserts the throw at the directory. The HTTP contract of the route (`SessionRunnerEndpoints.cs:47`, mapped through `ExceptionMiddleware`) is not pinned, and no script treats a non-200 as "not eligible": `c590-remote.sh` `deploy-parent` only records `status.json` (`:1379`). |
+| 4 | Sessions already record `RunnerId`; per-session calls route by it. | `AgentSessions.RunnerId/RunnerStoreId/RunnerCwd` all-or-none (`AppDbContext.cs:1139`); `RoutingSessionRunnerClient.Route` resolves `owner.RunnerId` (`RoutingSessionRunnerClient.cs:85`); every adapter's `RunnerScopedSessionRunnerClient.Current` is `Resolve(RunnerId)` (`RunnerScopedSessionRunnerClient.cs:30`); `AgentSessionRuntime.EnsureInputTransportAvailableAsync` resolves the binding's runner (`AgentSessionRuntime.cs:1366-1375`). On the 0710 tip `Resolve(runnerId)` returns that id's own socket (`:85-97`). Unchanged by this card. |
+| 5 | A "draining" state exists, or can reuse `DispatchEligible`. | None. `DispatchEligible` is the only gate; `Resolve` refuses every call while it is false (`:90-91`) and the connection refuses Launch, Input, ConditionalInput, KillGeneration, ClearBuffer and Resize on an ineligible socket (`PhoneHomeLiveConnection.cs:306-309`). The only server-side "Drain" words are unrelated (alert throttle, channel bridge, card-file policy). |
+| 6 | New work can be routed off a draining runner through the CARD-0710 runtime default runner. | 0710 tip: `RunnerRoutingSettings` (fixed key `fleet`, `GlobalRunnerId`, `RunnerKindDefaults`, append-only `RunnerRoutingRevisions`; `RunnerRoutingSettings.cs`), `RunnerDefaultSettingsService` (`GET`/`PUT /api/runner-defaults`, `EnsureInitializedAsync` imports `Delegation:DefaultRunnerId` once), and `DefaultRunnerRoutingPolicy.ApplySnapshot` plus `TryKindDefault` (`DefaultRunnerRoutingPolicy.cs`, diff hunks at `Decide`). A default that is not dispatch-eligible falls back to the **desktop** with `runner_not_dispatch_eligible`; there is no notion of "try another remote". The dispatcher never re-reads defaults for a queued task (0710 D-10), so a runtime edit does not move queued work. |
+| 7 | Explicit `-Runner x` tasks can be moved by the server. | Today never: `RunnerRequestSource.ExplicitRemote` is persisted and "never replaced or fallen back" (`DefaultRunnerRoutingPolicy.cs:20-22`, 0710 D-4/D-10). The dispatcher's `RemoteHoldForAsync` holds a task whose runner is unavailable (`AgentTaskDispatcher.cs:917-945`) and `CountRunnerOccupancyAsync` counts non-terminal rows plus prepared-but-unlaunched tasks plus in-flight mirrors per id (`:948-966`). 0710 adds `RunnerSelectionSource` on the task. |
+| 8 | Retire can be automatic. | The runner has no stop operation; the closest is `POST /sessions/kill-all` (`src/Antiphon.SessionRunner/Program.cs:346`). `PhoneHomeOperation` ends at `ObserveCompaction = 25` on master and `LaunchPlatformConstrained = 26` on the 0710 tip. `dind-entrypoint.sh` exits when either child exits (`docker/session-runner-grok/dind-entrypoint.sh:165-190`) and the container is `restart: unless-stopped` (`docker-compose.server2-runner.yml:46`, pinned by `DockerStackContractTests.Server2_runner_restarts_unless_stopped` and `c590-remote.sh:1347-1350`). Hangfire runs on the desktop (`HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob`, `server/Program.cs:916`; job at `RunnerSlotReconcileJob.cs`). |
+| 9 | Two containers on one host, separate state. | The compose project name is fixed `antiphon-runner` (`docker-compose.server2-runner.yml:6`; `c590-remote.sh:23`), with named volumes `work`, `runner-state`, `dind-data` (`:132-136`), `/tmp` container-local, the Codex home a host bind (`RUNNER_CODEX_HOME_DIR` → `/state/codex`), the Claude token a read-only file bind, the git identity a read-only file bind, and the deploy key and phone-home secret compose file secrets. A second project name gives its own three volumes for free; a runner-state volume produces a fresh store id on first boot (`PhoneHomeStoreIdentity.LoadOrCreate`) and its own `launch-generations` (`PhoneHomeSettings.ResolvedLaunchGenerationsPath`). `deploy-parent` rewrites the single `stack.env`, runs `up -d --no-build --remove-orphans` (`:1257`) and retires every image tag but the deployed sha12 (`retire_superseded_server2_images`, `:990-1004`). `DockerStackContractTests.Server2_file_defines_only_runner_and_state_init` pins the block list (`:237-246`). Compose on server2 is 2.18 (no volume subpath; `c590-remote.sh:1362`). |
+| 10 | Login stores can be shared. | dad7cd6a: share only the login stores, not `runner-state` (it holds the store id and the session records; a second runner using it would take server2's identity and try to adopt its sessions). Claude: the token file bind, read-only, already a host file. Codex: `secrets/codex/` host directory, read-write bind. Grok: the store lives on server2's `runner-state` volume at `grok/`; the only way to share it is a host-path bind of that volume's mountpoint subdirectory. Codex and Grok rotate tokens on refresh; two runners can occasionally sign each other out (accepted by the operator). |
+| 11 | Build slots can be shared. | `BuildSlotBroker` is process memory with a pid liveness sweep and a 90-minute TTL (`BuildSlotBroker.cs:139-172`, `BuildSlotSettings.cs:25`); `Enabled:false` answers unlimited (`:61`). The wrapper's Linux default is `http://127.0.0.1:8080/build-slots` and `ANTIPHON_BUILD_SLOTS_URL` overrides it (`scripts/lib/build-slot.ps1:26-29`); it never renews. A pid seen from another container's namespace is a different process. Today's server2 container has no `/build-slots` at all (dad7cd6a), so its agents already run unleased. |
+| 12 | The shared checkout is a lock risk. | Only when two runners share one `work` volume. Two compose projects have two `work` volumes and two checkouts; `RunnerWorkspaceService.MirrorAsync` reads `FETCH_HEAD` inside one process only (`RunnerWorkspaceService.cs:93-108`). Revision 1's cross-process mirror lock (its D-16) is therefore dropped; the intra-process `FETCH_HEAD` read is pre-existing and not this card's. |
+| 13 | The test host can script two runners. | 0710 tip: `PhoneHomeTestHost.StartAsync(configured:)` takes a full `PhoneHomeRunnerSettings` (the map), `RegisterAsync(runnerId:, storeId:, secret:, platform:, capabilities:)` and `ConnectPeerAsync(runnerId:, storeId:, secret:)` connect a peer to a named id's route, `WaitLiveAsync(runnerId:)`; `MultiRunnerDirectoryTests.Pair(secretA, secretB)` is the two-entry fixture. `PhoneHomeLaunchTransportTests.LaunchWorld` seeds a remote-bound row in an isolated schema with the real dispatcher graph (`:314-420`). `PhoneHomeScriptedPeer` records `Launches`, `Inputs`, `RequestCount(op)`, `Sessions`. |
+| 14 | Host-lane cases are routed automatically. | A live case reaches server2 only when it is in `$script:C590LiveCases` (`scripts/c590-real.ps1:10-40`) and has a stub arm in `scripts/verify-docker-stack.ps1` (`:170-232`); `Invoke-C590LiveCase` scps `c590-remote.sh` and runs one `C590_CASE` over SSH with `C604_SERVER_ORIGIN` (`:207-300`); `RemoteScriptContractTests` (25) enforce routing and refusals. The operator token stays on the desktop (`Operator:TokenPath`); `runner-slots.ps1` is the token-helper shape (`scripts/runner-slots.ps1:35-47`). |
+| 15 | Warm pooled processes on the old runner must be released. | Runner-bound tasks are Worktree only (`PhoneHomeLaunchPolicy.RefuseUnsupportedStart`) and are never pooled warm (`AgentTaskReplyService.cs:2053` requires Shared); reuse matches `Agent.RunnerId` (`AgentTaskDispatcher.cs:5991-5994`). Nothing to release on server2. |
 
 ## Decisions
 
-### R1: two live boots under one runner id
+### R1: multiple runner ids are CARD-0710's mechanism
 
-**D-1. The directory keys live connections by `ProcessBootId`.** `_live` becomes a
-`Dictionary<Guid, BootState>` where a `BootState` holds the connection, its last recovered
-connection, lease-until, and the role below. `SnapshotLive()` keeps its signature and returns the
-*accepting* boot's connection, so `RunnerSlotService`, `Status` callers and existing tests keep
-compiling; new `SnapshotBoot(bootId)` and `SnapshotBoots()` expose the rest. `AcceptConnect`
-supersedes only a socket of the *same* boot. `Disconnect` and `MarkRecovered` act on the boot
-whose connection they were given. Rejected: two directories or two runner ids (`server2`,
-`server2-b`), because callers pass `-Runner server2` and the card requires that string to keep
-working; a second `AllowedRunnerId` list would also double every routing, capacity and default
-decision.
+**D-1. The mechanism is `PhoneHomeRunner:Runners` as CARD-0710 lands it; this card adds no second
+shape.** `AllowedRunnerId` stays as the legacy import key that `PhoneHomeRunnerCatalog.FromLegacy`
+normalises; the production configuration switches to the map (D-2). Why: the map already keys
+connection, store, boot, epoch, disconnect record, capacity, inventory, pump and secret by id,
+which is the whole of the brief's R1 list; a parallel `AllowedRunnerIds` set would double every
+routing, validation and status path and is the "string array only" alternative 0710 D-6 rejected.
+Rejected: implementing R1 on master ahead of 0710 (two directories in flight on the same file;
+0710's Code succeeded and is in Review). Dependency: R1's Code dispatch starts from a master that
+contains 0710's `5f39210c` ("key phone-home runners"); until task `8752034b` lands, R1 is blocked,
+not re-planned.
 
-**D-2. Boot roles live in a `RunnerBoots` table, not in directory memory.** Entity `RunnerBoot`
-(`RunnerId varchar(64)`, `BootId uuid`, `StoreId uuid`, `Role` enum `RunnerBootRole
-{Standby=0, Accepting=1, Draining=2, Retired=3}`, `FirstSeenAt`, `LastSeenAt`, `PromotedAt?`,
-`DrainedAt?`, `IdleObservedAt?`, `RetiredAt?`, `RetireReason varchar(200)?`, `BuildVersion
-varchar(100)?`; key `(RunnerId, BootId)`, index `(RunnerId, Role)`). The directory reads and
-writes it through an `IRunnerBootRegistry` (`DbRunnerBootRegistry` in production;
-`InMemoryRunnerBootRegistry` for `PhoneHomeTestHost` without a connection string, the same
-split `PendingRunnerSessionInventory` already needs). Why: the desktop restarts during an overlap;
-both boots reconnect in arbitrary order and the server must still know which one is draining,
-and Hangfire's retire needs the draining set and an audit (who promoted, when drained, when and
-why retired). Rejected: a `Draining` flag in the registration request (a contract change and it
-makes the runner the authority for a server decision); registration order as seniority (wrong
-after a server restart); a boot start time in the registration (protocol version bump).
+**D-2. `server2-temp` is a second map entry with the same values and the same secret.**
+`PhoneHomeRunner:Runners:server2` carries today's singleton values; `Runners:server2-temp`
+carries identical `HostWorkspaceRoot`, `RunnerWorkspace`, `RunnerRepository`, `RawExeAllowList`,
+`MaxCapacity` 10, child homes, probe flags, `CallbackOrigin`, `AllowDelegatedTasks: true`,
+`DisplayName` "server2 (temp)", and the same `SharedSecret` value (the temp container mounts
+server2's `secrets/phone-home` file, dad7cd6a; the validator admits duplicate secret values, row
+1). The entry stays configured permanently: offline it costs nothing and shows as unavailable in
+the catalogue; adding it per upgrade would need a server restart each time. Activation is one
+user-secrets edit in the `antiphon-server` store plus `restart-apphost.ps1`, written into
+`docs/testing-and-build.md`'s enablement steps (which today say `AllowedRunnerId=server2` and are
+pinned by `DockerStackDocumentationTests.Testing_doc_names_the_production_enablement_steps`).
+Rejected: a distinct secret per entry (a second file and a second user-secret for no custody gain
+on one host with one owner); enabling the temp entry only during upgrades.
 
-**D-3. Sessions record their boot.** New nullable `AgentSessions.RunnerBootId uuid` with index
-`IX_AgentSessions_RunnerBootId`; migration `AddRunnerBoots` adds the column and the table in one
-step, created with `dotnet ef migrations add AddRunnerBoots --project server` and checked with
-`dotnet ef migrations has-pending-model-changes --project server`. The all-or-none check
-constraint is unchanged: rows created before this migration are legitimately null. Stamped at
-both binding sites (`AgentTaskDispatcher.cs:4421`, `AgentControlService.cs:650`) from the same
-directory snapshot the claim gate used (`AcceptingBoot(runnerId)` returns `(BootId, Connection)`
-so the claim never stamps a boot it did not check). `SessionRunnerOwner` gains
-`Guid? RunnerBootId` and `GetBindingAsync` selects it. A legacy null row is attributed to the boot
-that was `Accepting` at its `StartedAt` (derivable from `RunnerBoots.PromotedAt/DrainedAt`), which
-for the first rolling deploy is today's container. Rejected: a heuristic "oldest live boot"
-(ambiguous once the old boot is gone), and back-filling the column at migration time (there is no
-boot row to back-fill from until the old container re-registers after the server deploy).
+**D-3. Per-session routing needs no code; R1 pins it with this card's own test.** Rows 4 and 13:
+every session call already follows `RunnerId`, and on the 0710 tip that reaches the id's own socket.
+R1 builds the `RollingWorld` harness (two entries `server2` and `server2-temp`, isolated schema,
+`BridgeQueueHarness` with the real `AgentProtocolAdapterFactory` and `AgentTaskDispatcher` bound to
+`host.Directory`, a seeded `RunnerRoutingSettings` row) and asserts: a new default-placed task
+launches on the `server2-temp` peer only while an input to a session bound to `server2` reaches the
+`server2` peer only (V-2). R2 and R3 reuse the harness. Why a test of already-green behaviour: it is
+the card's acceptance ("a message sent to a session on the old generation still arrives") and the
+base every later round mutates; its red is proven by the post-land Mutation controls PC-1/PC-2,
+not by a red commit (there is no R1 production change to precede).
 
-**D-4. Per-session calls follow the session's boot; new work follows the accepting boot.**
-`ISessionRunnerDirectory` gains `ResolveBoot(string runnerId, Guid? bootId)`: the named boot's
-client when its socket is open and it has recovered (draining is not a refusal), otherwise the
-typed `phone_home_unavailable`; `bootId == null` resolves through the attribution rule in D-3.
-`RoutingSessionRunnerClient.Route` and `AgentSessionRuntime.EnsureInputTransportAvailableAsync`
-use it. `RunnerScopedSessionRunnerClient` becomes session-aware: every method that takes a session
-id resolves that session's boot (binding cached per session id inside the client; the binding
-never changes, CARD-0679 D-3, so a miss is re-read only after `OwnerCacheNegativeSeconds`), and the
-launch-time methods (`GetCapabilitiesAsync`, `GetProviderAuthAsync`, `GetHealthAsync`, the
-capability mismatch probes) keep `Resolve(RunnerId)`. `StartAsync(sessionId, spec)` is a
-per-session call: the row is stamped before the launch (G-20), so a launch goes exactly where the
-claim bound it. `Resolve(runnerId)` keeps its meaning of "the boot new work goes to", so
-`DefaultRunnerRoutingPolicy`, the claim gate (`AgentTaskDispatcher.cs:929`, `:5463`),
-`RemoteWorkspaceService.Remote` for mirrors, `SourceLandingAdmission` and the provider-auth
-probes at create need no change. `VerificationWorkspaceDirectory` and `VerificationCleanupService`
-resolve the *task's session boot* when the task has one (custody is container-local) and fall
-back to `Resolve`. Rejected: keeping `Resolve(runnerId)` as the only entry and letting the
-directory guess by session id (the directory would need the session id on every call, which the
-interface does not carry).
+**D-4. CARD-0729 is closed by the HTTP contract plus every script caller.** R1 pins
+`GET /api/session-runners/server2-temp/status` before any registration as **404** with no
+`runnerStoreId`, `processBootId` or `buildVersion` in the body, `GET .../server2/status` unchanged,
+and `GET .../desktop/status` as `available:false, dispatchEligible:false` (V-1). Every script this
+card adds treats a non-200 status as "not eligible" (`deploy-server2.ps1`, `runner-drain.ps1`);
+`docs/ops-http.md` says so. CARD-0729 is moved to Done when R1 lands (the orchestrator's move).
+Rejected: a 200 with `dispatchEligible:false` and `reason: unknown_runner` (the 0710 tip already
+chose 404; a second shape for the same answer).
 
-**D-5. Which boot accepts, and when that changes.** R1 knows two roles. At
-`MarkRecovered(boot)`: if the runner has no other live boot in role `Accepting`, this boot becomes
-`Accepting` (persisted, `PromotedAt`); otherwise it becomes `Standby`. A `Standby` boot is
-promoted automatically only when the accepting boot is gone (lease expired or socket closed), which
-keeps today's crash-and-restart behaviour, where the only boot accepts without an operator step.
-R2 adds `Draining` and `PromoteAsync`: `POST /api/session-runners/{runnerId}/boots/{bootId}/promote`
-makes the named live, recovered boot `Accepting` and drains **every other live boot**, `Accepting`
-or `Standby` (`DrainedAt`), so a boot that was promoted early by the fallback is still drained by
-the operator's promote. `Draining` is sticky: it is never auto-promoted, and a `Standby` or newly
-recovered boot is auto-promoted only when no live `Accepting` boot exists; the same `promote` verb
-on a draining boot is the explicit rollback and drains the current accepting one. Why explicit
-promotion: the deploy runs its probes (provider sign-in, `docker info`, custody, git identity,
-checkout) *between* the new boot's eligibility and the switch, so a broken new build never
-receives a launch. Rejected: newest eligible boot wins (a restarted desktop would flip roles by
-reconnect order; a restarted-after-retire container would steal launches).
+**D-5. One live connection per runner id stays the rule.** `PhoneHomeConnectionTests.Live_boot_and_store_identity_cannot_be_replaced`
+is unchanged; no `MaxLiveBoots`, no boot table, no per-boot session column. A runner restart is
+still the same id with a new `ProcessBootId` after its lease expires. This is the operator's
+decision and the reason the temp runner has its own id.
 
-**D-6. Exactly when a boot conflict is still an error.** `Register` refuses:
+### R2: a per-runner Draining state with a redirect
 
-1. `phone_home_store_mismatch`: the request's `RunnerStoreId` differs from the store id this
-   directory remembers for the runner (`_liveStoreId`, set by the first registration and never
-   cleared on disconnect). Unchanged. Two boots that do not share `/state/runner-store-id` are
-   two runners, and the second is refused whatever its boot id.
-2. `phone_home_boot_conflict`: a boot id not currently live when `PhoneHomeRunner:MaxLiveBoots`
-   (default **2**) boots already hold unexpired leases. Unexpired means an open socket with a
-   heartbeat inside `LeaseSeconds`, or a registration younger than `LeaseSeconds` that has not
-   connected yet. A third generation must wait for a retire.
-3. `phone_home_boot_conflict`: a boot id whose `RunnerBoots` row is `Retired`. A retired process
-   does not come back; a real restart is a new `ProcessBootId` and is judged by rule 2.
-4. `phone_home_invalid_ticket` (unchanged): a ticket presented for another boot or store.
+**D-6. Draining is a durable per-runner row, mirrored into the directory.** Entity
+`SessionRunnerState` (`RunnerId varchar(64)` PK, `Draining bool`, `DrainedAt?`, `DrainReason
+varchar(200)?`, `RedirectTo varchar(64)?`, `RetireWhenIdle bool`, `IdleObservedAt?`, `RetiredAt?`,
+`RetireReason varchar(200)?`, `UpdatedAt`, `UpdatedByTaskId?`), migration `AddSessionRunnerStates`
+(`dotnet ef migrations add AddSessionRunnerStates --project server`, checked with
+`has-pending-model-changes`). `RunnerStateService` (scoped) writes the row and pushes the new
+state into `PhoneHomeRunnerDirectory.ApplyState(runnerId, state)`; the directory keeps a
+`RunnerState` copy per `RunnerSlot` for its synchronous gates; `RunnerStateLoader` (hosted service
+registered before `PhoneHomeRecoveryPump`) loads every row at startup, and hosts without a database
+(the test host with no connection string) start empty. Why durable: the desktop restarts during
+an upgrade window and must not un-drain a runner mid-drain; the retire job needs the draining set;
+the row is the audit (who drained, why, when idle, when retired). Rejected: directory memory only
+(a restart un-drains); a flag in the `Runners` config (a restart per upgrade); a
+`RunnerRoutingRevisions` entry (wrong resource; that is the placement preference, not a runner's
+state); a registration-request flag (the runner does not decide placement).
 
-Everything else is accepted: the same boot re-registering (reconnect; its old socket is
-superseded), and a new boot with the same store id while fewer than `MaxLiveBoots` are live. The
-message for rule 2 names the live boot ids so an operator can see which one to retire.
+**D-7. Draining gates new work only; `Resolve` is untouched.** `ISessionRunnerDirectory` gains
+`ResolveForNewWork(string? runnerId)` (default body: `Resolve`), which in the directory is
+`Resolve` plus a `ServiceUnavailableException` with code `phone_home_runner_draining` when the slot
+is draining or retired. `Resolve` keeps serving everything else: input, buffer, transcript,
+snapshot, kill, kill-generation, release, compaction stop, inventory, slots, provider probes,
+verification custody, mirror removal. Callers moved to the new gate: `DefaultRunnerRoutingPolicy`
+(`Decide` and `TryKindDefault`, with D-8's redirect), `AgentTaskDispatcher.RemoteHoldForAsync`
+(before `DeclaredCapacity`) and `PrepareRemoteWorkspaceAsync`, and the standing-agent start in
+`AgentControlService` (a named runner-bound agent on a draining runner is refused 409
+`phone_home_runner_draining`). `SourceLandingAdmission.RequireSupportAsync` keeps `Resolve`: an
+explicit SourceLanding Mutation for a draining runner is admitted and held at dispatch until the
+drain clears, because its snapshot lives on that runner and cannot be redirected. Nothing changes
+in `PhoneHomeLiveConnection`'s `DispatchEligible` gate, `DeclaredCapacity` or
+`CountRunnerOccupancyAsync`. Rejected: flipping `DispatchEligible` (it would refuse messages, and
+0710's default policy would fall to the desktop before any redirect).
 
-**D-7. Inventory is the union, and absence is judged per boot.** `GetInventoryAsync(runnerId)`
-returns `Available(union of every live, recovered boot's List)` only when every boot that has
-attributed non-terminal rows is live and recovered; otherwise `Unavailable`, so the reconciler
-skips the cycle exactly as it does today for one unavailable runner. `LiveRemoteSessionIds()` is
-the union of recovered boots' `KnownLiveSessions`; `UnknownRemoteSessionIds()` is the union of
-each boot's unconfirmed entries plus, for a boot that is recovering, lease-expired or closed, its
-last recovered inventory (the CARD-0679 rule, applied per boot). The recovery pump keeps one
-`ConnectionState` per connection (it already does) and runs its cycle for every live boot rather
-than `SnapshotLive()` only; catch-up and refresh are per connection. `OwnerMatchesAsync` also
-requires the session's `RunnerBootId` to equal the connection's boot when the row has one; a
-legacy null row matches any boot with the store id. A row is confirmed gone only by its own
-boot's List omitting it, by an exit or kill event, or by its boot's `Retired` row (R3), never by
-another boot's List. Rejected: failing rows absent from the accepting boot's List (that is the
-CARD-0679 regression the investigation names).
+**D-8. A drain carries a redirect (a one-hop alias) and moves unlaunched work.**
+`POST /api/session-runners/{id}/drain { "reason", "redirectTo"?, "retireWhenIdle" }`.
 
-**D-8. Capacity is per boot.** `DeclaredCapacity(runnerId)` is the accepting boot's declared
-capacity; `CountRunnerOccupancyAsync` counts non-terminal rows whose attributed boot is the
-accepting boot plus prepared-but-unlaunched tasks and in-flight mirrors for the runner (those will
-bind to the accepting boot). The runner's own seat count is already per process. So the old
-boot's sessions never consume the new boot's seats, and the host may briefly hold up to two
-capacities of sessions; the build-slot memory floor and the shared broker (D-13) bound the builds
-they start. Rejected: halving each boot's capacity during overlap (the old boot takes nothing new
-anyway, so it would only idle seats).
+- *Placement.* When the kind or global runtime default names a draining runner whose `RedirectTo`
+  is configured, delegated-tasks-enabled, dispatch-eligible and not itself draining, the policy
+  selects the redirect (`source=default` or `kind-default`, `reason=drain_redirect:<from>`, no
+  warning). Otherwise today's fallback with `reason=runner_draining` (warn). An explicit
+  `-Runner server2-temp` create is admitted as today (row 7) and stays explicit.
+- *Dispatch.* A Queued task bound to a draining runner with no session and no SourceLanding
+  operation is **rebound** at its next tick when the drain has an eligible redirect: `RunnerId`
+  becomes the target; a task event `runner drain_redirect from=<a> to=<b> reason=<drain reason>`
+  is written (the requested id and `RunnerSelectionSource` are kept); a recorded
+  `RemoteWorktreePath` is removed through the draining runner (`WorkspaceRemove`, best effort,
+  logged on failure) and cleared, with `RemotePrepFailures`/`DispatchNotBeforeAt` reset so the
+  mirror is prepared again on the target; the tick then runs the ordinary gates on the new runner,
+  including 0710's platform recheck. Without a redirect, or with an ineligible one, the task is
+  held `RunnerDraining` ("Held: runner 'server2' is draining (<reason>); redirect 'x' is not
+  accepting work"), one deduplicated trace like the other holds.
+- *Explicit pins move too.* Step 4 drains `server2-temp` with `redirectTo: server2`; the tasks the
+  operator queued with `-Runner server2-temp` to prove the image are exactly the ones that must
+  move, or the retire never converges. The requested id stays in the audit.
 
-**D-9. The watermark, store id and launch generations stay shared.** Both boots read
-`/state/runner-store-id` and `/state/launch-generations` on the `runner-state` volume. A re-sent
-Launch is refused by whichever boot receives it (per session id), which is what the fence needs.
-`PhoneHomeStoreIdentity.LoadOrCreate` already writes by rename, and only the first boot ever
-creates the file. No change; TestDesign pins it with a two-boot re-send.
+Why a redirect on the drain rather than a runtime-defaults edit: the operator is already at the
+drain step; a PUT to `/api/runner-defaults` is a Human revision per upgrade, is never re-read for
+queued tasks (row 6), and leaves `server2` a dead explicit target. Why not a persistent runner
+group in the `Runners` map: a group with fixed membership cannot say "temporarily not this
+member", and editing the map is a restart. Rejected: holding explicit tasks until the drained
+runner returns (server2-temp's retirement would wait forever on a task pinned to it); re-reading
+runtime defaults at dispatch (0710 D-10 forbids it, and it would move work for reasons unrelated to
+a drain).
 
-**D-10. Status carries every boot from R1.** `PhoneHomeRunnerStatusDto` gains
-`IReadOnlyList<PhoneHomeRunnerBootDto>? Boots` (default null): `BootId`, `Epoch`, `Role`,
-`Available`, `DispatchEligible`, `LastHeartbeatUtc`, `BuildVersion`, `Capacity`, plus R3's
-`Sessions`, `RunnerSessions`, `DrainedAt`, `IdleObservedAt`, `RetiredAt`, `RetireReason`. The
-top-level fields keep describing the accepting boot (or, without one, the newest live boot), so
-`c590-remote.sh`'s `"available": true` grep and the ops doc stay true. The provider-auth route
-gains an optional `?bootId=` so a probe can be aimed at a specific boot.
+**D-9. Routes and codes.** `POST .../drain` and `POST .../drain/clear { "reason" }` (and R3's
+`POST .../retire`) are operator-token routes in `SessionRunnerEndpoints` using
+`OperatorCredential.Require` (CARD-0716 shape): 403 `operator_token_required` without the header
+whatever the address; 404 for an id not in the map or the desktop alias; 400 for an empty or
+over-200-character reason; 409 `phone_home_redirect_invalid` when `redirectTo` is unknown, the
+desktop, the runner itself, disabled, or itself draining. `drain` is idempotent (a re-POST updates
+reason, redirect and `retireWhenIdle`). `clear` resets `Draining`, `RedirectTo`, `RetireWhenIdle`,
+`IdleObservedAt`, `RetiredAt` and `RetireReason`, which is how a retired `server2-temp` becomes
+registrable again for the next upgrade. New `PhoneHomeProblemTypes`: `RunnerDraining`
+(`phone_home_runner_draining`), `RunnerRetired` (`phone_home_runner_retired`), `RedirectInvalid`
+(`phone_home_redirect_invalid`), `RunnerBusy` (`phone_home_runner_busy`, R3),
+`RunnerNotDraining` (`phone_home_runner_not_draining`, R3).
 
-### R2: draining, the second container, the shared broker
+**D-10. Status and catalogue say "accepting new work" separately from "eligible".**
+`PhoneHomeRunnerStatusDto` gains (all defaulted, additive): `AcceptingNewWork` (=
+`DispatchEligible && !Draining && RetiredAt == null`), `Draining`, `DrainedAt`, `DrainReason`,
+`RedirectTo`, `RetireWhenIdle`, `IdleObservedAt`, `RetiredAt`, `RetireReason`, `Sessions`
+(non-terminal desktop rows bound to the id; null without a database), `QueuedTasks` (Queued rows
+bound with no session), `RunnerSessions` (the connection's last List count, null before one).
+`DispatchEligible` keeps its meaning (a recovered connection), so 0710's policy fallback and
+`deploy-parent`'s wait are unchanged. `SessionRunnerCatalogueEntryDto` gains `draining` and
+`acceptingNewWork`, and `unavailableReason` is `"draining"` for an eligible draining runner.
+`GET .../slots` is unchanged. Rejected: reporting a draining runner as not eligible (scripts and
+the policy would misread a healthy runner).
 
-**D-11. Draining changes only where new claims bind.** R2 adds the role: a `Draining` boot is
-excluded from `Resolve(runnerId)`, `DeclaredCapacity`, `AcceptingBoot` and default routing
-exactly as a `Standby` boot already is in R1; `ResolveBoot` serves it for everything else, including a `StartAsync` for a session whose row was stamped with
-it before the drain (the claim happened first; the launch belongs to that boot, and the retire
-job sees it as a live row). Nothing new is added to the `DispatchEligible` gate. Why: a typed
-launch refusal at the drain moment would fail a task the acceptance says must not be interrupted;
-binding at claim removes the race instead of detecting it. `promote` and forced retire (R3) are
-operator-token routes in `SessionRunnerEndpoints` using `OperatorCredential.Require`, the
-CARD-0716 shape. New problem codes: `phone_home_boot_not_live` (promote of a boot that is not
-recovered), `phone_home_boot_accepting` (forced retire of the accepting boot), `phone_home_boot_busy`
-(a non-forced retire the runner refuses). Rejected: a runner-side drain flag (the runner does not
-decide placement).
+**D-11. A retired runner id cannot register until its drain is cleared.** `Register` refuses a
+slot whose state has `RetiredAt` with `phone_home_runner_retired`. Why in R2: the rule must exist
+when `RetiredAt` first appears (R3), and an operator `docker start` of an exited temp container, or
+the next `up` before `clear`, must not put a retired id back into service silently.
 
-**D-12. Two slot services in `docker-compose.server2-runner.yml`.** `session-runner-a` and
-`session-runner-b`, each under its own compose profile (`slot-a`, `slot-b`) so a plain `up`
-starts neither, each `image: antiphon-server2/session-testing:${SLOT_A_SHA12:-unset}` (resp.
-`SLOT_B_SHA12`), each with `ANTIPHON_RUNNER_SLOT: a|b` and `ANTIPHON_BUILD_SLOTS_URL:
-http://build-slots:8080/build-slots` in `environment:`; everything else from today's service
-through a YAML anchor. Own: `dind-data` (slot a keeps today's volume so its nested store
-survives) and `dind-data-b`; `/tmp` is already container-local (`SessionRunner__PtyHostDir`,
-`TMPDIR`) and stays unmounted, so no sibling can see the other's pty manifests. Shared:
-`work`, `runner-state` (store id, launch generations, Claude and Grok homes, session logs),
-the Codex home bind, the deploy key and phone-home secrets, the git identity, the Claude token
-file. `restart: unless-stopped` stays on both slots; the drain step sets the old container to
-`--restart=no` (D-15). `PhoneHome__Capacity` stays `"10"` per slot. The custody root stays the
-shared `antiphon-custody` (row 13): executions are unique ids, the helpers and sudoers keep their
-paths, and the residue probe is not part of the rolling case (it belongs to `custody-containment`
-on an idle host). `state-init` is unchanged and stays a dependency of both slots. Rejected: a
-second compose project (needs external volumes and an external network for the broker, and every
-helper and contract test is anchored on `antiphon-runner`); `--scale session-runner=2` (replicas
-share `dind-data`, which two dockerds corrupt); renaming the custody root per slot (touches the
-runner constant, two helpers, sudoers and the probe for no functional gain).
+### R3: retire, the temp project, the shared broker, the deploy
 
-**D-13. One broker, in its own container, reached through `ANTIPHON_BUILD_SLOTS_URL`.** Service
-`build-slots` in the same compose file: the same runner image pinned by its own `BUILD_SLOTS_SHA12`
-(so a rolling deploy never recreates it and never drops held leases), unprivileged, uid 1654,
-`SessionRunner__BuildSlotsOnly: "true"`, today's budget values, profile `broker`,
-`restart: unless-stopped`, health `curl -fsS http://127.0.0.1:8080/build-slots`. Runner change:
-`Program.cs` in build-slots-only mode maps `/health` and the build-slot routes and registers no
-phone-home, pty adoption or session routes. Liveness change: a broker in another container cannot
-see a holder's pid, so `BuildSlotSettings.HolderLiveness` (`pid` default, `renew` for the broker
-service) makes the sweep reap a lease not renewed within `RenewGraceSeconds` (default 90) instead
-of consulting pid liveness; the TTL still applies. New route `POST /build-slots/{leaseId}/renew`
-(204 held, 404 unknown); the grant carries `RenewEverySeconds` (null in pid mode) and
-`scripts/lib/build-slot.ps1` renews on that interval from a `Start-ThreadJob` while the foreground
-command runs, only when the grant asks for it, so the desktop broker's behaviour is byte-for-byte
-today's. The in-container broker on each slot stays configured as today as the fallback for a
-wrapper without the variable; the compose variable is what every pty child inherits. The first
-rolling deploy starts from today's container, which has no `/build-slots` at all (the card's own
-observation), so the overlap budget is the new boot's shared broker plus the old boot's unleased
-runs, which is the status quo. Rejected: `pid: "service:build-slots"` on the slots (a shared pid
-namespace whose init is the broker; restarting the broker would SIGKILL both runners); a
-file-backed lease ledger on `runner-state` with per-container pid sweeps (no new service, no
-renew loop, but not the shape the brief asks for and a crashed container's leases would sit until
-the TTL); `BuildSlots__Enabled: false` on one side (unlimited, per row 11); moving the broker to
-the desktop server (the budget is server2's).
+**D-12. `Retire` is a phone-home operation the runner executes.** `PhoneHomeOperation.Retire = 27`
+(26 is 0710's `LaunchPlatformConstrained`), `RunnerRetireRequest(bool Force, string Reason)`,
+`RunnerRetireResult(Guid ProcessBootId, int KilledSessions, DateTime StoppingAtUtc)`. The runner's
+dispatcher refuses a non-forced retire while `OwnedSessionCount > 0` with `phone_home_runner_busy`
+(count in the message); a forced retire runs `KillAllAsync(5 s)` first; on acceptance it schedules
+`IHostApplicationLifetime.StopApplication()` 250 ms after the reply is written so the frame
+flushes, and `PhoneHomeConnectionService` closes the socket with description `retiring`. The
+runner exits 0, `dind-entrypoint.sh` stops dockerd and the container exits; the temp project's
+`restart: "no"` (D-15) keeps it exited. Rejected: `docker stop` from the desktop (no host access; the
+card wants the instance to exit by itself); a close frame as the signal (not acknowledged, not
+typed).
 
-**D-14. The deploy is a new host-lane case plus a thin desktop wrapper.** `c590-remote.sh` gains
-`case_deploy_parent_rolling`: the same preconditions and evidence as `deploy-parent`; picks the
-target slot (the slot whose container is absent or exited; a slot whose boot is `Standby` is
-stopped and reused; a slot whose boot is `Draining` with attributed rows refuses
-`TargetSlotDraining`; both slots accepting refuses `BothSlotsLive`); refuses `NestedStoreDiskLow`
-below 20 GB free on the volume filesystem; builds both images as today; writes `SLOT_<T>_SHA12`
-and, when absent, `BUILD_SLOTS_SHA12` into `stack.env` without touching the other slot's tag;
-starts the broker if it is not running (`compose_host --profile broker up -d --no-build
-build-slots`); runs `compose_host --profile slot-<t> up -d --no-build session-runner-<t>` and
-**never** `--remove-orphans`; waits for health, then runs every `deploy-parent` probe against the
-new container (secret readable, phone-home registered, `docker info` name equals the container
-hostname, custody helpers, git identity, checkout verification); waits until
-`GET /api/session-runners/server2/status` lists the new boot `dispatchEligible` in role
-`Standby`, or `Accepting` if the fallback rule promoted it during the wait (five minutes, else
-`RunnerNotEligible`; the desktop's promote drains the old boot in either case); writes `new-boot.txt` and
-`old-container.txt`; retires image tags that are neither slot's nor the broker's. It does not
-promote: the operator token lives on the desktop. A second case `rolling-drain-host` takes the
-old container name from evidence and runs `docker update --restart=no` on it after the desktop
-has confirmed promotion, writing `restart-policy-old.txt`. Both cases join `$script:C590LiveCases`
-and get stub arms in `verify-docker-stack.ps1`. `scripts/deploy-server2.ps1 -Rolling` (desktop,
-ASCII, pwsh 7) runs `verify-docker-stack.ps1 -Case deploy-parent-rolling`, posts `promote` for
-the new boot with the operator token (the `runner-slots.ps1` token helper, never printed), polls
-status until the old boot is `Draining` and the new one `Accepting` (two minutes), runs
-`rolling-drain-host`, prints the boots table and exits 0; a failed promote leaves the new boot in
-`Standby` and exits 2 without touching the old container's restart policy. Rejected: streaming
-the operator token to server2 (a custody expansion for one POST); folding the restart-policy
-change into the first case (a failed promote would leave the accepting container unable to
-survive a crash).
+**D-13. `RunnerRetireJob` retires an idle draining runner that asked for it.** Hangfire recurring
+job `antiphon:runner-retire` on `PhoneHomeRunner:RunnerRetireCron` (default `* * * * *`),
+registered beside `RunnerSlotReconcileJob`, `[AutomaticRetry(Attempts = 0)]`. For each state row
+with `Draining && RetireWhenIdle && RetiredAt == null`: idle when the database has no
+non-terminal row bound to the id **and** no Queued unlaunched task bound to it (the redirect
+should have moved them; a remainder is logged with the task ids) **and** the runner's inventory is
+`Available` with no non-`Exited` session **and** `now >= DrainedAt + RetireMinDrainSeconds` (60).
+The first idle observation stamps `IdleObservedAt`; a later run at least `RetireIdleSeconds`
+(120) after it sends `Retire(force: false)`; success stamps `RetiredAt` with reason `idle`; a
+`phone_home_runner_busy` answer clears `IdleObservedAt`; a runner with no live connection (lease
+expired) and no bound rows is stamped `RetiredAt` with reason `idle_disconnected` without a send,
+which closes a crashed temp runner's book. A drain with `retireWhenIdle: false` (server2 in step 3,
+which the script redeploys) is never retired by the job. Rejected: retiring on the first idle
+observation (a launch claimed just before the drain may still be `Starting`); a job that runs
+`docker compose down` (Hangfire has no server2 access).
 
-**D-15. `docker update --restart=no` on the drained container.** With `unless-stopped`, the
-retired runner's clean exit would be restarted into a new, useless boot. The change is a host
-command and belongs to the drain step, after promotion. A drained container that crashes stays
-down, which is right: its sessions died with it, and a fresh start would only be a third boot.
-Rejected: `restart: on-failure` on the slots (not restarted after a host reboot, which the
-persistent runner requires); a marker file the entrypoint reads (a restart loop); an entrypoint
-call to the host socket (no socket is mounted, by design).
+**D-14. Forced retire needs the operator token and the runner id as confirmation.**
+`POST /api/session-runners/{id}/retire { "reason", "confirmRunnerId" }`: 403 without the token;
+400 when `confirmRunnerId` differs from the path or the reason is empty or over 200 characters; 409
+`phone_home_runner_not_draining` unless the runner is draining. It fails every non-terminal row
+bound to the id (`FailureReason` "runner <id> retired by operator: <reason>", `SessionTermination`
+`SystemRequest`), writes a `RunnerForceRetired` incident (`AgentIncidentKind`, next value after
+`RunnerSlotForceReleased = 74`), sends `Retire(force: true)` when connected, and stamps `RetiredAt`
+with `forced:<reason>` either way. Rejected: a `?force=true` flag alone (the card asks for an
+explicit confirmation).
 
-**D-16. The shared checkout gets a cross-process lock and stops reading `FETCH_HEAD`.**
-`RunnerWorkspaceService` takes an exclusive `FileStream` (`FileShare.None`, which .NET maps to
-`flock` on Linux) on `<repository>/.git/antiphon-mirror.lock` around fetch + verify + `worktree
-add` and around `worktree remove`, waiting up to `MirrorLockWaitSeconds` (120) with a typed
-`phone_home_unsupported_target` refusal naming the lock on timeout, and reads the fetched tip
-from `refs/remotes/origin/<branch>` instead of `FETCH_HEAD` (per-ref updates are already locked
-by git; `FETCH_HEAD` is one racy file). Why: an old boot removing mirrors while the new one adds
-them is the one new cross-process writer this card introduces, and the `FETCH_HEAD` read is racy
-even inside one process today. Rejected: serialising remote prep on the desktop (does not cover
-retirement-time removal from the other process).
+**D-15. The temp runner is the same compose file in a second project with an override.** Project
+`antiphon-runner-temp`; `docker-compose.server2-runner.temp.yml` overrides `session-runner`:
+`PhoneHome__RunnerId: server2-temp`, `restart: "no"`, `ANTIPHON_BUILD_SLOTS_URL:
+http://build-slots:8080/build-slots`, `networks: [default, antiphon-build-slots]`, and one extra
+volume `${RUNNER_GROK_STORE_DIR:?}:/state/grok` (the Grok login store shared by binding server2's
+`runner-state` volume's `grok/` subdirectory; the deploy resolves the path from `docker volume
+inspect -f '{{.Mountpoint}}' antiphon-runner_runner-state`, never a hard-coded
+`/var/lib/docker/...`; Compose 2.18 has no subpath). Everything else comes from the base file with
+the same secret and identity files (`ANTIPHON_DEPLOY_KEY_FILE`, `PHONE_HOME_SECRET_FILE`,
+`CLAUDE_OAUTH_TOKEN_FILE`, `RUNNER_GIT_IDENTITY_FILE`, `RUNNER_CODEX_HOME_DIR`) so the Claude token
+(read-only file), Codex home (read-write directory) and phone-home secret are shared, and its own
+`work`, `runner-state` (fresh store id, own launch generations, own Claude config dir seeded by
+`state-init`, own session records) and `dind-data` volumes plus its own `/tmp`. `stack.temp.env`
+(`COMPOSE_PROJECT_NAME=antiphon-runner-temp`, `SOURCE_SHA12`, the same file paths,
+`RUNNER_GROK_STORE_DIR`) is written by the deploy case and never touches `stack.env`.
+`PhoneHome__Capacity` stays 10 in both. Rejected: two services in one project (revision 1's D-12;
+per-project volumes are what keep `/work`, the store identity and the nested store apart with no
+new code); `--scale`; copying the Grok or Codex store (a credential-custody change, dad7cd6a);
+sharing `runner-state` (row 10).
 
-### R3: retire, forced retire, status
+**D-16. One build-slot broker, reached by both projects over an external network.** Service
+`build-slots` in `docker-compose.server2-runner.yml` (profile `broker`, image
+`antiphon-server2/session-testing:${BUILD_SLOTS_SHA12}` pinned separately so a runner deploy never
+recreates it, unprivileged, `user: 1654:1654`, `SessionRunner__BuildSlotsOnly: "true"`, today's
+budget values, `restart: unless-stopped`, health `curl -fsS http://127.0.0.1:8080/build-slots`,
+attached to the external network `antiphon-build-slots`, created by the deploy when absent).
+`session-runner` in the base file gains `ANTIPHON_BUILD_SLOTS_URL: http://build-slots:8080/build-slots`
+and joins the network, so after its redeploy server2 uses the broker too. Runner changes carried
+over from revision 1: `SessionRunner:BuildSlotsOnly` maps `/health` and the build-slot routes and
+registers no phone-home, pty adoption or session routes; `BuildSlotSettings.HolderLiveness`
+(`pid` default, `renew` for the broker service) makes the sweep reap a lease not renewed within
+`RenewGraceSeconds` (90) instead of consulting pid liveness (a pid in another container is
+meaningless), the TTL still applies; `POST /build-slots/{leaseId}/renew` (204 held, 404 unknown);
+the grant carries `RenewEverySeconds` (null in pid mode) and `scripts/lib/build-slot.ps1` renews
+from a `Start-ThreadJob` while the foreground command runs, only when the grant asks, so the
+desktop broker's behaviour is byte-for-byte today's. During the first overlap the old server2
+container (no `/build-slots`, wrapper default loopback, runs unleased today) stays unleased; that
+is the status quo, not a regression. Rejected: `MaxConcurrent 2` per runner (dad7cd6a's stopgap;
+halves the budget permanently and is still two budgets); `Enabled:false` (unlimited, row 11);
+`pid: "service:build-slots"` (a broker restart would kill both runners); a broker on the desktop
+(the budget is server2's).
 
-**D-17. `Retire` is a phone-home operation the runner executes.** `PhoneHomeOperation.Retire = 26`
-with `RunnerRetireRequest(bool Force, string Reason)` and `RunnerRetireResult(Guid BootId, int
-KilledSessions, DateTime StoppingAtUtc)`. The dispatcher refuses a non-forced retire while
-`OwnedSessionCount > 0` with `phone_home_boot_busy` (count in the message); a forced retire runs
-`KillAllAsync(5 s)` first; on acceptance it schedules `IHostApplicationLifetime.StopApplication()`
-250 ms after the reply is written so the frame flushes, and the connection service ends the socket
-with close description `retiring`. The runner exits 0, `dind-entrypoint.sh` stops dockerd and the
-container exits; with D-15 it stays exited. Rejected: `docker stop` from the desktop (no socket
-and no host access); a close frame as the signal (not acknowledged, not typed).
+**D-17. `deploy-server2.ps1 -Rolling` drives the four steps; the host lane gets three cases.**
 
-**D-18. `RunnerBootRetireJob` retires idle draining boots.** Hangfire recurring job
-`antiphon:runner-boot-retire` on `PhoneHomeRunner:BootRetireCron` (default `* * * * *`),
-registered beside `RunnerSlotReconcileJob`, `[AutomaticRetry(Attempts = 0)]`. For each
-`RunnerBoots` row in `Draining`: the boot is idle when a fresh List from that boot has no
-non-`Exited` session **and** the database has no non-terminal row attributed to it **and**
-`DrainedAt + RetireMinDrainSeconds` (60) has passed. The first idle observation stamps
-`IdleObservedAt`; a later run at least `RetireIdleSeconds` (120) after it sends
-`Retire(force: false)`; success marks the row `Retired` with reason `idle`; a `phone_home_boot_busy`
-answer clears `IdleObservedAt`; a boot whose lease has expired and that has no attributed live
-rows is marked `Retired` with reason `idle_disconnected` without a send, which is what closes a
-crashed old boot's book. `Standby` and `Accepting` boots are never retired by the job. Rejected:
-retiring on the first idle observation (a launch claimed just before the drain may still be
-`Starting`); retiring `Standby` boots (the deploy's new boot is standby until promoted).
+Host lane (`scripts/c590-remote.sh`), all joining `$script:C590LiveCases` with stub arms in
+`verify-docker-stack.ps1`:
 
-**D-19. Forced retire needs the operator token and the boot id as confirmation.**
-`POST /api/session-runners/{runnerId}/boots/{bootId}/retire` with `{ "reason": "...",
-"confirmBootId": "<bootId>" }`: 403 `operator_token_required` without the token; 400 when
-`confirmBootId` does not equal the path boot id or the reason is empty or over 200 characters;
-409 `phone_home_boot_accepting` when the boot is the accepting one (promote another first). It
-fails every non-terminal row attributed to the boot with `FailureReason` "runner boot <id> retired
-by operator: <reason>" and `SessionTermination` `SystemRequest`, writes a `RunnerBootForceRetired`
-incident, sends `Retire(force: true)` when the boot is connected, and marks the row `Retired` with
-the reason either way. `scripts/runner-boots.ps1 list|promote|retire` (`retire -Force -Confirm
-<bootId> -Reason "..."`) follows `runner-slots.ps1` (token from the owner-only file, never
-printed). Rejected: a `?force=true` flag alone (the card asks for an explicit confirmation).
+- `deploy-temp-runner`: the same secret and identity preconditions as `deploy-parent`; refuses
+  `NestedStoreDiskLow` below 20 GB free on the volume filesystem; builds both images at `$SHA` as
+  `deploy-parent` does; ensures the `antiphon-build-slots` network and the broker (`compose_host
+  --profile broker up -d --no-build build-slots`, writing `BUILD_SLOTS_SHA12` into `stack.env`
+  only when absent); resolves `RUNNER_GROK_STORE_DIR`; writes `stack.temp.env`; seeds the temp
+  `work` checkout (`seed_runner_checkout` parameterised by project); `docker compose -p
+  antiphon-runner-temp -f <base> -f <temp override> --env-file stack.temp.env up -d --no-build`
+  and **never** `--remove-orphans`; waits for health; runs the `deploy-parent` probes against the
+  temp container (secret readable as uid 1654, phone-home window, `docker info` name equals the
+  container hostname, a nested `docker run --rm busybox true`, git identity, checkout); records
+  `bridge-nf.txt` from both containers; writes `temp-container.txt`; retires no images. It does not
+  drain or promote: the operator token lives on the desktop.
+- `deploy-parent` amendments: keep the temp's and the broker's tags in
+  `retire_superseded_server2_images` (they are the same sha12 as the new deploy in the normal
+  flow, but a re-run at a later sha must not delete a live temp's image); never `--remove-orphans`
+  across projects (project-scoped already); join the network and set the broker URL (D-16).
+- `retire-temp-runner`: takes `tempRetiredAt` from the manifest (the desktop read it from status)
+  and refuses `TempRunnerNotRetired` when absent; `docker compose -p antiphon-runner-temp down -v`;
+  leaves images and the broker alone; writes `temp-down.txt`.
 
-**D-20. Status per boot with remaining sessions.** R3 fills D-10's `Sessions` (non-terminal
-rows attributed to the boot), `RunnerSessions` (the last List count, null before one), `DrainedAt`,
-`IdleObservedAt`, `RetiredAt`, `RetireReason`. `GET /api/session-runners/{runnerId}/slots` adds
-`bootId` per slot and lists the union. `runner-boots.ps1 list` prints one row per boot.
+Desktop wrapper `scripts/deploy-server2.ps1 -Rolling -Sha <40 hex> [-Phase all|deploy-temp|
+drain-old|redeploy-old|drain-temp|retire-temp] [-WaitIdleMinutes 480]` (ASCII, pwsh 7; the token
+from the owner-only file through the `runner-slots.ps1` helper, never printed):
+
+1. `deploy-temp`: `verify-docker-stack.ps1 -Case deploy-temp-runner`; wait until
+   `GET /api/session-runners/server2-temp/status` is 200 with `acceptingNewWork: true` and
+   `buildVersion` equal to the sha (five minutes; a 404 is not eligible, D-4).
+2. `drain-old`: `POST .../server2/drain { reason, redirectTo: "server2-temp", retireWhenIdle: false }`;
+   poll every 30 s until `sessions == 0 && runnerSessions == 0 && queuedTasks == 0`, bounded by
+   `-WaitIdleMinutes` (exit 2 `OldRunnerStillBusy` leaves the drain in place for a re-run).
+3. `redeploy-old`: `verify-docker-stack.ps1 -Case deploy-parent` (the existing case; server2 is
+   idle, so recreating its container interrupts nothing); wait for `dispatchEligible`; then
+   `POST .../server2/drain/clear { reason }`; wait for `acceptingNewWork: true`.
+4. `drain-temp`: `POST .../server2-temp/drain { reason, redirectTo: "server2", retireWhenIdle: true }`;
+   poll until `retiredAt` is set (bounded by `-WaitIdleMinutes`; Hangfire does the retire).
+5. `retire-temp`: `verify-docker-stack.ps1 -Case retire-temp-runner` with `tempRetiredAt`.
+
+Each phase reads the server's status first and is idempotent, so a wrapper killed mid-wait is
+re-run with the same arguments. A failed phase exits 2 with the diagnosis and touches nothing
+later. `scripts/runner-drain.ps1 status|drain|clear|retire [-RunnerId] [-RedirectTo]
+[-RetireWhenIdle] [-Reason] [-Confirm]` is the manual surface for the same routes.
+`scripts/test-deploy-server2.ps1` (C495 fixture: seamed `verify-docker-stack.ps1`, fake HTTP,
+sentinel token, `trace.jsonl`) covers T-1..T-6 (V-32). Rejected: streaming the operator token to
+server2 (a custody expansion); one monolithic case that drains from server2 (the token stays on
+the desktop); a wrapper that waits with no bound (the old runner can host hours-long tasks; the
+bound is the operator's, and the state survives on the server).
+
+**D-18. Manual rollback is documented, not automated.** If the temp image proves bad in step 2:
+`runner-drain.ps1 drain -RunnerId server2-temp -RedirectTo server2` (or `-Retire` forced) and, if
+server2 was already drained, `runner-drain.ps1 clear -RunnerId server2`; the old server2 container
+is untouched until step 3. After step 3 the old image is gone (deploy-parent retires it), so
+rolling back means deploying the previous sha through the same rolling flow.
 
 ### Cross-round
 
-**D-21. Settings and defaults.** `PhoneHomeRunnerSettings`: `MaxLiveBoots` (2, validated 1..4),
-`BootRetireCron` (`* * * * *`), `RetireMinDrainSeconds` (60), `RetireIdleSeconds` (120), each
-validated positive when enabled. `PhoneHomeSettings` (runner): `MirrorLockWaitSeconds` (120).
-`BuildSlotSettings`: `HolderLiveness` (`pid`), `RenewGraceSeconds` (90), `RenewEverySeconds` (20,
-sent to the client in renew mode); `SessionRunner:BuildSlotsOnly` (false). All are additive with
-today's behaviour as the default.
+**D-19. Settings and defaults.** `PhoneHomeRunnerSettings`: `RunnerRetireCron` (`* * * * *`),
+`RetireMinDrainSeconds` (60), `RetireIdleSeconds` (120), validated when enabled.
+`BuildSlotSettings`: `HolderLiveness` (`pid`), `RenewGraceSeconds` (90), `RenewEverySeconds` (20);
+`SessionRunner:BuildSlotsOnly` (false). All additive with today's behaviour as the default.
 
-**D-22. Docs.** `docs/session-runtime-invariants.md`: three invariants (a session's calls go to
-the boot that launched it; a draining boot takes no new claims and still serves its sessions; a
-boot is confirmed gone only by its own List, an exit or kill, or its retire). `docs/docker-stack.md`:
-the two slots, the broker, `deploy-server2.ps1 -Rolling`, what the first rolling deploy leaves
-behind (the exited old container, removed by the next deploy of that slot). `docs/ops-http.md`:
-the status `boots` array, `promote`, `retire`, the two problem codes, `runner-boots.ps1`.
-`docs/testing-and-build.md`: build slots renew mode and the shared broker on server2.
-`docs/bootstrap.md` or `docs/apphost-runbook.md`: one pointer that the server2 deploy is now
-rolling. `docker/stack.env.example`: `SLOT_A_SHA12`, `SLOT_B_SHA12`, `BUILD_SLOTS_SHA12`.
+**D-20. Docs.** `docs/session-runtime-invariants.md`: three invariants (a draining runner takes no
+new claims and still serves every call for its sessions; a drain's redirect moves unlaunched work,
+never a session; a retired runner id is refused until its drain is cleared). `docs/ops-http.md`:
+the two-entry `Runners` configuration, the status fields, `drain`/`drain/clear`/`retire`, the
+problem codes, `runner-drain.ps1`, "404 status is not eligible" (CARD-0729). `docs/docker-stack.md`:
+the temp project and override, the broker and network, `deploy-server2.ps1 -Rolling`, what the
+flow leaves behind (nothing from the temp; the broker stays). `docs/testing-and-build.md`: the
+`Runners` map in the enablement steps (D-2) and build-slot renew mode. `docs/agent-credentials.md`:
+the temp runner shares the login stores and how (row 10). `docs/bootstrap.md`: one pointer that the
+server2 deploy is rolling. `docker/stack.env.example`: `BUILD_SLOTS_SHA12`, `RUNNER_GROK_STORE_DIR`
+and the temp env file.
 
 ## Implementation rounds and slices
 
 Every slice commits its red tests first (`Sn-tests`), then the production change (`Sn`), with the
 real checkpoint outcome in each message. Server slices and runner slices are separate commits.
+R1 has no red commit (D-3); its rows are green pins.
 
-### R1 (server only, one Code dispatch)
-
-| Slice | Files | Tests |
-|---|---|---|
-| S1: two live boots in the directory (~2 h) | `PhoneHomeRunnerDirectory.cs` (D-1 boot map, D-6 rules, D-5's `Standby`/`Accepting` roles and fallback promotion, `SnapshotBoot(s)`, `ResolveBoot`, `AcceptingBoot`, per-boot `Disconnect`/`MarkRecovered`, D-10 `Boots` in `Status`); `PhoneHomeContracts.cs` (`PhoneHomeRunnerBootDto`, `Boots`, `RunnerBootRole`); `PhoneHomeRunnerSettings.cs` + validator (`MaxLiveBoots`); `ISessionRunnerDirectory.cs` (`ResolveBoot`, `AcceptingBoot` with default bodies); `IRunnerBootRegistry` + `InMemoryRunnerBootRegistry` (D-2, memory first; the DB registry lands in S2); `SessionRunnerEndpoints.cs` connect route passes the boot to `Disconnect`; `PhoneHomeTestHost.cs` wires the in-memory registry | `PhoneHomeConnectionTests`: V-1, V-2, V-3, V-10 new; `Live_boot_and_store_identity_cannot_be_replaced` keeps its store-mismatch and same-boot halves and drops the boot-refusal half (moved to V-1/V-2) |
-| S2: sessions carry their boot; routing, inventory, capacity per boot (~4 h) | `AgentSession.cs` + `AppDbContext.cs` + migration `AddRunnerBoots` (D-2 table, D-3 column, index; `has-pending-model-changes` clean); `RunnerBoot.cs`, `RunnerBootRole.cs`; `DbRunnerBootRegistry.cs` (+ `Program.cs` registration); `ISessionRunnerDirectory.cs` `SessionRunnerOwner.RunnerBootId`; `PhoneHomeRunnerDirectory.GetBindingAsync` (+ D-3 attribution for null); `RoutingSessionRunnerClient.cs`, `RunnerScopedSessionRunnerClient.cs` (D-4 session-aware), `AgentSessionRuntime.cs:1374`, `VerificationWorkspaceDirectory.cs`, `VerificationCleanupService.cs`; `AgentTaskDispatcher.cs` (`AcceptingBoot` in the claim gate, `RunnerBootId` stamp at `:4421`, D-8 occupancy) and `AgentControlService.cs:650`; `PhoneHomeRecoveryPump.cs` (per-boot cycles, D-7 owner match); `GetInventoryAsync`/`LiveRemoteSessionIds`/`UnknownRemoteSessionIds` unions; `SessionRunnerEndpoints.cs` provider-auth `?bootId=` | New `tests/Antiphon.Tests/Application/PhoneHomeRollingBootTests.cs` (V-4..V-9, V-11) on a `RollingWorld` copied from `PhoneHomeLaunchTransportTests.LaunchWorld` (isolated schema, `BridgeQueueHarness`, real dispatcher graph, `host.Directory`) with two peers (`ConnectPeerAsync(bootId: A)`, `ConnectPeerAsync(bootId: B)`); regressions listed in CP-4/CP-5 |
-| S3: docs for R1 (~20 min) | `docs/session-runtime-invariants.md` (first invariant), `docs/ops-http.md` status row (`boots`) | none |
-
-### R2 (server, runner, compose, scripts; one Code dispatch, desktop-placed for the live rows)
+### R1 (server config, tests, docs; one Code dispatch, after CARD-0710 lands)
 
 | Slice | Files | Tests |
 |---|---|---|
-| S4: draining and promote (~2 h) | `PhoneHomeRunnerDirectory.cs` (D-5 `Draining`, `PromoteAsync` draining every other live boot, sticky drain in the fallback rule, D-11 exclusions), `DbRunnerBootRegistry`/`InMemory` (`Promote`, `Drain`), `SessionRunnerEndpoints.cs` (`promote` route with `OperatorCredential.Require`), `PhoneHomeContracts.cs` (`BootNotLive`, `BootAccepting`, `BootBusy` codes), `DispatchHoldDetails` unchanged | `PhoneHomeRollingBootTests` V-12..V-16 |
-| S5: shared broker (~3 h, runner + script) | `BuildSlotSettings.cs` (`HolderLiveness`, `RenewGraceSeconds`, `RenewEverySeconds`), `BuildSlotBroker.cs` (`Renew`, renew-mode sweep, `LastRenewedAt` on `Lease`), `BuildSlotRoutes.cs` (`POST /build-slots/{leaseId}/renew`), contracts (`BuildSlotGrant.RenewEverySeconds`), `Program.cs` (`SessionRunner:BuildSlotsOnly`), `scripts/lib/build-slot.ps1` (renewer thread job; ASCII), `scripts/build-slot.ps1` unchanged | `BuildSlotBrokerTests` V-17, V-18; `BuildSlotEndpointTests` V-19, V-20; `BuildSlotScriptTests` V-21 |
-| S6: checkout lock (~1 h, runner) | `RunnerWorkspaceService.cs` (D-16 lock, `refs/remotes/origin/<branch>`), `PhoneHomeSettings.cs` (`MirrorLockWaitSeconds`) | `RunnerWorkspaceServiceTests` V-22 |
-| S7: compose, deploy case, wrapper, contract tests (~3 h) | `docker-compose.server2-runner.yml` (D-12 slots, D-13 broker), `docker/stack.env.example`, `scripts/c590-remote.sh` (`case_deploy_parent_rolling`, `case_rolling_drain_host`, `slot_container`, keep-set in `retire_superseded_server2_images`), `scripts/c590-real.ps1` (roster), `scripts/verify-docker-stack.ps1` (stub arms), new `scripts/deploy-server2.ps1`, new `scripts/test-deploy-server2.ps1` (C495 fixture: seamed `verify-docker-stack.ps1`, token file with a sentinel, trace) | `DockerStackContractTests` V-23 (new and updated methods), `DindRunnerContractTests` V-24, `RemoteScriptContractTests` V-25, `test-deploy-server2.ps1` T-1..T-4 (V-26) |
-| S8: docs for R2 (~30 min) | `docs/docker-stack.md`, `docs/testing-and-build.md` (build slots), `docs/session-runtime-invariants.md` (second invariant), `docs/bootstrap.md` pointer | `DockerStackDocumentationTests` regression |
-| L: live proof on server2 (desktop lane, after R1 is active on the desktop) | none | L-1..L-3 in the R2 table |
+| S1: `RollingWorld` and the two-id pins (~2 h) | new `tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs` with `RollingWorld` (copied from `PhoneHomeLaunchTransportTests.LaunchWorld`: isolated schema, `PhoneHomeTestHost.StartAsync(connectionString:, configured: Pair("server2", "server2-temp"))`, two peers via `ConnectPeerAsync(runnerId:, storeId:, secret:)`, `BridgeQueueHarness` with the real adapter factory and dispatcher bound to `host.Directory`, `RunnerDefaultSettingsService.EnsureInitializedAsync` plus a `PutAsync` setting `globalRunnerId`, `AgentKind.Raw`); `PhoneHomeConnectionTests` (V-1 HTTP contract; if the route answers anything but 404 the fix is in `SessionRunnerEndpoints`/`ExceptionMiddleware`) | V-1, V-2, V-3 |
+| S2: configuration and docs (~1 h) | `docs/testing-and-build.md` enablement steps (the `Runners` map with both entries), `docs/ops-http.md` (`Runners`, CARD-0729 rule), `docs/agent-credentials.md` (shared secret across entries), `server/appsettings.json` comment only, `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs` (`Testing_doc_names_the_production_enablement_steps` expects the map form) | V-3 (doc contract), `DockerStackDocumentationTests` regression |
 
-### R3 (server, runner, scripts; one Code dispatch)
+Activation after R1 lands (operator, main checkout): user-secrets `PhoneHomeRunner:Runners:server2:*`
+and `PhoneHomeRunner:Runners:server2-temp:*` per D-2, `restart-apphost.ps1`, confirm
+`GET /api/session-runners` lists `desktop`, `server2` (eligible) and `server2-temp` (unavailable).
+
+### R2 (server; one Code dispatch)
 
 | Slice | Files | Tests |
 |---|---|---|
-| S9: `Retire` on the runner (~1.5 h) | `PhoneHomeContracts.cs` (operation 26, request/result records, `retiring` close reason), `PhoneHomeCommandDispatcher.cs` (D-17, `IHostApplicationLifetime` injected), `PhoneHomeConnectionService.cs` (close description), `PhoneHomeRunnerClient.cs` (`RetireAsync`) | `PhoneHomeCommandDispatcherTests` V-27, V-28 |
-| S10: retire job, forced retire, status (~3 h) | new `RunnerBootRetireJob.cs` (+ `HangfireConfiguration.AddOrUpdateRunnerBootRetireJob`, `Program.cs`), `PhoneHomeRunnerSettings.cs` + validator (`BootRetireCron`, `RetireMinDrainSeconds`, `RetireIdleSeconds`), `SessionRunnerEndpoints.cs` (`retire` route, D-19), `RunnerBootRetireService.cs` (shared by job and route: idle check, row failure, incident), `PhoneHomeRunnerDirectory.Status` (D-20 fields), `RunnerSlotService.ListAsync` (`bootId`, union), `PhoneHomeContracts.cs` (`RunnerBootForceRetired` incident kind where incidents are enumerated) | new `tests/Antiphon.Tests/Application/RunnerBootRetireJobTests.cs` (V-29..V-32); `PhoneHomeRollingBootTests` V-33..V-37 |
-| S11: `runner-boots.ps1` and docs (~1 h) | new `scripts/runner-boots.ps1`, `docs/ops-http.md`, `docs/docker-stack.md`, `docs/session-runtime-invariants.md` (third invariant) | new `tests/Antiphon.Tests/Scripts/RunnerBootsScriptTests.cs` (V-38: ASCII, verbs, token header, no token in output) |
+| S3: the state row (~2 h) | `server/Domain/Entities/SessionRunnerState.cs`, `AppDbContext.cs`, migration `AddSessionRunnerStates`, `server/Application/Services/RunnerStateService.cs` (read/write, push to the directory), `RunnerStateLoader.cs` (hosted, before the pump), `Program.cs` registrations; `PhoneHomeTestHost` registers the service when a connection string is present and an in-memory `IRunnerStateStore` otherwise | V-4 (persistence half), V-11 |
+| S4: the drain gate, redirect, routes, status (~5 h) | `ISessionRunnerDirectory.cs` (`ResolveForNewWork`), `PhoneHomeRunnerDirectory.cs` (`RunnerSlot.State`, `ApplyState`, gate, `Register` retired refusal, `Status` fields incl. `Sessions`/`QueuedTasks`/`RunnerSessions`), `PhoneHomeContracts.cs` (DTO fields, problem codes), `SessionRunnerCatalogue.cs` (+DTO), `DefaultRunnerRoutingPolicy.cs` (D-8 placement), `AgentTaskDispatcher.cs` (`RemoteHoldForAsync` gate + rebind, `HoldKind.RunnerDraining`, `DispatchHoldDetails.RunnerDraining`, `PrepareRemoteWorkspaceAsync` gate), `AgentControlService.cs` (standing start gate), `SessionRunnerEndpoints.cs` (`drain`, `drain/clear`), `RunnerStateService.cs` (validation, D-9) | V-4..V-10, V-12, V-13 |
+| S5: docs for R2 (~30 min) | `docs/session-runtime-invariants.md` (first two invariants), `docs/ops-http.md` (routes, status fields), `scripts/runner-drain.ps1` `status|drain|clear` verbs (retire verb lands in R3) | `RunnerDrainScriptTests` V-33 (first three verbs; the retire verb is added in R3 without changing the contract) |
+
+### R3 (server, runner, compose, scripts; one Code dispatch, desktop lane for the live rows)
+
+| Slice | Files | Tests |
+|---|---|---|
+| S6: `Retire` on the runner (~1.5 h) | `PhoneHomeContracts.cs` (operation 27, records, `retiring` close reason), `PhoneHomeCommandDispatcher.cs` (D-12, `IHostApplicationLifetime` injected), `PhoneHomeConnectionService.cs`, `PhoneHomeRunnerClient.cs` (`RetireAsync`), `PhoneHomeScriptedPeer` (`Retires`, default `RunnerRetireResult`) | `PhoneHomeCommandDispatcherTests` V-14, V-15 |
+| S7: retire job, forced retire (~3 h) | new `RunnerRetireJob.cs` (+ `HangfireConfiguration.AddOrUpdateRunnerRetireJob`, `Program.cs`), `RunnerRetireService.cs` (idle check, row failure, incident; shared by job and route), `PhoneHomeRunnerSettings.cs` + validator (D-19), `SessionRunnerEndpoints.cs` (`retire`, D-14), `AgentIncidentKind` (`RunnerForceRetired`), `PhoneHomeRunnerDirectory.cs` (retire fields already in the DTO; `Register` refusal from R2) | new `tests/Antiphon.Tests/Application/RunnerRetireJobTests.cs` V-16..V-19; `PhoneHomeRollingRunnerTests` V-20..V-23 |
+| S8: shared broker (~3 h, runner + wrapper) | `BuildSlotSettings.cs`, `BuildSlotBroker.cs` (`Renew`, renew-mode sweep, `LastRenewedAt`), `BuildSlotRoutes.cs` (`POST /build-slots/{leaseId}/renew`), `BuildSlotContracts.cs` (`RenewEverySeconds`), `src/Antiphon.SessionRunner/Program.cs` (`BuildSlotsOnly`), `scripts/lib/build-slot.ps1` (renewer; ASCII) | `BuildSlotBrokerTests` V-24, V-25; `BuildSlotEndpointTests` V-26, V-27; `BuildSlotScriptTests` V-28 |
+| S9: compose, cases, wrapper, contract tests (~4 h) | `docker-compose.server2-runner.yml` (broker service, network, broker URL), new `docker-compose.server2-runner.temp.yml`, `docker/stack.env.example`, `scripts/c590-remote.sh` (`case_deploy_temp_runner`, `case_retire_temp_runner`, `deploy-parent` amendments, `compose_temp`, `temp_runner_container`, keep set), `scripts/c590-real.ps1` (roster), `scripts/verify-docker-stack.ps1` (stub arms), new `scripts/deploy-server2.ps1`, new `scripts/test-deploy-server2.ps1`, `scripts/runner-drain.ps1` (`retire` verb) | `DockerStackContractTests` V-29, `DindRunnerContractTests` V-30, `RemoteScriptContractTests` V-31, `test-deploy-server2.ps1` T-1..T-6 (V-32), `RunnerDrainScriptTests` V-33 |
+| S10: docs for R3 (~45 min) | `docs/docker-stack.md`, `docs/ops-http.md`, `docs/testing-and-build.md` (build slots), `docs/session-runtime-invariants.md` (third invariant), `docs/agent-credentials.md`, `docs/bootstrap.md` pointer | `DockerStackDocumentationTests` regression |
+| L: live proof on server2 (desktop lane, after R1 to R3 are active on the desktop server) | none | L-1..L-3 |
 
 ## Risks
 
 **Two nested dockerd processes on server2's kernel 4.15 (cgroup v1, legacy iptables).** Each
-slot is privileged with its own network namespace, its own `/var/lib/docker` volume and its own
-`docker0`, so the daemons do not share a graph or a bridge. What they do share: the host cgroup v1
-hierarchy (no cgroup namespace on v1), where each nested daemon creates `docker/<id>` groups under
-its own container's path (unique ids; this is how one nested daemon already runs), the
-`antiphon-custody` root (row 13, unique execution ids), the conntrack table and the
-`bridge-nf-call-iptables` sysctl, which on this kernel may be global rather than per namespace.
-The investigation did not start two. Mitigation: L-1 runs `docker info` in both slots while both
-run and a nested `docker run --rm busybox true` in the new slot, and records
-`bridge-nf-call-iptables` from both; a `SiblingDaemonRefused` (daemon name not equal to the
-container hostname) or a failed nested run stops the rolling case before promotion. The new
-slot's nested store starts empty (images re-pull on first use); `NestedStoreDiskLow` refuses below
-20 GB free.
+project's runner is privileged with its own network namespace, its own `dind-data` and its own
+`docker0`; they share the host cgroup v1 hierarchy (each nested daemon creates groups under its own
+container's path), the `antiphon-custody` root (executions are unique ids), the conntrack table and
+the `bridge-nf-call-iptables` sysctl, which on this kernel may be global. The investigation did not
+start two. Mitigation: `deploy-temp-runner` runs `docker info` in both containers, a nested
+`docker run --rm busybox true` in the temp one, and records `bridge-nf.txt` from both; a
+`SiblingDaemonRefused` or a failed nested run stops the case before any drain (L-1). The temp's
+nested store starts empty (images re-pull on first use); `NestedStoreDiskLow` refuses below 20 GB.
 
-**Codex home refresh contention.** Both boots' Codex children share `/state/codex` (one host
-directory) and Codex rewrites `auth.json` by rename on refresh; readers never see a torn file,
-but two concurrent refreshes with refresh-token rotation can leave one process with a revoked
-token. This already exists across ten concurrent sessions in one container; the overlap adds
-processes, not a new class. Grok's `/state/grok/auth.json` has the same shape; Claude uses the
-setup token from the environment and refreshes nothing on disk. Mitigation: L-2 probes
-`provider-auth` for `claude`, `codex` and `grok` on both boot ids at promotion and again after at
-least 30 minutes of overlap and requires `loggedIn` unchanged; no code change in this card. If a
-sign-out is observed, the follow-up is a per-boot Codex home copy at slot start, which is a
-credential-custody change and its own card.
+**Codex and Grok login contention.** Both runners' children share the Codex host directory and,
+through the volume-subdirectory bind, server2's Grok store; both CLIs rewrite their credential
+files by rename on refresh, so a concurrent refresh with rotation can sign one process out. The
+operator accepted this (dad7cd6a). Mitigation: L-2 probes `provider-auth` for `claude`, `codex` and
+`grok` on both ids at the start of the overlap and again after at least 30 minutes and requires
+`loggedIn` unchanged; no code change. A sign-out observed is a follow-up card (a per-runner login
+copy is a credential-custody change).
 
-**Git lock contention on the shared `/work`.** D-16 covers the writers this card adds: the old
-boot removes mirrors while the new boot fetches and adds them. Concurrent `worktree add` for
-different branches touch different `.git/worktrees/<name>` entries and per-ref locks; the racy
-piece is `FETCH_HEAD`, replaced by the tracking ref, and the lock serialises the rest with a
-120 s bound. Mitigation and measurement: V-22 pins the lock; L-3 greps both containers' runner
-logs during the overlap window for `index.lock`, `packed-refs.lock`, `Mirror fetch failed` and
-`antiphon-mirror.lock` timeouts (expected zero hits) and diffs `git worktree list` before and
-after. A lock timeout is a typed refusal that leaves the task Queued with the existing
-`RemotePrepBackoff` hold, never a half-made mirror.
+**The Grok store bind depends on the volume's mountpoint.** Docker performs the bind as root, so
+the compose user needs no access, but the path is resolved at deploy time from `docker volume
+inspect`, never hard-coded, and the case refuses `GrokStoreUnresolved` when the volume or its
+`grok/` directory is absent. If server2's `runner-state` volume is ever recreated, the temp's bind
+follows the new mountpoint on the next deploy.
 
-**Broker lease loss.** The broker holds leases in memory; a broker restart (its own upgrade, or
-a crash) drops them and briefly admits up to a full budget of new builds beside the running ones.
-Bounded by the memory floor; documented; the broker tag is pinned separately so a rolling runner
-deploy never restarts it.
+**Git lock contention on a shared checkout.** Not present: each project has its own `work`
+volume and checkout (row 12). The cost is one more clone per temp deploy (`seed_runner_checkout`
+on an empty volume; minutes). Revision 1's mirror lock is dropped; L-3 keeps the overlap-window
+log grep (`index.lock`, `packed-refs.lock`, `Mirror fetch failed`) on both containers as a
+zero-hit proof that nothing else shares a git dir.
 
-**Legacy rows without a boot.** Sessions launched before R1 is active have a null boot and are
-attributed by D-3's rule. The first rolling deploy is the only time this matters; V-11 pins it.
+**Broker lease loss.** The broker holds leases in memory; its restart drops them and briefly
+admits a full budget of new builds beside the running ones. Bounded by the memory floor; the
+broker tag is pinned separately so a rolling runner deploy never restarts it.
 
-**A server restart during overlap.** Roles come back from `RunnerBoots` (D-2); the pump recovers
-each boot separately; the deploy wrapper polls status rather than assuming. V-9 pins it.
+**A queued task rebound under a mirror.** D-8 removes the old mirror through the draining runner
+before clearing `RemoteWorktreePath`; a removal that fails (the runner is gone) leaves an orphan
+worktree on that runner's `work` volume. For server2-temp the volume is deleted at retirement; for
+server2 the desktop `WorktreeResidueJob` inventory and the next `deploy-parent` seed leave it
+visible, and the rebind event names the old path. V-7 pins the removal call.
 
-**A desktop-only step in a server2-placed pipeline.** The live rows L-1..L-3 and the wrapper
-itself run from the desktop (the c590 bridge SSHes to server2). A server2-placed Code task reports
-them not run; the orchestrator dispatches them to a desktop task after R1 is active on the desktop
-server, or the new boot is refused `phone_home_boot_conflict` by the unchanged directory.
+**A server restart during a drain.** The state is a row (D-6) and is loaded before the pump marks
+anything recovered; Hangfire's job is recurring. V-4 pins the rebuilt-directory half; V-23 runs the
+whole flow in one process only, so the restart case is the row test plus the pump's existing
+recovery coverage.
+
+**The desktop-only step in a server2-placed pipeline.** The live rows and the wrapper run from the
+desktop (the c590 bridge SSHes to server2; the operator token is there). A server2-placed Code
+task reports them not run; the orchestrator dispatches them to a desktop task after R1 to R3 are
+active on the desktop server.
 
 ## Verification design
 
 ### Harness and red-first discipline
 
-- Desktop transport tests use `PhoneHomeTestHost` and `PhoneHomeScriptedPeer` (CARD-0679 D-11,
-  CARD-0716 `CloseObserved`). Two peers are `ConnectPeerAsync(bootId: bootA)` and
-  `ConnectPeerAsync(bootId: bootB)` on the host's single `StoreId`; the peer gains
-  `Retires` (frames of operation 26) and a `RunnerRetireResult` default reply.
-- DB-backed rolling tests use a `RollingWorld` copied from `PhoneHomeLaunchTransportTests.LaunchWorld`
-  (isolated schema, `BridgeQueueHarness` with the real `AgentProtocolAdapterFactory` and
-  `AgentTaskDispatcher` graph bound to `host.Directory`, `AgentKind.Raw`), seeding rows with
-  `RunnerBootId` where the test needs a pre-bound session. The retire job runs through its class
-  with a `FakeTimeProvider`, never through Hangfire.
+- Desktop transport tests use `PhoneHomeTestHost.StartAsync(configured: Pair(...))` with two
+  entries (`server2`, `server2-temp`; secrets may be equal, D-2, and one test uses distinct ones to
+  show nothing depends on equality) and `PhoneHomeScriptedPeer` through
+  `ConnectPeerAsync(runnerId:, storeId:, secret:)`. The peer gains `Retires` (frames of
+  operation 27) and a `RunnerRetireResult` default reply (S6).
+- DB-backed rolling tests use `RollingWorld` (S1): isolated schema, `BridgeQueueHarness` with the
+  real `AgentProtocolAdapterFactory` and `AgentTaskDispatcher` bound to `host.Directory`, the
+  runtime-defaults row written through `RunnerDefaultSettingsService`, `AgentKind.Raw`, a
+  `FakeTimeProvider`. The retire job runs through its class, never through Hangfire.
 - Operator routes use `PostOperatorAsync(path, body, token)` with the token from
-  `host.OperatorTokenPath` (CARD-0653/0716 shape).
+  `host.OperatorTokenPath` (CARD-0653/0716 shape); the 403 case posts with `proxied: true`.
 - Runner tests use `PhoneHomeCommandDispatcherTests`' fake runtime with a recording
   `IHostApplicationLifetime`; broker tests use `BuildSlotBrokerTests`' fake liveness, fake memory
   and `FakeTimeProvider`; the wrapper uses `BuildSlotScriptTests`' `C589_SLOT_SHIM` and
   `C589_COMMAND_SHIM` seams (the shim records renew calls with timestamps).
-- Contract tests read the compose file, the entrypoint and the scripts as text (existing classes).
-  Script fixtures follow the C495 pattern (temp root, seams file, `trace.jsonl`, sentinel token);
-  nothing contacts 172xx, Docker or server2 except the L rows.
-- Red first: each `Sn-tests` commit compiles (schema, DTO members, interface members with
-  default bodies and stub classes throwing `NotImplementedException` are allowed in the red
-  commit; behaviour is not), fails at the assertion the roster names, and is followed by the
-  green row on the same filter. No wall-clock wait in a test above 3 s. No timeout widened, no
-  assertion loosened; a failure not explained by the slice is re-run alone at the base commit and
-  reported as inherited or owned.
+- Contract tests read the compose files, the entrypoint and the scripts as text (existing
+  classes). Script fixtures follow the C495 pattern (temp root, seams, `trace.jsonl`, sentinel
+  token); nothing contacts 172xx, Docker or server2 except the L rows.
+- Red first (R2, R3): each `Sn-tests` commit compiles (schema, DTO members, interface members
+  with default bodies and stub classes throwing `NotImplementedException` are allowed in the red
+  commit; behaviour is not), fails at the assertion the roster names, and is followed by the green
+  row on the same filter. R1's rows are green pins (D-3). No wall-clock wait in a test above 3 s.
+  No timeout widened, no assertion loosened; a failure not explained by the slice is re-run alone
+  at the base commit and reported as inherited or owned.
 
 ### Coverage roster and decisive assertions
 
 | ID | Class.Method | Assertion / red mechanism |
 |---|---|---|
-| V-1 | PhoneHomeConnectionTests.Second_boot_with_the_same_store_is_accepted_while_the_first_stays_live | Register A, connect; `RegisterAsync(bootId: B)` returns a ticket; after B connects, `peerA.Socket.State == Open` after 500 ms and `Directory.SnapshotBoots().Count == 2`. Today: the second register throws `phone_home_boot_conflict`. |
-| V-2 | PhoneHomeConnectionTests.Third_live_boot_and_a_retired_boot_are_refused_with_boot_conflict | With A and B live, `RegisterAsync(bootId: C)` fails 409 `phone_home_boot_conflict` whose message names A and B; a boot marked `Retired` through the registry is refused the same way; a different store id is still `phone_home_store_mismatch`. Today: fails at the B registration. |
-| V-3 | PhoneHomeConnectionTests.Same_boot_reconnect_supersedes_only_its_own_socket | A reconnects (same boot id): `peerA1.CloseObserved` completes, `peerB.Socket` stays open, `Status().Boots` still lists two boots with one epoch bump on A. Today: B refused. |
-| V-4 | PhoneHomeRollingBootTests.Launch_binds_the_session_to_the_accepting_boot_and_reaches_only_that_peer | peerB recovers first (Accepting), peerA second (Standby); a new runner-bound task is claimed; the row's `RunnerBootId == B`; `peerB.Launches.Count == 1`, `peerA.Launches.Count == 0`. Red after S1: the column stays null, so the boot assertion fails while the launch still reaches B. |
-| V-5 | PhoneHomeRollingBootTests.Input_to_a_session_bound_to_boot_A_reaches_peer_A_while_B_is_accepting | Row S_A stamped A; B accepting; `RoutingSessionRunnerClient.SendInputAsync(S_A, "x")` and the adapter's `SendInputAsync`: `peerA.Inputs.Count == 1`, `peerB.Inputs.Count == 0`. Red after S1: both reach B. |
-| V-6 | PhoneHomeRollingBootTests.Inventory_is_the_union_and_a_session_absent_from_the_accepting_boot_is_not_failed | peerA lists S_A Running, peerB lists nothing; `ScanAsync`; S_A stays `Running`; `GetInventoryAsync("grok-linux")` is `Available` with one session; with peerA `SilentFor(List)` it is `Unavailable`. Red after S1: S_A `Failed` "does not know this session". |
-| V-7 | PhoneHomeRollingBootTests.Capacity_counts_only_sessions_bound_to_the_accepting_boot | Capacity 1 on both peers, one Running row bound to A; a new task is claimed (no `RunnerAtCapacity` hold); a second new task is held. Red after S1: the first is held. |
-| V-8 | PhoneHomeRollingBootTests.Events_from_a_boot_apply_only_to_sessions_bound_to_it | peerB emits a transcript event for S_A (bound A): no transcript row written; peerA emits the same: written. Red after S1: both written (owner match ignores the boot). |
-| V-9 | PhoneHomeRollingBootTests.Roles_survive_a_directory_rebuild_from_the_registry | B Accepting, A Standby in the registry; a new `PhoneHomeRunnerDirectory` over the same registry; peers reconnect A first, then B; `Status().Boots` roles are still B Accepting and A Standby; `AcceptingBoot()` is B. Red: without the persisted role the rebuilt directory promotes the first recovered boot, A. |
-| V-10 | PhoneHomeConnectionTests.Status_names_every_boot_with_role_epoch_and_eligibility | Two boots: `Boots.Count == 2`, roles Accepting and Standby, each `Epoch` equals its peer's, top-level `ProcessBootId` is the accepting boot's. Today: `Boots` null. |
-| V-11 | PhoneHomeRollingBootTests.Legacy_rows_without_a_boot_route_to_the_boot_accepting_at_their_start | A row with `RunnerBootId == null` and `StartedAt` before B's `FirstSeenAt`; B accepting; `SendInputAsync` reaches peerA. Red after S1: reaches B. |
-| V-12 | PhoneHomeRollingBootTests.Promote_makes_the_named_boot_accepting_and_drains_the_other | A Accepting, B Standby; `POST .../boots/{B}/promote` with token: 200; registry rows B Accepting (`PromotedAt`), A Draining (`DrainedAt`); a new claim stamps B; a rebuilt directory over the registry keeps A Draining. Today: 404. |
-| V-13 | PhoneHomeRollingBootTests.A_draining_boot_still_serves_input_transcript_kill_and_release_for_its_sessions | After promote, `SendInput`, `GetTranscript`, `KillGeneration`, `ReleaseSlot` for S_A: `peerA.RequestCount(op) >= 1` for each and `peerB.RequestCount(op) == 0`. Red: `PromoteAsync` stub throws (S4-tests). |
-| V-14 | PhoneHomeRollingBootTests.A_launch_for_a_session_already_bound_to_a_draining_boot_still_goes_to_that_boot | Row stamped A before promote; promote B; the queued launch runs: `peerA.Launches.Count == 1`, no typed refusal, `peerB.Launches.Count == 0`. Red: goes to B. |
-| V-15 | PhoneHomeRollingBootTests.Promote_without_the_operator_token_is_forbidden_and_changes_no_role | 403 `operator_token_required`; roles unchanged. Today: 404. |
-| V-16 | PhoneHomeRollingBootTests.Only_a_draining_boot_live_means_no_accepting_boot | After promote, `peerB.Socket.Abort()`; a new claim is held `RunnerUnavailable`; A's role stays Draining; status top-level `dispatchEligible == false`; a third peer C then recovers and is auto-promoted. Red: `PromoteAsync` stub throws (S4-tests); once promote exists, R1's fallback would promote A. |
-| V-17 | BuildSlotBrokerTests.Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness | `HolderLiveness = renew`, fake liveness says dead; lease held after 10 s; reaped after `RenewGraceSeconds`; `Renew` inside the grace keeps it. Red: reaped at once by pid liveness. |
-| V-18 | BuildSlotBrokerTests.Renew_extends_a_held_lease_and_an_unknown_lease_answers_false | `Renew(id)` true and `LastRenewedAt` moves; unknown id false. Red: method stub. |
-| V-19 | BuildSlotEndpointTests.Post_renew_answers_204_for_a_held_lease_and_404_otherwise | Route contract. Today: 404 for both. |
-| V-20 | BuildSlotEndpointTests.Build_slots_only_host_serves_health_and_build_slots_and_nothing_else | Host with `SessionRunner:BuildSlotsOnly=true`: `/build-slots` 200, `/health` 200, `/sessions` 404, `/capabilities` 404, no `PhoneHomeConnectionService` in services. Red: `/sessions` 200. |
-| V-21 | BuildSlotScriptTests.Wrapper_renews_a_renew_mode_grant_while_the_command_runs | Shim grant `renewEverySeconds: 1`, command shim sleeps 3 s: shim log has >= 2 renew calls before the release; a pid-mode grant: 0 renew calls. Red: 0 renew calls. |
-| V-22 | RunnerWorkspaceServiceTests.Mirror_waits_for_the_repository_lock_and_reads_the_tracking_ref | Test holds `<repo>/.git/antiphon-mirror.lock` exclusively; `MirrorAsync` does not run git until the lock is released (fake git records start time); a stale `FETCH_HEAD` pointing at another sha does not fail verification. Red: git runs at once; the stale `FETCH_HEAD` refuses. |
-| V-23 | DockerStackContractTests.Server2_file_defines_two_runner_slots_a_broker_and_per_slot_nested_stores (replaces `Server2_file_defines_only_runner_and_state_init`) + Server2_slots_share_work_state_and_credential_homes_but_not_dind_or_tmp + Server2_broker_is_unprivileged_pinned_by_its_own_tag_and_reached_by_dns; slot-aware updates of `Only_the_server2_runner_is_privileged`, `Server2_runner_restarts_unless_stopped`, `Server2_runner_capacity_is_ten`, `Server2_services_name_their_images`, `Server2_compose_projects_claude_config_dir`, `Compose_never_lists_the_claude_token_under_environment`, `Server2_runner_has_nested_store_volume` | Block list is exactly `state-init, session-runner-a, session-runner-b, build-slots, antiphon-deploy-key, phone-home, work, runner-state, dind-data, dind-data-b`; each slot has its own `dind-data*` destination `/var/lib/docker`, no `/tmp` mount, `ANTIPHON_BUILD_SLOTS_URL: http://build-slots:8080/build-slots`, `profiles`; the broker has no `privileged`, `SessionRunner__BuildSlotsOnly: "true"`, image tag `${BUILD_SLOTS_SHA12`. Red: today's file. |
-| V-24 | DindRunnerContractTests.Server2_compose_reads_the_staged_phone_home_secret / Server2_healthcheck_covers_phone_home_secret_readability | Both slot blocks carry the staged secret path and the three-leg healthcheck. Red: only `session-runner` exists. |
-| V-25 | RemoteScriptContractTests.Rolling_cases_are_routed_and_have_stub_boundaries + Rolling_deploy_never_removes_orphans_and_keeps_both_slot_tags_and_the_broker_tag + Rolling_drain_updates_the_restart_policy_only_from_evidence | Roster has `'deploy-parent-rolling'` and `'rolling-drain-host'`; stub arms exist; `case_deploy_parent_rolling` contains no `--remove-orphans`, contains `--profile slot-`, `NestedStoreDiskLow`, `RunnerNotEligible`, `TargetSlotDraining`; keep-set includes `SLOT_A_SHA12`, `SLOT_B_SHA12`, `BUILD_SLOTS_SHA12`; `case_rolling_drain_host` reads `old-container.txt` and runs `docker update --restart=no`. Red: text absent. |
-| V-26 | scripts/test-deploy-server2.ps1 T-1..T-4 | T-1 happy path: trace order `deploy-parent-rolling`, `promote`, `rolling-drain-host`; T-2 promote 409 leaves no `rolling-drain-host` trace and exits 2; T-3 missing token file exits 2 before any case; T-4 the sentinel token never appears in output and the script is ASCII. Red: script missing. |
-| L-1 | `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling` (desktop main checkout, after R1 is active) | Evidence: `docker-info-a.txt`/`docker-info-b.txt` daemon names equal each container's hostname, `nested-run-b.txt` exit 0, `bridge-nf.txt` from both, `status-after-promote.json` with A Draining and B Accepting, `restart-policy-old.txt` = `no`. |
-| L-2 | `GET /api/session-runners/server2/provider-auth/{claude,codex,grok}?bootId=<A or B>` at promotion and >= 30 min later | Six `loggedIn` values unchanged between the two reads (evidence `provider-auth-overlap.json`). |
-| L-3 | overlap log grep on both containers + `git worktree list` diff | Zero hits for `index.lock`, `packed-refs.lock`, `Mirror fetch failed`, `antiphon-mirror.lock`; the worktree list differs only by mirrors the desktop created or retired in the window. |
-| V-27 | PhoneHomeCommandDispatcherTests.Retire_refuses_while_sessions_are_owned_unless_forced | `OwnedSessionCount = 1`: `Retire(force:false)` is 409 `phone_home_boot_busy` naming 1; `Retire(force:true)` calls `KillAllAsync` once and answers `RunnerRetireResult` with `KilledSessions == 1`. Today: `phone_home_unsupported_operation`. |
-| V-28 | PhoneHomeCommandDispatcherTests.Retire_reply_is_written_before_the_host_stops | Recording lifetime: `StopApplication` is called after the reply task completed and within 1 s. Today: never called. |
-| V-29 | RunnerBootRetireJobTests.Draining_boot_with_no_sessions_is_retired_after_the_idle_window | Fake clock; A draining, `Sessions` empty, no rows: run 1 stamps `IdleObservedAt`, sends nothing; advance `RetireIdleSeconds`; run 2: `peerA.Retires.Count == 1` with `force == false`, row `Retired` reason `idle`. Red: class stub. |
-| V-30 | RunnerBootRetireJobTests.Live_session_or_busy_answer_keeps_the_boot_draining | peerA lists S_A: no send; peerA lists nothing but replies `phone_home_boot_busy`: no `Retired`, `IdleObservedAt` cleared. |
-| V-31 | RunnerBootRetireJobTests.Standby_and_accepting_boots_are_never_retired | Two runs over idle Standby and Accepting rows: `Retires` empty, roles unchanged. |
-| V-32 | RunnerBootRetireJobTests.Disconnected_draining_boot_with_no_attributed_rows_is_marked_retired_without_a_send | peerA aborted, lease expired on the fake clock: row `Retired` reason `idle_disconnected`; a disconnected boot with an attributed Running row stays Draining. |
-| V-33 | PhoneHomeRollingBootTests.Forced_retire_requires_the_operator_token_and_the_boot_id_confirmation | 403 without token; 400 with a wrong `confirmBootId`; `peerA.Retires` empty in both. Today: 404. |
-| V-34 | PhoneHomeRollingBootTests.Forced_retire_fails_the_boot_sessions_with_the_reason_sends_a_forced_retire_and_writes_an_incident | S_A `Failed`, `FailureReason` contains the boot id and the reason, `TerminationSource == SystemRequest`; `peerA.Retires` has one frame with `force == true`; one `RunnerBootForceRetired` incident; row `Retired`. Today: 404. |
-| V-35 | PhoneHomeRollingBootTests.Forced_retire_of_the_accepting_boot_is_refused | 409 `phone_home_boot_accepting`; nothing sent. Today: 404. |
-| V-36 | PhoneHomeRollingBootTests.Status_lists_each_boot_with_its_remaining_sessions_and_retire_fields | A draining with one Running row: `Boots[A].Sessions == 1`, `RunnerSessions == 1`, `DrainedAt` set; after retire `RetiredAt` and `RetireReason` set; `GET .../slots` rows carry `bootId`. Red: fields absent. |
-| V-37 | PhoneHomeRollingBootTests.Rolling_upgrade_moves_new_launches_to_B_keeps_A_reachable_and_retires_A_when_idle | The brief's integration test, one method: peerA hosts S_A (Running row bound A); peerB connects and recovers; promote B; a new task launches on B only; input to S_A reaches peerA only; peerA emits S_A's exit and clears `Sessions`; advance the clock; two job runs; `peerA.Retires.Count == 1`; status: A Retired, B Accepting with one session. Red after R2: the retire step (job stub). |
-| V-38 | RunnerBootsScriptTests.Script_is_ascii_offers_the_three_verbs_and_sends_the_token_without_printing_it | Text contract on `scripts/runner-boots.ps1`. Red: file missing. |
+| V-1 | PhoneHomeConnectionTests.Unknown_runner_status_is_404_and_carries_no_live_runner_identity | Host with `server2` and `server2-temp` configured, `server2` connected and recovered: `GET /api/session-runners/server2-temp/status` is 200 `available:false, dispatchEligible:false` (configured, offline); `GET .../server2-other/status` is **404** and its JSON has no `runnerStoreId`, `processBootId` or `buildVersion`; `GET .../desktop/status` is 200 with both flags false; `GET .../server2/status` is `dispatchEligible:true` with its own store id. Green pin; Mutation PC-2 (Status returns the first slot) turns it red. |
+| V-2 | PhoneHomeRollingRunnerTests.Input_to_a_session_on_server2_reaches_server2_while_a_new_launch_goes_to_server2_temp | Peer A (`server2`) hosts row S_A (Running, bound `server2`); peer B (`server2-temp`) connected and recovered; runtime global default `server2-temp`; a new default-placed task is claimed: `peerB.Launches.Count == 1`, `peerA.Launches.Count == 0`, the row's `RunnerId == "server2-temp"` and `RunnerStoreId == storeB`; `RoutingSessionRunnerClient.SendInputAsync(S_A, "x")` and the adapter's `SendInputAsync`: `peerA.Inputs.Count == 2`, `peerB.Inputs.Count == 0`. Green pin; PC-1 (Route resolves the default runner) turns it red. |
+| V-3 | PhoneHomeRunnerSettingsValidatorTests.Two_entries_with_the_same_secret_and_host_root_validate | The D-2 configuration validates with zero failures; `KnownRunnerIds` lists both; a duplicate id (case-insensitive) fails. Green pin. |
+| V-4 | PhoneHomeRollingRunnerTests.Drain_requires_the_operator_token_persists_the_state_and_survives_a_directory_rebuild | `POST .../server2/drain` without token 403, no row; with token 200; `SessionRunnerStates` row has `Draining`, `DrainedAt`, `RedirectTo == "server2-temp"`; status shows `draining:true, acceptingNewWork:false, dispatchEligible:true`; a new `PhoneHomeRunnerDirectory` fed by `RunnerStateLoader` over the same schema reports `ResolveForNewWork("server2")` refused `phone_home_runner_draining`. Red after S3-tests: 404. |
+| V-5 | PhoneHomeRollingRunnerTests.A_draining_runner_still_serves_input_transcript_kill_and_release_for_its_sessions | After the drain: `SendInput`, `GetTranscript`, `KillGeneration`, `ReleaseSlot` for S_A: `peerA.RequestCount(op) >= 1` each and `peerB.RequestCount(op) == 0`; `GetInventoryAsync("server2")` is `Available`. Red: the S4-tests stub gate refuses `Resolve` too (the stub throws from both), so the first call fails. |
+| V-6 | PhoneHomeRollingRunnerTests.Default_placement_follows_the_drain_redirect_and_falls_back_without_one | Global default `server2`, drained with redirect `server2-temp` (eligible): create binds `server2-temp`, Created audit contains `reason=drain_redirect:server2`, no warning; drained without redirect: binds null (desktop) with `reason=runner_draining` and one warning; explicit `-Runner server2` create still binds `server2`. Red: binds `server2` / desktop with `runner_not_dispatch_eligible`. |
+| V-7 | PhoneHomeRollingRunnerTests.A_queued_task_bound_to_a_draining_runner_is_rebound_to_the_redirect_before_claim | Task Queued on `server2` with `RemoteWorktreePath` set; drain `server2` → `server2-temp`; one dispatch tick: `peerA.RequestCount(WorkspaceRemove) == 1`, task `RunnerId == "server2-temp"`, `RemoteWorktreePath` re-prepared and the launch reaches `peerB` only; a task event contains `drain_redirect from=server2 to=server2-temp`. Red: held `RunnerUnavailable` or launched on A. |
+| V-8 | PhoneHomeRollingRunnerTests.A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held | Drain without redirect: `Held: runner 'server2' is draining`; with redirect to an offline `server2-temp`: held naming the redirect; nothing launched, `RunnerId` unchanged. Red: launched on A. |
+| V-9 | PhoneHomeConnectionTests.Draining_changes_neither_dispatch_eligibility_nor_capacity | `DeclaredCapacity("server2")` unchanged; `Resolve("server2")` returns a client; `ResolveForNewWork("server2")` throws `phone_home_runner_draining`; catalogue row `acceptingNewWork:false, dispatchEligible:true, unavailableReason:"draining"`. Red: `ResolveForNewWork` default body resolves. |
+| V-10 | PhoneHomeRollingRunnerTests.Clear_drain_restores_new_work_and_resets_the_retire_fields | After `drain/clear`: row `Draining == false`, `RedirectTo == null`, `RetiredAt == null`; a new default-placed task binds `server2`; status `acceptingNewWork:true`. Red: 404. |
+| V-11 | PhoneHomeConnectionTests.A_retired_runner_id_cannot_register_until_its_drain_is_cleared | State row with `RetiredAt` for `server2-temp`: `RegisterAsync(runnerId: "server2-temp")` fails 409 `phone_home_runner_retired`; after `drain/clear` a ticket is issued. Red: ticket issued. |
+| V-12 | PhoneHomeStandingLaunchTests.Standing_agent_start_on_a_draining_runner_is_refused | The existing standing-launch harness with the runner drained: start is 409 `phone_home_runner_draining`, no Launch frame; after clear it launches. Red: launches. |
+| V-13 | PhoneHomeRollingRunnerTests.Status_reports_sessions_queued_tasks_and_runner_sessions_per_runner | One Running row bound `server2`, one Queued task bound `server2`, peer A listing one session: `server2` status `sessions == 1, queuedTasks == 1, runnerSessions == 1`; `server2-temp` status zeros; after a drain `drainedAt` and `drainReason` set. Red: fields absent (null). |
+| V-14 | PhoneHomeCommandDispatcherTests.Retire_refuses_while_sessions_are_owned_unless_forced | `OwnedSessionCount = 1`: `Retire(force:false)` is 409 `phone_home_runner_busy` naming 1; `Retire(force:true)` calls `KillAllAsync` once and answers `RunnerRetireResult` with `KilledSessions == 1`. Today: `phone_home_unsupported_operation`. |
+| V-15 | PhoneHomeCommandDispatcherTests.Retire_reply_is_written_before_the_host_stops | Recording lifetime: `StopApplication` is called after the reply task completed and within 1 s. Today: never called. |
+| V-16 | RunnerRetireJobTests.Draining_runner_with_retire_when_idle_is_retired_after_the_idle_window | Fake clock; `server2-temp` draining with `RetireWhenIdle`, no bound rows, peer B lists nothing: run 1 stamps `IdleObservedAt`, sends nothing; advance `RetireIdleSeconds`; run 2: `peerB.Retires.Count == 1` with `force == false`, row `RetiredAt` set, reason `idle`. Red: class stub. |
+| V-17 | RunnerRetireJobTests.Live_session_queued_task_or_busy_answer_keeps_the_runner_draining | Peer B lists S_B: no send; a Queued task bound: no send, log names it; peer B lists nothing but replies `phone_home_runner_busy`: `RetiredAt` null, `IdleObservedAt` cleared. |
+| V-18 | RunnerRetireJobTests.A_drain_without_retire_when_idle_is_never_retired | `server2` draining, `RetireWhenIdle == false`, idle for two windows: `Retires` empty, `RetiredAt` null. |
+| V-19 | RunnerRetireJobTests.Disconnected_draining_runner_with_no_bound_rows_is_marked_retired_without_a_send | Peer B aborted, lease expired on the fake clock: row `RetiredAt` with reason `idle_disconnected`; a disconnected runner with a bound Running row stays draining. |
+| V-20 | PhoneHomeRollingRunnerTests.Forced_retire_requires_the_operator_token_and_the_runner_id_confirmation | 403 without token; 400 with a wrong `confirmRunnerId`; 409 `phone_home_runner_not_draining` when not draining; `Retires` empty in all three. Today: 404. |
+| V-21 | PhoneHomeRollingRunnerTests.Forced_retire_fails_bound_sessions_writes_an_incident_and_sends_a_forced_retire | S_B `Failed`, `FailureReason` contains the runner id and the reason, `TerminationSource == SystemRequest`; `peerB.Retires` has one frame with `force == true`; one `RunnerForceRetired` incident; row `RetiredAt` with `forced:` prefix. Today: 404. |
+| V-22 | PhoneHomeRollingRunnerTests.Forced_retire_of_a_runner_that_is_not_draining_is_refused | 409 `phone_home_runner_not_draining`; nothing sent; no row change. Today: 404. |
+| V-23 | PhoneHomeRollingRunnerTests.Rolling_upgrade_moves_new_launches_to_server2_temp_keeps_server2_reachable_and_retires_server2_temp_when_idle | The brief's two-peer integration test, one method: peer A (`server2`) hosts S_A; peer B (`server2-temp`) connects and recovers; drain `server2` → `server2-temp` (`retireWhenIdle:false`); a new task launches on B only (`RunnerId == "server2-temp"`); input to S_A reaches A only; peer A emits S_A's exit; clear `server2`'s drain and a further new task launches on A; drain `server2-temp` → `server2` (`retireWhenIdle:true`); peer B emits S_B's exit and clears `Sessions`; advance the clock; two job runs; `peerB.Retires.Count == 1`; status: `server2-temp` `retiredAt` set, `server2` `acceptingNewWork:true`; `RegisterAsync(runnerId: "server2-temp")` is 409 until `drain/clear`. Red after R2: the retire step (job stub). |
+| V-24 | BuildSlotBrokerTests.Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness | `HolderLiveness = renew`, fake liveness says dead; lease held after 10 s; reaped after `RenewGraceSeconds`; `Renew` inside the grace keeps it. Red: reaped at once by pid liveness. |
+| V-25 | BuildSlotBrokerTests.Renew_extends_a_held_lease_and_an_unknown_lease_answers_false | `Renew(id)` true and `LastRenewedAt` moves; unknown id false. Red: method stub. |
+| V-26 | BuildSlotEndpointTests.Post_renew_answers_204_for_a_held_lease_and_404_otherwise | Route contract. Today: 404 for both. |
+| V-27 | BuildSlotEndpointTests.Build_slots_only_host_serves_health_and_build_slots_and_nothing_else | Host with `SessionRunner:BuildSlotsOnly=true`: `/build-slots` 200, `/health` 200, `/sessions` 404, `/capabilities` 404, no `PhoneHomeConnectionService` in services. Red: `/sessions` 200. |
+| V-28 | BuildSlotScriptTests.Wrapper_renews_a_renew_mode_grant_while_the_command_runs | Shim grant `renewEverySeconds: 1`, command shim sleeps 3 s: shim log has >= 2 renew calls before the release; a pid-mode grant: 0 renew calls. Red: 0 renew calls. |
+| V-29 | DockerStackContractTests.Server2_file_defines_runner_state_init_and_broker (replaces `Server2_file_defines_only_runner_and_state_init`) + Temp_override_changes_only_runner_id_restart_broker_url_network_and_grok_store + Server2_broker_is_unprivileged_pinned_by_its_own_tag_and_on_the_external_network; slot-aware updates of `Only_the_server2_runner_is_privileged`, `Server2_services_name_their_images`, `Compose_never_lists_the_claude_token_under_environment` | Base block list is exactly `state-init, session-runner, build-slots, antiphon-deploy-key, phone-home, work, runner-state, dind-data` plus the `networks` block; the override file defines only `session-runner` with `PhoneHome__RunnerId: server2-temp`, `restart: "no"`, `ANTIPHON_BUILD_SLOTS_URL`, the network and `${RUNNER_GROK_STORE_DIR:?}:/state/grok`, and no `runner-state`/`dind-data`/`work` mount changes; the broker has no `privileged`, `SessionRunner__BuildSlotsOnly: "true"`, image tag `${BUILD_SLOTS_SHA12`, `restart: unless-stopped`. Red: today's files. |
+| V-30 | DindRunnerContractTests.Server2_compose_reads_the_staged_phone_home_secret / Server2_healthcheck_covers_phone_home_secret_readability | The base file still carries them and the override does not override `healthcheck` or `PhoneHome__SecretPath`. Red: override text. |
+| V-31 | RemoteScriptContractTests.Rolling_cases_are_routed_and_have_stub_boundaries + Temp_deploy_never_removes_orphans_and_resolves_the_grok_store_from_the_volume + Deploy_parent_keeps_the_temp_and_broker_tags + Retire_temp_runner_requires_the_retired_evidence | Roster has `'deploy-temp-runner'` and `'retire-temp-runner'`; stub arms exist; `case_deploy_temp_runner` contains `-p antiphon-runner-temp`, `docker volume inspect`, `NestedStoreDiskLow`, `GrokStoreUnresolved`, no `--remove-orphans`; keep set includes `BUILD_SLOTS_SHA12` and the temp env's sha; `case_retire_temp_runner` refuses `TempRunnerNotRetired` and runs `down -v` only for `antiphon-runner-temp`. Red: text absent. |
+| V-32 | scripts/test-deploy-server2.ps1 T-1..T-6 | T-1 happy path: trace order `deploy-temp-runner`, `drain server2`, `deploy-parent`, `clear server2`, `drain server2-temp`, `retire-temp-runner`; T-2 a 404 temp status is `TempRunnerNotEligible` exit 2 with no drain posted; T-3 old runner still busy at the bound exits 2 with the drain left in place and no `deploy-parent`; T-4 `-Phase drain-temp` re-run after a kill posts nothing when status already says draining and waits for `retiredAt`; T-5 missing token file exits 2 before any case; T-6 the sentinel token never appears in output and the script is ASCII. Red: script missing. |
+| V-33 | RunnerDrainScriptTests.Script_is_ascii_offers_the_four_verbs_and_sends_the_token_without_printing_it | Text contract on `scripts/runner-drain.ps1` (`status|drain|clear|retire`, `X-Antiphon-Operator-Token`, no `Write-Host` of the token, 404 reported as not eligible). Red: file missing. |
+| L-1 | `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase deploy-temp` (desktop main checkout) | Evidence: `docker-info-old.txt`/`docker-info-temp.txt` daemon names equal each container's hostname, `nested-run-temp.txt` exit 0, `bridge-nf.txt` from both, `GET /api/session-runners` showing both ids eligible, `status-temp.json` with `acceptingNewWork:true` and the new `buildVersion`. Then the operator's step 2 (`delegate.ps1 -Runner server2-temp -Worktree ...`) settles one real task there. |
+| L-2 | `GET /api/session-runners/{server2,server2-temp}/provider-auth/{claude,codex,grok}` at L-1 and >= 30 min later | Six `loggedIn` values unchanged (evidence `provider-auth-overlap.json`). |
+| L-3 | `-Phase drain-old` through `retire-temp` on the same run, plus the overlap log grep | `status-old-idle.json` (`sessions == 0`), `deploy-parent` evidence at the new sha, `status-old-after-clear.json` `acceptingNewWork:true`, `status-temp-retired.json` with `retiredAt`, `temp-down.txt`; zero hits for `index.lock`, `packed-refs.lock`, `Mirror fetch failed` on either container during the window. |
 
-Regression classes executed in the green rows, counts at `598a522f`: `PhoneHomeConnectionTests`
-23, `PhoneHomeDirectoryTests` 7, `PhoneHomeReconciliationTests` 4, `PhoneHomeSessionRoutingTests`
-5, `PhoneHomeLaunchTransportTests` 7, `PhoneHomeEpochAgreementTests` 2, `PhoneHomeEventPumpTests`
-8, `PhoneHomeRecoveryEligibilityTests` 3, `PhoneHomePendingInventoryTests` 8,
-`RunnerSlotEndpointTests` 8, `SessionReconciliationServiceTests` 57 methods (14 argument-expanded),
-`DispatcherRemotePrepStarvationTests` 1 method (4 results), `DefaultRunnerCreateTests` 7,
-`DefaultRunnerEligibilityTests` 3, `OperatorShutdownEndpointTests` 3, `DockerStackContractTests`
-108, `DindRunnerContractTests` 22, `RemoteScriptContractTests` 25, `DockerStackDocumentationTests`
-10, `BuildSlotBrokerTests` 11, `BuildSlotEndpointTests` 2, `BuildSlotScriptTests` 7,
-`PhoneHomeCommandDispatcherTests` 34, `PhoneHomeConnectionServiceTests` 10,
-`RunnerWorkspaceServiceTests` 14. Code reads the fresh TRX if a class has grown by then.
+Regression classes executed in the green rows, counts at the 0710 tip (`[Test]` attributes;
+Code reads the fresh TRX if a class has grown): `PhoneHomeConnectionTests` 19 (23 on master by
+the same count; the tip reformatted attributes), `PhoneHomeDirectoryTests` 7,
+`MultiRunnerDirectoryTests` 7, `MultiRunnerRecoveryTests` 7, `MultiRunnerProjectionTests` 4,
+`RunnerCatalogueTests` 4, `PhoneHomeSessionRoutingTests` 5, `PhoneHomeLaunchTransportTests` 7,
+`PhoneHomeEpochAgreementTests` 2, `PhoneHomeEventPumpTests` 8, `PhoneHomeRecoveryEligibilityTests`
+3, `PhoneHomePendingInventoryTests` 8, `PhoneHomeReconciliationTests` 4,
+`SessionReconciliationServiceTests` 57 methods (argument-expanded), `DispatcherRemotePrepStarvationTests`
+1 method (4 results), `RunnerSlotEndpointTests` 8, `OperatorShutdownEndpointTests` 3,
+`DefaultRunnerCreateTests` 7, `DefaultRunnerEligibilityTests` 3, `DefaultRunnerPinTests` 6,
+`DefaultRunnerRerouteTests` 6, `RunnerDefaultTests` 23, `TaskPlatformDispatchTests` 6,
+`TaskPlatformPlacementTests` 8, `PhoneHomeStandingLaunchTests` (count from the TRX),
+`PhoneHomeRunnerSettingsValidatorTests` 6, `DockerStackContractTests` 108, `DindRunnerContractTests`
+22, `RemoteScriptContractTests` 25, `DockerStackDocumentationTests` 10, `BuildSlotBrokerTests` 11,
+`BuildSlotEndpointTests` 4, `BuildSlotScriptTests` 7, `PhoneHomeCommandDispatcherTests` 34,
+`PhoneHomeConnectionServiceTests` 10.
 
 ### Execution and evidence
 
@@ -560,11 +576,11 @@ assembly. Source is frozen during a run.
 
 ### Cost
 
-R1: three slices, about 6.5 hours of authoring; R2: five slices, about 9.5 hours plus the live
-rows; R3: three slices, about 5.5 hours. Ordinary checkpoint floors from the tables: R1 **27**
-minutes, R2 **43** minutes (plus L-1..L-3, about 60 minutes of wall clock dominated by the
-30-minute overlap wait), R3 **24** minutes. Suggested `-ExpectAbout`: R1 450 minutes, R2 650
-minutes, R3 400 minutes.
+R1: two slices, about 3 hours of authoring (after CARD-0710 lands); R2: three slices, about 7.5
+hours; R3: five slices, about 12 hours plus the live rows. Ordinary checkpoint floors from the
+tables: R1 **11** minutes, R2 **30** minutes, R3 **53** minutes (plus L-1..L-3, about 60 minutes of
+desktop wall clock dominated by the 30-minute overlap wait and however long the old runner's last
+task takes). Suggested `-ExpectAbout`: R1 200 minutes, R2 480 minutes, R3 760 minutes.
 
 ### Checkpoints
 
@@ -577,50 +593,48 @@ only. Red rows require the named assertion failures, not any failure.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-tests | `tests/Antiphon.Tests -> bin-c727-r1/` | boots-red | `/*/*/PhoneHomeConnectionTests*/*` | V-1, V-2, V-3, V-10 | 4 new + 23 existing executed; V-1, V-2, V-3, V-10 fail at their register/socket/status assertions | 27 | 4 |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c727-r1/` | boots-green | `/*/*/PhoneHomeConnectionTests*/*` | V-1, V-2, V-3, V-10; connection regressions | all listed, 0 failed/skipped | 27 | 4 |
-| CP-3 | S2-tests | `tests/Antiphon.Tests -> bin-c727-r1/` | routing-red | `/*/*/(PhoneHomeRollingBootTests*)\|(PhoneHomeDirectoryTests*)/*` | V-4 to V-9, V-11 | 7 new + 7 existing executed; the 7 new fail at their boot/peer/inventory/capacity/role assertions | 14 | 5 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c727-r1/` | routing-green | `/*/*/(PhoneHomeRollingBootTests*)\|(PhoneHomeDirectoryTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeLaunchTransportTests*)\|(PhoneHomeEventPumpTests*)\|(PhoneHomeRecoveryEligibilityTests*)\|(PhoneHomePendingInventoryTests*)\|(PhoneHomeEpochAgreementTests*)/*` | V-4 to V-9, V-11; phone-home routing, launch, pump and inventory regressions | all listed classes, 0 failed; 7 new methods, 0 skipped | 47 | 6 |
-| CP-5 | S2 | CP-4 | reconcile-capacity-green | `/*/*/(PhoneHomeReconciliationTests*)\|(SessionReconciliationServiceTests*)\|(DispatcherRemotePrepStarvationTests*)\|(RunnerSlotEndpointTests*)\|(DefaultRunnerCreateTests*)\|(DefaultRunnerEligibilityTests*)/*` | D-7, D-8 regressions | all listed classes, 0 failed (57 reconciliation methods expand to more results) | 83 | 6 |
-| CP-6 | S2 | n/a | migration-clean | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c727-ef -- dotnet ef migrations has-pending-model-changes --project server` | D-2, D-3 | exit 0, "No changes have been made to the model" | n/a | 2 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c727-r1/` | pins-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(MultiRunnerProjectionTests*)\|(RunnerCatalogueTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeLaunchTransportTests*)/*` | V-1, V-2; multi-runner, routing and launch regressions | all listed classes, 0 failed; 2 new methods, 0 skipped | 55 | 6 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c727-r1/` | config-docs-green | `/*/*/(PhoneHomeRunnerSettingsValidatorTests*)\|(DockerStackDocumentationTests*)/*` | V-3; docs contract | all listed, 0 failed/skipped; 1 new method | 17 | 5 |
 
-R1 floor = 4 + 4 + 5 + 6 + 6 + 2 = **27** minutes.
+R1 floor = 6 + 5 = **11** minutes.
 
 #### R2 checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-7 | S4-tests | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-red | `/*/*/PhoneHomeRollingBootTests*/*` | V-12 to V-16 | 5 new + 7 existing executed; V-12 to V-16 fail at their route/role/peer assertions | 12 | 5 |
-| CP-8 | S4 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-green | `/*/*/(PhoneHomeRollingBootTests*)\|(RunnerSlotEndpointTests*)\|(OperatorShutdownEndpointTests*)\|(PhoneHomeConnectionTests*)/*` | V-12 to V-16; operator-route and connection regressions | all listed, 0 failed/skipped | 50 | 6 |
-| CP-9 | S5-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r2s/` | broker-red | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)/*` | V-17 to V-20 | 4 new + 13 existing executed; V-17 to V-20 fail at their reap/renew/route/mode assertions | 17 | 4 |
-| CP-10 | S5 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r2s/` | broker-green | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(BuildSlotSettingsTests*)/*` | V-17 to V-20; broker regressions | all listed, 0 failed/skipped | 17 | 4 |
-| CP-11 | S5-tests | CP-7 | wrapper-red | `/*/*/BuildSlotScriptTests*/*` | V-21 | 1 new + 7 existing executed; V-21 fails at the renew count | 8 | 3 |
-| CP-12 | S5 | `tests/Antiphon.Tests -> bin-c727-r2/` | wrapper-green | `/*/*/BuildSlotScriptTests*/*` | V-21; wrapper regressions | all listed, 0 failed/skipped | 8 | 3 |
-| CP-13 | S6-tests | CP-10 | mirror-lock-red | `/*/*/RunnerWorkspaceServiceTests*/*` | V-22 | 1 new + 14 existing executed; V-22 fails at the lock-wait assertion | 15 | 3 |
-| CP-14 | S6 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r2s/` | mirror-lock-green | `/*/*/RunnerWorkspaceServiceTests*/*` | V-22; mirror regressions | all listed, 0 failed/skipped | 15 | 3 |
-| CP-15 | S7-tests | CP-12 | compose-red | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)/*` | V-23 to V-25 | new and updated methods fail at their text assertions; unrelated methods pass | 160 | 4 |
-| CP-16 | S7 | `tests/Antiphon.Tests -> bin-c727-r2/` | compose-green | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(DockerStackDocumentationTests*)/*` | V-23 to V-25; compose, entrypoint, script and docs contracts | all listed, 0 failed/skipped | 170 | 5 |
-| CP-17 | S7-tests | n/a | wrapper-script-red | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1` | V-26 | exit 1: the script under test is missing (T-1 to T-4 FAIL) | n/a | 1 |
-| CP-18 | S7 | n/a | wrapper-script-green | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1` | V-26 | 4 cases, every `PASS`, exit 0 | n/a | 2 |
-| CP-19 | R1 active on the desktop + S7 landed | n/a | live-rolling | `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling` (desktop main checkout) | L-1 | exit 0; evidence files as L-1 names; status A Draining, B Accepting | n/a | 20 |
-| CP-20 | CP-19 | n/a | live-auth-overlap | the six `provider-auth` reads at promotion and >= 30 min later | L-2 | `loggedIn` unchanged for claude, codex, grok on both boots | n/a | 35 |
-| CP-21 | CP-20 | n/a | live-git-window | log grep and `git worktree list` diff over the overlap window | L-3 | zero lock hits; worktree diff explained by desktop activity | n/a | 5 |
+| CP-3 | S3-tests, S4-tests | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-red | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)/*` | V-4 to V-13 | 10 new + existing executed; the 10 new fail at their route/gate/rebind/status assertions | 31 | 6 |
+| CP-4 | S3, S4 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)\|(RunnerSlotEndpointTests*)\|(OperatorShutdownEndpointTests*)\|(RunnerCatalogueTests*)/*` | V-4 to V-13; operator-route, catalogue and connection regressions | all listed, 0 failed/skipped | 46 | 6 |
+| CP-5 | S4 | CP-4 | placement-green | `/*/*/(DefaultRunnerCreateTests*)\|(DefaultRunnerEligibilityTests*)\|(DefaultRunnerPinTests*)\|(DefaultRunnerRerouteTests*)\|(RunnerDefaultTests*)\|(TaskPlatformDispatchTests*)\|(TaskPlatformPlacementTests*)\|(DispatcherRemotePrepStarvationTests*)/*` | D-7, D-8 regressions on placement and dispatch | all listed classes, 0 failed (the starvation method expands to 4 results) | 63 | 7 |
+| CP-6 | S4 | CP-4 | reconcile-green | `/*/*/(PhoneHomeReconciliationTests*)\|(SessionReconciliationServiceTests*)\|(PhoneHomePendingInventoryTests*)\|(PhoneHomeRecoveryEligibilityTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeEventPumpTests*)/*` | D-7 regressions on inventory and recovery | all listed classes, 0 failed (57 reconciliation methods expand to more results) | 87 | 6 |
+| CP-7 | S3 | n/a | migration-clean | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c727-ef -- dotnet ef migrations has-pending-model-changes --project server` | D-6 | exit 0, "No changes have been made to the model" | n/a | 2 |
+| CP-8 | S5 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-script-green | `/*/*/RunnerDrainScriptTests*/*` | V-33 (three verbs) | 1 executed, 0 failed | 1 | 3 |
 
-R2 ordinary floor = 5 + 6 + 4 + 4 + 3 + 3 + 3 + 3 + 4 + 5 + 1 + 2 = **43** minutes; the live rows
-add about 60 minutes on the desktop lane and are reported not run by a server2-placed task.
+R2 floor = 6 + 6 + 7 + 6 + 2 + 3 = **30** minutes.
 
 #### R3 checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-22 | S9-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-red | `/*/*/PhoneHomeCommandDispatcherTests*/*` | V-27, V-28 | 2 new + 34 existing executed; V-27, V-28 fail at the unsupported-operation answer | 36 | 4 |
-| CP-23 | S9 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-27, V-28; dispatcher and connection regressions | all listed, 0 failed/skipped | 46 | 5 |
-| CP-24 | S10-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-red | `/*/*/(RunnerBootRetireJobTests*)\|(PhoneHomeRollingBootTests*)/*` | V-29 to V-37 | 9 new + 12 existing executed; the 9 new fail at their send/role/route/status assertions | 21 | 5 |
-| CP-25 | S10 | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-green | `/*/*/(RunnerBootRetireJobTests*)\|(PhoneHomeRollingBootTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeDirectoryTests*)/*` | V-29 to V-37; slot, connection and directory regressions | all listed, 0 failed; 9 new methods, 0 skipped | 63 | 6 |
-| CP-26 | S11-tests | CP-24 | boots-script-red | `/*/*/RunnerBootsScriptTests*/*` | V-38 | 1 executed; fails because the script is missing | 1 | 1 |
-| CP-27 | S11 | `tests/Antiphon.Tests -> bin-c727-r3/` | boots-script-green | `/*/*/(RunnerBootsScriptTests*)\|(DockerStackDocumentationTests*)/*` | V-38; docs contracts | all listed, 0 failed/skipped | 11 | 3 |
+| CP-9 | S6-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-red | `/*/*/PhoneHomeCommandDispatcherTests*/*` | V-14, V-15 | 2 new + 34 existing executed; V-14, V-15 fail at the unsupported-operation answer | 36 | 4 |
+| CP-10 | S6 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-14, V-15; dispatcher and connection regressions | all listed, 0 failed/skipped | 46 | 5 |
+| CP-11 | S7-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-red | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)/*` | V-16 to V-23 | 8 new + existing executed; the 8 new fail at their send/row/route/status assertions | 16 | 5 |
+| CP-12 | S7 | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-green | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)/*` | V-16 to V-23; slot, connection and directory regressions | all listed, 0 failed; 8 new methods, 0 skipped | 53 | 6 |
+| CP-13 | S8-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | broker-red | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)/*` | V-24 to V-27 | 4 new + 15 existing executed; V-24 to V-27 fail at their reap/renew/route/mode assertions | 19 | 5 |
+| CP-14 | S8 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | broker-green | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(BuildSlotSettingsTests*)/*` | V-24 to V-27; broker regressions | all listed, 0 failed/skipped | 19 | 4 |
+| CP-15 | S8-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | wrapper-red | `/*/*/BuildSlotScriptTests*/*` | V-28 | 1 new + 7 existing executed; V-28 fails at the renew count | 8 | 4 |
+| CP-16 | S8 | `tests/Antiphon.Tests -> bin-c727-r3/` | wrapper-green | `/*/*/BuildSlotScriptTests*/*` | V-28; wrapper regressions | all listed, 0 failed/skipped | 8 | 3 |
+| CP-17 | S9-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-red | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)/*` | V-29 to V-31, V-33 | new and updated methods fail at their text assertions; unrelated methods pass | 162 | 5 |
+| CP-18 | S9 | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-green | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)\|(DockerStackDocumentationTests*)/*` | V-29 to V-31, V-33; compose, entrypoint, script and docs contracts | all listed, 0 failed/skipped | 172 | 5 |
+| CP-19 | S9-tests | n/a | deploy-script-red | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1` | V-32 | exit 1: the script under test is missing (T-1 to T-6 FAIL) | n/a | 1 |
+| CP-20 | S9 | n/a | deploy-script-green | `pwsh -NoProfile -File scripts/test-deploy-server2.ps1` | V-32 | 6 cases, every `PASS`, exit 0 | n/a | 2 |
+| CP-21 | S10 | `tests/Antiphon.Tests -> bin-c727-r3/` | docs-green | `/*/*/DockerStackDocumentationTests*/*` | D-20 | all listed, 0 failed/skipped | 10 | 4 |
+| CP-22 | R1 to R3 active on the desktop + S9 landed | n/a | live-deploy-temp | `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase deploy-temp` (desktop main checkout) | L-1 | exit 0; evidence files as L-1 names; one real `-Runner server2-temp` task settles | n/a | 25 |
+| CP-23 | CP-22 | n/a | live-auth-overlap | the six `provider-auth` reads at L-1 and >= 30 min later | L-2 | `loggedIn` unchanged for claude, codex, grok on both ids | n/a | 35 |
+| CP-24 | CP-23 | n/a | live-drain-redeploy-retire | `-Phase drain-old`, `redeploy-old`, `drain-temp`, `retire-temp` on the same run, plus the log grep | L-3 | exit 0 each; `retiredAt` set by the job; `temp-down.txt`; zero lock hits | n/a | 30 |
 
-R3 floor = 4 + 5 + 5 + 6 + 1 + 3 = **24** minutes.
+R3 ordinary floor = 4 + 5 + 5 + 6 + 5 + 4 + 4 + 3 + 5 + 5 + 1 + 2 + 4 = **53** minutes; the live
+rows add about 90 minutes on the desktop lane plus the old runner's drain time, and are reported
+not run by a server2-placed task.
 
 `Min` counts executed TUnit results from the class sizes above; the `Expect` tokens are the new
 method names of the row plus one token per regression class. A DB-backed row needs the test
@@ -637,8 +651,8 @@ scope, not part of R1 to R3:
   `AdoptOrphanedHostsAsync`, which moves the sessions instead of leaving them).
 - A local session binding that records which base URL owns the session (today local rows have a
   null `RunnerId` and one `SessionRunner:BaseUrl` client), and a `RoutingSessionRunnerClient`
-  that follows it; the D-2 registry extended to local boots so the same promote/drain/retire
-  verbs apply.
+  that follows it; the D-6 state row extended to local runners so the same drain/retire verbs
+  apply.
 - Warm-pool reuse must refuse a draining process (`AgentTaskReplyService.cs:2053-2061`,
   `AgentTaskDispatcher.cs:5991-5994` match `Agent.RunnerId` only).
 - 17204 stays the old process's port until it retires; then either the new process rebinds 17204
@@ -653,13 +667,20 @@ scope, not part of R1 to R3:
 
 ## Defaults stated for TestDesign and Code
 
-- D-6's `MaxLiveBoots` is 2; a third generation is refused rather than queued.
-- Promotion is explicit (D-5); the only automatic promotion is a `Standby` or newly recovered
-  boot when no live `Accepting` boot exists, and a `Draining` boot is never auto-promoted.
-- R1 ships `Standby` and `Accepting`; `Draining`, `PromoteAsync` and the promote route are R2.
-  R1's tests therefore order the peers (first recovered accepts) instead of promoting.
-- The custody root stays shared (D-12); the rolling case skips the residue probe.
-- The broker uses renewal, not pid liveness, only when configured so; the desktop broker and
-  wrapper behaviour is unchanged.
-- The first rolling deploy targets slot `b`; slot `a` inherits today's `dind-data` volume and
-  today's container is removed by the next deploy of slot `a` after its boot is `Retired`.
+- D-1: R1 is dispatched only from a master containing CARD-0710's `5f39210c`; the `Runners` map is
+  the mechanism, and no `AllowedRunnerIds` set is added.
+- D-2: `server2-temp` reuses server2's secret value and stays configured permanently.
+- D-3: R1 has no red commit; its rows are green pins whose red is proven by Mutation PC-1
+  (`RoutingSessionRunnerClient.Route` resolves the runtime default instead of the owner) and PC-2
+  (`Status` answers from the first slot for any id).
+- D-7: `Resolve` is untouched; `ResolveForNewWork` is the only new gate, used by the default
+  policy, the dispatcher's claim and remote-prep gates, and the standing-agent start.
+- D-8: a drain's redirect moves unlaunched tasks including explicit pins; a SourceLanding task is
+  never moved; a drain without an eligible redirect holds.
+- D-10: `dispatchEligible` keeps its meaning; `acceptingNewWork` is the new flag scripts wait on.
+- D-13: only a drain with `retireWhenIdle: true` is retired by Hangfire; server2 is redeployed by
+  the script, never retired.
+- D-15: the temp runner has `restart: "no"`; the base file keeps `unless-stopped`.
+- D-16: the broker uses renewal, not pid liveness, only when configured so; the desktop broker and
+  wrapper behaviour is unchanged; the old server2 container stays unleased until its redeploy.
+- Operation number: `Retire = 27`.
