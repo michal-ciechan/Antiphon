@@ -811,6 +811,7 @@ public sealed class AgentSessionRuntime
         public static PersistResult Empty { get; } = new(null, false, false, false);
         public IReadOnlyList<TranscriptEntry> CommittedRows { get; init; } = [];
         public bool NeedsReload { get; init; }
+        public DateTime? AcceptedGeneration { get; init; }
     }
 
     internal const string TranscriptStubPrefix = "[transcript text not persistable:";
@@ -854,7 +855,7 @@ public sealed class AgentSessionRuntime
     {
         if (lease is null) return;
         if (result.NeedsReload) await lease.ReconcileAsync(false, CancellationToken.None);
-        else await lease.PublishAsync(result.CommittedRows, CancellationToken.None);
+        else await lease.PublishAsync(result.CommittedRows, result.AcceptedGeneration, CancellationToken.None);
     }
 
     /// <summary>The synthetic append shares serialization, persistence and publication with runner ingestion.</summary>
@@ -894,7 +895,9 @@ public sealed class AgentSessionRuntime
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
-            if (!await db.AgentSessions.AnyAsync(s => s.Id == sessionId))
+            var session = await db.AgentSessions.Where(s => s.Id == sessionId)
+                .Select(s => new { s.StartedAt }).FirstOrDefaultAsync();
+            if (session is null)
                 return PersistResult.Empty;
 
             // Dedup by transcript line uuid, NOT by sequence: the runner tailer numbers entries per
@@ -985,7 +988,7 @@ public sealed class AgentSessionRuntime
             }
 
             if (pending.Count == 0)
-                return PersistResult.Empty;
+                return PersistResult.Empty with { AcceptedGeneration = session.StartedAt };
 
             try
             {
@@ -996,12 +999,13 @@ public sealed class AgentSessionRuntime
             catch (DbUpdateException batchFailure)
             {
                 db.ChangeTracker.Clear();
-                return await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure);
+                return (await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure))
+                    with { AcceptedGeneration = session.StartedAt };
             }
 
             _persistFailures.TryRemove(sessionId, out _);
             return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
-                with { CommittedRows = pending.Select(p => p.Row).ToArray() };
+                with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = session.StartedAt };
         }
         catch (Exception ex)
         {

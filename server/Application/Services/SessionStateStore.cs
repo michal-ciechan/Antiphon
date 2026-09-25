@@ -214,12 +214,12 @@ public sealed class SessionStateStore : IDisposable
         public SessionStateSnapshot Snapshot => entry.Fault is null && entry.State is not null
             ? entry.State : throw new InvalidOperationException("Session state is unavailable.");
 
-        public async Task PublishAsync(IReadOnlyList<TranscriptEntry> rows, CancellationToken ct)
+        public async Task PublishAsync(IReadOnlyList<TranscriptEntry> rows, DateTime? acceptedGeneration, CancellationToken ct)
         {
-            if (rows.Count == 0) return;
             try
             {
-                entry.State = Snapshot.Append(rows) with { Revision = Interlocked.Increment(ref owner._revision) };
+                var next = Snapshot.Append(rows) with { AcceptedGeneration = acceptedGeneration ?? Snapshot.AcceptedGeneration };
+                if (next != entry.State) entry.State = next with { Revision = Interlocked.Increment(ref owner._revision) };
             }
             catch
             {
