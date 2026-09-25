@@ -110,6 +110,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         {
             if (cut == "C14" && phase == LandPhase.PublicationConfirmed) await PauseAsync();
         };
+        if (cut == "C665-before-drop") h.Fixture.Git.BeforeUnregister = _ => PauseAsync();
+        if (cut == "C665-after-drop") h.Fixture.Git.AfterUnregister = _ => PauseAsync();
         h.Fixture.Git.AfterCommand = async (_, args, result) =>
         {
             if ((cut == "C03" && result.Succeeded && args[0] == "update-ref" && args.Any(a => a.EndsWith("/source", StringComparison.Ordinal)))

@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class AgentTaskLandPublicationTests
+public sealed partial class AgentTaskLandPublicationTests
 {
     [Test]
     [Arguments("non-ff-before-push")]
