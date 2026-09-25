@@ -891,6 +891,77 @@ public class PhoneHomeCommandDispatcherTests
         runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(2);
     }
 
+    // --- CARD-0679 R5 repair 2 (review 18f52a40): the fence outlives the runner's session record. ---
+
+    [Test]
+    public async Task Pre_ack_resend_after_the_slot_was_released_starts_no_second_process()
+    {
+        var runtime = new RecordingRuntime();
+        var dispatcher = Dispatcher(runtime, capacity: 1);
+        var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 25, 12, 0, 0, DateTimeKind.Utc));
+        var request = Request("grok", "/work") with { AcceptedStartedAt = generation };
+        (await dispatcher.DispatchAsync(Launch(request), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.MarkExited(request.SessionId, exitCode: 0, exitReason: "ProcessExited");
+        // The seat is released before the desktop's pre-ack re-send arrives: the runner no longer lists the session.
+        var released = await dispatcher.DispatchAsync(ReleaseSlot(request.SessionId), CancellationToken.None);
+        released.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{released.ErrorCode}: {released.ErrorDetail}");
+        runtime.List().ShouldBeEmpty();
+
+        var resend = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
+        var older = await dispatcher.DispatchAsync(
+            Launch(request with { AcceptedStartedAt = generation.AddTicks(-SessionGeneration.MicrosecondTicks) }),
+            CancellationToken.None);
+
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(1, "an accepted generation never starts twice");
+        resend.Kind.ShouldBe(PhoneHomeFrameKind.Error, "the re-send is refused, not started");
+        resend.StatusCode.ShouldBe(409);
+        // The wire value, pinned: the desktop matches on the code, never on detail text.
+        resend.ErrorCode.ShouldBe("phone_home_session_generation_already_accepted");
+        older.Kind.ShouldBe(PhoneHomeFrameKind.Error, "an older generation than the accepted one is refused too");
+        older.ErrorCode.ShouldBe("phone_home_session_generation_already_accepted");
+
+        // A resume under a newer generation is not blocked by the fence.
+        var next = await dispatcher.DispatchAsync(
+            Launch(request with { AcceptedStartedAt = SessionGeneration.Next(generation, generation) }), CancellationToken.None);
+        next.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{next.ErrorCode}: {next.ErrorDetail}");
+        runtime.Mutations.Count(mutation => mutation == "start").ShouldBe(2);
+    }
+
+    [Test]
+    public async Task Pre_ack_resend_after_a_runner_restart_starts_no_second_process()
+    {
+        var state = Path.Combine(Path.GetTempPath(), $"antiphon-launch-generations-{Guid.NewGuid():N}");
+        try
+        {
+            var generation = SessionGeneration.Normalize(new DateTime(2026, 9, 25, 12, 30, 0, DateTimeKind.Utc));
+            var request = Request("grok", "/work") with { AcceptedStartedAt = generation };
+            var before = new RecordingRuntime();
+            (await Dispatcher(before, capacity: 1, launchGenerationsPath: state)
+                .DispatchAsync(Launch(request), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            before.Mutations.Count(mutation => mutation == "start").ShouldBe(1);
+
+            // The runner restarts: a new process with an empty session table over the same state directory.
+            var after = new RecordingRuntime();
+            var restarted = Dispatcher(after, capacity: 1, launchGenerationsPath: state);
+            var resend = await restarted.DispatchAsync(Launch(request), CancellationToken.None);
+
+            after.Mutations.Count(mutation => mutation == "start").ShouldBe(0, "the generation accepted before the restart never starts again");
+            resend.Kind.ShouldBe(PhoneHomeFrameKind.Error, "the re-send is refused, not started");
+            resend.StatusCode.ShouldBe(409);
+            resend.ErrorCode.ShouldBe("phone_home_session_generation_already_accepted");
+
+            var next = await restarted.DispatchAsync(
+                Launch(request with { AcceptedStartedAt = SessionGeneration.Next(generation, generation) }), CancellationToken.None);
+            next.Kind.ShouldBe(PhoneHomeFrameKind.Result, $"{next.ErrorCode}: {next.ErrorDetail}");
+            after.Mutations.Count(mutation => mutation == "start").ShouldBe(1);
+        }
+        finally
+        {
+            if (Directory.Exists(state))
+                Directory.Delete(state, recursive: true);
+        }
+    }
+
     // --- CARD-0679 D-4: the mutation log line carries ids, exe basename and generations only. ---
 
     [Test]
@@ -999,8 +1070,10 @@ public class PhoneHomeCommandDispatcherTests
     private static PhoneHomeCommandDispatcher Dispatcher(
         IPhoneHomeRuntimeSurface runtime, int capacity = 8, IProviderAuthProbe? probe = null, bool claudeAuthProbeEnabled = true,
         bool grokAuthProbeEnabled = true, bool codexAuthProbeEnabled = true,
-        int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes, List<string>? logs = null) =>
-        new(runtime, new PhoneHomeSettings
+        int maxMessageUtf8Bytes = PhoneHomeProtocol.DefaultMaxMessageUtf8Bytes, List<string>? logs = null,
+        string? launchGenerationsPath = null)
+    {
+        var settings = new PhoneHomeSettings
         {
             Enabled = true,
             AllowedCwd = "/work",
@@ -1010,7 +1083,18 @@ public class PhoneHomeCommandDispatcherTests
             GrokAuthProbeEnabled = grokAuthProbeEnabled,
             CodexAuthProbeEnabled = codexAuthProbeEnabled,
             Limits = new PhoneHomeLimits(MaxMessageUtf8Bytes: maxMessageUtf8Bytes),
-        }, probe, logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
+        };
+        // Bound from configuration, the way the runner reads it (PhoneHome:LaunchGenerationsPath).
+        if (launchGenerationsPath is not null)
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?> { ["LaunchGenerationsPath"] = launchGenerationsPath })
+                .Build().Bind(settings);
+        return new(runtime, settings, probe, logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
+    }
+
+    private static PhoneHomeFrame ReleaseSlot(Guid sessionId) =>
+        new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ReleaseSlot,
+            JsonSerializer.SerializeToElement(new { sessionId, reason = "test-release" }, PhoneHomeFraming.Json));
 
     private static RunnerLaunchRequest Request(string exe, string cwd) =>
         new(Guid.NewGuid(), exe, [], new Dictionary<string, string>(), cwd, 80, 24);
@@ -1061,6 +1145,15 @@ public class PhoneHomeCommandDispatcherTests
         {
             _sessions[sessionId] = _sessions[sessionId] with { Status = "Exited", ExitCode = exitCode, ExitReason = exitReason };
             Owned--;
+        }
+
+        /// <summary>Like the real runtime (CARD-0653): an exited record is evicted and forgotten.</summary>
+        public Task<RunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct)
+        {
+            Mutations.Add("release");
+            return Task.FromResult(_sessions.TryRemove(sessionId, out var released)
+                ? released
+                : new RunnerSessionDto(sessionId, null, DateTime.UtcNow, "Exited", null, "Released", 0));
         }
         public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
         public RunnerSnapshotDto GetSnapshot(Guid sessionId) => new(sessionId, "", "", 0, DateTime.UtcNow);

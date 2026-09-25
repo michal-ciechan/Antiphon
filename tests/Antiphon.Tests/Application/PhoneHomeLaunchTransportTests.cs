@@ -185,7 +185,8 @@ public class PhoneHomeLaunchTransportTests
         session.FailureReason.ShouldContain(world.RunnerId);
         session.FailureReason.ShouldContain("exit code 3");
         session.FailureReason.ShouldContain(nameof(AgentExitReason.ProcessExited));
-        session.RestartFailureKind.ShouldNotBe(RestartFailureKind.Infrastructure, "a process that ran and exited is not a transport loss");
+        // R5 repair 2 (review 18f52a40): a process that ran and exited is a process failure, charged as one.
+        session.RestartFailureKind.ShouldBe(RestartFailureKind.LaunchOrProcessFailure, "a process that ran and exited before ready is a launch or process failure");
         session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
         peerB.Launches.Count.ShouldBe(1, "the lost Launch is re-sent once and never again");
         AcceptedStartedAtOf(peerB.Launches[0]).ShouldBe(AcceptedStartedAtOf(world.PeerA.Launches[0]));
