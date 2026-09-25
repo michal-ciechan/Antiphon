@@ -149,7 +149,8 @@ public sealed class AgentTaskLandBoundaryTests
             var op = (await h.OperationAsync())!;
             op.RemoteConfirmedAt.ShouldNotBeNull();
             op.CanonicalAdvanceReason.ShouldBe("canonical_advance_failed");
-            h.Fixture.Git.Trace.Count(a => a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef)).ShouldBe(1);
+            h.Fixture.Git.Trace.Count(a => a[0] == "update-ref" && a.Contains("--no-deref") && a.Contains(h.Fixture.TargetRef))
+                .ShouldBe(1, "the land's own CAS update-ref runs once and fails; the other is the fixture's rival write");
         }
         await h.Fixture.AssertRemoteSourceAsync();
     }
