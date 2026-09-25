@@ -1706,6 +1706,10 @@ public class AppDbContext : DbContext
             entity.Property(l => l.SourceRemoteSha).HasMaxLength(64);
             entity.Property(l => l.SourceRemoteFingerprint).HasMaxLength(64);
             entity.Property(l => l.SourceRemoteRef).HasMaxLength(400);
+            entity.Property(l => l.SourceLocalSha).HasMaxLength(64);
+            entity.Property(l => l.LocalTargetBeforeSha).HasMaxLength(64);
+            entity.Property(l => l.LandWorktreePath).HasMaxLength(1024);
+            entity.Property(l => l.CanonicalAdvanceReason).HasMaxLength(400);
         });
 
         modelBuilder.Entity<VerificationExecution>(entity =>
