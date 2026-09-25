@@ -22,6 +22,7 @@ public class ProjectService
     private readonly ProjectReadinessCache? _readinessCache;
     private readonly IEventBus? _eventBus;
     private readonly DelegationSettings _delegation;
+    private readonly SessionStateStore? _states;
 
     public ProjectService(
         AppDbContext db,
@@ -31,7 +32,8 @@ public class ProjectService
         ProjectReadinessCache? readinessCache = null,
         IEventBus? eventBus = null,
         CardTaskFileService? cardFiles = null,
-        IOptions<DelegationSettings>? delegation = null)
+        IOptions<DelegationSettings>? delegation = null,
+        SessionStateStore? states = null)
     {
         _db = db;
         _cardFiles = cardFiles;
@@ -41,6 +43,7 @@ public class ProjectService
         _readinessCache = readinessCache;
         _eventBus = eventBus;
         _delegation = delegation?.Value ?? new DelegationSettings();
+        _states = states;
     }
 
     public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken) =>
@@ -213,11 +216,12 @@ public class ProjectService
             .ToListAsync(cancellationToken);
 
         // One transaction: the cascade is a dozen separate statements, and a project half-deleted
-        // is worse than one not deleted at all.
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
-        await ProjectCascade.DeleteBoardsAsync(_db, boardIds, cancellationToken);
-        await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        // is worse than one not deleted at all. The session-state fence stays across that commit.
+        await SessionStateDeletion.RunAsync(_db, _states, boardIds, async ct =>
+        {
+            await ProjectCascade.DeleteBoardsAsync(_db, boardIds, ct);
+            await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(ct);
+        }, cancellationToken);
         _readinessCache?.Remove(id);
 
         _logger.LogInformation(

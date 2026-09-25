@@ -10,6 +10,10 @@
   and outside the state gate. Queue lock -> state gate is permitted; the inverse is forbidden.
   Ingestion and retention refuse ambient/shared transactions that would publish before commit.
   Retention holds the gate through deletion and reseed; session deletion yields Missing.
+  Board and project cascade deletion acquires those sessions' gates in id order, holds them
+  across the outer commit, and reseeds through the same mutation. A commit that does not land
+  leaves the cached snapshot untouched. A commit whose outcome is unknown reloads, so a landed
+  delete cannot stay Ready.
 
   The server fold keeps independent end-sequence/end-timestamp maxima and only post-end activity,
   using the exact SQL prefix rules without whitespace trimming. The runner's file-order classifier
