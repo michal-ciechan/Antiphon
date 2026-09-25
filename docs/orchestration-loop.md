@@ -504,6 +504,8 @@ check at **$0.12**.
 
 A Queued runner-bound task whose mirror is not recorded yet stays Queued. Its deduplicated `Held` detail is one of three texts: remote workspace preparation is in flight (the branch push and mirror were requested); preparation failed N times in a row and the next attempt is not before an instant (exponential backoff, base 30 seconds, cap 900 seconds, reset when the mirror is recorded); or the runner is not dispatch-eligible. Those traces are not a warning on every tick. A warning is written once per failed preparation attempt.
 
+A runner-bound task crosses the dispatcher's claim twice (CARD-0672). The first crossing cuts its desktop worktree and starts the preparer, under the repository mutation lease. The second, once the mirror is recorded, only claims the row and launches into the mirror, and takes **no** lease: a runner session never writes the desktop checkout, and only the leased settlement sync moves it (invariant I-A). Repair, SourceLanding and Interim claims keep the lease on every crossing. A queued task refused the lease registers as a lease waiter; a land about to acquire that repository's lease yields while any waiter is registered (hold `repository_lease_yielded_to_dispatch`), so the dispatcher's next tick takes the lease in the gap. Each land request yields for at most `Delegation:LandYieldToDispatchMaxSeconds` (default 90, 0 disables the yield), so N queued waiters cost the land queue about N × 5 seconds. `HeldAged` rows and the `DispatchHeld` item carry a per-class wait ledger (`leaseWait=`, `prepWait=`, `runnerWait=`, `capWait=`, `otherWait=`, `class=`; attention `holdClass`) so lease starvation and runner capacity read apart.
+
 Start a new project through `POST /api/projects/setup` (or `scripts/project.ps1 new -Dir ... -Orchestrator -Start`): it creates the project, board, and preset agent in one transaction and returns readiness. `POST /api/agents` remains for adding an agent to a project that already exists.
 
 Create and start an agent through `POST /api/agents` + `POST /api/agents/{id}/start` (or the UI).
@@ -767,7 +769,11 @@ process does not hold. `delegate.ps1 -Land` prints "Queued land" or "Requeued la
 202 `{ status: "queued" | "requeued" }`. A 409 means a land is running in this server now —
 wait for the outcome event; it never fires for a request no process holds. Three interrupted
 attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
-finish (server restarted); re-running" is informational.
+finish (server restarted); re-running" is informational. A land yields at admission, before it
+takes the repository mutation lease, while a queued dispatch waits for that lease (hold
+`repository_lease_yielded_to_dispatch`, CARD-0672); the sweep re-picks it within
+`Delegation:LandSweepSeconds`, and after `Delegation:LandYieldToDispatchMaxSeconds` (default 90)
+it proceeds with one `Warning` "yield budget exhausted". The yield is not a caller note.
 
 The in-process channel is one global single reader, not a queue per repository. A LandAged
 note for a request that is still waiting reports that snapshot. Position is one-based among
