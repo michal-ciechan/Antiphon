@@ -108,7 +108,7 @@ public class PhoneHomePendingInventoryTests
             else if (state == "unbound")
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
                     .SetProperty(s => s.RunnerId, (string?)null)
-                    .SetProperty(s => s.RunnerStoreId, (string?)null)
+                    .SetProperty(s => s.RunnerStoreId, (Guid?)null)
                     .SetProperty(s => s.RunnerCwd, (string?)null));
             else
                 await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, "unaccepted-runner"));
