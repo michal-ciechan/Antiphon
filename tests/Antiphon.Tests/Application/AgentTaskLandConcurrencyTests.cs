@@ -130,7 +130,7 @@ public sealed class AgentTaskLandConcurrencyTests
         if (mode != "AlreadyPresent") await h.AddSourceAsync();
         if (mode == "ResumePublication")
         {
-            h.Fault.Phase = LandPhase.LocalTargetAdvanced;
+            h.Fault.Phase = LandPhase.PushStarted; // CARD-0688: the resumable pre-publication phase
             h.Fault.AfterCommit = true;
             await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
         }
@@ -227,17 +227,41 @@ public sealed class AgentTaskLandConcurrencyTests
         await h.RunAsync();
         h.Verifier.Calls.ShouldBe(1);
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        op.RemoteConfirmedAt.ShouldBeNull();
-        op.Phase.ShouldBe(LandPhase.Refused, "invalid post-verification evidence must be rejected before committing Verified");
-        op.LastReason.ShouldBe(change switch
-        {
-            "source" => "source_changed", "source-dirty" or "source-staged" or "source-untracked" => "source_dirty",
-            "source-registration" => "registration_unavailable",
-            "source-switch" => "source_branch_mismatch", "target-switch" => "target_checkout_changed",
-            "target" => "target_changed", _ => "target_dirty_or_unknown",
-        });
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
-        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("remove"));
         await h.Fixture.AssertRemoteSourceAsync();
+        if (change == "source")
+        {
+            // I-2: a moved branch is still rejected before Verified is committed.
+            op.RemoteConfirmedAt.ShouldBeNull();
+            op.Phase.ShouldBe(LandPhase.Refused, "invalid post-verification evidence must be rejected before committing Verified");
+            op.LastReason.ShouldBe("source_changed");
+            h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("remove"));
+            return;
+        }
+        // CARD-0688: the verified commit lives in the land worktree, so task-worktree state is a cleanup concern
+        // (D-2, I-3..I-5) and target-checkout state is an activation residue after the push (D-4, I-11).
+        op.RemoteConfirmedAt.ShouldNotBeNull("neither the task worktree nor the target checkout gates publication any more");
+        if (change.StartsWith("source", StringComparison.Ordinal))
+        {
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            op.LastReason.ShouldBe(change switch
+            {
+                "source-registration" => "registration_locked",
+                "source-switch" => "source_branch_mismatch",
+                _ => "source_dirty",
+            });
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+            return;
+        }
+        if (change == "target-switch")
+        {
+            // The main checkout left master, so master is checked out nowhere and advances by update-ref.
+            op.CanonicalAdvanceReason.ShouldBeNull();
+            op.CanonicalAdvancedAt.ShouldNotBeNull();
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "refs/heads/master")).Trim().ShouldBe(op.VerifiedSourceSha);
+            return;
+        }
+        op.CanonicalAdvanceReason.ShouldBe(change == "target" ? "canonical_diverged" : "canonical_checkout_dirty");
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef));
     }
 }

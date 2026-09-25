@@ -1053,7 +1053,8 @@ public partial class DelegationWorktreeTests
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance,
-            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal),
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal,
+                gitSettings: Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot })),
             graph.Leases, graph.Git);
         return (land, worktrees);
     }

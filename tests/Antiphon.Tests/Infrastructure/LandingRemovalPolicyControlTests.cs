@@ -77,19 +77,42 @@ public sealed class LandingRemovalPolicyControlTests
     {
         using var f = new RemovalFixture();
         f.LocalChange = change;
-        f.Operation.TargetCheckoutRecorded = true;
-        f.Operation.TargetCheckoutPath = f.Root;
+        // CARD-0688 D-4/D-5: the target decision is the canonical checkout step after publication. It reads HEAD
+        // files (no git) and then the main checkout's lock, sequencer and status; each changed component is a
+        // named residue, never a refusal. HEAD/target movement is the fast-forward's ancestry concern, not the
+        // decision's, and a HEAD file naming another branch means the target is checked out nowhere.
+        var common = Path.Combine(f.Root, ".git");
+        Directory.CreateDirectory(common);
+        File.WriteAllText(Path.Combine(common, "HEAD"), change == "symbolic" ? "ref: refs/heads/other\n" : "ref: refs/heads/master\n");
+        if (change == "checkout")
+        {
+            var linked = Path.Combine(common, "worktrees", "other");
+            Directory.CreateDirectory(linked);
+            File.WriteAllText(Path.Combine(linked, "HEAD"), "ref: refs/heads/master\n");
+            File.WriteAllText(Path.Combine(linked, "gitdir"), Path.Combine(f.Root, "other", ".git") + "\n");
+        }
+        f.Operation.CommonDirectory = common;
         var protocol = new AgentTaskLandingProtocol(null!, f, f, null!, null!, TimeProvider.System);
         // Exercise the existing decision directly without adding a production API for tests.
         // Real-Git boundary cases separately assert the target index, files and remote state.
-        var method = typeof(AgentTaskLandingProtocol).GetMethod("CheckTargetAsync",
+        var method = typeof(AgentTaskLandingProtocol).GetMethod("CanonicalDecisionAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        Exception? failure = null;
-        try { await (Task)method.Invoke(protocol, [f.Operation, RemovalFixture.Sha, CancellationToken.None])!; }
-        catch (Exception ex) { failure = ex; }
-        if (change == "valid") failure.ShouldBeNull();
-        else failure.ShouldNotBeNull("the target decision must refuse this independently changed component: " + change)
-            .GetType().Name.ShouldBe("LandingRefusal");
+        var decision = (Task)method.Invoke(protocol, [f.Operation, CancellationToken.None])!;
+        await decision;
+        var (reason, checkout) = ((string?, string?))decision.GetType().GetProperty("Result")!.GetValue(decision)!;
+        reason.ShouldBe(change switch
+        {
+            "dirty" or "status-error" => "canonical_checkout_dirty",
+            "sequencer" => "canonical_active_sequencer",
+            "checkout" => "target_checked_out_elsewhere",
+            _ => null,
+        }, "each changed component decides independently: " + change);
+        checkout.ShouldBe(change switch
+        {
+            "symbolic" => null,
+            "checkout" => Path.Combine(f.Root, "other"),
+            _ => f.Root,
+        });
         f.Mutations.ShouldBeEmpty();
         File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
     }
