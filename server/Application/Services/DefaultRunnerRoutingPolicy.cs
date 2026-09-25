@@ -213,6 +213,11 @@ public sealed class DefaultRunnerRoutingPolicy
             && TryKindDefault(kindRunner, shape) is { } kindDecision)
             return kindDecision;
 
+        // A global desktop preference is stored as the catalogue id, then mapped to a null
+        // runner on the task. That null must still audit as GlobalDefault, not as "no decision".
+        if (_snapshot?.GlobalRunnerId is { } globalDesktop && RunnerRequestIntent.IsDesktopAlias(globalDesktop))
+            return new DefaultRunnerDecision(null, "default", "unset", RunnerPlatformWire.DesktopId, ReasonEligible, Warn: false);
+
         if (_defaultRunnerId is not { } configured)
             return null;
 

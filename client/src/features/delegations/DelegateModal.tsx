@@ -89,7 +89,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const catalogue = runners.data ?? []
   const selectedRunner = catalogue.find((row) => row.runnerId === runnerChoice)
   const effectivePlatform = platformChoice === 'inherit' ? prefill?.cardDefaultPlatform : platformChoice
-  const runnerPlatform = runnerChoice === 'desktop' ? 'windows' : selectedRunner?.platform ?? null
+  const runnerPlatform = selectedRunner?.platform ?? null
   const platformConflict =
     runnerChoice !== 'automatic'
     && (effectivePlatform === 'Windows' || effectivePlatform === 'Linux')
@@ -295,7 +295,6 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
         onChange={(value) => setRunnerChoice(value ?? 'automatic')}
         data={[
           { value: 'automatic', label: 'Automatic' },
-          { value: 'desktop', label: 'Desktop' },
           ...catalogue.map((row) => ({
             value: row.runnerId,
             label: `${row.displayName} · ${row.platform ?? 'platform unknown'} · ${

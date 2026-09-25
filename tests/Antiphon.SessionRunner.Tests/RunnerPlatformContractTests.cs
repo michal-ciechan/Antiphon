@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,8 +14,11 @@ public sealed class RunnerPlatformContractTests
     [Test]
     public async Task Local_and_phone_home_report_actual_platform()
     {
-        var expected = RunnerPlatformWire.FromOperatingSystem();
+        var expected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? RunnerPlatformWire.Windows
+            : RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? RunnerPlatformWire.Linux
+            : null;
         expected.ShouldNotBeNull();
+        RunnerPlatformWire.FromOperatingSystem().ShouldBe(expected);
         var logRoot = TestSessionLogRoot.Create("c710-platform");
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02, CpuWatchdogEnabled = false }),

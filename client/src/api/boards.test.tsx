@@ -108,6 +108,25 @@ describe('useUpdateCardContent', () => {
     expect(queryClient.getQueryState(boardKeys.cardRevisions('card-1'))?.isInvalidated).toBe(true)
     expect(queryClient.getQueryState(boardKeys.detail('board-1'))?.isInvalidated).toBe(true)
   })
+
+  it('forwards a requiredPlatform edit and an explicit Any reset', async () => {
+    const patchSpy = vi.fn()
+    server.use(http.patch('/api/cards/card-1/content', async ({ request }) => {
+      patchSpy(await request.json())
+      return HttpResponse.json(cardStub)
+    }))
+    const { result } = renderHookWithProviders(() => useUpdateCardContent('board-1'))
+    result.current.mutate({
+      cardId: 'card-1',
+      request: { concurrencyToken: 'token-1', reason: 'windows lane', requiredPlatform: 'Windows', editedBy: 'operator' },
+    })
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ requiredPlatform: 'Windows' })))
+    result.current.mutate({
+      cardId: 'card-1',
+      request: { concurrencyToken: 'token-2', reason: 'any host', requiredPlatform: 'Any', editedBy: 'operator' },
+    })
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ requiredPlatform: 'Any' })))
+  })
 })
 
 describe('useArchiveCard / useUnarchiveCard', () => {

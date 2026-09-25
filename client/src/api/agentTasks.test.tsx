@@ -8,6 +8,7 @@ import {
   useAgentTaskListSummary,
   useAgentTasks,
   useCancelAgentTask,
+  useCreateAgentTask,
   type AgentTaskListSummaryDto,
   type AgentTaskSummaryDto,
 } from './agentTasks'
@@ -73,6 +74,25 @@ const emptySummary: AgentTaskListSummaryDto = {
   totalCostUsd: 0,
   byStatus: {},
 }
+
+describe('agentTasks create', () => {
+  it('posts an explicit platform and runner and keeps an omitted platform off the body', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(http.post('/api/agent-tasks', async ({ request }) => {
+      bodies.push((await request.json()) as Record<string, unknown>)
+      return HttpResponse.json({ id: 'task-1', shortId: 'task-1', status: 'Queued', modelLevel: 'High' })
+    }))
+    const explicit = renderHookWithProviders(() => useCreateAgentTask())
+    explicit.result.current.mutate({ goal: 'linux work', requiredPlatform: 'Linux', runnerId: 'server2' })
+    await waitFor(() => expect(bodies[0]).toMatchObject({ goal: 'linux work', requiredPlatform: 'Linux', runnerId: 'server2' }))
+
+    const omitted = renderHookWithProviders(() => useCreateAgentTask())
+    omitted.result.current.mutate({ goal: 'inherit the card' })
+    await waitFor(() => expect(bodies).toHaveLength(2))
+    expect(bodies[1]).not.toHaveProperty('requiredPlatform')
+    expect(bodies[1]).not.toHaveProperty('runnerId')
+  })
+})
 
 describe('agentTasks scope', () => {
   it('list requests preserve every scope parameter', async () => {

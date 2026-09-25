@@ -37,4 +37,23 @@ describe('runnerDefaults', () => {
     })
     await waitFor(() => expect(body).toMatchObject({ expectedRevision: 4, globalRunnerId: 'desktop', provenance: 'Human' }))
   })
+
+  it('sends an explicit null when the global default is cleared', async () => {
+    let body: Record<string, unknown> | null = null
+    server.use(http.put('/api/runner-defaults', async ({ request }) => {
+      body = (await request.json()) as Record<string, unknown>
+      return HttpResponse.json({ ...current, revision: 5, globalRunnerId: null })
+    }))
+    const view = renderHookWithProviders(() => usePutRunnerDefaults())
+    view.result.current.mutate({
+      expectedRevision: 4,
+      globalRunnerId: null,
+      kindDefaults: [],
+      reason: 'clear the global',
+      provenance: 'Human',
+    })
+    await waitFor(() => expect(body).not.toBeNull())
+    expect(body).toHaveProperty('globalRunnerId', null)
+    expect(body).toMatchObject({ expectedRevision: 4, kindDefaults: [], provenance: 'Human' })
+  })
 })

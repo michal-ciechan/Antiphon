@@ -1,3 +1,4 @@
+using System.Text;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
@@ -186,6 +187,110 @@ public sealed class MultiRunnerRecoveryTests
     }
 
     [Test]
+    [NotInParallel("MessageQueue")]
+    public async Task Queued_user_prompt_reaches_each_runner_once()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var secretA = "secret-a-" + Guid.NewGuid().ToString("N");
+        var secretB = "secret-b-" + Guid.NewGuid().ToString("N");
+        await using var host = await PhoneHomeTestHost.StartAsync(
+            connectionString: schema.ConnectionString, configured: Pair(secretA, secretB));
+        host.Capacity = 2;
+        var storeA = Guid.NewGuid();
+        var storeB = Guid.NewGuid();
+        await using var peerA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
+        await using var peerB = await host.ConnectPeerAsync(runnerId: "runner-b", secret: secretB, storeId: storeB);
+        await using var harness = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+                services.AddSingleton<ISessionRunnerClient>(new RoutingSessionRunnerClient(host.Directory));
+            },
+            ConfigureDeliveryVerification = verification =>
+            {
+                verification.TranscriptConfirmTimeoutSeconds = 2;
+                verification.PostFailureConfirmGraceSeconds = 0;
+                verification.PollIntervalMs = 40;
+            },
+        });
+        harness.Runtime.TryRemove(harness.SessionId, out _).ShouldBeTrue();
+        var sessionB = harness.SessionId;
+        var sessionA = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            await db.AgentSessions.Where(s => s.Id == sessionB).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.RunnerId, "runner-b")
+                .SetProperty(s => s.RunnerStoreId, storeB)
+                .SetProperty(s => s.RunnerCwd, "/work/b"));
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionA,
+                DefinitionName = "claude",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = "/work",
+                Cols = 80,
+                Rows = 24,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+                RunnerId = "runner-a",
+                RunnerStoreId = storeA,
+                RunnerCwd = "/work/a",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        peerA.Sessions.Add(Running(sessionA));
+        peerB.Sessions.Add(Running(sessionB));
+        EchoPrompts(peerA, harness, sessionA);
+        EchoPrompts(peerB, harness, sessionB);
+        await harness.InsertTurnAsync("prior-b", "done", sessionB);
+        await harness.MarkWorkingAsync(sessionA);
+        var promptA = "CARD-0710-A-" + Guid.NewGuid().ToString("N");
+        var promptB = "CARD-0710-B-" + Guid.NewGuid().ToString("N");
+        await harness.Queue.EnqueueAsync(sessionA, promptA, MessageSendMode.WhenIdle, CancellationToken.None);
+        await harness.Queue.EnqueueAsync(sessionB, promptB, MessageSendMode.WhenIdle, CancellationToken.None);
+        (await Pump(host, harness).RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
+
+        await harness.Queue.FlushIfIdleAsync(sessionA, CancellationToken.None);
+        await harness.Queue.FlushIfIdleAsync(sessionB, CancellationToken.None);
+
+        (await QueueStatusAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(QueuedMessageStatus.Pending);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(0);
+        (await QueueStatusAsync(schema.ConnectionString, sessionB, promptB)).ShouldBe(QueuedMessageStatus.Sent);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionB, promptB)).ShouldBe(1);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionA, promptB)).ShouldBe(0);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionB, promptA)).ShouldBe(0);
+        peerA.Inputs.ShouldBeEmpty();
+
+        peerA.Socket.Abort();
+        await using var nextA = await host.ConnectPeerAsync(runnerId: "runner-a", secret: secretA, storeId: storeA);
+        nextA.Sessions.Add(Running(sessionA));
+        EchoPrompts(nextA, harness, sessionA);
+        host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: "runner-a"));
+        (await Pump(host, harness).RunCycleAsync(CancellationToken.None)).ShouldBeTrue();
+        (await QueueStatusAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(QueuedMessageStatus.Pending);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionB, promptB)).ShouldBe(1);
+
+        await harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: sessionA);
+        await harness.Queue.FlushIfIdleAsync(sessionA, CancellationToken.None);
+
+        (await QueueStatusAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(QueuedMessageStatus.Sent);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionA, promptA)).ShouldBe(1);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionA, promptB)).ShouldBe(0);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionB, promptB)).ShouldBe(1);
+        (await UserPromptCountAsync(schema.ConnectionString, sessionB, promptA)).ShouldBe(0);
+        var recorded = await PromptTextAsync(schema.ConnectionString, sessionA, promptA);
+        PromptSubmissionMatch.IsCompleteIn(promptA, recorded).ShouldBeTrue();
+        var recordedB = await PromptTextAsync(schema.ConnectionString, sessionB, promptB);
+        PromptSubmissionMatch.IsCompleteIn(promptB, recordedB).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Removed_runner_keeps_bound_sessions_unknown()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -211,6 +316,12 @@ public sealed class MultiRunnerRecoveryTests
         session.Status.ShouldBe(SessionStatus.Running);
         session.RunnerId.ShouldBe("runner-a");
     }
+
+    private static PhoneHomeRecoveryPump Pump(PhoneHomeTestHost host, BridgeQueueHarness harness) => new(
+        host.Directory,
+        Options.Create(new PhoneHomeRunnerSettings { Enabled = true, CatchUpRetrySeconds = 30 }),
+        harness.Provider.GetRequiredService<IServiceScopeFactory>(),
+        NullLogger<PhoneHomeRecoveryPump>.Instance);
 
     private static PhoneHomeRecoveryPump Pump(PhoneHomeTestHost host) => new(
         host.Directory,
@@ -263,6 +374,64 @@ public sealed class MultiRunnerRecoveryTests
         services.AddSingleton<ISessionRunnerClient, PhoneHomeTestHost.RecordingLocalClient>();
         services.AddSingleton<AgentSessionRuntime>();
         return services.BuildServiceProvider();
+    }
+
+    private static RunnerSessionDto Running(Guid sessionId) =>
+        new(sessionId, 1, DateTime.UtcNow, "Running", null, "", 0, AcceptedStartedAt: DateTime.UtcNow);
+
+    private static void EchoPrompts(PhoneHomeScriptedPeer peer, BridgeQueueHarness harness, Guid sessionId)
+    {
+        var composer = new StringBuilder();
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.Input || frame.Payload is not { } payload)
+                return null;
+            var input = payload.TryGetProperty("input", out var text) ? text.GetString() ?? "" : "";
+            if (!input.EndsWith('\r'))
+            {
+                composer.Append(input);
+                return null;
+            }
+
+            composer.Append(input[..^1]);
+            var prompt = composer.ToString().Replace("\u001b[200~", "", StringComparison.Ordinal)
+                .Replace("\u001b[201~", "", StringComparison.Ordinal);
+            composer.Clear();
+            if (prompt.Length == 0)
+                return null;
+            harness.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt, sessionId: sessionId)
+                .GetAwaiter().GetResult();
+            harness.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: sessionId)
+                .GetAwaiter().GetResult();
+            return null;
+        };
+    }
+
+    private static async Task<QueuedMessageStatus> QueueStatusAsync(string connectionString, Guid sessionId, string body)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        return await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId && m.Body == body)
+            .Select(m => m.Status)
+            .SingleAsync();
+    }
+
+    private static async Task<int> UserPromptCountAsync(string connectionString, Guid sessionId, string body)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        return await db.TranscriptEntries.AsNoTracking()
+            .CountAsync(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null && t.Text.Contains(body));
+    }
+
+    private static async Task<string> PromptTextAsync(string connectionString, Guid sessionId, string body)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        return await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null && t.Text.Contains(body))
+            .Select(t => t.Text!)
+            .SingleAsync();
     }
 
     private static RunnerTranscriptDto Transcript(Guid sessionId) =>

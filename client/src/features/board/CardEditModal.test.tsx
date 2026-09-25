@@ -111,6 +111,31 @@ describe('CardEditModal', () => {
     expect(saveButton()).toBeEnabled()
   })
 
+  it('saves a new default platform and resets a stored one to Any', async () => {
+    const patchSpy = vi.fn()
+    server.use(http.patch('/api/cards/card-1/content', async ({ request }) => {
+      patchSpy(await request.json())
+      return HttpResponse.json(card({ requiredPlatform: 'Windows' }))
+    }))
+    renderEdit()
+    await userEvent.click(screen.getByTestId('card-platform'))
+    await userEvent.click(await screen.findByRole('option', { name: 'Windows' }))
+    await userEvent.type(reasonInput(), 'windows tasks')
+    await userEvent.click(saveButton())
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ requiredPlatform: 'Windows' })))
+
+    patchSpy.mockClear()
+    renderEdit({ requiredPlatform: 'Windows' })
+    const platforms = screen.getAllByTestId('card-platform')
+    await userEvent.click(platforms[platforms.length - 1])
+    await userEvent.click(await screen.findByRole('option', { name: 'Any' }))
+    const reasons = screen.getAllByLabelText(/^Reason/)
+    await userEvent.type(reasons[reasons.length - 1], 'back to any')
+    const saves = screen.getAllByRole('button', { name: 'Save' })
+    await userEvent.click(saves[saves.length - 1])
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(expect.objectContaining({ requiredPlatform: 'Any' })))
+  })
+
   it('sends only the fields that changed, plus the token and editedBy', async () => {
     const patchSpy = vi.fn()
     server.use(http.patch('/api/cards/card-1/content', async ({ request }) => {

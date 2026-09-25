@@ -417,16 +417,21 @@ public sealed class RunnerDefaultPlacementTests
             .SingleAsync(row => row.Revision == saved.Task.RunnerDefaultsRevision);
         using var snapshot = JsonDocument.Parse(revision.SnapshotJson);
         var global = snapshot.RootElement.GetProperty("globalRunnerId");
-        if (saved.Task.RunnerSelectionSource == RunnerSelectionSource.GlobalDefault)
-            global.GetString().ShouldBe(RunnerRequestIntent.DisplayRunnerId(saved.Task.RunnerId));
-        else
+        var globalText = global.ValueKind == JsonValueKind.Null ? null : global.GetString();
+        if (globalText is null)
         {
-            // A null global and a stored desktop alias are the same no-remote decision.
-            // The concurrent edit can commit either snapshot before this create reads it.
             saved.Task.RunnerSelectionSource.ShouldBeNull();
             saved.Task.RunnerId.ShouldBeNull();
-            if (global.ValueKind != JsonValueKind.Null)
-                global.GetString().ShouldBe(RunnerRequestIntent.DisplayRunnerId(saved.Task.RunnerId));
+        }
+        else if (string.Equals(globalText, RunnerPlatformWire.DesktopId, StringComparison.Ordinal))
+        {
+            saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.GlobalDefault);
+            saved.Task.RunnerId.ShouldBeNull();
+        }
+        else
+        {
+            saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.GlobalDefault);
+            saved.Task.RunnerId.ShouldBe(globalText);
         }
     }
 

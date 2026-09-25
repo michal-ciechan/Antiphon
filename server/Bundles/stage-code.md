@@ -14,4 +14,4 @@ next: review when implementation and ordinary V/R are complete, even with zero P
 
 next: code when implementation or ordinary verification remains (name it); decide when a human choice blocks. Do not settle next: land; never land or deploy. The caller lands the original Code task after ordinary Review, then commissions SourceLanding Mutation.
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. -Platform Windows for junction, file-sharing, ConPTY, or Windows path/CRLF/E2E. CP-13 and CP-14 use -Platform Windows. Portable rows stay on server2.
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. -Platform Windows for junction, file-sharing, ConPTY, or Windows path/CRLF/E2E.

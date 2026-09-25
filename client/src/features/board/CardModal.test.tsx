@@ -100,6 +100,12 @@ describe('CardModal', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.objectContaining({ description: 'Public description', privateNotes: '  C408_PRIVATE  ', cardFileVisibility: 'Inherit' })))
   })
 
+  it('shows the stored default task platform', async () => {
+    server.use(agentDefinitionsHandler(), discussionHandler(), cardHandler({ ...card, requiredPlatform: 'Linux' }))
+    renderWithProviders(<CardModal boardId="board-1" card={{ ...card, requiredPlatform: 'Linux' }} opened onClose={() => undefined} />)
+    expect(await screen.findByTestId('card-default-platform')).toHaveTextContent('Default task platform: Linux')
+  })
+
   it('fetches the full card only after the modal opens', async () => {
     const getSpy = vi.fn()
     server.use(agentDefinitionsHandler(), discussionHandler(), http.get('/api/cards/card-1', () => {

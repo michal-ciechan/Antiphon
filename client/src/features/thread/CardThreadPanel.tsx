@@ -135,7 +135,7 @@ export function CardThreadPanel({
         {data.tasks.map((task, i) => (
           <Fragment key={task.id}>
             {i > 0 && <Divider />}
-            <ThreadTaskRow task={task} attention={attentionByTask.get(task.id) ?? []} />
+            <ThreadTaskRow task={task} attention={attentionByTask.get(task.id) ?? []} cardDefaultPlatform={data.card.requiredPlatform} />
           </Fragment>
         ))}
       </ThreadSection>
@@ -247,7 +247,7 @@ function SubjectPlanRow({
         </Group>
       </UnstyledButton>
       <Group justify="flex-end" gap="xs" mt={6}>
-        <HandBackButton identifier={identifier} context={`plan ${p.relativePath}`} />
+        <HandBackButton identifier={identifier} context={`plan ${p.relativePath}`} cardDefaultPlatform={card.requiredPlatform} />
         {boardId && columns.length > 0 && (
           <ApprovePlanButton boardId={boardId} card={card} columns={columns} planPath={p.relativePath} />
         )}
@@ -437,15 +437,18 @@ export function HandBackButton({
   identifier,
   context,
   directory,
+  cardDefaultPlatform,
 }: {
   identifier: string
   context: string
   directory?: string
+  cardDefaultPlatform?: DelegatePrefill['cardDefaultPlatform']
 }) {
   const [opened, setOpened] = useState(false)
   const prefill: DelegatePrefill = {
     goal: `${identifier} — change requested on ${context}: `,
     workingDirectory: directory,
+    cardDefaultPlatform,
   }
   return (
     <>
@@ -478,9 +481,11 @@ const OPEN_STATUSES = new Set<CardThreadTaskDto['status']>([
 function ThreadTaskRow({
   task,
   attention,
+  cardDefaultPlatform,
 }: {
   task: CardThreadTaskDto
   attention: AttentionItemDto[]
+  cardDefaultPlatform?: DelegatePrefill['cardDefaultPlatform']
 }) {
   const [answering, setAnswering] = useState(false)
   const [showFullResult, setShowFullResult] = useState(false)
@@ -642,7 +647,7 @@ function ThreadTaskRow({
             Cancel
           </Button>
         )}
-        {task.status !== 'Blocked' && task.result && <HandBackButton identifier={citationOf(task.title)} context="its report" />}
+        {task.status !== 'Blocked' && task.result && <HandBackButton identifier={citationOf(task.title)} context="its report" cardDefaultPlatform={cardDefaultPlatform} />}
       </Group>
     </Box>
   )

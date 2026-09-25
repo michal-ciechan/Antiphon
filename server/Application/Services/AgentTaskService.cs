@@ -2608,7 +2608,7 @@ public sealed class AgentTaskService
         {
             throw new ConflictException(
                 $"Task {DelegationReportFormatter.Short(id)} runs on runner '{task.RunnerId}', which cannot run "
-                + $"{agentKind}. Reroute to Grok or ClaudeCode.",
+                + $"{agentKind}. Reroute to Grok, ClaudeCode or Codex.",
                 DefaultRunnerRoutingPolicy.ReasonRunnerKindUnsupported);
         }
 
