@@ -253,6 +253,43 @@ public partial class AgentTaskReplyIntegrationTests
         await AssertOlderReportStaysUncorrelatedAsync(task.Id, sessionId);
     }
 
+    /// <summary>
+    /// Auto-compaction writes only the continuation prompt: no command wrapper, stdout, or raw
+    /// echo. That prompt is the turn end's immediate record, and the marked brief in the same
+    /// turn still has to settle. A manual <c>/compact</c> is covered by
+    /// <c>a_compaction_the_delegate_runs_mid_task_still_settles_against_the_brief</c>.
+    /// </summary>
+    [Test]
+    public async Task C714_Claude_auto_compaction_continuation_settles()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-20);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        const string report = "Verdict: keep as is. The guard is sound.";
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nReview the move guard.",
+            dispatched.AddMinutes(1));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText, "Reading the spec.", dispatched.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            TranscriptKinds.CompactionContinuationPromptPrefix
+            + " that ran out of context. The summary below covers…",
+            dispatched.AddMinutes(5));
+        await SeedResponseAsync(
+            sessionId, report, dispatched.AddMinutes(8), DelegationReportFormatter.TaskMarker(task.Id));
+
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report, "the report is the turn-ending response, not the continuation prompt");
+    }
+
     [Test]
     public async Task C714_Codex_unmarked_user_turn_is_barrier()
     {
