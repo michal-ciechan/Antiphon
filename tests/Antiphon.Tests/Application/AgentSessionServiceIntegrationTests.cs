@@ -1150,6 +1150,9 @@ public class AgentSessionServiceIntegrationTests
                 Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
                 Status = SessionStatus.Running, Cwd = tempRoot, Cols = 120, Rows = 30,
                 CreatedAt = startedAt, StartedAt = startedAt, LastSeenAt = startedAt, RunnerId = runnerId,
+                // CK_AgentSessions_RunnerBinding_AllOrNone: a runner binding is all three or none.
+                RunnerStoreId = runnerId is null ? null : Guid.NewGuid(),
+                RunnerCwd = runnerId is null ? null : "/work",
             });
             await db.SaveChangesAsync();
             var adapter = new FakeAgentProtocolAdapter { ThrowOnKill = new HttpRequestException("runner unreachable (c691)") };
