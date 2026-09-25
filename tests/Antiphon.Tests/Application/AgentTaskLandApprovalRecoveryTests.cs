@@ -272,12 +272,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         // CARD-0688 D-7: schema 3 never moves the branch; derivation is the read-only acceptance of a branch that a
         // schema-2 rebase moved to its witnessed P. Put the branch where that rebase would have left it.
         h.Git.RewindSource(p);
-        await using (var db = h.CreateContext())
-        {
-            var stored = await db.AgentTaskLandings.SingleAsync(o => o.Id == failed.Id);
-            stored.SchemaVersion = 2;
-            await db.SaveChangesAsync();
-        }
+        await MarkLegacyPreparationAsync(h, failed.Id);
         h.Verifier.Passed = true;
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();
@@ -456,14 +451,26 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Verifier.Passed = false;
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();
-        h.Git.RewindSource((await h.OperationAsync())!.RebasedSourceSha!); // D-7: the schema-2 branch position
+        var previous = (await h.OperationAsync()).ShouldNotBeNull();
+        h.Git.RewindSource(previous.RebasedSourceSha!); // D-7: the schema-2 branch position
+        await MarkLegacyPreparationAsync(h, previous.Id);
         h.Verifier.Passed = true;
         h.Git.OwnedTrace.Clear();
         await h.RequestAsync(filter: "/*/*/Required/*", expectedSourceSha: original);
         await h.RunQueuedAsync();
         h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(original));
         var retry = (await h.OperationAsync()).ShouldNotBeNull();
+        retry.Id.ShouldNotBe(previous.Id);
+        new AgentTaskLandingState().HasPublication(retry).ShouldBeTrue();
         retry.PreparationInputSha.ShouldNotBe(retry.OriginalSourceSha);
+    }
+
+    private static async Task MarkLegacyPreparationAsync(LandingProtocolHarness h, Guid operationId)
+    {
+        await using var db = h.CreateContext();
+        var stored = await db.AgentTaskLandings.SingleAsync(o => o.Id == operationId);
+        stored.SchemaVersion = 2;
+        await db.SaveChangesAsync();
     }
 
     [Test]
