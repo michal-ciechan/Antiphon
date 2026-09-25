@@ -209,7 +209,8 @@ public partial class AgentTaskReplyIntegrationTests
     public async Task C714_Grok_unmarked_prompt_before_reminder_is_barrier()
     {
         using var workspace = new TempWorkspace();
-        var (task, sessionId) = await SeedGrokAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"c714-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedGrokAsync(workspace.Path, configure: t => t.AgentId = agentId);
         await SeedMarkedReportThenHousekeepingAsync(
             sessionId, task, TranscriptKinds.UserPrompt, Card0714Transcript.Reminder);
         await AssertOlderReportStaysUncorrelatedAsync(task.Id, sessionId);
@@ -219,7 +220,8 @@ public partial class AgentTaskReplyIntegrationTests
     public async Task C714_Grok_unmarked_queued_prompt_before_reminder_is_barrier()
     {
         using var workspace = new TempWorkspace();
-        var (task, sessionId) = await SeedGrokAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"c714-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedGrokAsync(workspace.Path, configure: t => t.AgentId = agentId);
         await SeedMarkedReportThenHousekeepingAsync(
             sessionId, task, TranscriptKinds.QueuedUserPrompt, Card0714Transcript.Reminder);
         await AssertOlderReportStaysUncorrelatedAsync(task.Id, sessionId);
@@ -233,8 +235,10 @@ public partial class AgentTaskReplyIntegrationTests
     {
         using var workspace = new TempWorkspace();
         var dispatched = DateTime.UtcNow.AddHours(-2);
+        var agentId = await SeedAgentAsync(workspace.Path, $"c714-{Guid.NewGuid():N}"[..20]);
         var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
         {
+            t.AgentId = agentId;
             t.AgentKind = AgentKind.ClaudeCode;
             t.DispatchedAt = dispatched;
         });
