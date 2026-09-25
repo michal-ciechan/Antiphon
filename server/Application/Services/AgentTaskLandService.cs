@@ -1158,19 +1158,56 @@ public sealed class AgentTaskLandService
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         => await VerifyWithObserverAsync(worktree, filter, null, ct);
 
+    /// <summary>Starts one verifier child and waits for it; the seam V-8 fakes so nothing is built.</summary>
+    internal delegate Task<ProcessResult> LandProcessRunner(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, string[] args);
+
     internal static async Task<LandVerification> VerifyWithObserverAsync(string worktree, string? filter,
-        ILandingChildObserver? observer, CancellationToken ct)
+        ILandingChildObserver? observer, CancellationToken ct, IBuildSlotGate? buildSlots = null, LandProcessRunner? runProcess = null)
+    {
+        runProcess ??= (cwd, obs, token, file, args) => RunProcessAsync(cwd, obs, token, file, args);
+        // CARD-0589 S4: the build and the test run hold one host build slot, like a delegate's
+        // checkpoint row. No gate (a verifier built outside DI) keeps the unbudgeted behaviour; an
+        // unreachable runner builds unleased at -maxcpucount:4 and is never a land failure.
+        BuildSlotHold? slot = null;
+        void Report(string line)
+        {
+            try { observer?.Line(line); } catch (Exception) { /* Secondary observation only. */ }
+        }
+        if (buildSlots is not null)
+        {
+            var name = Path.GetFileName(worktree.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            slot = await buildSlots.AcquireAsync("land-verify " + name, Report, ct);
+            if (slot.Outcome == BuildSlotHoldOutcome.Timeout)
+                return LandVerification.Failure("build-slot", $"build_slot_timeout position={slot.QueuePosition}");
+        }
+        try
+        {
+            return await VerifyUnderSlotAsync(worktree, filter, observer, ct, slot, runProcess);
+        }
+        finally
+        {
+            if (slot is not null)
+                await buildSlots!.ReleaseAsync(slot, Report, CancellationToken.None);
+        }
+    }
+
+    private static async Task<LandVerification> VerifyUnderSlotAsync(string worktree, string? filter,
+        ILandingChildObserver? observer, CancellationToken ct, BuildSlotHold? slot, LandProcessRunner runProcess)
     {
         // SDK artifacts isolate both bin and obj by project, outside the source checkout.
         // Unique owned outputs are retained; never recursively erase pre-existing bin-* paths.
         var output = Path.Combine(Path.GetTempPath(), "antiphon-land-verify-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(output);
-        var build = await RunProcessAsync(worktree, observer, ct, "dotnet", "build", "--artifacts-path", output);
+        string[] buildArgs = slot is { MaxCpuCount: > 0 }
+            ? ["build", "--artifacts-path", output, "-maxcpucount:" + slot.MaxCpuCount]
+            : ["build", "--artifacts-path", output];
+        var build = await runProcess(worktree, observer, ct, "dotnet", buildArgs);
         if (!build.Ok) return LandVerification.Failure("build", Tail(build));
         if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
-        var tests = await RunProcessAsync(worktree, observer, ct, "dotnet", "run", "--project", "tests/Antiphon.Tests",
+        // dotnet run hands -maxcpucount to the program, so the grant applies to the build above only.
+        var tests = await runProcess(worktree, observer, ct, "dotnet", ["run", "--project", "tests/Antiphon.Tests",
             "--artifacts-path", output, "--", "--treenode-filter", filter, "--report-trx",
-            "--report-trx-filename", "landing-verification.trx");
+            "--report-trx-filename", "landing-verification.trx"]);
         if (!tests.Ok) return LandVerification.Failure("tests", Tail(tests));
         var reports = Directory.GetFiles(output, "landing-verification.trx", SearchOption.AllDirectories);
         if (reports.Length != 1) return LandVerification.Failure("tests", "fresh_test_report_missing_or_ambiguous");
@@ -1255,7 +1292,7 @@ public sealed class AgentTaskLandService
     private static AgentTaskEvent Event(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
         new() { Id = Guid.NewGuid(), AgentTaskId = taskId, Type = type, Detail = detail, At = at };
 
-    private sealed record ProcessResult(bool Ok, string StdOut, string StdErr);
+    internal sealed record ProcessResult(bool Ok, string StdOut, string StdErr);
 }
 
 internal sealed record LandVerification(bool Ok, string Step, string Tail, string Description)

@@ -17,6 +17,13 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
 
     public Task<string?> GetHealthAsync(CancellationToken ct) => _directory.Local.GetHealthAsync(ct);
 
+    // CARD-0589: the build budget belongs to the host this server builds on, i.e. the local runner.
+    public Task<RunnerBuildSlotAnswer?> AcquireBuildSlotAsync(BuildSlotRequest request, CancellationToken ct) =>
+        _directory.Local.AcquireBuildSlotAsync(request, ct);
+
+    public Task<bool> ReleaseBuildSlotAsync(Guid leaseId, CancellationToken ct) =>
+        _directory.Local.ReleaseBuildSlotAsync(leaseId, ct);
+
     public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
         _directory.Local.ListAsync(ct);
 
