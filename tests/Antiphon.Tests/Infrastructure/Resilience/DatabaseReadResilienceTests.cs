@@ -19,6 +19,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure.Resilience;
 
+[Category("Integration")]
 public class DatabaseReadResilienceTests
 {
     [Test]

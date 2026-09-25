@@ -21,6 +21,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure.Resilience;
 
+[Category("Unit")]
 public class HttpResilienceRegistrationTests
 {
     [Test]
@@ -41,7 +42,7 @@ public class HttpResilienceRegistrationTests
         var commands = new ScriptHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
         await using var provider = ResilienceTestHost.Build(reads, ResilienceClientNames.RunnerRead, Tight(), time, new FixedResilienceJitter(1));
         var sut = Runner(provider, commands, time);
-        await OpenReadCircuit(time, sut);
+        await OpenReadCircuit(time, sut, reads);
         var before = commands.Sends;
 
         await Should.ThrowAsync<Exception>(() => sut.StartAsync(Guid.NewGuid(), Spec(), CancellationToken.None));
@@ -135,7 +136,18 @@ public class HttpResilienceRegistrationTests
             await Task.Delay(Timeout.Infinite, ct);
             return ResilienceTestHost.Status(HttpStatusCode.OK);
         });
-        await using var gitProvider = ResilienceTestHost.Build(gitHandler, ResilienceClientNames.GitConnectivityRead, time: time);
+        var gitSettings = new ResilienceSettings
+        {
+            TotalTimeoutSeconds = 60,
+            AttemptTimeoutSeconds = 30,
+            CircuitBreaker = new ResilienceCircuitBreakerSettings
+            {
+                SamplingDurationSeconds = 60,
+                MinimumThroughput = 100,
+            },
+        };
+        await using var gitProvider = ResilienceTestHost.Build(
+            gitHandler, ResilienceClientNames.GitConnectivityRead, gitSettings, time);
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=127.0.0.1;Port=1;Database=unused;Username=u;Password=p").Options);
         var projects = new ProjectService(
@@ -152,7 +164,56 @@ public class HttpResilienceRegistrationTests
             TimeSpan.FromSeconds(1),
             TimeSpan.FromSeconds(8));
         result.Success.ShouldBeFalse();
-        (time.GetUtcNow() - gitStarted).ShouldBeLessThan(TimeSpan.FromSeconds(15));
+        var gitElapsed = time.GetUtcNow() - gitStarted;
+        gitElapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(10));
+        gitElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
+    }
+
+    [Test]
+    public async Task Runner_reads_stop_at_request_timeout_seconds()
+    {
+        var time = Clock();
+        var reads = new ScriptHandler(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return ResilienceTestHost.Status(HttpStatusCode.OK);
+        });
+        var settings = new ResilienceSettings
+        {
+            TotalTimeoutSeconds = 30,
+            AttemptTimeoutSeconds = 20,
+            MaxRetryAttempts = 2,
+            CircuitBreaker = new ResilienceCircuitBreakerSettings
+            {
+                SamplingDurationSeconds = 40,
+                MinimumThroughput = 100,
+            },
+        };
+        await using var provider = ResilienceTestHost.Build(
+            reads, ResilienceClientNames.RunnerRead, settings, time, new FixedResilienceJitter(0));
+        var sut = new SessionRunnerHttpClient(
+            new HttpClient(new ScriptHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))))
+            {
+                BaseAddress = new Uri("http://runner.test/"),
+            },
+            provider.GetRequiredService<IHttpClientFactory>(),
+            Options.Create(new SessionRunnerSettings
+            {
+                BaseUrl = "http://runner.test",
+                RequestTimeoutSeconds = 2,
+            }),
+            time: time,
+            resilience: provider.GetRequiredService<IOptionsMonitor<ResilienceSettings>>());
+        var started = time.GetUtcNow();
+        await Should.ThrowAsync<TaskCanceledException>(() =>
+            ResilienceTestHost.Pump(
+                time,
+                sut.GetAsync(Guid.NewGuid(), CancellationToken.None),
+                TimeSpan.FromMilliseconds(200),
+                TimeSpan.FromSeconds(6)));
+        var elapsed = time.GetUtcNow() - started;
+        elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(2));
+        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8));
     }
 
     [Test]
@@ -195,22 +256,29 @@ public class HttpResilienceRegistrationTests
         handler.Sends.ShouldBe(2);
     }
 
-    private static async Task OpenReadCircuit(FakeTimeProvider time, SessionRunnerHttpClient sut)
+    private static async Task OpenReadCircuit(FakeTimeProvider time, SessionRunnerHttpClient sut, ScriptHandler reads)
     {
-        for (var i = 0; i < 6; i++)
+        for (var i = 0; i < 8; i++)
         {
+            var before = reads.Sends;
             try
             {
                 await ResilienceTestHost.Pump(time, sut.GetAsync(Guid.NewGuid(), CancellationToken.None), TimeSpan.FromMilliseconds(20), TimeSpan.FromSeconds(3));
             }
+            catch (HttpRequestException ex) when (ex.Message.Contains("circuit is open", StringComparison.Ordinal))
+            {
+                reads.Sends.ShouldBe(before);
+                return;
+            }
             catch (HttpRequestException)
             {
-                return;
             }
             catch (InvalidOperationException)
             {
             }
         }
+
+        throw new InvalidOperationException($"Read circuit stayed closed after {reads.Sends} sends.");
     }
 
     private static SessionRunnerHttpClient Runner(ServiceProvider provider, ScriptHandler commands, FakeTimeProvider time)

@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Net;
 using Antiphon.Resilience;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using OpenTelemetry;
@@ -39,6 +40,72 @@ public class ResilienceOptionsAndTelemetryTests
         settings.Database.AllowedSqlStates.ShouldNotContain("57014");
         settings.Http.MaxAuthorityPipelines.ShouldBe(128);
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Unconfigured_allowlists_keep_the_built_in_defaults()
+    {
+        var settings = Bind(new ConfigurationBuilder().Build());
+        settings.Http.AllowedStatusCodes.ShouldBe([408, 429, 502, 503, 504]);
+        settings.Http.AllowedSocketErrors.ShouldBe(ResilienceHttpSettings.DefaultSocketErrors);
+        settings.Database.AllowedSqlStates.ShouldBe(ResilienceDatabaseSettings.DefaultSqlStates);
+        Validate(settings).Succeeded.ShouldBeTrue();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Shipped_allowlist_is_not_appended_to_the_built_in_default()
+    {
+        var config = new ConfigurationBuilder()
+            .AddJsonFile(Path.Combine(RepoRoot, "server", "appsettings.json"))
+            .Build();
+        var settings = Bind(config);
+        settings.Http.AllowedStatusCodes.ShouldBe([408, 429, 502, 503, 504]);
+        settings.Http.AllowedSocketErrors.ShouldBe(ResilienceHttpSettings.DefaultSocketErrors);
+        settings.Database.AllowedSqlStates.ShouldBe(ResilienceDatabaseSettings.DefaultSqlStates);
+        settings.Http.AllowedStatusCodes.Count(code => code == 503).ShouldBe(1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Configured_allowlist_subset_replaces_the_built_in_default()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Resilience:Http:AllowedStatusCodes:0"] = "503",
+            ["Resilience:Http:AllowedSocketErrors:0"] = "TimedOut",
+            ["Resilience:Database:AllowedSqlStates:0"] = "08006",
+        }).Build();
+        var settings = Bind(config);
+        settings.Http.AllowedStatusCodes.ShouldBe([503]);
+        settings.Http.AllowedSocketErrors.ShouldBe(["TimedOut"]);
+        settings.Database.AllowedSqlStates.ShouldBe(["08006"]);
+        Validate(settings).Succeeded.ShouldBeTrue();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Configured_allowlist_entry_outside_the_default_fails_validation()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Resilience:Http:AllowedStatusCodes:0"] = "503",
+            ["Resilience:Http:AllowedStatusCodes:1"] = "500",
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddAntiphonResilience(config);
+        await using var provider = services.BuildServiceProvider();
+        var ex = Should.Throw<OptionsValidationException>(() =>
+            _ = provider.GetRequiredService<IOptions<ResilienceSettings>>().Value);
+        string.Join('\n', ex.Failures).ShouldContain("500");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Host_registers_the_resilience_meter()
+    {
+        var program = await File.ReadAllTextAsync(Path.Combine(RepoRoot, "server", "Program.cs"));
+        program.ShouldContain(".WithMetrics(metrics => metrics.AddAntiphonResilienceMetrics())");
     }
 
     [Test]
@@ -168,6 +235,26 @@ public class ResilienceOptionsAndTelemetryTests
 
     private static ValidateOptionsResult Validate(ResilienceSettings settings) =>
         new ResilienceSettingsValidator().Validate(null, settings);
+
+    private static ResilienceSettings Bind(IConfiguration configuration)
+    {
+        var services = new ServiceCollection();
+        services.AddAntiphonResilience(configuration);
+        using var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<IOptions<ResilienceSettings>>().Value;
+    }
+
+    private static string RepoRoot
+    {
+        get
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
+                dir = dir.Parent;
+            return dir?.FullName
+                ?? throw new DirectoryNotFoundException("Could not locate repo root (Antiphon.sln) from test base dir.");
+        }
+    }
 
     private static Task<HttpResponseMessage> Send(HttpClient client)
     {
