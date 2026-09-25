@@ -1,0 +1,72 @@
+{
+  "at": "2026-09-25T08:26:36.5440101+01:00",
+  "machine": {
+    "NumberOfLogicalProcessors": 8,
+    "TotalPhysicalMemory": 34298142720
+  },
+  "cpu": {
+    "PercentProcessorTime": 100
+  },
+  "topProcesses": [
+    {
+      "Name": "vmmem",
+      "IDProcess": 47560,
+      "PercentProcessorTime": 167,
+      "WorkingSetPrivate": 4076216320
+    },
+    {
+      "Name": "MsMpEng",
+      "IDProcess": 32480,
+      "PercentProcessorTime": 145,
+      "WorkingSetPrivate": 507777024
+    },
+    {
+      "Name": "claude#8",
+      "IDProcess": 3412,
+      "PercentProcessorTime": 61,
+      "WorkingSetPrivate": 295071744
+    },
+    {
+      "Name": "Antiphon.Server",
+      "IDProcess": 14500,
+      "PercentProcessorTime": 44,
+      "WorkingSetPrivate": 648937472
+    },
+    {
+      "Name": "System",
+      "IDProcess": 4,
+      "PercentProcessorTime": 39,
+      "WorkingSetPrivate": 20480
+    },
+    {
+      "Name": "git#1",
+      "IDProcess": 17012,
+      "PercentProcessorTime": 35,
+      "WorkingSetPrivate": 11870208
+    },
+    {
+      "Name": "dcpctrl",
+      "IDProcess": 60224,
+      "PercentProcessorTime": 26,
+      "WorkingSetPrivate": 25616384
+    },
+    {
+      "Name": "pwsh#8",
+      "IDProcess": 37916,
+      "PercentProcessorTime": 26,
+      "WorkingSetPrivate": 23265280
+    },
+    {
+      "Name": "WmiPrvSE#2",
+      "IDProcess": 62968,
+      "PercentProcessorTime": 26,
+      "WorkingSetPrivate": 8728576
+    },
+    {
+      "Name": "com.docker.backend#1",
+      "IDProcess": 18184,
+      "PercentProcessorTime": 13,
+      "WorkingSetPrivate": 513642496
+    }
+  ]
+}

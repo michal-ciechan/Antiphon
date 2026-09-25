@@ -1,0 +1,14 @@
+[
+  {
+    "id": "f81a4171-69f1-43f2-853e-494c9443fb63",
+    "identifier": "CARD-0699",
+    "title": "Completion recovery rechecks all historical sourced tasks every second",
+    "status": "Backlog"
+  },
+  {
+    "id": "59658f2d-babb-45fa-88fb-3d64eb1f51d2",
+    "identifier": "CARD-0700",
+    "title": "Card-file inspection multiplies sibling-board queries across opted-out boards",
+    "status": "Backlog"
+  }
+]

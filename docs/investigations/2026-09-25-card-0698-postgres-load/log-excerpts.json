@@ -1,0 +1,25 @@
+{
+  "path": "C:\\src\\Antiphon\\server\\logs\\antiphon-20260925.log",
+  "rows": [
+    {
+      "line": 39286,
+      "text": "2026-09-25 04:06:49.693 +01:00 [WRN] Session runner event stream disconnected {\"SourceContext\":\"Antiphon.Server.Infrastructure.Agents.SessionRunner.SessionRunnerEventPump\"}"
+    },
+    {
+      "line": 39299,
+      "text": "2026-09-25 04:06:53.917 +01:00 [INF] Transcript catch-up completed for 35 runner session(s) {\"SourceContext\":\"Antiphon.Server.Infrastructure.Agents.SessionRunner.SessionRunnerEventPump\"}"
+    },
+    {
+      "line": 49631,
+      "text": "2026-09-25 04:59:27.632 +01:00 [INF] Transcript catch-up completed for 38 runner session(s) {\"SourceContext\":\"Antiphon.Server.Infrastructure.Agents.SessionRunner.SessionRunnerEventPump\"}"
+    },
+    {
+      "line": 57065,
+      "text": "2026-09-25 06:08:51.889 +01:00 [INF] Transcript catch-up completed for 39 runner session(s) {\"SourceContext\":\"Antiphon.Server.Infrastructure.Agents.SessionRunner.SessionRunnerEventPump\"}"
+    },
+    {
+      "line": 69013,
+      "text": "2026-09-25 08:36:15.809 +01:00 [INF] Transcript catch-up completed for 44 runner session(s) {\"SourceContext\":\"Antiphon.Server.Infrastructure.Agents.SessionRunner.SessionRunnerEventPump\"}"
+    }
+  ]
+}

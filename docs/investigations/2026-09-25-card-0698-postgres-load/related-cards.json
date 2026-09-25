@@ -1,0 +1,27 @@
+[
+  {
+    "identifier": "CARD-0698",
+    "title": "antiphon-postgres burns ~5.6 cores: TranscriptEntries polled by full seq scan ~36x/s",
+    "status": "InProgress"
+  },
+  {
+    "identifier": "CARD-0691",
+    "title": "Pooled Codex/Grok delegate sessions never released after settlement; test PtyHosts outlive linger and parents",
+    "status": "InProgress"
+  },
+  {
+    "identifier": "CARD-0696",
+    "title": "Phone-home outage follow-ups: dropped @mentions, inconsistent send-now refusals, unbounded pending-inventory reads (CARD-0679 R6)",
+    "status": "Backlog"
+  },
+  {
+    "identifier": "CARD-0590",
+    "title": "Self-contained Antiphon Docker stack for server2 (server+runner+Postgres in-container)",
+    "status": "Review"
+  },
+  {
+    "identifier": "CARD-0336",
+    "title": "Triage the 16 non-Postgres test failures found by CARD-0238's verification run",
+    "status": "Done"
+  }
+]
