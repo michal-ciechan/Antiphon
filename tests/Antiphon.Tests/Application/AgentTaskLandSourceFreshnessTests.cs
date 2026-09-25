@@ -16,6 +16,67 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandSourceFreshnessTests
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task C688_Repair_OnlySchemaTwoCanWitnessMovedSource(int schema, bool resolved)
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var original = await h.AddSourceAsync();
+        h.Verifier.Passed = false;
+        await h.RunAsync();
+        var previous = (await h.OperationAsync()).ShouldNotBeNull();
+        previous.LastReason.ShouldBe("verification_failed");
+        var prepared = previous.RebasedSourceSha.ShouldNotBeNull();
+        prepared.ShouldNotBe(original);
+        h.Git.RewindSource(prepared);
+        h.Verifier.Passed = true;
+        var queued = await h.RequestAsync(expectedSourceSha: original);
+        await using (var db = h.CreateContext())
+        {
+            var stored = await db.AgentTaskLandings.SingleAsync(o => o.Id == previous.Id);
+            stored.SchemaVersion = schema;
+            if (resolved)
+            {
+                // Crash after resolution: the factory must independently enforce the lineage rule.
+                var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+                request.SourceResolutionState = LandSourceResolutionState.Resolved;
+                request.ResolvedSourceSha = original;
+                request.LocalBeforeSha = prepared;
+                request.SourceRelationship = LandSourceRelationship.LocalAhead;
+                request.RemoteSourceSha = previous.SourceRemoteSha;
+                request.RemoteSourceRef = previous.SourceRemoteRef;
+                request.RemoteSourceFingerprint = previous.SourceRemoteFingerprint;
+                request.SourceObservedAt = previous.SourceRemoteObservedAt;
+            }
+            await db.SaveChangesAsync();
+        }
+        h.Git.Commands.Clear();
+
+        await h.RunQueuedAsync();
+
+        await using var observer = h.CreateContext();
+        var terminal = await observer.AgentTaskEvents.SingleAsync(e => e.LandRequestId == queued.RequestId && e.IsLandTerminal);
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        if (schema == 2)
+        {
+            after.Id.ShouldNotBe(previous.Id);
+            after.PreparationInputSha.ShouldBe(prepared);
+            after.PreviousPreparationOperationId.ShouldBe(previous.Id);
+            new AgentTaskLandingState().HasPublication(after).ShouldBeTrue();
+        }
+        else
+        {
+            terminal.Type.ShouldBe(AgentTaskEventType.LandRefused);
+            terminal.Detail.ShouldContain("reviewed_source_mismatch");
+            after.Id.ShouldBe(previous.Id);
+            h.Git.Commands.ShouldNotContain(c => c.Arguments.Contains("rebase") || c.Arguments[0] == "push");
+        }
+    }
+
+    [Test]
     public async Task C488_DetachedFollowUpPublishesReviewedFix()
     {
         await using var h = new LandingSafetyHarness();

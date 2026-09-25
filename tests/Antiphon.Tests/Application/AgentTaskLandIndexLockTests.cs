@@ -104,7 +104,7 @@ public sealed class AgentTaskLandIndexLockTests
         var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
             && e.Type == AgentTaskEventType.LandRefused);
         refused.Detail.ShouldStartWith("land refused: git_index_lock_stale;");
-        refused.Detail.ShouldContain(lockPath);
+        refused.Detail.Replace('\\', '/').ShouldContain(lockPath.Replace('\\', '/'));
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.Phase.ShouldBe(LandPhase.RecoveryPinned);
         op.LastReason.ShouldBe(GitIndexLock.StaleCode);
@@ -184,7 +184,7 @@ public sealed class AgentTaskLandIndexLockTests
         {
             var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
                 && e.Type == AgentTaskEventType.LandRefused);
-            refused.Detail.ShouldContain(lockPath);
+            refused.Detail.Replace('\\', '/').ShouldContain(lockPath.Replace('\\', '/'));
             (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Fixture.TaskId
                 && e.Detail.Contains("interrupted_rebase"))).ShouldBeFalse();
         }
