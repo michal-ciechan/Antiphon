@@ -106,6 +106,25 @@ public sealed class CheckpointManifestDocumentationTests
         checkpoints.ShouldContain("waited=", Case.Sensitive, "the CHECKPOINTS sentence of server/Bundles/stage-code.md");
     }
 
+    /// <summary>CARD-0723 V-18: the checkpoint tool is named in every copy a delegate reads.</summary>
+    [Test]
+    public void the_checkpoint_tool_is_pinned_in_every_copy()
+    {
+        var doc = ReadCollapsed("docs", "testing-and-build.md");
+        foreach (var phrase in new[] { "### Checkpoint runner tool (CARD-0723)", "tools/Antiphon.Checkpoints", "wait", "exit 75" })
+            doc.ShouldContain(phrase, Case.Insensitive, DocRelativePath);
+
+        ReadCollapsed("AGENTS.md").ShouldContain("CARD-0723", Case.Insensitive, "AGENTS.md");
+        ReadCollapsed(".claude", "skills", "antiphon-delegate", "SKILL.md")
+            .ShouldContain("Antiphon.Checkpoints", Case.Insensitive, ".claude/skills/antiphon-delegate/SKILL.md");
+        ReadCollapsed("docs", "orchestration-loop.md")
+            .ShouldContain("Antiphon.Checkpoints", Case.Insensitive, "docs/orchestration-loop.md");
+        ReadCollapsed("server", "Bundles", "stage-code.md")
+            .ShouldContain("checkpoint tool", Case.Insensitive, "server/Bundles/stage-code.md");
+        ReadCollapsed("server", "Bundles", "stage-review.md")
+            .ShouldContain("checkpoint-tool run", Case.Insensitive, "server/Bundles/stage-review.md");
+    }
+
     [Test]
     public void the_review_bundle_names_each_checkpoint_defect()
     {
