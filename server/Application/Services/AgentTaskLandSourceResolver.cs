@@ -115,8 +115,7 @@ public sealed class AgentTaskLandSourceResolver(
             ? await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == activeId && o.TaskId == task.Id, ct)
             : null;
         // D-7: read-only acceptance of a branch a schema-2 rebase moved; schema 3 never creates this state.
-        var derivation = predecessorOp is { RebasedSourceSha: { } prepared } && prepared == local
-            && predecessorOp.OriginalSourceSha == expected;
+        var derivation = LandOperationFactory.IsLegacyDerivation(predecessorOp, local, expected);
 
         LandSourceRelationship relationship;
         if (derivation)

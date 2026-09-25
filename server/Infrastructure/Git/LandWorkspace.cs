@@ -120,11 +120,12 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
         var (mainRef, mainSha) = ReadHead(Path.Combine(commonDirectory, "HEAD"));
         rows.Add(new(commonDirectory, main, mainRef, mainSha, true));
         var linked = Path.Combine(commonDirectory, "worktrees");
-        if (!Directory.Exists(linked)) return rows;
+        // Only proven absence means no registrations. Access/enumeration failures propagate to the
+        // canonical residue boundary; they must not turn an unknown checkout into "nowhere".
+        if (!Exists(linked)) return rows;
         foreach (var admin in Directory.EnumerateDirectories(linked))
         {
             var head = Path.Combine(admin, "HEAD");
-            if (!File.Exists(head)) continue;
             var (symbolic, sha) = ReadHead(head);
             string? worktree = null;
             try
@@ -148,7 +149,19 @@ public sealed class LandWorkspace(ILandingGit git, IOptions<GitSettings> setting
         string text;
         try { text = File.ReadAllText(file).Trim(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return (null, null); }
-        if (text.StartsWith("ref:", StringComparison.Ordinal)) return (text[4..].Trim(), null);
+        if (text.StartsWith("ref:", StringComparison.Ordinal))
+        {
+            var reference = text[4..].Trim();
+            // HEAD is either a commit or a well-formed branch ref. Malformed symbolic text does not
+            // prove that this registration is off the target. Keep its row as unknown instead.
+            var valid = reference.StartsWith("refs/heads/", StringComparison.Ordinal)
+                && !reference.Contains("..", StringComparison.Ordinal)
+                && !reference.Contains("@{", StringComparison.Ordinal)
+                && !reference.Any(c => c <= ' ' || c == '\u007f' || "~^:?*[\\".Contains(c))
+                && reference.Split('/').All(part => part.Length > 0 && !part.StartsWith('.')
+                    && !part.EndsWith('.') && !part.EndsWith(".lock", StringComparison.Ordinal));
+            return valid ? (reference, null) : (null, null);
+        }
         return (null, LandingGit.IsOid(text) ? text : null);
     }
 
