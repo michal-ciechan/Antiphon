@@ -93,7 +93,8 @@ public sealed class AgentTaskLandVerifierTests
         Directory.CreateDirectory(project);
         await File.WriteAllTextAsync(Path.Combine(fixture.Path, "Fixture.csproj"), """
             <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework>
-            <EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup></Project>
+            <EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+            <ItemGroup><ProjectReference Include="tests/Antiphon.Tests/Antiphon.Tests.csproj" /></ItemGroup></Project>
             """);
         await File.WriteAllTextAsync(Path.Combine(project, "Antiphon.Tests.csproj"), """
             <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework>
