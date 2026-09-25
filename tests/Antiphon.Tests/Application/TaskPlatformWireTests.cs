@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -101,8 +102,10 @@ public sealed class TaskPlatformWireTests
             {"goal":"c710 desktop alias","title":"c710 desktop","role":"Code","agentKind":"ClaudeCode","workspace":"Shared","runnerId":"desktop"}
             """);
 
-        var created = await Should.NotThrowAsync(() =>
-            kit.Service(db).CreateAsync(request, kit.Caller, CancellationToken.None));
+        AgentTaskCreatedDto? created = null;
+        await Should.NotThrowAsync(async () =>
+            created = await kit.Service(db).CreateAsync(request, kit.Caller, CancellationToken.None));
+        created.ShouldNotBeNull();
 
         var saved = await kit.ReadAsync(created.Id);
         saved.Task.RunnerId.ShouldBeNull("desktop is the local runner and is stored as null");
