@@ -355,7 +355,7 @@ public sealed class CodexRunnerImageContractTests
     [
         "i=antiphon-runner-state-init-1",
         "c=antiphon-runner-session-runner-1",
-        "docker cp \"$i:/runner-state/codex/home/auth.json\" - | docker cp - \"$c:/state/codex/\"",
+        "docker cp \"$i:/runner-state/codex/auth.json\" - | docker cp - \"$c:/state/codex/\"",
         "docker exec -u 0:0 \"$c\" chown 1654:1654 /state/codex/auth.json",
         "docker exec -u 0:0 \"$c\" chmod 0600 /state/codex/auth.json",
         "docker exec -u 1654:1654 \"$c\" stat -c '%u:%g %a %F' /state/codex/auth.json",

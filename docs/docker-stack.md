@@ -22,12 +22,12 @@ Everything the persistent runner boots with that is *who it is*, rather than *wh
 
 Grok is **not** a file of this kind: its OAuth store is `GROK_HOME/auth.json` on the `runner-state` volume (`/state/grok`), made once by an interactive `grok login` inside the container (see `docs/agent-credentials.md`). The Claude interactive-login fallback store `/state/claude` is likewise volume state.
 
-**Codex home: one-time migration of the pre-amendment sign-in (CARD-0660).** Before the host directory existed, the first ChatGPT sign-in was made on the `runner-state` volume and sits at `/state/codex/home/auth.json` there. The new runner mounts the host directory *over* the volume's `/state/codex`, so that copy is no longer visible inside the runner; it is still visible in the exited `state-init` container, which sees the volume at `/runner-state` and the host directory at `/codex-home`. After a `deploy-parent` of this revision (which creates `secrets/codex/` and brings the new runner up), run on server2 as `mc`, from any directory. The file streams from one container to the other through a pipe: it lands nowhere on the host except the Codex home itself, never passes through a terminal, and nothing prints it. Only do this while `/state/codex/auth.json` is absent in the runner; a later `docker cp` would replace a newer sign-in.
+**Codex home: one-time migration of the pre-amendment sign-in (CARD-0660).** Before the host directory existed, the ChatGPT sign-in was made on the `runner-state` volume and now sits at `/state/codex/auth.json` there (the runner's view; `state-init` sees it as `/runner-state/codex/auth.json`). The new runner mounts the host directory *over* the volume's `/state/codex`, so that copy is no longer visible inside the runner; it is still visible in the exited `state-init` container, which sees the volume at `/runner-state` and the host directory at `/codex-home`. After a `deploy-parent` of this revision (which creates `secrets/codex/` and brings the new runner up), run on server2 as `mc`, from any directory. The file streams from one container to the other through a pipe: it lands nowhere on the host except the Codex home itself, never passes through a terminal, and nothing prints it. Only do this while `/state/codex/auth.json` is absent in the runner; a later `docker cp` would replace a newer sign-in.
 
 ```sh
 i=antiphon-runner-state-init-1
 c=antiphon-runner-session-runner-1
-docker cp "$i:/runner-state/codex/home/auth.json" - | docker cp - "$c:/state/codex/"
+docker cp "$i:/runner-state/codex/auth.json" - | docker cp - "$c:/state/codex/"
 docker exec -u 0:0 "$c" chown 1654:1654 /state/codex/auth.json
 docker exec -u 0:0 "$c" chmod 0600 /state/codex/auth.json
 docker exec -u 1654:1654 "$c" stat -c '%u:%g %a %F' /state/codex/auth.json
