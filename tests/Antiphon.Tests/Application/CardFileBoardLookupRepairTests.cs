@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -166,7 +167,7 @@ public partial class CardFileBoardLookupTests
         await world.AddCardAsync();
         await using var db = Context(isolated.ConnectionString, new QueryCounter());
         var service = Service(world, db, autoCommit: true);
-        (await service.SyncBoardAsync(world.BoardId)).Sha.ShouldNotBeNull();
+        (await service.SyncBoardAsync(world.BoardId)).CommitSha.ShouldNotBeNull();
         var child = (await GitOk(world.Repo.Path, "rev-parse", "HEAD")).Trim();
         var parent = (await GitOk(world.Repo.Path, "rev-parse", "HEAD~1")).Trim();
         (await service.OptedOutLandRefusalAsync(world.Repo.Path, parent, child, default)).ShouldBeNull();
@@ -185,7 +186,7 @@ public partial class CardFileBoardLookupTests
             var service = Service(world, db, autoCommit: true);
             var published = await service.SyncBoardAsync(world.BoardId);
             published.Written.ShouldBe(2);
-            published.Sha.ShouldNotBeNull();
+            published.CommitSha.ShouldNotBeNull();
             var exportSha = (await GitOk(world.Repo.Path, "rev-parse", "HEAD")).Trim();
             await using (var edit = world.Db())
                 await edit.Boards.Where(b => b.Id == world.BoardId).ExecuteUpdateAsync(s => s.SetProperty(b => b.SyncCardFiles, false));
