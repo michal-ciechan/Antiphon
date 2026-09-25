@@ -70,5 +70,5 @@ function SessionInspection({ sessionId }: { sessionId: string }) {
     {transcript.error.message}
   </Alert>
   if (!transcript.data.entries.length) return <Text>No transcript entries are available for this session.</Text>
-  return <SessionTranscriptPanel sessionId={sessionId} initialEntries={transcript.data.entries} />
+  return <SessionTranscriptPanel key={transcript.dataUpdatedAt} sessionId={sessionId} initialEntries={transcript.data.entries} />
 }
