@@ -227,10 +227,10 @@ public sealed class AgentTaskLandConcurrencyTests
         await h.RunAsync();
         h.Verifier.Calls.ShouldBe(1);
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         await h.Fixture.AssertRemoteSourceAsync();
         if (change == "source")
         {
+            Directory.Exists(h.Fixture.Source).ShouldBeTrue();
             // I-2: a moved branch is still rejected before Verified is committed.
             op.RemoteConfirmedAt.ShouldBeNull();
             op.Phase.ShouldBe(LandPhase.Refused, "invalid post-verification evidence must be rejected before committing Verified");
@@ -243,6 +243,7 @@ public sealed class AgentTaskLandConcurrencyTests
         op.RemoteConfirmedAt.ShouldNotBeNull("neither the task worktree nor the target checkout gates publication any more");
         if (change.StartsWith("source", StringComparison.Ordinal))
         {
+            Directory.Exists(h.Fixture.Source).ShouldBeTrue();
             op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
             op.LastReason.ShouldBe(change switch
             {
