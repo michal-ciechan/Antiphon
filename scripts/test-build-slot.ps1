@@ -167,6 +167,15 @@ function Test-C589_WrapperTimeout {
         -Name 'C589 WrapperTimeout prints the waiting and timeout lines' -Detail $r.Text
 }
 
+function Test-C589_WrapperUnreachableAtDeadline {
+    $fx = New-C589Case -Name 'wrapper-deadline-unreachable'
+    $r = Invoke-C589Wrapper -Fx $fx -SlotScript 'deadline_unreachable' -WaitSeconds '1' -GraceSeconds '2' -WrapperArgs @('-Label', 'late-unreachable', '--', 'dotnet', 'build', 'tests/X')
+    Assert-C487 -Cond ($r.Exit -eq 4 -and (Get-C589Line -Result $r -Pattern '^BUILD SLOT timeout after 1s position=0$') -eq 1) `
+        -Name 'C589 WrapperUnreachableAtDeadline exits 4 when the first unreachable answer arrives at the wait deadline' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST' -and (Get-C589Line -Result $r -Pattern '^BUILD SLOT unleased ') -eq 0) `
+        -Name 'C589 WrapperUnreachableAtDeadline never starts a build before the full grace' -Detail ('calls={0} {1}' -f ($r.Calls -join ' | '), $r.Text)
+}
+
 function Test-C589_WrapperUnreachable {
     $fx = New-C589Case -Name 'wrapper-unreachable'
     $r = Invoke-C589Wrapper -Fx $fx -SlotScript 'unreachable' -GraceSeconds '0' -WrapperArgs @('-Label', 'offline', '--', 'dotnet', 'build', 'tests/X')
@@ -194,7 +203,7 @@ function Test-C589_WrapperAsciiOnly {
     }
 }
 
-$script:C589ExpectedRows = 7 + 12 + 2 + 3 + 4 + 5
+$script:C589ExpectedRows = 7 + 12 + 2 + 3 + 4 + 2 + 5
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }
