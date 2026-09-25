@@ -464,6 +464,131 @@ public class PhoneHomeStrandedQueueTests
         stop.Cancel();
     }
 
+    // Review f87b49a7. In that same window IsLiveOrUnknown saw the session but
+    // ListLiveOrUnknownSessions() had no id for it: there is no inventory yet. A WhenTargetDown=Skip
+    // fire tested the list, read "down" and was skipped for good, with nothing having said the
+    // session was gone. The desktop's own binding record is what names it until the runner lists.
+    [Test]
+    public async Task A_desktop_restart_before_the_first_List_does_not_skip_a_scheduled_fire()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        var ended = await InsertRunnerBoundSessionAsync(schema.ConnectionString, host, SessionStatus.Failed);
+        const string prompt = "CARD-0679 scheduled prompt across a desktop restart";
+        var scheduleId = await SeedSkipWhenDownPromptAsync(schema.ConnectionString, h.AgentId, prompt);
+        h.Runtime.ListLiveSessions().ShouldNotContain(h.SessionId);
+        h.Runtime.ListLiveOrUnknownSessions().ShouldContain(h.SessionId,
+            "bound to the runner, not seen to end, and no runner has listed it either way");
+        h.Runtime.ListLiveOrUnknownSessions().ShouldNotContain(ended, "the desktop already saw this one end");
+
+        await FireNowAsync(h, scheduleId);
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var fire = await db.ScheduleFires.AsNoTracking().SingleAsync(f => f.ScheduleId == scheduleId);
+            fire.Outcome.ShouldBe(ScheduleFireOutcome.Enqueued, $"fire detail: {fire.Detail}");
+            fire.QueuedMessageId.ShouldNotBeNull();
+        }
+        var queued = await ReadRowContainingAsync(schema.ConnectionString, h.SessionId, prompt);
+        queued.Status.ShouldBe(QueuedMessageStatus.Pending, "nothing can reach the runner yet, so it waits");
+
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Sessions.Add(RunningOnRunner(h.SessionId));
+        EchoSubmittedPromptsToTranscript(peer, h);
+        using var stop = new CancellationTokenSource();
+        (await Pump(host, h).RunCycleAsync(stop.Token)).ShouldBeTrue("the first catch-up List answered");
+
+        (await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None)).ShouldBe(1);
+
+        TypedCount(peer, prompt).ShouldBe(1, "the fire reached the session once the runner was back");
+        (await ReadRowContainingAsync(schema.ConnectionString, h.SessionId, prompt)).Status
+            .ShouldBe(QueuedMessageStatus.Sent);
+        stop.Cancel();
+    }
+
+    // Review f87b49a7, channel targets: both the direct send and the @mention lookup read the
+    // list, so in the window the session did not exist (NotFound; "No live target matched").
+    // Channel input is typed, not queued: until the runner is back the send is refused as
+    // retryable (phone_home_unavailable), and the same target is reached once it is.
+    [Test]
+    public async Task A_desktop_restart_before_the_first_List_does_not_lose_a_channel_target()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        var (cardId, _) = await ClaimCardAsync(h, schema.ConnectionString);
+        var source = await InsertMentionSourceAsync(schema.ConnectionString, cardId);
+        const string direct = "CARD-0679 channel message across a desktop restart";
+        const string mentioned = "CARD-0679 mention across a desktop restart";
+        var mention = new AgentMention("fake", mentioned);
+
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            var channel = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
+            var sendRefused = await CaptureAsync(() => channel.SendToSessionAsync(null, h.SessionId, direct, CancellationToken.None));
+            sendRefused.ShouldBeOfType<ServiceUnavailableException>(
+                $"the target exists; only its runner is not back yet: {sendRefused}")
+                .Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+            var routeRefused = await CaptureAsync(() => channel.RouteMentionAsync(source, mention, CancellationToken.None));
+            routeRefused.ShouldBeOfType<ServiceUnavailableException>(
+                $"the mention matched its target; only its runner is not back yet: {routeRefused}")
+                .Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+        }
+
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Sessions.Add(RunningOnRunner(h.SessionId));
+        using var stop = new CancellationTokenSource();
+        (await Pump(host, h).RunCycleAsync(stop.Token)).ShouldBeTrue("the first catch-up List answered");
+
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            var channel = scope.ServiceProvider.GetRequiredService<AgentChannelService>();
+            await channel.SendToSessionAsync(null, h.SessionId, direct, CancellationToken.None);
+            (await channel.RouteMentionAsync(source, mention, CancellationToken.None)).ShouldBeTrue();
+        }
+
+        TypedCount(peer, direct).ShouldBe(1);
+        TypedCount(peer, mentioned).ShouldBe(1);
+        stop.Cancel();
+    }
+
+    // Review f87b49a7, send-now: the same list answered 409 "is not live" in the window, a
+    // refusal that says the session is gone. The message stays queued and the refusal says why.
+    [Test]
+    public async Task A_desktop_restart_before_the_first_List_does_not_409_a_send_now()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var h = await CreateRunnerBoundHarnessAsync(host, schema.ConnectionString);
+        const string reply = "CARD-0679 send-now across a desktop restart";
+        await h.Queue.EnqueueAsync(h.SessionId, reply, MessageSendMode.WhenIdle, CancellationToken.None);
+        var pending = await ReadRowAsync(schema.ConnectionString, h.SessionId, reply);
+        pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+
+        var refused = await CaptureAsync(() => h.Queue.SendNowAsync(h.SessionId, pending.Id, CancellationToken.None));
+
+        refused.ShouldNotBeOfType<ConflictException>($"send-now answered 409: {refused?.Message}");
+        refused.ShouldBeOfType<ServiceUnavailableException>($"{refused}").Code.ShouldBe(PhoneHomeProblemTypes.Unavailable);
+        var held = await ReadRowAsync(schema.ConnectionString, h.SessionId, reply);
+        held.Status.ShouldBe(QueuedMessageStatus.Pending, "the message stays queued");
+        held.DeliveryAttempts.ShouldBe(pending.DeliveryAttempts, "nothing left the desktop, so no attempt is charged");
+
+        await using var peer = await host.ConnectPeerAsync();
+        peer.Sessions.Add(RunningOnRunner(h.SessionId));
+        EchoSubmittedPromptsToTranscript(peer, h);
+        using var stop = new CancellationTokenSource();
+        (await Pump(host, h).RunCycleAsync(stop.Token)).ShouldBeTrue("the first catch-up List answered");
+
+        await h.Queue.SendNowAsync(h.SessionId, pending.Id, CancellationToken.None);
+
+        var row = await ReadRowAsync(schema.ConnectionString, h.SessionId, reply);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        TypedCount(peer, reply).ShouldBe(1);
+        stop.Cancel();
+    }
+
     // Review 87af1bf6 finding 2. The guard against an exited generation coming back was a
     // tombstone kept for ten minutes. A reply already received (its request stamped before the
     // exit) whose continuation runs after that, under thread-pool starvation say, found no
@@ -676,6 +801,13 @@ public class PhoneHomeStrandedQueueTests
             {
                 s.AddSingleton<ISessionRunnerDirectory>(host.Directory);
                 s.AddSingleton<ISessionRunnerClient>(new RoutingSessionRunnerClient(host.Directory));
+                // The list-based gates of review f87b49a7: schedule fires and channel targets.
+                s.AddSingleton(Options.Create(new ScheduleSettings()));
+                s.AddSingleton(Options.Create(new DigestSettings { TimeZone = "Europe/London" }));
+                s.AddSingleton<ScheduleFireQueue>();
+                s.AddSingleton<IScheduledCardActions>(new UnusedScheduledCardActions());
+                s.AddScoped<ScheduleService>();
+                s.AddScoped<AgentChannelService>();
             },
         });
         h.Runtime.TryRemove(h.SessionId, out _).ShouldBeTrue();
@@ -772,6 +904,130 @@ public class PhoneHomeStrandedQueueTests
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
         return await db.SessionQueuedMessages.AsNoTracking()
             .SingleAsync(m => m.AgentSessionId == sessionId && m.Body == body);
+    }
+
+    private static async Task<SessionQueuedMessage> ReadRowContainingAsync(string connectionString, Guid sessionId, string text)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        return await db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == sessionId && m.Body.Contains(text));
+    }
+
+    private static async Task<Exception?> CaptureAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    /// <summary>Another session the desktop bound to the runner, in <paramref name="status"/>.</summary>
+    private static async Task<Guid> InsertRunnerBoundSessionAsync(
+        string connectionString, PhoneHomeTestHost host, SessionStatus status)
+    {
+        var id = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = status,
+            Cwd = "/work",
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+            RunnerId = host.AllowedRunnerId,
+            RunnerStoreId = host.StoreId,
+            RunnerCwd = "/work",
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    /// <summary>A local session on the target's card: the source of an @mention.</summary>
+    private static async Task<Guid> InsertMentionSourceAsync(string connectionString, Guid cardId)
+    {
+        var id = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id,
+            CardId = cardId,
+            DefinitionName = "c679-source",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = "/work",
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    /// <summary>A due one-shot prompt to the harness agent whose policy skips a down target.</summary>
+    private static async Task<Guid> SeedSkipWhenDownPromptAsync(string connectionString, Guid agentId, string prompt)
+    {
+        var now = DateTime.UtcNow;
+        var dueAt = now.AddMinutes(-1);
+        var schedule = new Schedule
+        {
+            Id = Guid.NewGuid(),
+            Name = "Restart window",
+            Kind = ScheduleKind.Prompt,
+            Repeat = ScheduleRepeat.Once,
+            TimeZoneId = "Europe/London",
+            NextFireAt = dueAt,
+            Enabled = true,
+            MissedGraceMinutes = null,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ConcurrencyToken = Guid.NewGuid(),
+            AgentId = agentId,
+            PromptText = prompt,
+            WhenTargetDown = ScheduleWhenTargetDown.Skip,
+            FireAt = dueAt,
+            DaysOfWeek = 0,
+        };
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        db.Schedules.Add(schedule);
+        await db.SaveChangesAsync();
+        return schedule.Id;
+    }
+
+    private static async Task FireNowAsync(BridgeQueueHarness h, Guid scheduleId)
+    {
+        await using var scope = h.Provider.CreateAsyncScope();
+        var schedules = scope.ServiceProvider.GetRequiredService<ScheduleService>();
+        await schedules.FireNowAsync(scheduleId, CancellationToken.None);
+        var queue = h.Provider.GetRequiredService<ScheduleFireQueue>();
+        queue.TryDequeue(out var claim).ShouldBeTrue("the manual fire was claimed");
+        await schedules.FireAsync(claim, CancellationToken.None);
+    }
+
+    private sealed class UnusedScheduledCardActions : IScheduledCardActions
+    {
+        public Task<bool> ApplyAutomatedMoveAsync(
+            Guid cardId, CardStatus target, string reason, string movedBy, CancellationToken ct) =>
+            throw new InvalidOperationException("A prompt schedule fired a card action.");
+
+        public Task<bool> ReleaseAutoDispatchHoldAsync(Guid cardId, string reason, string actor, CancellationToken ct) =>
+            throw new InvalidOperationException("A prompt schedule fired a card action.");
+
+        public Task<SpawnCardResult> SpawnAsync(Guid cardId, SpawnCardRequest request, CancellationToken ct) =>
+            throw new InvalidOperationException("A prompt schedule fired a card action.");
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
