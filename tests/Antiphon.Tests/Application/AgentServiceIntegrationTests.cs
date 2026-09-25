@@ -609,6 +609,82 @@ public class AgentServiceIntegrationTests
             .ShouldContain(e => HasPayloadValue(e.Payload, "cardId", graph.CardA.Id));
     }
 
+    // ---- CARD-0691 D-5: delete stops the agent's session first, or refuses --------------------
+
+    [Test]
+    public async Task DeleteAsync_kills_a_live_session_before_removing_the_row()
+    {
+        await using var db = CreateContext();
+        var stopper = new RecordingSessionStopper { StopsSessionsIn = TestDbFixture.ConnectionString };
+        var service = CreateService(db, new MockEventBus(), sessions: stopper);
+        var agent = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Live Claude"), "D:/src/app"), CancellationToken.None);
+        var sessionId = await SeedAgentSessionAsync(agent.Id, SessionStatus.Running);
+        try
+        {
+            await service.DeleteAsync(agent.Id, CancellationToken.None);
+
+            stopper.Sources.ShouldBe([(sessionId, SessionTerminationSource.OperatorRequest)],
+                "deleting the owner is the operator's stop, not an inferred one");
+            await using var verify = CreateContext();
+            (await verify.Agents.AnyAsync(a => a.Id == agent.Id)).ShouldBeFalse();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Stopped);
+        }
+        finally
+        {
+            await CleanupDeleteFixtureAsync(agent.Id, sessionId);
+        }
+    }
+
+    [Test]
+    public async Task DeleteAsync_refuses_when_the_session_stays_live()
+    {
+        await using var db = CreateContext();
+        var stopper = new RecordingSessionStopper();
+        var service = CreateService(db, new MockEventBus(), sessions: stopper);
+        var agent = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Stubborn Claude"), "D:/src/app"), CancellationToken.None);
+        var sessionId = await SeedAgentSessionAsync(agent.Id, SessionStatus.Running);
+        try
+        {
+            var refused = await Should.ThrowAsync<ConflictException>(() =>
+                service.DeleteAsync(agent.Id, CancellationToken.None));
+
+            refused.Code.ShouldBe("agent_delete_session_live");
+            stopper.Killed.ShouldBe([sessionId], "the stop is attempted before refusing");
+            await using var verify = CreateContext();
+            (await verify.Agents.AnyAsync(a => a.Id == agent.Id)).ShouldBeTrue(
+                "the row is the live session's only owner; deleting it would orphan the process");
+        }
+        finally
+        {
+            await CleanupDeleteFixtureAsync(agent.Id, sessionId);
+        }
+    }
+
+    private static async Task<Guid> SeedAgentSessionAsync(Guid agentId, SessionStatus status)
+    {
+        var sessionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode, Status = status,
+            Cwd = Path.GetTempPath(), Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+        await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+            .SetProperty(a => a.PersistentSessionId, sessionId.ToString("D")));
+        return sessionId;
+    }
+
+    private static async Task CleanupDeleteFixtureAsync(Guid agentId, Guid sessionId)
+    {
+        await using var db = CreateContext();
+        await db.Agents.Where(a => a.Id == agentId).ExecuteDeleteAsync();
+        await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+    }
+
     [Test]
     public async Task DeleteAsync_rejects_unknown_agent()
     {
@@ -1613,7 +1689,8 @@ public class AgentServiceIntegrationTests
         AppDbContext db,
         IEventBus eventBus,
         IDirectoryWriter? directoryWriter = null,
-        ISessionRunnerClient? runnerClient = null)
+        ISessionRunnerClient? runnerClient = null,
+        IDelegateSessionStopper? sessions = null)
     {
         return new AgentService(
             db,
@@ -1622,7 +1699,8 @@ public class AgentServiceIntegrationTests
             TimeProvider.System,
             directoryWriter ?? new NoOpDirectoryWriter(),
             NullLogger<AgentService>.Instance,
-            runnerClient: runnerClient);
+            runnerClient: runnerClient,
+            sessions: sessions);
     }
 
     private sealed class BindingRunnerClient : ISessionRunnerClient

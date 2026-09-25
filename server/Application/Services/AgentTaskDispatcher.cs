@@ -6275,6 +6275,9 @@ public sealed class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
     }
 
+    /// <summary>CARD-0691 D-1 pool-release sweep (red-first surface; the sweep lands with S2).</summary>
+    internal Task<int> ReleaseUnownedPoolDelegatesAsync(CancellationToken ct) => Task.FromResult(0);
+
     /// <summary>
     /// Retire warm delegates that outstayed their welcome: idle past the TTL, or beyond the
     /// per-directory cap (oldest first). This bound is what makes "keep Claudes warm" a trade

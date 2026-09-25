@@ -12,6 +12,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -1096,6 +1097,75 @@ public class AgentSessionServiceIntegrationTests
             var secondAttempt = await db.RunAttempts.SingleAsync(a => a.Id == secondResult.RunAttemptId);
             secondAttempt.Phase.ShouldBe(RunPhase.Succeeded);
             secondAttempt.AttemptNumber.ShouldBe(2);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // ---- CARD-0691 D-4: a kill that cannot be delivered keeps its stop intent on record -------
+
+    [Test]
+    public async Task a_kill_whose_runner_call_throws_keeps_Stopping_and_names_the_reason()
+    {
+        var (sessionId, incidents) = await KillWithThrowingRunnerAsync(runnerId: null);
+
+        await using var verify = CreateContext();
+        var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        row.Status.ShouldBe(SessionStatus.Stopping, "the stop intent is real (CARD-0256); the kill just did not land");
+        row.FailureReason.ShouldBe("kill not delivered: runner unreachable (c691)");
+        row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        incidents.ShouldBeEmpty("a local session has no phone-home ledger to defer to");
+    }
+
+    [Test]
+    public async Task a_kill_whose_runner_call_throws_records_a_deferred_kill_for_a_remote_session()
+    {
+        var runnerId = $"c691-{Guid.NewGuid():N}"[..13];
+        var (sessionId, incidents) = await KillWithThrowingRunnerAsync(runnerId);
+
+        await using var verify = CreateContext();
+        var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        row.Status.ShouldBe(SessionStatus.Stopping);
+        var generation = SessionGeneration.Normalize(row.StartedAt);
+        // The CARD-0679 D-7 ledger shape PhoneHomeDeferredKillTests asserts; RunnerSlotReconcileJob drains it.
+        var intent = incidents.ShouldHaveSingleItem();
+        intent.Kind.ShouldBe(AgentIncidentKind.RunnerSlotReleaseIntent);
+        intent.FailureReason.ShouldBe($"pending:kill-generation:{runnerId}:{generation.Ticks}");
+        intent.Message.ShouldContain("runner unreachable (c691)");
+    }
+
+    private static async Task<(Guid SessionId, List<AgentIncident> Incidents)> KillWithThrowingRunnerAsync(string? runnerId)
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c691-kill-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var sessionId = Guid.NewGuid();
+        try
+        {
+            var startedAt = DateTime.UtcNow.AddMinutes(-5);
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running, Cwd = tempRoot, Cols = 120, Rows = 30,
+                CreatedAt = startedAt, StartedAt = startedAt, LastSeenAt = startedAt, RunnerId = runnerId,
+            });
+            await db.SaveChangesAsync();
+            var adapter = new FakeAgentProtocolAdapter { ThrowOnKill = new HttpRequestException("runner unreachable (c691)") };
+            await using var provider = BuildProvider();
+            var (service, runtime) = BuildServiceWithFakes(
+                db, new MockEventBus(), provider, adapter, tempRoot, CreateSessionSettings(tempRoot));
+            runtime.Register(sessionId, adapter);
+
+            var thrown = await Should.ThrowAsync<HttpRequestException>(() => service.KillAsync(sessionId, CancellationToken.None));
+            thrown.Message.ShouldBe("runner unreachable (c691)", "callers already catch and log the failed kill");
+            adapter.Killed.ShouldBeTrue();
+
+            await using var verify = CreateContext();
+            var incidents = await verify.AgentIncidents.AsNoTracking()
+                .Where(i => i.SessionId == sessionId).ToListAsync();
+            return (sessionId, incidents);
         }
         finally
         {

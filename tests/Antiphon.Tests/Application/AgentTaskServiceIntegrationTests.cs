@@ -1250,6 +1250,73 @@ public class AgentTaskServiceIntegrationTests
         (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse();
     }
 
+    // ---- CARD-0691 D-3: a pool row is removed only once its session is terminal ---------------
+
+    [Test]
+    public async Task RemoveEphemeralAgentAsync_marks_a_live_session_row_idle_instead_of_deleting_it()
+    {
+        // The overdue-deadline and dead-session writers fail the task WITHOUT a kill and then call
+        // this; deleting the row there left the session running with no owner at all.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Running, cs);
+        await MarkAgentWorkingOnAsync(agentId, sessionId, cs);
+        var failed = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, sessionId: sessionId,
+            connectionString: cs);
+        await PinTaskAgentAsync(failed.Id, agentId, cs);
+
+        await using (var db = CreateContext(cs))
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == failed.Id);
+            await CreateService(db).RemoveEphemeralAgentAsync(task, agentId, CancellationToken.None);
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = CreateContext(cs);
+        var agent = await verify.Agents.SingleOrDefaultAsync(a => a.Id == agentId);
+        agent.ShouldNotBeNull("the session is still Running, so the row is its only owner");
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldNotBeNull("left for the janitor");
+        agent.PoolReservedForRootTaskId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task RemoveEphemeralAgentAsync_removes_the_row_when_the_session_is_terminal()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low, cs);
+        var sessionId = await SeedLiveSessionAsync(workspace.Path, SessionStatus.Stopped, cs);
+        await MarkAgentWorkingOnAsync(agentId, sessionId, cs);
+        var failed = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, sessionId: sessionId,
+            connectionString: cs);
+        await PinTaskAgentAsync(failed.Id, agentId, cs);
+
+        await using (var db = CreateContext(cs))
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == failed.Id);
+            await CreateService(db).RemoveEphemeralAgentAsync(task, agentId, CancellationToken.None);
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = CreateContext(cs);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse();
+    }
+
+    private static async Task MarkAgentWorkingOnAsync(Guid agentId, Guid sessionId, string cs)
+    {
+        await using var db = CreateContext(cs);
+        await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u => u
+            .SetProperty(a => a.Status, AgentStatus.Running)
+            .SetProperty(a => a.PoolIdleSince, (DateTime?)null)
+            .SetProperty(a => a.PersistentSessionId, sessionId.ToString("D")));
+    }
+
     // ---- workspace defaults: an orchestrator owns something ---------------------------------
 
     [Test]
@@ -2337,7 +2404,9 @@ public class AgentTaskServiceIntegrationTests
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(settings),
             eventBus ?? new MockEventBus(),
-            stopper ?? new RecordingSessionStopper(),
+            // CARD-0691 D-3: the default stopper ends the session like the real one, so a pool row
+            // whose kill took is removed; pass a bare RecordingSessionStopper for "did not take".
+            stopper ?? new RecordingSessionStopper { StopsSessionsIn = db.Database.GetConnectionString() },
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance);
     }

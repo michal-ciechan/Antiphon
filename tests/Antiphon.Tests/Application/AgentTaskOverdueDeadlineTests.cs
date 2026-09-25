@@ -82,6 +82,35 @@ public class AgentTaskOverdueDeadlineTests
     }
 
     [Test]
+    public async Task an_overdue_pool_delegate_keeps_its_row_idle_while_the_session_lives()
+    {
+        // CARD-0691 D-3: this sweep fails WITHOUT a kill, and used to delete the pool row anyway,
+        // leaving a live session no agent owned. The row now stays, Idle, for the janitor.
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 150_000, withAgent: true);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 149_000),
+            (TranscriptKinds.TurnEnd, null, 148_000));
+        Guid agentId;
+        await using (var seeded = CreateContext())
+            agentId = (await seeded.AgentTasks.SingleAsync(t => t.Id == task)).AgentId!.Value;
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        stopper.Killed.ShouldBeEmpty();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+        var agent = await verify.Agents.SingleOrDefaultAsync(a => a.Id == agentId);
+        agent.ShouldNotBeNull("the live session's only owner must not be deleted");
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task a_task_under_its_ceiling_is_left_completely_alone()
     {
         var (harness, stopper) = CreateHarness();

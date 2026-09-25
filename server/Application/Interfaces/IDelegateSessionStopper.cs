@@ -1,3 +1,5 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Application.Interfaces;
 
 /// <summary>
@@ -11,4 +13,12 @@ namespace Antiphon.Server.Application.Interfaces;
 public interface IDelegateSessionStopper
 {
     Task KillAsync(Guid sessionId, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0691 D-5: the same stop with the caller's termination source (an agent delete is an
+    /// <see cref="SessionTerminationSource.OperatorRequest"/>). <c>AgentSessionService</c> implements
+    /// it directly; a seam without the notion falls back to the one-argument stop.
+    /// </summary>
+    Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct) =>
+        KillAsync(sessionId, ct);
 }

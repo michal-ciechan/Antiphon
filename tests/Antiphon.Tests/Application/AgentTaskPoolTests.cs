@@ -1025,14 +1025,276 @@ public class AgentTaskPoolTests
         (await verify.Agents.AnyAsync(a => a.Id == ids[0])).ShouldBeTrue("freshest stays");
     }
 
+    // ---- CARD-0691 D-1: the pool-release sweep ----------------------------------------------
+    //
+    // Each test owns an isolated schema: the sweep walks every pool delegate in the database, and
+    // these rows (Running, no pool state, a live session, a long-settled task) must neither be
+    // acted on by other suites' ticks nor let this sweep act on theirs.
+
+    [Test]
+    public async Task the_release_sweep_pools_a_running_shared_delegate_whose_task_settled_failed()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+        var (agentId, sessionId, task) = await SeedUnreleasedDelegateAsync(
+            schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
+
+        var acted = await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None);
+
+        acted.ShouldBe(1);
+        stopper.Killed.ShouldNotContain(sessionId, "a live Shared delegate is pooled warm, not killed");
+        await using var verify = CreateContext(schema.ConnectionString);
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldNotBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBe(task.RootTaskId);
+    }
+
+    [Test]
+    public async Task the_release_sweep_kills_a_running_worktree_delegate_with_no_open_task()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
+            schema.ConnectionString, workspace.Path, AgentTaskStatus.Succeeded, TimeSpan.FromMinutes(3),
+            WorkspaceMode.Worktree);
+
+        var acted = await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None);
+
+        acted.ShouldBe(1);
+        stopper.Killed.ShouldBe([sessionId]);
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Stopped);
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse("removed after the stopper ended the session");
+    }
+
+    [Test]
+    public async Task the_release_sweep_leaves_a_delegate_inside_the_grace()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
+            schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromSeconds(30));
+
+        (await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None)).ShouldBe(0);
+
+        stopper.Killed.ShouldBeEmpty();
+        await AssertUntouchedAsync(schema.ConnectionString, agentId, sessionId);
+    }
+
+    [Test]
+    public async Task the_release_sweep_leaves_a_delegate_with_a_blocked_task()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
+            schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
+        await SeedTaskOnDelegateAsync(schema.ConnectionString, agentId, sessionId, workspace.Path,
+            AgentTaskStatus.Blocked, completedAt: null);
+
+        (await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None)).ShouldBe(0);
+
+        stopper.Killed.ShouldBeEmpty("a Blocked task is a conversation its caller continues");
+        await AssertUntouchedAsync(schema.ConnectionString, agentId, sessionId);
+    }
+
+    [Test]
+    public async Task the_release_sweep_leaves_a_sourced_owner()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
+        using var ownedProvider = provider;
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
+            schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3),
+            WorkspaceMode.Worktree, sourced: true);
+
+        (await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None)).ShouldBe(0);
+
+        stopper.Killed.ShouldBeEmpty("SourceLanding release is receipt-authorized, never this sweep's");
+        await AssertUntouchedAsync(schema.ConnectionString, agentId, sessionId);
+    }
+
+    [Test]
+    public async Task the_release_sweep_defers_a_mid_turn_session_and_refreshes_nothing()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var logs = new List<RecordingLogEntry>();
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString, logs: logs);
+        using var ownedProvider = provider;
+        var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
+            schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
+        await using (var db = CreateContext(schema.ConnectionString))
+        {
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt, Text = "Keep working", CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        (await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None)).ShouldBe(0);
+
+        stopper.Killed.ShouldBeEmpty();
+        await AssertUntouchedAsync(schema.ConnectionString, agentId, sessionId);
+        logs.Where(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+                && e.Message.Contains(sessionId.ToString()))
+            .ShouldHaveSingleItem().Message.ShouldContain("mid-turn");
+    }
+
+    [Test]
+    public async Task the_janitor_keeps_the_row_when_the_kill_did_not_take()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, stopper, provider) = CreateHarness(connectionString: cs);
+        using var ownedProvider = provider;
+        stopper.StopsSessionsIn = null;
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 10, connectionString: cs);
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        stopper.Killed.ShouldBe([sessionId]);
+        await using (var verify = CreateContext(cs))
+        {
+            var kept = await verify.Agents.SingleOrDefaultAsync(a => a.Id == agentId);
+            kept.ShouldNotBeNull("the session is still Running, so the row is its only owner");
+            kept.Status.ShouldBe(AgentStatus.Idle);
+            kept.PoolKillRetries.ShouldBe(1);
+            (await verify.AgentIncidents.AnyAsync(i => i.AgentId == agentId)).ShouldBeFalse(
+                "one kill that did not take is a retry, not yet an incident");
+        }
+
+        for (var pass = 2; pass <= 3; pass++)
+        {
+            await using (var db = CreateContext(cs))
+                await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(u =>
+                    u.SetProperty(a => a.PoolIdleSince, DateTime.UtcNow.AddMinutes(-10)));
+            await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+        }
+
+        stopper.Killed.Count(id => id == sessionId).ShouldBe(3);
+        await using var final = CreateContext(cs);
+        var stopped = await final.Agents.SingleAsync(a => a.Id == agentId);
+        stopped.Status.ShouldBe(AgentStatus.Stopped, "the retry budget is spent; stop churning, keep the row");
+        stopped.PoolKillRetries.ShouldBe(3);
+        (await final.AgentIncidents.Where(i => i.AgentId == agentId).ToListAsync())
+            .ShouldHaveSingleItem().Kind.ShouldBe(AgentIncidentKind.DelegateReleaseUnresolved);
+    }
+
+    private static async Task<(Guid AgentId, Guid SessionId, AgentTask Task)> SeedUnreleasedDelegateAsync(
+        string connectionString, string directory, AgentTaskStatus status, TimeSpan completedAgo,
+        WorkspaceMode workspace = WorkspaceMode.Shared, bool sourced = false)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var name = $"task-{agentId:N}"[..13];
+        await using var db = CreateContext(connectionString);
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running, Cwd = directory, Cols = 120, Rows = 30,
+            CreatedAt = now.AddMinutes(-30), StartedAt = now.AddMinutes(-30), LastSeenAt = now,
+        });
+        // The CARD-0691 shape: alwaysOn off, Running, no PoolIdleSince, alive after its task settled.
+        db.Agents.Add(new Agent
+        {
+            Id = agentId, Name = name, Slug = name, WorkingDirectory = directory,
+            Details = "CARD-0691 unreleased pool delegate.", Status = AgentStatus.Running,
+            Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true,
+            PersistentSessionId = sessionId.ToString("D"), LaunchEnvJson = "{}",
+            CreatedAt = now.AddMinutes(-30), UpdatedAt = now.AddMinutes(-30),
+        });
+        await db.SaveChangesAsync();
+
+        Guid? operationId = null;
+        if (sourced)
+        {
+            var sourceId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = sourceId, RootTaskId = sourceId, Title = "landed source", Goal = "the landed work",
+                Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.Medium, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = directory, Status = AgentTaskStatus.Succeeded,
+                CreatedAt = now.AddHours(-1), CompletedAt = now.AddMinutes(-50),
+            });
+            await db.SaveChangesAsync();
+            operationId = Guid.NewGuid();
+            var sha = new string('a', 40);
+            db.AgentTaskLandings.Add(new AgentTaskLanding
+            {
+                Id = operationId.Value, TaskId = sourceId, CreatedAt = now, UpdatedAt = now,
+                RepositoryPath = directory, CommonDirectory = directory, WorktreePath = directory,
+                GitDirectory = directory, SourceFullRef = "refs/heads/feat/card-task-c691src",
+                OriginalSourceSha = sha, VerifiedSourceSha = sha, TargetFullRef = "refs/heads/master",
+                TargetBeforeSha = sha,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var task = await SeedTaskOnDelegateAsync(connectionString, agentId, sessionId, directory, status,
+            now - completedAgo, workspace, operationId);
+        return (agentId, sessionId, task);
+    }
+
+    private static async Task<AgentTask> SeedTaskOnDelegateAsync(
+        string connectionString, Guid agentId, Guid sessionId, string directory, AgentTaskStatus status,
+        DateTime? completedAt, WorkspaceMode workspace = WorkspaceMode.Shared, Guid? sourceLandingOperationId = null)
+    {
+        var id = Guid.NewGuid();
+        var at = completedAt ?? DateTime.UtcNow;
+        var task = new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "CARD-0691 settled work", Goal = "the settled work",
+            Role = sourceLandingOperationId is null ? AgentTaskRole.Docs : AgentTaskRole.Mutation,
+            AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, Workspace = workspace,
+            WorkingDirectory = directory, AgentId = agentId, AgentSessionId = sessionId, Status = status,
+            SourceLandingOperationId = sourceLandingOperationId,
+            SourceLandingSha = sourceLandingOperationId is null ? null : new string('a', 40),
+            CreatedAt = at.AddMinutes(-20), DispatchedAt = at.AddMinutes(-19), CompletedAt = completedAt,
+        };
+        await using var db = CreateContext(connectionString);
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
+    }
+
+    private static async Task AssertUntouchedAsync(string connectionString, Guid agentId, Guid sessionId)
+    {
+        await using var verify = CreateContext(connectionString);
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Running);
+        agent.PoolIdleSince.ShouldBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBeNull();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider)
-        CreateHarness(TimeProvider? timeProvider = null, string? connectionString = null)
+        CreateHarness(TimeProvider? timeProvider = null, string? connectionString = null,
+            List<RecordingLogEntry>? logs = null)
     {
-        var stopper = new RecordingSessionStopper();
+        // CARD-0691 D-3: kills end the session like the real stopper, so a retired row can go.
+        var stopper = new RecordingSessionStopper { StopsSessionsIn = connectionString ?? TestDbFixture.ConnectionString };
         var services = new ServiceCollection();
         services.AddLogging();
+        if (logs is not null)
+            services.AddSingleton<Microsoft.Extensions.Logging.ILogger<AgentTaskDispatcher>>(
+                new RecordingLogger<AgentTaskDispatcher>(logs));
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(timeProvider ?? TimeProvider.System);

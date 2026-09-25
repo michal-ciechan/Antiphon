@@ -936,6 +936,20 @@ public sealed class DelegationSettings
     /// </summary>
     public int PoolMaxIdlePerDirectory { get; set; } = 3;
 
+    /// <summary>
+    /// CARD-0691 D-1: the dispatcher's pool-release sweep pools or kills a pool delegate that has no
+    /// open task, no pool state and a live session once its newest task completed this many seconds
+    /// ago. The grace keeps the sweep off a settlement in flight (persist, deliver, then release).
+    /// Zero or less disables the sweep.
+    /// </summary>
+    public int PoolReleaseGraceSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// CARD-0691 D-3: kills of a retiring pool delegate whose session stays live before the janitor
+    /// stops retrying, leaves the row Stopped and records <c>DelegateReleaseUnresolved</c>.
+    /// </summary>
+    public int PoolReleaseMaxKillRetries { get; set; } = 3;
+
     public sealed class RolePolicyEntry
     {
         public AgentModelLevel Level { get; set; } = AgentModelLevel.High;
