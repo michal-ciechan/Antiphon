@@ -361,6 +361,7 @@ try
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
+    builder.Services.AddSingleton<ILandWorkspace, LandWorkspace>();
     // CARD-0666: a caller start SHA only origin has is fetched at create, never in the dispatch claim.
     builder.Services.AddSingleton<StartRefAvailability>();
     builder.Services.AddSingleton<ITaskProgressGit, TaskProgressGit>();

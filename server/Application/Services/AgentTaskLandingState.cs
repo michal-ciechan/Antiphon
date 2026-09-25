@@ -20,7 +20,7 @@ public sealed class AgentTaskLandingState
 
     public void Transition(AgentTaskLanding operation, LandPhase next, DateTime now)
     {
-        if (operation.SchemaVersion is not 1 and not 2) throw new InvalidOperationException("landing_schema_unsupported");
+        if (operation.SchemaVersion is not (1 or 2 or 3)) throw new InvalidOperationException("landing_schema_unsupported");
         var permitted = (operation.Phase, next) switch
         {
             (LandPhase.Inspected, LandPhase.RecoveryPinned) => operation.SourcePinned && operation.TargetPinned,
@@ -28,12 +28,14 @@ public sealed class AgentTaskLandingState
             (LandPhase.RebaseStarted, LandPhase.Prepared) => operation.PreparedPinned && IsOid(operation.RebasedSourceSha),
             (LandPhase.RecoveryPinned, LandPhase.Verified) => operation.VerificationSkipReason == "exact_remote_containment",
             (LandPhase.Prepared, LandPhase.Verified) => true,
-            (LandPhase.Verified, LandPhase.TargetAdvanceStarted) => true,
+            (LandPhase.Verified, LandPhase.TargetAdvanceStarted) => operation.SchemaVersion != 3,
+            // CARD-0688 D-4: schema 3 pushes straight from Verified; local target is advanced after publication.
+            (LandPhase.Verified, LandPhase.PushStarted) => operation.SchemaVersion == 3 && operation.PushStartedAt is not null,
             (LandPhase.TargetAdvanceStarted, LandPhase.LocalTargetAdvanced) => operation.LocalTargetAfterSha == operation.VerifiedSourceSha,
-            (LandPhase.LocalTargetAdvanced, LandPhase.PushStarted) => operation.PushStartedAt is not null,
+            (LandPhase.LocalTargetAdvanced, LandPhase.PushStarted) => operation.SchemaVersion != 3 && operation.PushStartedAt is not null,
             (LandPhase.Verified or LandPhase.PushStarted or LandPhase.LocalTargetAdvanced, LandPhase.PublicationConfirmed) => HasPublication(operation),
             (LandPhase.PublicationConfirmed, LandPhase.CleanupStarted) => HasPublication(operation)
-                && operation.CleanupStartedAt is not null && operation.ExpectedDeletionSha == operation.VerifiedSourceSha,
+                && operation.CleanupStartedAt is not null && operation.ExpectedDeletionSha == ExpectedDeletion(operation),
             (LandPhase.CleanupStarted, LandPhase.Complete) => HasPublication(operation)
                 && operation.DirectoryRemoved && operation.RegistrationRemoved && operation.BranchRemoved,
             (_, LandPhase.Refused) => !HasPublication(operation) && operation.Phase != LandPhase.Complete,
@@ -55,29 +57,35 @@ public sealed class AgentTaskLandingState
     public bool CanReplaceRefused(AgentTaskLanding previous, LandSourceInspection freshInspection,
         bool explicitRequest, bool leaseHeld, string? expectedSourceSha)
     {
-        if (!explicitRequest || !leaseHeld || previous.Phase != LandPhase.Refused || HasPublication(previous)
-            || !freshInspection.Accepted
-            || freshInspection.Snapshot!.Coordinates.TaskId != previous.TaskId)
-            return false;
-        if (previous.SchemaVersion is not 1 and not 2) return false;
-        if (previous.SchemaVersion == 1) return true;
         _ = expectedSourceSha;
+        return freshInspection.Accepted && freshInspection.Snapshot!.Coordinates.TaskId == previous.TaskId
+            && CanReplaceRefused(previous, explicitRequest, leaseHeld);
+    }
+
+    /// <summary>CARD-0688: replacing a refused operation needs no worktree inspection; the replacement reads the
+    /// branch ref itself. Only an explicit request under the lease may replace, and never a publication.</summary>
+    public bool CanReplaceRefused(AgentTaskLanding previous, bool explicitRequest, bool leaseHeld)
+    {
+        if (!explicitRequest || !leaseHeld || previous.Phase != LandPhase.Refused || HasPublication(previous))
+            return false;
+        if (previous.SchemaVersion is not (1 or 2 or 3)) return false;
+        if (previous.SchemaVersion == 1) return true;
         return previous.ApprovalLandRequestId is not null
             && previous.ReviewedSourceSha == previous.OriginalSourceSha;
     }
 
     public bool HasV2Approval(AgentTaskLanding operation) =>
-        operation.SchemaVersion == 2 && HasV2ApprovalStatic(operation);
+        operation.SchemaVersion is 2 or 3 && HasV2ApprovalStatic(operation);
 
     public bool HasLineage(AgentTaskLanding operation) =>
-        operation.SchemaVersion == 1 || (operation.SchemaVersion == 2 && LineageHolds(operation));
+        operation.SchemaVersion == 1 || (operation.SchemaVersion is 2 or 3 && LineageHolds(operation));
 
     private static bool HasVerification(AgentTaskLanding operation)
     {
         var expected = operation.RebasedSourceSha
             ?? operation.PreparationInputSha
             ?? operation.OriginalSourceSha;
-        var derivation = operation.SchemaVersion == 2
+        var derivation = operation.SchemaVersion is 2 or 3
             && operation.PreparationInputSha is { } input && input != operation.OriginalSourceSha;
         var baseUnchanged = operation.VerificationSkipReason == "base_unchanged"
             && operation.RebasedSourceSha == operation.OriginalSourceSha
@@ -96,7 +104,7 @@ public sealed class AgentTaskLandingState
     private static bool IsOid(string? value) => GitObjectId.IsFull(value);
 
     private static bool HasIdentity(AgentTaskLanding operation) =>
-        operation.SchemaVersion is 1 or 2
+        operation.SchemaVersion is 1 or 2 or 3
         && operation.Id != Guid.Empty && operation.TaskId != Guid.Empty
         && IsOid(operation.OriginalSourceSha) && IsOid(operation.TargetBeforeSha)
         && operation.SourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
@@ -109,7 +117,14 @@ public sealed class AgentTaskLandingState
         && !string.IsNullOrWhiteSpace(operation.GitDirectory)
         && operation.RemoteFingerprint.Length == 64
         && operation.RecoveryRefPrefix == $"refs/antiphon/land/{operation.TaskId:N}/{operation.Id:N}"
-        && (operation.SchemaVersion == 1 || HasV2ApprovalStatic(operation));
+        && (operation.SchemaVersion == 1 || HasV2ApprovalStatic(operation))
+        && (operation.SchemaVersion != 3 || IsOid(operation.SourceLocalSha) && IsOid(operation.LocalTargetBeforeSha)
+            && !string.IsNullOrWhiteSpace(operation.LandWorktreePath));
+
+    /// <summary>CARD-0688 D-6: schema 3 never moves the task branch, so cleanup deletes it at the SHA it had when
+    /// the operation was created; schema 1/2 rebased the branch itself and delete it at the landed SHA.</summary>
+    public static string? ExpectedDeletion(AgentTaskLanding operation) =>
+        operation.SchemaVersion == 3 ? operation.SourceLocalSha : operation.VerifiedSourceSha;
 
     private static bool HasV2ApprovalStatic(AgentTaskLanding operation) =>
         operation.ApprovalLandRequestId is { } requestId && requestId != Guid.Empty

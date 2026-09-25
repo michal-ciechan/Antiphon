@@ -553,6 +553,28 @@ public class LandingGit : ILandingGit
         return new(null, null, fingerprint, "source_remote_changed_during_confirmation");
     }
 
+    /// <summary>CARD-0642 D-6 / CARD-0688 D-8: endpoint fingerprint, then one <c>ls-remote</c>. No fetch, no pin ref:
+    /// the resolver's authoritative observation already holds the reviewed objects locally.</summary>
+    public virtual async Task<LandingSourceRecheck> RecheckSourceRemoteAsync(string repository, string sourceFullRef,
+        string expectedSha, string expectedFingerprint, CancellationToken ct)
+    {
+        if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(expectedSha))
+            return new(null, null, "invalid_observation_identity");
+        string endpoint;
+        try { endpoint = await EndpointAsync(repository, ct); }
+        catch (IOException) { return new(null, null, "source_remote_endpoint_ambiguous"); }
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)));
+        if (fingerprint != expectedFingerprint) return new(null, fingerprint, "source_remote_endpoint_changed");
+        var read = await RunAsync(repository, ["ls-remote", "--refs", "--exit-code", endpoint, sourceFullRef], ct);
+        if (read.ExitCode == 2) return new(null, fingerprint, "source_remote_missing");
+        if (!read.Succeeded) return new(null, fingerprint, "source_remote_unreadable");
+        var lines = read.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var fields = lines.Length == 1 ? lines[0].TrimEnd('\r').Split('\t') : [];
+        if (fields.Length != 2 || fields[1] != sourceFullRef || !IsOid(fields[0]))
+            return new(null, fingerprint, "source_remote_response_invalid");
+        return new(fields[0], fingerprint, null);
+    }
+
     public virtual async Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct)
     {
         try
