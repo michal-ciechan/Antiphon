@@ -144,8 +144,10 @@ public sealed class ChannelBridgeService : BackgroundService
             return existing.QueueMessageId is null && existing.EnvelopeJson is not null ? existing.Id : null;
 
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
-        var (channel, legacyDuplicate) = await channels.UpsertFromInboundAsync(message, ct);
-        var deliverable = !legacyDuplicate && channel.Enabled && channel.AgentId is not null
+        var (channel, _) = await channels.UpsertFromInboundAsync(message, ct);
+        // The catalog's one-slot LastChannelMessageId can predate this journal. It is
+        // not proof that a complete envelope was accepted or delivered.
+        var deliverable = channel.Enabled && channel.AgentId is not null
             && (!string.IsNullOrWhiteSpace(message.Text) || message.Attachments.Count > 0);
         var inbound = new ChannelInbound
         {
