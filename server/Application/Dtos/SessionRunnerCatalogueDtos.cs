@@ -14,4 +14,6 @@ public sealed record SessionRunnerCatalogueEntryDto(
     string CapacityKind,
     DateTimeOffset? CapacityObservedAt,
     bool Stale,
-    IReadOnlyList<string> Features);
+    IReadOnlyList<string> Features,
+    bool Draining = false,
+    bool AcceptingNewWork = false);

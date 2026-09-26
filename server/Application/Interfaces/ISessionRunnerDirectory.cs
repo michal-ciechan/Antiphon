@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Interfaces;
@@ -42,6 +43,16 @@ public interface ISessionRunnerDirectory
 {
     ISessionRunnerClient Local { get; }
     ISessionRunnerClient Resolve(string? runnerId);
+
+    /// <summary>
+    /// CARD-0727 D-7. <see cref="Resolve"/> plus a refusal when the slot is draining or retired.
+    /// Existing-session calls stay on <see cref="Resolve"/>. The default body is <see cref="Resolve"/>
+    /// so a directory that has not learned the gate keeps today's behaviour.
+    /// </summary>
+    ISessionRunnerClient ResolveForNewWork(string? runnerId) => Resolve(runnerId);
+
+    /// <summary>CARD-0727 D-6. The mirrored drain row, or null when this directory has none.</summary>
+    RunnerState? DrainState(string? runnerId) => null;
     Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct);
     Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct);

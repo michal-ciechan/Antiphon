@@ -473,6 +473,47 @@ public class PhoneHomeStandingLaunchTests
         host.Local.Calls.Count(c => c == "start").ShouldBe(localStartsBefore);
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task Standing_agent_start_on_a_draining_runner_is_refused()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var workspace = Path.Combine(Path.GetTempPath(), $"ph-drain-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workspace);
+        await File.WriteAllBytesAsync(Path.Combine(workspace, "grok.exe"), [0x4D, 0x5A]);
+        try
+        {
+            await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+            await using var peer = await host.ConnectPeerAsync();
+            host.Directory.MarkRecovered(await host.WaitLiveAsync());
+            var agentId = Guid.NewGuid();
+            await SeedPinnedAgentAsync(schema.ConnectionString, agentId, workspace);
+            host.Directory.ApplyState(host.AllowedRunnerId, new RunnerState(
+                true, DateTimeOffset.UtcNow, "upgrade", null, false, null, null, null));
+            var inner = new FakeAgentProtocolAdapter { ReadyResult = true };
+            var gate = new GateScopeFactory();
+            await using var harness = BuildLaunchHarness(
+                schema, host, workspace, agentId,
+                [new PrefixStartAdapter(inner)], new ThrowOnSessionInsert { Armed = false }, gate);
+
+            var refused = await Should.ThrowAsync<ConflictException>(() =>
+                harness.Control.StartAsync(agentId, new StartAgentRequest(Fresh: true), CancellationToken.None));
+            refused.StatusCode.ShouldBe(409);
+            refused.Code.ShouldBe(PhoneHomeProblemTypes.RunnerDraining);
+            peer.Launches.Count.ShouldBe(0);
+
+            host.Directory.ApplyState(host.AllowedRunnerId, new RunnerState(
+                false, null, null, null, false, null, null, null));
+            var started = await harness.Control.StartAsync(
+                agentId, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            started.PersistentSessionId.ShouldNotBeNull();
+        }
+        finally
+        {
+            try { Directory.Delete(workspace, recursive: true); } catch (IOException) { }
+        }
+    }
+
     private static AgentControlServiceIntegrationTests.Harness BuildLaunchHarness(
         IsolatedTestSchema schema,
         PhoneHomeTestHost host,

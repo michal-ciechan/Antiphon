@@ -88,6 +88,19 @@ public static class DispatchHoldDetails
         $"Held: RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({reason}); the task stays Queued.";
 
     /// <summary>
+    /// CARD-0727 D-8. A queued task whose runner is draining and has no eligible redirect.
+    /// The redirect clause stays in the sentence so a later eligibility change dedupes on new text.
+    /// </summary>
+    public static string RunnerDraining(string runnerId, string? reason, string? redirectTo)
+    {
+        var why = string.IsNullOrWhiteSpace(reason) ? "no reason recorded" : reason.Trim();
+        var redirect = string.IsNullOrWhiteSpace(redirectTo)
+            ? "no redirect"
+            : $"redirect '{redirectTo.Trim()}' is not accepting work";
+        return $"Held: runner '{runnerId}' is draining ({why}); {redirect}";
+    }
+
+    /// <summary>
     /// CARD-0653: the runner's declared seats are full. Occupied and capacity stay out of the
     /// dedupe key's changing half only while the fraction is stable, which is the hold itself.
     /// </summary>

@@ -82,6 +82,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             return SnapshotOf(slot)?.RunnerStoreId ?? slot.StoreId;
     }
 
+    /// <summary>
+    /// CARD-0727 D-7. The red body is <see cref="Resolve"/>; production refuses a draining or retired slot.
+    /// </summary>
+    public ISessionRunnerClient ResolveForNewWork(string? runnerId) => Resolve(runnerId);
+
     public ISessionRunnerClient Resolve(string? runnerId)
     {
         if (string.IsNullOrWhiteSpace(runnerId) || runnerId == LocalRunnerId || RunnerRequestIntent.IsDesktopAlias(runnerId))
@@ -596,6 +601,27 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         public DateTimeOffset? PlatformObservedAt;
         public RunnerCapabilitiesDto? Capabilities;
         public int RegisteredCapacity;
+        public RunnerState? State;
+    }
+
+    /// <summary>
+    /// CARD-0727 D-6. Stores the mirrored row. The red-commit body does not gate
+    /// <see cref="Resolve"/>; <see cref="ResolveForNewWork"/> grows the refusal.
+    /// </summary>
+    public void ApplyState(string runnerId, RunnerState state)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot))
+            throw new NotFoundException("SessionRunner", runnerId);
+        lock (_gate)
+            slot.State = state;
+    }
+
+    public RunnerState? DrainState(string? runnerId)
+    {
+        if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot))
+            return null;
+        lock (_gate)
+            return slot.State;
     }
 
     private sealed record LastDisconnectRecord(string Reason, DateTimeOffset AtUtc, long Epoch);
