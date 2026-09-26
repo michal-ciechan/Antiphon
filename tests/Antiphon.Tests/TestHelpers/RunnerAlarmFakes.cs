@@ -25,9 +25,14 @@ internal sealed class FakeEligibilitySource : IRunnerEligibilitySnapshotSource
 internal sealed class FakeExclusion : IRunnerAlarmExclusion
 {
     public Dictionary<string, string?> Reasons { get; } = new(StringComparer.Ordinal);
+    public string? ThrowFor { get; set; }
 
-    public string? Excluded(string runnerId) =>
-        Reasons.TryGetValue(runnerId, out var reason) ? reason : null;
+    public string? Excluded(string runnerId)
+    {
+        if (ThrowFor == runnerId)
+            throw new InvalidOperationException("exclusion failed for " + runnerId);
+        return Reasons.TryGetValue(runnerId, out var reason) ? reason : null;
+    }
 }
 
 internal sealed class RecordingNotifier : IRunnerAlarmNotifier

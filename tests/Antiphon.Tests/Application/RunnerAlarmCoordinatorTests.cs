@@ -272,6 +272,41 @@ public sealed class RunnerAlarmCoordinatorTests
     }
 
     [Test]
+    public async Task a_later_runner_failure_does_not_resend_notes_already_sent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var pa = Guid.NewGuid();
+        var pb = Guid.NewGuid();
+        await AddSessionAsync(db, pa, "a", SessionStatus.Running);
+        await AddSessionAsync(db, pb, "b", SessionStatus.Running);
+        await AddTaskAsync(db, "a", AgentTaskStatus.Working, pa, AgentTaskReplyTo.Session, AgentTaskRole.Code);
+        await AddTaskAsync(db, "b", AgentTaskStatus.Working, pb, AgentTaskReplyTo.Session, AgentTaskRole.Code);
+        await db.SaveChangesAsync();
+        var source = new FakeEligibilitySource();
+        source.Rows.Add(Row("a", true, false, "transport_abort"));
+        source.Rows.Add(Row("b", true, false, "socket_closed"));
+        var state = new RunnerAlarmState();
+        var notifier = new RecordingNotifier();
+        var exclusion = new FakeExclusion();
+        var coordinator = Build(db, source, state, notifier, exclusion);
+
+        await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        exclusion.ThrowFor = "b";
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None));
+
+        var raised = state.Current.Episodes.Single(episode => episode.RunnerId == "a");
+        raised.RaisedAt.ShouldBe(T0.AddSeconds(180));
+        raised.NotifiedSessionIds.ShouldBe([pa]);
+        notifier.Notes.Count(note => note.SessionId == pa).ShouldBe(1);
+
+        exclusion.ThrowFor = null;
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(181), CancellationToken.None);
+        notifier.Notes.Count(note => note.SessionId == pa).ShouldBe(1);
+    }
+
+    [Test]
     public async Task journal_findings_are_published_per_repository_and_cleared_when_recovered()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
