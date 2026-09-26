@@ -9,6 +9,7 @@ public static class ExitCodes
     public const int SlotTimeout = 4;
     public const int Timeout = 5;
     public const int ExecutorCrashed = 6;
+    public const int OwnerEnded = 7;
     public const int StillRunning = 75;
 
     // Highest precedence first. PC-10 swaps the 1 and 2 entries.

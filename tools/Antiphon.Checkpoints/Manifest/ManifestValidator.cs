@@ -48,6 +48,10 @@ public static class ManifestValidator
                 throw new ManifestValidationException("id", $"duplicate checkpoint id '{row.Id}'");
             if (row.After.Count == 0)
                 throw new ManifestValidationException("after", $"{row.Id} has no after");
+            if (row.EstimatedMinutes is int estimate && (estimate <= 0 || 3L * estimate > int.MaxValue))
+                throw new ManifestValidationException("estimatedMinutes", $"{row.Id}: EstimatedMinutes must be positive with safe deadlines");
+            if (row.EstimatedMinutesWindows is int windows && (windows <= 0 || 3L * windows > int.MaxValue))
+                throw new ManifestValidationException("estimatedMinutesWindows", $"{row.Id}: EstimatedMinutesWindows must be positive with safe deadlines");
 
             var hasFilter = !string.IsNullOrWhiteSpace(row.Filter);
             var hasCommand = !string.IsNullOrWhiteSpace(row.Command);
@@ -61,14 +65,26 @@ public static class ManifestValidator
                 if (string.IsNullOrWhiteSpace(row.Build) || manifest.Builds.All(b => b.Id != row.Build))
                     throw new ManifestValidationException("build", $"{row.Id} references unknown build '{row.Build}'");
                 var afterKey = string.Join(",", row.After);
-                if (!manifest.RelaxSharedBuildAfter)
-                {
-                    if (firstAfter.TryGetValue(row.Build!, out var existing) && !string.Equals(existing, afterKey, StringComparison.Ordinal))
-                        throw new ManifestValidationException("after",
-                            $"{row.Id} reuses build '{row.Build}' across a different after (CARD-0585 reuse rule)");
-                    firstAfter.TryAdd(row.Build!, afterKey);
-                }
+                if (firstAfter.TryGetValue(row.Build!, out var existing) && !string.Equals(existing, afterKey, StringComparison.Ordinal))
+                    throw new ManifestValidationException("after",
+                        $"{row.Id} reuses build '{row.Build}' across a different after (CARD-0585 reuse rule)");
+                firstAfter.TryAdd(row.Build!, afterKey);
             }
+            ValidateEnvironment(row);
+        }
+    }
+
+    public static void ValidateEnvironment(CheckpointSpec row)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in row.Environment ?? [])
+        {
+            if (!Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)
+                || name.IndexOfAny(['\0', '\n', '\r']) >= 0
+                || value.IndexOfAny(['\0', '\n', '\r']) >= 0)
+                throw new ManifestValidationException("environment", $"{row.Id}: Environment has invalid NAME=value entry '{name}'");
+            if (!names.Add(name))
+                throw new ManifestValidationException("environment", $"{row.Id}: Environment duplicates '{name}'");
         }
     }
 

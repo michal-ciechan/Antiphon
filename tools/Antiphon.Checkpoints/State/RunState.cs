@@ -9,6 +9,7 @@ public sealed class RunState
     public DateTimeOffset? TotalTimeoutAt { get; set; }
     public DateTimeOffset? EndedAt { get; set; }
     public int? ExitCode { get; set; }
+    public string? Reason { get; set; }
     public int Nonce { get; set; }
     public string Marker { get; set; } = "";
     public int MaxConcurrentRows { get; set; }

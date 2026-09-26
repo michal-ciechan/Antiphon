@@ -168,7 +168,17 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     }
 
                     var max = ReadInt(body, "maxCpuCount", 4);
-                    _log?.Invoke($"BUILD SLOT granted lease={leaseId} waited={elapsed}s maxcpucount={max}");
+                    try
+                    {
+                        _log?.Invoke($"BUILD SLOT granted lease={leaseId} waited={elapsed}s maxcpucount={max}");
+                    }
+                    catch
+                    {
+                        _held.TryRemove(leaseId, out _);
+                        try { using var ignored = await _http.DeleteAsync(_endpoint + "/" + leaseId, CancellationToken.None).ConfigureAwait(false); }
+                        catch { /* holder disposal in the outer finally is the remaining safety net */ }
+                        throw;
+                    }
                     var owned = holder;
                     holder = null;
                     return new SlotLease
@@ -231,17 +241,20 @@ public sealed class BuildSlotClient : IBuildSlotClient
 
     private async Task ReleaseAsync(string leaseId, CancellationToken cancellationToken)
     {
+        string line;
         try
         {
             using var response = await _http.DeleteAsync(_endpoint + "/" + leaseId, cancellationToken).ConfigureAwait(false);
-            _log?.Invoke(response.StatusCode == HttpStatusCode.NoContent
+            line = response.StatusCode == HttpStatusCode.NoContent
                 ? $"BUILD SLOT released lease={leaseId}"
-                : $"BUILD SLOT release failed lease={leaseId} status={(int)response.StatusCode}");
+                : $"BUILD SLOT release failed lease={leaseId} status={(int)response.StatusCode}";
         }
         catch (Exception ex)
         {
-            _log?.Invoke($"BUILD SLOT release failed lease={leaseId} error={ex.Message}");
+            line = $"BUILD SLOT release failed lease={leaseId} error={ex.Message}";
         }
+
+        _log?.Invoke(line);
     }
 
     private static int ReadInt(string json, string name, int fallback)

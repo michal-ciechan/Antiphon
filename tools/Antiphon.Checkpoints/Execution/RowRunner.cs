@@ -21,6 +21,8 @@ public sealed class RowRequest
     public int MaxCpuCount { get; init; } = 4;
     public TimeSpan Deadline { get; init; } = TimeSpan.FromMinutes(15);
     public string? DotnetFileName { get; init; }
+    public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
+    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
 }
 
 public sealed class RowRunResult
@@ -70,13 +72,15 @@ public sealed class RowRunner
 
         if (!string.IsNullOrWhiteSpace(request.Command))
         {
+            if (request.BeforeLaunch is not null)
+                await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
             var shell = _platform.IsWindows ? "cmd.exe" : "/bin/sh";
             var shellArgs = _platform.IsWindows
                 ? new[] { "/d", "/s", "/c", request.Command }
                 : new[] { "-lc", request.Command };
             var ran = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log")),
+                new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                 request.Deadline,
                 cancellationToken).ConfigureAwait(false);
             if (ran.TimedOut)
@@ -102,10 +106,12 @@ public sealed class RowRunner
         var buildState = request.BuildStateOverride ?? (request.NoBuild ? "reused" : "ok");
         if (!request.NoBuild)
         {
+            if (request.BeforeLaunch is not null)
+                await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
             var built = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log")),
+                new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
                 request.Deadline,
                 cancellationToken).ConfigureAwait(false);
             if (built.TimedOut)
@@ -119,10 +125,12 @@ public sealed class RowRunner
         }
 
         var trxPath = Path.Combine(request.ResultsDirectory, "run.trx");
+        if (request.BeforeLaunch is not null)
+            await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
         var runArgs = BuildStep.RunArguments(request.Project!, request.OutputPath!, properties, request.Filter!, request.ResultsDirectory, "run.trx");
         var run = await RowTimeout.RunWithDeadlineAsync(
             _driver,
-            new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log")),
+            new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
             request.Deadline,
             cancellationToken).ConfigureAwait(false);
         if (run.TimedOut)
@@ -160,9 +168,11 @@ public sealed class RowRunner
                 var rerunTrx = Path.Combine(request.ResultsDirectory, rerunName);
                 var rerunArgs = BuildStep.RunArguments(
                     request.Project!, request.OutputPath!, properties, decision.Filters[index], request.ResultsDirectory, rerunName);
+                if (request.BeforeLaunch is not null)
+                    await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
                 var second = await RowTimeout.RunWithDeadlineAsync(
                     _driver,
-                    new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log")),
+                    new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                     request.Deadline,
                     cancellationToken).ConfigureAwait(false);
                 var secondParsed = File.Exists(rerunTrx) ? TrxReport.Parse(rerunTrx) : null;
