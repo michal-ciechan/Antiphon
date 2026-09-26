@@ -148,7 +148,10 @@ public sealed class RunnerAlarmDeliveryTests
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(444), CancellationToken.None);
         await Task.Delay(100);
         (await PromptsAsync(rig)).ShouldNotContain(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal));
-        (await rig.Db.SessionQueuedMessages.AsNoTracking().SingleAsync(row => row.Body.Contains("[runner server2 recovered]", StringComparison.Ordinal)))
+        var saved = await rig.Db.SessionQueuedMessages.AsNoTracking()
+            .Where(row => row.AgentSessionId == rig.Harness.SessionId)
+            .ToListAsync();
+        saved.Single(row => row.Body.Contains("[runner server2 recovered]", StringComparison.Ordinal))
             .Status.ShouldBe(QueuedMessageStatus.Pending);
 
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(445), CancellationToken.None);
