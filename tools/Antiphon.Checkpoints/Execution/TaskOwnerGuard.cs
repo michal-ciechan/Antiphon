@@ -17,6 +17,7 @@ public sealed class TaskOwnerGuard : IDisposable
     private readonly Action<string>? _log;
     private readonly SemaphoreSlim _read = new(1, 1);
     private readonly CancellationTokenSource _ended = new();
+    private readonly CancellationTokenSource _settled = new();
     private string? _sessionId;
 
     public TaskOwnerGuard(
@@ -56,6 +57,9 @@ public sealed class TaskOwnerGuard : IDisposable
     public string? SessionId => _sessionId;
     public string? Reason { get; private set; }
     public CancellationToken Ended => _ended.Token;
+
+    /// <summary>Cancelled only for a definitively settled owner. Uncertainty does not cancel running work.</summary>
+    public CancellationToken Settled => _settled.Token;
 
     public async Task<bool> EnsureLiveAsync(CancellationToken cancellationToken)
     {
@@ -178,6 +182,15 @@ public sealed class TaskOwnerGuard : IDisposable
     private void End(string reason)
     {
         Reason = reason;
+        try
+        {
+            _log?.Invoke(reason);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+        }
+        if (reason == "owner-ended")
+            _settled.Cancel();
         _ended.Cancel();
     }
 
@@ -186,5 +199,6 @@ public sealed class TaskOwnerGuard : IDisposable
         _http.Dispose();
         _read.Dispose();
         _ended.Dispose();
+        _settled.Dispose();
     }
 }
