@@ -23,7 +23,9 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
         if (task is null || task.ActiveLandingId != op.Id
             || task.SourceLandingOperationId is not null || task.Role == AgentTaskRole.Mutation
-            || task.Status != Domain.Enums.AgentTaskStatus.Succeeded
+            || (op.RecoveryMode == LandRecoveryMode.None
+                ? task.Status != AgentTaskStatus.Succeeded
+                : task.Role != AgentTaskRole.Code || !LandApproval.RecoveryStatusEligible(task.Status))
             || FullRef(task.WorktreeBranch) != op.SourceFullRef
             || FullRef(task.MergeTargetRef ?? "master") != op.TargetFullRef
             || !SamePath(task.RepoPath, op.RepositoryPath) || !SamePath(task.WorktreePath, op.WorktreePath)) return null;
