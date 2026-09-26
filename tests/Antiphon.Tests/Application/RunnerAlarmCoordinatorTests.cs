@@ -336,6 +336,43 @@ public sealed class RunnerAlarmCoordinatorTests
         _ = calls;
     }
 
+    [Test]
+    public async Task journal_findings_publish_each_records_file_state_age_process_and_write_time()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        using var repo = new ScratchGitRepo("c726-journal-record");
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        db.Projects.Add(new Project
+        {
+            Id = Guid.NewGuid(), Name = "one", GitRepositoryUrl = "https://example.test/one",
+            LocalRepositoryPath = repo.Path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var ticks = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks + 1;
+        var children = Path.Combine(common, "antiphon", "children");
+        Directory.CreateDirectory(children);
+        var record = Path.Combine(children, Guid.NewGuid().ToString("N") + ".json");
+        var now = DateTimeOffset.UtcNow;
+        await File.WriteAllTextAsync(record, System.Text.Json.JsonSerializer.Serialize(
+            new RepositoryChildJournal.ChildRecord(1, common, Environment.ProcessId, ticks)));
+        File.SetLastWriteTimeUtc(record, now.AddMinutes(-10).UtcDateTime);
+        var state = new RunnerAlarmState();
+        var coordinator = Build(db, new FakeEligibilitySource(), state, new RecordingNotifier());
+
+        await coordinator.EvaluateJournalsAsync(null, now, CancellationToken.None);
+
+        var finding = state.Current.Journals.ShouldHaveSingleItem();
+        finding.StaleCount.ShouldBe(1);
+        var published = finding.Records.ShouldHaveSingleItem();
+        LandingGit.PathsEqual(published.File, record).ShouldBeTrue();
+        published.State.ShouldBe(JournalRecordState.Dead);
+        published.ProcessId.ShouldBe(Environment.ProcessId);
+        published.Age.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMinutes(5));
+        published.WrittenAt.ShouldBe(new DateTimeOffset(File.GetLastWriteTimeUtc(record), TimeSpan.Zero));
+    }
+
     private static RunnerAlarmCoordinator Build(
         AppDbContext db, FakeEligibilitySource source, RunnerAlarmState state, RecordingNotifier notifier,
         FakeExclusion? exclusion = null, AlarmSettings? settings = null,

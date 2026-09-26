@@ -1,3 +1,5 @@
+using Antiphon.Server.Infrastructure.Git;
+
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed record RunnerOutageEpisode(
@@ -24,11 +26,22 @@ public sealed record PendingRecoveryNote(
     string Header,
     string Body);
 
+/// <summary>One inspected child-journal record. Round 2's feed row reads <see cref="WrittenAt"/>.</summary>
+public sealed record JournalAlarmRecord(
+    string File,
+    JournalRecordState State,
+    TimeSpan Age,
+    int? ProcessId,
+    DateTimeOffset WrittenAt);
+
 public sealed record JournalFinding(
     string Repository,
     string CommonDirectory,
     int StaleCount,
-    DateTimeOffset InspectedAt);
+    DateTimeOffset InspectedAt)
+{
+    public IReadOnlyList<JournalAlarmRecord> Records { get; init; } = [];
+}
 
 public sealed record RunnerAlarmSnapshot(
     IReadOnlyList<RunnerOutageEpisode> Episodes,

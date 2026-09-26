@@ -99,10 +99,12 @@ public class RepositoryChildJournalInspector(ILandingGit git)
         return ClassifyPath(path, JournalRecordState.Unknown, record.ProcessId, staleAfter, now);
     }
 
-    private static JournalRecordFinding ClassifyPath(
+    protected virtual DateTime ReadWrittenAtUtc(string path) => File.GetLastWriteTimeUtc(path);
+
+    private JournalRecordFinding ClassifyPath(
         string path, JournalRecordState state, int? processId, TimeSpan staleAfter, DateTimeOffset now)
     {
-        var age = now.UtcDateTime - File.GetLastWriteTimeUtc(path);
+        var age = now.UtcDateTime - ReadWrittenAtUtc(path);
         if (age < TimeSpan.Zero)
             age = TimeSpan.Zero;
         var stale = state != JournalRecordState.Alive && age >= staleAfter;
