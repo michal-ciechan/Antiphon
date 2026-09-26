@@ -117,7 +117,8 @@ public class AgentTaskLandRequestTests
         var conflicted = new AgentTaskLanding
         {
             Id = Guid.NewGuid(), TaskId = task.Id, SchemaVersion = 3,
-            Phase = LandPhase.Conflicted, Publication = LandPublicationOutcome.Unconfirmed,
+            Phase = LandPhase.Refused, Publication = LandPublicationOutcome.Unconfirmed,
+            LastReason = "rebase_conflict",
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             RepositoryPath = task.RepoPath!, WorktreePath = task.WorktreePath!,
             SourceFullRef = "refs/heads/" + task.WorktreeBranch,
@@ -178,7 +179,7 @@ public class AgentTaskLandRequestTests
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId)).State.ShouldBe(LandRequestState.Superseded);
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId)).SupersedesRequestId.ShouldBe(first.RequestId);
         (await db.AgentTasks.SingleAsync(t => t.Id == helperId)).Status.ShouldBe(AgentTaskStatus.Canceled);
-        (await db.AgentTaskLandings.SingleAsync(o => o.Id == conflicted.Id)).Active.ShouldBeFalse();
+        (await db.AgentTaskLandings.SingleAsync(o => o.Id == conflicted.Id)).Active.ShouldBeTrue();
     }
 
     [Test]
