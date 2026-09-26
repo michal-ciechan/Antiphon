@@ -62,6 +62,7 @@ public sealed class HostStatsEndpointTests
         {
             host.Local.HostStats = HostStatsCacheTests.Sample(cpu: 25);
             await using var peer = await host.ConnectPeerAsync();
+            host.Directory.MarkRecovered(await host.WaitLiveAsync());
             peer.Reply = frame => frame.Operation == PhoneHomeOperation.HostStats
                 ? Reply(frame, HostStatsCacheTests.Sample(cpu: 42)) : null;
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
@@ -95,6 +96,7 @@ public sealed class HostStatsEndpointTests
         await using (host)
         {
             await using var peer = await host.ConnectPeerAsync();
+            host.Directory.MarkRecovered(await host.WaitLiveAsync());
             peer.Reply = frame => frame.Operation == PhoneHomeOperation.HostStatsSeries
                 ? Reply(frame, new RunnerHostSeriesDto("cpu", "30m", 5,
                     [new(DateTimeOffset.UtcNow, 1), new(DateTimeOffset.UtcNow.AddSeconds(5), 2),

@@ -24,7 +24,7 @@ public sealed class HostStatsCache(HostStatsSettings settings, TimeProvider time
         lock (_gate)
         {
             _entries.TryGetValue(hostId, out var previous);
-            if (previous?.Snapshot?.At != dto.At || previous.Failure is not null)
+            if (previous?.Snapshot?.At != dto.At || previous?.Failure is not null)
                 _changed = true;
             _entries[hostId] = new Entry(dto, time.GetUtcNow(), null);
         }

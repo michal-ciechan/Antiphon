@@ -40,6 +40,7 @@ public sealed class HostStatsPollServiceTests
         var host = await PhoneHomeTestHost.StartAsync(clock: time);
         host.Local.HostStats = HostStatsCacheTests.Sample(cpu: 25);
         var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
         peer.Reply = frame => frame.Operation == PhoneHomeOperation.HostStats
             ? Reply(frame, HostStatsCacheTests.Sample(new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero), 42))
             : null;
@@ -60,6 +61,9 @@ public sealed class HostStatsPollServiceTests
             rows.Count.ShouldBe(2);
             rows.ShouldAllBe(r => r.State == "live");
             rows.Single(r => r.HostId == host.AllowedRunnerId).Current!.CpuPercent.ShouldBe(42);
+            rows.Single(r => r.HostId == host.AllowedRunnerId).Antiphon.SessionsLive.ShouldBe(0);
+            rows.Single(r => r.HostId == host.AllowedRunnerId).Antiphon.SeatsDeclared.ShouldBe(1);
+            rows.Single(r => r.HostId == "desktop").Antiphon.SeatsDeclared.ShouldBe(6);
             bus.Events.Count.ShouldBe(1);
             bus.Events[0].Group.ShouldBe("hosts");
             bus.Events[0].EventName.ShouldBe("HostStatsUpdated");
@@ -77,12 +81,13 @@ public sealed class HostStatsPollServiceTests
         {
             await poll.TickOnceAsync();
             peer.SilentFor(PhoneHomeOperation.HostStats);
+            time.Advance(TimeSpan.FromMilliseconds(12000));
             var tick = poll.TickOnceAsync();
             while (peer.RequestCount(PhoneHomeOperation.HostStats) < 2)
                 await Task.Delay(10);
             time.Advance(TimeSpan.FromMilliseconds(3000));
             await tick.WaitAsync(TimeSpan.FromSeconds(10));
-            time.Advance(TimeSpan.FromMilliseconds(12001));
+            time.Advance(TimeSpan.FromMilliseconds(1));
             var rows = cache.Project();
             rows.Single(r => r.HostId == host.AllowedRunnerId).State.ShouldBe("stale");
             rows.Single(r => r.HostId == host.AllowedRunnerId).Current!.CpuPercent.ShouldBe(42);
@@ -143,6 +148,7 @@ public sealed class HostStatsPollServiceTests
             offline.State.ShouldBe("offline");
             offline.Current!.CpuPercent.ShouldBe(42);
             await using var next = await host.ConnectPeerAsync();
+            host.Directory.MarkRecovered(await host.WaitLiveAsync());
             next.Reply = frame => frame.Operation == PhoneHomeOperation.HostStats
                 ? Reply(frame, HostStatsCacheTests.Sample(cpu: 51)) : null;
             await poll.TickOnceAsync();
