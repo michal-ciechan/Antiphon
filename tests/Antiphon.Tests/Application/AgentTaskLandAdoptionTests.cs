@@ -1,0 +1,127 @@
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class AgentTaskLandAdoptionTests
+{
+    [Test]
+    public async Task C753_ReviewedSelfRecoveryAlignsRewrittenOwnerSourceAndPublishes()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var local = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var repairPath = Path.Combine(h.Fixture.Root, "trees", "reviewed-self");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", repairPath,
+            h.Fixture.SeedSha);
+        await File.WriteAllTextAsync(Path.Combine(repairPath, "recovery.txt"), "reviewed rewrite\n");
+        await h.Fixture.RequiredAsync(repairPath, "add", ".");
+        await h.Fixture.RequiredAsync(repairPath, "commit", "-m", "reviewed recovery");
+        var reviewed = (await h.Fixture.RequiredAsync(repairPath, "rev-parse", "HEAD")).Trim();
+        await h.Fixture.RequiredAsync(repairPath, "push", "--force-with-lease", "origin",
+            $"HEAD:{h.Fixture.SourceRef}");
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(local);
+        Guid evidenceId;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            owner.WorktreeBaseSha = h.Fixture.SeedSha;
+            evidenceId = await AddReviewAsync(db, owner, reviewed);
+        }
+
+        var queued = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidenceId,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        op.RecoveryMode.ShouldBe(LandRecoveryMode.OwnerReviewedSource);
+        op.RecoveryLocalBeforeSha.ShouldBe(local);
+        op.RecoveryOwnerRemoteBeforeSha.ShouldBe(reviewed);
+        op.OriginalSourceSha.ShouldBe(reviewed);
+        await using var observer = h.CreateContext();
+        (await observer.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId)).Status.ShouldBe(AgentTaskStatus.Failed);
+        (await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId))
+            .RecoveryOwnerRemoteAfterSha.ShouldBe(reviewed);
+    }
+
+    [Test]
+    public async Task C753_FailedOwnerAdoptsReviewedRepairBranchAndRetainsRepairWorktree()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var ownerBefore = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var sourceId = Guid.NewGuid();
+        var sourceRef = $"refs/heads/feat/card-task-{sourceId:N}";
+        var sourcePath = Path.Combine(h.Fixture.Root, "trees", "reviewed-repair");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "-b", sourceRef[11..],
+            sourcePath, ownerBefore);
+        await File.WriteAllTextAsync(Path.Combine(sourcePath, "repair.txt"), "reviewed repair\n");
+        await h.Fixture.RequiredAsync(sourcePath, "add", ".");
+        await h.Fixture.RequiredAsync(sourcePath, "commit", "-m", "repair owner source");
+        var reviewed = (await h.Fixture.RequiredAsync(sourcePath, "rev-parse", "HEAD")).Trim();
+        await h.Fixture.RequiredAsync(sourcePath, "push", "origin", sourceRef);
+        Guid evidenceId;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            owner.CardId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = sourceId, RootTaskId = sourceId, Title = "reviewed repair", Goal = "repair",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = h.Fixture.Repository, RepoPath = h.Fixture.Repository,
+                WorktreePath = sourcePath, WorktreeBranch = sourceRef[11..],
+                WorktreeBaseSha = ownerBefore, Status = AgentTaskStatus.Failed,
+                CardId = owner.CardId, ProjectId = owner.ProjectId,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            var source = await db.AgentTasks.SingleAsync(t => t.Id == sourceId);
+            evidenceId = await AddReviewAsync(db, source, reviewed);
+        }
+
+        await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidenceId,
+            adoptFromTaskId: sourceId);
+        await h.RunQueuedAsync();
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        op.RecoveryMode.ShouldBe(LandRecoveryMode.AdoptReviewedSource);
+        op.RecoverySourceTaskId.ShouldBe(sourceId);
+        op.RecoveryOwnerRemoteBeforeSha.ShouldBe(ownerBefore);
+        op.RecoveryOwnerRemoteAfterSha.ShouldBe(reviewed);
+        Directory.Exists(sourcePath).ShouldBeTrue();
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "show-ref", "--verify", "--hash", sourceRef))
+            .Trim().ShouldBe(reviewed);
+        h.Fixture.Git.Trace.ShouldContain(a => a.Contains($"--force-with-lease={h.Fixture.SourceRef}:{ownerBefore}"));
+    }
+
+    private static async Task<Guid> AddReviewAsync(
+        Antiphon.Server.Infrastructure.Data.AppDbContext db, AgentTask subject, string sha)
+    {
+        var row = new StageOutcome
+        {
+            Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Delegate, SubjectTaskId = subject.Id, StageTaskId = Guid.NewGuid(),
+            ReviewedSourceSha = sha, ReviewedSourceRef = "refs/heads/" + subject.WorktreeBranch,
+            ReviewedRepositoryPath = subject.RepoPath, CommissionedRound = VerificationRound.Final,
+            OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
+        };
+        db.StageOutcomes.Add(row);
+        await db.SaveChangesAsync();
+        return row.Id;
+    }
+}
