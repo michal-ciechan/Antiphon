@@ -443,6 +443,25 @@ function Write-CardFileStatus {
     if (-not $s.enabled) { Write-Output 'card-file sync disabled; existing exports are not erased' }
 }
 
+function Write-TaskSettlementLine {
+    param($Settlement)
+    if ($null -eq $Settlement) { return }
+    if ($null -ne $Settlement.canceled) {
+        foreach ($id in @($Settlement.canceled)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$id)) {
+                Write-Output ("{0,-11} canceled {1}" -f 'tasks', $id)
+            }
+        }
+    }
+    if ($null -ne $Settlement.leftOpen) {
+        foreach ($id in @($Settlement.leftOpen)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$id)) {
+                Write-Output ("{0,-11} still working {1} (attention row; cancel or reopen)" -f 'tasks', $id)
+            }
+        }
+    }
+}
+
 function Write-TrackerPushLine {
     param($Push)
     if ($null -eq $Push) { return }
@@ -689,6 +708,7 @@ switch ($Verb) {
         Write-CardLine $result.card
         Write-Output ("moved to    {0}" -f $target.name)
         Write-TrackerPushLine $result.trackerPush
+        Write-TaskSettlementLine $result.taskSettlement
         if ($result.spawnedSessionId) {
             Write-Output ("started     session {0}" -f $result.spawnedSessionId)
         }

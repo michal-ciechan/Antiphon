@@ -907,7 +907,9 @@ Split by what each part actually is:
   touches. A haiku agent cannot see that from the repo.
 - **The move and the cleanup in §8 are mechanical — delegate them.** Hand the agent the verdict text
   and the card identifier; it runs `pwsh -File scripts/card.ps1 close CARD-nnnn -ReasonFile <path>`
-  (or `-Reason` for something short) and reports the result.
+  (or `-Reason` for something short) and reports the result. Closing cancels the card's unstarted
+  delegates and leaves started ones with an attention row (CARD-0738), so close after the last
+  delegate settles, or expect a Canceled note for anything that had not started.
 
 - **A terminal move preserves its `reason`; use it as the verdict** — what shipped, what was
   corrected, what is still open, with commit hashes.

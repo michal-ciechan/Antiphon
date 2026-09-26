@@ -21,6 +21,8 @@ Failed launches release the claim and leave the card in its current workflow col
 
 Moving a card to a terminal column while a session is active stops the session and clears the claim.
 
+Closing a card (Done or Canceled), `card.ps1 close`, or archiving it also settles the delegated tasks bound to it (CARD-0738). A task that has not started — Queued, Blocked, or Dispatched whose own brief queue row is still Pending, or that has no brief and no turn prompt since dispatch — is canceled. The reason names the card and carries the card's close or archive reason. A task that has started (Working, or Dispatched whose brief was Sent, or whose transcript shows a turn prompt when no brief row exists) is not stopped: it gets one Warning event and one `CardClosedWhileWorking` attention row, and a human cancels it or reopens the card. "Started" is that brief row, then the transcript, never the task status. Reopening the card resurrects nothing; retry still exists. `POST /api/agent-tasks/closed-card-sweep` lists open tasks whose card is already terminal or archived and cancels them only when `apply` is true. A task created after the close, including a post-Done Mutation, is left alone.
+
 ## Importance and urgency
 
 Cards store two named axes; a single `priority` number is not an API field (a request that still sends it is a 400).
