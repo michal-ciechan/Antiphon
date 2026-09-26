@@ -8,20 +8,31 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskPlatformGuidanceTests
 {
     [Test]
-    public void Stage_guidance_defaults_to_any_and_names_the_platform_contract()
+    public void Stage_guidance_inherits_platform_before_using_any_and_names_the_platform_contract()
     {
         foreach (var name in new[] { "stage-code.md", "stage-review.md", "stage-mutation.md", "stage-plan.md" })
         {
             var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", name));
-            text.ShouldContain("Default Any");
+            text.ShouldContain("inherits its predecessor's platform");
+            text.ShouldContain("inherits the card's platform");
+            text.ShouldContain("unpinned (Any)");
+            text.ShouldContain("runtime default places it");
+            text.ShouldContain("pass -Platform Any explicitly");
+            text.ShouldContain("only when that piece of work requires it");
+            text.ShouldContain("scope a platform-pinned task to just the OS-specific part");
             text.ShouldContain("OS-specific");
-            text.ShouldContain("defaults/runners");
+            text.ShouldContain("habit, stage name");
             text.ShouldNotContain("-Platform Windows for");
         }
 
         var orchestrator = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "orchestrator.md"));
-        orchestrator.ShouldContain("omitting -Platform is Any");
-        orchestrator.ShouldContain("Pass -Platform only");
+        orchestrator.ShouldContain("inherits its predecessor's platform");
+        orchestrator.ShouldContain("inherits the card's platform");
+        orchestrator.ShouldContain("unpinned (Any)");
+        orchestrator.ShouldContain("pass -Platform Any explicitly");
+        orchestrator.ShouldContain("only when that piece of work requires it");
+        orchestrator.ShouldContain("scope a platform-pinned task to just the OS-specific part");
+        orchestrator.ShouldContain("habit, a stage name");
         orchestrator.ShouldNotContain("-Platform Windows for");
     }
 
@@ -47,7 +58,7 @@ public sealed class RunnerDefaultGuidanceTests
     }
 
     [Test]
-    public void Platform_pins_are_explicit_and_bundles_default_to_any()
+    public void Platform_pins_are_explicit_and_bundles_inherit_before_any()
     {
         var plan = File.ReadAllText(Path.Combine(Root(), "docs", "superpowers", "plans", "2026-09-25-card-0710-task-platform-placement-plan.md"));
         plan.ShouldContain("CP-13");
@@ -57,13 +68,16 @@ public sealed class RunnerDefaultGuidanceTests
         foreach (var name in new[] { "stage-plan.md", "stage-code.md", "stage-review.md", "stage-mutation.md" })
         {
             var text = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", name));
-            text.ShouldContain("Default Any");
+            text.ShouldContain("inherits its predecessor's platform");
+            text.ShouldContain("inherits the card's platform");
+            text.ShouldContain("pass -Platform Any explicitly");
             text.ShouldContain("OS-specific");
             text.Contains("CP-13", StringComparison.Ordinal).ShouldBeFalse(name + " names CP-13");
             text.Contains("server2", StringComparison.Ordinal).ShouldBeFalse(name + " names server2");
         }
         var orchestrator = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", "orchestrator.md"));
-        orchestrator.ShouldContain("omitting -Platform is Any");
+        orchestrator.ShouldContain("inherits its predecessor's platform");
+        orchestrator.ShouldContain("pass -Platform Any explicitly");
         orchestrator.ShouldContain("OS-only probe");
     }
 
