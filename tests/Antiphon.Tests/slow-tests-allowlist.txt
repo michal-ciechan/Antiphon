@@ -51,7 +51,7 @@ Antiphon.Tests.Application.AttentionServiceTests
 Antiphon.Tests.Application.AgentTaskDeliveryWatchdogTests
 # CARD-0487: historical allowance, review loop queue cost.
 Antiphon.Tests.Application.ReviewLoopTests
-# CARD-0735: scaled clock at speed 5. Re-press-count tests keep a 3s real confirm window. Class body was 95-99s before that window; remeasure after the margin fix.
+# CARD-0735: scaled clock at speed 5. Re-press-count tests keep a 3s real confirm window. Class body 101-103s on Linux (three runs at 46c3c7d8; was 95-99s, originally 292-302s).
 Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests
 # CARD-0501: first harness starts/migrates PostgreSQL (28.372s measured); failed-submit confirmation uses real timers.
 Antiphon.Tests.Application.SessionMessageQueueWedgedHeadTests

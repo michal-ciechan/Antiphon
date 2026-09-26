@@ -191,7 +191,7 @@ Each `After` slice that builds uses its own `bin-c735-<slice>/` (forward slash).
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c735-s1/` | clock-unit | `/*/*/ScaledTimeProviderTests/*` | V-1–V-6 | all 6 methods, 0 failed/skipped | 6 | 6 |
 | CP-2 | S2a | `tests/Antiphon.Tests -> bin-c735-s2a/` | pc-a-red-whenidle | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | PC-A | 1 executed, **1 failed** (killed) | 1 | 3 |
 | CP-3 | S2a | CP-2 | pc-a-red-modenow | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_grace_confirms_late_record_without_409` | PC-A | 1 executed, **1 failed** (409) | 1 | 2 |
-| CP-4 | S2b | `tests/Antiphon.Tests -> bin-c735-s2b/` | class-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-1, PC-A green | 123 executed, 0 failed/skipped; class span reported from the TRX | 123 | 4 |
+| CP-4 | S2b | `tests/Antiphon.Tests -> bin-c735-s2b/` | class-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-1, PC-A green | 123 executed, 0 failed/skipped; class span about 101-103s on Linux at speed 5 | 123 | 4 |
 | CP-5 | S2b | CP-4 | class-soak-1 | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-2 | 123 executed, 0 failed | 123 | 2 |
 | CP-6 | S2b | CP-4 | class-soak-2 | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-2 | 123 executed, 0 failed | 123 | 2 |
 | CP-7 | S2b | `tests/Antiphon.Tests -> bin-c735-pcb/` | pc-b-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/Swallowed_submit_reverts_message_and_restarts_always_on_agent` | PC-B | 1 executed, **1 failed** | 1 | 3 |
