@@ -55,7 +55,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var seeded = await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Custom, AgentTaskStatus.Queued),
             (AgentTaskRole.Custom, AgentTaskStatus.Dispatched),
@@ -99,7 +99,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var open = await SeedOpenAsync(db, workspace.Path, (AgentTaskRole.Debug, AgentTaskStatus.Working));
         var goal = Unique("second-debug");
 
@@ -127,7 +127,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Plan, AgentTaskStatus.Working),
             (AgentTaskRole.Code, AgentTaskStatus.Queued),
@@ -152,7 +152,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Custom, AgentTaskStatus.Queued),
             (AgentTaskRole.Plan, AgentTaskStatus.Working));
@@ -180,7 +180,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Custom, AgentTaskStatus.Queued),
             (AgentTaskRole.Custom, AgentTaskStatus.Queued),
@@ -201,7 +201,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Blocked, Unique("blocked"));
         await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Succeeded, Unique("done"));
         await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Failed, Unique("failed"));
@@ -219,7 +219,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Plan, AgentTaskStatus.Working),
             (AgentTaskRole.Code, AgentTaskStatus.Queued),
@@ -238,7 +238,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var agentId = await SeedAgentAsync(db, workspace.Path);
         var prior = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Succeeded, Unique("prior"));
         prior.AgentId = agentId;
@@ -265,7 +265,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var prior = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Succeeded, Unique("retired-prior"));
         prior.AgentId = Guid.NewGuid();
         await db.SaveChangesAsync();
@@ -293,7 +293,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Plan, AgentTaskStatus.Working),
             (AgentTaskRole.Code, AgentTaskStatus.Queued),
@@ -323,7 +323,7 @@ public class AgentTaskConcurrencyLimitTests
         CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var settings = new DelegationSettings
         {
             MaxOpenTasks = 1,
@@ -363,7 +363,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var open = await SeedOpenAsync(db, workspace.Path,
             (AgentTaskRole.Plan, AgentTaskStatus.Working),
             (AgentTaskRole.Code, AgentTaskStatus.Queued),
@@ -411,7 +411,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var projectP = await SeedProjectAsync(db);
         var projectQ = await SeedProjectAsync(db);
         var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
@@ -441,7 +441,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var projectP = await SeedProjectAsync(db);
         var projectQ = await SeedProjectAsync(db);
         var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
@@ -461,7 +461,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var projectP = await SeedProjectAsync(db);
         var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
         var nullOpen = await SeedOpenAsync(db, workspace.Path,
@@ -497,7 +497,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var projectP = await SeedProjectAsync(db);
         var projectQ = await SeedProjectAsync(db);
         var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
@@ -537,7 +537,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var projectP = await SeedProjectAsync(db);
         var projectQ = await SeedProjectAsync(db);
         var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
@@ -565,7 +565,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var projectP = await SeedProjectAsync(db);
         var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
         await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("p-open-1"), projectP);
@@ -593,7 +593,7 @@ public class AgentTaskConcurrencyLimitTests
     public async Task the_lock_still_serialises_creates_within_one_project(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         var settings = new DelegationSettings
         {
             MaxOpenTasks = 2,
@@ -636,7 +636,7 @@ public class AgentTaskConcurrencyLimitTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-c0147");
         await SeedOpenAsync(db, workspace.Path, (AgentTaskRole.Plan, AgentTaskStatus.Working));
 
         var created = await CreateService(db).CreateAsync(
@@ -790,16 +790,5 @@ public class AgentTaskConcurrencyLimitTests
         db.Agents.Add(agent);
         await db.SaveChangesAsync();
         return agent.Id;
-    }
-
-    private sealed class TempWorkspace : IDisposable
-    {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-c0147").FullName;
-
-        public void Dispose()
-        {
-            try { Directory.Delete(Path, recursive: true); }
-            catch (IOException) { }
-        }
     }
 }
