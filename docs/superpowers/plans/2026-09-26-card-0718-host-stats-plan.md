@@ -479,6 +479,9 @@ Missing setup the Code stage adds (test-only or seam, named so no row is a stub)
   query) so V-8 passes a fixed fake; V-9 uses the real one on the isolated schema. The per-host
   request timeout is `new CancellationTokenSource(RequestTimeout, time)` on the injected
   `TimeProvider`, so V-8 advances a `FakeTimeProvider` instead of sleeping.
+- **MS-8** `SessionRunnerHttpClient` gains an optional `IOptions<HostStatsSettings>?` ctor
+  parameter (after `resilience`) for `RequestTimeoutMs`/`SeriesTimeoutMs`, and uses its existing
+  `TimeProvider` for the timeout source, so V-12 constructs it the `SessionRunnerHttpClientHerdrWireTests` way.
 
 ### Delivery inventory
 
@@ -741,35 +744,78 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     the fake clock 3000 ms ends the call with `TimeoutException` while the caller's token is still
     live. Red: removing the `CancelAfter`/timeout source (the call never ends; a 10 s real-time
     guard fails).
-- **V-10 S3 client** (vitest, `pwsh -File scripts/test-client.ps1 hosts Sparkline HostsPage`):
-  `hosts.test.tsx` reads the list and the series hooks against msw; `HostsPage.test.tsx` renders
-  one card per host, a `stale` badge with the old values still visible, an `offline` card with
-  "no data" and no `0 %`, and the nav item; `Sparkline.test.tsx` builds a path with one `M` and
-  359 `L` segments from 360 points and renders a placeholder for an empty series;
-  `useHostStatsLive.test.ts` joins group `hosts`, writes a pushed list into the query cache and
-  appends the pushed current point to a mounted series key.
-- **V-11 S4 docs**: a non-TUnit grep row (CP-8) proving the four docs name the routes, the
-  states and the settings.
-- **R-1** runner classes adjacent to S1: `PhoneHomeCommandDispatcherTests` (34 → 37),
-  `RunnerCapabilitiesTests` (4 → 5), `BuildSlotBrokerTests` (11) and `BuildSlotEndpointTests`
-  (4) because `SystemHostMemoryProbe` changes shape, `SessionCpuWatchdogTests` (3) because the
-  sampler shares `IProcessCpuProbe`, `PhoneHomeConnectionServiceTests` (10).
-- **R-2** server classes adjacent to S2: `PhoneHomeDirectoryTests` (7), `RunnerCatalogueTests`
-  (4), `RunnerSlotEndpointTests` (8), `PhoneHomeEventPumpTests` (8), `SessionRunnerEventPumpTests`
-  (2), `SessionRunnerCapabilityGateTests` (2), `HttpResilienceRegistrationTests` (7, the typed
-  client gained two non-admitted reads).
-- **R-3** the whole `Antiphon.Tests` Unit lane.
-- **R-4** client lint (`npm run lint`, zero warnings) and the whole vitest suite once (S3 adds a
-  route and a nav item that `App.test.tsx` and `Layout` tests observe).
+- **V-10: the page shows each host's state honestly and stays live | client vitest + msw, mocked
+  `@microsoft/signalr` (the `SessionTerminal.test.tsx:116` pattern) | `pwsh -File
+  scripts/test-client.ps1 hosts` (matches `src/api/hosts.test.tsx` and every file under
+  `src/features/hosts/`; no other client path contains `hosts` at `bafc3366`) | 11 tests green.**
+  - `hosts.test.tsx` (2): `useHostStats reads /api/hosts/stats` (two entries); `useHostSeries
+    requests metric and window` (msw asserts the query string). Red: a hard-coded `window=30m`.
+  - `HostsPage.test.tsx` (4): `renders one card per host`; `a stale host keeps its last values
+    under a Stale badge` (text `42 %` and badge `Stale`); `an offline host shows No data and never
+    0 %` (no text matching `/\b0 ?%/` inside that card); `the Hosts nav item links to /hosts`.
+    Red: `current?.cpuPercent ?? 0` in `HostCard` (third), or the stale arm hiding values (second).
+  - `Sparkline.test.tsx` (2): `360 points draw one M and 359 L commands` (count in the `d`
+    attribute, newest point at x = W); `an empty series renders the placeholder, not a flat
+    line`. Red: `L` emitted for the first point, or an empty series drawing `M0,H`.
+  - `useHostStatsLive.test.ts` (3+1 = 4): `joins group hosts on start` (`invoke('JoinGroup', 'hosts')`);
+    `a pushed list replaces ['hosts','stats'] without a refetch` (msw request count for
+    `/api/hosts/stats` unchanged, `getQueryData` equals the pushed list); `a pushed current point
+    is appended to a mounted series key` (length +1, last `t` = pushed `observedAt`);
+    `on reconnect it rejoins hosts and refetches` (`onreconnected` handler: second `JoinGroup`,
+    one list refetch). Red: `invalidateQueries` instead of `setQueryData` (second), a group name
+    other than `hosts` (first), no `onreconnected` handler (fourth).
+- **V-11: the docs name the routes, states and settings | docs | CP-9 grep | >= 8 lines.** Red:
+  the grep over the four files at `bafc3366` returns 0 lines (none of the tokens exist yet).
+- **V-13: the real probe reads this lane's OS | runner Integration (no process spawn) |
+  `HostStatsProbeLiveTests` (2 methods, 1 executes per lane) | the lane's method green, the other
+  `Skip.Test` with the reason.** Idiom (the `CodexAuthProbeTests.cs:105` shape): each method opens
+  with `if (!OperatingSystem.IsLinux()) { Skip.Test("Linux /proc probe; this lane is <os>, where
+  <other method> runs."); return; }` (Windows method mirrors it).
+  - `Linux_probe_reads_live_proc`: `new SystemHostStatsProbe(settings)` with `Volumes = [Path.GetTempPath()]`;
+    first `Read()`: `MemoryTotalBytes` equals `MemTotal` kB x 1024 read independently from
+    `/proc/meminfo` by the test, `0 < MemoryAvailableBytes <= MemoryTotalBytes`, `Cores ==
+    Environment.ProcessorCount`, `CpuPercent` null, `Load1` non-null, `ProcessCount > 0`, one disk
+    with `0 < Free <= Total`; after `Task.Delay(1000)` a second `Read()` has `CpuPercent` in
+    `[0, 100]`. Red: the platform switch in `SystemHostStatsProbe`'s ctor selecting no Linux arm
+    (`Read()` null), or `/proc/stat` read once at construction and never again (second `CpuPercent`
+    null).
+  - `Windows_probe_reads_live_system_times`: same shape; `MemoryTotalBytes >= 1 GiB`,
+    `MemoryAvailableBytes <= MemoryTotalBytes`, `SwapTotalBytes >= MemoryTotalBytes` (the commit
+    limit includes physical memory), `Load1` null (not 0), second `CpuPercent` in `[0, 100]`. Red:
+    the Windows arm missing, or `GetSystemTimes` failure mapped to 0 instead of null.
+- **V-12** is listed above V-10 because it closes S2's server surface; numbering is creation order.
 
-Red-first rule: V-1..V-9 are committed red before their production change; a test that passes
-before the change is a stub (CARD-0585 rule 4). V-10's page tests are red because the route
-and components do not exist; the msw handlers are added with the tests.
+### Guards the regression
 
-Platform notes: V-2's Linux parsers and Windows `CpuPercent` are pure and run on both lanes.
-The live probes are exercised by CP-4 (a real `SampleOnceAsync` on the lane's OS asserting
-non-null total memory, cores ≥ 1, and CPU % between 0 and 100 on the second sample) and the
-other OS is reported as not run with the reason.
+- **R-1: runner classes on S1's path stay green | `PhoneHomeCommandDispatcherTests` (34 + 3),
+  `RunnerCapabilitiesTests` (4 + 1), `BuildSlotBrokerTests` (11), `BuildSlotEndpointTests` (4),
+  `PhoneHomeConnectionServiceTests` (10) = 67 executions.** Decisive assertions: the existing
+  34 dispatcher methods (unknown operation `(PhoneHomeOperation)999` still `Error`, capacity paths
+  untouched by the new ctor parameter); the build-slot memory floor still reads the injected
+  `IHostMemoryProbe` (`BuildSlotTestHost` injects one before `AddBuildSlotBroker`, so V-2 m8's
+  `AddSingleton` forwarder must not displace an injected probe: `AddHostStats` is not called by
+  `BuildSlotTestHost`).
+- **R-2: server classes on S2's path stay green | `PhoneHomeDirectoryTests` (7),
+  `RunnerCatalogueTests` (4), `RunnerSlotEndpointTests` (8), `PhoneHomeEventPumpTests` (8),
+  `SessionRunnerEventPumpTests` (2 methods, 4 `[Arguments]` rows on one: 5 executions),
+  `SessionRunnerCapabilityGateTests` (2), `HttpResilienceRegistrationTests` (7) = 41 executions.**
+  Decisive: `HttpResilienceRegistrationTests` still sees exactly the admitted operations it lists
+  (the host-stats reads are not added to `ResilienceOperations`); the event pumps still ignore
+  unknown event names (no host-stats event exists, D-3).
+- **R-3: the `Antiphon.Tests` Unit lane | `/*/*/*/*[Category=Unit]` | >= 2900 executed, 0 failed.**
+  Static count at `bafc3366`: 225 files with a class-level `[Category("Unit")]`, 2238 `[Test]` and
+  1195 `[Arguments]` lines (about 3.2k executions before data-source expansion); last measured run
+  3021 total / 2993 executed at `c18a6c67`. This card adds 12 (V-6 6, V-7 3, V-12 3). A failure
+  that also fails at `bafc3366` is reported as pre-existing, not fixed here.
+- **R-4: client lint and the whole vitest suite | `npm run lint` 0 warnings; `test-client.ps1`
+  (all 106 files at `bafc3366` plus 4) | exit 0.** Decisive: `App.test.tsx` still renders every
+  route with the new lazy `hosts` route and nav item.
+
+Red-first rule: every V method is committed red against a stubbed body before its production
+change, and the commit message quotes the failing assertion; a method that passes against the
+stub is a stub test (CARD-0585 rule 4). V-13 is red against a `SystemHostStatsProbe` whose `Read()`
+returns null. No row in this design is a known stub; the draft's concurrent-loop store method was
+one and was replaced (V-1 m9).
 
 ### Checkpoints
 
