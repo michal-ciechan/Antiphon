@@ -616,8 +616,8 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   (local) and `RecheckRemoteSourceAsync` (remote).
 - **V-12** The budget is validated 0..5 | unit (in the race class, no harness) | `…C711_RaceRetryBudgetIsValidated`, CP-0, CP-1 |
   `new DelegationSettings().LandTargetRaceRetries == 2`; `DelegationSettingsValidator.Validate` fails with a message
-  containing `LandTargetRaceRetries` for -1 and 6, and succeeds for 0 and 5. Red: compile error (member absent) — CP-0
-  records it as the build failure of that row; see CP-0 note. Turned red by: S2 `DelegationSettings`.
+  containing `LandTargetRaceRetries` for -1 and 6, and succeeds for 0 and 5. Red at CP-0: the S0 property exists but
+  the validator accepts -1 and 6. Turned red by: S2 `DelegationSettingsValidator` clause.
 - **V-13** A crash-resumed request whose target raced retries with fresh verification | real git |
   `…C711_CrashResumeAfterRaceRetries`, CP-0, CP-1 | `h.Fault.Phase = LandPhase.Verified; h.Fault.AfterCommit = true;`
   `await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync())` (the `C448_V15` shape); then
@@ -842,7 +842,7 @@ Code report. Delete `bin-c711r/` and `bin-c711a/` before finishing.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-0 | S0 + S4a + all tests + R-2/R-3/R-4 amendments | `tests/Antiphon.Tests -> bin-c711r/` | race-red | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandTargetRaceFakeTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)/*` | red gate for V-1..V-15 | exit 1 with **exactly** these failing: V-1, V-2, V-3 (2), V-5, V-6 (2), V-9, V-10 `remote`/`branch`, V-11, V-12, V-13, V-15, V-7 rows `race`/`no-lease`/`no-approval`, V-8 = 19 executions; passing: V-4, V-10 `push-rejected`, V-14, the other 7 V-7 rows, the 116 existing rows | 144 | 7 |
+| CP-0 | S0 + S4a + all tests + R-2/R-3/R-4 amendments | `tests/Antiphon.Tests -> bin-c711r/` | race-red | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandTargetRaceFakeTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)/*` | red gate for V-1..V-15 | exit 1 with **exactly** these failing: V-1, V-2, V-3 (2), V-5, V-6 (2), V-9, V-10 `remote`/`branch`, V-11, V-12, V-13, V-15, V-7 rows `race`/`no-lease`/`no-approval`, V-8 = 18 executions; passing: V-4, V-10 `push-rejected`, V-14, the other 7 V-7 rows, the 116 existing rows | 144 | 7 |
 | CP-1 | S5 (all slices) | `tests/Antiphon.Tests -> bin-c711a/` | race-real-git | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandRecoveryTests*)/*` | V-1..V-6, V-12, V-13, V-15, R-1, R-8 | exit 0, 0 failed | 48 | 9 |
 | CP-2 | CP-1 | CP-1 (`-NoBuild`) | publication-real-git | `/*/*/(AgentTaskLandPublicationTests*)\|(AgentTaskLandPreparationIdentityTests*)\|(AgentTaskLandStageOutcomeTests*)/*` | R-1, R-2, R-3, R-6, R-7 | exit 0, 0 failed | 91 | 9 |
 | CP-3 | CP-1 | CP-1 (`-NoBuild`) | fake-protocol-aging | `/*/*/(AgentTaskLandTargetRaceFakeTests*)\|(AgentTaskLandSourceFreshnessTests*)\|(LandingProtocolGuardTests*)\|(LandingProtocolHarnessTests*)\|(AgentTaskLandApprovalRecoveryTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)\|(AgentTaskLandQueueAgingTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)\|(DelegateScriptLandStatusTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(DelegationHarnessCensusTests*)/*` | V-7..V-11, V-14, R-1, R-4, R-5, R-9, census of the two new classes | exit 0, 0 failed | 377 | 9 |
