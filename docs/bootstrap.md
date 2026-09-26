@@ -5,6 +5,11 @@ The self-contained server2 stack (CARD-0590) is documented in [docker-stack.md](
 For everyday operation, use the [canonical local restart runbook](apphost-runbook.md):
 first start, AppHost or runner restart, verification, locks, exits and Job Object caveats.
 
+The Hosts page at `/hosts` shows the desktop runner and configured phone-home runners. Check
+`GET /api/hosts/stats` for `live`, `stale`, `offline`, or `unsupported` state; stale values are
+last known samples, and absent values are not zero. See [testing-and-build.md](testing-and-build.md#host-stats-card-0718)
+for the `HostStats` settings and [ops-http.md](ops-http.md) for the routes.
+
 The CARD-0490 Linux Grok phone-home runner is an opt-in companion compose file
 (`docker-compose.runner-grok.yml`), not a replacement for `docker-compose.dev.yml` and not an
 AppHost service. It publishes no runner port. `PHONE_HOME_SERVER_ORIGIN` is required at launch

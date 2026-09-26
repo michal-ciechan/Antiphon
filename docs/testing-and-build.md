@@ -325,6 +325,27 @@ PC cycles remain method-scoped work for post-land SourceLanding Mutation.
 
 `dotnet-ef` is a repo-local tool pinned in `.config/dotnet-tools.json`, not a machine-global install. Before any `dotnet ef` command in a worktree (Windows or the server2 runner), run `dotnet tool restore` from the repo root, then `dotnet ef migrations add <Name> --project server`. The pin is an exact version whose major matches the server's `Microsoft.EntityFrameworkCore.Design` reference (currently `9.*`, pinned `9.0.20`); bump the pin together with an EF Core major move. `DotnetToolManifestContractTests` guards the exact pin and the major match. The runner image needs no extra layer: restore writes to the runner user's `~/.nuget/packages` and reaches nuget.org the same way package restore does.
 
+### Host stats (CARD-0718)
+
+Each session runner samples host health every five seconds into a 360-slot, 30-minute memory
+ring; the server polls every five seconds and keeps only the latest snapshot. No sample is
+written to PostgreSQL. The server exposes `/api/hosts/stats`, the runner exposes `/host-stats`,
+and the Hosts page joins SignalR group `hosts` for `HostStatsUpdated`. A missing observation is
+null, not zero. On Windows, the displayed page-file figures are commit charge and commit limit.
+
+The 2026-09-26 server2 baseline measured 0.143 ms per read of `/proc/stat`, `/proc/meminfo`,
+`/proc/loadavg` and two volume stats; a full `/proc` process sweep measured 1.17 ms and is
+deferred to Round 2. CP-4's full sampler check compares runner process CPU with the sampler on
+and off across two 60-second pairs; its acceptance is under one percentage point of one core.
+
+| Process | Setting | Default / purpose |
+|---|---|---|
+| runner | `SessionRunner:HostStats:Enabled` | `true`; `false` answers host-stats 404 / unsupported |
+| runner | `SessionRunner:HostStats:IntervalMs`, `RetentionMinutes` | `5000`, `30` |
+| runner | `SessionRunner:HostStats:ProcessSampling`, `Volumes` | `true`; current directory and session log volume unless overridden |
+| server | `HostStats:Enabled`, `HostStats:PollIntervalMs`, `HostStats:StaleAfterMs` | `true`, `5000`, `15000` |
+| server | `HostStats:RequestTimeoutMs`, `HostStats:SeriesTimeoutMs` | `3000`, `5000`; single-attempt reads |
+
 ### Build slots (CARD-0589)
 
 Nothing else bounds how many `dotnet build` / `dotnet run --project tests/*` drivers, MSBuild worker nodes, compilers and test hosts run at once across the sessions on one host; the outage behind CARD-0589 had 203 build processes and 1.1 GB free. Three layers do, cheapest first. Plan: [2026-09-25-card-0589-build-fanout-cap-plan.md](superpowers/plans/2026-09-25-card-0589-build-fanout-cap-plan.md).
