@@ -793,12 +793,13 @@ public sealed class ChannelInboundRecoveryTests
             .SingleAsync(q => q.Id == ownedId)).Body;
         marked.ShouldContain("[antiphon-channel:");
         var events = new List<SessionRunnerTranscriptEvent>();
-        async Task IngestAsync(string kind, string text)
+        async Task IngestAsync(string kind, string? text, string? stopReason = null)
         {
             var sequence = events.Count + 1L;
             events.Add(new SessionRunnerTranscriptEvent(h.SessionId, sequence, kind,
-                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", text,
-                null, null, null, null, null));
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow,
+                kind == TranscriptKinds.TurnEnd ? "assistant" : "user", text,
+                null, null, null, null, stopReason));
             h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, events.ToArray(), sequence));
             await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
             await using (var evidence = Db(schema.ConnectionString))
@@ -810,12 +811,14 @@ public sealed class ChannelInboundRecoveryTests
         await IngestAsync(TranscriptKinds.QueuedUserPrompt, marked);
         await IngestAsync(TranscriptKinds.AssistantText, marked);
         await IngestAsync(TranscriptKinds.UserPrompt, marked[..^13] + "different tail");
+        await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
         var stillPending = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId);
         stillPending.Status.ShouldBe(QueuedMessageStatus.Pending);
         stillPending.Body.ShouldBe(marked);
         stillPending.DeliveryAttempts.ShouldBe(3);
         h.Adapter.SentInput.ShouldBeEmpty();
         await IngestAsync(TranscriptKinds.UserPrompt, marked);
+        await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
         var received = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId);
         received.Status.ShouldBe(QueuedMessageStatus.Sent);
         received.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
