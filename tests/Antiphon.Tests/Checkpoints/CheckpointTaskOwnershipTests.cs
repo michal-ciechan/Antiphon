@@ -339,6 +339,13 @@ public sealed class CheckpointTaskOwnershipTests
         (await observation).ShouldBeFalse();
         held.HeldCanceled.Count.ShouldBe(3);
         held.HeldCanceled.All(receipt => receipt.Task.IsCompleted).ShouldBeTrue();
+
+        var brokenBody = new OwnerHandler();
+        for (var i = 0; i < 3; i++) brokenBody.Next.Enqueue("IO");
+        using var unreadable = new TaskOwnerGuard(OwnerEnvironment(), brokenBody, (_, _) => Task.CompletedTask);
+        (await unreadable.EnsureLiveAsync(CancellationToken.None)).ShouldBeFalse();
+        unreadable.Reason.ShouldBe("owner-unverified");
+        brokenBody.Calls.ShouldBe(3);
     }
 
     [Test]
@@ -464,6 +471,8 @@ public sealed class CheckpointTaskOwnershipTests
             var status = Next.Count > 0 ? Next.Dequeue() : TaskStatus;
             if (status == "HTTP500")
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            if (status == "IO")
+                throw new IOException("synthetic owner response read failed");
             if (status == "HOLD")
             {
                 var receipt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
