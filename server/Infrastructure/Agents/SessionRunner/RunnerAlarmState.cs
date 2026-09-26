@@ -13,6 +13,17 @@ public sealed record RunnerOutageEpisode(
 
 public sealed record NotedAlarmRow(Guid SessionId, Guid RowId);
 
+/// <summary>
+/// A recovery note that has not reached <c>Sent</c>. <see cref="RowId"/> is null until the insert
+/// succeeds. The episode is already gone; this list is what the next wake retries (DP-2 H1/H2).
+/// </summary>
+public sealed record PendingRecoveryNote(
+    string RunnerId,
+    Guid SessionId,
+    Guid? RowId,
+    string Header,
+    string Body);
+
 public sealed record JournalFinding(
     string Repository,
     string CommonDirectory,
@@ -22,10 +33,11 @@ public sealed record JournalFinding(
 public sealed record RunnerAlarmSnapshot(
     IReadOnlyList<RunnerOutageEpisode> Episodes,
     IReadOnlyDictionary<string, DateTimeOffset> LastResolvedAt,
-    IReadOnlyList<JournalFinding> Journals)
+    IReadOnlyList<JournalFinding> Journals,
+    IReadOnlyList<PendingRecoveryNote> PendingRecoveries)
 {
     public static RunnerAlarmSnapshot Empty { get; } = new(
-        [], new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal), []);
+        [], new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal), [], []);
 }
 
 /// <summary>CARD-0726 D-3: the in-memory episodes and journal findings the feed will project.</summary>
