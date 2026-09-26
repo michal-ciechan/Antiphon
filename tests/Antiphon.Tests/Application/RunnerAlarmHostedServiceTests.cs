@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
@@ -23,6 +24,19 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerAlarmHostedServiceTests
 {
+    [Test]
+    public void a_timer_is_registered_before_the_clock_reports_it_ready()
+    {
+        var clock = new AlarmClock(DateTimeOffset.UtcNow);
+        var fired = false;
+        clock.AfterFirstTimerSignal = () => clock.Inner.Advance(TimeSpan.FromSeconds(180));
+
+        using var timer = clock.CreateTimer(_ => fired = true, null,
+            TimeSpan.FromSeconds(180), Timeout.InfiniteTimeSpan);
+
+        fired.ShouldBeTrue();
+    }
+
     [Test]
     [Timeout(60_000)]
     public async Task the_loop_raises_on_the_grace_timer_and_wakes_on_a_fence_signal()
@@ -134,7 +148,7 @@ public sealed class RunnerAlarmHostedServiceTests
     {
         var secretA = "secret-a-" + Guid.NewGuid().ToString("N");
         var secretB = "secret-b-" + Guid.NewGuid().ToString("N");
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new AlarmClock(DateTimeOffset.UtcNow);
         var wake = new AlarmWakeQueue();
         await using var host = await PhoneHomeTestHost.StartAsync(clock, configured: Pair(secretA, secretB), observer: wake);
         var storeA = Guid.NewGuid();
@@ -146,6 +160,13 @@ public sealed class RunnerAlarmHostedServiceTests
         var exclusion = new FakeExclusion();
         exclusion.Reasons["runner-b"] = "draining";
         var state = new RunnerAlarmState();
+        var graceTimerRegistered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        clock.AfterTimerRegistered = timer =>
+        {
+            if (timer.Due == TimeSpan.FromSeconds(180)
+                && state.Current.Episodes.Any(episode => episode.RunnerId == "runner-a"))
+                graceTimerRegistered.TrySetResult();
+        };
         var services = Provider(schema.ConnectionString, host.Directory, exclusion, state, wake, new AlarmSettings(), clock);
         var service = new RunnerAlarmHostedService(services.GetRequiredService<IServiceScopeFactory>(), wake, state,
             Options.Create(new AlarmSettings()), clock, NullLogger<RunnerAlarmHostedService>.Instance);
@@ -156,7 +177,8 @@ public sealed class RunnerAlarmHostedServiceTests
         peerB.Socket.Abort();
         await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "runner-a")
             && state.Current.Episodes.All(episode => episode.RunnerId != "runner-b"), "directory signal did not open runner-a");
-        clock.Advance(TimeSpan.FromSeconds(180));
+        await graceTimerRegistered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Inner.Advance(TimeSpan.FromSeconds(180));
         await UntilAsync(() => state.Current.Episodes.Any(episode => episode.RunnerId == "runner-a" && episode.RaisedAt is not null)
             && state.Current.Episodes.All(episode => episode.RunnerId != "runner-b"), "drained runner raised");
         await using var again = await host.ConnectPeerAsync(runnerId: "runner-a", storeId: storeA, secret: secretA);
@@ -245,15 +267,21 @@ public sealed class RunnerAlarmHostedServiceTests
     private sealed class AlarmClock : TimeProvider
     {
         public FakeTimeProvider Inner { get; }
-        public List<TimerMark> Timers { get; } = [];
+        public ConcurrentQueue<TimerMark> Timers { get; } = new();
         public TaskCompletionSource FirstTimer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Action<TimerMark>? AfterTimerRegistered { get; set; }
+        public Action? AfterFirstTimerSignal { get; set; }
         public AlarmClock(DateTimeOffset start) => Inner = new FakeTimeProvider(start);
         public override DateTimeOffset GetUtcNow() => Inner.GetUtcNow();
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            Timers.Add(new TimerMark(dueTime, period));
+            var timer = Inner.CreateTimer(callback, state, dueTime, period);
+            var mark = new TimerMark(dueTime, period);
+            Timers.Enqueue(mark);
+            AfterTimerRegistered?.Invoke(mark);
             FirstTimer.TrySetResult();
-            return Inner.CreateTimer(callback, state, dueTime, period);
+            AfterFirstTimerSignal?.Invoke();
+            return timer;
         }
         internal sealed record TimerMark(TimeSpan Due, TimeSpan Period);
     }
