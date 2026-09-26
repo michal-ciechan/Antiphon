@@ -3666,6 +3666,53 @@ public partial class AgentTaskReplyIntegrationTests
         parent.LandAttempt.ShouldBe(1);
     }
 
+    [Test]
+    public async Task C753_MergeHelperCannotMakeConflictedRecoveryOwnerLandable()
+    {
+        using var workspace = new TempWorkspace();
+        var ownerId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        await using (var db = CreateContext())
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = ownerId, RootTaskId = ownerId, Title = "Reviewed recovery owner",
+                Goal = "recover", Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = workspace.Path, WorktreePath = workspace.Path,
+                WorktreeBranch = "feat/card-task-x", MergeTargetRef = "master",
+                Status = AgentTaskStatus.Blocked, FailureReason = "Landing rebase conflicted.",
+                CurrentLandRequestId = requestId, LandRequestedAt = DateTime.UtcNow.AddMinutes(-5),
+                LandStartedAt = DateTime.UtcNow.AddMinutes(-4), LandAttempt = 1,
+                CreatedAt = DateTime.UtcNow,
+            });
+            db.AgentTaskLandRequests.Add(new AgentTaskLandRequest
+            {
+                Id = requestId, TaskId = ownerId, RequestedAt = DateTime.UtcNow.AddMinutes(-5),
+                LastEvaluatedAt = DateTime.UtcNow, LastProgressAt = DateTime.UtcNow,
+                State = LandRequestState.NeedsResolution, IsPending = true,
+                RecoveryMode = LandRecoveryMode.OwnerReviewedSource,
+                RecoveryOwnerStatus = AgentTaskStatus.Failed,
+            });
+            await db.SaveChangesAsync();
+        }
+        var (merge, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.RootTaskId = ownerId;
+            t.ParentTaskId = ownerId;
+            t.Role = AgentTaskRole.Merge;
+            t.ModelLevel = AgentModelLevel.High;
+        });
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(merge.Id),
+            "Resolved the rebase conflict.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var check = CreateContext();
+        (await check.AgentTasks.SingleAsync(t => t.Id == ownerId)).Status.ShouldBe(AgentTaskStatus.Blocked);
+        (await check.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId)).State
+            .ShouldBe(LandRequestState.NeedsResolution);
+    }
+
     private static async Task CreateWorktreeForAsync(TestScopeFactory factory, AgentTask seeded)
     {
         // The dispatcher's move, replayed: create the worktree and persist its coordinates.

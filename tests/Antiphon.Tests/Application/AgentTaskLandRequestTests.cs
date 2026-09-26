@@ -27,6 +27,9 @@ public class AgentTaskLandRequestTests
     [Arguments("canceled", "recovery_owner_ineligible")]
     [Arguments("missing", "review_evidence_missing")]
     [Arguments("interim", "review_verification_scope_ineligible")]
+    [Arguments("scope-none", "review_verification_scope_ineligible")]
+    [Arguments("scope-unknown", "review_verification_scope_ineligible")]
+    [Arguments("scope-null", "review_verification_scope_ineligible")]
     [Arguments("wrong-ref", "review_evidence_ref_mismatch")]
     [Arguments("wrong-sha", "review_evidence_sha_mismatch")]
     [Arguments("superseded", "review_evidence_superseded")]
@@ -45,7 +48,14 @@ public class AgentTaskLandRequestTests
             ReviewedSourceRef = caseName == "wrong-ref" ? "refs/heads/other" : "refs/heads/" + task.WorktreeBranch,
             ReviewedRepositoryPath = task.RepoPath,
             CommissionedRound = caseName == "interim" ? VerificationRound.Interim : VerificationRound.Final,
-            OrdinaryScopeCompleted = caseName == "interim" ? VerificationScope.Interim : VerificationScope.Full,
+            OrdinaryScopeCompleted = caseName switch
+            {
+                "interim" => VerificationScope.Interim,
+                "scope-none" => VerificationScope.None,
+                "scope-unknown" => VerificationScope.Unknown,
+                "scope-null" => null,
+                _ => VerificationScope.Full,
+            },
             RecordedAt = DateTime.UtcNow,
         };
         db.StageOutcomes.Add(review);

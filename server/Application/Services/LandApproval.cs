@@ -101,11 +101,14 @@ internal static class LandApproval
     public static bool RecoveryStatusEligible(AgentTaskStatus status) =>
         status is AgentTaskStatus.Succeeded or AgentTaskStatus.Blocked or AgentTaskStatus.Failed;
 
+    public static bool RecoveryOwnerInUse(AgentTaskStatus status) =>
+        status is AgentTaskStatus.Queued or AgentTaskStatus.Dispatched or AgentTaskStatus.Working;
+
     public static bool RequestStatusEligible(AgentTask task, AgentTaskLandRequest request) =>
         task.Workspace == WorkspaceMode.Worktree &&
         (request.CleanupOnly && request.RecoveryMode != LandRecoveryMode.None
             ? task.Role == AgentTaskRole.Code && request.RecoveryOwnerStatus is { } approved
-                && RecoveryStatusEligible(approved)
+                && RecoveryStatusEligible(approved) && !RecoveryOwnerInUse(task.Status)
             : request.RecoveryMode == LandRecoveryMode.None
             ? task.Status == AgentTaskStatus.Succeeded
             : task.Role == AgentTaskRole.Code && RecoveryStatusEligible(task.Status));
