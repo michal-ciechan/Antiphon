@@ -511,6 +511,80 @@ public sealed class CheckpointTaskOwnershipTests
     }
 
     [Test]
+    public async Task uncertainty_lets_the_running_row_finish_and_marks_pending_owner_unverified()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var driver = new FakeDriver();
+        driver.When(_ => true, async (_, token) =>
+        {
+            Interlocked.Increment(ref calls);
+            using var registration = token.Register(() => cancelled.TrySetResult());
+            entered.TrySetResult();
+            var completed = await Task.WhenAny(release.Task, Task.Delay(Timeout.InfiniteTimeSpan, token));
+            if (completed != release.Task)
+                throw new OperationCanceledException(token);
+            return new DriverResult(0, "finished", "");
+        });
+        var manifest = new CheckpointManifest();
+        manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
+        manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
+        var repo = CheckpointFixtures.TempDir();
+        var run = CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            Slots = "off", KeepOutputs = true, Parallel = 1,
+            OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
+        }, repo);
+        var handler = new OwnerHandler();
+        var slots = new BoundarySlots();
+        var clock = new GatedUncertaintyClock();
+        var sink = new OwnerLineSink();
+        var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime
+        {
+            EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = clock.Delay, OwnerClock = clock.Now,
+            Driver = driver, Slots = slots, LogSinkFactory = _ => sink,
+        });
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            handler.TaskStatus = "HTTP500";
+            clock.Release();
+            var observed = await Task.WhenAny(sink.Unverified.Task, cancelled.Task).WaitAsync(TimeSpan.FromSeconds(5));
+            cancelled.Task.IsCompleted.ShouldBeFalse();
+            observed.ShouldBe(sink.Unverified.Task);
+            slots.Acquires.ShouldBe(1);
+            slots.Releases.ShouldBe(0);
+            driver.KillCount.ShouldBe(0);
+            release.TrySetResult();
+            (await execute.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(ExitCodes.OwnerEnded);
+            calls.ShouldBe(1);
+            slots.Releases.ShouldBe(1);
+            driver.KillCount.ShouldBe(0);
+            var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+            state.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
+            state.Reason.ShouldBe("owner-unverified");
+            var running = state.Rows.Single(row => row.Id == "CP-1");
+            running.State.ShouldBe("green");
+            running.ExitCode.ShouldBe(0);
+            var pending = state.Rows.Single(row => row.Id == "CP-2");
+            pending.State.ShouldBe("owner-unverified");
+            pending.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
+            var report = File.ReadAllText(Path.Combine(run, "report.md"));
+            report.ShouldContain("exit=7");
+            report.ShouldContain("reason=owner-unverified");
+        }
+        finally
+        {
+            clock.Release();
+            release.TrySetResult();
+            try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (TimeoutException) { }
+        }
+    }
+
+    [Test]
     public async Task owner_token_is_used_only_in_the_http_header()
     {
         var handler = new OwnerHandler();
@@ -770,5 +844,31 @@ public sealed class CheckpointTaskOwnershipTests
             _now += span;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class GatedUncertaintyClock
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private DateTimeOffset _now = new(2026, 9, 26, 0, 0, 0, TimeSpan.Zero);
+        public void Release() => _gate.TrySetResult();
+        public DateTimeOffset Now() => _now;
+        public async Task Delay(TimeSpan span, CancellationToken token)
+        {
+            await _gate.Task.WaitAsync(token);
+            _now += span;
+        }
+    }
+
+    private sealed class OwnerLineSink : IExecutorLogSink
+    {
+        public TaskCompletionSource Unverified { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task AppendAsync(string line, CancellationToken cancellationToken)
+        {
+            if (line.Contains("owner-unverified", StringComparison.Ordinal))
+                Unverified.TrySetResult();
+            return Task.CompletedTask;
+        }
+        public Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
