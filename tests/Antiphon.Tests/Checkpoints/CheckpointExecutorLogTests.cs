@@ -101,13 +101,20 @@ public sealed class CheckpointExecutorLogTests
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            File.ReadAllText(Path.Combine(liveRun, "executor.log")).ShouldContain("execute rows=1");
+            ReadWhileWriterHolds(Path.Combine(liveRun, "executor.log")).ShouldContain("execute rows=1");
         }
         finally
         {
             release.TrySetResult();
             await live;
         }
+    }
+
+    private static string ReadWhileWriterHolds(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     private static (string Run, CheckpointApp.Runtime Runtime, GatedSink Sink) NewRun()

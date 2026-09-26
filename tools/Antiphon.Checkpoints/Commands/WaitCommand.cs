@@ -125,7 +125,11 @@ public sealed class WaitCommand
     {
         if (!File.Exists(path))
             return "";
-        var lines = File.ReadAllLines(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line)
+            lines.Add(line);
         return string.Join('\n', lines.TakeLast(40));
     }
 }
