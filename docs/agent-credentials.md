@@ -236,7 +236,10 @@ about. It holds no secret -- bindings, intents, host identities and receipts onl
 
 The public half of the deploy key is exported with the run's evidence and registered on GitHub from
 the desktop bridge. The phone-home value is entered into the production server's user-secrets by the
-operator; it never crosses the SSH bridge into a desktop script. The entrypoint refuses with exit 3
+operator, as the same `SharedSecret` on both `PhoneHomeRunner:Runners:server2` and
+`PhoneHomeRunner:Runners:server2-temp` (CARD-0727 D-2). The temp runner mounts this same
+`secrets/phone-home` file; a second secret would be a second custody file for one host and one
+owner. The value never crosses the SSH bridge into a desktop script. The entrypoint refuses with exit 3
 (`DeployKeyMissing` / `PhoneHomeSecretMissing`) rather than starting without either, and neither is
 ever printed, logged or hashed. A Compose file secret arrives owned by the **host** uid at 0600, so
 uid 1654 cannot open it: both secrets are staged onto the app-owned tmpfs, and the entrypoint proves

@@ -125,7 +125,9 @@ public sealed class DockerStackDocumentationTests
     public void Testing_doc_names_the_production_enablement_steps()
     {
         var text = Read("docs/testing-and-build.md");
-        text.ShouldContain("AllowedRunnerId=server2");
+        text.ShouldContain("PhoneHomeRunner:Runners");
+        text.ShouldContain("Runners:server2");
+        text.ShouldContain("Runners:server2-temp");
         text.ShouldContain("AllowDelegatedTasks=true");
         text.ShouldContain("restart-apphost.ps1");
         text.ShouldContain("delegate.ps1 -Runner server2");
