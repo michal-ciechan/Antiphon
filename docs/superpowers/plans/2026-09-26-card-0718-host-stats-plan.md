@@ -622,34 +622,125 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     (R-1, Unit, MS-3): `CapabilityFeatures(existing, Enabled=true)` ends with `hostStatsV1`,
     `Enabled=false` does not contain it, and the existing entries are preserved in order. Red:
     appending the token unconditionally.
-- **V-5 S1 `PhoneHomeCommandDispatcherTests` +3**: `HostStats` answers a `Result` frame whose
-  payload round-trips to `RunnerHostStatsDto`; `HostStatsSeries` with `{ metric: "cpu", window: "1m" }`
-  answers points and with `window: "2h"` answers a 400 error frame; a dispatcher constructed
-  without the seam answers `phone_home_unsupported_operation` for 29. Red: the enum members do
-  not exist (compile), then the switch has no case.
-- **V-6 S2 `HostStatsCacheTests`** (Unit, `FakeTimeProvider`, 5 methods): a recorded sample
-  projects `live`; advancing past `StaleAfterMs` projects `stale` with the same values (never
-  zero); a host with no record and a directory saying not connected projects `offline` with
-  `current` null; an `unsupported` failure projects `unsupported`; `Changed` is true after a new
-  sample and false after a tick that recorded nothing new.
-- **V-7 S2 `HostStatsAntiphonCountersTests`** (Unit, 3 methods): `Group(rows)` over a
-  synthetic row set yields per-host `byStage` (Code 2, Review 1), `byKind`, `queued`, `held`
-  (only `CapacityWaitRetained`), `landsPending` (only `HasLand`), and a null/empty `RunnerId` is
-  the desktop; a Blocked task counts as open but not in flight.
-- **V-8 S2 `HostStatsPollServiceTests`** (Integration, `PhoneHomeTestHost`, 4 methods): one
-  `TickOnceAsync` with the local recording client answering a sample and the scripted peer
-  replying to operation 29 fills both hosts `live` and publishes one `HostStatsUpdated` to group
-  `hosts` with two entries; a peer `SilentFor(HostStats)` leaves that host on its last values and,
-  after `StaleAfterMs` on the fake clock, `stale`, while the desktop stays `live`; a peer whose
-  `Reply` answers `phone_home_unsupported_operation` projects `unsupported`; a tick whose local
-  client throws `HttpRequestException` does not fault the service and marks the desktop `stale`
-  on the next projection. The local answer is the `RecordingLocalClient`'s new
-  `HostStats` property.
-- **V-9 S2 `HostStatsEndpointTests`** (server, Integration, same host, 4 methods):
-  `GET /api/hosts/stats` answers the cache's projection (state, current, rollups, antiphon
-  counters from a seeded task row); `GET /api/hosts/server2/stats/series?metric=cpu&window=30m`
-  proxies the scripted peer's operation 30 answer; unknown host is 404; `window=2h` is 400
-  before any runner call (`RequestCount(HostStatsSeries)` stays 0).
+- **V-5: operations 29/30 answer over phone-home and an old-shaped runner refuses typed | runner
+  Unit | `PhoneHomeCommandDispatcherTests` +3 (34 -> 37) | all green.** A real `HostStatsStore`
+  with two samples is the `hostStats:` seam.
+  - m1 `Host_stats_operation_answers_the_store_snapshot`: `Result` frame, payload deserializes
+    (`PhoneHomeFraming.Json`) to `RunnerHostStatsDto` whose newest `At` and `1m` cpu avg equal the
+    store's. Red: the case answering `Result(request, null)` or a fresh empty snapshot.
+  - m2 `Host_stats_series_answers_points_and_rejects_a_bad_window`: `{ metric: "cpu", window: "1m" }`
+    -> 2 points; `window: "2h"` -> `Error` frame with `StatusCode` 400. Red: the case not catching
+    the store's `ArgumentException` (the dispatcher's generic fault path answers 500).
+  - m3 `Host_stats_without_the_seam_is_unsupported`: no seam -> `Error` frame with `ErrorCode`
+    `phone_home_unsupported_operation` for both 29 and 30. Red: the cases reading
+    `hostStats?.Snapshot(...)` and answering `Result` with a null payload instead of falling through
+    to `UnsupportedOperation`.
+- **V-6: the cache's projection never shows a zero for a missing value | server Unit,
+  `FakeTimeProvider` | `HostStatsCacheTests` (6) | all green.** `StaleAfterMs` 15000.
+  - m1 `Recorded_sample_projects_live`: `Record("server2", dto)` with the dto's `At` one hour
+    behind the fake clock (runner clock skew) -> `live`, `current.cpuPercent` = dto's, `observedAt`
+    = fake now. Red: the state switch defaulting to `stale`, or age measured from the dto's `At`.
+  - m2 `Old_sample_projects_stale_with_the_same_values`: advance exactly 15000 ms -> still `live`;
+    +1 ms -> `stale` with `current` and `rollups` equal to the recorded ones. Red: `age < StaleAfter`
+    instead of `<=` (first assertion), or the stale arm nulling `current` (second).
+  - m3 `Unrecorded_disconnected_host_projects_offline_with_null_current`: catalogue row for a
+    remote id with no record -> `offline`, `current` null, `rollups` null. Red: projecting a
+    default-constructed `current` (zeros).
+  - m4 `Unsupported_failure_projects_unsupported`: `RecordFailure(id, Unsupported)` -> `unsupported`
+    with null `current`. Red: mapping every failure kind to `offline`.
+  - m5 `Changed_is_true_after_a_new_sample_and_false_after_an_empty_tick`: new `At` -> `Changed`
+    true; `BeginTick()` then recording the same `At` again -> false; a state transition
+    `live -> stale` alone -> true. Red: `Changed` returning true unconditionally (second assertion)
+    or ignoring state transitions (third).
+  - m6 `Disabled_poll_projects_every_host_offline_disabled`: options `Enabled=false` -> every
+    catalogue host `offline` with `reason` `disabled`. Red: the disabled check removed (hosts
+    project `offline` with reason null).
+- **V-7: Antiphon's own counters count only what they name | server Unit, pure |
+  `HostStatsAntiphonCountersTests` (3) | all green.** Rows: desktop (`RunnerId` null) Code Working,
+  desktop (`""`) Code Dispatched, desktop Review Working, desktop Plan Queued with
+  `CapacityWaitRetained`, desktop Investigate Queued without it, desktop Code Blocked with `HasLand`,
+  `server2` Mutation Working (kind `grok`), `server2` Review Blocked without `HasLand`.
+  - m1 `Group_counts_in_flight_by_stage_and_kind_per_host`: desktop `byStage` {Code 2, Review 1},
+    `byKind` by the rows' kinds, `server2` {Mutation 1}, {grok 1}. Red: grouping `byStage` by
+    `AgentKind`, or not partitioning by host.
+  - m2 `Held_and_lands_count_only_their_flags`: desktop `queued` 2 (held included), `held` 1,
+    `landsPending` 1. Red: `held` counting every Queued row (2), or `landsPending` counting every
+    Blocked row regardless of the flag (`server2` `landsPending` 1 instead of 0).
+  - m3 `Null_or_empty_runner_is_desktop_and_blocked_is_open_not_in_flight`: desktop
+    `tasksInFlight` 3 (Working, Dispatched, Working), the Blocked row not in flight. Red: only
+    `RunnerId == null` treated as desktop (2), or Blocked counted in flight (4).
+- **V-8: one tick pulls every host through the real transports, isolates failures, and pushes to
+  group `hosts` | server Integration, `PhoneHomeTestHost` + scripted peer (real
+  `PhoneHomeLiveConnection` and `PhoneHomeRunnerClient`), MS-6/MS-7, `FakeTimeProvider` |
+  `HostStatsPollServiceTests` (6) | all green.** The service is constructed by the test over
+  `host.Directory`, a `HostStatsCache`, a fixed fake counters source and a `RecordingEventBus`;
+  every method scripts `peer.Reply` for `HostStats` (the peer's default reply is `{ ok = true }`).
+  Projection rule pinned here (refines D-4): `unsupported` if the last failure is unsupported;
+  else `offline` if no sample was ever recorded or the remote id has no live connection; else `live`
+  while `now − observedAt <= StaleAfterMs`, else `stale`. `observedAt` is the **server's** clock at
+  `Record`, never the runner's `At` (hosts' clocks differ).
+  - m1 `Tick_fills_both_hosts_live_and_publishes_once_to_group_hosts`: local answers a sample, the
+    peer answers operation 29 with `At` = 2020-01-01 (a skewed runner clock): both `live`; exactly
+    one `("hosts", "HostStatsUpdated", list)` with two entries whose `current` values are the
+    answered ones; a second tick with identical answers publishes nothing. Red: `PublishToAllAsync`
+    or a group name other than `hosts`; staleness computed from the runner's `At` (server2 `stale`
+    immediately); publishing without the `Changed` check (two publishes).
+  - m2 `Silent_peer_goes_stale_while_desktop_stays_live`: tick 1 both answer; then
+    `peer.SilentFor(HostStats)`; tick 2 starts, the test awaits the peer's receipt of the request,
+    advances the fake clock by `RequestTimeoutMs` (3000): the tick completes within 10 s of real
+    time; advance to 15.001 s after tick 1: server2 `stale` with tick 1's values, desktop `live`
+    (it answered tick 2). Red: no per-request `CancellationTokenSource(timeout, time)` (the tick
+    waits the connection's 60 s default and the 10 s guard fails), or hosts awaited in sequence
+    with a shared token.
+  - m3 `Unsupported_peer_projects_unsupported`: the peer replies an `Error` frame with
+    `ErrorCode` `phone_home_unsupported_operation`, `StatusCode` 400: server2 `unsupported`,
+    `current` null; the desktop `live`. Red: `PhoneHomeRunnerClient.GetHostStatsAsync` returning
+    null for an error frame (server2 `offline`) or throwing an untyped exception the poll records
+    as unreachable.
+  - m4 `Local_client_fault_does_not_fault_the_tick`: `HostStatsFault = new HttpRequestException()`
+    on the first tick: `Should.NotThrowAsync(TickOnceAsync)`, desktop `offline` (never sampled),
+    server2 `live`; a good tick then a faulting tick plus 15.001 s: desktop `stale` with the good
+    values. Red: removing the per-host `try/catch` (the tick throws), or a failure clearing the
+    last sample (desktop `offline` in the second half).
+  - m5 `Disconnected_peer_projects_offline_and_recovers_live_on_reconnect`: tick 1 live; dispose
+    the peer and wait for the directory to drop the connection; tick 2: server2 `offline` with
+    tick 1's values still in `current`; connect a new peer (`ConnectPeerAsync`), tick 3: `live`
+    with the new values. Red: an offline host projecting `current` null (the "keeps its last
+    values" rule broken), or a missing connection recorded as a transient failure (`live`/`stale`
+    instead of `offline`).
+  - m6 `Publish_failure_does_not_fault_the_tick_and_the_next_tick_republishes`: the bus throws
+    on its first publish: the tick completes; a second tick with identical answers publishes
+    once. Red: clearing `Changed` before the publish rather than after it succeeds.
+- **V-9: the API serves the cache and proxies series only for a known host with a valid query |
+  server Integration, `PhoneHomeTestHost` with MS-5, `TestDbFixture.CreateIsolatedSchemaAsync()`
+  | `HostStatsEndpointTests` (5) | all green.** Remote id is `host.AllowedRunnerId`.
+  - m1 `Hosts_stats_answers_the_cache_projection_with_counters`: seed one Working Code task with
+    `RunnerId = host.AllowedRunnerId` and one with `RunnerId = null`; tick once; `GET /api/hosts/stats`
+    -> two entries, camelCase `state`, `current.cpuPercent`, `rollups["1m"].cpuPercent.avg`,
+    `antiphon.tasksInFlight` 1 each. Red: the endpoint projecting without the counters (`antiphon`
+    null), or the counters query not partitioning by runner (2 on the desktop).
+  - m2 `Series_proxies_the_peer_operation_30_answer`: peer replies 3 points to `HostStatsSeries`;
+    `GET /api/hosts/{id}/stats/series?metric=cpu&window=30m` -> the 3 points, `RequestCount(HostStatsSeries)`
+    1, request payload `{ metric: "cpu", window: "30m" }`. Red: the endpoint resolving every id to
+    `directory.Local`.
+  - m3 `Unknown_host_is_404`: `/api/hosts/nope/stats/series?metric=cpu&window=1m` -> 404, no local
+    series call recorded. Red: unknown ids falling through to the local client.
+  - m4 `Bad_window_is_400_before_any_runner_call`: `window=2h` and `metric=bogus` -> 400,
+    `RequestCount(HostStatsSeries)` 0 and no local series call. Red: validating after the proxy.
+  - m5 `Series_for_a_disconnected_runner_is_409_unavailable`: no peer connected -> 409 with
+    `phone_home_unavailable`. Red: a disconnected runner answering 200 with an empty series.
+- **V-12: the local-runner read is one bounded attempt | server Unit, stub `HttpMessageHandler`
+  (the `SessionRunnerHttpClientHerdrWireTests` construction), `FakeTimeProvider` |
+  `SessionRunnerHttpClientHostStatsTests` (3) | all green.** MS-8: `SessionRunnerHttpClient` takes
+  `IOptions<HostStatsSettings>?` for `RequestTimeoutMs`/`SeriesTimeoutMs`.
+  - m1 `Host_stats_read_is_one_attempt`: the handler answers 503: the call fails and the handler
+    saw exactly 1 request. Red: routing the read through `SendReadAsync` (the admitted read retries).
+  - m2 `Not_found_maps_to_unsupported`: 404 -> `HostStatsUnsupportedException`. Red: 404 mapped
+    to null (the cache would show `offline` for an old runner).
+  - m3 `Hung_runner_is_cancelled_at_the_request_timeout`: the handler awaits its token; advancing
+    the fake clock 3000 ms ends the call with `TimeoutException` while the caller's token is still
+    live. Red: removing the `CancelAfter`/timeout source (the call never ends; a 10 s real-time
+    guard fails).
 - **V-10 S3 client** (vitest, `pwsh -File scripts/test-client.ps1 hosts Sparkline HostsPage`):
   `hosts.test.tsx` reads the list and the series hooks against msw; `HostsPage.test.tsx` renders
   one card per host, a `stale` badge with the old values still visible, an `offline` card with
