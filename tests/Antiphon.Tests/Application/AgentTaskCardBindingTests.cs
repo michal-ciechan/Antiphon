@@ -32,7 +32,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var card = await SeedCardAsync(db, board.Id, "CARD-0040");
 
@@ -51,7 +51,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, callerBoard) = await SeedProjectBoardAsync(db);
         var (_, otherBoard) = await SeedProjectBoardAsync(db);
         var wanted = await SeedCardAsync(db, callerBoard.Id, "CARD-0007");
@@ -76,7 +76,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         await SeedProjectBoardAsync(db);
 
         var failure = await Should.ThrowAsync<ValidationException>(async () =>
@@ -86,6 +86,8 @@ public class AgentTaskCardBindingTests
                 CancellationToken.None));
 
         failure.StatusCode.ShouldBe(422);
+        failure.Errors.Keys.ShouldContain("card");
+        failure.Errors["card"][0].ShouldContain("CARD-9999");
         (await db.AgentTasks.AsNoTracking().CountAsync()).ShouldBe(0);
     }
 
@@ -94,7 +96,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var card = await SeedCardAsync(db, board.Id, "CARD-0083");
 
@@ -113,7 +115,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var first = await SeedCardAsync(db, board.Id, "CARD-0177");
         await SeedCardAsync(db, board.Id, "CARD-0178");
@@ -137,7 +139,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, boardA) = await SeedProjectBoardAsync(db, name: "Antiphon");
         var (_, boardB) = await SeedProjectBoardAsync(db, name: "Gym Stat");
         var cardA = await SeedCardAsync(db, boardA.Id, "CARD-0005");
@@ -164,7 +166,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var card = await SeedCardAsync(db, board.Id, "CARD-0083");
         var token = Guid.NewGuid().ToString("N");
@@ -184,7 +186,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var parentCard = await SeedCardAsync(db, board.Id, "CARD-0083");
         var otherCard = await SeedCardAsync(db, board.Id, "CARD-0084");
@@ -205,7 +207,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var card = await SeedCardAsync(db, board.Id, "CARD-0033");
         var agent = await SeedAgentAsync(db, workspace.Path);
@@ -228,7 +230,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var card = await SeedCardAsync(db, board.Id, "CARD-0063");
         var conflicted = await SeedTaskAsync(db, workspace.Path, cardId: card.Id, worktree: true);
@@ -248,7 +250,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         await SeedCardAsync(db, board.Id, "CARD-0040");
 
@@ -273,7 +275,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
 
         var created = await CreateService(db, workspace).CreateAsync(
             Request(workspace.Path) with { Role = role, Title = "specialist furniture" },
@@ -294,7 +296,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var (_, board) = await SeedProjectBoardAsync(db);
         var card = await SeedCardAsync(db, board.Id, "CARD-0110");
 
@@ -317,7 +319,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var since = DateTime.UtcNow.AddDays(-7);
         var oldTerminal = TaskRow(AgentTaskStatus.Succeeded, since.AddDays(-1), since.AddDays(-1));
         var oldBlocked = TaskRow(AgentTaskStatus.Blocked, since.AddDays(-21), null);
@@ -338,7 +340,7 @@ public class AgentTaskCardBindingTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        using var workspace = new TempWorkspace();
+        using var workspace = new ScratchGitRepo("antiphon-card-bind");
         var root = Guid.NewGuid();
         db.AgentTasks.AddRange(
             TaskRow(AgentTaskStatus.Working, DateTime.UtcNow, null, root, costUsd: 0.05m),
@@ -390,7 +392,7 @@ public class AgentTaskCardBindingTests
         };
     }
 
-    private static AgentTaskService CreateService(AppDbContext db, TempWorkspace workspace) => new(
+    private static AgentTaskService CreateService(AppDbContext db, ScratchGitRepo workspace) => new(
         db,
         new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
         Options.Create(new DelegationSettings { AllowedRoots = [workspace.Path] }),
@@ -566,16 +568,5 @@ public class AgentTaskCardBindingTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
-    }
-
-    private sealed class TempWorkspace : IDisposable
-    {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-card-bind").FullName;
-
-        public void Dispose()
-        {
-            try { Directory.Delete(Path, recursive: true); }
-            catch (IOException) { }
-        }
     }
 }

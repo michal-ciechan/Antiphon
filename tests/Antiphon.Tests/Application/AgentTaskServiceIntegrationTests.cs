@@ -296,7 +296,7 @@ public class AgentTaskServiceIntegrationTests
         // that a branch + merge-back + conflict path is pure overhead.
         await using var db = CreateContext();
         var service = CreateService(db);
-        using var workspace = new TempWorkspace();
+        using var workspace = new TempWorkspace(gitRepository: false);
 
         var created = await service.CreateAsync(
             NewRequest("run the tests"), ManualCaller(workspace.Path), CancellationToken.None);
@@ -367,7 +367,7 @@ public class AgentTaskServiceIntegrationTests
     {
         // There is nothing to branch. Fail at creation with an explanation rather than crashing
         // in the dispatcher.
-        using var workspace = new TempWorkspace();
+        using var workspace = new TempWorkspace(gitRepository: false);
         await using var db = CreateContext();
         var service = CreateService(db);
 
@@ -1341,8 +1341,8 @@ public class AgentTaskServiceIntegrationTests
     public async Task an_orchestrator_with_its_own_location_stays_shared()
     {
         // Its own -Dir IS the isolation — a worktree on top would be pure overhead.
-        using var callerDir = new TempWorkspace();
-        using var ownDir = new TempWorkspace();
+        using var callerDir = new TempWorkspace(gitRepository: false);
+        using var ownDir = new TempWorkspace(gitRepository: false);
 
         await using var db = CreateContext();
         var created = await CreateService(db, allowedRoots: [ownDir.Path]).CreateAsync(
@@ -1399,7 +1399,7 @@ public class AgentTaskServiceIntegrationTests
     public async Task an_orchestrator_in_a_non_git_directory_falls_back_to_shared_with_a_warning()
     {
         // Nothing to branch, so isolation is impossible — say so instead of failing the creation.
-        using var workspace = new TempWorkspace();
+        using var workspace = new TempWorkspace(gitRepository: false);
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
@@ -2414,15 +2414,41 @@ public class AgentTaskServiceIntegrationTests
     private static AppDbContext CreateContext(string? connectionString = null) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
 
-    /// <summary>A real directory on disk — the resolver verifies existence, so a fake path won't do.</summary>
+    /// <summary>
+    /// A real directory. The default is a scratch git repository so an omitted workspace, which
+    /// has been Worktree since CARD-0644, has a toplevel to branch. Pass gitRepository: false
+    /// only when the test is about a directory that is not a repository.
+    /// </summary>
     private sealed class TempWorkspace : IDisposable
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-task-test").FullName;
+        private readonly ScratchGitRepo? _repo;
+
+        public string Path { get; }
+
+        public TempWorkspace(bool gitRepository = true)
+        {
+            if (gitRepository)
+            {
+                _repo = new ScratchGitRepo("antiphon-task-test");
+                Path = _repo.Path;
+            }
+            else
+            {
+                Path = Directory.CreateTempSubdirectory("antiphon-task-test").FullName;
+            }
+        }
 
         public void Dispose()
         {
+            if (_repo is not null)
+            {
+                _repo.Dispose();
+                return;
+            }
+
             try { Directory.Delete(Path, recursive: true); }
             catch (IOException) { /* a delegate's stray file lock must not fail the test */ }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }
