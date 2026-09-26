@@ -1,6 +1,8 @@
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -101,6 +103,27 @@ public sealed class KafkaInboundCommitTests
                 async () => await e.Current.AcknowledgeAsync("accepted", timeout.Token));
         }
         (await CommittedAsync(rebalanceTopic, rebalanceGroup, 0)).ShouldBeLessThanOrEqualTo(0);
+
+        var (faultTopic, faultGroup) = await CreateTopicAsync();
+        await ProduceAsync(faultTopic, 0, "commit response lost");
+        CommitFailingConsumerProxy? faultProxy = null;
+        var faultClient = Client(faultTopic, faultGroup, config =>
+        {
+            var proxy = DispatchProxy.Create<IConsumer<string, string>, CommitFailingConsumerProxy>();
+            faultProxy = (CommitFailingConsumerProxy)(object)proxy;
+            faultProxy.Inner = new ConsumerBuilder<string, string>(config).Build();
+            return proxy;
+        });
+        await using (var e = faultClient.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            faultProxy!.FailNextCommit();
+            await Should.ThrowAsync<InvalidOperationException>(
+                async () => await e.Current.AcknowledgeAsync("accepted", timeout.Token));
+            (await CommittedAsync(faultTopic, faultGroup, 0)).ShouldBeLessThanOrEqualTo(0);
+            await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+        }
+        (await CommittedAsync(faultTopic, faultGroup, 0)).ShouldBe(1);
     }
 
     [Test]
@@ -233,5 +256,26 @@ public sealed class KafkaInboundCommitTests
         var results = await admin.ListConsumerGroupOffsetsAsync(
             [new ConsumerGroupTopicPartitions(group, [new TopicPartition(topic, partition)])]);
         return results.SelectMany(r => r.Partitions).Single().Offset.Value;
+    }
+
+    public class CommitFailingConsumerProxy : DispatchProxy
+    {
+        public IConsumer<string, string> Inner { get; set; } = null!;
+        private int _failNextCommit;
+        public void FailNextCommit() => Interlocked.Exchange(ref _failNextCommit, 1);
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod is null) throw new InvalidOperationException("Consumer method is missing.");
+            if (targetMethod.Name == nameof(IConsumer<string, string>.Commit)
+                && Interlocked.Exchange(ref _failNextCommit, 0) == 1)
+                throw new InvalidOperationException("synthetic broker commit failure");
+            try { return targetMethod.Invoke(Inner, args); }
+            catch (TargetInvocationException ex) when (ex.InnerException is not null)
+            {
+                ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw;
+            }
+        }
     }
 }
