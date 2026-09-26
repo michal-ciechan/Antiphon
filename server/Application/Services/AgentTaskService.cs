@@ -2489,7 +2489,6 @@ public sealed class AgentTaskService
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct, string? reason = null)
     {
-        _ = reason;
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
 
@@ -2507,7 +2506,12 @@ public sealed class AgentTaskService
         task.Status = AgentTaskStatus.Canceled;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        AddEvent(task.Id, AgentTaskEventType.Canceled, null, "Canceled.", now);
+        // A card close names itself in the reason. No reason keeps today's bare event and leaves
+        // FailureReason alone, so the endpoint and every existing caller stay unchanged.
+        var trimmed = string.IsNullOrWhiteSpace(reason) ? null : Clamp(reason.Trim(), 4000);
+        if (trimmed is not null)
+            task.FailureReason = trimmed;
+        AddEvent(task.Id, AgentTaskEventType.Canceled, null, trimmed is null ? "Canceled." : "Canceled: " + trimmed, now);
         await _db.SaveChangesAsync(ct);
         if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
         // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.
