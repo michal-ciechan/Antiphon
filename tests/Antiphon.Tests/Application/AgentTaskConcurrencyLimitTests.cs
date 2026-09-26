@@ -23,13 +23,13 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskConcurrencyLimitTests
 {
     [Test]
-    public void max_open_tasks_defaults_to_three_and_does_not_change_the_hard_process_cap()
+    public void max_open_tasks_defaults_to_six_and_does_not_change_the_desktop_cap()
     {
         var settings = new DelegationSettings();
-        settings.MaxOpenTasks.ShouldBe(3);
-        settings.MaxConcurrentTasks.ShouldBe(6, "the dispatcher process cap is independent of the create gate");
+        settings.MaxOpenTasks.ShouldBe(6);
+        settings.MaxConcurrentTasks.ShouldBe(2, "the desktop delegated-task cap is independent of the create gate");
         settings.MaxOpenTasks = 10;
-        settings.MaxConcurrentTasks.ShouldBe(6);
+        settings.MaxConcurrentTasks.ShouldBe(2);
     }
 
     [Test]

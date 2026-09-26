@@ -1,7 +1,7 @@
 {
   "asOf": "2026-02-03T09:00:00Z",
   "recommendationsAreAdvisory": true,
-  "maxConcurrentTasks": 6,
+  "maxConcurrentTasks": 2,
   "inFlightAgainstCap": 1,
   "stages": [
     {
@@ -28,7 +28,7 @@
     },
     {
       "role": "Code",
-      "recommendedInFlight": 1,
+      "recommendedInFlight": 2,
       "inFlightCount": 0,
       "atOrAboveRecommendation": false,
       "inFlight": [],
@@ -55,7 +55,7 @@
     },
     {
       "role": "Review",
-      "recommendedInFlight": 1,
+      "recommendedInFlight": 2,
       "inFlightCount": 0,
       "atOrAboveRecommendation": false,
       "inFlight": [],

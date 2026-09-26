@@ -436,8 +436,8 @@ worktree base. Detail records `worktreeBaseRequestedRef` (S4 create input; unuse
 > it only records an informational warning.
 >
 > It can also refuse with **409 `concurrency_limit`** (CARD-0147 / CARD-0366) when a new non-specialist task
-> would push its project scope past `Delegation:MaxOpenTasks` (default 3) or that role within the project past
-> `RolePolicy[role].RecommendedInFlight` (default 1). Queued, Dispatched and Working count; Blocked
+> would push its project scope past `Delegation:MaxOpenTasks` (default 6) or that role within the project past
+> `RolePolicy[role].RecommendedInFlight` (default 1; Code and Review default 2). Queued, Dispatched and Working count; Blocked
 > does not; specialists and live follow-ups are exempt; tasks with no project scope form their own bucket.
 > The `concurrency` extension names the axis, `projectId`, the occupants (same project only), and
 > `override: "ignoreConcurrencyLimit"`. Retry with `ignoreConcurrencyLimit: true`

@@ -86,7 +86,7 @@ public class AgentTaskPipelineStatusTests
         var dto = await pipeline.GetAsync(CancellationToken.None);
 
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
-        dto.MaxConcurrentTasks.ShouldBe(6);
+        dto.MaxConcurrentTasks.ShouldBe(2);
         dto.InFlightAgainstCap.ShouldBe(0);
         dto.Stages.Select(s => s.Role).ShouldBe([
             AgentTaskRole.Custom, AgentTaskRole.Plan, AgentTaskRole.Code, AgentTaskRole.Review,
@@ -110,7 +110,7 @@ public class AgentTaskPipelineStatusTests
     }
 
     [Test]
-    public async Task shipped_limits_are_one_and_custom_is_unbounded()
+    public async Task shipped_limits_match_role_policy_and_custom_is_unbounded()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
@@ -118,9 +118,11 @@ public class AgentTaskPipelineStatusTests
 
         var dto = await pipeline.GetAsync(CancellationToken.None);
         dto.Stages.Single(s => s.Role == AgentTaskRole.Plan).RecommendedInFlight.ShouldBe(1);
-        dto.Stages.Single(s => s.Role == AgentTaskRole.Code).RecommendedInFlight.ShouldBe(1);
+        dto.Stages.Single(s => s.Role == AgentTaskRole.Code).RecommendedInFlight.ShouldBe(2);
+        dto.Stages.Single(s => s.Role == AgentTaskRole.Review).RecommendedInFlight.ShouldBe(2);
         dto.Stages.Single(s => s.Role == AgentTaskRole.Investigate).RecommendedInFlight.ShouldBe(1);
         dto.Stages.Single(s => s.Role == AgentTaskRole.TestDesign).RecommendedInFlight.ShouldBe(1);
+        dto.Stages.Single(s => s.Role == AgentTaskRole.Mutation).RecommendedInFlight.ShouldBe(1);
         dto.Stages.Single(s => s.Role == AgentTaskRole.Custom).RecommendedInFlight.ShouldBeNull();
     }
 
@@ -971,13 +973,15 @@ public class AgentTaskPipelineEndpointTests
         var dto = JsonSerializer.Deserialize<AgentTaskPipelineDto>(json, Json);
         dto.ShouldNotBeNull();
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
-        dto.MaxConcurrentTasks.ShouldBe(6);
+        dto.MaxConcurrentTasks.ShouldBe(2);
         dto.InFlightAgainstCap.ShouldBe(0);
         dto.Stages.Count.ShouldBe(14);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Distill);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Diagnose);
         dto.Stages.ShouldContain(s => s.Role == AgentTaskRole.Plan && s.RecommendedInFlight == 1);
+        dto.Stages.ShouldContain(s => s.Role == AgentTaskRole.Code && s.RecommendedInFlight == 2);
+        dto.Stages.ShouldContain(s => s.Role == AgentTaskRole.Review && s.RecommendedInFlight == 2);
         foreach (var stage in dto.Stages)
         {
             stage.InFlight.ShouldBeEmpty();

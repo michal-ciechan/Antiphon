@@ -15,8 +15,8 @@ tick by tick, and the specific traps that cost real time when missed.
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
 
-- **1 task per pipeline stage, in parallel across stages.** Never two tasks in the same stage at
-  once. Before dispatching a stage, check that role's in-flight row on
+- **Code and Review at two; every other stage at one**, in parallel across stages. Never two tasks in the same stage at
+  once when that role's cap is one. Before dispatching a stage, check that role's in-flight row on
   `GET /api/agent-tasks/pipeline` (or a known task by `GET /api/agent-tasks/{id}`, see §5), not
   your memory.
 - **`-Worktree` by default on every dispatch.** Shared checkout only when explicitly told to
@@ -25,7 +25,7 @@ short form.
 - **One stage transition per completion.** Read `next=`/`handoff:` off the header and dispatch
   that stage (§1). Parallelism comes from different cards sitting at different stages, not from
   fanning out several dispatches at once.
-- **Code stage at a depth of two** (in flight + queued + ready). Below two, pull the next unstarted
+- **Code stage at a depth of two** (in flight + queued + ready). Review's create-time cap is two. Below two, pull the next unstarted
   Backlog card, lowest rank first, and start it through Plan toward Code; at two, start no new Plan
   toward Code.
 - **Same source area as an in-flight Code task: defer that card's Code**, even with a free slot —

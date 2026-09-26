@@ -101,8 +101,6 @@ public class AgentTaskServiceIntegrationTests
     [Arguments(AgentTaskRole.Investigate)]
     [Arguments(AgentTaskRole.Plan)]
     [Arguments(AgentTaskRole.TestDesign)]
-    [Arguments(AgentTaskRole.Code)]
-    [Arguments(AgentTaskRole.Review)]
     [Arguments(AgentTaskRole.Debug)]
     [Arguments(AgentTaskRole.Coverage)]
     [Arguments(AgentTaskRole.Docs)]
@@ -114,7 +112,17 @@ public class AgentTaskServiceIntegrationTests
     {
         var settings = new DelegationSettings();
         settings.RecommendedInFlightFor(role).ShouldBe(1);
-        settings.MaxConcurrentTasks.ShouldBe(6, "the hard process cap is independent of the recommendation");
+        settings.MaxConcurrentTasks.ShouldBe(2, "the desktop delegated-task cap is independent of the recommendation");
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Code)]
+    [Arguments(AgentTaskRole.Review)]
+    public void code_and_review_recommend_two_in_flight(AgentTaskRole role)
+    {
+        var settings = new DelegationSettings();
+        settings.RecommendedInFlightFor(role).ShouldBe(2);
+        settings.MaxConcurrentTasks.ShouldBe(2, "the desktop delegated-task cap is independent of the recommendation");
     }
 
     [Test]
@@ -187,10 +195,10 @@ public class AgentTaskServiceIntegrationTests
         var settings = new DelegationSettings();
         foreach (var entry in settings.RolePolicy.Values)
             entry.RecommendedInFlight = 1;
-        settings.MaxConcurrentTasks.ShouldBe(6);
-        settings.MaxConcurrentTasks = 2;
-        settings.RecommendedInFlightFor(AgentTaskRole.Code).ShouldBe(1);
         settings.MaxConcurrentTasks.ShouldBe(2);
+        settings.MaxConcurrentTasks = 4;
+        settings.RecommendedInFlightFor(AgentTaskRole.Code).ShouldBe(1);
+        settings.MaxConcurrentTasks.ShouldBe(4);
     }
 
     // ---- the recursion boundary -----------------------------------------------------------

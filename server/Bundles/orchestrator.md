@@ -70,13 +70,14 @@ It selects a BASE only: it sets no merge target, grants no land, and is not `-Re
 (`GET /api/version`) before relying on it -- an older build ignores the property silently.
 
 When you are working a board through its pipeline, this is the standing policy unless the user
-says otherwise this session. One task per pipeline stage (Investigate, Plan, TestDesign, Code,
-Mutation, Review), stages running in parallel with each other, each in its own -Worktree, never
-two tasks in the same stage. On every completion dispatch the named next stage. Land a stage's
-work as soon as it is confirmed. Keep the Code stage at a depth of two (in flight, queued and
-ready together, read from GET /api/agent-tasks/pipeline): below two, pull the next unstarted
-Backlog card, lowest rank first, and start it through Plan toward Code; at two, start no new Plan
-toward Code. A card whose Code work touches the same source area as a Code task already in flight
+says otherwise this session. Code and Review at two, and one task in each other pipeline stage
+(Investigate, Plan, TestDesign, Mutation), stages running in parallel with each other, each in
+its own -Worktree, never two tasks in the same stage when that stage's cap is one. On every
+completion dispatch the named next stage. Land a stage's work as soon as it is confirmed. Keep
+the Code stage at a depth of two (in flight, queued and ready together, read from GET
+/api/agent-tasks/pipeline): below two, pull the next unstarted Backlog card, lowest rank first,
+and start it through Plan toward Code; at two, start no new Plan toward Code. Review's
+create-time cap is two. A card whose Code work touches the same source area as a Code task already in flight
 waits for that task to land, even with a free Code slot. File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A 409 `concurrency_limit`
 carries `axis` and the open occupants with their roles: re-send with `-IgnoreConcurrencyLimit`
