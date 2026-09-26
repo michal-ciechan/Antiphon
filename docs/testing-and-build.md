@@ -337,6 +337,8 @@ The 2026-09-26 server2 baseline measured 0.143 ms per read of `/proc/stat`, `/pr
 `/proc/loadavg` and two volume stats; a full `/proc` process sweep measured 1.17 ms and is
 deferred to Round 2. CP-4's full sampler check compares runner process CPU with the sampler on
 and off across two 60-second pairs; its acceptance is under one percentage point of one core.
+On this Linux lane on 2026-09-26, CP-4 measured off `0.233, 0.267` %, on `0.800, 0.967` %,
+and mean delta `0.633` percentage points (24 cores; `on-samples=15`, disabled route 404).
 
 | Process | Setting | Default / purpose |
 |---|---|---|
