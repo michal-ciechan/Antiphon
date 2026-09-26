@@ -88,12 +88,19 @@ public static class EvidenceFolder
         var tool = Path.Combine(runDirectory, "tool");
         if (!Directory.Exists(tool))
             return;
-        try
+        for (var attempt = 0; attempt < 10; attempt++)
         {
-            Directory.Delete(tool, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
+            try
+            {
+                Directory.Delete(tool, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (!Directory.Exists(tool))
+                    return;
+                Thread.Sleep(50 * (attempt + 1));
+            }
         }
     }
 

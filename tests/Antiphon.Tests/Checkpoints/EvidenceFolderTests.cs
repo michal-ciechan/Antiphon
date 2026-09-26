@@ -8,6 +8,24 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class EvidenceFolderTests
 {
     [Test]
+    public async Task tool_copy_removal_retries_while_a_file_is_still_held_open()
+    {
+        var dir = CheckpointFixtures.TempDir();
+        Directory.CreateDirectory(Path.Combine(dir, "tool"));
+        var locked = Path.Combine(dir, "tool", "YamlDotNet.dll");
+        File.WriteAllText(locked, "x");
+        var stream = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = Task.Run(async () =>
+        {
+            await Task.Delay(300);
+            stream.Dispose();
+        });
+        EvidenceFolder.TryRemoveToolCopy(dir);
+        await release;
+        Directory.Exists(Path.Combine(dir, "tool")).ShouldBeFalse();
+    }
+
+    [Test]
     public void red_run_writes_failures_with_message_stack_stdout_and_commands()
     {
         var dir = CheckpointFixtures.TempDir();

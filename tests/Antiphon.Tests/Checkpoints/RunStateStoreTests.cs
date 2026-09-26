@@ -13,30 +13,57 @@ public sealed class RunStateStoreTests
         var path = Path.Combine(CheckpointFixtures.TempDir(), "state.json");
         var store = new RunStateStore();
         var failures = 0;
-        var seen = 0;
+        var reads = 0;
         var stop = false;
         var reader = Task.Run(() =>
         {
             while (!Volatile.Read(ref stop))
             {
-                var state = store.TryRead(path);
-                if (state is null)
+                string text;
+                try
+                {
+                    if (!File.Exists(path))
+                        continue;
+                    using var stream = new FileStream(
+                        path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var streamReader = new StreamReader(stream);
+                    text = streamReader.ReadToEnd();
+                }
+                catch (IOException)
+                {
                     continue;
-                if (!int.TryParse(state.RunId, out var nonce) || state.Marker.Length != nonce)
+                }
+
+                Interlocked.Increment(ref reads);
+                if (!IsComplete(text))
                     Interlocked.Increment(ref failures);
-                else
-                    Interlocked.Increment(ref seen);
             }
         });
-        for (var i = 1; i <= 400 && Volatile.Read(ref seen) == 0; i++)
+        for (var i = 1; i <= 300; i++)
         {
-            store.Write(path, new RunState { RunId = i.ToString(), Marker = new string('x', i), Phase = "running" });
-            if (i % 8 == 0)
+            store.Write(path, new RunState { RunId = i.ToString(), Marker = new string('x', i * 20), Phase = "running" });
+            if (i % 4 == 0)
                 await Task.Yield();
         }
         Volatile.Write(ref stop, true);
         await reader;
         failures.ShouldBe(0);
-        seen.ShouldBeGreaterThan(0);
+        reads.ShouldBeGreaterThan(0);
+        Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
+    }
+
+    private static bool IsComplete(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        try
+        {
+            var state = System.Text.Json.JsonSerializer.Deserialize<RunState>(text, RunStateStore.Json);
+            return state is not null && int.TryParse(state.RunId, out var n) && state.Marker.Length == n * 20;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
     }
 }
