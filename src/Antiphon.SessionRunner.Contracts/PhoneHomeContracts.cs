@@ -84,7 +84,16 @@ public enum PhoneHomeOperation
     /// treats that as an enforcement refusal and does not retry <see cref="Launch"/>.
     /// </summary>
     LaunchPlatformConstrained = 26,
+
+    /// <summary>CARD-0718. Latest host sample and rollups. An old runner answers unsupported.</summary>
+    HostStats = 29,
+
+    /// <summary>CARD-0718. One metric's series over a named window.</summary>
+    HostStatsSeries = 30,
 }
+
+/// <summary>CARD-0718. Body for <see cref="PhoneHomeOperation.HostStatsSeries"/>.</summary>
+public sealed record PhoneHomeHostSeriesRequest(string Metric, string Window);
 
 /// <summary>CARD-0604: read (and optionally seal) a tracked execution's custody on the runner.</summary>
 public sealed record PhoneHomeReadCustodyRequest(VerificationExecutionBinding Binding, bool Seal);
