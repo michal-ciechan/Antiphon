@@ -2,6 +2,7 @@
 import { execSync } from 'node:child_process'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createWsProxyTrace } from './scripts/proxy-trace.mjs'
 
 function gitSha(): string {
   try {
@@ -43,6 +44,7 @@ const sharedServerConfig = {
       target: serverUrl,
       changeOrigin: true,
       ws: true,
+      configure: createWsProxyTrace({ label: '/api' }),
     },
     '/hubs': {
       target: serverUrl,
