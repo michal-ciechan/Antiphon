@@ -113,6 +113,50 @@ public sealed class RunSchedulerTests
         driver.Count(CheckpointFixtures.IsRun).ShouldBe(1);
     }
 
+    [Test]
+    public async Task concurrent_rows_hold_distinct_leases_and_their_lines_say_granted()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = BlockingDriver(release);
+        var handler = new PidIdempotentSlotHandler();
+        var manifest = OneBuildTwoRows();
+        var root = CheckpointFixtures.TempDir();
+        foreach (var row in manifest.Checkpoints)
+            row.Expect = [];
+        var client = new BuildSlotClient(
+            handler,
+            "http://slots.test/build-slots",
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromSeconds(2),
+            () => DateTimeOffset.UtcNow,
+            (_, _) => Task.CompletedTask,
+            holders: new SlotPids(11, 22, 33));
+        var task = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
+        {
+            Manifest = manifest,
+            Rows = manifest.Checkpoints,
+            RunDirectory = root,
+            WorkingDirectory = root,
+            State = new RunState { RunId = "test", StartedAt = DateTimeOffset.UtcNow },
+            Slots = client,
+            Commit = new string('a', 40),
+            Width = 2,
+            TotalTimeout = TimeSpan.FromMinutes(5),
+        }, CancellationToken.None);
+        await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsRun) >= 2 && handler.LiveCount >= 2);
+        handler.LiveCount.ShouldBe(2);
+        release.TrySetResult();
+        var result = await task;
+        result.Rows.Count.ShouldBe(2);
+        foreach (var row in result.Rows)
+        {
+            row.Line.ShouldContain("slot=granted");
+            row.Line.ShouldNotContain("slot=unleased");
+        }
+
+        handler.LiveCount.ShouldBe(0);
+    }
+
     private static CheckpointManifest OneBuildTwoRows()
     {
         var manifest = new CheckpointManifest();
@@ -145,6 +189,22 @@ public sealed class RunSchedulerTests
             return new DriverResult(0, "", "");
         });
         return driver;
+    }
+
+    private sealed class SlotPids(params int[] pids) : ILeaseHolderSource
+    {
+        private readonly Queue<int> _pids = new(pids);
+
+        public ILeaseHolder Open() => new Holder(_pids.Dequeue());
+
+        private sealed class Holder(int pid) : ILeaseHolder
+        {
+            public int Pid { get; } = pid;
+
+            public string? ProcessStartUtc => null;
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private static Task<SchedulerResult> Schedule(FakeDriver driver, CheckpointManifest manifest, IReadOnlyList<CheckpointSpec> rows, int width)

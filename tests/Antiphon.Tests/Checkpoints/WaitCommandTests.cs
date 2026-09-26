@@ -50,6 +50,61 @@ public sealed class WaitCommandTests
     }
 
     [Test]
+    public async Task executor_finish_leaves_the_image_and_wait_deletes_it_once_the_pid_is_gone()
+    {
+        var dir = CheckpointFixtures.TempDir();
+        var tool = Path.Combine(dir, "tool");
+        Directory.CreateDirectory(tool);
+        File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        File.WriteAllText(Path.Combine(dir, "report.md"), "--- checkpoint report ---\nverdict: GREEN exit=0\n");
+        var state = new RunState
+        {
+            RunId = "done-tool",
+            Phase = "running",
+            ExecutorPid = 42,
+            ExitCode = 0,
+            StartedAt = DateTimeOffset.UtcNow,
+        };
+        CheckpointApp.Finish(
+            state,
+            0,
+            () => new RunStateStore().Write(Path.Combine(dir, "state.json"), state),
+            () => EvidenceFolder.TryRemoveToolCopy(dir, tool),
+            _ => { });
+        state.Phase.ShouldBe("done");
+        Directory.Exists(tool).ShouldBeTrue();
+        var output = new StringWriter();
+        var code = await new WaitCommand(liveness: new Alive(false), delay: Fast).WaitAsync(
+            dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
+        code.ShouldBe(0);
+        Directory.Exists(tool).ShouldBeFalse();
+        output.ToString().ShouldContain("GREEN");
+    }
+
+    [Test]
+    public async Task wait_leaves_the_tool_copy_while_the_finished_executor_is_still_alive()
+    {
+        var dir = CheckpointFixtures.TempDir();
+        var tool = Path.Combine(dir, "tool");
+        Directory.CreateDirectory(tool);
+        File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
+        {
+            RunId = "exiting",
+            Phase = "done",
+            ExitCode = 0,
+            ExecutorPid = 42,
+            StartedAt = DateTimeOffset.UtcNow,
+        });
+        File.WriteAllText(Path.Combine(dir, "report.md"), "verdict: GREEN\n");
+        var output = new StringWriter();
+        var code = await new WaitCommand(liveness: new Alive(true), delay: Fast).WaitAsync(
+            dir, TimeSpan.FromMilliseconds(30), TimeSpan.FromSeconds(60), output, CancellationToken.None);
+        code.ShouldBe(75);
+        Directory.Exists(tool).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task returns_6_when_executor_died()
     {
         var dir = Running(pid: 99);

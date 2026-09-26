@@ -68,7 +68,7 @@ public sealed class EvidenceFolderTests
     }
 
     [Test]
-    public void green_run_writes_report_only_and_removes_tool_copy()
+    public void non_image_remove_drops_the_tool_copy()
     {
         var dir = CheckpointFixtures.TempDir();
         Directory.CreateDirectory(Path.Combine(dir, "tool"));

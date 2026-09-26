@@ -37,7 +37,7 @@ public static class CheckpointApp
         Publish();
         IBuildSlotClient slots = request.Slots == "off"
             ? new FixedSlotClient("off")
-            : new BuildSlotClient(new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()), log: Note);
+            : new BuildSlotClient(new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()), log: Note, holders: new ProcessLeaseHolderSource());
         var platform = new RuntimePlatform();
         var width = request.Parallel is > 0 ? request.Parallel.Value : manifest.EffectiveMaxRows(platform.IsWindows);
         if (request.Serial)
@@ -136,6 +136,7 @@ public static class CheckpointApp
             throw new ManifestValidationException("rows", "no checkpoints selected");
         var resultsRoot = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
         Directory.CreateDirectory(resultsRoot);
+        EvidenceFolder.SweepFinishedToolCopies(resultsRoot, new ProcessLiveness());
         var runId = RepoPaths.RunId();
         var runDirectory = Path.Combine(resultsRoot, runId);
         Directory.CreateDirectory(runDirectory);

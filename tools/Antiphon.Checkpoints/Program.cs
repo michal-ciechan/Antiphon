@@ -22,7 +22,7 @@ public static class Program
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
-            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|import|row|clean|execute|--version");
+            Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|import|row|clean|execute|hold|--version");
             return ExitCodes.Green;
         }
 
@@ -35,6 +35,8 @@ public static class Program
 
         if (args[0] == "smoke-detach")
             return SmokeDetach(args);
+        if (args[0] == "hold")
+            return Hold(args);
 
         var verb = args[0];
         var options = Parse(args.Skip(1).ToArray());
@@ -64,6 +66,34 @@ public static class Program
             default:
                 Console.Error.WriteLine("unknown verb " + verb);
                 return ExitCodes.Invalid;
+        }
+    }
+
+    private static int Hold(string[] args)
+    {
+        var parent = 0;
+        for (var i = 1; i < args.Length - 1; i++)
+        {
+            if (args[i] == "--parent"
+                && int.TryParse(args[i + 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var pid))
+                parent = pid;
+        }
+
+        while (parent <= 0 || ParentAlive(parent))
+            Thread.Sleep(500);
+        return ExitCodes.Green;
+    }
+
+    private static bool ParentAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return false;
         }
     }
 
@@ -232,7 +262,10 @@ public static class Program
     private static async Task<int> Row(ArgSet options, string repo)
     {
         var platform = new RuntimePlatform();
-        var slots = new BuildSlotClient(new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(platform.IsWindows));
+        var slots = new BuildSlotClient(
+            new HttpClientHandler(),
+            BuildSlotClient.DefaultEndpoint(platform.IsWindows),
+            holders: new ProcessLeaseHolderSource());
         var session = options.Get("slots") == "off"
             ? new SlotSession("off", 4)
             : await slots.ProbeAsync(CancellationToken.None).ConfigureAwait(false);

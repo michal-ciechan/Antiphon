@@ -64,6 +64,60 @@ internal sealed class FakeDriver : IDriver
     }
 }
 
+internal sealed class PidIdempotentSlotHandler : HttpMessageHandler
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<int, string> _byPid = new();
+    private readonly HashSet<string> _live = new(StringComparer.Ordinal);
+    private int _next = 1;
+
+    public int LiveCount
+    {
+        get { lock (_gate) return _live.Count; }
+    }
+
+    public bool IsLive(string leaseId)
+    {
+        lock (_gate)
+            return _live.Contains(leaseId);
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.Method == HttpMethod.Get)
+            return Json(HttpStatusCode.OK, """{"enabled":true,"maxConcurrent":4}""");
+        if (request.Method == HttpMethod.Delete)
+        {
+            var id = request.RequestUri?.Segments.LastOrDefault()?.Trim('/') ?? "";
+            bool removed;
+            lock (_gate)
+                removed = _live.Remove(id);
+            return new HttpResponseMessage(removed ? HttpStatusCode.NoContent : HttpStatusCode.NotFound);
+        }
+
+        var json = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+        var pid = doc.RootElement.TryGetProperty("pid", out var value) && value.TryGetInt32(out var parsed) ? parsed : 0;
+        string lease;
+        lock (_gate)
+        {
+            if (_byPid.TryGetValue(pid, out var existing) && existing is not null && _live.Contains(existing))
+                lease = existing;
+            else
+            {
+                lease = "L" + _next++;
+                _byPid[pid] = lease;
+                _live.Add(lease);
+            }
+        }
+
+        return Json(HttpStatusCode.OK, "{\"leaseId\":\"" + lease + "\",\"maxCpuCount\":4}");
+    }
+
+    private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
+        new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+}
+
 internal sealed class ScriptedHttpHandler : HttpMessageHandler
 {
     private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _next = new();
