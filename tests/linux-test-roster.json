@@ -14686,8 +14686,8 @@
         "Antiphon.Tests.TestHelpers.TestDbReadyState"
       ],
       "sourceSha256": {
-        "tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.C561.cs": "a912d88052783e1713deb7088414f2cd96cee5151e1f1ca9e1bfaa767560c54a",
-        "tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs": "ed5d5e5773f944a9dc72c348ce490bc1ee3c0cbbd3a631ee718ccceee113c913"
+        "tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.C561.cs": "7314710b09b58d36c6c50514dbaf527a934e41fa4e18e83584a42902c969fe71",
+        "tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs": "4a365af7a3f632fc084df63dfa38e4d4449067a0876df3a8e492b14bd508bdf1"
       }
     },
     {
@@ -18648,6 +18648,26 @@
     },
     {
       "assembly": "Antiphon.Tests",
+      "class": "Antiphon.Tests.TestHelpers.ScaledTimeProviderTests",
+      "sourceFiles": [
+        "tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs"
+      ],
+      "directTestMethods": 6,
+      "disposition": "include",
+      "lane": "local",
+      "shard": "local-05",
+      "boundary": "Managed values, file fixtures, parsers or controlled I/O; source-inspection context retained.",
+      "owner": "CARD-0735",
+      "testHelperClosure": [
+        "Antiphon.Tests.TestHelpers.ScaledTimeProvider"
+      ],
+      "sourceSha256": {
+        "tests/Antiphon.Tests/TestHelpers/ScaledTimeProvider.cs": "b6de15643793d6c189cde3426dc792be9b64a4643e9f8ab9d102c5504a526a95",
+        "tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs": "851dfef3d4ab94abb28efeb6f00432a132401b142fb8ba7de6f03628dce236bb"
+      }
+    },
+    {
+      "assembly": "Antiphon.Tests",
       "class": "Antiphon.Tests.TestHelpers.SlowTestTripwireTests",
       "sourceFiles": [
         "tests/Antiphon.Tests/TestHelpers/SlowTestTripwireTests.cs"
@@ -19425,7 +19445,7 @@
     },
     {
       "id": "local-05",
-      "filter": "/*/*/(VerificationRoundBriefTests*)|(VerificationRoundInstructionTests*)|(WorkflowEngineParsingTests*)|(WorktreeCleanupPresentationTests*)|(WorktreeListParsingTests*)|(CachingChatClientTests*)|(CardStateMachineTests*)|(RunAttemptStateMachineTests*)|(WorkflowStateMachineTests*)|(AppHostBrokerSourceGuardTests*)|(LandingIdentityControlTests*)|(LandingRemovalPolicyControlTests*)|(LogRetentionTests*)|(WorktreeDeleteAccessProbeTests*)|(WorktreeManagerSafetyTests*)|(WorktreeManagerTests*)|(WorktreeRemovalDefaultTests*)|(NightlyWatchdogCoreTests*)|(DelegationHarnessCensusTests*)|(ProductionRunnerGuardTests*)|(PtyBackendEnvGuardTests*)|(SlowTestTripwireTests*)|(TestLaneCategoryGuardTests*)/*",
+      "filter": "/*/*/(VerificationRoundBriefTests*)|(VerificationRoundInstructionTests*)|(WorkflowEngineParsingTests*)|(WorktreeCleanupPresentationTests*)|(WorktreeListParsingTests*)|(CachingChatClientTests*)|(CardStateMachineTests*)|(RunAttemptStateMachineTests*)|(WorkflowStateMachineTests*)|(AppHostBrokerSourceGuardTests*)|(LandingIdentityControlTests*)|(LandingRemovalPolicyControlTests*)|(LogRetentionTests*)|(WorktreeDeleteAccessProbeTests*)|(WorktreeManagerSafetyTests*)|(WorktreeManagerTests*)|(WorktreeRemovalDefaultTests*)|(NightlyWatchdogCoreTests*)|(DelegationHarnessCensusTests*)|(ProductionRunnerGuardTests*)|(PtyBackendEnvGuardTests*)|(ScaledTimeProviderTests*)|(SlowTestTripwireTests*)|(TestLaneCategoryGuardTests*)/*",
       "classes": [
         "Antiphon.Tests.Application.VerificationRoundBriefTests",
         "Antiphon.Tests.Application.VerificationRoundInstructionTests",
@@ -19448,6 +19468,7 @@
         "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests",
         "Antiphon.Tests.TestHelpers.ProductionRunnerGuardTests",
         "Antiphon.Tests.TestHelpers.PtyBackendEnvGuardTests",
+        "Antiphon.Tests.TestHelpers.ScaledTimeProviderTests",
         "Antiphon.Tests.TestHelpers.SlowTestTripwireTests",
         "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests"
       ],
