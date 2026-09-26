@@ -26,14 +26,16 @@ public sealed class CheckpointTaskOwnershipTests
             {
                 if (Interlocked.Increment(ref entries) == 2)
                     entered.TrySetResult();
-                try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
-                catch (OperationCanceledException)
+                var cancellation = Task.Delay(Timeout.InfiniteTimeSpan, token);
+                if (await Task.WhenAny(cancellation, release.Task) == cancellation)
                 {
+                    await Should.ThrowAsync<OperationCanceledException>(() => cancellation);
                     if (Interlocked.Increment(ref cancellations) == 2)
                         canceled.TrySetResult();
+                    await release.Task;
+                    throw new OperationCanceledException(token);
                 }
-                await release.Task;
-                throw new OperationCanceledException(token);
+                return new DriverResult(0, "", "");
             });
             var manifest = new CheckpointManifest();
             for (var i = 1; i <= 3; i++)
@@ -46,8 +48,10 @@ public sealed class CheckpointTaskOwnershipTests
             }, repo);
             var handler = new OwnerHandler();
             var slots = new BoundarySlots();
+            var polls = 0;
             var execute = CheckpointApp.ExecuteAsync(run, abort.Token,
-                Runtime(handler, driver, slots, (_, token) => poll.Task.WaitAsync(token)));
+                Runtime(handler, driver, slots, (_, token) =>
+                    Interlocked.Increment(ref polls) == 1 ? poll.Task.WaitAsync(token) : HoldDelay(TimeSpan.Zero, token)));
             try
             {
                 await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -70,10 +74,14 @@ public sealed class CheckpointTaskOwnershipTests
             }
             finally
             {
-                abort.Cancel();
                 poll.TrySetResult();
                 release.TrySetResult();
-                await execute.WaitAsync(TimeSpan.FromSeconds(5));
+                try { await execute.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (TimeoutException)
+                {
+                    abort.Cancel();
+                    await execute.WaitAsync(TimeSpan.FromSeconds(5));
+                }
             }
         }
     }
