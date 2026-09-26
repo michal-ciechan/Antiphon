@@ -412,6 +412,10 @@ is the surface and the docs. Each `Sn-tests` commit lands the compiling red test
 
 ## Verification design
 
+This is the plan's draft. TestDesign (task `08e6f2d2`) keeps its IDs and red-first discipline and
+supersedes its roster detail, checkpoint table and cost with `## Test design` at the end of this
+document; where the two differ, `## Test design` governs.
+
 ### Harness and red-first discipline
 
 - Every backend class takes its own migrated schema (`TestDbFixture.CreateIsolatedSchemaAsync()`,
@@ -483,7 +487,7 @@ Builds go to `bin-c726-r1/` and `bin-c726-r2/` (forward slash); every row runs t
 are deleted before the Code report. Every row is reported as its `CHECKPOINT` line. Unlisted
 runs need a stated reason.
 
-### Checkpoints
+#### Plan draft checkpoints (superseded by `## Test design` `### Checkpoints`)
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
@@ -502,7 +506,7 @@ runs need a stated reason.
 CP-7 reuses CP-6's output with `--no-build` (same `After`); CP-11 reuses CP-9's. Round 1 is
 CP-1 to CP-7; Round 2 is CP-8 to CP-11 and the S5 docs.
 
-### Cost
+#### Plan draft cost (superseded by `## Test design` `### Cost`)
 
 Ordinary Code floor: the sum of `EstimatedMinutes`, 93 minutes across the two rounds (R1 54,
 R2 39), plus authoring. `-ExpectAbout` for the R1 Code dispatch: about 3 h; for R2: about 2 h.
@@ -529,3 +533,121 @@ The Code briefs point at this table with
 - **Nothing here retires `watch-server2.sh`.** It is the orchestrator's local file; the
   orchestration-loop doc's new sentence is the instruction not to re-arm it once the runner row
   exists, and the caller's standing authority covers that.
+
+## Test design
+
+TestDesign task `08e6f2d2`, server2 Linux lane, against plan commit `4fe3bce9` and source
+`4fe3bce9` (no `server/`, `tests/` or `client/` file changed between the plan's inspected
+`fa86dc64` and this commit except CARD-0718's `DelegationUnitTests.cs` and `ScratchGitRepo.cs`
+additions, neither of which a row below relies on). Nothing was built or run by TestDesign; every
+count below is a source count (argument expansion included) at `4fe3bce9`. The plan's IDs
+V-1..V-20, R-1..R-3 and CP-1..CP-11 are kept with their meaning; rows V-21..V-34 and R-4..R-5 are
+added for boundaries and delivery evidence the draft did not reach, and CP rows are renumbered in
+the final table.
+
+### Stated defaults (TestDesign, for Review)
+
+The fix design is unchanged. Three behaviours the plan leaves ambiguous or unrecovered are pinned
+here as defaults under the caller's standing authority, because a guard cannot be tested until its
+behaviour is fixed:
+
+- **TD-1 (D-7 enqueue order).** A caller session enters `NotifiedSessionIds` only after its
+  `NotifyAsync` returned; a throwing `NotifyAsync` (missing session, queue insert failure) is
+  logged at Warning and that session is retried on the next wake of the same raised episode. A
+  session is never sent a second outage note once recorded. (The plan's "before the enqueue
+  returns" would leave a failed caller permanently untold and would then send it a recovery note
+  for an outage it never heard of.)
+- **TD-2 (lost flush hint).** The CARD-0699 backstop sweep re-flushes only rows with a
+  `SourceTaskId` and `ContentDigest` (`CompletionNoteWorkHostedService.cs:69-71`), and
+  `FlushStrandedQueuesAsync` picks up only always-on sessions or Delegation/Supervision/Mention
+  origins (`QueueAttention.cs:85-90`). A `System` alarm note whose `TryEnqueue` was dropped, or
+  whose flush threw, therefore waits for the caller's next turn end, which never comes for an
+  idle caller. Default: the episode also records each note's queue row id (the `onCreated`
+  callback of `EnqueueAsync`); every sweep and every wake that finds such a row still `Pending`
+  with `DeliveryAttempts == 0` calls `CompletionNoteFlushQueue.TryEnqueue(session)` again. No new
+  table, no new timer.
+- **TD-3 (fences the inspector must not hide).** Every state in which
+  `RepositoryChildJournal.HasUnfinishedAsync` returns true must surface as a finding: a
+  `children` path that is a file (`:103`) is one `Malformed` finding named after the path; a
+  record whose liveness read returns null is `Unknown`; a `.tmp` torn save is `Malformed`. D-8's
+  classification governs where ground-truth row 7 differs: a wrong `CommonDirectory` is `Unknown`,
+  not `Malformed`.
+
+### Inspection
+
+Bodies read by TestDesign at `4fe3bce9`, and what each changes in the roster:
+
+- `server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs:32-55, 270-345, 440-613`
+  | the four transitions are `AcceptConnect` supersede (`:283-287`), `MarkRecovered` (`:300-311`),
+  `Disconnect` (`:328-338`) and `SnapshotOf` (`:566-579`); `SnapshotOf` writes
+  `DispatchEligible = false` on **every** read after expiry, so "notify once" needs an edge test
+  (V-3 reads twice); `Status` returns eligibility as `live is { DispatchEligible: true } &&
+  available` (`:495`) and the desktop alias is not a slot -> V-2, V-3, V-21, V-22, V-23.
+- `tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs:1-140, 150-175` | `StartAsync(clock,
+  connectionString, limits, configureDbContext, shutdownTimeout, configured)` builds the directory
+  inline with no observer: **MS-1** adds `IRunnerEligibilityObserver? observer = null` passed to
+  the constructor; `Logs` (`CapturingLoggerProvider`) captures the Warning V-22 asserts;
+  `ConnectPeerAsync(runnerId:, storeId:, secret:)` and `WaitLiveAsync(runnerId:)` are the peer
+  verbs -> V-2, V-3, V-21..V-23, V-34 is not a directory test.
+- `tests/Antiphon.Tests/Application/MultiRunnerDirectoryTests.cs` (7 `[Test]`, `Pair(secretA,
+  secretB)` configured map, `Socket.Abort()` then replacement at `:88-89`) and
+  `DefaultRunnerEligibilityTests.cs` (3, `FakeTimeProvider` host, `Advance(91 s)` expires the lease
+  at `:79`) | the supersede and lease-expiry recipes V-2 and V-3 copy; both classes join R-1.
+- `server/Infrastructure/Git/RepositoryMutationLease.cs:20-80` | `AcquireAsync` returns null for
+  two different reasons: the journal fence (`:33-37`) and a busy `landing.lock` (`IOException`,
+  `:52`); only the first may call `Fenced` -> V-4 gains the busy-lock boundary (G-7).
+- `server/Infrastructure/Git/RepositoryChildJournal.cs:1-140` and `LandingGit.cs:35-46` |
+  `HasUnfinishedAsync` fences on a `children` file, any non-`.json` name, a torn or foreign record,
+  an alive or unreadable PID, and a dead one; `IsProcessAliveAsync` is non-virtual, returns false
+  for a missing PID **and** for a live PID with other start ticks -> V-6 plants a "reused" record
+  from the test process's own PID with `StartTicks + 1` and a missing PID, so no child process is
+  spawned; **MS-2** `UnreadableLivenessGit : LandingGit, ILandingGit` re-implements the interface
+  with `public new Task<bool?> IsProcessAliveAsync(...) => Task.FromResult<bool?>(null)` for V-24.
+- `tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs:505-570` and
+  `RepositoryMutationLeaseDescribeTests.cs` | records are planted by serialising
+  `RepositoryChildJournal.ChildRecord` into `<common>/antiphon/children/<guid>.json` (internal type,
+  visible to the test assembly); the describe test is the one-class, 30 s-timeout shape the new
+  journal classes copy, with `[ParallelLimiter<ProcessSpawnLimit>]` because git runs.
+- `tests/Antiphon.Tests/TestHelpers/ScratchGitRepo.cs` | `Path`, `WorktreeRoot`, `GitAsync(...)`;
+  a linked worktree for V-13 is `GitAsync("worktree", "add", <dir>)`.
+- `server/Application/Services/SessionMessageQueueService.cs:340-368, 1325, 1366-1440, 1516` and
+  `server/Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs:16-168` | `EnqueueAsync`
+  takes `onCreated` (row id) and `deliverIfIdle`; the flush worker calls `FlushIfIdleAsync`; the
+  turn-end entry is `OnTurnEndAsync`; the sweep's `SourceTaskId`/`ContentDigest` filter is why
+  TD-2 exists -> DP-1 in the delivery inventory, V-16, V-30..V-34.
+- `tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs:29-80, 260-300` and
+  `PostLandMutationDeliveryTests.cs:905-960, 1104-1120` | the harness is the real queue over a
+  `FakeAgentProtocolAdapter` whose `OnSubmitted` writes a stamped `UserPrompt` plus `TurnEnd`
+  transcript row (CARD-0055), so a delivered note is observable as a transcript row; the
+  busy-caller recipe is `SetWorkingAsync(connection, session, true)` then `FlushIfIdleAsync`
+  (zero `Adapter.Inputs`) then TurnEnd + `OnTurnEndAsync` -> V-16, V-30..V-34 use it; the
+  `RecoveryWorker(h, clock)` / `RecoveryClock` shape of `PostLandMutationDeliveryTests.CompletionRecovery.cs:258-285`
+  is copied (it is `private` there: **MS-3** copies the two helpers into the new class).
+- `server/Application/Services/AttentionService.cs:128-156, 225-235` and
+  `DispatchHeldAttentionTests.cs:262-277` | six positional arguments plus named optionals;
+  `BuildZombieCensusItemsAsync` is the insertion point; the new parameter goes last -> V-17..V-19.
+- `client/src/features/attention/attentionVisuals.test.ts:1-280` (15 `it`, one 4-case `it.each`)
+  | `ALL_KINDS` list, the per-kind visual test, the group test, the home-bucket `it.each`
+  (`:90-98`) and the `unique == visualKeys` lockstep (`:266-268`) -> V-20 adds both kinds to
+  `ALL_KINDS` and two `it.each` cases (`Error` -> `broken`).
+- `server/Application/Services/SessionRunnerCatalogue.cs:78-96` | "live" sessions are
+  `Created | Starting | Running | Stopping` on the runner -> V-8 seeds one `Running` and one
+  `Stopped` session. `AgentTaskReplyTo` is `None = 0, Session = 1, ...` -> V-8 seeds a `None`
+  task that is pinned but has no caller.
+
+Missing setup (Code adds it in the `Sn-tests` commit that first needs it): **MS-1** the
+`PhoneHomeTestHost` observer parameter; **MS-2** `UnreadableLivenessGit`; **MS-3** the recovery
+worker/clock helpers copied into `RunnerAlarmDeliveryTests`; **MS-4** `FakeEligibilitySource`,
+`RecordingNotifier` (optionally throwing once per session), `FakeExclusion` and a
+`RecordingFenceObserver`/`RecordingEligibilityObserver`, all in
+`tests/Antiphon.Tests/TestHelpers/RunnerAlarmFakes.cs`; **MS-5** `DroppingFlushQueue :
+CompletionNoteFlushQueue` (`TryEnqueue` is `virtual`, `CompletionNoteWork.cs:13`) that drops the
+first N hints and records every call.
+
+Boundary combinations covered: grace at 179/180 s (V-8, V-14); journal age at 4:59 / 5:00 (V-7);
+eligible x excluded x episode state, all seven D-3 table rows (V-8..V-12, V-27); drain before,
+during and after an outage and the CARD-0727 drain -> redeploy -> clear sequence (V-11); lease
+expiry read once and twice (V-3); fence vs busy lock (V-4); two worktrees of one repository
+(V-13); idle, busy and failing recipients (V-30..V-34). Excluded: a runner removed from
+configuration while an episode is open (configuration is bound at startup; a change restarts the
+server and D-3's restart rule applies).
