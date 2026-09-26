@@ -25,7 +25,8 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             || task.SourceLandingOperationId is not null || task.Role == AgentTaskRole.Mutation
             || (op.RecoveryMode == LandRecoveryMode.None
                 ? task.Status != AgentTaskStatus.Succeeded
-                : task.Role != AgentTaskRole.Code || !LandApproval.RecoveryStatusEligible(task.Status))
+                : task.Role != AgentTaskRole.Code || op.RecoveryOwnerStatus is not { } approved
+                    || !LandApproval.RecoveryStatusEligible(approved))
             || FullRef(task.WorktreeBranch) != op.SourceFullRef
             || FullRef(task.MergeTargetRef ?? "master") != op.TargetFullRef
             || !SamePath(task.RepoPath, op.RepositoryPath) || !SamePath(task.WorktreePath, op.WorktreePath)) return null;
