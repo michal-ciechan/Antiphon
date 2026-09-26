@@ -14,6 +14,7 @@ public sealed class CheckpointTaskOwnershipTests
     {
         foreach (var terminal in new[] { "Succeeded", "Failed", "Canceled" })
         {
+            using var abort = new CancellationTokenSource();
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -45,17 +46,18 @@ public sealed class CheckpointTaskOwnershipTests
             }, repo);
             var handler = new OwnerHandler();
             var slots = new BoundarySlots();
-            var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None,
+            var execute = CheckpointApp.ExecuteAsync(run, abort.Token,
                 Runtime(handler, driver, slots, (_, token) => poll.Task.WaitAsync(token)));
             try
             {
                 await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 handler.TaskStatus = terminal;
                 poll.TrySetResult();
-                await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var observed = await Task.WhenAny(canceled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+                observed.ShouldBe(canceled.Task, $"terminal owner status {terminal} did not cancel both active drivers");
                 execute.IsCompleted.ShouldBeFalse();
                 release.TrySetResult();
-                (await execute).ShouldBe(ExitCodes.OwnerEnded);
+                (await execute.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(ExitCodes.OwnerEnded);
                 driver.Count(_ => true).ShouldBe(2);
                 slots.Acquires.ShouldBe(2);
                 slots.Releases.ShouldBe(2);
@@ -68,10 +70,10 @@ public sealed class CheckpointTaskOwnershipTests
             }
             finally
             {
-                handler.TaskStatus = "Succeeded";
+                abort.Cancel();
                 poll.TrySetResult();
                 release.TrySetResult();
-                await execute;
+                await execute.WaitAsync(TimeSpan.FromSeconds(5));
             }
         }
     }
@@ -251,6 +253,75 @@ public sealed class CheckpointTaskOwnershipTests
         await Should.ThrowAsync<OperationCanceledException>(() => b);
         factory.Handles[1].Kills.ShouldBe(1);
         factory.Handles[1].KilledTree.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task one_row_deadline_does_not_kill_its_sibling_handle()
+    {
+        var factory = new BlockingHandleFactory();
+        var driver = new ProcessDriver(factory);
+        using var keepRunning = new CancellationTokenSource();
+        var timed = RowTimeout.RunWithDeadlineAsync(driver,
+            new DriverRequest("fake", [], CheckpointFixtures.TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        var sibling = RowTimeout.RunWithDeadlineAsync(driver,
+            new DriverRequest("fake", [], CheckpointFixtures.TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
+        try
+        {
+            factory.Handles.Count.ShouldBe(2);
+            (await timed.WaitAsync(TimeSpan.FromSeconds(5))).TimedOut.ShouldBeTrue();
+            factory.Handles[0].Kills.ShouldBe(1);
+            factory.Handles[1].Kills.ShouldBe(0);
+        }
+        finally
+        {
+            keepRunning.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => sibling.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+    }
+
+    [Test]
+    public async Task owner_read_allows_slow_recovery_and_uses_twelve_second_deadline()
+    {
+        var handler = new OwnerHandler();
+        for (var i = 0; i < 4; i++) handler.Next.Enqueue("HTTP500");
+        handler.Next.Enqueue("Working");
+        using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask,
+            deadline: (span, token) =>
+            {
+                span.ShouldBe(TimeSpan.FromSeconds(12));
+                return CancellationTokenSource.CreateLinkedTokenSource(token);
+            });
+        (await owner.EnsureLiveAsync(CancellationToken.None)).ShouldBeTrue();
+        handler.Calls.ShouldBe(5);
+        owner.Reason.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task executor_log_records_each_failed_owner_read_without_stopping_work()
+    {
+        var handler = new OwnerHandler();
+        handler.Next.Enqueue("Working");
+        handler.Next.Enqueue("HTTP500");
+        handler.Next.Enqueue("Working");
+        var driver = new FakeDriver();
+        var run = NewBoundRun();
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None,
+            Runtime(handler, driver, delay: (_, _) => Task.CompletedTask))).ShouldBe(0);
+        driver.Count(_ => true).ShouldBe(1);
+        File.ReadAllText(Path.Combine(run, "executor.log")).ShouldContain("owner read failed: http 500");
+    }
+
+    [Test]
+    public async Task canceled_process_does_not_wait_forever_for_inherited_output_pipes()
+    {
+        var factory = new StuckAfterKillFactory();
+        var driver = new ProcessDriver(factory);
+        using var cancel = new CancellationTokenSource();
+        var run = driver.RunAsync(new DriverRequest("fake", [], CheckpointFixtures.TempDir()), cancel.Token);
+        cancel.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(15)));
+        factory.Handle.Kills.ShouldBe(1);
+        factory.Handle.PostKillWaits.ShouldBe(1);
     }
 
     [Test]
@@ -636,6 +707,31 @@ public sealed class CheckpointTaskOwnershipTests
             KilledTree = entireProcessTree;
             _exit.TrySetResult();
         }
+        public void Dispose() { }
+    }
+
+    private sealed class StuckAfterKillFactory : IProcessHandleFactory
+    {
+        public StuckAfterKillHandle Handle { get; } = new();
+        public IProcessHandle Create(System.Diagnostics.ProcessStartInfo startInfo) => Handle;
+    }
+
+    private sealed class StuckAfterKillHandle : IProcessHandle
+    {
+        public int Kills { get; private set; }
+        public int PostKillWaits { get; private set; }
+        public bool Start() => true;
+        public void BeginRead(Action<string?> stdout, Action<string?> stderr) { }
+        public Task WaitForExitAsync(CancellationToken cancellationToken)
+        {
+            if (Kills == 0)
+                return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            PostKillWaits++;
+            return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        public bool HasExited => false;
+        public int ExitCode => 137;
+        public void Kill(bool entireProcessTree) => Kills++;
         public void Dispose() { }
     }
 
