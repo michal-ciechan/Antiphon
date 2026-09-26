@@ -51,7 +51,7 @@ Antiphon.Tests.Application.AttentionServiceTests
 Antiphon.Tests.Application.AgentTaskDeliveryWatchdogTests
 # CARD-0487: historical allowance, review loop queue cost.
 Antiphon.Tests.Application.ReviewLoopTests
-# CARD-0487: historical allowance, delivery verification cost.
+# CARD-0735: scaled clock at speed 5; class body measured 95-99s on server2 (was 292-302s).
 Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests
 # CARD-0501: first harness starts/migrates PostgreSQL (28.372s measured); failed-submit confirmation uses real timers.
 Antiphon.Tests.Application.SessionMessageQueueWedgedHeadTests
