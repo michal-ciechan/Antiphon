@@ -890,3 +890,117 @@ P3 on the desktop (`RunnerId` null). Sessions on `server2`: one `Running`, one `
   `JournalEnabled = false`: no finding and no inspection (inspector call count unchanged). Red:
   key repositories on their checkout path instead of `CommonDirectoryAsync` -> two findings; let
   the missing path throw -> the evaluation throws; ignore `JournalEnabled` -> finding present.
+
+**S3: the loop** (`CP-5` red, `CP-6` green;
+`tests/Antiphon.Tests/Application/RunnerAlarmHostedServiceTests.cs`, `[Category("Integration")]`,
+`[ParallelLimiter<ProcessSpawnLimit>]`; the real `RunnerAlarmHostedService` and `AlarmWakeQueue`
+over a service provider with the isolated schema, `AlarmClock` = MS-3's `RecoveryClock` shape
+recording every `CreateTimer` due time and period; `UntilAsync` polls the published state with a
+5 s real-time bound; "settle" is a 100 ms real delay with no clock advance)
+
+- **V-14: the grace expiry is a timer and a fence signal wakes the loop | Integration |
+  `RunnerAlarmHostedServiceTests.the_loop_raises_on_the_grace_timer_and_wakes_on_a_fence_signal` |
+  as below.** Source ineligible; start; await the first timer. `Advance(179 s)`, settle: an
+  episode, `RaisedAt == null`. `Advance(1 s)`: `UntilAsync` sees `RaisedAt` set with no further
+  advance. `AlarmWakeQueue.Fenced(common)` for a `ScratchGitRepo` holding a 10-minute-old dead
+  record: `UntilAsync` sees its finding with no clock advance. `StopAsync` completes within 5 s.
+  Red: compute the wait due time from `nextSweep` only -> fails at the first `UntilAsync`; drop
+  `Fenced`'s wake -> fails at the second.
+- **V-15: the sweep runs at the period and nothing polls | Integration |
+  `RunnerAlarmHostedServiceTests.the_sweep_runs_at_the_period_and_no_other_timer_exists` | as
+  below.** Source eligible, one registered repository, no signals. After start: source `Snapshots`
+  calls `s0 >= 1`, inspector calls `i0 >= 1`. `Advance(14 min)`, settle: both unchanged.
+  `Advance(1 min)`: `UntilAsync` source calls `== s0 + 1` and inspector calls `== i0 + 1`. Every
+  recorded timer has period `Timeout.InfiniteTimeSpan` and a due time of at least 1 min. Red: add a
+  1 s `Task.Delay` poll to the loop -> fails at the due-time assertion; a sweep period other than
+  `SweepMinutes` -> fails at the 14-minute "unchanged" or the 15-minute `UntilAsync`.
+- **V-26: `Alarms:Enabled = false` starts no loop and publishes nothing | Integration |
+  `RunnerAlarmHostedServiceTests.disabled_alarms_start_no_loop_and_publish_nothing` | nothing.**
+  Source ineligible; `Enabled = false`; start: `ExecuteTask` completes within 5 s, source calls
+  `0`, no timer recorded; `Advance(10 min)`, settle: state empty. Green on the waiting skeleton
+  (control). Red: ignore `Enabled` -> fails at source calls `0`.
+- **V-29: a failing pass is logged and retried without waiting for the sweep | Integration |
+  `RunnerAlarmHostedServiceTests.a_failing_pass_is_logged_and_retried_without_waiting_for_the_sweep`
+  | as below.** Source eligible at start, then throws once on the next call and reports ineligible
+  afterwards. `Signal("server2")`: one Warning is logged; `UntilAsync` an open episode with the
+  clock advanced by at most 60 s; `ExecuteTask` is not faulted. Red: remove the loop's catch ->
+  `ExecuteTask` faults and no episode opens.
+- **V-35: the real directory drives the loop, and a drained runner never raises | Integration,
+  `PhoneHomeTestHost` (MS-1) with the real `AlarmWakeQueue` as observer and the directory as the
+  source | `RunnerAlarmHostedServiceTests.the_real_directory_drives_the_loop_and_a_drained_runner_never_raises`
+  | as below.** `FakeTimeProvider` host, runners `a` and `b`, `FakeExclusion` `"draining"` for
+  `b`. Both connected and recovered, loop started. Abort both sockets; `UntilAsync` an episode for
+  `a` (signal-driven: no clock advance) and none for `b`. `Advance(180 s)`: `a` raised; `b` still
+  none. Reconnect and recover `a`: `UntilAsync` no episode for `a`, no clock advance. Red: make
+  `AlarmWakeQueue.Signal` record the id without waking the waiter -> fails at the first `UntilAsync`.
+
+**S3: the notifier and the delivery path** (`CP-5` red, `CP-6` green; both classes over
+`BridgeQueueHarness`, `[Category("Integration")]`, `[ParallelLimiter<ProcessSpawnLimit>]`, the
+`PostLandMutationDeliveryTests` attributes; recipient evidence per the delivery inventory)
+
+- **V-16: a note is a `Pending` `WhenIdle` `System` row, hinted, never typed inline | Integration |
+  `tests/Antiphon.Tests/Application/RunnerAlarmNotifierTests.cs`
+  `RunnerAlarmNotifierTests.a_note_is_a_pending_whenidle_system_row_hinted_and_never_typed_inline`
+  | as below.** Idle live harness session; `new QueueRunnerAlarmNotifier(h.Queue, recordingFlush)`;
+  `NotifyAsync(session, "[runner server2 unavailable]", body)`: exactly one row for the session,
+  `Origin == System`, `Status == Pending`, `DeliveryAttempts == 0`, `NoteHeader` equal to the
+  header, `Body` containing the body; `h.Adapter.SubmittedBodies` empty when the call returns;
+  `recordingFlush.Calls == [session]`. `NotifyAsync` for an unknown session id throws and writes no
+  row. Red: `deliverIfIdle: true` -> fails at `SubmittedBodies` empty; omit `TryEnqueue` -> fails
+  at `Calls`; `QueuedMessageOrigin.Delegation` -> fails at `Origin`.
+- **V-30: an idle caller receives the outage and the recovery note as complete prompts |
+  Integration, producer to recipient |
+  `tests/Antiphon.Tests/Application/RunnerAlarmDeliveryTests.cs`
+  `RunnerAlarmDeliveryTests.an_idle_caller_receives_the_outage_and_recovery_notes_as_complete_user_prompts`
+  | two `UserPrompt` rows.** One task pinned to `server2` with parent = the harness session; real
+  coordinator (fake source, fake clock), real notifier, the harness's `CompletionNoteFlushQueue`
+  and the real `CompletionNoteWorkHostedService` flush workers (MS-3). Evaluate at `t0` and
+  `t0+180`: `UntilAsync` (10 s) exactly one `UserPrompt` on the session whose text contains
+  `[runner server2 unavailable]`, the task's short id and `transport_abort`; its queue row is
+  `Sent`. Eligible at `t0+444`: exactly one more `UserPrompt` containing
+  `[runner server2 recovered]` and `after 7.4 min`. Red: the notifier passes the header but not
+  the body to `EnqueueAsync` -> fails at the short-id assertion.
+- **V-31: a busy caller gets the note only after its turn ends | Integration |
+  `RunnerAlarmDeliveryTests.a_busy_caller_gets_the_note_only_after_its_turn_ends` | held then
+  typed.** `SetWorkingAsync(true)` before the raise; after the raise and `FlushIfIdleAsync`:
+  `h.Adapter.Inputs` holds nothing of the note, the row is `Pending`, no `UserPrompt` contains the
+  header. TurnEnd plus `h.Queue.OnTurnEndAsync(session)`: exactly one `UserPrompt` containing the
+  header and body. Red: `MessageSendMode.Now` in the notifier -> fails at `Inputs` empty.
+- **V-32: a dropped flush hint is re-hinted from the durable row (TD-2) | Integration, MS-5 |
+  `RunnerAlarmDeliveryTests.a_dropped_flush_hint_is_re_hinted_from_the_durable_row` | one prompt
+  after the next wake.** `DroppingFlushQueue` drops the first hint. After the raise and a settle:
+  the row is `Pending`, no `UserPrompt`. Evaluate at `t0+181`: `UntilAsync` exactly one `UserPrompt`
+  with the note; `DroppingFlushQueue.Calls` has two entries for the session. Red: no re-hint of a
+  `Pending` alarm row -> fails at `UntilAsync`.
+- **V-33: a failed queue insert is retried and delivered once (TD-1, real stack) | Integration |
+  `RunnerAlarmDeliveryTests.a_failed_queue_insert_is_retried_on_the_next_wake_and_delivered_once` |
+  one prompt.** A `SaveChangesInterceptor` fails the first `SessionQueuedMessage` insert (the
+  `FailFirstCompletionInsert` shape). After the raise: no row, `NotifiedSessionIds` empty, one
+  Warning. Evaluate at `t0+181`: one row, `UntilAsync` exactly one `UserPrompt` with the note;
+  evaluate at `t0+182`: still one. Red: TD-1 violated (record before enqueue) -> fails at
+  `UntilAsync`.
+- **V-34: a note orphaned by a restart is typed with the next flush | Integration |
+  `RunnerAlarmDeliveryTests.a_note_orphaned_by_a_restart_is_typed_with_the_next_flush` | both
+  notes reach the transcript.** `DroppingFlushQueue` drops the first hint; raise -> row R1
+  `Pending`. Simulated restart: a new `RunnerAlarmState` and coordinator, hints no longer dropped,
+  the runner still down: open at `t1`, raise at `t1+180` -> row R2. `UntilAsync`: the session's
+  `UserPrompt` text (one prompt or two) contains R1's body and R2's body; R1 and R2 are `Sent`.
+  Evidence row for handoff H4; no guard of its own (G-19 and the queue's existing session flush).
+
+**S3: wiring** (`CP-5` red, `CP-6` green)
+
+- **V-36: `Program` wires the loop, both observers and the default exclusion | Integration, real
+  `Program` via `AntiphonWebAppFactory` (the `WorktreeResidueRegistrationTests` attributes:
+  `[NotInParallel]`, `[ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]`,
+  plus `[ParallelLimiter<ProcessSpawnLimit>]`) |
+  `tests/Antiphon.Tests/Application/RunnerAlarmWiringTests.cs`
+  `RunnerAlarmWiringTests.program_wires_the_loop_the_observers_and_the_default_exclusion` | as
+  below.** Exactly one `RunnerAlarmHostedService` among `IHostedService`s;
+  `IRunnerAlarmExclusion` is `NeverExcluded`; `IRunnerEligibilitySnapshotSource` is the
+  `PhoneHomeRunnerDirectory` singleton; the directory's `internal Observer` accessor is the
+  `AlarmWakeQueue` singleton; `IOptions<AlarmSettings>` carries 180 / 15 / 5. Then a
+  `ScratchGitRepo` with a 10-minute-old dead record: the resolved `IRepositoryMutationLease`
+  refuses `TryAcquireAsync`, and `UntilAsync` (10 s) the resolved `RunnerAlarmState` holds that
+  repository's finding. Red: construct the directory without `observer:` in `Program.cs` -> fails
+  at `Observer`; register the lease without its fence observer -> fails at the finding; omit the
+  hosted-service registration -> fails at the count.
