@@ -131,7 +131,7 @@ public sealed class HostStatsEndpointTests
         await using (host)
         {
             await using var peer = await host.ConnectPeerAsync();
-            foreach (var query in new[] { "metric=cpu&window=2h", "metric=bogus&window=1m" })
+            foreach (var query in new[] { "metric=cpu&window=2h", "metric=bogus&window=1m", "metric=tasks&window=1m" })
             {
                 using var response = await host.Http.GetAsync($"/api/hosts/{host.AllowedRunnerId}/stats/series?{query}");
                 response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);

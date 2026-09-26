@@ -62,7 +62,7 @@ public class HostStatsEndpointTests
     public async Task Bad_metric_or_window_is_400_problem()
     {
         await using var host = await HostStatsTestHost.StartAsync(Enabled(), new ScriptedHostStatsProbe(), new FakeTimeProvider(T0));
-        foreach (var path in new[] { "host-stats/series?metric=bogus&window=1m", "host-stats/series?metric=cpu&window=2h" })
+        foreach (var path in new[] { "host-stats/series?metric=bogus&window=1m", "host-stats/series?metric=tasks&window=1m", "host-stats/series?metric=cpu&window=2h" })
         {
             var response = await host.Http.GetAsync(path);
             ((int)response.StatusCode).ShouldBe(400);

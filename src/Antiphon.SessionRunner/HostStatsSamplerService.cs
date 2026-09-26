@@ -23,7 +23,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly TimeProvider _time;
     private readonly HostStatsSettings _settings;
     private readonly ILogger<HostStatsSamplerService> _logger;
-    private readonly Dictionary<int, (TimeSpan Cpu, DateTimeOffset At)> _last = new();
+    private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, DateTimeOffset At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
 
     public HostStatsSamplerService(
@@ -99,6 +99,17 @@ public sealed class HostStatsSamplerService : BackgroundService
             return [];
         }
 
+        var active = new HashSet<(int Pid, DateTime StartedAt)>();
+        foreach (var target in targets)
+        {
+            if (target.Pid > 0)
+                active.Add((target.Pid, target.StartedAt));
+            if (target.HostPid is int host && host > 0 && host != target.Pid)
+                active.Add((host, target.StartedAt));
+        }
+        foreach (var key in _last.Keys.Where(key => !active.Contains(key)).ToArray())
+            _last.Remove(key);
+
         var list = new List<HostProcessSample>(targets.Count);
         foreach (var target in targets)
         {
@@ -137,14 +148,15 @@ public sealed class HostStatsSamplerService : BackgroundService
         double? percent = null;
         if (cpu is { } current)
         {
-            if (_last.TryGetValue(pid, out var previous))
+            var key = (pid, startedAt);
+            if (_last.TryGetValue(key, out var previous))
             {
                 var wall = (now - previous.At).TotalSeconds;
                 if (wall > 0)
                     percent = (current - previous.Cpu).TotalSeconds / wall * 100.0;
             }
 
-            _last[pid] = (current, now);
+            _last[key] = (current, now);
         }
 
         return new HostProcessSample(name, sessionId, percent, workingSet);

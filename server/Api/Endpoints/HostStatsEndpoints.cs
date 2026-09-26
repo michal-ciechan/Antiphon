@@ -18,7 +18,7 @@ public static class HostStatsEndpoints
             string hostId, string? metric, string? window, PhoneHomeRunnerDirectory directory,
             IOptions<HostStatsSettings> settings, TimeProvider time, CancellationToken ct) =>
         {
-            if (metric is not ("cpu" or "load" or "memory" or "tasks")
+            if (metric is not ("cpu" or "load" or "memory")
                 || window is not ("1m" or "5m" or "15m" or "30m"))
                 return Results.BadRequest(new { code = "invalid_host_stats_query" });
             if (hostId != RunnerPlatformWire.DesktopId

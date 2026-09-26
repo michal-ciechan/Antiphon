@@ -82,7 +82,7 @@ public static class HostStatsRoutes
             {
                 return Results.Problem(
                     title: InvalidQueryCode,
-                    detail: "metric must be cpu, load, memory or tasks and window must be 1m, 5m, 15m or 30m",
+                    detail: "metric must be cpu, load or memory and window must be 1m, 5m, 15m or 30m",
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
