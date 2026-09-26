@@ -20,7 +20,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     public async Task C561_a_blind_matcher_verdict_withholds_the_kill_and_refunds_the_attempt(
         int sentAfterMarkSeconds, bool channelBound)
     {
-        var clock = new AgentSupervisionTests.MutableTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
@@ -59,7 +59,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task C561_a_persist_failure_older_than_the_attempt_does_not_excuse_the_verdict()
     {
-        var clock = new AgentSupervisionTests.MutableTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
@@ -89,7 +89,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task C561_a_no_composer_evidence_verdict_with_a_mark_keeps_the_card_0103_rules()
     {
-        var clock = new AgentSupervisionTests.MutableTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
@@ -114,7 +114,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task C561_a_mixed_batch_takes_the_destructive_default()
     {
-        var clock = new AgentSupervisionTests.MutableTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
@@ -146,7 +146,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Arguments("still-failing")]
     public async Task C561_after_a_refund_the_stranded_sweep_delivers_once_the_store_recovers(string shape)
     {
-        var clock = new AgentSupervisionTests.MutableTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
@@ -204,7 +204,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
             i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed)).ShouldBe(1);
     }
 
-    private static Task<BridgeQueueHarness> BlindHarnessAsync(TimeProvider clock) =>
+    private static Task<BridgeQueueHarness> BlindHarnessAsync(ScaledTimeProvider clock) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
