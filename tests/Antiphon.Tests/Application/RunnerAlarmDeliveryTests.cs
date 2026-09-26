@@ -92,7 +92,10 @@ public sealed class RunnerAlarmDeliveryTests
     [Timeout(60_000)]
     public async Task a_failed_queue_insert_is_retried_on_the_next_wake_and_delivered_once()
     {
-        await using var rig = await StartAsync(configure: options => options.AddInterceptors(new FailFirstInsert()));
+        // One interceptor instance. DbContext options are built per scope, so `new` inside the
+        // configuration action would fail every insert and the retry wake could never deliver.
+        var fault = new FailFirstInsert();
+        await using var rig = await StartAsync(configure: options => options.AddInterceptors(fault));
         await SeedPinnedAsync(rig, AgentTaskStatus.Working);
         await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
@@ -220,9 +223,13 @@ public sealed class RunnerAlarmDeliveryTests
     private static async Task<SessionQueuedMessage> PendingAsync(Rig rig) =>
         await rig.Db.SessionQueuedMessages.AsNoTracking().SingleAsync(row => row.AgentSessionId == rig.Harness.SessionId);
 
-    private static async Task<SessionQueuedMessage> RowAsync(Rig rig, string prompt) =>
-        await rig.Db.SessionQueuedMessages.AsNoTracking().SingleAsync(row =>
-            row.AgentSessionId == rig.Harness.SessionId && prompt.Contains(row.Body, StringComparison.Ordinal));
+    private static async Task<SessionQueuedMessage> RowAsync(Rig rig, string prompt)
+    {
+        var rows = await rig.Db.SessionQueuedMessages.AsNoTracking()
+            .Where(row => row.AgentSessionId == rig.Harness.SessionId)
+            .ToListAsync();
+        return rows.Single(row => prompt.Contains(row.Body, StringComparison.Ordinal));
+    }
 
     private static async Task UntilAsync(Func<Task<bool>> ready)
     {
