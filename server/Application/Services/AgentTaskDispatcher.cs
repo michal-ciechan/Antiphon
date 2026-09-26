@@ -4176,6 +4176,8 @@ public sealed class AgentTaskDispatcher
             task.MergeTargetRef,
             probe);
         var baseRef = resolved.Ref;
+        var requestedSha = task.WorktreeBaseRequestedRef is null ? null
+            : await _worktrees.ResolveCommitAsync(task.RepoPath, task.WorktreeBaseRequestedRef, ct);
 
         var siblings = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.Id != task.Id
@@ -4183,13 +4185,17 @@ public sealed class AgentTaskDispatcher
                 && t.Workspace == WorkspaceMode.Worktree
                 && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
                 && t.WorktreeBranch != null)
-            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.LandRequestedAt, t.CreatedAt })
+            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.CurrentLandRequestId, t.CreatedAt })
             .ToListAsync(ct);
 
         var sameRepo = siblings
             .Where(s => DelegationWorktreeService.SharesRepo(task.RepoPath, s.RepoPath)
                 || DelegationWorktreeService.SharesRepo(task.RepoPath, s.WorktreePath))
             .ToList();
+        var requestIds = sameRepo.Select(s => s.CurrentLandRequestId).OfType<Guid>().ToList();
+        var requests = await _db.AgentTaskLandRequests.AsNoTracking()
+            .Where(r => requestIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, ct);
 
         var cardIdentifier = await _db.Cards.AsNoTracking()
             .Where(c => c.Id == task.CardId)
@@ -4200,6 +4206,13 @@ public sealed class AgentTaskDispatcher
 
         foreach (var sibling in sameRepo)
         {
+            var request = sibling.CurrentLandRequestId is Guid id && requests.TryGetValue(id, out var current)
+                ? current : null;
+            var reviewedSource = request?.ExpectedSourceSha;
+            if (requestedSha is not null && reviewedSource is not null
+                && (string.Equals(requestedSha, reviewedSource, StringComparison.OrdinalIgnoreCase)
+                    || await _worktrees.IsCommitAncestorAsync(task.RepoPath, reviewedSource, requestedSha, ct)))
+                continue;
             var branch = sibling.WorktreeBranch!;
             if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
                 continue;
@@ -4220,7 +4233,7 @@ public sealed class AgentTaskDispatcher
                 sibling.CreatedAt,
                 fullTip);
 
-            if (sibling.LandRequestedAt is not null)
+            if (request is { IsPending: true, State: LandRequestState.Queued or LandRequestState.Held or LandRequestState.Running })
             {
                 hold ??= unlanded;
                 continue;

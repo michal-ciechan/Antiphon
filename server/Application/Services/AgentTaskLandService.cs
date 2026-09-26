@@ -96,11 +96,14 @@ public sealed class AgentTaskLandService
             : body.AdoptFromTaskId is not null ? LandRecoveryMode.AdoptReviewedSource : LandRecoveryMode.None;
         if (recoveryMode != LandRecoveryMode.None && task.Role != AgentTaskRole.Code)
             throw new ConflictException("Reviewed recovery requires a Code landing owner.", "recovery_owner_invalid");
-        if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded
-            || recoveryMode != LandRecoveryMode.None && !LandApproval.RecoveryStatusEligible(task.Status))
+        if (recoveryMode != LandRecoveryMode.None && !LandApproval.RecoveryStatusEligible(task.Status))
+            throw new ConflictException("Reviewed recovery requires a Succeeded, Blocked or Failed landing owner.",
+                "recovery_owner_ineligible");
+        if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded)
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
         WorkspaceReservationSnapshot? admitted = null;
         var committed = false;
+        var retiredHelpers = new List<Guid>();
         if (_workspaceUse is not null && !string.IsNullOrWhiteSpace(task.WorktreePath))
         {
             admitted = await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
@@ -234,6 +237,27 @@ public sealed class AgentTaskLandService
                 if (recoveryMode != LandRecoveryMode.None) request.ApprovalKind = LandApprovalKind.ReviewEvidence;
                 if (supersede)
                 {
+                    var helpers = await _db.AgentTasks
+                        .Where(t => t.ParentTaskId == task.Id && t.Role == AgentTaskRole.Merge
+                            && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
+                                || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked))
+                        .ToListAsync(ct);
+                    foreach (var helper in helpers)
+                    {
+                        if (helper.AgentSessionId is Guid sessionId && await _db.AgentSessions.AsNoTracking()
+                            .AnyAsync(s => s.Id == sessionId && s.EndedAt == null
+                                && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running
+                                    || s.Status == SessionStatus.Stopping), ct))
+                            throw new ConflictException("A merge helper still owns a live session; cancel it before recovery.",
+                                "merge_helper_active");
+                        helper.Status = AgentTaskStatus.Canceled;
+                        helper.CompletedAt = now;
+                        helper.FailureReason = $"Superseded by reviewed land request {request.Id:N}.";
+                        helper.ConcurrencyToken = Guid.NewGuid();
+                        _db.AgentTaskEvents.Add(Event(helper.Id, AgentTaskEventType.Canceled,
+                            helper.FailureReason, now));
+                        retiredHelpers.Add(helper.Id);
+                    }
                     existing!.State = LandRequestState.Superseded;
                     existing.IsPending = false;
                     var supersededEvent = Event(task.Id, AgentTaskEventType.LandSuperseded,
@@ -260,6 +284,10 @@ public sealed class AgentTaskLandService
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             committed = true;
+            if (_workspaceUse is not null)
+                foreach (var helperId in retiredHelpers)
+                    try { await _workspaceUse.ReleaseTaskConsumersAsync(helperId, CancellationToken.None); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Merge helper {HelperId} reservation release failed", helperId); }
             if (!_boundary.DropWakeup("land-request", request.Id)) _queue.TryEnqueue(taskId, request.VerifyFilter, request.Id);
             await PublishAsync(task, ct);
             return new LandRequestResult(task.Id, pending && !supersede ? "requeued" : "queued", request.Id,
@@ -699,6 +727,8 @@ public sealed class AgentTaskLandService
             .Where(AgentTaskRoles.NotSpecialist).ToListAsync(ct);
         foreach (var candidate in candidates)
         {
+            if (candidate.Workspace == WorkspaceMode.Shared && candidate.Role == AgentTaskRole.Merge
+                && !await IsLiveMergeHelperAsync(candidate, ct)) continue;
             var sourcePath = candidate.WorktreePath ?? candidate.WorkingDirectory;
             if (task.WorktreePath is not null && string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(task.WorktreePath),
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return candidate;
@@ -721,6 +751,15 @@ public sealed class AgentTaskLandService
             catch (IOException) { return candidate; } // An inaccessible active writer cannot prove disjoint ownership.
         }
         return null;
+    }
+
+    private async Task<bool> IsLiveMergeHelperAsync(AgentTask candidate, CancellationToken ct)
+    {
+        if (candidate.AgentSessionId is not Guid sessionId) return false;
+        var live = await _db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId
+            && s.EndedAt == null && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
+        return live && await _db.TranscriptEntries.AsNoTracking().AnyAsync(t =>
+            t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt, ct);
     }
 
     private async Task SettleLandedAsync(
@@ -800,11 +839,13 @@ public sealed class AgentTaskLandService
     }
 
     /// <summary>Pure form of the Shared-writer rule, kept visible for the lease contract tests.</summary>
-    internal static bool IsHeldBehindSharedWriter(AgentTask landing, IEnumerable<AgentTask> candidates)
+    internal static bool IsHeldBehindSharedWriter(AgentTask landing, IEnumerable<AgentTask> candidates,
+        Func<AgentTask, bool>? helperIsLive = null)
     {
         var key = ScopeResolver.KeyFor(landing.RepoPath, landing.WorkingDirectory);
         return candidates.Any(t => t.Id != landing.Id && t.Workspace == WorkspaceMode.Shared
             && !AgentTaskRoles.IsSpecialist(t.Role)
+            && (t.Role != AgentTaskRole.Merge || helperIsLive?.Invoke(t) == true)
             && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
             && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory) == key);
     }
