@@ -225,17 +225,25 @@ The user-secrets go in the **`antiphon-server`** store (`dotnet user-secrets set
 `--project Antiphon.AppHost` is silently inert. Set the POSIX-path values from PowerShell, not Git
 Bash - MSYS rewrites a bare `/work` argument into `C:/Program Files/Git/work` (CARD-0604 CP-6a).
 
-1. `git pull --rebase`, then set the user-secrets: `PhoneHomeRunner:Enabled=true`,
-   `AllowedRunnerId=server2`, `AllowDelegatedTasks=true`, `HostWorkspaceRoot=C:\src\Antiphon`,
-   `RunnerWorkspace=/work`, `RunnerRepository=/work/repos/antiphon`,
+1. `git pull --rebase`, then set the user-secrets in the `PhoneHomeRunner:Runners` map (CARD-0727
+   D-2). `Runners:server2` carries the production entry: `AllowDelegatedTasks=true`,
+   `HostWorkspaceRoot=C:\src\Antiphon`, `RunnerWorkspace=/work`,
+   `RunnerRepository=/work/repos/antiphon`, `MaxCapacity=10`, the child homes, the probe flags,
    `CallbackOrigin=https://antiphon.desktop.codeperf.net`, and `SharedSecret` from the value
    `deploy-parent` generated on server2 (see [agent-credentials.md](agent-credentials.md) §5 — it
-   never crosses the SSH bridge into a script or an evidence file).
+   never crosses the SSH bridge into a script or an evidence file). `Runners:server2-temp` repeats
+   those same values, including the same `SharedSecret`, with `DisplayName` `server2 (temp)`. The
+   temp entry stays configured: offline it is unavailable and costs nothing. Also
+   `PhoneHomeRunner:Enabled=true`. The legacy `AllowedRunnerId` key is only the import the catalogue
+   normalises when the map is empty; do not keep a second shape beside the map.
 2. `pwsh -NoProfile -File scripts/restart-apphost.ps1`.
 3. Confirm `GET /api/version` is the SHA you just built, then
+   `GET /api/session-runners` lists `desktop`, `server2` and `server2-temp`.
    `GET /api/session-runners/server2/status` reports `available: true` and
-   `dispatchEligible: true` within ~120 s of the runner reconnecting. A passing `/health` is not
-   that confirmation.
+   `dispatchEligible: true` within ~120 s of the runner reconnecting. Before `server2-temp`
+   connects, its status is 200 with `available: false`, `dispatchEligible: false` and null
+   `runnerStoreId`, `processBootId` and `buildVersion`. An id that is not in the map is 404, and
+   that 404 is not eligible (CARD-0729). A passing `/health` is not that confirmation.
 
 Once eligible, `scripts/delegate.ps1 -Runner server2 -Worktree ...` routes an ordinary Grok or
 Claude task there (Claude needs the runner's `CLAUDE_CODE_OAUTH_TOKEN` or the fallback login first;
