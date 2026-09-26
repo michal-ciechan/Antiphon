@@ -23,6 +23,8 @@ public sealed class RunnerDrainScriptTests
         text.ShouldContain("ValidateSet('status', 'drain', 'clear')");
         text.ShouldContain("X-Antiphon-Operator-Token");
         text.ShouldContain("not eligible");
+        text.ShouldContain("[uri]::EscapeDataString($RunnerId)");
+        text.ShouldContain("ErrorDetails");
 
         foreach (var line in text.Split('\n'))
         {

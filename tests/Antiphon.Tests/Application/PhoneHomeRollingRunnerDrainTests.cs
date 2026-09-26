@@ -153,6 +153,115 @@ public sealed partial class PhoneHomeRollingRunnerTests
     }
 
     [Test]
+    [Timeout(120_000)]
+    public async Task Default_placement_follows_a_retired_runners_redirect_and_falls_back_without_one()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        var now = DateTimeOffset.UtcNow;
+        world.RunnerDirectory.ApplyState(RollingRunnerSettings.Server2, new RunnerState(
+            true, now, "upgrade", RollingRunnerSettings.Server2Temp, true, now, now, "idle"));
+        await world.SetDefaultsAsync(RollingRunnerSettings.Server2);
+
+        var redirected = await world.ReadTaskAsync((await world.CreateTaskAsync("retired redirect")).Id);
+        redirected.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
+        redirected.Created.ShouldContain("reason=drain_redirect:server2");
+        redirected.Warnings.ShouldBeEmpty();
+
+        world.RunnerDirectory.ApplyState(RollingRunnerSettings.Server2, new RunnerState(
+            true, now, "upgrade", null, true, now, now, "idle"));
+        var nowhere = await world.ReadTaskAsync((await world.CreateTaskAsync("retired nowhere")).Id);
+        nowhere.Task.RunnerId.ShouldBeNull();
+        nowhere.Created.ShouldContain("reason=runner_retired");
+        nowhere.Warnings.Count.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task A_drain_during_an_in_flight_mirror_prepares_the_redirect_and_removes_the_old_mirror()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        world.PeerA.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "in-flight-drain");
+
+        await world.TickAsync();
+        var mirror = await world.PeerA.WaitForAsync(PhoneHomeOperation.WorkspaceMirror, TimeSpan.FromSeconds(15));
+        var request = mirror.Payload!.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var oldPath = "/work/runners/server2/" + request.Name;
+        var newPath = "/work/worktrees/" + request.Name;
+
+        (await PostDrainAsync(
+                world, RollingRunnerSettings.Server2, new DrainBody("during mirror", RollingRunnerSettings.Server2Temp), token: true))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        await world.TickAsync();
+
+        var during = await world.ReadTaskAsync(id);
+        during.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2);
+        during.Task.RemoteWorktreePath.ShouldBeNull();
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBe(0);
+        world.PeerB.Launches.ShouldBeEmpty();
+
+        await world.PeerA.EmitAsync(Result(mirror, new PhoneHomeWorkspaceMirrorResponse(oldPath)));
+        await world.WaitPrepAsync();
+
+        for (var tick = 0; tick < 6 && world.PeerB.Launches.Count == 0; tick++)
+        {
+            await world.TickAsync();
+            await world.WaitPrepAsync();
+        }
+
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBeGreaterThanOrEqualTo(1);
+        world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBeGreaterThanOrEqualTo(1);
+        world.PeerB.Launches.Count.ShouldBe(1);
+        var cwd = world.PeerB.Launches[0].Payload!.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!.Cwd;
+        cwd.ShouldBe(newPath);
+        cwd.ShouldNotBe(oldPath);
+        var saved = await world.ReadTaskAsync(id);
+        saved.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
+        saved.Task.RemoteWorktreePath.ShouldBe(newPath);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Loader_skips_a_state_row_for_an_unknown_runner_and_still_applies_configured_rows()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = world.NewDb())
+        {
+            db.SessionRunnerStates.Add(new SessionRunnerState
+            {
+                RunnerId = RollingRunnerSettings.Server2,
+                Draining = true,
+                DrainReason = "kept",
+                UpdatedAt = now,
+            });
+            db.SessionRunnerStates.Add(new SessionRunnerState
+            {
+                RunnerId = "gone-runner",
+                Draining = true,
+                DrainReason = "unknown",
+                UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var rebuilt = new PhoneHomeRunnerDirectory(
+            world.Host.Local,
+            Options.Create(world.Configured),
+            world.Host.App.Services.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System);
+        var loader = new RunnerStateLoader(
+            world.Host.App.Services.GetRequiredService<IServiceScopeFactory>(), rebuilt);
+        await loader.StartAsync(CancellationToken.None);
+
+        var kept = rebuilt.DrainState(RollingRunnerSettings.Server2);
+        kept.ShouldNotBeNull();
+        kept!.Draining.ShouldBeTrue();
+        kept.DrainReason.ShouldBe("kept");
+        rebuilt.DrainState("gone-runner").ShouldBeNull();
+    }
+
+    [Test]
     [Timeout(180_000)]
     public async Task A_queued_task_bound_to_a_draining_runner_is_rebound_to_the_redirect_before_claim()
     {
@@ -238,12 +347,17 @@ public sealed partial class PhoneHomeRollingRunnerTests
         denied.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         world.RunnerDirectory.DrainState(RollingRunnerSettings.Server2)!.Draining.ShouldBeTrue();
 
-        var cleared = await PostClearAsync(world, RollingRunnerSettings.Server2, token: true);
+        var (raw, hash) = AgentTaskService.NewToken();
+        var callerId = await world.SeedQueuedAsync(RollingRunnerSettings.Server2Temp, "clear-caller", task =>
+            task.TokenHash = hash);
+        var cleared = await PostClearAsync(world, RollingRunnerSettings.Server2, token: true, taskToken: raw);
         cleared.StatusCode.ShouldBe(HttpStatusCode.OK);
         await using (var db = world.NewDb())
         {
             var row = await db.SessionRunnerStates.SingleAsync(s => s.RunnerId == RollingRunnerSettings.Server2);
             row.Draining.ShouldBeFalse();
+            row.DrainReason.ShouldBe("cleared");
+            row.UpdatedByTaskId.ShouldBe(callerId);
             row.RedirectTo.ShouldBeNull();
             row.RetiredAt.ShouldBeNull();
             row.RetireWhenIdle.ShouldBeFalse();
@@ -541,12 +655,13 @@ public sealed partial class PhoneHomeRollingRunnerTests
             proxied);
 
     private static Task<HttpResponseMessage> PostClearAsync(
-        RollingWorld world, string runnerId, bool token, bool proxied = false) =>
+        RollingWorld world, string runnerId, bool token, bool proxied = false, string? taskToken = null) =>
         world.Host.PostOperatorAsync(
             $"/api/session-runners/{runnerId}/drain/clear",
             new ClearBody("cleared"),
             token ? OperatorTokenFile.ReadOrCreate(world.Host.OperatorTokenPath) : null,
-            proxied);
+            proxied,
+            taskToken);
 
     private static async Task<JsonElement> ReadStatusAsync(RollingWorld world, string runnerId)
     {

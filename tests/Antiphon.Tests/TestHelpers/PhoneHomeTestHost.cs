@@ -190,11 +190,14 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     /// <summary>POST as the operator: with the token when <paramref name="token"/> is set.</summary>
     /// <param name="proxied">CARD-0658: shape the request as the public vhost delivers it (Caddy
     /// and Vite: Host rewritten to localhost:17202, X-Forwarded-* naming the tailnet client).</param>
-    public async Task<HttpResponseMessage> PostOperatorAsync<T>(string path, T body, string? token, bool proxied = false)
+    public async Task<HttpResponseMessage> PostOperatorAsync<T>(
+        string path, T body, string? token, bool proxied = false, string? taskToken = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
         if (token is not null)
             request.Headers.TryAddWithoutValidation(OperatorTokenFile.Header, token);
+        if (!string.IsNullOrEmpty(taskToken))
+            request.Headers.TryAddWithoutValidation(AgentTaskEndpoints.TokenHeader, taskToken);
         if (proxied)
         {
             request.Headers.Host = "localhost:17202";
