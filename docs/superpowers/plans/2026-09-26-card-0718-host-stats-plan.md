@@ -518,37 +518,110 @@ Declared substitutes and what each cannot prove:
   timeout; V-12 covers `SessionRunnerHttpClient` itself with a stub `HttpMessageHandler`.
 - Fake `IHostStatsProbe`: cannot prove the OS reads; CP-3 runs the real probe on the lane's OS.
 
-- **V-1 S1 `HostStatsStoreTests`** (Unit, `FakeTimeProvider`, 9 methods): an empty store
-  answers null latest and null rollups (never zero); the 361st sample evicts the first and
-  `Series(30m)` has exactly 360 points in time order; rollup `avg` and `max` over 1/5/15/30
-  minutes match hand-computed values for a synthetic saw-tooth (`cpu = i % 20`, one sample per
-  5 s, 30 minutes), including a window that holds fewer samples than its capacity (2 minutes of
-  data: `5m` covers all 24 samples, `1m` the last 12; both asserted against the arithmetic); a sample older than the window is excluded at the boundary
-  (`now - 60 s` is in `1m`, `now - 60.001 s` is not); a metric absent from a sample (`load` on
-  Windows) yields null rollups, not zero; `Series` for an unknown metric throws
-  `ArgumentException`; `Snapshot` carries `intervalSeconds` and `retentionMinutes`; the store is
-  safe under a concurrent `Add` / `Rollups` loop (no exception, counts monotone). Red: the type
-  does not exist.
-- **V-2 S1 `HostStatsProbeParseTests`** (Unit, 6 methods): `ParseProcStat` yields idle/total
-  jiffies from the measured line above and CPU % from two readings (busy delta over total delta,
-  e.g. `(2000-1000)-(1500-800) / (2000-1000) = 30 %`); a shorter first line (8 columns) still
-  parses; `ParseMemInfo` yields total/available/swap from the four lines; `ParseLoadAvg` yields
-  three loads and the total process count 3789 from `13/3789`; a missing `MemAvailable` gives
-  null available, not zero; `WindowsHostStatsProbe.CpuPercent(idle0, kernel0, user0, idle1, kernel1, user1)`
-  (pure, the P/Invoke is behind it) yields `1 - Δidle / (Δkernel + Δuser)`. Red: the parsers do not
-  exist.
-- **V-3 S1 `HostStatsSamplerTests`** (Unit, 4 methods): `SampleOnceAsync` with a fake probe
-  adds one sample with the fake clock's time; a probe that throws leaves the store unchanged and
-  the sampler alive (a second call adds); process figures for a fake runtime's live session pid
-  come from a fake `IProcessCpuProbe` (CPU % from two consecutive `TotalProcessorTime` deltas over
-  the wall interval) and a null CPU sample yields a null percent, not zero; `Enabled=false`
-  never calls the probe.
-- **V-4 S1 `HostStatsEndpointTests`** (Integration, loopback `HostStatsTestHost`, 4 methods):
-  `GET /host-stats` after two `SampleOnceAsync` answers the newest sample and non-null `1m`
-  rollups; `GET /host-stats/series?metric=cpu&window=5m` answers the points; `metric=bogus` is
-  400 with a problem body; `SessionRunner:HostStats:Enabled=false` answers 404 and the
-  `/capabilities` features list lacks `hostStatsV1` (the capability check is a fifth assertion
-  inside a `RunnerCapabilitiesTests` addition, R-1).
+### Proves it works now
+
+Each row: `V-n: behaviour | layer | test | expected`, then per method the **red-first line**: the
+production line whose removal or change turns that method red at the named assertion (a compile
+failure before the type exists is not counted as red-first; each method must also be red against a
+stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
+
+- **V-1: ring, windows and rollups are exact and never invent zeros | runner Unit, `FakeTimeProvider` |
+  `HostStatsStoreTests` (9) | all green.** Fixture: `HostSample` factory with `cpu = i % 20`,
+  one sample per 5 s at `At(i) = t0 + 5i s`, and `now` = the last sample's `At` **+ 5 s** (the
+  next tick), so with an inclusive cutoff a window of `w` seconds holds exactly `w / 5` samples.
+  - m1 `Empty_store_answers_null_latest_and_null_rollups`: `Latest()` null, every window of
+    `Rollups(now)` null. Red: `Rollups` returning `new(0, 0)` for an empty window.
+  - m2 `Ring_evicts_oldest_at_capacity_and_series_is_time_ordered`: after 359/360 samples
+    `Series(cpu, 30m)` has 359/360 points; after 361 the first `At` is `At(1)` and the points
+    are strictly ascending. Red: capacity `RetentionMinutes * 60 / IntervalSeconds` (+1), or
+    returning slots in physical order without rotating from the head.
+  - m3 `Rollups_match_hand_computed_avg_and_max_for_a_sawtooth`: 360 samples; `1m` avg 13.5
+    (i = 348..359 -> 8..19), max 19; `5m` (60 samples) avg 9.5, max 19; `30m` avg 9.5, max 19.
+    Red: `avg` computed as `Max`, or `max` taking the newest value.
+  - m4 `Partial_window_averages_only_the_samples_it_holds`: 24 samples (2 minutes, `cpu = i`);
+    `5m` avg 11.5 over all 24, `15m` and `30m` the same, `1m` avg 17.5 over i = 12..23 (i = 12
+    sits exactly on `now − 60 s` and is in). Red: dividing by the window's capacity (60, 180,
+    360 samples) instead of the held count.
+  - m5 `Window_boundary_includes_sixty_seconds_and_excludes_beyond`: a sample at `now − 60 s` is
+    in `1m`; one at `now − 60.001 s` is not (two stores, one sample each, value 7). Red: the
+    cutoff comparison `At >= now − window` changed to `>` (first assertion) or the cutoff widened
+    by one interval (second assertion).
+  - m6 `Metric_absent_from_samples_yields_null_rollups`: samples with `Load1 = null` give null
+    `load1` rollups while `cpuPercent` rollups are non-null. Red: `?? 0` on the metric selector.
+  - m7 `Series_rejects_unknown_metric_and_window`: `Series("bogus", ...)` and a window of
+    `2h` throw `ArgumentException`. Red: the default arm of the metric switch returning `cpu`.
+  - m8 `Snapshot_carries_interval_and_retention_and_copies`: `Snapshot(now)` has
+    `IntervalSeconds` 5, `RetentionMinutes` 30; a `Series` result taken before another `Add` is
+    unchanged after it. Red: returning a lazy view over the ring (no `ToArray()`).
+  - m9 `Writers_and_readers_wait_for_the_store_gate`: the test holds `lock (store.Gate)` (internal)
+    on its own thread, starts `Add` and `Rollups` on the thread pool, asserts neither completes
+    within 200 ms, releases, asserts both complete within 5 s. Red: removing `lock (_gate)` in `Add`
+    (first assertion) or in the read path (second). Replaces the draft's concurrent-loop method,
+    which could not go red deterministically (a stub under CARD-0585 rule 4).
+- **V-2: the OS figures are parsed and differenced correctly on both platforms | runner Unit, pure |
+  `HostStatsProbeParseTests` (8) | all green on either lane.** TestDesign pins D-1's CPU formula:
+  idle = `idle + iowait` (columns 4, 5), total = the first **eight** columns (user, nice, system,
+  idle, iowait, irq, softirq, steal); `guest`/`guest_nice` are already inside `user`/`nice` and
+  are excluded.
+  - m1 `ProcStat_cpu_percent_is_busy_delta_over_total_delta`: `cpu 600 0 200 700 100 0 0 0 0 0`
+    then `cpu 1000 0 400 1300 200 0 100 0 50 0`: Δtotal 1400, Δidle 700 -> 50.0 %. Red: idle
+    without iowait (57.14 %), or guest summed into total (51.72 %).
+  - m2 `ProcStat_short_first_line_still_parses`: an 8-column `cpu` line parses to the same totals.
+    Red: an index read of column 9 without a length check (throws).
+  - m3 `MemInfo_yields_total_available_and_swap`: the server2 figures from Ground truth give
+    total 132,014,068 KiB x 1024, available 97,687,336 KiB x 1024, swap total 542,716 KiB x 1024,
+    swap free 286,400 KiB x 1024. Red: kB not multiplied by 1024, or `SwapFree` read as `SwapTotal`.
+  - m4 `MemInfo_without_MemAvailable_yields_null_available`: available null, total still set. Red:
+    `?? 0` (or a `MemFree` fallback) on the available field.
+  - m5 `LoadAvg_yields_three_loads_and_host_process_count`: `28.71 29.75 27.49 13/3789 8436` ->
+    28.71, 29.75, 27.49, process count 3789. Red: taking the running count (13) before the slash.
+  - m6 `Windows_cpu_percent_treats_kernel_as_including_idle`: `CpuPercent(idle 0->600, kernel
+    0->800, user 0->200)` = 40.0 %. Red: `Δidle` added to the denominator (62.5 %).
+  - m7 `First_read_has_no_cpu_and_second_read_has_the_delta`: `LinuxHostStatsProbe` over MS-1 with
+    the m1 lines served in order: first `Read()` has `CpuPercent` null and non-null memory; second
+    has 50.0. Red: a zero baseline for the first read (reports a since-boot percentage).
+  - m8 `Linux_probe_memory_floor_and_sample_read_the_same_meminfo`: over MS-1, the
+    `IHostMemoryProbe.AvailableBytes` of the probe equals `Read().MemoryAvailableBytes` (both
+    97,687,336 x 1024), and on a `ServiceCollection` built with `AddHostStats` and
+    `AddBuildSlotBroker` **in both call orders** the resolved `IHostMemoryProbe` is the same instance
+    as `IHostStatsProbe` (so `AddHostStats` registers `AddSingleton<IHostMemoryProbe>(sp =>
+    (IHostMemoryProbe)sp.GetRequiredService<IHostStatsProbe>())`, which beats the broker's
+    `TryAddSingleton` either way). Red: `SystemHostMemoryProbe` left as the broker's independent
+    registration, or `AvailableBytes` reading `MemFree`.
+- **V-3: the sampler adds one timestamped sample per tick, survives faults and never charges an
+  unknown process | runner Unit, MS-2 fakes, `FakeTimeProvider` | `HostStatsSamplerTests` (4) |
+  all green.**
+  - m1 `SampleOnce_adds_one_sample_at_the_fake_clock_time`: one call -> `store.Latest().At` equals
+    `time.GetUtcNow()` (fake clock set to 2026-09-26T12:00:00Z). Red: `DateTimeOffset.UtcNow`
+    instead of `_time.GetUtcNow()`.
+  - m2 `Faulting_probe_leaves_store_unchanged_and_sampler_alive`: the probe throws
+    `IOException` once: `Should.NotThrowAsync(SampleOnceAsync)`, `store.Latest()` still null; second
+    call adds. Red: removing the `try/catch` around the probe read.
+  - m3 `Session_process_cpu_is_delta_over_wall_and_null_sample_is_null`: target pid 4242 with fake
+    CPU 1.0 s then 3.5 s across 5 s of fake time -> 50.0 % of one core (not divided by `Cores`); working set from the MS-2 reader; a
+    second target whose probe answers null has `CpuPercent` null (not 0) and is still listed. Red:
+    `?? TimeSpan.Zero` on the probe answer, or dividing by the configured interval instead of the
+    measured wall delta (assert with a 6 s gap: 41.67 %).
+  - m4 `Disabled_sampler_never_calls_the_probe`: `Enabled=false`, `StartAsync`, advance 20 s,
+    `StopAsync`: probe call count 0. Red: removing the `if (!settings.Enabled) return;` at the top
+    of `ExecuteAsync` (the immediate first sample then calls the probe).
+- **V-4: the runner routes answer the store and refuse bad input | runner Integration, MS-4 |
+  `HostStatsEndpointTests` (4) | all green.**
+  - m1 `Host_stats_answers_newest_sample_and_one_minute_rollups`: two `SampleOnceAsync` 5 s apart;
+    `GET /host-stats` newest `At` = second sample's, `rollups["1m"].cpuPercent` non-null with avg
+    of the two fake values. Red: the route serializing `store.Latest()` only (no rollups) or the
+    first slot.
+  - m2 `Series_route_answers_points_in_window`: `?metric=cpu&window=5m` -> 2 points, ascending.
+    Red: ignoring the `window` query value.
+  - m3 `Bad_metric_or_window_is_400_problem`: `metric=bogus` and `window=2h` -> 400 with a
+    `application/problem+json` body. Red: removing the route's validation (the store's
+    `ArgumentException` surfaces as 500).
+  - m4 `Disabled_host_stats_is_404`: host started with `SessionRunner:HostStats:Enabled=false` ->
+    404 for both routes. Red: mapping the routes unconditionally.
+  - The capability arm is `RunnerCapabilitiesTests.Host_stats_feature_is_advertised_only_when_enabled`
+    (R-1, Unit, MS-3): `CapabilityFeatures(existing, Enabled=true)` ends with `hostStatsV1`,
+    `Enabled=false` does not contain it, and the existing entries are preserved in order. Red:
+    appending the token unconditionally.
 - **V-5 S1 `PhoneHomeCommandDispatcherTests` +3**: `HostStats` answers a `Result` frame whose
   payload round-trips to `RunnerHostStatsDto`; `HostStatsSeries` with `{ metric: "cpu", window: "1m" }`
   answers points and with `window: "2h"` answers a 400 error frame; a dispatcher constructed
