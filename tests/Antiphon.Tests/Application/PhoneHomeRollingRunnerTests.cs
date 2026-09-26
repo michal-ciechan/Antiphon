@@ -28,7 +28,7 @@ namespace Antiphon.Tests.Application;
 /// queue's wall-clock confirm; the harness stays on the system clock so that confirm can finish.
 /// </summary>
 [Category("Integration")]
-public sealed class PhoneHomeRollingRunnerTests
+public sealed partial class PhoneHomeRollingRunnerTests
 {
     [Test]
     [Timeout(120_000)]
@@ -95,7 +95,7 @@ public sealed class PhoneHomeRollingRunnerTests
     }
 
     /// <summary>CARD-0727 MS-2. Real queue, real dispatcher, real adapter factory, two scripted peers.</summary>
-    private sealed class RollingWorld : IAsyncDisposable
+    private sealed partial class RollingWorld : IAsyncDisposable
     {
         private readonly List<IServiceScope> _scopes = [];
         private readonly string _root;
@@ -108,6 +108,7 @@ public sealed class PhoneHomeRollingRunnerTests
         public BridgeQueueHarness Harness { get; }
         public IsolatedTestSchema Schema { get; }
         public Guid SessionA { get; }
+        public Guid StoreA { get; }
         public Guid StoreB { get; }
         public PhoneHomeRunnerDirectory RunnerDirectory => Host.Directory;
         public SessionMessageQueueService Queue => Harness.Queue;
@@ -119,6 +120,7 @@ public sealed class PhoneHomeRollingRunnerTests
             BridgeQueueHarness harness,
             IsolatedTestSchema schema,
             Guid sessionA,
+            Guid storeA,
             Guid storeB,
             string root)
         {
@@ -128,42 +130,56 @@ public sealed class PhoneHomeRollingRunnerTests
             Harness = harness;
             Schema = schema;
             SessionA = sessionA;
+            StoreA = storeA;
             StoreB = storeB;
             _root = root;
         }
 
-        public static async Task<RollingWorld> StartAsync()
+        public static Task<RollingWorld> StartAsync() => StartAsync(null);
+
+        public static async Task<RollingWorld> StartAsync(RollingOptions? options)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var secretA = "rolling-a-" + Guid.NewGuid().ToString("N");
             var secretB = "rolling-b-" + Guid.NewGuid().ToString("N");
-            var configured = RollingRunnerSettings.Pair(secretA, secretB);
+            var configured = options?.Settings ?? RollingRunnerSettings.Pair(secretA, secretB);
+            options?.ConfigureSettings?.Invoke(configured);
+            if (options?.Settings is not null || options?.ConfigureSettings is not null)
+            {
+                secretA = configured.Runners[RollingRunnerSettings.Server2].SharedSecret;
+                secretB = configured.Runners[RollingRunnerSettings.Server2Temp].SharedSecret;
+            }
             // Two map entries make the unscoped probe read the legacy singleton. Keep that false
             // so create and dispatch do not ask the peer for provider auth.
             configured.ClaudeAuthProbeEnabled = false;
-            var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+            var clock = options?.Clock
+                ?? new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
             var host = await PhoneHomeTestHost.StartAsync(clock, schema.ConnectionString, configured: configured);
-            host.Capacity = 4;
+            host.Capacity = options?.PeerACapacity ?? 4;
             var storeA = Guid.NewGuid();
             var storeB = Guid.NewGuid();
             var peerA = await host.ConnectPeerAsync(
                 runnerId: RollingRunnerSettings.Server2, storeId: storeA, secret: secretA);
+            if (options?.PeerBCapacity is int peerBCapacity)
+                host.Capacity = peerBCapacity;
             var peerB = await host.ConnectPeerAsync(
                 runnerId: RollingRunnerSettings.Server2Temp, storeId: storeB, secret: secretB);
             host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2));
             host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2Temp));
+            var directory = options?.Directory?.Invoke(host) ?? (ISessionRunnerDirectory)host.Directory;
 
             var root = RepoRoot();
             var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = false,
                 ConnectionString = schema.ConnectionString,
+                TimeProvider = options?.Clock,
                 Delegation = new DelegationSettings
                 {
                     MaxConcurrentTasks = 32,
                     AllowedRoots = [root],
                 },
-                ConfigureServices = services => Configure(services, host, configured, root),
+                ConfigureServices = services => Configure(services, host, configured, root, directory),
             });
 
             var sessionA = Guid.NewGuid();
@@ -192,7 +208,8 @@ public sealed class PhoneHomeRollingRunnerTests
             var liveA = host.Directory.SnapshotLive(RollingRunnerSettings.Server2)!;
             liveA.NoteSessionLive(sessionA, started, liveA.BeginInventoryRead());
 
-            var world = new RollingWorld(host, peerA, peerB, harness, schema, sessionA, storeB, root);
+            var world = new RollingWorld(host, peerA, peerB, harness, schema, sessionA, storeA, storeB, root);
+            world.Configured = configured;
             world.Script(peerA);
             world.Script(peerB);
             return world;
@@ -304,9 +321,47 @@ public sealed class PhoneHomeRollingRunnerTests
             {
                 if (frame.Operation == PhoneHomeOperation.WorkspaceMirror)
                 {
+                    if (ReferenceEquals(peer, PeerB) && PeerBMirrorErrors > 0)
+                    {
+                        PeerBMirrorErrors--;
+                        return new PhoneHomeFrame(
+                            PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                            ErrorCode: PhoneHomeProblemTypes.Unavailable, ErrorDetail: "mirror failed");
+                    }
+
                     var request = frame.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json);
                     var name = string.IsNullOrWhiteSpace(request?.Name) ? "mirror" : request!.Name;
                     return Result(frame, new PhoneHomeWorkspaceMirrorResponse("/work/worktrees/" + name));
+                }
+
+                if (frame.Operation == PhoneHomeOperation.WorkspaceRemove)
+                {
+                    if (ReferenceEquals(peer, PeerA) && PeerARemoveErrors > 0)
+                    {
+                        PeerARemoveErrors--;
+                        return new PhoneHomeFrame(
+                            PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                            ErrorCode: PhoneHomeProblemTypes.Unavailable, ErrorDetail: "remove failed");
+                    }
+
+                    return Result(frame, new PhoneHomeWorkspaceRemoveResponse(true, null));
+                }
+
+                if (frame.Operation == PhoneHomeOperation.Capabilities && ReferenceEquals(peer, PeerA))
+                {
+                    return Result(frame, new RunnerCapabilitiesDto(
+                        "ModernConPty", "modern", "test", false,
+                        Features: [RunnerCapabilityFeatures.VerificationCustodyV1],
+                        VerificationCustodyBackend: VerificationCustodyBackends.LinuxCgroup,
+                        RunnerStoreId: StoreA,
+                        Platform: "linux"));
+                }
+
+                if (frame.Operation == PhoneHomeOperation.ReleaseSlot)
+                {
+                    var sessionId = SessionIdOf(frame);
+                    return Result(frame, new RunnerSessionDto(
+                        sessionId, 1, DateTime.UtcNow, "Exited", 0, "", 0, AcceptedStartedAt: DateTime.UtcNow));
                 }
 
                 if (frame.Operation == PhoneHomeOperation.Input)
@@ -344,7 +399,8 @@ public sealed class PhoneHomeRollingRunnerTests
                 JsonSerializer.SerializeToElement(payload, PhoneHomeFraming.Json));
 
         private static void Configure(
-            IServiceCollection services, PhoneHomeTestHost host, PhoneHomeRunnerSettings configured, string root)
+            IServiceCollection services, PhoneHomeTestHost host, PhoneHomeRunnerSettings configured, string root,
+            ISessionRunnerDirectory directory)
         {
             var registry = new AgentRegistrySettings
             {
@@ -361,16 +417,17 @@ public sealed class PhoneHomeRollingRunnerTests
                 new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(registry));
             services.AddSingleton<AgentRegistry>();
             services.RemoveAll<ISessionRunnerClient>();
-            services.AddSingleton<ISessionRunnerClient>(new RoutingSessionRunnerClient(host.Directory));
+            services.AddSingleton<ISessionRunnerClient>(new RoutingSessionRunnerClient(directory));
             services.RemoveAll<IAgentProtocolAdapterFactory>();
             services.AddSingleton<IAgentProtocolAdapterFactory>(sp => new AgentProtocolAdapterFactory(
                 Options.Create(registry),
                 sp.GetRequiredService<ISessionRunnerClient>(),
-                directory: host.Directory));
-            services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+                directory: directory));
+            services.AddSingleton(directory);
+            services.AddScoped<SourceLandingAdmission>();
             services.AddSingleton(Options.Create(configured));
             services.AddSingleton<PhoneHomeLaunchPolicy>();
-            services.AddSingleton<ILandingGit, PushGit>();
+            services.AddSingleton<ILandingGit>(new PushGit(root));
             services.AddSingleton<IRepositoryMutationLease>(new OpenLease());
             services.AddDelegationWorktreeGraph(new GitSettings
             {
@@ -401,8 +458,14 @@ public sealed class PhoneHomeRollingRunnerTests
             }
         }
 
-        private sealed class PushGit : ILandingGit
+        private sealed class PushGit(string root) : ILandingGit
         {
+            public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) =>
+                Task.FromResult(Path.GetFullPath(path));
+
+            public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) =>
+                Task.FromResult(Path.GetFullPath(root));
+
             public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
                 Task.FromResult(arguments[0] switch
                 {
@@ -413,8 +476,6 @@ public sealed class PhoneHomeRollingRunnerTests
 
             public Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
             public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct) => throw new NotSupportedException();
-            public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => throw new NotSupportedException();
-            public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
             public Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
             public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct) => throw new NotSupportedException();
             public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct) => throw new NotSupportedException();

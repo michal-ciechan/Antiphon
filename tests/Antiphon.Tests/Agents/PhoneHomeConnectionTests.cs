@@ -5,7 +5,10 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -752,6 +755,69 @@ public class PhoneHomeConnectionTests
         (await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2)).ShouldNotBeNull();
         host.Directory.SnapshotLive(RollingRunnerSettings.Server2Temp).ShouldBeNull();
         peer.Epoch.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public async Task Draining_changes_neither_dispatch_eligibility_nor_capacity()
+    {
+        var secret = "drain-secret-" + Guid.NewGuid().ToString("N");
+        var configured = RollingRunnerSettings.Pair(secret, secret + "-temp");
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: configured);
+        await using var peer = await host.ConnectPeerAsync(
+            runnerId: RollingRunnerSettings.Server2, secret: secret);
+        host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2));
+        var before = host.Directory.DeclaredCapacity(RollingRunnerSettings.Server2);
+
+        host.Directory.ApplyState(RollingRunnerSettings.Server2, new RunnerState(
+            true, DateTimeOffset.UtcNow, "upgrade", RollingRunnerSettings.Server2Temp, false, null, null, null));
+
+        host.Directory.DeclaredCapacity(RollingRunnerSettings.Server2).ShouldBe(before);
+        host.Directory.Resolve(RollingRunnerSettings.Server2).ShouldNotBeNull();
+        var refused = Should.Throw<ServiceUnavailableException>(
+            () => host.Directory.ResolveForNewWork(RollingRunnerSettings.Server2));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.RunnerDraining);
+
+        var status = await host.Http.GetAsync("/api/session-runners/server2/status");
+        status.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await status.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("acceptingNewWork").GetBoolean().ShouldBeFalse();
+        body.GetProperty("dispatchEligible").GetBoolean().ShouldBeTrue();
+
+        var catalogue = await host.Http.GetAsync("/api/session-runners");
+        catalogue.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var rows = await catalogue.Content.ReadFromJsonAsync<JsonElement>();
+        var server2 = rows.EnumerateArray().Single(row => row.GetProperty("runnerId").GetString() == RollingRunnerSettings.Server2);
+        server2.GetProperty("acceptingNewWork").GetBoolean().ShouldBeFalse();
+        server2.GetProperty("dispatchEligible").GetBoolean().ShouldBeTrue();
+        server2.GetProperty("unavailableReason").GetString().ShouldBe("draining");
+        peer.Epoch.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public async Task A_retired_runner_id_cannot_register_until_its_drain_is_cleared()
+    {
+        var secret = "retired-" + Guid.NewGuid().ToString("N");
+        var configured = RollingRunnerSettings.Pair(secret, secret);
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: configured);
+        host.Directory.ApplyState(RollingRunnerSettings.Server2Temp, new RunnerState(
+            true, DateTimeOffset.UtcNow, "retired", null, true, null, DateTimeOffset.UtcNow, "idle"));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
+        request.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, secret);
+        request.Content = JsonContent.Create(
+            host.Registration(runnerId: RollingRunnerSettings.Server2Temp), options: PhoneHomeFraming.Json);
+        var refused = await host.Http.SendAsync(request);
+        refused.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString()
+            .ShouldBe(PhoneHomeProblemTypes.RunnerRetired);
+
+        var cleared = await host.PostOperatorAsync(
+            "/api/session-runners/server2-temp/drain/clear",
+            new { reason = "next upgrade" },
+            OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath));
+        cleared.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var ticket = await host.RegisterAsync(runnerId: RollingRunnerSettings.Server2Temp, secret: secret);
+        ticket.Ticket.ShouldNotBeNullOrWhiteSpace();
     }
 
     private static void IdentityIsNull(JsonElement body)
