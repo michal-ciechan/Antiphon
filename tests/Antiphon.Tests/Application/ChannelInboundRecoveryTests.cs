@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -270,9 +271,9 @@ public sealed class ChannelInboundRecoveryTests
         }
         await Bridge(h).HandleInboundAsync(Message(chat, Guid.NewGuid().ToString("N"), "preserve operator hold"), Ct);
         await using var verify = Db(schema.ConnectionString);
-        var state = await verify.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == h.AgentId);
-        state.Suspended.ShouldBeTrue();
-        state.LivenessLatchedAt.ShouldNotBeNull();
+        var verifiedState = await verify.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == h.AgentId);
+        verifiedState.Suspended.ShouldBeTrue();
+        verifiedState.LivenessLatchedAt.ShouldNotBeNull();
         (await verify.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId && i.QueueMessageId == null)).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
     }
