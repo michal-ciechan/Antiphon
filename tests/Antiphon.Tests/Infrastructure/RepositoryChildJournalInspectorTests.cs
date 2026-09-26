@@ -148,6 +148,23 @@ public sealed class RepositoryChildJournalInspectorTests
         LandingGit.PathsEqual(finding.File, children).ShouldBeTrue();
     }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task a_record_deleted_before_its_timestamp_is_not_a_stale_finding(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c726-vanished");
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var ticks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks + 1;
+        await PlantAsync(common, new RepositoryChildJournal.ChildRecord(
+            1, common, Environment.ProcessId, ticks), DateTimeOffset.UtcNow.AddMinutes(-10), ct);
+
+        var inspection = await new VanishingWriteInspector(git)
+            .InspectAsync(repo.Path, TimeSpan.FromMinutes(5), DateTimeOffset.UtcNow, ct);
+        inspection.Findings.ShouldBeEmpty();
+        inspection.StaleCount.ShouldBe(0);
+    }
+
     private static async Task<string> PlantAsync(
         string common, RepositoryChildJournal.ChildRecord record, DateTimeOffset written, CancellationToken ct)
     {
@@ -157,6 +174,16 @@ public sealed class RepositoryChildJournalInspectorTests
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(record), ct);
         File.SetLastWriteTimeUtc(path, written.UtcDateTime);
         return path;
+    }
+}
+
+/// <summary>Deletes the record as its write time is read, the enumerate-then-timestamp race.</summary>
+internal sealed class VanishingWriteInspector(ILandingGit git) : RepositoryChildJournalInspector(git)
+{
+    protected override DateTime ReadWrittenAtUtc(string path)
+    {
+        File.Delete(path);
+        return base.ReadWrittenAtUtc(path);
     }
 }
 
