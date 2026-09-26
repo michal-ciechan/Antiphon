@@ -23,8 +23,48 @@ public sealed class EvidenceFolderTests
         text.ShouldContain("INHERITED");
         text.ShouldContain("dotnet run --project tools/Antiphon.Checkpoints -- row");
         text.ShouldContain("--treenode-filter");
+        text.ShouldContain("--property:OutputPath=bin-a/");
+        text.ShouldContain("--project tests/Antiphon.Tests");
+        text.ShouldNotContain("--project bin-a");
+        var rowFailures = File.ReadAllText(Path.Combine(dir, "rows", "CP-2", "failures.md"));
+        rowFailures.ShouldContain("Expected 1 but was 2");
         File.Exists(Path.Combine(dir, "rows", "CP-2", "rerun.txt")).ShouldBeTrue();
         Directory.Exists(Path.Combine(dir, "tool")).ShouldBeTrue();
+    }
+
+    [Test]
+    public void rerun_text_is_reset_for_each_row()
+    {
+        var dir = CheckpointFixtures.TempDir();
+        var model = Model(dir, exit: 1);
+        model.Rows.Add(new ReportRow
+        {
+            Id = "CP-3",
+            Build = "bin-a",
+            Failures = [new ReportFailure { Name = "Antiphon.Tests.Other.beta", Message = "other" }],
+        });
+        EvidenceFolder.Write(dir, model, removeToolCopy: false);
+        var first = File.ReadAllText(Path.Combine(dir, "rows", "CP-2", "rerun.txt"));
+        var second = File.ReadAllText(Path.Combine(dir, "rows", "CP-3", "rerun.txt"));
+        first.ShouldContain("CP-2");
+        first.ShouldNotContain("CP-3");
+        second.ShouldContain("CP-3");
+        second.ShouldNotContain("--name CP-2");
+        File.Exists(Path.Combine(dir, "rows", "CP-3", "failures.md")).ShouldBeTrue();
+    }
+
+    [Test]
+    public void green_run_leaves_the_executor_image()
+    {
+        var dir = CheckpointFixtures.TempDir();
+        var tool = Path.Combine(dir, "tool");
+        Directory.CreateDirectory(tool);
+        File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        var model = Model(dir, exit: 0);
+        model.Rows[0].Failures.Clear();
+        EvidenceFolder.Write(dir, model, removeToolCopy: true, imageDirectory: tool);
+        Directory.Exists(tool).ShouldBeTrue();
+        File.Exists(Path.Combine(tool, "Antiphon.Checkpoints.dll")).ShouldBeTrue();
     }
 
     [Test]

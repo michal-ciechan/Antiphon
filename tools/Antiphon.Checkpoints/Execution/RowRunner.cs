@@ -148,27 +148,47 @@ public sealed class RowRunner
         var decision = RerunPolicy.Select(parsed.FailureNames, request.KnownFlaky);
         var unlistedFailures = parsed.FailureNames.Where(name => !decision.Names.Contains(name)).ToList();
         var rerunPassed = false;
-        if (decision.Names.Count > 0)
+        if (decision.Filters.Count > 0)
         {
             reruns = 1;
-            var rerunTrx = Path.Combine(request.ResultsDirectory, "rerun-1.trx");
-            var rerunArgs = BuildStep.RunArguments(request.Project!, request.OutputPath!, properties, decision.Filter, request.ResultsDirectory, "rerun-1.trx");
-            var second = await RowTimeout.RunWithDeadlineAsync(
-                _driver,
-                new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log")),
-                request.Deadline,
-                cancellationToken).ConfigureAwait(false);
-            var secondParsed = File.Exists(rerunTrx) ? TrxReport.Parse(rerunTrx) : null;
+            var passedNames = new HashSet<string>(StringComparer.Ordinal);
+            var failedNames = new HashSet<string>(StringComparer.Ordinal);
+            var sawOk = true;
+            for (var index = 0; index < decision.Filters.Count; index++)
+            {
+                var rerunName = "rerun-" + (index + 1) + ".trx";
+                var rerunTrx = Path.Combine(request.ResultsDirectory, rerunName);
+                var rerunArgs = BuildStep.RunArguments(
+                    request.Project!, request.OutputPath!, properties, decision.Filters[index], request.ResultsDirectory, rerunName);
+                var second = await RowTimeout.RunWithDeadlineAsync(
+                    _driver,
+                    new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log")),
+                    request.Deadline,
+                    cancellationToken).ConfigureAwait(false);
+                var secondParsed = File.Exists(rerunTrx) ? TrxReport.Parse(rerunTrx) : null;
+                if (second.TimedOut || secondParsed is not { Ok: true })
+                    sawOk = false;
+                if (secondParsed is { Ok: true })
+                {
+                    foreach (var name in secondParsed.ExecutedNames)
+                    {
+                        if (secondParsed.FailureNames.Contains(name))
+                            failedNames.Add(name);
+                        else
+                            passedNames.Add(name);
+                    }
+                }
+            }
+
             foreach (var name in decision.Names)
             {
-                var secondFailed = second.TimedOut || secondParsed is null || !secondParsed.Ok
-                    || secondParsed.FailureNames.Contains(name) || !secondParsed.ExecutedNames.Contains(name);
+                var secondFailed = !sawOk || failedNames.Contains(name) || !passedNames.Contains(name);
                 var outcome = secondFailed ? "Failed" : "Passed";
                 rerunLines.Add($"RERUN {name} first=Failed second={outcome}");
             }
 
-            rerunPassed = secondParsed is { Ok: true }
-                && decision.Names.All(name => secondParsed.ExecutedNames.Contains(name) && !secondParsed.FailureNames.Contains(name));
+            rerunPassed = sawOk
+                && decision.Names.All(name => passedNames.Contains(name) && !failedNames.Contains(name));
             if (rerunPassed && unlistedFailures.Count == 0)
             {
                 parsed = new TrxParseResult

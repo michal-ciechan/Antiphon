@@ -18,9 +18,24 @@ public sealed class RunStateStore
         var json = JsonSerializer.Serialize(state, Json);
         var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(tmp, json);
-        File.Move(tmp, path, overwrite: true);
-        var history = Path.Combine(Path.GetDirectoryName(path) ?? ".", "state.history.jsonl");
-        File.AppendAllText(history, JsonSerializer.Serialize(state, new JsonSerializerOptions(Json) { WriteIndented = false }) + "\n");
+        try
+        {
+            ReplaceWithRetry(tmp, path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            TryDelete(tmp);
+            return;
+        }
+
+        try
+        {
+            var history = Path.Combine(Path.GetDirectoryName(path) ?? ".", "state.history.jsonl");
+            File.AppendAllText(history, JsonSerializer.Serialize(state, new JsonSerializerOptions(Json) { WriteIndented = false }) + "\n");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     public RunState? TryRead(string path)
@@ -29,18 +44,45 @@ public sealed class RunStateStore
         {
             if (!File.Exists(path))
                 return null;
-            var json = File.ReadAllText(path);
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            var json = reader.ReadToEnd();
             if (string.IsNullOrWhiteSpace(json))
                 return null;
             return JsonSerializer.Deserialize<RunState>(json, Json);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
             return null;
         }
-        catch (IOException)
+    }
+
+    private static void ReplaceWithRetry(string tmp, string path)
+    {
+        for (var attempt = 0; ; attempt++)
         {
-            return null;
+            try
+            {
+                File.Move(tmp, path, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 8)
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
     }
 }

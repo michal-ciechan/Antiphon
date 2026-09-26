@@ -104,8 +104,15 @@ public sealed class CheckpointImportTests
         manifest.Checkpoints.Single(row => row.Id == "CP-6").Filter.ShouldBe("/*/*/*/*[Category=Unit]");
         manifest.Checkpoints.Single(row => row.Id == "CP-6").MinExecuted.ShouldBe(1000);
         manifest.Checkpoints.Single(row => row.Id == "CP-6").Expect.ShouldBeEmpty();
+        manifest.Checkpoints.Single(row => row.Id == "CP-2").MinExecuted.ShouldBe(OperatingSystem.IsWindows() ? 15 : 16);
         manifest.Checkpoints.Single(row => row.Id == "CP-7").IsCommand.ShouldBeTrue();
+        manifest.Checkpoints.Single(row => row.Id == "CP-7").Command.ShouldContain("dotnet exec");
+        manifest.Checkpoints.Single(row => row.Id == "CP-7").Command!.ShouldNotContain(".antiphon/c723-pack/tp/antiphon-checkpoints --version");
         manifest.Checkpoints.Single(row => row.Id == "CP-8").IsCommand.ShouldBeTrue();
+        PlanTableImporter.TryParseMin("16 linux / 15 windows", isWindows: false, out var linux, out var error).ShouldBeTrue(error);
+        linux.ShouldBe(16);
+        PlanTableImporter.TryParseMin("16 linux / 15 windows", isWindows: true, out var windows, out _).ShouldBeTrue();
+        windows.ShouldBe(15);
         first.Filter.ShouldContain("|");
         var root = CheckpointFixtures.TempDir();
         var yaml = ManifestLoader.ToYaml(manifest);

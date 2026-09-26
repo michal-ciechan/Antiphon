@@ -4,40 +4,45 @@ namespace Antiphon.Checkpoints;
 
 public static class EvidenceFolder
 {
-    public static void Write(string runDirectory, ReportModel model, bool removeToolCopy)
+    public static void Write(string runDirectory, ReportModel model, bool removeToolCopy, string? imageDirectory = null)
     {
         Directory.CreateDirectory(runDirectory);
         if (model.Rows.Any(row => row.Failures.Count > 0))
         {
             var failures = new StringBuilder();
-            var rerun = new StringBuilder();
             foreach (var row in model.Rows)
             {
+                if (row.Failures.Count == 0)
+                    continue;
+                var rowFailures = new StringBuilder();
+                var rerun = new StringBuilder();
                 foreach (var failure in row.Failures)
                 {
-                    failures.AppendLine("## " + failure.Name);
-                    failures.AppendLine("outcome: Failed");
-                    failures.AppendLine("durationSeconds: " + failure.DurationSeconds);
-                    failures.AppendLine("baseline: " + (failure.Baseline ?? "n/a"));
-                    failures.AppendLine("message:");
-                    failures.AppendLine(Cap(failure.Message));
-                    failures.AppendLine("stack:");
-                    failures.AppendLine(Cap(failure.StackTrace));
-                    failures.AppendLine("stdout:");
-                    failures.AppendLine(Cap(failure.StdOut));
                     var rowCommand = RowCommand(model, row, failure.Name);
-                    var rawCommand = RawCommand(row, failure.Name);
-                    failures.AppendLine("rerun:");
-                    failures.AppendLine(rowCommand);
-                    failures.AppendLine(rawCommand);
-                    failures.AppendLine();
+                    var rawCommand = RawCommand(model, row, failure.Name);
+                    rowFailures.AppendLine("## " + failure.Name);
+                    rowFailures.AppendLine("outcome: Failed");
+                    rowFailures.AppendLine("durationSeconds: " + failure.DurationSeconds);
+                    rowFailures.AppendLine("baseline: " + (failure.Baseline ?? "n/a"));
+                    rowFailures.AppendLine("message:");
+                    rowFailures.AppendLine(Cap(failure.Message));
+                    rowFailures.AppendLine("stack:");
+                    rowFailures.AppendLine(Cap(failure.StackTrace));
+                    rowFailures.AppendLine("stdout:");
+                    rowFailures.AppendLine(Cap(failure.StdOut));
+                    rowFailures.AppendLine("rerun:");
+                    rowFailures.AppendLine(rowCommand);
+                    rowFailures.AppendLine(rawCommand);
+                    rowFailures.AppendLine();
                     rerun.AppendLine(rowCommand);
                     rerun.AppendLine(rawCommand);
                 }
 
                 var rowDir = Path.Combine(runDirectory, "rows", row.Id);
-                if (row.Failures.Count > 0 && Directory.Exists(rowDir))
-                    File.WriteAllText(Path.Combine(rowDir, "rerun.txt"), rerun.ToString());
+                Directory.CreateDirectory(rowDir);
+                File.WriteAllText(Path.Combine(rowDir, "failures.md"), rowFailures.ToString());
+                File.WriteAllText(Path.Combine(rowDir, "rerun.txt"), rerun.ToString());
+                failures.Append(rowFailures);
             }
 
             File.WriteAllText(Path.Combine(runDirectory, "failures.md"), failures.ToString());
@@ -50,27 +55,60 @@ public static class EvidenceFolder
         }
 
         if (removeToolCopy)
+            TryRemoveToolCopy(runDirectory, imageDirectory);
+    }
+
+    public static void TryRemoveToolCopy(string runDirectory, string? imageDirectory = null)
+    {
+        if (IsExecutorImage(runDirectory, imageDirectory))
+            return;
+        var tool = Path.Combine(runDirectory, "tool");
+        if (!Directory.Exists(tool))
+            return;
+        try
         {
-            var tool = Path.Combine(runDirectory, "tool");
-            if (Directory.Exists(tool))
-                Directory.Delete(tool, recursive: true);
+            Directory.Delete(tool, recursive: true);
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    public static bool IsExecutorImage(string runDirectory, string? imageDirectory = null)
+    {
+        var tool = Path.GetFullPath(Path.Combine(runDirectory, "tool"));
+        var image = Path.GetFullPath(imageDirectory ?? AppContext.BaseDirectory);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var prefix = tool.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!image.EndsWith(Path.DirectorySeparatorChar) && !image.EndsWith(Path.AltDirectorySeparatorChar))
+            image += Path.DirectorySeparatorChar;
+        return image.StartsWith(prefix, comparison);
     }
 
     public static string RowCommand(ReportModel model, ReportRow row, string failureName)
     {
-        var filter = RerunPolicy.MethodFilter([failureName]);
+        var filter = FilterOf(failureName);
         return "dotnet run --project tools/Antiphon.Checkpoints -- row --name " + row.Id
             + " --project " + ProjectOf(model, row)
             + " --output-path " + OutputOf(model, row)
-            + " --filter '" + filter + "' --no-build";
+            + " --filter \"" + filter + "\" --no-build";
     }
 
-    public static string RawCommand(ReportRow row, string failureName)
+    public static string RawCommand(ReportModel model, ReportRow row, string failureName)
     {
-        var filter = RerunPolicy.MethodFilter([failureName]);
-        return "dotnet run --project " + (row.Build ?? "tests/Antiphon.Tests")
-            + " --no-build -- --treenode-filter '" + filter + "'";
+        var filter = FilterOf(failureName);
+        return "dotnet run --project " + ProjectOf(model, row)
+            + " --no-build --property:OutputPath=" + OutputOf(model, row)
+            + " -- --treenode-filter \"" + filter + "\"";
+    }
+
+    private static string FilterOf(string failureName)
+    {
+        var filters = RerunPolicy.MethodFilters([failureName]);
+        return filters.Count == 0 ? "" : filters[0];
     }
 
     private static string ProjectOf(ReportModel model, ReportRow row) =>

@@ -80,6 +80,62 @@ public sealed class BaselineComparerTests
         driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
     }
 
+    [Test]
+    public async Task baseline_checkout_is_outside_the_worktree_and_evidence_stays_in_the_run()
+    {
+        var driver = Script(GreenTrx());
+        var slots = new RecordingSlots();
+        var source = CheckpointFixtures.TempDir();
+        var run = CheckpointFixtures.TempDir();
+        var comparer = new BaselineComparer(driver, slots, TimeSpan.FromMinutes(5));
+        await comparer.CompareAsync(
+            source, run, "origin/master",
+            [Failures("CP-1", "bin-a", "N.A.one")],
+            [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
+            CancellationToken.None);
+        var build = driver.Calls.First(CheckpointFixtures.IsBuild);
+        var sourceFull = Path.GetFullPath(source) + Path.DirectorySeparatorChar;
+        Path.GetFullPath(build.WorkingDirectory).StartsWith(sourceFull, StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+        build.LogPath.ShouldNotBeNull();
+        Path.GetFullPath(build.LogPath!).StartsWith(Path.GetFullPath(run), StringComparison.OrdinalIgnoreCase).ShouldBeTrue();
+        build.LogPath.ShouldContain("build.log");
+        comparer.ToolRuns.ShouldContain(item => item.StartsWith("tool-run: baseline git", StringComparison.Ordinal));
+        comparer.ToolRuns.ShouldContain(item => item.Contains("baseline build", StringComparison.Ordinal));
+        comparer.ToolRuns.ShouldContain(item => item.Contains("baseline run", StringComparison.Ordinal));
+        slots.Labels.ShouldContain(item => item.Contains("baseline git", StringComparison.Ordinal));
+        slots.Labels.ShouldContain(item => item.Contains("baseline build", StringComparison.Ordinal));
+        slots.Labels.ShouldContain(item => item.Contains("baseline run", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task baseline_stops_when_the_timeout_is_already_spent()
+    {
+        var driver = Script(GreenTrx());
+        var comparer = new BaselineComparer(driver, timeout: TimeSpan.Zero);
+        await comparer.CompareAsync(
+            CheckpointFixtures.TempDir(), CheckpointFixtures.TempDir(), "origin/master",
+            [Failures("CP-1", "bin-a", "N.A.one")],
+            [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
+            CancellationToken.None);
+        driver.Count(CheckpointFixtures.IsBuild).ShouldBe(0);
+        driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
+        comparer.ToolRuns.ShouldContain(item => item.Contains("git fetch", StringComparison.Ordinal));
+    }
+
+    private sealed class RecordingSlots : IBuildSlotClient
+    {
+        public List<string> Labels { get; } = [];
+
+        public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new SlotSession("enabled", 4));
+
+        public Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
+        {
+            Labels.Add(label);
+            return Task.FromResult(new SlotLease { State = "granted", MaxCpuCount = 4 });
+        }
+    }
+
     private static FakeDriver Script(string trx)
     {
         var driver = new FakeDriver();

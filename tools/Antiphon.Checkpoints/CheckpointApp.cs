@@ -31,7 +31,7 @@ public static class CheckpointApp
         void Publish()
         {
             try { store.Write(statePath, state); }
-            catch (IOException) { /* the next transition retries */ }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
 
         Publish();
@@ -79,26 +79,56 @@ public static class CheckpointApp
         var model = BuildReport(runDirectory, repo, request, manifest, state, result);
         if (!string.IsNullOrWhiteSpace(request.Baseline))
         {
-            var comparer = new BaselineComparer(new ProcessDriver());
-            await comparer.CompareAsync(repo, runDirectory, request.Baseline, model.Rows.Where(row => row.Failures.Count > 0).ToList(), manifest.Builds, cancellationToken)
-                .ConfigureAwait(false);
+            var remaining = state.TotalTimeoutAt is DateTimeOffset deadline
+                ? deadline - DateTimeOffset.UtcNow
+                : TimeSpan.FromMinutes(15);
+            if (remaining < TimeSpan.Zero)
+                remaining = TimeSpan.Zero;
+            var comparer = new BaselineComparer(new ProcessDriver(), slots, remaining);
+            try
+            {
+                await comparer.CompareAsync(
+                    repo,
+                    runDirectory,
+                    request.Baseline,
+                    model.Rows.Where(row => row.Failures.Count > 0).ToList(),
+                    manifest.Builds,
+                    cancellationToken).ConfigureAwait(false);
+                model.Unlisted.AddRange(comparer.ToolRuns);
+            }
+            catch (Exception ex)
+            {
+                Note("baseline failed: " + ex.GetType().Name + ": " + ex.Message);
+                model.Unlisted.Add("tool-run: baseline failed");
+            }
         }
 
         model.Evidence = Path.Combine(runDirectory, "report.md");
         ReportWriter.WriteFiles(runDirectory, model);
         var green = model.ExitCode == 0;
-        EvidenceFolder.Write(runDirectory, model, removeToolCopy: green && !request.KeepOutputs);
-        if (!request.KeepOutputs)
-            OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode, request.CleanOnRed, dryRun: false);
-        state.Phase = "done";
-        state.EndedAt = DateTimeOffset.UtcNow;
-        state.ExitCode = model.ExitCode;
-        Publish();
+        try
+        {
+            EvidenceFolder.Write(runDirectory, model, removeToolCopy: false);
+        }
+        catch (Exception ex)
+        {
+            Note("evidence failed: " + ex.GetType().Name + ": " + ex.Message);
+        }
+
+        Finish(state, model.ExitCode, Publish, () =>
+        {
+            if (green && !request.KeepOutputs)
+                EvidenceFolder.TryRemoveToolCopy(runDirectory);
+            if (!request.KeepOutputs)
+                OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode, request.CleanOnRed, dryRun: false);
+        }, Note);
         Note("done exit=" + model.ExitCode);
         return model.ExitCode;
     }
 
-    public static int Start(CheckpointManifest manifest, RunRequest request, string repo, TextWriter output)
+    public readonly record struct StartResult(int ExitCode, string RunDirectory);
+
+    public static string CreateRun(CheckpointManifest manifest, RunRequest request, string repo)
     {
         ManifestValidator.Validate(manifest, repo);
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
@@ -117,6 +147,14 @@ public static class CheckpointApp
         if (string.IsNullOrWhiteSpace(request.Branch))
             request.Branch = GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
         File.WriteAllText(Path.Combine(runDirectory, "request.json"), JsonSerializer.Serialize(request, Json));
+        return runDirectory;
+    }
+
+    public static StartResult Start(CheckpointManifest manifest, RunRequest request, string repo, TextWriter output)
+    {
+        var runDirectory = CreateRun(manifest, request, repo);
+        var resultsRoot = Path.GetDirectoryName(runDirectory)!;
+        var runId = Path.GetFileName(runDirectory);
         ShadowCopy.CopyToolOutput(AppContext.BaseDirectory, Path.Combine(runDirectory, "tool"));
         var dll = Path.Combine(runDirectory, "tool", "Antiphon.Checkpoints.dll");
         var pid = new DetachedLauncher(new RuntimePlatform()).Start(new LaunchRequest(
@@ -126,8 +164,24 @@ public static class CheckpointApp
         File.WriteAllText(Path.Combine(resultsRoot, "latest"), runId);
         var state = new RunState { RunId = runId, Phase = "starting", ExecutorPid = pid, StartedAt = DateTimeOffset.UtcNow };
         new RunStateStore().Write(Path.Combine(runDirectory, "state.json"), state);
-        output.WriteLine($"RUN {runId} started rows={selected.Count} executor={pid}");
-        return ExitCodes.Green;
+        output.WriteLine($"RUN {runId} started rows={request.Rows.Count} executor={pid}");
+        return new StartResult(ExitCodes.Green, runDirectory);
+    }
+
+    public static void Finish(RunState state, int exitCode, Action publish, Action cleanup, Action<string> note)
+    {
+        state.Phase = "done";
+        state.EndedAt = DateTimeOffset.UtcNow;
+        state.ExitCode = exitCode;
+        publish();
+        try
+        {
+            cleanup();
+        }
+        catch (Exception ex)
+        {
+            note(ex.GetType().Name + ": " + ex.Message);
+        }
     }
 
     public static ReportModel BuildReport(
