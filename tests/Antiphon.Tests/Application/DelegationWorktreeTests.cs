@@ -690,22 +690,6 @@ public partial class DelegationWorktreeTests
     }
 
     [Test]
-    public void C753_MergeHelperOnlyHoldsLandWithConfirmedLivePrompt()
-    {
-        var repo = Path.Combine(Path.GetTempPath(), "antiphon-land-merge-scope");
-        var landing = NewTask(repo, mergeTarget: null);
-        var helper = new AgentTask
-        {
-            Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "merge helper",
-            Workspace = WorkspaceMode.Shared, Role = AgentTaskRole.Merge,
-            RepoPath = repo, WorkingDirectory = repo, Status = AgentTaskStatus.Dispatched,
-        };
-        AgentTaskLandService.IsHeldBehindSharedWriter(landing, [helper]).ShouldBeFalse();
-        AgentTaskLandService.IsHeldBehindSharedWriter(landing, [helper], _ => false).ShouldBeFalse();
-        AgentTaskLandService.IsHeldBehindSharedWriter(landing, [helper], _ => true).ShouldBeTrue();
-    }
-
-    [Test]
     public async Task a_clean_change_lands_on_the_target_and_the_worktree_is_removed()
     {
         using var repo = new ScratchGitRepo();

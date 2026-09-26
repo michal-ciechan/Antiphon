@@ -159,7 +159,11 @@ public sealed class AgentTaskLandAdoptionTests
     }
 
     [Test]
-    public async Task C753_FailedOwnerAdoptsReviewedRepairBranchAndRetainsRepairWorktree()
+    [Arguments("success")]
+    [Arguments("local-cas")]
+    [Arguments("remote-lease")]
+    [Arguments("push-rejected")]
+    public async Task C753_ReviewedRepairAdoptionObeysLocalCasAndRemoteLease(string scenario)
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
@@ -224,7 +228,42 @@ public sealed class AgentTaskLandAdoptionTests
 
         await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidenceId,
             adoptFromTaskId: sourceId);
+        var raced = false;
+        h.Fixture.Git.BeforeCommand = async (_, args) =>
+        {
+            if (raced) return null;
+            if (scenario == "local-cas" && args.Count > 4 && args[0] == "update-ref"
+                && args.Contains(h.Fixture.SourceRef))
+            {
+                raced = true;
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", h.Fixture.SourceRef,
+                    h.Fixture.SeedSha, ownerBefore);
+            }
+            if ((scenario is "remote-lease" or "push-rejected") && args.Count > 2 && args[0] == "push"
+                && args.Any(a => a.StartsWith("--force-with-lease=" + h.Fixture.SourceRef + ":", StringComparison.Ordinal)))
+            {
+                raced = true;
+                if (scenario == "remote-lease")
+                    await h.Fixture.RequiredAsync(h.Fixture.Remote, "update-ref", h.Fixture.SourceRef,
+                        h.Fixture.SeedSha, ownerBefore);
+                else
+                    return new Antiphon.Server.Application.Dtos.LandingGitResult(1, "", "injected push refusal");
+            }
+            return null;
+        };
         await h.RunQueuedAsync();
+
+        if (scenario != "success")
+        {
+            raced.ShouldBeTrue();
+            await using var refused = h.CreateContext();
+            var row = await refused.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+            row.SourceRefusalReason.ShouldBe(scenario == "local-cas"
+                ? "adopt_local_cas_rejected" : "adopt_source_push_rejected");
+            (await refused.AgentTaskLandings.CountAsync()).ShouldBe(0);
+            Directory.Exists(sourcePath).ShouldBeTrue();
+            return;
+        }
 
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();

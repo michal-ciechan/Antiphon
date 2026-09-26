@@ -248,11 +248,15 @@ public class AgentTaskLandRequestTests
         var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, Approve(), CancellationToken.None);
         queue.Release(task.Id);
         var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
-        request.State = LandRequestState.NeedsResolution; await db.SaveChangesAsync(); var age = request.RequestedAt;
+        request.State = LandRequestState.NeedsResolution;
+        task.Status = AgentTaskStatus.Blocked;
+        task.FailureReason = "merge conflict";
+        await db.SaveChangesAsync(); var age = request.RequestedAt;
         await land.SweepAsync(CancellationToken.None); queue.PendingCount.ShouldBe(0);
         clock.Advance(TimeSpan.FromHours(1));
         (await land.RequestAsync(task.Id, Approve(), CancellationToken.None)).RequestId.ShouldBe(accepted.RequestId);
         request.State.ShouldBe(LandRequestState.Queued); request.RequestedAt.ShouldBe(age); queue.PendingCount.ShouldBe(1);
+        task.Status.ShouldBe(AgentTaskStatus.Succeeded); task.FailureReason.ShouldBeNull();
     }
 
     [Test]
