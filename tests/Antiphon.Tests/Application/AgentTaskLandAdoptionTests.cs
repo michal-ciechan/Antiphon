@@ -320,7 +320,7 @@ public sealed class AgentTaskLandAdoptionTests
         op.RecoveryOwnerRemoteAfterSha.ShouldBe(reviewed);
         op.RecoveryPatchesContained.ShouldBe(true);
         op.RecoveryUncontainedPatches.ShouldBe("");
-        op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete, op.LastReason);
         Directory.Exists(h.Fixture.Source).ShouldBeFalse();
         (await h.Fixture.Git.RunAsync(h.Fixture.Repository,
             ["show-ref", "--verify", "--quiet", h.Fixture.SourceRef], CancellationToken.None))
