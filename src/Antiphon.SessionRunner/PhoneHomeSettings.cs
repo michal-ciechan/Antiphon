@@ -79,8 +79,17 @@ public sealed class PhoneHomeSettings
     /// </summary>
     public IReadOnlyList<string> RawExeAllowList { get; set; } = ["/bin/sh", "/bin/bash", "/usr/local/bin/pwsh"];
     public int HeartbeatSeconds { get; set; } = PhoneHomeProtocol.DefaultHeartbeatSeconds;
+
+    /// <summary>CARD-0716 D-4: bound on the registration HTTP call. The client has no other use.</summary>
+    public int RegistrationTimeoutSeconds { get; set; } = 8;
+
+    /// <summary>CARD-0716 D-4: bound on the websocket upgrade. A peer that accepts and never answers.</summary>
+    public int ConnectTimeoutSeconds { get; set; } = 8;
+
     public int ReconnectBackoffMs { get; set; } = 1000;
-    public int ReconnectBackoffMaxMs { get; set; } = 15_000;
+
+    /// <summary>CARD-0716 D-4: was 15000. A returned server must not stay hidden behind one long wait.</summary>
+    public int ReconnectBackoffMaxMs { get; set; } = 5_000;
     public PhoneHomeLimits Limits { get; set; } = new();
 
     public void Validate()
@@ -110,6 +119,13 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:RawExeAllowList entries must be POSIX absolute paths.");
         if (HeartbeatSeconds <= 0)
             throw new InvalidOperationException("PhoneHome:HeartbeatSeconds must be positive.");
+        if (RegistrationTimeoutSeconds < 1 || RegistrationTimeoutSeconds > 120)
+            throw new InvalidOperationException("PhoneHome:RegistrationTimeoutSeconds must be between 1 and 120.");
+        if (ConnectTimeoutSeconds < 1 || ConnectTimeoutSeconds > 120)
+            throw new InvalidOperationException("PhoneHome:ConnectTimeoutSeconds must be between 1 and 120.");
+        if (ReconnectBackoffMs <= 0 || ReconnectBackoffMs > ReconnectBackoffMaxMs)
+            throw new InvalidOperationException(
+                "PhoneHome:ReconnectBackoffMs must be positive and not greater than PhoneHome:ReconnectBackoffMaxMs.");
         Limits.Validate("PhoneHome:Limits");
     }
 }
