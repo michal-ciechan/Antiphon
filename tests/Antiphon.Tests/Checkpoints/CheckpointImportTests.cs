@@ -224,6 +224,37 @@ public sealed class CheckpointImportTests
     }
 
     [Test]
+    public async Task scheduler_passes_test_parallel_limit_only_to_serial_rows_process()
+    {
+        const string name = "TUNIT_MAX_PARALLEL_TESTS";
+        var inherited = Environment.GetEnvironmentVariable(name);
+        var manifest = new CheckpointManifest();
+        manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
+        manifest.Checkpoints.Add(new CheckpointSpec
+        {
+            Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1, Serial = true,
+            Environment = new Dictionary<string, string> { [name] = "1" },
+        });
+        manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-3", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
+        var factory = new CapturingFactory();
+        var root = CheckpointFixtures.TempDir();
+        var result = await new RunScheduler(new ProcessDriver(factory), new FakePlatform()).RunAsync(new SchedulerRequest
+        {
+            Manifest = manifest, Rows = manifest.Checkpoints, RunDirectory = root, WorkingDirectory = root,
+            State = new RunState(), Slots = new FixedSlotClient("off"), Width = 2,
+        }, CancellationToken.None);
+        result.ExitCode.ShouldBe(0);
+        factory.Starts.Count.ShouldBe(3);
+        foreach (var index in new[] { 0, 2 })
+        {
+            factory.Starts[index].Environment.TryGetValue(name, out var sibling).ShouldBe(inherited is not null);
+            sibling.ShouldBe(inherited);
+        }
+        factory.Starts[1].Environment[name].ShouldBe("1");
+        Environment.GetEnvironmentVariable(name).ShouldBe(inherited);
+    }
+
+    [Test]
     public void invalid_serial_is_refused_before_execution()
     {
         foreach (var value in new[] { "yes", "1", "n/a" })
