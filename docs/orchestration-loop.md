@@ -89,6 +89,8 @@ An open land-origin Merge helper with a live session blocks supersession; an ina
 canceled as the new reviewed request takes custody. If a helper fails or is canceled while its
 request still needs resolution, the owner gets a Warning and a fresh Conflict notification.
 An unconfirmed previous publication needs its own recovery before another source is adopted.
+After publication, a cleanup-only retry uses that operation's saved recovery authority even if
+the owner's later task status changes; it cannot publish again or select a new source.
 
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
 checked out elsewhere, pass `delegate.ps1 -RepairSource <owner-guid>` (full GUID of the original
