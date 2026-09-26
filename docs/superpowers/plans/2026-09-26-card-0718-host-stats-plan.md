@@ -24,8 +24,8 @@ tasks, and pending lands. A missing runner is `offline`, a silent one `stale`, a
 `unsupported`; none of them is ever a zero.
 
 The operator's acceptance is carried by four measurable things: both hosts appear with values
-that move every 5 s (CP-9 against the live host); rollups are correct against synthetic samples
-(V-1); the 30-minute graph renders from a 360-point series (V-7); sampling cost is measured, not
+that move every 5 s (CP-11 against the live host); rollups are correct against synthetic samples
+(V-1); the 30-minute graph renders from a 360-point series (V-10); sampling cost is measured, not
 asserted (CP-4: runner process CPU with the sampler on versus off, under 1 %; measured input
 today: 0.14 ms per host sample and 1.2 ms per full `/proc` process sweep on server2).
 
@@ -261,7 +261,7 @@ is under 1 ms), Docker/WSL and Postgres container CPU beyond the `vmmem` process
 ## Slices
 
 Round 1 is one Code dispatch (S1–S4, in order; each slice is committed with its red tests
-first). Round 2 (S5–S6) is a second Code dispatch after Round 1 has landed and CP-9 has been
+first). Round 2 (S5–S6) is a second Code dispatch after Round 1 has landed and CP-11 has been
 observed live.
 
 ### S1 — runner: probes, store, sampler, routes, phone-home operation, capability
@@ -488,6 +488,10 @@ Missing setup the Code stage adds (test-only or seam, named so no row is a stub)
   parameter (after `resilience`) for `RequestTimeoutMs`/`SeriesTimeoutMs`, and uses its existing
   `TimeProvider` for the timeout source, so V-12 constructs it the `SessionRunnerHttpClientHerdrWireTests` way.
 
+Slice ownership of what TestDesign adds: MS-1..MS-4, `HostStatsProbeLiveTests` and
+`scripts/measure-host-stats-overhead.ps1` are S1; MS-5..MS-8 and
+`SessionRunnerHttpClientHostStatsTests` are S2; `scripts/host-stats-hub-receipt.mjs` is S4.
+
 ### Delivery inventory
 
 Host stats are a best-effort, last-value-wins telemetry stream: nothing is durable by design
@@ -501,7 +505,7 @@ No path carries session input, so no UserPrompt transcript applies.
 | DP-1 sample | `HostStatsSamplerService.SampleOnceAsync` | `HostStatsStore` ring | none (runner memory; a runner restart empties the ring, accepted in D-4) | next tick; a faulting probe skips one tick (G-26) | `Latest().At` equals the fake clock (V-3 m1); `GET /host-stats` newest `At` (V-4 m1) |
 | DP-2 local pull | runner `GET /host-stats` | server `HostStatsCache.Record("desktop", dto)` | none | next 5 s tick; a fault or 3 s timeout marks the host for `stale` (G-53, G-55) | projection `live` with the answered `At` (V-8 m1, m4) |
 | DP-3 remote pull | runner dispatcher case 29 over the phone-home socket | `HostStatsCache.Record("server2", dto)` | none | silent peer: request cancelled at `RequestTimeoutMs`, host goes `stale`; disconnect: `offline`, then `live` on reconnect; old runner: `unsupported` | V-8 m2, m3, m5 against the real `PhoneHomeLiveConnection` |
-| DP-4 push | `HostStatsPollService` after a tick with `Changed` | browser query cache `['hosts','stats']` and mounted series keys, via `IEventBus.PublishToGroupAsync("hosts", "HostStatsUpdated", list)` | none; the page's `GET /api/hosts/stats` on mount and on reconnect is the resync | publish fault: the tick survives and `Changed` stays set so the next tick republishes (G-59); client reconnect: rejoin + refetch (G-76) | server: `RecordingEventBus` holds one `("hosts","HostStatsUpdated", list)` whose entries carry the answered `At` (V-8 m1, m6); client: `queryClient.getQueryData(['hosts','stats'])` equals the pushed list (V-10 live m2); live: CP-9 hub receipt |
+| DP-4 push | `HostStatsPollService` after a tick with `Changed` | browser query cache `['hosts','stats']` and mounted series keys, via `IEventBus.PublishToGroupAsync("hosts", "HostStatsUpdated", list)` | none; the page's `GET /api/hosts/stats` on mount and on reconnect is the resync | publish fault: the tick survives and `Changed` stays set so the next tick republishes (G-59); client reconnect: rejoin + refetch (G-76) | server: `RecordingEventBus` holds one `("hosts","HostStatsUpdated", list)` whose entries carry the answered `At` (V-8 m1, m6); client: `queryClient.getQueryData(['hosts','stats'])` equals the pushed list (V-10 live m2); live: CP-11 hub receipt |
 | DP-5 series read | runner `Series(...)` via `GET host-stats/series` / operation 30 | page series key | none | synchronous request; a failure is 409 and the page keeps its points | V-9 m2 (proxied points), V-4 m2, V-5 m2 |
 
 Producer-to-recipient through the real queue: V-8 drives the real `PhoneHomeLiveConnection` (the
@@ -515,11 +519,11 @@ Declared substitutes and what each cannot prove:
 
 - `RecordingEventBus` for `EventBus` + `AntiphonHub`: proves the group name, event name and payload
   the service hands over; cannot prove SignalR routes a group message to a connection that called
-  `JoinGroup("hosts")`. Closed by CP-9's live hub receipt (a node `@microsoft/signalr` client joins
+  `JoinGroup("hosts")`. Closed by CP-11's live hub receipt (a node `@microsoft/signalr` client joins
   `hosts` on the activated server and must receive two `HostStatsUpdated` lists with advancing
   `observedAt`) — this is the recipient evidence for DP-4.
 - Mocked `HubConnectionBuilder` in vitest: proves the hook's `JoinGroup` call, `on('HostStatsUpdated')`
-  handler and cache writes; cannot prove wire compatibility of the payload casing. Closed by CP-9
+  handler and cache writes; cannot prove wire compatibility of the payload casing. Closed by CP-11
   (same payload read by the real client library) and V-9 m1 (the JSON the API serializes is the
   shape the page reads; both use the one `HostStatsDto`).
 - `RecordingLocalClient` for `SessionRunnerHttpClient`: V-8 cannot prove the HTTP single-attempt and
@@ -764,7 +768,7 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
 - **V-10: the page shows each host's state honestly and stays live | client vitest + msw, mocked
   `@microsoft/signalr` (the `SessionTerminal.test.tsx:116` pattern) | `pwsh -File
   scripts/test-client.ps1 hosts` (matches `src/api/hosts.test.tsx` and every file under
-  `src/features/hosts/`; no other client path contains `hosts` at `bafc3366`) | 11 tests green.**
+  `src/features/hosts/`; no other client path contains `hosts` at `bafc3366`) | 12 tests green.**
   - `hosts.test.tsx` (2): `useHostStats reads /api/hosts/stats` (two entries); `useHostSeries
     requests metric and window` (msw asserts the query string). Red: a hard-coded `window=30m`.
   - `HostsPage.test.tsx` (4): `renders one card per host`; `a stale host keeps its last values
@@ -781,7 +785,7 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     `on reconnect it rejoins hosts and refetches` (`onreconnected` handler: second `JoinGroup`,
     one list refetch). Red: `invalidateQueries` instead of `setQueryData` (second), a group name
     other than `hosts` (first), no `onreconnected` handler (fourth).
-- **V-11: the docs name the routes, states and settings | docs | CP-9 grep | >= 8 lines.** Red:
+- **V-11: the docs name the routes, states and settings | docs | CP-10 grep | >= 8 lines.** Red:
   the grep over the four files at `bafc3366` returns 0 lines (none of the tokens exist yet).
 - **V-13: the real probe reads this lane's OS | runner Integration (no process spawn) |
   `HostStatsProbeLiveTests` (2 methods, 1 executes per lane) | the lane's method green, the other
@@ -937,7 +941,7 @@ can be broken independently, and maps 1:1 to a distinct PC.
 | G-77 | D-10 | the CP-4 measurement runner is launched with `PhoneHome__*`/`SessionRunner__*`/`ASPNETCORE_*` scrubbed, `--PhoneHome:Enabled false` and `--urls http://127.0.0.1:0` | PC-77 |
 
 Totals: guards = 77, mapped = 77, missing = 0, duplicate PC maps = 0. Not guards (evidence only):
-V-13's live reads and CP-4's overhead number (a measurement with its own threshold), CP-9's
+V-13's live reads and CP-4's overhead number (a measurement with its own threshold), CP-11's
 activation check.
 
 ### Positive controls
@@ -1038,7 +1042,7 @@ no runner.
 - `SessionCpuWatchdogTests` (draft R-1): the plan changes neither `IProcessCpuProbe` nor the
   watchdog (the sampler only consumes the interface), and the class starts a real `cmd.exe` pty
   session from `Environment.SystemDirectory`, so it cannot be an either-lane row.
-- Round 2 (S5–S6) and the draft's CP-11..CP-13: their V rows are named only as "R2 V", which is a
+- Round 2 (S5–S6) and the draft's Round 2 rows (its CP-11..CP-13): their V rows are named only as "R2 V", which is a
   placeholder; Round 2 gets its own TestDesign pass after Round 1 lands and CP-11 has been seen
   live, and its rows are not part of this closed list.
 - A server-side SignalR hub test: `Antiphon.Tests` has no `Microsoft.AspNetCore.SignalR.Client`
@@ -1072,7 +1076,7 @@ every non-TUnit command runs under `pwsh -NoProfile -File scripts/build-slot.ps1
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c718a/` | host-stats-server | `/*/*/(HostStatsCacheTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsPollServiceTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-6, V-7, V-8, V-9, V-12 | all listed (6 + 3 + 6 + 5 + 3), 0 failed | 23 | 12 |
 | CP-6 | S2 | CP-5 | server-adjacent | `/*/*/(PhoneHomeDirectoryTests*)\|(RunnerCatalogueTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeEventPumpTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerCapabilityGateTests*)\|(HttpResilienceRegistrationTests*)/*` | R-2 | all listed (7 + 4 + 8 + 8 + 5 + 2 + 7), 0 failed | 41 | 8 |
 | CP-7 | S2 | CP-5 | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | >= 2900 executed, 0 failed (last measured 2993 executed at `c18a6c67`, + 12 new); a failure that also fails at `bafc3366` is reported pre-existing | 2900 | 5 |
-| CP-8 | S3 | n/a | client-hosts | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-client -- pwsh -File scripts/test-client.ps1 hosts` | V-10 | `CLIENT TESTS EXIT CODE: 0`, 4 files, 11 tests passed | n/a | 3 |
+| CP-8 | S3 | n/a | client-hosts | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-client -- pwsh -File scripts/test-client.ps1 hosts` | V-10 | `CLIENT TESTS EXIT CODE: 0`, 4 files, 12 tests passed | n/a | 3 |
 | CP-9 | S3 | n/a | client-full-lint | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-client-full -- pwsh -File scripts/test-client.ps1` then `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-lint -- npm --prefix client run lint` | R-4 | `CLIENT TESTS EXIT CODE: 0` over 110 files; lint 0 errors 0 warnings | n/a | 7 |
 | CP-10 | S4 | n/a | docs-named | `git grep -n -e "/api/hosts/stats" -e "HostStatsUpdated" -e "hostStatsV1" -e "SessionRunner:HostStats" -e "HostStats:PollIntervalMs" -e "host-stats" -- docs/ops-http.md docs/antiphon-api.md docs/resilience.md docs/testing-and-build.md` | V-11 | >= 8 matching lines, each of the 4 files at least once, exit 0 | n/a | 1 |
 | CP-11 | landed and activated | n/a | live-hosts | `curl -sS $ANTIPHON_API/api/version`, then `curl -sS $ANTIPHON_API/api/hosts/stats` twice 10 s apart, then `node scripts/host-stats-hub-receipt.mjs --api $ANTIPHON_API --count 2 --timeout-seconds 20` | V-15 | version SHA = landed commit; two entries both `live`, `observedAt` advanced >= 5 s, server2 `load1` non-null, desktop `load1` null and `cpuPercent` non-null; the receipt prints `RECEIPT 2` with both host ids | n/a | 3 |
@@ -1133,11 +1137,29 @@ gets a new runner); it is run by whoever confirms activation, not by the Code st
 
 ### Cost
 
-Round 1 checkpoints: 9 + 6 + 2 + 8 + 12 + 8 + 5 + 1 + 2 + 12 = **65** minutes plus slot waits.
-Authoring Round 1: S1 ~4 h (two probes, store, sampler, routes, dispatcher cases, 22 tests),
-S2 ~3.5 h (cache, counters, poll service, endpoints, 16 tests), S3 ~3 h (page, sparkline, live
-hook, stories, 10 tests), S4 ~0.5 h; about 11 h. Round 2 checkpoints 6 + 8 + 3 = **17** minutes;
-authoring about 5 h.
+All figures estimated (no build or run was timed by TestDesign; the only measured inputs are
+CP-7's 2026-09-10 Unit lane, about 70 s for 1,992 cases, and the plan's 0.143 ms sample cost).
+
+- **Ordinary V/R floor (Code)** = sum of `EstimatedMinutes` = 9 + 5 + 2 + 9 + 12 + 8 + 5 + 3 + 7
+  + 1 = **61 minutes** for CP-1..CP-10, builds included (two test-project builds, one runner build),
+  plus slot waits. CP-11 (3 min) is post-land activation work, not Code's. Authoring Round 1 stays
+  the plan's estimate, about 11 h (S1 now 27 runner tests plus the overhead script, S2 23 server
+  tests plus MS-5/MS-6 helpers, S3 12 client tests, S4 docs and the receipt script).
+- **PC floor (Mutation)**, 77 controls, method-scoped red/restore/green, batched only across
+  different files and methods, so the round count is the largest per-file PC count:
+  - runner (PC-1..PC-37, `HostStatsStore.cs` holds 13): 13 rounds x (2 incremental
+    `Antiphon.SessionRunner.Tests` builds ~1.5 min + 2 single-method runs ~0.3 min) = **~47 min**;
+  - server (PC-38..PC-67, `HostStatsCache.cs` holds 10): 10 rounds x (2 `Antiphon.Tests` builds
+    ~4 min + 2 runs ~0.5 min, Postgres-backed for V-9) = **~90 min**;
+  - client (PC-68..PC-76, `useHostStatsLive.ts` holds 4): 4 rounds x ~1.4 min = **~6 min**;
+  - PC-77 (dry run only): **~1 min**;
+  - setup (first build of both test projects, `client/node_modules` present): **~8 min**.
+  PC total **~152 min**. Unbatched it would be 37 x 3.6 + 30 x 9 + 9 x 1.4 + 1 ≈ 417 min, so the
+  file-disjoint batching saves about 265 min; a SourceLanding Mutation may not shard, so no further
+  saving is assumed.
+- **Total** = Code ordinary 61 min + ~11 h authoring; Mutation ~152 min; CP-11 3 min post-land.
+  Versus the draft's 65 min (which counted its live row): 61 + 3 = 64 min here, with Round 2's
+  17 min moved to its own TestDesign; the PC floor is new.
 
 ## Follow-ups (not in this card)
 
