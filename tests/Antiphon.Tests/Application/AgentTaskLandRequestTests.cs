@@ -24,6 +24,50 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskLandRequestTests
 {
     [Test]
+    [Arguments("canceled", "recovery_owner_ineligible")]
+    [Arguments("missing", "review_evidence_missing")]
+    [Arguments("interim", "review_verification_scope_ineligible")]
+    [Arguments("wrong-ref", "review_evidence_ref_mismatch")]
+    [Arguments("wrong-sha", "review_evidence_sha_mismatch")]
+    [Arguments("superseded", "review_evidence_superseded")]
+    public async Task C753_RecoveryRefusesIneligibleOwnerOrReviewWithoutRequest(string caseName, string code)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var task = await SeedSucceededWorktreeAsync(db);
+        task.Status = caseName == "canceled" ? AgentTaskStatus.Canceled : AgentTaskStatus.Failed;
+        var sha = new string('a', 40);
+        var review = new StageOutcome
+        {
+            Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
+            ReviewedSourceSha = caseName == "wrong-sha" ? new string('b', 40) : sha,
+            ReviewedSourceRef = caseName == "wrong-ref" ? "refs/heads/other" : "refs/heads/" + task.WorktreeBranch,
+            ReviewedRepositoryPath = task.RepoPath,
+            CommissionedRound = caseName == "interim" ? VerificationRound.Interim : VerificationRound.Final,
+            OrdinaryScopeCompleted = caseName == "interim" ? VerificationScope.Interim : VerificationScope.Full,
+            RecordedAt = DateTime.UtcNow,
+        };
+        db.StageOutcomes.Add(review);
+        if (caseName == "superseded") db.StageOutcomes.Add(new StageOutcome
+        {
+            Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
+            SupersedesId = review.Id, RecordedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+
+        var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: sha,
+                ReviewEvidenceId: caseName == "missing" ? Guid.NewGuid() : review.Id,
+                RecoverReviewedSource: true), CancellationToken.None));
+
+        error.Code.ShouldBe(code);
+        (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == task.Id)).ShouldBe(0);
+    }
+
+    [Test]
     [Arguments(AgentTaskStatus.Blocked)]
     [Arguments(AgentTaskStatus.Failed)]
     public async Task C753_ExplicitReviewedRecoveryKeepsTerminalOwnerStatus(AgentTaskStatus status)
@@ -58,7 +102,9 @@ public class AgentTaskLandRequestTests
     }
 
     [Test]
-    public async Task C753_RecoverySupersedesNeedsResolutionWithoutRewritingOldRequest()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C753_RecoverySupersedesOnlyAfterMergeHelperIsInactive(bool liveHelper)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
@@ -79,8 +125,37 @@ public class AgentTaskLandRequestTests
             OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
         };
         db.StageOutcomes.Add(review);
+        var helperId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = helperId, RootTaskId = task.RootTaskId, ParentTaskId = task.Id,
+            Title = "resolve landing conflict", Goal = "resolve", Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Merge, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = task.WorktreePath!, RepoPath = task.RepoPath,
+            Status = liveHelper ? AgentTaskStatus.Dispatched : AgentTaskStatus.Queued,
+            AgentSessionId = liveHelper ? sessionId : null,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+        });
+        if (liveHelper) db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId, DefinitionName = "merge", Status = SessionStatus.Running,
+            Cwd = task.WorktreePath!, CreatedAt = DateTime.UtcNow,
+            StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+        });
         await db.SaveChangesAsync();
 
+        if (liveHelper)
+        {
+            var conflict = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
+                new LandAgentTaskRequest(ExpectedSourceSha: sha, ReviewEvidenceId: review.Id,
+                    RecoverReviewedSource: true), CancellationToken.None));
+            conflict.Code.ShouldBe("merge_helper_active");
+            (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId)).State
+                .ShouldBe(LandRequestState.NeedsResolution);
+            (await db.AgentTasks.SingleAsync(t => t.Id == helperId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+            return;
+        }
         var accepted = await land.RequestAsync(task.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: sha, ReviewEvidenceId: review.Id,
                 RecoverReviewedSource: true), CancellationToken.None);
@@ -88,6 +163,40 @@ public class AgentTaskLandRequestTests
         accepted.RequestId.ShouldNotBe(first.RequestId);
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId)).State.ShouldBe(LandRequestState.Superseded);
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId)).SupersedesRequestId.ShouldBe(first.RequestId);
+        (await db.AgentTasks.SingleAsync(t => t.Id == helperId)).Status.ShouldBe(AgentTaskStatus.Canceled);
+    }
+
+    [Test]
+    public async Task C753_FailedMergeHelperReissuesConflictAndOwnerWarning()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var owner = await SeedSucceededWorktreeAsync(db);
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var accepted = await land.RequestAsync(owner.Id, Approve(), CancellationToken.None);
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
+        request.State = LandRequestState.NeedsResolution;
+        owner.Status = AgentTaskStatus.Blocked;
+        var helper = new AgentTask
+        {
+            Id = Guid.NewGuid(), RootTaskId = owner.RootTaskId, ParentTaskId = owner.Id,
+            Title = "merge helper", Goal = "resolve", Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Merge, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = owner.WorktreePath!, RepoPath = owner.RepoPath,
+            Status = AgentTaskStatus.Failed, ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
+        };
+        db.AgentTasks.Add(helper);
+        await db.SaveChangesAsync();
+
+        await MergeHelperOutcome.RecordUnresolvedAsync(db, helper, DateTime.UtcNow, CancellationToken.None);
+        await db.SaveChangesAsync();
+
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == owner.Id
+            && e.Type == AgentTaskEventType.Warning)).ShouldBe(1);
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.RequestId == request.Id
+            && n.Kind == LandNotificationKind.Conflict)).ShouldBe(1);
+        request.State.ShouldBe(LandRequestState.NeedsResolution);
     }
 
     [Test]

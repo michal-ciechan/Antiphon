@@ -2512,6 +2512,7 @@ public sealed class AgentTaskService
         if (trimmed is not null)
             task.FailureReason = trimmed;
         AddEvent(task.Id, AgentTaskEventType.Canceled, null, trimmed is null ? "Canceled." : "Canceled: " + trimmed, now);
+        await MergeHelperOutcome.RecordUnresolvedAsync(_db, task, now, ct);
         await _db.SaveChangesAsync(ct);
         if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
         // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.

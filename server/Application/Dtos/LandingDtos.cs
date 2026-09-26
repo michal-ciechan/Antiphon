@@ -92,7 +92,7 @@ public sealed record LandingVerification(bool Passed, string Description);
 
 /// <summary>CARD-0642 D-5. Only guarded cleanup reads <see cref="LandSourceSnapshot.IgnoredPaths"/>;
 /// the resolver and protocol ask for identity and the dirty check only.</summary>
-public enum LandInspectionScope { Full, IdentityAndStatus }
+public enum LandInspectionScope { Full, IdentityAndStatus, IdentityOnly }
 
 /// <summary>CARD-0642 D-7: git I/O spent inside one land operation scope. Thread-safe.</summary>
 public sealed class LandingGitProfile
