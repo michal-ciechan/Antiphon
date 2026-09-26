@@ -29,6 +29,30 @@ public sealed class ReportWriterTests
     }
 
     [Test]
+    public void tool_runs_are_not_reported_as_unlisted_none()
+    {
+        var model = Sample();
+        model.Unlisted = ["tool-run: baseline git fetch origin/master", "tool-run: baseline build bin-c723a"];
+        var text = ReportWriter.Markdown(model);
+        text.ShouldContain("tool-run: baseline git fetch origin/master");
+        text.ShouldContain("tool-run: baseline build bin-c723a");
+        text.ShouldNotContain("unlisted: none");
+    }
+
+    [Test]
+    public void empty_outputs_say_none()
+    {
+        var model = Sample();
+        model.ExitCode = 0;
+        model.Verdict = "GREEN";
+        model.OutputNames = [];
+        var text = ReportWriter.Markdown(model);
+        text.ShouldContain("outputs: none");
+        text.ShouldNotContain("outputs: deleted ");
+        text.ShouldNotContain("outputs: deleted\n");
+    }
+
+    [Test]
     public void json_carries_every_row_field()
     {
         using var doc = JsonDocument.Parse(ReportWriter.JsonText(Sample()));

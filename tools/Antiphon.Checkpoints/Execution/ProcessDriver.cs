@@ -9,16 +9,10 @@ public sealed class ProcessDriver : IDriver
     public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
     {
         var (fileName, arguments) = Resolve(request);
-        var psi = new ProcessStartInfo
-        {
-            FileName = fileName,
-            WorkingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
-                ? Environment.CurrentDirectory
-                : request.WorkingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
+        var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
+            ? Environment.CurrentDirectory
+            : request.WorkingDirectory;
+        var psi = CreateStartInfo(fileName, workingDirectory);
         foreach (var argument in arguments)
             psi.ArgumentList.Add(argument);
 
@@ -77,6 +71,17 @@ public sealed class ProcessDriver : IDriver
         {
         }
     }
+
+    public static ProcessStartInfo CreateStartInfo(string fileName, string workingDirectory) =>
+        new()
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
 
     private (string FileName, IReadOnlyList<string> Arguments) Resolve(DriverRequest request)
     {

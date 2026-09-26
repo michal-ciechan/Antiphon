@@ -196,10 +196,11 @@ three 600 s land runs).
 ### D-9. Reruns are named-only, once, method-scoped, and always printed
 
 `rerun.knownFlaky` (manifest) or `--known-flaky A.B,C.D` (CLI). After a red row, the failed names
-that appear in that list are rerun once in one method-scoped invocation
-(`/*/*/Class/Method` operands OR-combined); each is printed as `RERUN <Class.Method> first=Failed
-second=Passed|Failed`; the row line carries `reruns=1`; the first TRX stays `run.trx` and the rerun
-is `rerun-1.trx`; the row is green only when the rerun passed and nothing else failed. A failed
+that appear in that list are rerun once, one invocation per class
+(`/*/*/Class/(m1*)|(m2*)`; a bare `(m1)|(m2)` or a multi-class OR matches nothing on TUnit 1.44); each is printed as
+`RERUN <Class.Method> first=Failed second=Passed|Failed`; the row line carries `reruns=1`; the
+first TRX stays `run.trx` and each class rerun is `rerun-N.trx`; the row is green only when every
+rerun passed and nothing else failed. A failed
 name not in the list is never rerun. There is no standing repo list: known-flaky names are state
 that belongs in the brief or plan for that dispatch (bundle README: "anything that will be wrong
 tomorrow … belongs in the brief"). Rejected: rerun every failure once by default (the retry
@@ -591,7 +592,7 @@ substitute claims: the receipt is the waiter's exit code, not the `RUN … start
 - V-8: wait | tool unit | `WaitCommandTests` (`prints_a_heartbeat_per_interval`, `returns_75_with_progress_at_max_wait`, `prints_report_and_run_exit_when_done`, `returns_6_when_executor_died`) | scripted state files and liveness.
 - V-9: state store | tool unit | `RunStateStoreTests.readers_never_see_a_partial_file` | temp+rename observed.
 - V-10: detached executor | real process, Linux | `DetachedLauncherTests.executor_survives_its_starter` (`[ParallelLimiter<ProcessSpawnLimit>]`, `RequireLinux()`) | starter group killed, executor completes and writes `done`.
-- V-11: rerun policy | tool unit | `RerunPolicyTests` (`reruns_only_known_flaky_names_once`, `unlisted_failure_never_reruns`, `rerun_filter_is_method_scoped`, `row_green_only_when_rerun_passed_and_nothing_else_failed`, `rerun_lines_and_reruns_suffix`) | exactly one extra driver call with the OR-combined method filter.
+- V-11: rerun policy | tool unit | `RerunPolicyTests` (`reruns_only_known_flaky_names_once`, `unlisted_failure_never_reruns`, `rerun_filter_is_method_scoped`, `row_green_only_when_rerun_passed_and_nothing_else_failed`, `rerun_lines_and_reruns_suffix`) | one extra driver call per class, filter `/*/*/Class/(m1*)|(m2*)`.
 - V-12: baseline | tool unit | `BaselineComparerTests` (`classifies_inherited_introduced_new`, `adds_and_removes_the_detached_worktree_once_per_build`, `removes_worktree_when_build_fails`) | worktree commands in order.
 - V-13: evidence | tool unit | `EvidenceFolderTests` (`red_run_writes_failures_with_message_stack_stdout_and_commands`, `green_run_writes_report_only_and_removes_tool_copy`, `host_and_git_snapshots_present`) | files listed in D-12.
 - V-14: report | tool unit | `ReportWriterTests` (`block_layout_matches_d10`, `unlisted_is_none`, `json_carries_every_row_field`), `ReportMergerTests.latest_per_cp_wins_and_earlier_attempts_count_as_reruns`.
@@ -669,16 +670,19 @@ the `[Test]` methods named in the V-n rows above (argument-expanded rows per arg
 CP-1..CP-6 run through `scripts/run-checkpoint.ps1` (the tool does not exist until S1–S4 are green);
 CP-8 then runs CP-1..CP-6 again through the tool — those second runs are the dogfood, not
 unlisted runs. Pipes inside `Filter` cells are escaped for the table; the command line uses `|`.
+CP-2 Min is `16 linux / 15 windows` because `DetachedLauncherTests` skips off Linux.
+CP-7 runs the packed tool with `dotnet exec` on the installed assembly: cmd treats an unquoted
+`.antiphon/...` token as a command plus switches, and that dll entry point is the same on Windows and Linux.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c723a/` | tool-core | `/*/Antiphon.Tests.Checkpoints/(CheckpointManifestTests*)\|(CheckpointImportTests*)\|(TrxReportTests*)\|(CheckpointLineTests*)\|(ExitCodeTests*)\|(RowRunnerTests*)\|(BuildSlotClientTests*)/*` | V-1..V-5, V-16, V-17, R-5 | all listed, 0 failed | 45 | 6 |
-| CP-2 | S3-S4 | CP-1 | tool-engine | `/*/Antiphon.Tests.Checkpoints/(RunSchedulerTests*)\|(TimeoutTests*)\|(RunStateStoreTests*)\|(WaitCommandTests*)\|(ShadowCopyTests*)\|(DetachedLauncherTests*)/*` | V-6..V-10 | all listed, 0 failed (DetachedLauncherTests executes on Linux, skips elsewhere) | 16 | 4 |
-| CP-3 | S5-S6 | CP-1 | tool-evidence | `/*/Antiphon.Tests.Checkpoints/(RerunPolicyTests*)\|(BaselineComparerTests*)\|(EvidenceFolderTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)\|(OutputCleanupTests*)/*` | V-11..V-15 | all listed, 0 failed | 19 | 3 |
+| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c723a/` | tool-core | `/*/Antiphon.Tests.Checkpoints/(CheckpointManifestTests*)\|(CheckpointImportTests*)\|(TrxReportTests*)\|(CheckpointLineTests*)\|(ExitCodeTests*)\|(RowRunnerTests*)\|(BuildSlotClientTests*)\|(ProcessDriverTests*)/*` | V-1..V-5, V-16, V-17, R-5 | all listed, 0 failed | 45 | 6 |
+| CP-2 | S3-S4 | CP-1 | tool-engine | `/*/Antiphon.Tests.Checkpoints/(RunSchedulerTests*)\|(TimeoutTests*)\|(RunStateStoreTests*)\|(WaitCommandTests*)\|(ShadowCopyTests*)\|(DetachedLauncherTests*)\|(CheckpointAppTests*)/*` | V-6..V-10 | all listed, 0 failed (DetachedLauncherTests executes on Linux, skips elsewhere) | 16 linux / 15 windows | 4 |
+| CP-3 | S5-S6 | CP-1 | tool-evidence | `/*/Antiphon.Tests.Checkpoints/(RerunPolicyTests*)\|(BaselineComparerTests*)\|(EvidenceFolderTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)\|(OutputCleanupTests*)\|(RerunFilterHostTests*)/*` | V-11..V-15 | all listed, 0 failed | 19 | 3 |
 | CP-4 | S7 | CP-1 | doc-and-bundle-pins | `/*/Antiphon.Tests.Application/(CheckpointManifestDocumentationTests*)\|(InstructionBundleTests*)\|(VerificationRoundInstructionTests*)\|(ScopedVerificationInstructionTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(CommitOnSettleDocumentationTests*)/*` | V-18, R-2, R-3 | all listed, 0 failed | 60 | 3 |
 | CP-5 | S7 | CP-1 | contracts-and-script | `/*/*/(CheckpointToolProjectContractTests*)\|(DotnetToolManifestContractTests*)\|(RunCheckpointScriptTests*)/*` | V-19, R-1, R-4 | all listed, 0 failed | 21 | 5 |
 | CP-6 | S7 | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` (`-MinExecuted 1000`) | Final whole Unit lane | >= 1000 executed, 0 failed | 1000 | 4 |
-| CP-7 | S7 | n/a | pack-and-install | `dotnet pack tools/Antiphon.Checkpoints -o .antiphon/c723-pack --nologo && dotnet tool install Antiphon.Checkpoints --tool-path .antiphon/c723-pack/tp --add-source .antiphon/c723-pack && .antiphon/c723-pack/tp/antiphon-checkpoints --version` | V-20 | exit 0; a version line naming the SHA | n/a | 2 |
+| CP-7 | S7 | n/a | pack-and-install | `dotnet pack tools/Antiphon.Checkpoints -o .antiphon/c723-pack --nologo && dotnet tool install Antiphon.Checkpoints --tool-path .antiphon/c723-pack/tp --add-source .antiphon/c723-pack && dotnet exec .antiphon/c723-pack/tp/.store/antiphon.checkpoints/1.0.0/antiphon.checkpoints/1.0.0/tools/net9.0/any/Antiphon.Checkpoints.dll --version` | V-20 | exit 0; a version line naming the SHA | n/a | 2 |
 | CP-8 | S7 | n/a (the tool builds `bin-c723a/` itself) | dogfood | `timeout 590 dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-25-card-0723-checkpoint-runner-plan.md --rows CP-1,CP-2,CP-3,CP-4,CP-5,CP-6 --baseline origin/master --results-root .antiphon/c723-dogfood --max-wait 570s`, then `… wait --latest --max-wait 570s` until the exit is not 75 | V-21, D-1, D-4..D-8, D-13 | one `--- checkpoint report ---` block with six green CP lines, `unlisted: none`, exit 0, `state.json` history showing two rows in flight at once, `bin-c723a/` absent afterwards; paste the block in the Code report | n/a | 12 |
 
 Round 2 rows (dispatched separately): CP-R2-1 `tests/Antiphon.Tests -> bin-c723b/`

@@ -43,7 +43,9 @@ public static class ReportWriter
         var red = model.Rows.Count - green - skipped;
         text.AppendLine(
             $"wall: {Format(model.WallSeconds)}  sequential-equivalent: {Format(model.SequentialEquivalentSeconds)}  builds: {model.Builds.Count}  rows: {green} green {red} red {skipped} skipped");
-        if (model.ExitCode == 0)
+        if (model.OutputNames.Count == 0)
+            text.AppendLine("outputs: none");
+        else if (model.ExitCode == 0)
             text.AppendLine("outputs: deleted " + string.Join(", ", model.OutputNames));
         else
             text.AppendLine($"outputs: kept {string.Join(", ", model.OutputNames)} (red run) -> dotnet run --project tools/Antiphon.Checkpoints -- clean --run {model.RunId}");

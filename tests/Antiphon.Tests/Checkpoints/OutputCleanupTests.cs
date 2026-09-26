@@ -63,6 +63,24 @@ public sealed class OutputCleanupTests
         Directory.Exists(young).ShouldBeTrue();
     }
 
+    [Test]
+    public void evidence_under_antiphon_survives_and_dry_run_says_would_delete()
+    {
+        var root = Tree();
+        var evidence = Path.Combine(root, ".antiphon", "checkpoints", "run", "builds", "bin-c723a");
+        Directory.CreateDirectory(evidence);
+        File.WriteAllText(Path.Combine(evidence, "build.log"), "log");
+        var dry = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, dryRun: true);
+        dry.Deleted.ShouldContain(path => path.EndsWith("bin-c723a", StringComparison.Ordinal) && !path.Contains(".antiphon", StringComparison.Ordinal));
+        OutputCleanup.DeletedLine(true, dry.Deleted[0]).ShouldStartWith("would delete ");
+        OutputCleanup.DeletedLine(false, dry.Deleted[0]).ShouldStartWith("deleted ");
+        Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeTrue();
+        var deleted = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, dryRun: false);
+        deleted.Deleted.ShouldAllBe(path => !path.Contains(".antiphon", StringComparison.Ordinal));
+        File.Exists(Path.Combine(evidence, "build.log")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeFalse();
+    }
+
     private static string Tree()
     {
         var root = CheckpointFixtures.TempDir();

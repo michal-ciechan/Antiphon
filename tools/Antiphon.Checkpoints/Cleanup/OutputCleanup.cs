@@ -9,7 +9,7 @@ public sealed class CleanResult
 public static class OutputCleanup
 {
     // PC-4 drops "bin" from this list. Descending into bin/ would delete a nested owned name.
-    private static readonly string[] PruneNames = ["bin", "obj", "workspace", ".git", "node_modules"];
+    private static readonly string[] PruneNames = ["bin", "obj", "workspace", ".git", "node_modules", ".antiphon"];
 
     public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun)
     {
@@ -42,6 +42,9 @@ public static class OutputCleanup
 
         return deleted;
     }
+
+    public static string DeletedLine(bool dryRun, string path) =>
+        (dryRun ? "would delete " : "deleted ") + path;
 
     private static void DeleteMatches(string directory, HashSet<string> owned, bool dryRun, List<string> deleted)
     {

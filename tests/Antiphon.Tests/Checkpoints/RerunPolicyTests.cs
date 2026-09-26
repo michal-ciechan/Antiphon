@@ -45,11 +45,41 @@ public sealed class RerunPolicyTests
     [Test]
     public void rerun_filter_is_method_scoped()
     {
-        var filter = RerunPolicy.MethodFilter([
+        var filters = RerunPolicy.MethodFilters([
             "Antiphon.Tests.Sample.alpha",
-            "Antiphon.Tests.Other.beta",
+            "Antiphon.Tests.Sample.beta",
+            "Antiphon.Tests.Other.gamma",
         ]);
-        filter.ShouldBe("/*/*/Sample/alpha|/*/*/Other/beta");
+        filters.ShouldBe([
+            "/*/*/Sample/(alpha*)|(beta*)",
+            "/*/*/Other/gamma",
+        ]);
+    }
+
+    [Test]
+    public async Task rerun_invokes_once_per_class()
+    {
+        var alpha = "Antiphon.Tests.Sample.alpha";
+        var beta = "Antiphon.Tests.Sample.beta";
+        var gamma = "Antiphon.Tests.Other.gamma";
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            var file = CheckpointFixtures.TrxFile(request);
+            if (file.Contains("rerun-", StringComparison.Ordinal))
+                CheckpointFixtures.WriteResults(file, (alpha, "Passed"), (beta, "Passed"), (gamma, "Passed"));
+            else
+                CheckpointFixtures.WriteResults(file, (alpha, "Failed"), (beta, "Failed"), (gamma, "Failed"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        var result = await Run(driver, [alpha, beta, gamma]);
+        result.ExitCode.ShouldBe(0);
+        result.Reruns.ShouldBe(1);
+        var reruns = driver.Calls.Where(CheckpointFixtures.IsRun).Skip(1).ToList();
+        reruns.Count.ShouldBe(2);
+        reruns[0].Arguments.ShouldContain("/*/*/Sample/(alpha*)|(beta*)");
+        reruns[1].Arguments.ShouldContain("/*/*/Other/gamma");
     }
 
     [Test]
