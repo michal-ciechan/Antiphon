@@ -55,7 +55,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         PhoneHomeLimits? limits = null,
         Action<DbContextOptionsBuilder>? configureDbContext = null,
         TimeSpan? shutdownTimeout = null,
-        PhoneHomeRunnerSettings? configured = null)
+        PhoneHomeRunnerSettings? configured = null,
+        IRunnerEligibilityObserver? observer = null)
     {
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -107,7 +108,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             settings,
             connectionString is null ? new EmptyScopeFactory() : sp.GetRequiredService<IServiceScopeFactory>(),
             clock ?? TimeProvider.System,
-            inventoryLogger: sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>()));
+            inventoryLogger: sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>(),
+            observer: observer));
         if (connectionString is not null)
             builder.Services.AddScoped<IRunnerStateStore, DbRunnerStateStore>();
         else

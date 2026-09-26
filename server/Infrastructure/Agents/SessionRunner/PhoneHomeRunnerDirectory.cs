@@ -14,7 +14,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
+public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerEligibilitySnapshotSource
 {
     public const string LocalRunnerId = PhoneHomeProtocol.LocalRunnerId;
 
@@ -28,6 +28,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     private readonly Dictionary<string, RunnerSlot> _slots = new(StringComparer.Ordinal);
     private readonly ILogger _logger;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
+    private readonly IRunnerEligibilityObserver? _observer;
 
     public PhoneHomeRunnerDirectory(
         ISessionRunnerClient local,
@@ -36,8 +37,10 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         TimeProvider clock,
         // CARD-0604 G-21: absent, a remote spill is typed whole rather than written anywhere.
         Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null,
-        ILogger<PhoneHomeRunnerDirectory>? inventoryLogger = null)
+        ILogger<PhoneHomeRunnerDirectory>? inventoryLogger = null,
+        IRunnerEligibilityObserver? observer = null)
     {
+        _observer = observer;
         _spills = spills;
         _local = local;
         _settings = settings.Value;
@@ -55,6 +58,12 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     }
 
     public ISessionRunnerClient Local => _local;
+
+    /// <summary>CARD-0726 TD-4: the observer <c>Program</c> passed. Tests prove the wire; nothing else reads it.</summary>
+    internal IRunnerEligibilityObserver? Observer => _observer;
+
+    public IReadOnlyList<RunnerEligibilitySnapshot> Snapshots() => [];
+
     public IReadOnlyList<string> KnownRunnerIds
     {
         get
