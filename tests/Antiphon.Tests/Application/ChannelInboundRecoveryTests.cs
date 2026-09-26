@@ -379,6 +379,30 @@ public sealed class ChannelInboundRecoveryTests
             q.SourceChannelInboundId != null).ToListAsync();
         owners.Count.ShouldBe(3);
         owners.Select(o => o.SourceChannelInboundId!.Value).Distinct().Count().ShouldBe(3);
+
+        var firstInbound = inbounds.Single(i => i.NativeMessageId == first.ChannelMessageId);
+        await using (var duplicateNative = Db(schema.ConnectionString))
+        {
+            duplicateNative.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = firstInbound.Provider,
+                ConversationId = firstInbound.ConversationId,
+                NativeMessageId = firstInbound.NativeMessageId,
+                AcceptedAt = DateTime.UtcNow,
+            });
+            await Should.ThrowAsync<DbUpdateException>(() => duplicateNative.SaveChangesAsync());
+        }
+        await using (var duplicateOwner = Db(schema.ConnectionString))
+        {
+            duplicateOwner.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(), AgentSessionId = h.SessionId,
+                SourceChannelInboundId = firstInbound.Id,
+                Body = "duplicate source owner", Sequence = owners.Max(o => o.Sequence) + 1,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await Should.ThrowAsync<DbUpdateException>(() => duplicateOwner.SaveChangesAsync());
+        }
     }
 
     [Test]
@@ -723,6 +747,35 @@ public sealed class ChannelInboundRecoveryTests
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         await using var verify = Db(schema.ConnectionString);
         (await verify.ChannelInbounds.SingleAsync(i => i.NativeMessageId == inbound.ChannelMessageId)).QueueMessageId.ShouldNotBeNull();
+
+        await using var failedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var failed = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = failedSchema.ConnectionString, ClockSpeed = 20,
+            Bridge = Settings(timeout: 90), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        var failedChat = await failed.BindChannelAsync();
+        await using (var setup = Db(failedSchema.ConnectionString))
+            await setup.AgentSessions.Where(s => s.Id == failed.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+        failed.Provider.GetRequiredService<AgentSessionLaunchQueue>().TryRegister(failed.SessionId).ShouldBeTrue();
+        var failedMessage = Message(failedChat, Guid.NewGuid().ToString("N"), "terminal launch failure");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var waiting = Bridge(failed).HandleInboundAsync(failedMessage, Ct);
+        await Task.Delay(50);
+        failed.Adapter.SentInput.ShouldBeEmpty();
+        await using (var setup = Db(failedSchema.ConnectionString))
+            await setup.AgentSessions.Where(s => s.Id == failed.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Failed));
+        await waiting.WaitAsync(TimeSpan.FromSeconds(8));
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3),
+            "a known failed launch must stop within one poll, before the 90-second wake deadline");
+        await using var failedRead = Db(failedSchema.ConnectionString);
+        (await failedRead.ChannelInbounds.SingleAsync(i => i.NativeMessageId == failedMessage.ChannelMessageId))
+            .QueueMessageId.ShouldBeNull();
+        (await failedRead.AgentIncidents.CountAsync(i => i.AgentId == failed.AgentId
+            && i.FailureReason == "ChannelWakeTimeout" && i.Severity == AlertSeverity.Critical)).ShouldBe(1);
+        failed.Adapter.SentInput.ShouldBeEmpty();
     }
 
     [Test]
@@ -735,7 +788,8 @@ public sealed class ChannelInboundRecoveryTests
             PreserveDatabaseOnDispose = true,
         });
         var chat = await h.BindChannelAsync();
-        var body = "complete marked body " + new string('z', 240) + " DISTINCT TAIL";
+        var marker = $"[antiphon-channel:{Guid.NewGuid():N}]";
+        var body = marker + " complete marked body " + new string('z', 240) + " DISTINCT TAIL";
         var id = await h.SeedPendingMessageAsync(body, origin: QueuedMessageOrigin.Channel,
             conversationKey: $"telegram:{chat}", deliveryAttempts: 3);
         await h.Queue.FlushSessionAsync(h.SessionId, Ct);
@@ -746,6 +800,41 @@ public sealed class ChannelInboundRecoveryTests
         h.Adapter.SentInput.ShouldBeEmpty();
         (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId &&
             t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains("DISTINCT TAIL"))).ShouldBe(0);
+
+        var baseline = await h.CurrentTranscriptMaxSequenceAsync();
+        var wrongMarker = body.Replace(marker, "[antiphon-channel:00000000000000000000000000000000]", StringComparison.Ordinal);
+        var falseRecords = new[]
+        {
+            new SessionRunnerTranscriptEvent(h.SessionId, baseline + 1, TranscriptKinds.AssistantText,
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "assistant", body,
+                null, null, null, null, null),
+            new SessionRunnerTranscriptEvent(h.SessionId, baseline + 2, TranscriptKinds.UserPrompt,
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", wrongMarker,
+                null, null, null, null, null),
+        };
+        h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, falseRecords, baseline + 2));
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+        await h.Queue.OnTurnEndAsync(h.SessionId, Ct);
+        await using (var falseRead = Db(schema.ConnectionString))
+        {
+            var pending = await falseRead.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == id);
+            pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+            pending.DeliveryAttempts.ShouldBe(3);
+        }
+        h.Adapter.SentInput.ShouldBeEmpty();
+
+        var actual = new SessionRunnerTranscriptEvent(h.SessionId, baseline + 3, TranscriptKinds.UserPrompt,
+            Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", body,
+            null, null, null, null, null);
+        h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [.. falseRecords, actual], baseline + 3));
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+        await h.Queue.OnTurnEndAsync(h.SessionId, Ct);
+        await using var finalRead = Db(schema.ConnectionString);
+        var confirmed = await finalRead.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == id);
+        confirmed.Status.ShouldBe(QueuedMessageStatus.Sent);
+        confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        confirmed.DeliveryAttempts.ShouldBe(3);
+        h.Adapter.SentInput.ShouldBeEmpty();
     }
 
     private sealed class QueueMappingFault : SaveChangesInterceptor
