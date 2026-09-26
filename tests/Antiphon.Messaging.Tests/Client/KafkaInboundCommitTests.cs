@@ -77,6 +77,30 @@ public sealed class KafkaInboundCommitTests
             await e.Current.AcknowledgeAsync("accepted");
         }
         fake.AcknowledgedCount.ShouldBe(1);
+
+        var (rebalanceTopic, rebalanceGroup) = await CreateTopicAsync();
+        await ProduceAsync(rebalanceTopic, 0, "revoked delivery");
+        Action? revoke = null;
+        var rebalanceSettings = Options.Create(new AntiphonMessagingOptions
+        {
+            BootstrapServers = _broker!.GetBootstrapAddress(),
+            InboundTopic = rebalanceTopic, ConsumerGroup = rebalanceGroup,
+        });
+        var rebalanceClient = new KafkaAntiphonMessagingConsumer(rebalanceSettings,
+            NullLogger<KafkaAntiphonMessagingConsumer>.Instance, (config, callback) =>
+            {
+                revoke = callback;
+                return new ConsumerBuilder<string, string>(config).Build();
+            });
+        await using (var e = rebalanceClient.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            revoke.ShouldNotBeNull();
+            revoke(); // broker revoked the assignment before this handle was acknowledged
+            await Should.ThrowAsync<InvalidOperationException>(
+                async () => await e.Current.AcknowledgeAsync("accepted", timeout.Token));
+        }
+        (await CommittedAsync(rebalanceTopic, rebalanceGroup, 0)).ShouldBeLessThanOrEqualTo(0);
     }
 
     [Test]
