@@ -88,7 +88,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     /// </summary>
     public ISessionRunnerClient ResolveForNewWork(string? runnerId)
     {
-        var client = Resolve(runnerId);
+        // A rebuilt directory has the row and no socket. The drain refusal has to win over
+        // "unavailable", or a restart would report a drained runner as merely offline.
         var state = DrainState(runnerId);
         if (state?.RetiredAt is not null)
             throw new ServiceUnavailableException(
@@ -96,7 +97,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
         if (state is { Draining: true })
             throw new ServiceUnavailableException(
                 $"Phone-home runner '{runnerId}' is draining.", PhoneHomeProblemTypes.RunnerDraining);
-        return client;
+        return Resolve(runnerId);
     }
 
     public ISessionRunnerClient Resolve(string? runnerId)
