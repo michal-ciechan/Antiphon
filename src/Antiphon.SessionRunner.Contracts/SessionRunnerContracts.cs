@@ -167,6 +167,9 @@ public static class RunnerCapabilityFeatures
 
     /// <summary>CARD-0710. This runner refuses a specific platform before creating a session.</summary>
     public const string RequiredPlatformV1 = RunnerPlatformWire.Feature;
+
+    /// <summary>CARD-0718. This runner samples host stats and answers <c>/host-stats</c>.</summary>
+    public const string HostStatsV1 = "hostStatsV1";
 }
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
@@ -998,3 +1001,54 @@ public static class SessionRunnerEventNames
     // CARD-0162: herdr agent_status change. Additive — ParseEvent returns null on unknown names.
     public const string SessionAgentStatus = "SessionAgentStatus";
 }
+
+/// <summary>CARD-0718. One window's avg/max. Null when the window holds no samples of that metric.</summary>
+public sealed record RunnerHostRollupDto(double Avg, double Max);
+
+/// <summary>CARD-0718. Rollups for one window. A missing metric is null, never zero.</summary>
+public sealed record RunnerHostWindowRollups(
+    RunnerHostRollupDto? CpuPercent,
+    RunnerHostRollupDto? Load1,
+    RunnerHostRollupDto? MemoryUsedBytes);
+
+public sealed record RunnerHostDiskDto(string Path, long FreeBytes, long TotalBytes);
+
+public sealed record RunnerHostProcessDto(string Name, string? SessionId, double? CpuPercent, long WorkingSetBytes);
+
+/// <summary>CARD-0718. The newest sample. Null fields are "cannot say", never a fabricated zero.</summary>
+public sealed record RunnerHostCurrentDto(
+    double? CpuPercent,
+    double? Load1,
+    double? Load5,
+    double? Load15,
+    long? MemoryUsedBytes,
+    long? MemoryAvailableBytes,
+    long? MemoryTotalBytes,
+    long? SwapUsedBytes,
+    long? SwapTotalBytes,
+    IReadOnlyList<RunnerHostDiskDto> Disks,
+    int? ProcessCount,
+    IReadOnlyList<RunnerHostProcessDto> Processes);
+
+/// <summary>CARD-0718. Build-slot broker listing folded into the host sample. In-process on the runner.</summary>
+public sealed record RunnerHostBuildSlotsDto(int Occupied, int Budget, int Waiters, long? AvailableMb);
+
+/// <summary>CARD-0718. <c>GET /host-stats</c> and phone-home operation 29.</summary>
+public sealed record RunnerHostStatsDto(
+    DateTimeOffset? At,
+    int IntervalSeconds,
+    int RetentionMinutes,
+    int? Cores,
+    RunnerHostCurrentDto? Current,
+    IReadOnlyDictionary<string, RunnerHostWindowRollups> Rollups,
+    RunnerHostBuildSlotsDto? BuildSlots);
+
+/// <summary>CARD-0718. One series point. <paramref name="T"/> is the runner clock.</summary>
+public sealed record RunnerHostSeriesPoint(DateTimeOffset T, double V);
+
+/// <summary>CARD-0718. <c>GET /host-stats/series</c> and phone-home operation 30.</summary>
+public sealed record RunnerHostSeriesDto(
+    string Metric,
+    string Window,
+    int IntervalSeconds,
+    IReadOnlyList<RunnerHostSeriesPoint> Points);

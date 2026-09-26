@@ -48,12 +48,14 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
 {
     var runtime = sp.GetRequiredService<SessionRunnerRuntime>();
     var build = RunnerBuildIdentity.Resolve();
+    var hostStatsOptions = sp.GetRequiredService<IOptions<HostStatsSettings>>().Value;
     return new PhoneHomeCommandDispatcher(
         new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto(
             build.InformationalVersion, build.CommitSha, build.AssemblyWriteTimeUtc, build.ProcessStartUtc)),
         sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
         sp.GetRequiredService<IProviderAuthProbe>(),
-        sp.GetRequiredService<ILogger<PhoneHomeCommandDispatcher>>());
+        sp.GetRequiredService<ILogger<PhoneHomeCommandDispatcher>>(),
+        hostStatsOptions.Enabled ? sp.GetRequiredService<IHostStatsSource>() : null);
 });
 // CARD-0628 D-7 / CARD-0647 / CARD-0660: the Claude, Grok and Codex probes behind one router.
 builder.Services.AddProviderAuthProbes();
@@ -96,6 +98,8 @@ builder.Services.AddHostedService<SessionCpuWatchdogService>();
 // CARD-0589 D-3: the host build/test driver budget (/build-slots). Registered after the liveness probe and
 // TimeProvider above, so the broker reaps with the same probe the session sweep uses.
 builder.Services.AddBuildSlotBroker(builder.Configuration);
+// CARD-0718: host samples stay on this process. The server pulls /host-stats; nothing is written per sample.
+builder.Services.AddHostStats(builder.Configuration);
 // CARD-0162: herdr event pump — always registered; inert unless SessionRunner:Herdr:Enabled.
 // Holds a pipe only while ≥ 1 live herdr session exists. Events are verification triggers, never evidence.
 builder.Services.AddHostedService<HerdrEventPumpService>();
@@ -202,7 +206,7 @@ app.MapHealthChecks("/health");
 // environment: runner and server are separate processes with separate config, so a server that
 // assumed they matched would size bodies for a pty that cannot carry them. Resolved live rather
 // than captured at startup so a runner restarted with a different flag reports the truth.
-app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunnerRuntime runtime) =>
+app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, IOptions<HostStatsSettings> hostStats, SessionRunnerRuntime runtime) =>
 {
     // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
     // herdr is advertised only when SessionRunner:Herdr:Enabled is true — an Enabled=false
@@ -216,12 +220,14 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, SessionRunne
         : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1];
     if (runtime.VerificationCustodyBackend is not null)
         features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
+    features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
     return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
 // CARD-0589: build/test driver leases for scripts/run-checkpoint.ps1, scripts/build-slot.ps1 and the land verifier.
 app.MapBuildSlotRoutes();
+app.MapHostStatsRoutes();
 app.MapHerdrPaneDisposalRoutes();
 
 app.MapSessionGetRoute();

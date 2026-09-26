@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Time.Testing;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -1036,6 +1037,72 @@ public class PhoneHomeCommandDispatcherTests
     private static PhoneHomeFrame ProviderAuth(string provider) =>
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ProviderAuth,
             System.Text.Json.JsonSerializer.SerializeToElement(new PhoneHomeProviderAuthRequest(provider), PhoneHomeFraming.Json));
+
+    [Test]
+    public async Task Host_stats_operation_answers_the_store_snapshot()
+    {
+        var (dispatcher, store) = HostStatsDispatcher();
+        var frame = await dispatcher.DispatchAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.HostStats), CancellationToken.None);
+        frame.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var dto = frame.Payload!.Value.Deserialize<RunnerHostStatsDto>(PhoneHomeFraming.Json);
+        var expected = store.Snapshot();
+        dto.ShouldNotBeNull();
+        dto.At.ShouldBe(expected.At);
+        dto.Rollups["1m"].CpuPercent!.Avg.ShouldBe(expected.Rollups["1m"].CpuPercent!.Avg);
+    }
+
+    [Test]
+    public async Task Host_stats_series_answers_points_and_rejects_a_bad_window()
+    {
+        var (dispatcher, _) = HostStatsDispatcher();
+        var good = await dispatcher.DispatchAsync(HostStatsSeriesFrame("cpu", "1m"), CancellationToken.None);
+        good.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var series = good.Payload!.Value.Deserialize<RunnerHostSeriesDto>(PhoneHomeFraming.Json);
+        series.ShouldNotBeNull();
+        series.Points.Count.ShouldBe(2);
+
+        var bad = await dispatcher.DispatchAsync(HostStatsSeriesFrame("cpu", "2h"), CancellationToken.None);
+        bad.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        bad.StatusCode.ShouldBe(400);
+        bad.ErrorCode.ShouldBe(HostStatsRoutes.InvalidQueryCode);
+    }
+
+    [Test]
+    public async Task Host_stats_without_the_seam_is_unsupported()
+    {
+        var dispatcher = new PhoneHomeCommandDispatcher(new RecordingRuntime(), new PhoneHomeSettings
+        {
+            Enabled = true,
+            AllowedCwd = "/work",
+            Capacity = 1,
+        });
+        foreach (var operation in new[] { PhoneHomeOperation.HostStats, PhoneHomeOperation.HostStatsSeries })
+        {
+            var frame = await dispatcher.DispatchAsync(new PhoneHomeFrame(
+                PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), operation), CancellationToken.None);
+            frame.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+            frame.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
+        }
+    }
+
+    private static (PhoneHomeCommandDispatcher Dispatcher, HostStatsStore Store) HostStatsDispatcher()
+    {
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero));
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        store.Add(HostStatsStoreTests.Sample(0, cpu: 10));
+        time.Advance(TimeSpan.FromSeconds(5));
+        store.Add(HostStatsStoreTests.Sample(1, cpu: 30) with { At = time.GetUtcNow() });
+        var dispatcher = new PhoneHomeCommandDispatcher(
+            new RecordingRuntime(),
+            new PhoneHomeSettings { Enabled = true, AllowedCwd = "/work", Capacity = 1 },
+            hostStats: store);
+        return (dispatcher, store);
+    }
+
+    private static PhoneHomeFrame HostStatsSeriesFrame(string metric, string window) =>
+        new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.HostStatsSeries,
+            JsonSerializer.SerializeToElement(new PhoneHomeHostSeriesRequest(metric, window), PhoneHomeFraming.Json));
 
     /// <summary>
     /// Holds every probe until <paramref name="expected"/> launches are inside it, so they all
