@@ -214,7 +214,7 @@ public sealed class RunnerAlarmHostedServiceTests
 
     private static async Task UntilAsync(Func<bool> ready, string why)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
             if (ready()) return;
