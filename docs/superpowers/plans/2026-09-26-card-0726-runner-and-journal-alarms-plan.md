@@ -136,7 +136,7 @@ Three new types:
   the `ZombieCensusState` shape): the current episodes and the last journal inspection, published
   as immutable snapshots (`Volatile.Read` / `Interlocked.Exchange`). Records:
   `RunnerOutageEpisode(RunnerId, DownSince, LastReason, RaisedAt?, PinnedOpenTasks, LiveSessions, NotifiedSessionIds)`;
-  `JournalFinding(Repository, CommonDirectory, Records: [(File, State, AgeAtInspection, ProcessId?)], InspectedAt)`.
+  `JournalFinding(Repository, CommonDirectory, Records: [(File, State, AgeAtInspection, ProcessId?, WrittenAt)], InspectedAt)`.
 - `RunnerAlarmCoordinator` (`server/Application/Services/RunnerAlarmCoordinator.cs`, scoped, pure
   apart from the database and the queue): `Task EvaluateRunnersAsync(now, ct)` and
   `Task EvaluateJournalsAsync(repositories, now, ct)`. It takes `IRunnerEligibilitySnapshotSource`
@@ -167,6 +167,14 @@ from D-5:
 | open, raised | true | any | resolve: drop the row, recovery note to `NotifiedSessionIds` (D-7), one Information log line with the total downtime |
 | open | any | true | close silently and remember the exclusion in the log at Debug; a raised episode still sends the recovery note, because those callers were told of an outage that is now explained |
 | none | true | any | nothing |
+
+R1 review (task `9f69ac66`) pins two points this table leaves open. A caller whose task is pinned
+after the raise gets one outage note on that same episode; "nothing else" on the raised row is the
+feed row, which refreshes the counts and the last reason and does not tell a caller already in
+`NotifiedSessionIds` a second time. `JournalFinding.Records` publishes each inspected record's
+file, state, age, process id and write time. A record that disappears between the directory read
+and its timestamp is omitted: `GetLastWriteTimeUtc` returns year 1601, and publishing that age
+would be a false stale Dead finding until the next inspection.
 
 Episodes live in memory. A desktop restart during an outage forgets the raised flag and the
 notified set; the first iteration opens a fresh episode with `DownSince = now`, so a runner that
