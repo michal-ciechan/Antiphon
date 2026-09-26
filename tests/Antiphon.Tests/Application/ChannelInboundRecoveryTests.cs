@@ -50,6 +50,18 @@ public sealed class ChannelInboundRecoveryTests
         AgentStartTimeoutSeconds = timeout, AgentReadyDelaySeconds = 0,
     };
 
+    private static void InstallTranscriptReceipt(BridgeQueueHarness h)
+    {
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            var record = new SessionRunnerTranscriptEvent(h.SessionId, 1, TranscriptKinds.UserPrompt,
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                null, null, null, null, null);
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], 1));
+            await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+        };
+    }
+
     private static async Task WaitForAsync(Func<Task<bool>> predicate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(8);
@@ -127,14 +139,7 @@ public sealed class ChannelInboundRecoveryTests
             ConnectionString = schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
             Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
-        recovered.Adapter.OnSubmitted = async submitted =>
-        {
-            var record = new SessionRunnerTranscriptEvent(session, 1, TranscriptKinds.UserPrompt,
-                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
-                null, null, null, null, null);
-            recovered.Runner.SetTranscript(new SessionRunnerTranscriptDto(session, [record], 1));
-            await recovered.Runtime.SyncTranscriptAsync(session, Ct);
-        };
+        InstallTranscriptReceipt(recovered);
         var recoveredBridge = Bridge(recovered);
         await recoveredBridge.StartAsync(Ct);
         await WaitForAsync(async () =>
@@ -150,6 +155,43 @@ public sealed class ChannelInboundRecoveryTests
         owner.Body.ShouldContain("[antiphon-channel:");
         (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == session &&
             t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(owner.Body))).ShouldBe(1);
+
+        await RecoveryTriggerAsync(signal: true);
+        await RecoveryTriggerAsync(signal: false);
+    }
+
+    private static async Task RecoveryTriggerAsync(bool signal)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, ClockSpeed = signal ? null : 5,
+            Bridge = Settings(timeout: 1), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        InstallTranscriptReceipt(h);
+        await using (var db = Db(schema.ConnectionString))
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+        var native = $"trigger-{signal}-{Guid.NewGuid():N}";
+        await Bridge(h).HandleInboundAsync(Message(chat, native, "recovered by worker trigger"), Ct);
+        var worker = Bridge(h);
+        await worker.StartAsync(Ct);
+        await WaitForAsync(() => Task.FromResult(worker.CompletedDrainIterations > 0));
+        await using (var db = Db(schema.ConnectionString))
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+        if (signal)
+            h.Provider.GetRequiredService<ChannelInboundWakeSignal>().Signal(h.AgentId);
+        await WaitForAsync(async () =>
+        {
+            await using var db = Db(schema.ConnectionString);
+            return await db.ChannelInbounds.AnyAsync(i => i.NativeMessageId == native && i.QueueMessageId != null)
+                && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text != null
+                    && t.Text.Contains("recovered by worker trigger"));
+        });
+        await worker.StopAsync(Ct);
     }
 
     [Test]
