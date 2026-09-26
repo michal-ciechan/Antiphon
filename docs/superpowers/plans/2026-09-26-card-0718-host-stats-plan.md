@@ -802,6 +802,18 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     `MemoryAvailableBytes <= MemoryTotalBytes`, `SwapTotalBytes >= MemoryTotalBytes` (the commit
     limit includes physical memory), `Load1` null (not 0), second `CpuPercent` in `[0, 100]`. Red:
     the Windows arm missing, or `GetSystemTimes` failure mapped to 0 instead of null.
+- **V-14: the sampler costs under 1 % of one core | runner process, OS CPU accounting | CP-4
+  (`scripts/measure-host-stats-overhead.ps1`, written by Code in S1) | `mean(on) − mean(off) < 1.0`
+  percentage points of one core.** The measurement reads the runner **process's**
+  `TotalProcessorTime` from the OS (`/proc/<pid>/stat` on Linux, the process handle on Windows,
+  both through .NET `Process`), not the sampler's own report of itself, so a sampler that
+  under-reports cannot pass it. It is a threshold measurement, not a mutation-backed test, and
+  not a stub: its input is independent of the code under test and it fails on a sampler that does
+  per-tick enumeration work D-6 deferred. Step 0's dry run is G-77's check (PC-77).
+- **V-15: both hosts appear live in the activated system and the page's push reaches a joined
+  client | live server + real SignalR | CP-11 | two entries, both `live`, `observedAt` advancing,
+  and two `HostStatsUpdated` receipts.** This is DP-4's recipient evidence (Delivery inventory).
+  Red-first: before land, `GET /api/hosts/stats` is 404 and the hub never sends the event.
 - **V-12** is listed above V-10 because it closes S2's server surface; numbering is creation order.
 
 ### Guards the regression
