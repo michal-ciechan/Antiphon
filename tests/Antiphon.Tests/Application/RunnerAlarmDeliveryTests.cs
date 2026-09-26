@@ -332,7 +332,8 @@ public sealed class RunnerAlarmDeliveryTests
     private static RunnerAlarmCoordinator NewCoordinator(AppDbContext db, FakeEligibilitySource source, RunnerAlarmState state,
         CompletionNoteFlushQueue flush, BridgeQueueHarness harness) =>
         new(source, new NeverExcluded(), state, new RepositoryChildJournalInspector(new LandingGit()), db,
-            new QueueRunnerAlarmNotifier(harness.Queue, flush), flush, Options.Create(new AlarmSettings()),
+            new QueueRunnerAlarmNotifier(harness.Queue, flush, NullLogger<QueueRunnerAlarmNotifier>.Instance), flush,
+            Options.Create(new AlarmSettings()),
             NullLogger<RunnerAlarmCoordinator>.Instance);
 
     private static async Task<Guid> SeedPinnedAsync(Rig rig, AgentTaskStatus status)

@@ -4,6 +4,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -19,7 +20,7 @@ public sealed class RunnerAlarmNotifierTests
     {
         await using var harness = await BridgeQueueHarness.CreateAsync();
         var flush = new DroppingFlushQueue(0);
-        var notifier = new QueueRunnerAlarmNotifier(harness.Queue, flush);
+        var notifier = new QueueRunnerAlarmNotifier(harness.Queue, flush, NullLogger<QueueRunnerAlarmNotifier>.Instance);
         const string header = "[runner server2 unavailable]";
         const string body = "two tasks are pinned";
 
