@@ -462,6 +462,9 @@ public sealed class AgentTaskLandService
         request.HoldingTaskId = null;
         request.HoldingTaskStatus = null;
         request.HeldSince = null;
+        // The durable request is the filter authority. Repair a stale task mirror at admission;
+        // a subsequent change while verification runs is rejected before publication.
+        task.LandVerifyFilter = request.VerifyFilter;
         if (request.HighestProgress < -1)
         {
             request.HighestProgress = -1;
