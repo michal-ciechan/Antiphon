@@ -231,12 +231,13 @@ recorded here so a fresh seat starts from it instead of being told again. The us
 session override it for that session; nothing below needs restating to apply. The delivered copy
 is the `orchestrator` bundle; this section carries the reasons.
 
-1. **One task per stage, stages in parallel.** Run at most one task in each stage role
-   (Investigate, Plan, TestDesign, Code, Mutation, Review) at a time, and let different stages
-   run concurrently — each in its own `-Worktree`, so they never serialise on the shared
-   checkout. Never two tasks in the same stage at once. Before dispatching a stage, read that
-   stage's in-flight row on `GET /api/agent-tasks/pipeline` (or `/orchestrator?tab=pipeline`),
-   not your memory of what you dispatched.
+1. **One task per stage, stages in parallel — except Code and Review, now fed to two (2026-09-26,
+   server2-default).** Run at most one task in each of Investigate, Plan, TestDesign and Mutation
+   at a time, and up to two in Code and up to two in Review, letting different stages run
+   concurrently — each in its own `-Worktree`, so they never serialise on the shared checkout.
+   Never a third task in Code or Review, and never two in any other stage. Before dispatching a
+   stage, read that stage's in-flight row on `GET /api/agent-tasks/pipeline` (or
+   `/orchestrator?tab=pipeline`), not your memory of what you dispatched.
 2. **On every completion, dispatch the named next stage.** Read `next=` and `handoff:` off the
    completion header (§1, CARD-0146). `next=unmarked` goes back to the same delegate for the
    missing block (§0's ladder); it is never guessed from the diff.
@@ -249,7 +250,10 @@ is the `orchestrator` bundle; this section carries the reasons.
    start it through Investigate/Plan toward Code. Already two: start no new Plan toward Code;
    Investigate, Plan and TestDesign for cards already in the pipe still run. This is CARD-0146
    D7's "planning should only stop if more than 1 card waiting to execute", with its pull side
-   stated as well.
+   stated as well. Since 2026-09-26 the depth of two can be entirely in-flight (Code's
+   `RecommendedInFlight` is now 2) with nothing queued or ready — that is not a signal to feed a
+   third; the depth-of-two ceiling on feeding and the 2-in-flight ceiling on dispatch are the same
+   number today but count different things, and neither one raises the other.
 5. **Same source area as an in-flight Code task: defer, even with a free Code slot.** A Worktree
    task whose scope intersects a running one is warned, not held (CARD-0063, preserved detail
    below), so nothing stops two Code tasks editing the same file and conflicting at merge. When a
@@ -404,17 +408,25 @@ Code's ordinary V/R, mandatory pre-land `Review`, and post-land Mutation's delib
 axes (`AgentTask.Stage` vs `AgentTask.NextStage`); neither is renamed to disambiguate, so read the
 column, not the word.
 
-**WIP defaults (documented rule, CARD-0146 D7, restated by CARD-0533 — dates are the operator
-instructions that fixed these, 2026-09-01/02 and 2026-09-13/14).** `RecommendedInFlight = 1` for
-every stage role, and that is the per-stage rule: one Investigate, one Plan, one TestDesign, one
-Code, one Mutation and one Review may all be in flight together, never two tasks in the same
-stage. The 2026-09-01 reading that the plan-side stages share one slot is superseded — they run
-concurrently, each in its own worktree. Code is fed to a depth of two (in flight + queued +
-ready); Plan toward Code holds at that depth ("planning should only stop if more than 1 card
-waiting to execute") and resumes below it. Alternate one complex/UI card with one medium/simple
-card, and prefer GitHub-linked cards. All of this is advisory — CARD-0147's create-time
-concurrency gate is the hard stop, this is the judgement call underneath it; the full rule set is
-§1's standing pipeline policy.
+**WIP defaults (documented rule, CARD-0146 D7, restated by CARD-0533, raised for Code/Review by
+the 2026-09-26 server2-default operator instruction — dates are the operator instructions that
+fixed these, 2026-09-01/02, 2026-09-13/14 and 2026-09-26).** `RecommendedInFlight = 2` for Code
+and Review, `= 1` for every other stage role: one Investigate, one Plan, one TestDesign, up to two
+Code, one Mutation and up to two Review may all be in flight together; still never two tasks in
+the same stage for Investigate/Plan/TestDesign/Mutation. The 2026-09-01 reading that the plan-side
+stages share one slot is superseded — they run concurrently, each in its own worktree. Code is fed
+to a depth of two (in flight + queued + ready) regardless of the Code role's own 2-in-flight
+allowance — those are two different counts, not one relaxed by the other; Plan toward Code holds
+at that depth ("planning should only stop if more than 1 card waiting to execute") and resumes
+below it. Alternate one complex/UI card with one medium/simple card, and prefer GitHub-linked
+cards. All of this is advisory — CARD-0147's create-time concurrency gate (`Delegation:MaxOpenTasks`,
+raised 3 -> 6 in the same 2026-09-26 change so 6 total open tasks fit the per-project absolute cap)
+is the hard stop, this is the judgement call underneath it; the full rule set is §1's standing
+pipeline policy. The 6-in-flight budget targets server2 (`PhoneHomeRunner:Runners:server2`
+capacity 10, unchanged); the desktop runner's own `delegatedTasks` capacity
+(`Delegation:MaxConcurrentTasks`, desktop-only per CARD-0653/0654) was lowered 7 -> 2 in the same
+change, not raised — it does not gate server2 concurrency at all, so it was never the lever for
+this policy.
 
 **A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
 of taste:

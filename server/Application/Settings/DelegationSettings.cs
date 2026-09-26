@@ -18,16 +18,27 @@ public sealed class DelegationSettings
     /// <summary>Recent-history window requested by delegations list clients unless they choose Show all.</summary>
     public int DefaultWindowDays { get; set; } = 7;
 
-    /// <summary>How many tasks may be Dispatched/Working at once across all roots.</summary>
-    public int MaxConcurrentTasks { get; set; } = 6;
+    /// <summary>
+    /// How many tasks may be Dispatched/Working at once across all roots. Desktop-only in
+    /// practice: the dispatcher's active-task query counts only rows with no <c>RunnerId</c>
+    /// (CARD-0653), so this is the desktop runner's declared <c>delegatedTasks</c> capacity shown
+    /// by <c>GET /api/session-runners</c>; a runner-bound (server2) task is capped separately by
+    /// that runner's declared capacity (<c>PhoneHomeRunner:Runners:*:Capacity</c>), not by this
+    /// value. Raised runner concurrency belongs in <see cref="MaxOpenTasks"/> and
+    /// <see cref="RolePolicyEntry.RecommendedInFlight"/> instead (2026-09-26 operator instruction,
+    /// desktop capacity lowered 7 -> 2 to make room for server2 to take over as the default).
+    /// </summary>
+    public int MaxConcurrentTasks { get; set; } = 2;
 
     /// <summary>
     /// CARD-0147: absolute create-time cap on non-specialist tasks in Queued, Dispatched, or
     /// Working, per project scope (<c>AgentTask.ProjectId</c>; tasks with no project scope form
     /// their own bucket). Distinct from <see cref="MaxConcurrentTasks"/> (the dispatcher process
-    /// ceiling). Must be a positive integer; there is always an absolute cap.
+    /// ceiling, desktop-only). Must be a positive integer; there is always an absolute cap.
+    /// Raised 3 -> 6 (2026-09-26 operator instruction) so a project can run 6 concurrent tasks on
+    /// server2 without hitting the per-project 409 <c>concurrency_limit</c> (axis: absolute).
     /// </summary>
-    public int MaxOpenTasks { get; set; } = 3;
+    public int MaxOpenTasks { get; set; } = 6;
 
     /// <summary>
     /// CARD-0659 import input only (CARD-0710 D-11). The first missing runtime-defaults row copies
@@ -331,9 +342,9 @@ public sealed class DelegationSettings
         ["Investigate"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Plan"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["TestDesign"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
-        ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 2 },
         ["Mutation"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
-        ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 2 },
         // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately
         // unset — the auto-trigger is disarmed by default (CARD-0158). Same pattern as Test below.
         ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
