@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -8,6 +9,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -631,6 +633,70 @@ public sealed class ChannelInboundRecoveryTests
         verifiedState.LivenessLatchedAt.ShouldNotBeNull();
         (await verify.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId && i.QueueMessageId == null)).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
+
+        await using var quotaSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        RecordingLaunchFactory? launchFactory = null;
+        await using var eligible = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = quotaSchema.ConnectionString, ClockSpeed = 10,
+            Bridge = Settings(timeout: 90), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            AgentExecutable = OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/true",
+            ConfigureServices = services =>
+            {
+                services.AddScoped<SubscriptionUsageReader>();
+                services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+                services.AddScoped<SubscriptionQuotaGate>();
+                services.AddSingleton<IAgentProtocolAdapterFactory>(sp => launchFactory = new RecordingLaunchFactory(
+                    sp.GetRequiredService<AgentSessionRuntime>(),
+                    (BridgeQueueHarness.EmptyRunnerClient)sp.GetRequiredService<ISessionRunnerClient>()));
+            },
+        });
+        var eligibleChat = await eligible.BindChannelAsync();
+        await using (var setup = Db(quotaSchema.ConnectionString))
+        {
+            await setup.AgentSessions.Where(s => s.Id == eligible.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            var agent = await setup.Agents.SingleAsync(a => a.Id == eligible.AgentId);
+            agent.PersistentSessionId = null;
+            var state = await setup.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == eligible.AgentId);
+            if (state is null)
+            {
+                state = new AgentSupervisionState { AgentId = eligible.AgentId };
+                setup.AgentSupervisionStates.Add(state);
+            }
+            state.ConsecutiveFailures = 2;
+            state.RestartBackoffFailures = 2;
+            var now = DateTime.UtcNow;
+            setup.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+            {
+                Id = Guid.NewGuid(), Provider = AgentKind.Raw,
+                SubscriptionKey = SubscriptionUsageKey.For(agent, AgentKind.Raw),
+                PlanLabel = "low", RemainingPercent = 3,
+                ResetsAt = now.AddHours(36), ObservedAt = now,
+                AgentSessionId = eligible.SessionId, SourceCommand = "/status",
+                ParseStatus = SubscriptionUsageParseStatus.Parsed, RawExcerpt = "3% remaining",
+            });
+            await setup.SaveChangesAsync();
+        }
+        var quotaMessage = Message(eligibleChat, $"quota-{Guid.NewGuid():N}", "quota override inbound body");
+        await Bridge(eligible).HandleInboundAsync(quotaMessage, Ct);
+        await eligible.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+            .WaitForIdleAsync(TimeSpan.FromSeconds(10), Ct);
+        await using var quotaCheck = Db(quotaSchema.ConnectionString);
+        var quotaInbound = await quotaCheck.ChannelInbounds.AsNoTracking()
+            .SingleAsync(i => i.NativeMessageId == quotaMessage.ChannelMessageId);
+        quotaInbound.QueueMessageId.ShouldNotBeNull();
+        var currentSession = Guid.Parse((await quotaCheck.Agents.SingleAsync(a => a.Id == eligible.AgentId)).PersistentSessionId!);
+        (await quotaCheck.TranscriptEntries.CountAsync(t => t.AgentSessionId == currentSession
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text != null
+            && t.Text.Contains("quota override inbound body"))).ShouldBe(1);
+        launchFactory.ShouldNotBeNull().Created.ShouldHaveSingleItem().Started.ShouldBeTrue();
+        (await quotaCheck.AgentIncidents.CountAsync(i => i.AgentId == eligible.AgentId
+            && i.Kind == AgentIncidentKind.SubscriptionQuotaOverridden)).ShouldBe(1);
+        var preserved = await quotaCheck.AgentSupervisionStates.AsNoTracking()
+            .SingleAsync(s => s.AgentId == eligible.AgentId);
+        preserved.ConsecutiveFailures.ShouldBe(2);
+        preserved.RestartBackoffFailures.ShouldBe(2);
     }
 
     [Test]
@@ -741,6 +807,28 @@ public sealed class ChannelInboundRecoveryTests
                 && Interlocked.Exchange(ref _armed, 0) == 1)
                 throw new InvalidOperationException("synthetic incident commit failure");
             return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed class RecordingLaunchFactory(
+        AgentSessionRuntime runtime, BridgeQueueHarness.EmptyRunnerClient runner) : IAgentProtocolAdapterFactory
+    {
+        public List<FakeAgentProtocolAdapter> Created { get; } = [];
+
+        public IAgentProtocolAdapter Create(AgentKind kind)
+        {
+            var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
+            adapter.OnSubmitted = async submitted =>
+            {
+                var sessionId = adapter.StartedSessionId!.Value;
+                var record = new SessionRunnerTranscriptEvent(sessionId, 1, TranscriptKinds.UserPrompt,
+                    Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                    null, null, null, null, null);
+                runner.SetTranscript(new SessionRunnerTranscriptDto(sessionId, [record], 1));
+                await runtime.SyncTranscriptAsync(sessionId, Ct);
+            };
+            Created.Add(adapter);
+            return adapter;
         }
     }
 }

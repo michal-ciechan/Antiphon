@@ -52,6 +52,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     {
         public bool AlwaysOn { get; init; } = true;
         public bool PreserveDatabaseOnDispose { get; init; }
+        public string? AgentExecutable { get; init; }
         public TimeProvider? TimeProvider { get; init; }
 
         /// <summary>
@@ -202,7 +203,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                     ["fake"] = new AgentDefinition
                     {
                         Kind = "Raw",
-                        Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                        Exe = options.AgentExecutable ?? Path.Combine(Environment.SystemDirectory, "cmd.exe"),
                     },
                 },
             }));
