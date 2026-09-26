@@ -522,6 +522,86 @@ public sealed class ChannelInboundRecoveryTests
             i.Severity == AlertSeverity.Critical)).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
         h.Messaging.SentReplies.ShouldBeEmpty();
+
+        foreach (var hold in new[] { "continuity", "suspended", "liveness" })
+        {
+            await using var holdSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var held = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = holdSchema.ConnectionString, Bridge = Settings(),
+                AlwaysOn = true, PreserveDatabaseOnDispose = true,
+            });
+            var heldChat = await held.BindChannelAsync();
+            await using (var setup = Db(holdSchema.ConnectionString))
+            {
+                await setup.AgentSessions.Where(s => s.Id == held.SessionId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+                var state = await setup.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == held.AgentId);
+                if (state is null)
+                {
+                    state = new AgentSupervisionState { AgentId = held.AgentId };
+                    setup.AgentSupervisionStates.Add(state);
+                }
+                var heldAt = DateTime.UtcNow.AddMinutes(-1);
+                if (hold == "continuity") state.ContinuityHeldAt = heldAt;
+                if (hold == "suspended") state.Suspended = true;
+                if (hold == "liveness") state.LivenessLatchedAt = heldAt;
+                await setup.SaveChangesAsync();
+            }
+            var heldMessage = Message(heldChat, $"{hold}-{Guid.NewGuid():N}", $"{hold} retained full body");
+            await Bridge(held).HandleInboundAsync(heldMessage, Ct);
+            await using var check = Db(holdSchema.ConnectionString);
+            var parked = await check.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.NativeMessageId == heldMessage.ChannelMessageId);
+            parked.EnvelopeJson.ShouldContain(heldMessage.Text!);
+            parked.QueueMessageId.ShouldBeNull();
+            (await check.AgentSessions.CountAsync(s => s.Cwd.StartsWith(held.TempRoot))).ShouldBe(1);
+            held.Adapter.SentInput.ShouldBeEmpty();
+            held.Adapter.Started.ShouldBeFalse();
+            var unchanged = await check.AgentSupervisionStates.AsNoTracking()
+                .SingleAsync(s => s.AgentId == held.AgentId);
+            if (hold == "continuity") unchanged.ContinuityHeldAt.ShouldNotBeNull();
+            if (hold == "suspended") unchanged.Suspended.ShouldBeTrue();
+            if (hold == "liveness") unchanged.LivenessLatchedAt.ShouldNotBeNull();
+        }
+
+        await using var capacitySchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var capacity = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = capacitySchema.ConnectionString, Bridge = Settings(),
+            AlwaysOn = true, PreserveDatabaseOnDispose = true,
+        });
+        var capacityChat = await capacity.BindChannelAsync();
+        await using (var setup = Db(capacitySchema.ConnectionString))
+        {
+            await setup.AgentSessions.Where(s => s.Id == capacity.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            foreach (var kind in new[] { AgentKind.Raw, AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex })
+                setup.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+                {
+                    Id = Guid.NewGuid(), Kind = kind, ModelAlias = ModelAlias.KindWide,
+                    Source = ModelAvailabilitySource.AutoDetected, DisabledUntil = null,
+                    HitAt = DateTime.UtcNow.AddMinutes(-1), Reason = "capacity unavailable",
+                });
+            await setup.SaveChangesAsync();
+        }
+        var capacityMessages = Enumerable.Range(0, 2)
+            .Select(i => Message(capacityChat, $"capacity-{i}-{Guid.NewGuid():N}", $"capacity retained body {i}"))
+            .ToArray();
+        foreach (var item in capacityMessages)
+            await Bridge(capacity).HandleInboundAsync(item, Ct);
+        await Bridge(capacity).DrainPendingAsync(Ct);
+        await using var capacityCheck = Db(capacitySchema.ConnectionString);
+        (await capacityCheck.ChannelInbounds.CountAsync(i => i.AgentId == capacity.AgentId
+            && i.EnvelopeJson != null && i.QueueMessageId == null)).ShouldBe(2);
+        (await capacityCheck.AgentIncidents.CountAsync(i => i.AgentId == capacity.AgentId
+            && i.Kind == AgentIncidentKind.ChannelReplyLost && i.FailureReason == "ProviderCapacity"
+            && i.Severity == AlertSeverity.Critical)).ShouldBe(1);
+        var notice = capacity.Messaging.SentReplies.ShouldHaveSingleItem();
+        notice.ConversationId.ShouldBe(capacityChat);
+        notice.ReplyHandle.ShouldBe(capacityChat);
+        notice.Text.ShouldContain("Your message is kept");
+        capacity.Adapter.SentInput.ShouldBeEmpty();
     }
 
     [Test]
