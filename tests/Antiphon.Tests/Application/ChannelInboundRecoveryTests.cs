@@ -211,6 +211,15 @@ public sealed class ChannelInboundRecoveryTests
             await Bridge(h).HandleInboundAsync(Message(chat, secondId, "line two tail"), Ct);
             await using var verify = Db(schema.ConnectionString);
             (await verify.ChannelInbounds.CountAsync(i => i.ConversationId == chat && i.QueueMessageId == null)).ShouldBe(2);
+            // Force the tie that a frozen clock or broker replay can produce. The old
+            // (AcceptedAt, random Id) order now places the second native message first.
+            var tiedAt = DateTime.UtcNow;
+            await verify.ChannelInbounds.Where(i => i.NativeMessageId == firstId)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.AcceptedAt, tiedAt)
+                    .SetProperty(i => i.Id, Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff")));
+            await verify.ChannelInbounds.Where(i => i.NativeMessageId == secondId)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.AcceptedAt, tiedAt)
+                    .SetProperty(i => i.Id, Guid.Parse("00000000-0000-0000-0000-000000000001")));
         }
         await using var recovered = await BridgeQueueHarness.CreateAsync(new()
         {
@@ -226,7 +235,7 @@ public sealed class ChannelInboundRecoveryTests
         });
         await using var db = Db(schema.ConnectionString);
         var members = await db.ChannelInbounds.Where(i => i.ConversationId == chat).OrderBy(i => i.AcceptedAt).ToListAsync();
-        members.Select(i => i.NativeMessageId).ToArray().ShouldBe(new[] { firstId, secondId });
+        members.Select(i => i.NativeMessageId).Order().ShouldBe(new[] { firstId, secondId }.Order());
         members.Select(i => i.QueueMessageId).Distinct().Count().ShouldBe(1);
         var owner = await db.SessionQueuedMessages.SingleAsync(q => q.Id == members[0].QueueMessageId);
         owner.Body.IndexOf("line one tail", StringComparison.Ordinal).ShouldBeLessThan(owner.Body.IndexOf("line two tail", StringComparison.Ordinal));
