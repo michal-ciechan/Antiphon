@@ -1004,3 +1004,68 @@ recording every `CreateTimer` due time and period; `UntilAsync` polls the publis
   repository's finding. Red: construct the directory without `observer:` in `Program.cs` -> fails
   at `Observer`; register the lease without its fence observer -> fails at the finding; omit the
   hosted-service registration -> fails at the count.
+
+**S4: attention and client** (`CP-8` red, `CP-9` green for the server class; `CP-10` red, `CP-11`
+green for the client file; `tests/Antiphon.Tests/Application/RunnerAlarmAttentionTests.cs`,
+`[Category("Integration")]`, isolated schema, `AttentionService` built as
+`DispatchHeldAttentionTests.cs:265-276` plus `alarms: state`, only rows of the two kinds asserted)
+
+- **V-17: a raised episode is one `Error` row and an unraised one is none | Integration |
+  `RunnerAlarmAttentionTests.a_raised_episode_is_one_error_row_and_an_unraised_one_is_none` | as
+  below.** State with a raised `server2` episode (`PinnedOpenTasks 3`, `LiveSessions 1`, reason
+  `transport_abort`, `NotifiedSessionIds` of two): exactly one item, `Kind == RunnerUnavailable`,
+  `Severity == Error`, `Title == "Runner server2 unavailable"`, `ConditionKey ==
+  "runner-unavailable:server2"`, headline containing `3 open task(s)` and `1 live session(s)`,
+  evidence containing `lastReason=transport_abort` and `notified=2`, `SinceUtc == DownSince`,
+  `Actions == [OpenDrawer]`, no task/session/agent id. State with only an unraised episode: no item
+  of the kind. Red: project every episode, raised or not -> fails at the unraised "no item".
+- **V-18: a journal finding with stale records is one `Error` row naming the recovery command |
+  Integration | `RunnerAlarmAttentionTests.a_journal_finding_is_one_error_row_naming_the_recovery_command`
+  | as below.** Finding A with two stale records and one `Alive` record: one item, `Kind ==
+  RepositoryChildJournalStale`, `Severity == Error`, `ConditionKey == "journal-stale:" + key`
+  (key = `Path.TrimEndingDirectorySeparator(Path.GetFullPath(common))`), headline starting `2 stale`,
+  evidence containing `recover-repository-children.ps1 -Repository ` + the repository path and
+  `-Execute -ConfirmDescendantsExited`, `SinceUtc` = the older stale record's write time. Finding B
+  with only an `Alive` record: no item for B. Findings for two repositories each with a stale
+  record: two items with distinct keys. Red: count every record instead of stale ones -> fails at
+  `2 stale`; project a finding with no stale record -> fails at B's "no item".
+- **V-19: no state means no rows, and the summary counts both kinds open | Integration |
+  `RunnerAlarmAttentionTests.no_state_means_no_rows_and_the_summary_counts_both_kinds_open` | as
+  below.** Service built without `alarms`: no item of either kind. With one raised episode and one
+  stale finding: `AttentionSummaryDto.From(dto).Open` is the no-state count plus 2. Red on the
+  skeleton at the `+ 2` (builders return `[]`); after S4 a PC maps either kind to a non-open
+  bucket -> fails at `+ 2`.
+- **V-20: the client knows both kinds and draws them as broken | client (vitest) |
+  `client/src/features/attention/attentionVisuals.test.ts`: `ALL_KINDS` gains `RunnerUnavailable`
+  and `RepositoryChildJournalStale`; the home-bucket `it.each` (`:90-98`) gains
+  `['RunnerUnavailable', 'Error', 'broken']` and `['RepositoryChildJournalStale', 'Error', 'broken']`
+  | all cases green.** The existing `maps every kind to a label, a colour, an icon and a hint`,
+  `lands every kind in a declared group` and the `unique == visualKeys` lockstep (`:266-268`) then
+  cover the two kinds; the new `it.each` cases assert
+  `ATTENTION_VISUALS[kind]` is defined and `homeBucketOf(item({ kind, severity: 'Error' })) ===
+  'broken'`. Red (the S4-tests commit: union and test lists updated, visuals not): the two new
+  `it.each` cases and `maps every kind ...` fail at `toBeDefined`. Label/colour/icon/hint strings are
+  D-6 copy, asserted non-empty only.
+
+### Guards the regression
+
+- **R-1: the observer seam changes no directory behaviour** | `MultiRunnerDirectoryTests` (7),
+  `MultiRunnerRecoveryTests` (8), `PhoneHomeDirectoryTests` (7), `DefaultRunnerEligibilityTests` (3):
+  25 executions, 0 failed (`CP-7`). Decisive: `MultiRunnerDirectoryTests`'s supersede/abort
+  recipe (`:79-93`) and `DefaultRunnerEligibilityTests`'s lease expiry (`:66-87`) keep their
+  eligibility answers with a recorder attached through MS-1's default-null path.
+- **R-2: the fence observer changes no lease behaviour** | `RepositoryMutationLeaseTests` (14
+  methods, 28 executions, 2 skipped on Linux by their own `SkipTestException`:
+  `C448_V28_ExitedRootKeepsItsJournalWhileADescendantOwnsOutput`,
+  `C448_V13_WindowsJunctionAndOtherProcessShareTheLease`), `RepositoryMutationLeaseDescribeTests`
+  (1), `RepositoryMutationLeaseOwnerTests` (6 methods, 8 executions): 37 results, 35 passed, 2
+  skipped, 0 failed (`CP-7`). Decisive: the C448/C661 fence-and-recover rows at
+  `RepositoryMutationLeaseTests.cs:505-600` still refuse and recover exactly as before.
+- **R-3: the optional `alarms` parameter and two builders change no existing row** |
+  `AttentionServiceTests` (partials `AttentionServiceTests.cs` 124, `AttentionServiceTests.C691.cs`
+  32, `AttentionServiceCommitRecoveryTests.cs` 9 executions) and `DispatchHeldAttentionTests` (11):
+  176 executions, 0 failed (`CP-12`), run with `TUNIT_MAX_PARALLEL_TESTS=1` as the plan set.
+- **R-4: the client's existing attention visuals stay green** | the 15 existing `it` blocks and
+  the four existing `it.each` cases of `attentionVisuals.test.ts` (`CP-11`).
+- **R-5: every new class declares its lane** | `TestLaneCategoryGuardTests` (1, `CP-7`) fails on
+  a new test class without `[Category]`.
