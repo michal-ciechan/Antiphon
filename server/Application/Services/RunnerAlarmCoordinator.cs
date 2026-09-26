@@ -292,15 +292,24 @@ public sealed class RunnerAlarmCoordinator(
                 continue;
             }
 
-            var row = await db.SessionQueuedMessages.AsNoTracking()
-                .Where(message => message.Id == rowId)
-                .Select(message => new { message.Status, message.DeliveryAttempts })
-                .SingleOrDefaultAsync(ct);
-            if (row is null || row.Status != QueuedMessageStatus.Pending)
-                continue;
-            kept.Add(note);
-            if (row.DeliveryAttempts == 0)
-                rehint.Add(rowId);
+            try
+            {
+                var row = await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(message => message.Id == rowId)
+                    .Select(message => new { message.Status, message.DeliveryAttempts })
+                    .SingleOrDefaultAsync(ct);
+                if (row is null || row.Status != QueuedMessageStatus.Pending)
+                    continue;
+                kept.Add(note);
+                if (row.DeliveryAttempts == 0)
+                    rehint.Add(rowId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A later note's read must not drop a row id an earlier retry already saved.
+                logger.LogWarning(ex, "Runner {RunnerId} recovery status read failed for {SessionId}", note.RunnerId, note.SessionId);
+                kept.Add(note);
+            }
         }
 
         pending.Clear();
