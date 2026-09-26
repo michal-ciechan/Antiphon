@@ -194,8 +194,8 @@ public sealed class AgentTaskLandTargetRaceFakeTests
             var notes = await db.AgentTaskLandNotifications.Where(n => n.RequestId == request.Id).ToListAsync();
             db.RemoveRange(notes);
             await db.SaveChangesAsync();
-            var terminal = await db.AgentTaskEvents.SingleAsync(e => e.Id == request.TerminalEventId);
-            db.Remove(terminal);
+            var spent = await db.AgentTaskEvents.SingleAsync(e => e.Id == request.TerminalEventId);
+            db.Remove(spent);
             request.IsPending = true;
             request.State = LandRequestState.Queued;
             request.TerminalEventId = null;
