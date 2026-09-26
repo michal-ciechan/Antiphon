@@ -114,6 +114,19 @@ public class AgentTaskLandRequestTests
         var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId);
         old.State = LandRequestState.NeedsResolution;
         task.Status = AgentTaskStatus.Blocked;
+        var conflicted = new AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = task.Id, SchemaVersion = 3,
+            Phase = LandPhase.Conflicted, Publication = LandPublicationOutcome.Unconfirmed,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            RepositoryPath = task.RepoPath!, WorktreePath = task.WorktreePath!,
+            SourceFullRef = "refs/heads/" + task.WorktreeBranch,
+            OriginalSourceSha = old.ExpectedSourceSha!,
+            TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+        };
+        db.AgentTaskLandings.Add(conflicted);
+        task.ActiveLandingId = conflicted.Id;
+        old.LandingOperationId = conflicted.Id;
         await db.SaveChangesAsync();
         var sha = new string('b', 40);
         var review = new StageOutcome
@@ -154,6 +167,7 @@ public class AgentTaskLandRequestTests
             (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId)).State
                 .ShouldBe(LandRequestState.NeedsResolution);
             (await db.AgentTasks.SingleAsync(t => t.Id == helperId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+            (await db.AgentTaskLandings.SingleAsync(o => o.Id == conflicted.Id)).Active.ShouldBeTrue();
             return;
         }
         var accepted = await land.RequestAsync(task.Id,
@@ -164,6 +178,7 @@ public class AgentTaskLandRequestTests
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId)).State.ShouldBe(LandRequestState.Superseded);
         (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId)).SupersedesRequestId.ShouldBe(first.RequestId);
         (await db.AgentTasks.SingleAsync(t => t.Id == helperId)).Status.ShouldBe(AgentTaskStatus.Canceled);
+        (await db.AgentTaskLandings.SingleAsync(o => o.Id == conflicted.Id)).Active.ShouldBeFalse();
     }
 
     [Test]
