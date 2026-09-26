@@ -147,6 +147,58 @@ public sealed class ChannelInboundRecoveryTests
     [Test]
     public async Task C593_AcceptanceAckAndQueueCommitCuts_AreIdempotent()
     {
+        await using (var ackSchema = await TestDbFixture.CreateIsolatedSchemaAsync())
+        {
+            var gate = new AcceptanceGate();
+            await using var hostedHarness = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = ackSchema.ConnectionString, Bridge = Settings(timeout: 5),
+                ClockSpeed = 20, AlwaysOn = false, PreserveDatabaseOnDispose = true,
+                ConfigureDbContext = options => options.AddInterceptors(gate),
+            });
+            var hostedChat = await hostedHarness.BindChannelAsync();
+            await using (var setup = Db(ackSchema.ConnectionString))
+                await setup.AgentSessions.Where(s => s.Id == hostedHarness.SessionId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+            var acceptedMessage = Message(hostedChat, "hosted-" + Guid.NewGuid().ToString("N"),
+                "full envelope before Kafka acknowledgement");
+            gate.PauseNext();
+            var hosted = Bridge(hostedHarness);
+            await hosted.StartAsync(Ct);
+            hostedHarness.Messaging.InjectInbound(acceptedMessage);
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            hostedHarness.Messaging.AcknowledgedCount.ShouldBe(0);
+            await using (var beforeCommit = Db(ackSchema.ConnectionString))
+            {
+                (await beforeCommit.ChannelInbounds.AnyAsync(i => i.NativeMessageId == acceptedMessage.ChannelMessageId)).ShouldBeFalse();
+                (await beforeCommit.ChatChannels.Where(c => c.ExternalId == hostedChat)
+                    .Select(c => c.MessageCount).SingleAsync()).ShouldBe(0);
+            }
+            gate.Release.TrySetResult(true);
+            await WaitForAsync(() => Task.FromResult(hostedHarness.Messaging.AcknowledgedCount == 1));
+            await using (var afterCommit = Db(ackSchema.ConnectionString))
+                (await afterCommit.ChannelInbounds.Where(i => i.NativeMessageId == acceptedMessage.ChannelMessageId)
+                    .Select(i => i.EnvelopeJson).SingleAsync()).ShouldContain(acceptedMessage.Text!);
+            hostedHarness.Adapter.SentInput.ShouldBeEmpty(); // slow wake has not completed
+            await hosted.StopAsync(Ct);
+
+            gate.FailNext();
+            var failedMessage = Message(hostedChat, "failed-" + Guid.NewGuid().ToString("N"),
+                "replay after acceptance failure");
+            var failedHost = Bridge(hostedHarness);
+            await failedHost.StartAsync(Ct);
+            hostedHarness.Messaging.InjectInbound(failedMessage);
+            await gate.Failed.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            hostedHarness.Messaging.AcknowledgedCount.ShouldBe(1);
+            await using (var failedRead = Db(ackSchema.ConnectionString))
+                (await failedRead.ChannelInbounds.AnyAsync(i => i.NativeMessageId == failedMessage.ChannelMessageId)).ShouldBeFalse();
+            await failedHost.StopAsync(Ct);
+            var replayHost = Bridge(hostedHarness);
+            await replayHost.StartAsync(Ct);
+            await WaitForAsync(() => Task.FromResult(hostedHarness.Messaging.AcknowledgedCount == 2));
+            await replayHost.StopAsync(Ct);
+        }
+
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var mappingFault = new QueueMappingFault();
         await using var h = await BridgeQueueHarness.CreateAsync(new()
@@ -399,6 +451,36 @@ public sealed class ChannelInboundRecoveryTests
                 && Interlocked.Exchange(ref _armed, 0) == 1)
                 throw new InvalidOperationException("synthetic journal mapping failure after queue preparation");
             return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed class AcceptanceGate : SaveChangesInterceptor
+    {
+        private int _mode;
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void PauseNext() => Interlocked.Exchange(ref _mode, 1);
+        public void FailNext() => Interlocked.Exchange(ref _mode, 2);
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context?.ChangeTracker.Entries<ChannelInbound>()
+                .Any(e => e.State == EntityState.Added) == true)
+            {
+                switch (Interlocked.Exchange(ref _mode, 0))
+                {
+                    case 1:
+                        Entered.TrySetResult(true);
+                        await Release.Task.WaitAsync(cancellationToken);
+                        break;
+                    case 2:
+                        Failed.TrySetResult(true);
+                        throw new InvalidOperationException("synthetic acceptance transaction failure");
+                }
+            }
+            return await base.SavingChangesAsync(eventData, result, cancellationToken);
         }
     }
 }
