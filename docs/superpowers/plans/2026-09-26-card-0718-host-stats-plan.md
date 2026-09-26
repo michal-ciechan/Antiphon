@@ -544,8 +544,9 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     are strictly ascending. Red: capacity `RetentionMinutes * 60 / IntervalSeconds` (+1), or
     returning slots in physical order without rotating from the head.
   - m3 `Rollups_match_hand_computed_avg_and_max_for_a_sawtooth`: 360 samples; `1m` avg 13.5
-    (i = 348..359 -> 8..19), max 19; `5m` (60 samples) avg 9.5, max 19; `30m` avg 9.5, max 19.
-    Red: `avg` computed as `Max`, or `max` taking the newest value.
+    (i = 348..359 -> 8..19), max 19; `5m` (60 samples) avg 9.5, max 19; `30m` avg 9.5, max 19;
+    and a second store holding i = 0..358 (newest value 18) has `5m` max 19. Red: `avg` computed
+    as `Max`, or `max` taking the newest value (the 359-sample assertion).
   - m4 `Partial_window_averages_only_the_samples_it_holds`: 24 samples (2 minutes, `cpu = i`);
     `5m` avg 11.5 over all 24, `15m` and `30m` the same, `1m` avg 17.5 over i = 12..23 (i = 12
     sits exactly on `now − 60 s` and is in). Red: dividing by the window's capacity (60, 180,
@@ -628,8 +629,10 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     `GET /host-stats` newest `At` = second sample's, `rollups["1m"].cpuPercent` non-null with avg
     of the two fake values. Red: the route serializing `store.Latest()` only (no rollups) or the
     first slot.
-  - m2 `Series_route_answers_points_in_window`: `?metric=cpu&window=5m` -> 2 points, ascending.
-    Red: ignoring the `window` query value.
+  - m2 `Series_route_answers_points_in_window`: three samples, the first 6 minutes before the
+    other two (fake clock advanced between `SampleOnceAsync` calls); `?metric=cpu&window=5m` -> 2
+    points, ascending, `window` echoed `5m`; `window=30m` -> 3. Red: ignoring the `window` query
+    value.
   - m3 `Bad_metric_or_window_is_400_problem`: `metric=bogus` and `window=2h` -> 400 with a
     `application/problem+json` body. Red: removing the route's validation (the store's
     `ArgumentException` surfaces as 500).
@@ -940,7 +943,7 @@ judges this list before land. Runner PCs use `tests/Antiphon.SessionRunner.Tests
 | PC-2 | `HostStatsStore.cs`: capacity `+ 1` | `HostStatsStoreTests.Ring_evicts_oldest_at_capacity_and_series_is_time_ordered` | `points.Count.ShouldBe(360)` after 361 |
 | PC-3 | `HostStatsStore.cs`: `Series` iterates slots `0..n` instead of from the head | same method as PC-2 | first point `At` = `At(1)` |
 | PC-4 | `HostStatsStore.cs`: `Avg = values.Max()` | `HostStatsStoreTests.Rollups_match_hand_computed_avg_and_max_for_a_sawtooth` | `1m` avg 13.5 |
-| PC-5 | `HostStatsStore.cs`: `Max = values[^1]` | same method as PC-4 | `5m` max 19 (newest value is 19 only by accident at 360: the method also asserts after 359 samples, newest 18) |
+| PC-5 | `HostStatsStore.cs`: `Max = values[^1]` | same method as PC-4 | the 359-sample store's `5m` max 19 (got 18) |
 | PC-6 | `HostStatsStore.cs`: divide by `window / interval` | `HostStatsStoreTests.Partial_window_averages_only_the_samples_it_holds` | `5m` avg 11.5 |
 | PC-7 | `HostStatsStore.cs`: cutoff `>` instead of `>=` | `HostStatsStoreTests.Window_boundary_includes_sixty_seconds_and_excludes_beyond` | the 60 s sample is in `1m` |
 | PC-8 | `HostStatsStore.cs`: cutoff `now − window − interval` | same method as PC-7 | the 60.001 s sample is not in `1m` |
@@ -966,13 +969,57 @@ judges this list before land. Runner PCs use `tests/Antiphon.SessionRunner.Tests
 | PC-28 | `HostStatsSamplerService.cs`: divide by `_interval` | same method as PC-27 | 41.67 at the 6 s gap |
 | PC-29 | `HostStatsSamplerService.cs`: remove the `Enabled` early return | `HostStatsSamplerTests.Disabled_sampler_never_calls_the_probe` | calls 0 |
 | PC-30 | `HostStatsRoutes.cs`: answer `store.Latest()` without rollups | `HostStatsEndpointTests.Host_stats_answers_newest_sample_and_one_minute_rollups` | `rollups["1m"]` non-null |
-| PC-31 | `HostStatsRoutes.cs`: pass `"30m"` instead of the query `window` | `HostStatsEndpointTests.Series_route_answers_points_in_window` | `window` echoed `5m` |
+| PC-31 | `HostStatsRoutes.cs`: pass `"30m"` instead of the query `window` | `HostStatsEndpointTests.Series_route_answers_points_in_window` | `5m` point count 2 (got 3) |
 | PC-32 | `HostStatsRoutes.cs`: remove the validation block | `HostStatsEndpointTests.Bad_metric_or_window_is_400_problem` | status 400 |
 | PC-33 | `HostStatsRoutes.cs`: map regardless of `Enabled` | `HostStatsEndpointTests.Disabled_host_stats_is_404` | status 404 |
 | PC-34 | `HostStatsRoutes.cs`: `CapabilityFeatures` appends unconditionally | `RunnerCapabilitiesTests.Host_stats_feature_is_advertised_only_when_enabled` | `ShouldNotContain("hostStatsV1")` |
 | PC-35 | `PhoneHomeCommandDispatcher.cs`: case 29 `Result(request, null)` | `PhoneHomeCommandDispatcherTests.Host_stats_operation_answers_the_store_snapshot` | payload `At` |
 | PC-36 | `PhoneHomeCommandDispatcher.cs`: case 30 without the `ArgumentException` catch | `PhoneHomeCommandDispatcherTests.Host_stats_series_answers_points_and_rejects_a_bad_window` | `StatusCode` 400 |
 | PC-37 | `PhoneHomeCommandDispatcher.cs`: null seam answers `Result` with null payload | `PhoneHomeCommandDispatcherTests.Host_stats_without_the_seam_is_unsupported` | `ErrorCode` unsupported |
+| PC-38 | `HostStatsCache.cs`: age from `dto.At` | `HostStatsCacheTests.Recorded_sample_projects_live` | state `live` |
+| PC-39 | `HostStatsCache.cs`: `age < StaleAfter` | `HostStatsCacheTests.Old_sample_projects_stale_with_the_same_values` | `live` at exactly 15000 ms |
+| PC-40 | `HostStatsCache.cs`: stale arm sets `Current = null` | same method as PC-39 | stale `current.cpuPercent` equals the recorded one |
+| PC-41 | `HostStatsCache.cs`: never-sampled host projects `new HostStatsCurrentDto()` | `HostStatsCacheTests.Unrecorded_disconnected_host_projects_offline_with_null_current` | `current` null |
+| PC-42 | `HostStatsCache.cs`: every failure kind -> `offline` | `HostStatsCacheTests.Unsupported_failure_projects_unsupported` | state `unsupported` |
+| PC-43 | `HostStatsCache.cs`: `Changed => true` | `HostStatsCacheTests.Changed_is_true_after_a_new_sample_and_false_after_an_empty_tick` | `Changed` false after the repeat |
+| PC-44 | `HostStatsCache.cs`: `Changed` set only by a new `At` | same method as PC-43 | `Changed` true after `live -> stale` |
+| PC-45 | `HostStatsCache.cs`: remove the `Enabled` check | `HostStatsCacheTests.Disabled_poll_projects_every_host_offline_disabled` | reason `disabled` |
+| PC-46 | `HostStatsAntiphonCounters.cs`: `byStage` keyed by `AgentKind` | `HostStatsAntiphonCountersTests.Group_counts_in_flight_by_stage_and_kind_per_host` | desktop `byStage["Code"]` 2 |
+| PC-47 | `HostStatsAntiphonCounters.cs`: `held` = Queued count | `HostStatsAntiphonCountersTests.Held_and_lands_count_only_their_flags` | `held` 1 (got 2) |
+| PC-48 | `HostStatsAntiphonCounters.cs`: `landsPending` = Blocked count | same method as PC-47 | `server2` `landsPending` 0 (got 1) |
+| PC-49 | `HostStatsAntiphonCounters.cs`: desktop predicate `RunnerId == null` | `HostStatsAntiphonCountersTests.Null_or_empty_runner_is_desktop_and_blocked_is_open_not_in_flight` | desktop `tasksInFlight` 3 (got 2) |
+| PC-50 | `HostStatsAntiphonCounters.cs`: in flight includes Blocked | same method as PC-49 | desktop `tasksInFlight` 3 (got 4) |
+| PC-51 | `HostStatsPollService.cs`: `PublishToAllAsync` | `HostStatsPollServiceTests.Tick_fills_both_hosts_live_and_publishes_once_to_group_hosts` | recorded group `hosts` |
+| PC-52 | `HostStatsPollService.cs`: remove `if (cache.Changed)` | same method as PC-51 | publish count 1 after the second tick |
+| PC-53 | `HostStatsPollService.cs`: pass the tick token instead of the per-host timeout source | `HostStatsPollServiceTests.Silent_peer_goes_stale_while_desktop_stays_live` | tick completes within 10 s |
+| PC-54 | `PhoneHomeRunnerClient.cs`: `GetHostStatsAsync` returns null on an `Error` frame | `HostStatsPollServiceTests.Unsupported_peer_projects_unsupported` | server2 `unsupported` |
+| PC-55 | `HostStatsPollService.cs`: remove the per-host `try/catch` | `HostStatsPollServiceTests.Local_client_fault_does_not_fault_the_tick` | `Should.NotThrowAsync` |
+| PC-56 | `HostStatsCache.cs`: `RecordFailure` clears the last sample | same method as PC-55 | desktop `stale` with the good values |
+| PC-57 | `HostStatsCache.cs`: offline arm sets `Current = null` when a sample exists | `HostStatsPollServiceTests.Disconnected_peer_projects_offline_and_recovers_live_on_reconnect` | offline `current` equals tick 1's |
+| PC-58 | `HostStatsPollService.cs`: a missing connection recorded as `Unreachable` instead of `Offline` | same method as PC-57 | server2 `offline` |
+| PC-59 | `HostStatsPollService.cs`: `cache.ClearChanged()` before `PublishToGroupAsync` | `HostStatsPollServiceTests.Publish_failure_does_not_fault_the_tick_and_the_next_tick_republishes` | publish count 1 after the second tick |
+| PC-60 | `HostStatsEndpoints.cs`: project with `antiphon: null` | `HostStatsEndpointTests.Hosts_stats_answers_the_cache_projection_with_counters` | `antiphon.tasksInFlight` 1 |
+| PC-61 | `HostStatsEndpoints.cs`: series always via `directory.Local` | `HostStatsEndpointTests.Series_proxies_the_peer_operation_30_answer` | `RequestCount(HostStatsSeries)` 1 |
+| PC-62 | `HostStatsEndpoints.cs`: unknown id resolved to `directory.Local` | `HostStatsEndpointTests.Unknown_host_is_404` | status 404 |
+| PC-63 | `HostStatsEndpoints.cs`: validation moved after the runner call | `HostStatsEndpointTests.Bad_window_is_400_before_any_runner_call` | `RequestCount(HostStatsSeries)` 0 |
+| PC-64 | `HostStatsEndpoints.cs`: `phone_home_unavailable` caught into an empty 200 | `HostStatsEndpointTests.Series_for_a_disconnected_runner_is_409_unavailable` | status 409 |
+| PC-65 | `SessionRunnerHttpClient.cs`: `GetHostStatsAsync` through `SendReadAsync` | `SessionRunnerHttpClientHostStatsTests.Host_stats_read_is_one_attempt` | handler requests 1 |
+| PC-66 | `SessionRunnerHttpClient.cs`: 404 -> `return null` | `SessionRunnerHttpClientHostStatsTests.Not_found_maps_to_unsupported` | `ThrowAsync<HostStatsUnsupportedException>` |
+| PC-67 | `SessionRunnerHttpClient.cs`: remove the timeout source | `SessionRunnerHttpClientHostStatsTests.Hung_runner_is_cancelled_at_the_request_timeout` | `TimeoutException` within 10 s |
+| PC-68 | `client/src/api/hosts.ts`: `window=30m` literal | `hosts.test.tsx` / `useHostSeries requests metric and window` | msw sees `window=5m` |
+| PC-69 | `HostCard.tsx`: stale state renders the offline body | `HostsPage.test.tsx` / `a stale host keeps its last values under a Stale badge` | text `42 %` |
+| PC-70 | `HostCard.tsx`: `current?.cpuPercent ?? 0` | `HostsPage.test.tsx` / `an offline host shows No data and never 0 %` | no `/\b0 ?%/` in the card |
+| PC-71 | `Sparkline.tsx`: every point emits `L` | `Sparkline.test.tsx` / `360 points draw one M and 359 L commands` | one `M` |
+| PC-72 | `Sparkline.tsx`: empty series draws `M0,H L W,H` | `Sparkline.test.tsx` / `an empty series renders the placeholder, not a flat line` | placeholder present, no `path` |
+| PC-73 | `useHostStatsLive.ts`: `invoke('JoinGroup', 'host')` | `useHostStatsLive.test.ts` / `joins group hosts on start` | `invoke` called with `hosts` |
+| PC-74 | `useHostStatsLive.ts`: `invalidateQueries` instead of `setQueryData` | `useHostStatsLive.test.ts` / `a pushed list replaces ['hosts','stats'] without a refetch` | list request count unchanged |
+| PC-75 | `useHostStatsLive.ts`: skip the series append | `useHostStatsLive.test.ts` / `a pushed current point is appended to a mounted series key` | series length +1 |
+| PC-76 | `useHostStatsLive.ts`: no `onreconnected` handler | `useHostStatsLive.test.ts` / `on reconnect it rejoins hosts and refetches` | second `JoinGroup` |
+| PC-77 | `scripts/measure-host-stats-overhead.ps1`: delete the environment-scrub loop | CP-4 step 0 (`-DryRun`) | output contains no `PhoneHome__` key name |
+
+Client PCs run as `pwsh -File scripts/test-client.ps1 <file> -t "<test name>"` (arguments pass
+through to vitest; one test per invocation). PC-77 runs the CP-4 step 0 command only; it starts
+no runner.
 
 ### Checkpoints
 
