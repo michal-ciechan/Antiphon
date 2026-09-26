@@ -1,0 +1,3 @@
+@media (max-width: 48em) {
+  .hosts-rollup-wide { display: none; }
+}

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHookWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { host, observedAt } from './hostsFixtures'
-import { hostKeys, type HostSeries } from '../../api/hosts'
+import { hostKeys, useHostStats, type HostSeries } from '../../api/hosts'
 import { useHostStatsLive } from './useHostStatsLive'
 
 const signalr = vi.hoisted(() => ({
@@ -70,11 +70,9 @@ describe('useHostStatsLive', () => {
   it('rejoins hosts and refetches after reconnect', async () => {
     let requests = 0
     server.use(http.get('/api/hosts/stats', () => { requests++; return HttpResponse.json([host()]) }))
-    const view = renderHookWithProviders(() => useHostStatsLive())
+    const view = renderHookWithProviders(() => { useHostStatsLive(); return useHostStats() })
     await waitFor(() => expect(signalr.connection.reconnected).toBeTypeOf('function'))
-    await view.queryClient.fetchQuery({ queryKey: hostKeys.stats, queryFn: async () => {
-      const response = await fetch('/api/hosts/stats'); return response.json()
-    } })
+    await waitFor(() => expect(view.result.current.data).toHaveLength(1))
     const before = requests
     await act(async () => { signalr.connection.reconnected?.() })
     await waitFor(() => expect(requests).toBe(before + 1))

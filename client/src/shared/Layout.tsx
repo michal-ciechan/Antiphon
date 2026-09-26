@@ -73,6 +73,7 @@ const NAV_ITEMS = [
   { to: '/workflows', label: 'Workflows' },
   { to: '/boards', label: 'Boards' },
   { to: '/agents', label: 'Agents' },
+  { to: '/hosts', label: 'Hosts' },
   { to: '/channels', label: 'Channels' },
   { to: '/orchestrator', label: 'Orchestrator' },
   { to: '/settings', label: 'Settings' },
