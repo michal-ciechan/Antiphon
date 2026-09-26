@@ -55,7 +55,9 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         PhoneHomeLimits? limits = null,
         Action<DbContextOptionsBuilder>? configureDbContext = null,
         TimeSpan? shutdownTimeout = null,
-        PhoneHomeRunnerSettings? configured = null)
+        PhoneHomeRunnerSettings? configured = null,
+        Action<IServiceCollection>? configureServices = null,
+        Action<WebApplication>? mapEndpoints = null)
     {
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -108,6 +110,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             connectionString is null ? new EmptyScopeFactory() : sp.GetRequiredService<IServiceScopeFactory>(),
             clock ?? TimeProvider.System,
             inventoryLogger: sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>()));
+        configureServices?.Invoke(builder.Services);
         host.App = builder.Build();
         host.Directory = host.App.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
         host.App.UseWebSockets();
@@ -121,6 +124,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         host.App.MapSessionRunnerEndpoints();
         host.App.MapOperatorEndpoints();
         host.App.MapVersionEndpoints();
+        mapEndpoints?.Invoke(host.App);
         await host.App.StartAsync();
         var url = host.App.Urls.Single();
         host.Http = new HttpClient { BaseAddress = new Uri(url) };
@@ -234,6 +238,16 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
     {
         public List<string> Calls { get; } = [];
         public RunnerCapabilitiesDto? Capabilities { get; set; }
+        public RunnerHostStatsDto? HostStats { get; set; }
+        public Exception? HostStatsFault { get; set; }
+        public RunnerHostSeriesDto? HostSeries { get; set; }
+        public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
+            HostStatsFault is { } fault ? Task.FromException<RunnerHostStatsDto?>(fault) : Task.FromResult(HostStats);
+        public Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct)
+        {
+            Calls.Add($"series:{metric}:{window}");
+            return Task.FromResult(HostSeries);
+        }
 
         public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
             Task.FromResult(Capabilities);

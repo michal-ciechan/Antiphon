@@ -128,6 +128,15 @@ try
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
+    builder.Services.AddOptions<HostStatsSettings>()
+        .Bind(builder.Configuration.GetSection(HostStatsSettings.SectionName))
+        .Validate(s => s.PollIntervalMs > 0 && s.StaleAfterMs > 0 && s.RequestTimeoutMs > 0 && s.SeriesTimeoutMs > 0,
+            "Host stats intervals and timeouts must be positive.")
+        .ValidateOnStart();
+    builder.Services.AddSingleton(sp => new HostStatsCache(
+        sp.GetRequiredService<IOptions<HostStatsSettings>>().Value,
+        sp.GetRequiredService<TimeProvider>()));
+    builder.Services.AddSingleton<IHostStatsAntiphonCounters, HostStatsAntiphonCounters>();
     builder.Services.Configure<DiagnosticsSettings>(builder.Configuration.GetSection("Diagnostics"));
     builder.Services.Configure<DeliverablesSettings>(
         builder.Configuration.GetSection(DeliverablesSettings.SectionName));
@@ -787,6 +796,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
     builder.Services.AddHostedService<PhoneHomeRecoveryPump>();
+    builder.Services.AddHostedService<HostStatsPollService>();
 
     // CARD-0298: Hangfire storage is always registered (dashboard + job serialization). The worker
     // is the dangerous bit — it must not WMI-scan or call the runner from a test Program boot.
@@ -989,6 +999,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
     app.MapSessionRunnerEndpoints();
+    app.MapHostStatsEndpoints();
     app.MapOperatorEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
