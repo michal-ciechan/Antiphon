@@ -319,11 +319,14 @@ public sealed class CheckpointTaskOwnershipTests
         var factory = new StuckAfterKillFactory();
         var driver = new ProcessDriver(factory);
         using var cancel = new CancellationTokenSource();
-        var run = driver.RunAsync(new DriverRequest("fake", [], CheckpointFixtures.TempDir()), cancel.Token);
+        var root = CheckpointFixtures.TempDir();
+        var log = Path.Combine(root, "console.log");
+        var run = driver.RunAsync(new DriverRequest("fake", [], root, log), cancel.Token);
         cancel.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(15)));
         factory.Handle.Kills.ShouldBe(1);
         factory.Handle.PostKillWaits.ShouldBe(1);
+        File.ReadAllText(log).ShouldContain("process kill drain timed out after 10s");
     }
 
     [Test]
