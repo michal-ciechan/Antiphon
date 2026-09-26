@@ -226,14 +226,13 @@ public sealed class CheckpointImportTests
     [Test]
     public async Task scheduler_passes_test_parallel_limit_only_to_serial_rows_process()
     {
-        const string name = "TUNIT_MAX_PARALLEL_TESTS";
-        var inherited = Environment.GetEnvironmentVariable(name);
+        const string name = "C760_SERIAL_ROW_VALUE";
         var manifest = new CheckpointManifest();
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         manifest.Checkpoints.Add(new CheckpointSpec
         {
             Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1, Serial = true,
-            Environment = new Dictionary<string, string> { [name] = "1" },
+            Environment = new Dictionary<string, string> { [name] = "7" },
         });
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-3", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         var factory = new CapturingFactory();
@@ -246,12 +245,9 @@ public sealed class CheckpointImportTests
         result.ExitCode.ShouldBe(0);
         factory.Starts.Count.ShouldBe(3);
         foreach (var index in new[] { 0, 2 })
-        {
-            factory.Starts[index].Environment.TryGetValue(name, out var sibling).ShouldBe(inherited is not null);
-            sibling.ShouldBe(inherited);
-        }
-        factory.Starts[1].Environment[name].ShouldBe("1");
-        Environment.GetEnvironmentVariable(name).ShouldBe(inherited);
+            factory.Starts[index].Environment.ContainsKey(name).ShouldBeFalse();
+        factory.Starts[1].Environment[name].ShouldBe("7");
+        Environment.GetEnvironmentVariable(name).ShouldBeNull();
     }
 
     [Test]
