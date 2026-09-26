@@ -434,26 +434,31 @@ public class PhoneHomeConnectionServiceTests
     {
         var settings = RunnableSettings();
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var logs = new CapturingLogger<PhoneHomeConnectionService>();
         var gate = new PhoneHomeAdoptionGate();
         gate.SignalReady();
-        var service = Service(new RecordingRuntime(), settings, new StatusHandler(HttpStatusCode.BadGateway), time, gate);
+        var service = Service(
+            new RecordingRuntime(), settings, new StatusHandler(HttpStatusCode.BadGateway), time, gate, logs);
         using var cts = new CancellationTokenSource();
         var running = service.StartAsync(cts.Token);
         try
         {
-            await WaitUntilAsync(() => service.RegistrationAttempts >= 1);
+            // The attempt counter moves before the failure is logged, and the delay is armed only
+            // after that log. Advancing earlier spends the fake second on a timer that does not
+            // exist yet, so the cap is never reached.
+            await WaitForFailureAsync(logs, 1);
             service.RegistrationAttempts.ShouldBe(1);
             await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(1));
-            await WaitUntilAsync(() => service.RegistrationAttempts >= 2);
+            await WaitForFailureAsync(logs, 2);
             service.RegistrationAttempts.ShouldBe(2);
             await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(2));
-            await WaitUntilAsync(() => service.RegistrationAttempts >= 3);
+            await WaitForFailureAsync(logs, 3);
             service.RegistrationAttempts.ShouldBe(3);
             await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(4));
-            await WaitUntilAsync(() => service.RegistrationAttempts >= 4);
+            await WaitForFailureAsync(logs, 4);
             service.RegistrationAttempts.ShouldBe(4);
             await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(5));
-            await WaitUntilAsync(() => service.RegistrationAttempts >= 5);
+            await WaitForFailureAsync(logs, 5);
             service.RegistrationAttempts.ShouldBe(5);
         }
         finally
@@ -705,6 +710,12 @@ public class PhoneHomeConnectionServiceTests
         var deadline = DateTime.UtcNow.AddSeconds(3);
         while (!condition() && DateTime.UtcNow < deadline)
             await Task.Delay(10);
+    }
+
+    private static async Task WaitForFailureAsync(CapturingLogger<PhoneHomeConnectionService> logs, int count)
+    {
+        await WaitUntilAsync(() => logs.Warnings.Count >= count);
+        logs.Warnings.Count.ShouldBeGreaterThanOrEqualTo(count);
     }
 
     /// <summary>
