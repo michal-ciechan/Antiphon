@@ -54,3 +54,79 @@ Timed waiting is about 250 s of the 270 s. At speed 10 that is 25 s, plus about 
 - **Fixed waits and polling:** yes, and it is the whole cost. All of it goes through the injected `TimeProvider`.
 - **Real runner or pty:** no.
 
+## Decisions
+
+### D-1 — A scaled real clock, not a virtual one
+
+Add `tests/Antiphon.Tests/TestHelpers/ScaledTimeProvider.cs`: `internal sealed class ScaledTimeProvider(double speed, DateTimeOffset? start = null) : TimeProvider`.
+
+- `GetUtcNow()` returns `start + offset + speed × (real elapsed since construction)`, measured with `Stopwatch`. `speed` must be `> 0`; `speed == 1` is exactly the "offset over the real clock" shape that `AgentSupervisionTests.MutableTimeProvider` has today.
+- `Advance(TimeSpan)` adds to `offset`. Like `MutableTimeProvider.Advance` it does not fire pending timers; every queue loop re-reads `UtcNow()` on its next poll, at most 50 ms virtual later, so a jump past a deadline is observed on that poll. The five C561 tests already rely on this.
+- `CreateTimer(callback, state, dueTime, period)` delegates to `TimeProvider.System.CreateTimer` with `dueTime / speed` and `period / speed` (`Timeout.InfiniteTimeSpan` preserved, anything positive rounded up to at least 1 ms). `Task.Delay(x, clock, ct)` and `CancellationTokenSource.CancelAfter` therefore run in real time, `speed` times shorter. `GetTimestamp()` and `TimestampFrequency` scale the same way so `GetElapsedTime` agrees with `GetUtcNow`. `LocalTimeZone` is UTC.
+
+Why this shape: the CARD-0222 rule in `docs/testing-and-build.md` (a fake clock handed to the queue must be an offset over the real clock, or `FakeTimeProvider` with `AutoAdvanceAmount`, never a frozen instant) exists because the six poll loops wait on `Task.Delay(poll, _timeProvider)` and compare `UtcNow()` to a deadline; a clock whose timers never fire hangs the process at 0 % CPU. Real timers keep every wait finite. `FakeTimeProvider` with `AutoAdvanceAmount` is not enough here: it moves time only from `GetUtcNow()` and `Advance()`, and a loop parked in `Task.Delay` calls neither, so nothing wakes it (R-B covers the pump variant).
+
+**Speed 10**, as a constant `TestClockSpeed` on the class. The bound is the fake adapter's two real delays: `FakeAgentProtocolAdapter.ComposerFrameDelayMs = 10` and `PromptOutputDelayMs = 10` (`tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs:50, 117`) emit frames on `Task.Run` in real time. The shortest virtual window that must contain such a frame is `PostEvidenceSettleMs = 500` on a 50 ms poll grid; at speed 10 a 10 ms frame is 100 ms virtual, five times inside the settle. Database round trips of 1–5 ms real become 10–50 ms virtual, at most one poll interval, so poll counts within a window (three Enters at 1 s inside a 3 s confirm) hold. Speed 20 would put a 5 ms query past one poll and a frame at 40 % of the settle. If CP-5/CP-6 show any timing failure in three consecutive runs, Code drops the constant to 5, retargets 75 s, and says so in its report; that is the one decision delegated to Code.
+
+### D-2 — The class stays `[NotInParallel("MessageQueue")]`, `Integration`, `Slow`
+
+`FlushStrandedQueuesAsync` and the turn-end flush select rows across the whole store, so two tests in the same store cannot overlap without one delivering the other's message; a per-test clone costs 2 s (`TestDbFixtureIsolationTests`), more than the test it would isolate. `[ParallelLimiter]` on the class would only cap concurrency inside the class and would not keep it apart from the other 39 classes on the key. `[ParallelGroup]` semantics could not be verified on this runner (no TUnit docs offline) and would need all forty classes reasoned about together; out of scope. `Slow` is a cost marker, not a skip; the class stays in `slow-tests-allowlist.txt` with its reason comment updated to the new measured cost.
+
+### D-3 — No shared harness
+
+Thirty-six methods that never wait on a deadline run in 0.09–0.22 s including `BridgeQueueHarness.CreateAsync`, so the harness is at most 0.1 s of a test and 11 s of the class. Sharing one harness would make the five sweep tests and the dispose-time cleanup (`BridgeQueueHarness.cs:584–625`, keyed on `AgentId`/`TempRoot`) order-dependent for an 11 s gain. Rejected.
+
+### D-4 — No duplicates removed
+
+Eight pairs share a scenario and split the assertions between two methods (each pair pins a different card). After D-1 each pair costs about 0.3 s real, so merging would save about 2.5 s of the class while changing the roster's `directTestMethods` and the card-to-pin mapping. Not done in this card; recorded for a later cleanup if the class is ever reorganised:
+
+| Same scenario | Method A | Method B |
+|---|---|---|
+| Always-on, echo off, WhenIdle (pre-first-turn refund) | `A_pre_first_turn_no_evidence_refunds_the_attempt_and_withholds_the_kill` | `The_refunded_failure_reports_one_warning_not_an_error_per_attempt` |
+| Always-on, swallow 99, empty ack, WhenIdle | `Swallowed_submit_reverts_message_and_restarts_always_on_agent` | `A_pre_first_turn_swallowed_submit_still_charges_the_attempt` |
+| Non-always-on, echo off, WhenIdle | `Non_always_on_agent_gets_incident_and_revert_but_no_kill` | `The_refund_applies_to_non_always_on_agents_too` |
+| Observable, swallow 99, WhenIdle | `Screen_output_advancing_without_a_record_is_no_longer_delivered` | `An_idle_always_on_session_with_no_record_is_still_killed` |
+| Observable, echo off, WhenIdle (post-first-turn wedge) | `Wedged_composer_withholds_enter_reverts_message_and_restarts_always_on_agent` | `A_session_that_worked_and_then_stalled_still_charges_the_attempt_and_is_killed` |
+| Non-always-on, echo off, Mode.Now | `Mode_Now_failure_still_throws_409_with_no_receipt` | `Card0164_ModeNow_NoComposerEvidence_gets_no_grace` |
+| Observable, non-question ToolResult on turn end | `Read_file_ToolResult_does_not_confirm_delivery` | `Claude_ToolResult_without_question_wrapper_does_not_confirm` (an `[Arguments]` pair, not a duplicate) |
+| Codex slash usage refused at enqueue | `Codex_slash_usage_is_refused_at_enqueue_with_zero_bytes_typed` | `Codex_slash_usage_with_arguments_is_refused_too` (an `[Arguments]` pair, not a duplicate) |
+
+### D-5 — Every stamp comes from the harness clock, and scheduled rows ride the same clock
+
+At speed 10, virtual time runs ahead of real time by nine times the real elapsed; a 23 s-virtual test drifts 21 s. `UnobservableBaselineConfirmClockToleranceSeconds = 30` compares a row's `Timestamp` with the provider's now (`SessionMessageQueueService.cs:480, 2361, 2701, 3257`), so a row stamped with `DateTime.UtcNow` would silently age toward the tolerance. Therefore:
+
+- `BridgeQueueHarness` exposes `TimeProvider Clock` and `DateTime Now` (`Clock.GetUtcNow().UtcDateTime`), and its ten `DateTime.UtcNow` sites (`BridgeQueueHarness.cs:215, 249, 295, 366, 388, 466, 468, 512, 562, 563`) read `Now`. The static `InsertEntryAsync` gains a `DateTime? createdAtUtc` parameter that the instance wrappers fill from `Now`.
+- The class's twenty `DateTime.UtcNow` sites read `h.Now`; C561's `DateTimeOffset.UtcNow` in `PoisonToolCall` and `StubbedUserPrompt` read the test's clock.
+- The five fire-and-forget inserts (`SessionMessageQueueDeliveryVerificationTests.cs:1278, 2048, 2137, 2189, 2291`) become `await Task.Delay(x, h.Clock)` inside the same `Task.Run`, so a "4 s" row still lands at virtual 4 s, inside the 3–6 s grace, and the 0.4/0.3/0.2 s rows still land inside the confirm window.
+- The two real-elapsed assertions (`:861–865` "< 10 s, only the fallback waits out the 20 s deadline" and `:2335–2341` "< 5 s, must not burn the grace") become `(h.Now - started)`, so they still discriminate: under real elapsed they would pass even if the pipeline ran the fallback (2 s real). PC-D proves it.
+- `Mode_Now_waits_for_the_per_session_lock`'s real `Task.Delay(400)` (`:1996`) stays: it bounds a semaphore wait, not a clock-driven path.
+
+### D-6 — Opt-in per class; the harness default is unchanged
+
+`HarnessOptions.ClockSpeed` (`double?`) creates a `ScaledTimeProvider(ClockSpeed.Value)` and registers it; `TimeProvider` (explicit) and `ClockSpeed` together throw `InvalidOperationException`. The default remains `TimeProvider.System`, so the 32 other `BridgeQueueHarness` users on the `MessageQueue` key see the same values as today (`Now` is then `TimeProvider.System.GetUtcNow()`). `VerificationRoundDeliveryTests` (139 s), `CheckNoteDeliveryHandoffTests` (98 s) and `ChannelBridgeTests` (87 s) are a follow-up card after this lands: each needs the same audit of real-time scheduling and stamps that this plan did for one class.
+
+### D-7 — The 22.9 s test states its grace
+
+`Parking_a_channel_bound_agents_message_raises_a_critical_incident` (`:1200–1220`) builds its own `DeliveryVerificationSettings` and omits `PostFailureConfirmGraceSeconds`, so it inherits the production 20 s. It is about severity and the PARKED text, not the grace; it gets `PostFailureConfirmGraceSeconds = 3` like the harness default (three grace polls instead of twenty). Same verdict path, 5.5 s virtual instead of 22.9.
+
+### D-8 — One new Unit class, registered in the Linux roster
+
+`tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs` (`[Category("Unit")]`, no database) with the six tests in V-1. The Docker roster validator (`scripts/test-docker-container.ps1:40–43`) refuses an unknown or stale class name, so `tests/linux-test-roster.json` gains a row (lane `local`, shard `local-05`, `disposition: include`, `directTestMethods: 6`, `sourceSha256`) and the `local-05` filter in `backendShards` gains `(ScaledTimeProviderTests*)`; the two class files' `sourceSha256` entries are refreshed from `sha256sum`. Hashes are bookkeeping; the validator checks names.
+
+### D-9 — Docs
+
+`docs/testing-and-build.md`: the CARD-0222 gotcha bullet gains the third allowed shape ("or a `ScaledTimeProvider`, which keeps real timers at a fixed multiple; `BridgeQueueHarness.HarnessOptions.ClockSpeed`"). The `BridgeQueueHarness` summary comment names the option. The `slow-tests-allowlist.txt` reason comment for the class states the new cost. The CARD-0728 investigation is historical and is not edited.
+
+## Rejected alternatives
+
+| Alternative | Why not |
+|---|---|
+| **R-A** Fully virtual clock with a pump that jumps to the next due timer when the code under test is idle | Fastest in theory (about 20 s for the class), but idle detection is the CARD-0222 trap in a new coat: while the service is between polls with a query in flight, the only pending timer can be the test's own "row at 4 s", and the pump would jump the deadline the test is about. A quiescence heuristic either flakes under load or gives the time back. |
+| **R-B** `FakeTimeProvider` with `AutoAdvanceAmount`, or with a pump thread calling `Advance` | `AutoAdvanceAmount` moves only on `GetUtcNow()`, which the parked loop never calls; a fixed-step pump is R-A without the idle detection, with timer callbacks running on the pump thread. |
+| **R-C** Compress the harness settings further | Floors are reached: evidence and advance windows are `Math.Max(1, …)` seconds, pull and grace cadence is `Math.Max(1000, PollIntervalMs)`, `SubmitAttempts = 3` is the production count the tests assert, and the 3 s grace has to hold the "row lands at 4 s" pins with a poll to spare. |
+| **R-D** Per-test isolated schema and drop `[NotInParallel]` | 119 clones at 2 s each is 240 s, and the process-wide clone lock serialises them. |
+| **R-E** Split the class by agent kind and run the parts in parallel | Same store, same store-wide sweeps; splitting changes nothing about the coupling. |
+| **R-F** One harness per class | ≤ 0.1 s per test measured (D-3). |
+| **R-G** Delete the eight duplicate pairs | 2.5 s after D-1 (D-4). |
+| **R-H** Lower the production floors (`Math.Max(1000, …)`) | Production code, and the floor exists because each pull fetches a whole transcript (`SessionMessageQueueService.cs:3795`). |
+
