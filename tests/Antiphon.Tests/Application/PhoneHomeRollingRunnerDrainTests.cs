@@ -449,6 +449,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
         created.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2);
         var status = await ReadStatusAsync(world, RollingRunnerSettings.Server2);
         status.GetProperty("acceptingNewWork").GetBoolean().ShouldBeTrue();
+        status.GetProperty("draining").GetBoolean().ShouldBeFalse();
+        status.GetProperty("drainReason").GetString().ShouldBe("cleared");
     }
 
     [Test]
