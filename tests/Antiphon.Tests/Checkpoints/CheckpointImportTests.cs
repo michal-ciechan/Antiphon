@@ -201,6 +201,26 @@ public sealed class CheckpointImportTests
         factory.Starts[1].Environment.TryGetValue(name, out var siblingValue).ShouldBe(original is not null);
         siblingValue.ShouldBe(original);
         Environment.GetEnvironmentVariable(name).ShouldBe(original);
+
+        const string flaky = "Antiphon.Tests.FlakyTests.flaky";
+        var retryDriver = new FakeDriver();
+        retryDriver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            var first = request.Arguments.Contains("run.trx");
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), (flaky, first ? "Failed" : "Passed"));
+            return Task.FromResult(new DriverResult(first ? 1 : 0, "", ""));
+        });
+        var retryEnvironment = new Dictionary<string, string> { [name] = "target-only" };
+        await new RowRunner(retryDriver, new FakePlatform()).RunAsync(new RowRequest
+        {
+            Name = "retry", Project = "tests/Antiphon.Tests", OutputPath = "bin-e/", Filter = "/*/*/FlakyTests/*",
+            ResultsDirectory = Path.Combine(root, "retry"), WorkingDirectory = root, NoBuild = true,
+            Expect = ["FlakyTests"], MinExecuted = 1, KnownFlaky = [flaky], Environment = retryEnvironment,
+        }, TextWriter.Null, CancellationToken.None);
+        retryDriver.Count(CheckpointFixtures.IsRun).ShouldBe(2);
+        retryDriver.Calls.Where(CheckpointFixtures.IsRun)
+            .All(call => call.Environment![name] == "target-only").ShouldBeTrue();
+        retryEnvironment[name].ShouldBe("target-only");
     }
 
     [Test]
