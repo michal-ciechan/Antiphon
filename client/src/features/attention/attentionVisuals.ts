@@ -40,6 +40,14 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  RunnerUnavailable: {
+    label: 'Runner unavailable', color: 'danger', icon: TbPlugConnectedX,
+    hint: 'A phone-home runner has not been dispatch-eligible past the grace; its queued work waits.',
+  },
+  RepositoryChildJournalStale: {
+    label: 'Repository fenced', color: 'danger', icon: TbGitCommit,
+    hint: 'A stale child-journal record fences land and dispatch; follow the recovery command in the evidence.',
+  },
   PoolDelegateUnreleased: {
     label: 'Pool release overdue', color: 'danger', icon: TbUserOff,
     hint: 'A live pool delegate has no open task and has not been released past twice the release grace.',
