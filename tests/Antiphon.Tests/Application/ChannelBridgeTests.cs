@@ -515,7 +515,7 @@ public class ChannelBridgeTests
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "one correlation per flush, not per message");
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var members = await db.ChannelInbounds.AsNoTracking()
-            .Where(i => i.ConversationId == h.ChatId).ToListAsync();
+            .Where(i => i.ConversationId == h.ChatId && i.AgentId == h.AgentId).ToListAsync();
         members.Count.ShouldBe(3);
         members.Select(i => i.NativeMessageId).Order().ShouldBe(messages.Select(m => m.ChannelMessageId).Order());
         members.Select(i => i.QueueMessageId).Distinct().Count().ShouldBe(1);
