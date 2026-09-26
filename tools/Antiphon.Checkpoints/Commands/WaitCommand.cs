@@ -60,11 +60,16 @@ public sealed class WaitCommand
             var state = _store.TryRead(statePath);
             if (state?.Phase == "done")
             {
-                if (File.Exists(reportPath))
-                    output.Write(File.ReadAllText(reportPath));
-                else
-                    output.WriteLine(state.Heartbeat(now));
-                return state.ExitCode ?? ExitCodes.Green;
+                var executorGone = state.ExecutorPid <= 0 || !_liveness.IsAlive(state.ExecutorPid);
+                if (executorGone)
+                {
+                    EvidenceFolder.TryRemoveToolCopy(runDirectory);
+                    if (File.Exists(reportPath))
+                        output.Write(File.ReadAllText(reportPath));
+                    else
+                        output.WriteLine(state.Heartbeat(now));
+                    return state.ExitCode ?? ExitCodes.Green;
+                }
             }
 
             if (state is not null && state.Phase != "done" && state.ExecutorPid > 0 && !_liveness.IsAlive(state.ExecutorPid))

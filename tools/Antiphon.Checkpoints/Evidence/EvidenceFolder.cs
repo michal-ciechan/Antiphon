@@ -58,6 +58,29 @@ public static class EvidenceFolder
             TryRemoveToolCopy(runDirectory, imageDirectory);
     }
 
+    public static int SweepFinishedToolCopies(string resultsRoot, IProcessLiveness liveness, RunStateStore? store = null)
+    {
+        if (string.IsNullOrWhiteSpace(resultsRoot) || !Directory.Exists(resultsRoot))
+            return 0;
+        store ??= new RunStateStore();
+        var removed = 0;
+        foreach (var dir in Directory.EnumerateDirectories(resultsRoot))
+        {
+            if (!Directory.Exists(Path.Combine(dir, "tool")))
+                continue;
+            var state = store.TryRead(Path.Combine(dir, "state.json"));
+            if (state is null || state.Phase is not ("done" or "stopped" or "crashed"))
+                continue;
+            if (state.ExecutorPid > 0 && liveness.IsAlive(state.ExecutorPid))
+                continue;
+            TryRemoveToolCopy(dir);
+            if (!Directory.Exists(Path.Combine(dir, "tool")))
+                removed++;
+        }
+
+        return removed;
+    }
+
     public static void TryRemoveToolCopy(string runDirectory, string? imageDirectory = null)
     {
         if (IsExecutorImage(runDirectory, imageDirectory))

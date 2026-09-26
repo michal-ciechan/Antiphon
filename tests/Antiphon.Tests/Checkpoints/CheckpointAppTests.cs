@@ -46,4 +46,37 @@ public sealed class CheckpointAppTests
         order.ShouldContain("cleanup");
         order.ShouldContain(item => item.Contains("UnauthorizedAccessException", StringComparison.Ordinal));
     }
+
+    [Test]
+    public void create_run_sweeps_a_finished_sibling_tool_copy_and_leaves_a_live_one()
+    {
+        var repo = CheckpointFixtures.TempDir();
+        var root = Path.Combine(repo, ".antiphon", "checkpoints");
+        var finished = Path.Combine(root, "old-run");
+        var live = Path.Combine(root, "live-run");
+        Directory.CreateDirectory(Path.Combine(finished, "tool"));
+        Directory.CreateDirectory(Path.Combine(live, "tool"));
+        File.WriteAllText(Path.Combine(finished, "tool", "Antiphon.Checkpoints.dll"), "old");
+        File.WriteAllText(Path.Combine(live, "tool", "Antiphon.Checkpoints.dll"), "live");
+        var store = new RunStateStore();
+        store.Write(Path.Combine(finished, "state.json"), new RunState
+        {
+            RunId = "old-run",
+            Phase = "done",
+            ExecutorPid = 2_100_000_001,
+            StartedAt = DateTimeOffset.UtcNow,
+        });
+        store.Write(Path.Combine(live, "state.json"), new RunState
+        {
+            RunId = "live-run",
+            Phase = "running",
+            ExecutorPid = Environment.ProcessId,
+            StartedAt = DateTimeOffset.UtcNow,
+        });
+        var manifest = new CheckpointManifest { ResultsRoot = ".antiphon/checkpoints" };
+        manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "echo hi" });
+        CheckpointApp.CreateRun(manifest, new RunRequest(), repo);
+        Directory.Exists(Path.Combine(finished, "tool")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(live, "tool")).ShouldBeTrue();
+    }
 }

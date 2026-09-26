@@ -39,6 +39,8 @@ public sealed class BuildSlotClient : IBuildSlotClient
     private readonly Action<string>? _log;
     private readonly int _pid;
     private readonly string? _processStartUtc;
+    private readonly ILeaseHolderSource? _holders;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _held = new(StringComparer.Ordinal);
 
     public BuildSlotClient(
         HttpMessageHandler handler,
@@ -49,7 +51,8 @@ public sealed class BuildSlotClient : IBuildSlotClient
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         Action<string>? log = null,
         int? pid = null,
-        string? processStartUtc = null)
+        string? processStartUtc = null,
+        ILeaseHolderSource? holders = null)
     {
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _endpoint = endpoint.TrimEnd('/');
@@ -60,6 +63,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         _log = log;
         _pid = pid ?? Environment.ProcessId;
         _processStartUtc = processStartUtc;
+        _holders = holders;
     }
 
     public static string DefaultEndpoint(bool isWindows)
@@ -117,40 +121,77 @@ public sealed class BuildSlotClient : IBuildSlotClient
 
         var started = _clock();
         var lastPrinted = started - TimeSpan.FromMinutes(2);
-        while (true)
+        ILeaseHolder? holder = null;
+        try
         {
-            using var content = new StringContent(JsonSerializer.Serialize(new
+            holder = _holders?.Open();
+            var pid = holder?.Pid ?? _pid;
+            var processStart = holder?.ProcessStartUtc ?? _processStartUtc;
+            var replacements = 0;
+            while (true)
             {
-                pid = _pid,
-                processStartUtc = _processStartUtc,
-                label,
-                sessionId = Environment.GetEnvironmentVariable("ANTIPHON_SESSION_ID"),
-                taskId = Environment.GetEnvironmentVariable("ANTIPHON_TASK_ID"),
-            }, Json), Encoding.UTF8, "application/json");
-            using var response = await _http.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            var elapsed = (int)(_clock() - started).TotalSeconds;
-            if (response.StatusCode == HttpStatusCode.OK)
-            {
-                if (body.Contains("\"unlimited\":true", StringComparison.OrdinalIgnoreCase))
+                using var content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    var cpu = ReadInt(body, "maxCpuCount", session.MaxCpuCount);
-                    _log?.Invoke($"BUILD SLOT unlimited maxcpucount={cpu}");
-                    return new SlotLease { State = "unlimited", MaxCpuCount = cpu, WaitedSeconds = elapsed };
-                }
+                    pid,
+                    processStartUtc = processStart,
+                    label,
+                    sessionId = Environment.GetEnvironmentVariable("ANTIPHON_SESSION_ID"),
+                    taskId = Environment.GetEnvironmentVariable("ANTIPHON_TASK_ID"),
+                }, Json), Encoding.UTF8, "application/json");
+                using var response = await _http.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                var elapsed = (int)(_clock() - started).TotalSeconds;
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    if (body.Contains("\"unlimited\":true", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var cpu = ReadInt(body, "maxCpuCount", session.MaxCpuCount);
+                        _log?.Invoke($"BUILD SLOT unlimited maxcpucount={cpu}");
+                        return new SlotLease { State = "unlimited", MaxCpuCount = cpu, WaitedSeconds = elapsed };
+                    }
 
-                var leaseId = ReadString(body, "leaseId") ?? "";
-                var max = ReadInt(body, "maxCpuCount", 4);
-                _log?.Invoke($"BUILD SLOT granted lease={leaseId} waited={elapsed}s maxcpucount={max}");
-                return new SlotLease
-                {
-                    State = "granted",
-                    LeaseId = leaseId,
-                    MaxCpuCount = max,
-                    WaitedSeconds = elapsed,
-                    ReleaseAsync = token => ReleaseAsync(leaseId, token),
-                };
-            }
+                    var leaseId = ReadString(body, "leaseId") ?? "";
+                    if (leaseId.Length == 0 || !_held.TryAdd(leaseId, 0))
+                    {
+                        if (_holders is null || holder is null || replacements >= 3)
+                        {
+                            _log?.Invoke($"BUILD SLOT refused shared lease={leaseId} label={label}");
+                            return new SlotLease { State = "unleased", MaxCpuCount = 4, WaitedSeconds = elapsed };
+                        }
+
+                        await holder.DisposeAsync().ConfigureAwait(false);
+                        holder = _holders.Open();
+                        pid = holder.Pid;
+                        processStart = holder.ProcessStartUtc;
+                        replacements++;
+                        continue;
+                    }
+
+                    var max = ReadInt(body, "maxCpuCount", 4);
+                    _log?.Invoke($"BUILD SLOT granted lease={leaseId} waited={elapsed}s maxcpucount={max}");
+                    var owned = holder;
+                    holder = null;
+                    return new SlotLease
+                    {
+                        State = "granted",
+                        LeaseId = leaseId,
+                        MaxCpuCount = max,
+                        WaitedSeconds = elapsed,
+                        ReleaseAsync = async token =>
+                        {
+                            try
+                            {
+                                await ReleaseAsync(leaseId, token).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                _held.TryRemove(leaseId, out _);
+                                if (owned is not null)
+                                    await owned.DisposeAsync().ConfigureAwait(false);
+                            }
+                        },
+                    };
+                }
 
             var type = ReadString(body, "type") ?? "";
             if (response.StatusCode == HttpStatusCode.Conflict
@@ -176,9 +217,15 @@ public sealed class BuildSlotClient : IBuildSlotClient
                 continue;
             }
 
-            if (_clock() - started >= _grace)
-                return new SlotLease { State = "unleased", MaxCpuCount = 4, WaitedSeconds = elapsed };
-            await _delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                if (_clock() - started >= _grace)
+                    return new SlotLease { State = "unleased", MaxCpuCount = 4, WaitedSeconds = elapsed };
+                await _delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (holder is not null)
+                await holder.DisposeAsync().ConfigureAwait(false);
         }
     }
 

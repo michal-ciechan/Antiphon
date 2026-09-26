@@ -264,19 +264,21 @@ checkout (shared stash stack; mutates the source under a running executor).
   builds/<bin-x>/build.log            # full MSBuild output; console shows only the summary and errors
   rows/<CP>/run.trx  rerun-1.trx  console.log  roster.txt  failures.md  rerun.txt
   baseline/<bin-x>/build.log  rows/<CP>/run.trx  classification.txt
-  tool/                               # the shadow copy, deleted on a green run
+  tool/                               # the shadow copy; wait deletes it after the executor exits
 ```
 
 `failures.md`: per failed test the class-qualified name, outcome, duration, `ErrorInfo/Message`,
 `StackTrace`, `StdOut` (each capped at 200 lines), the baseline classification, and the two exact
 rerun commands (the tool's `row` form and the raw `dotnet run … --treenode-filter` form). A green
-run writes the folder without `failures.md` and deletes `tool/`.
+run writes the folder without `failures.md`. `wait` deletes `tool/` once `phase=done` and the executor pid is gone.
 
 ### D-13. Cleanup deletes only what this run created, and only on a green run by default
 
 On exit 0: every directory named exactly `bin-<x>` for this run's build ids, found under the repo
-root (recursing, pruning `.git`, `node_modules`, `workspace`, `bin`, `obj`, other `bin-*`), plus
-`tool/` and the baseline worktree. On a red run the outputs stay (the rerun commands need them)
+root (recursing, pruning `.git`, `node_modules`, `workspace`, `bin`, `obj`, other `bin-*`) and the
+baseline worktree. `<run>/tool/` stays while the executor is alive; `wait` deletes it once
+`phase=done` and that pid is gone, and the next `start` sweeps finished runs. On a red run the
+test outputs stay (the rerun commands need them)
 and the report prints the `clean --run <id>` command; `--clean-on-red` overrides. `clean
 [--run <id> | --manifest <path>] [--older-than 7d]` is the verb; it never touches `bin/`, `obj/`,
 `workspace/` or a `bin-*` name the manifest does not own (guarded by tests and PC-4).
@@ -680,7 +682,7 @@ CP-7 runs the packed tool with `dotnet exec` on the installed assembly: cmd trea
 | CP-2 | S3-S4 | CP-1 | tool-engine | `/*/Antiphon.Tests.Checkpoints/(RunSchedulerTests*)\|(TimeoutTests*)\|(RunStateStoreTests*)\|(WaitCommandTests*)\|(ShadowCopyTests*)\|(DetachedLauncherTests*)\|(CheckpointAppTests*)/*` | V-6..V-10 | all listed, 0 failed (DetachedLauncherTests executes on Linux, skips elsewhere) | 16 linux / 15 windows | 4 |
 | CP-3 | S5-S6 | CP-1 | tool-evidence | `/*/Antiphon.Tests.Checkpoints/(RerunPolicyTests*)\|(BaselineComparerTests*)\|(EvidenceFolderTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)\|(OutputCleanupTests*)\|(RerunFilterHostTests*)/*` | V-11..V-15 | all listed, 0 failed | 19 | 3 |
 | CP-4 | S7 | CP-1 | doc-and-bundle-pins | `/*/Antiphon.Tests.Application/(CheckpointManifestDocumentationTests*)\|(InstructionBundleTests*)\|(VerificationRoundInstructionTests*)\|(ScopedVerificationInstructionTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(CommitOnSettleDocumentationTests*)/*` | V-18, R-2, R-3 | all listed, 0 failed | 60 | 3 |
-| CP-5 | S7 | CP-1 | contracts-and-script | `/*/*/(CheckpointToolProjectContractTests*)\|(DotnetToolManifestContractTests*)\|(RunCheckpointScriptTests*)/*` | V-19, R-1, R-4 | all listed, 0 failed | 21 | 5 |
+| CP-5 | S7 | CP-1 | contracts-and-script | `/*/*/(CheckpointToolProjectContractTests*)\|(DotnetToolManifestContractTests*)\|(RunCheckpointScriptTests*)/*\|/*/*/NightlyVerificationContractTests/(C544_DailyValidity*)` | V-19, R-1, R-4 | all listed, 0 failed | 22 | 5 |
 | CP-6 | S7 | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` (`-MinExecuted 1000`) | Final whole Unit lane | >= 1000 executed, 0 failed | 1000 | 4 |
 | CP-7 | S7 | n/a | pack-and-install | `dotnet pack tools/Antiphon.Checkpoints -o .antiphon/c723-pack --nologo && dotnet tool install Antiphon.Checkpoints --tool-path .antiphon/c723-pack/tp --add-source .antiphon/c723-pack && dotnet exec .antiphon/c723-pack/tp/.store/antiphon.checkpoints/1.0.0/antiphon.checkpoints/1.0.0/tools/net9.0/any/Antiphon.Checkpoints.dll --version` | V-20 | exit 0; a version line naming the SHA | n/a | 2 |
 | CP-8 | S7 | n/a (the tool builds `bin-c723a/` itself) | dogfood | `timeout 590 dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-25-card-0723-checkpoint-runner-plan.md --rows CP-1,CP-2,CP-3,CP-4,CP-5,CP-6 --baseline origin/master --results-root .antiphon/c723-dogfood --max-wait 570s`, then `… wait --latest --max-wait 570s` until the exit is not 75 | V-21, D-1, D-4..D-8, D-13 | one `--- checkpoint report ---` block with six green CP lines, `unlisted: none`, exit 0, `state.json` history showing two rows in flight at once, `bin-c723a/` absent afterwards; paste the block in the Code report | n/a | 12 |

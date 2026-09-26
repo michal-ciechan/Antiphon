@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using Antiphon.Checkpoints;
 using Shouldly;
@@ -87,6 +88,56 @@ public sealed class BuildSlotClientTests
         handler.Calls.ShouldContain(call => call.Method == "DELETE" && call.Uri.Contains("L3", StringComparison.Ordinal));
     }
 
+    [Test]
+    public async Task pid_idempotent_broker_grants_distinct_leases_and_one_release_keeps_the_other()
+    {
+        var handler = new PidIdempotentSlotHandler();
+        var (client, _) = Client(handler, holders: new QueueHolders(101, 202));
+        var session = await client.ProbeAsync(CancellationToken.None);
+        var firstTask = client.AcquireAsync(session, "build:bin-a", CancellationToken.None);
+        var secondTask = client.AcquireAsync(session, "CP-7@command", CancellationToken.None);
+        var leases = await Task.WhenAll(firstTask, secondTask);
+        leases[0].State.ShouldBe("granted");
+        leases[1].State.ShouldBe("granted");
+        leases[0].LeaseId.ShouldNotBeNullOrWhiteSpace();
+        leases[0].LeaseId.ShouldNotBe(leases[1].LeaseId);
+        handler.LiveCount.ShouldBe(2);
+        await leases[0].DisposeAsync();
+        handler.IsLive(leases[0].LeaseId!).ShouldBeFalse();
+        handler.IsLive(leases[1].LeaseId!).ShouldBeTrue();
+        await leases[1].DisposeAsync();
+        handler.LiveCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task a_shared_pid_lease_is_not_claimed_by_the_second_driver()
+    {
+        var handler = new PidIdempotentSlotHandler();
+        var (client, _) = Client(handler, pid: 50);
+        var session = await client.ProbeAsync(CancellationToken.None);
+        var leases = await Task.WhenAll(
+            client.AcquireAsync(session, "CP-1", CancellationToken.None),
+            client.AcquireAsync(session, "CP-2", CancellationToken.None));
+        leases.Count(lease => lease.State == "granted").ShouldBe(1);
+        leases.Count(lease => lease.State == "unleased").ShouldBe(1);
+        handler.LiveCount.ShouldBe(1);
+        await leases.Single(lease => lease.State == "granted").DisposeAsync();
+        handler.LiveCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task holder_process_stays_alive_until_the_lease_is_released()
+    {
+        var dll = Path.Combine(AppContext.BaseDirectory, "Antiphon.Checkpoints.dll");
+        File.Exists(dll).ShouldBeTrue(dll);
+        var holder = ProcessLeaseHolder.Start(Environment.ProcessId);
+        var pid = holder.Pid;
+        pid.ShouldBeGreaterThan(0);
+        ProcessAlive(pid).ShouldBeTrue();
+        await holder.DisposeAsync();
+        ProcessAlive(pid).ShouldBeFalse();
+    }
+
     private static ScriptedHttpHandler ScriptProbe()
     {
         var handler = new ScriptedHttpHandler();
@@ -94,7 +145,12 @@ public sealed class BuildSlotClientTests
         return handler;
     }
 
-    private static (BuildSlotClient Client, DateTimeOffset Now) Client(ScriptedHttpHandler handler, TimeSpan? grace = null, TimeSpan? wait = null)
+    private static (BuildSlotClient Client, DateTimeOffset Now) Client(
+        HttpMessageHandler handler,
+        TimeSpan? grace = null,
+        TimeSpan? wait = null,
+        int? pid = null,
+        ILeaseHolderSource? holders = null)
     {
         var now = DateTimeOffset.UtcNow;
         Task Delay(TimeSpan span, CancellationToken _)
@@ -103,7 +159,44 @@ public sealed class BuildSlotClientTests
             return Task.CompletedTask;
         }
 
-        var client = new BuildSlotClient(handler, "http://slots.test/build-slots", grace, wait, () => now, Delay);
+        var client = new BuildSlotClient(
+            handler,
+            "http://slots.test/build-slots",
+            grace,
+            wait,
+            () => now,
+            Delay,
+            pid: pid,
+            holders: holders);
         return (client, now);
+    }
+
+    private static bool ProcessAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private sealed class QueueHolders(params int[] pids) : ILeaseHolderSource
+    {
+        private readonly Queue<int> _pids = new(pids);
+
+        public ILeaseHolder Open() => new Holder(_pids.Dequeue());
+
+        private sealed class Holder(int pid) : ILeaseHolder
+        {
+            public int Pid { get; } = pid;
+
+            public string? ProcessStartUtc => null;
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 }
