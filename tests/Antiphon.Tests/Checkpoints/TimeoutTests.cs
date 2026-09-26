@@ -69,10 +69,10 @@ public sealed class TimeoutTests
         var marker = "C760W2" + Guid.NewGuid().ToString("N");
         try
         {
-            var command = "start /b pwsh -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 600 # " + marker + "\"";
+            var command = "start /b pwsh -NoProfile -NonInteractive -Command Start-Sleep -Seconds 600 # " + marker;
             var result = await RowTimeout.RunWithDeadlineAsync(
                 new ProcessDriver(),
-                new DriverRequest("cmd.exe", ["/d", "/s", "/c", command], CheckpointFixtures.TempDir()),
+                new DriverRequest("cmd.exe", ["/d", "/c", command], CheckpointFixtures.TempDir()),
                 TimeSpan.FromMinutes(1),
                 cancellationToken);
             result.TimedOut.ShouldBeTrue();
