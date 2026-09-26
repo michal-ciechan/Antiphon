@@ -50,7 +50,7 @@ Timed waiting is about 250 s of the 270 s. At speed 10 that is 25 s, plus about 
 
 - **Shared static state:** none found. `SessionMessageQueueService` holds `_locks` as an instance `ConcurrentDictionary`; each harness builds its own `ServiceProvider`, `AgentSessionRuntime` and `FakeAgentProtocolAdapter`.
 - **`ParallelLimiter<ProcessSpawnLimit>`:** not on this class; nothing spawns.
-- **Real Postgres:** yes, the shared default store. Each harness inserts one agent and one session and cleans up by `AgentId` and `TempRoot` on dispose (`BridgeQueueHarness.cs:584–625`). The coupling is `FlushStrandedQueuesAsync` and the turn-end flush reading every session's queue, which is also why forty classes share the key.
+- **Real Postgres:** yes, the shared default store. Each harness inserts one agent and one session and cleans up by `AgentId` and `TempRoot` on dispose (`BridgeQueueHarness.cs:569–606`). The coupling is `FlushStrandedQueuesAsync` and the turn-end flush reading every session's queue, which is also why forty classes share the key.
 - **Fixed waits and polling:** yes, and it is the whole cost. All of it goes through the injected `TimeProvider`.
 - **Real runner or pty:** no.
 
@@ -74,7 +74,7 @@ Why this shape: the CARD-0222 rule in `docs/testing-and-build.md` (a fake clock 
 
 ### D-3 — No shared harness
 
-Thirty-six methods that never wait on a deadline run in 0.09–0.22 s including `BridgeQueueHarness.CreateAsync`, so the harness is at most 0.1 s of a test and 11 s of the class. Sharing one harness would make the five sweep tests and the dispose-time cleanup (`BridgeQueueHarness.cs:584–625`, keyed on `AgentId`/`TempRoot`) order-dependent for an 11 s gain. Rejected.
+Thirty-six methods that never wait on a deadline run in 0.09–0.22 s including `BridgeQueueHarness.CreateAsync`, so the harness is at most 0.1 s of a test and 11 s of the class. Sharing one harness would make the five sweep tests and the dispose-time cleanup (`BridgeQueueHarness.cs:569–606`, keyed on `AgentId`/`TempRoot`) order-dependent for an 11 s gain. Rejected.
 
 ### D-4 — No duplicates removed
 
@@ -175,7 +175,7 @@ Each PC is one method, run red then green. A production mutation is restored wit
 |---|---|---|---|
 | PC-A | None: S2a switches the class to the clock while the two "row lands at 4 s" inserts still use **real** `Task.Delay(4 s)`, so the row lands at virtual 40 s, outside the 3–6 s grace. Proves the clock scales the pipeline before S2b converts them. | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing`; `Card0164_ModeNow_grace_confirms_late_record_without_409` | first: `Killed.ShouldBeFalse` fails; second: `ConflictException` (409). Green comes from CP-4 after S2b. |
 | PC-B | `server/Application/Services/SessionMessageQueueService.cs` confirm loop (`:3640–3646`): drop the re-press (`await _runtime.SendInputAsync(sessionId, "\r", ct); entersSent++;`), keep `lastEnter = UtcNow();` | `Swallowed_submit_reverts_message_and_restarts_always_on_agent` | `Inputs.ShouldBe(["swallowed submit", "\r", "\r", "\r"])` sees one CR |
-| PC-C | Same file, the WhenIdle grace method whose `grace` reads `PostFailureConfirmGraceSeconds` at `:3748`: `var grace = TimeSpan.Zero;` | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | `Killed.ShouldBeFalse` fails (no grace, always-on kill) |
+| PC-C | Same file, `GraceConfirmAsync` (`:3743`), whose `grace` reads `PostFailureConfirmGraceSeconds` at `:3748`: `var grace = TimeSpan.Zero;` | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | `Killed.ShouldBeFalse` fails (no grace, always-on kill) |
 | PC-D | Test-side, in `A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` (`:848–870`): add `h.Adapter.OnSubmitted = _ => Task.CompletedTask;` before the enqueue, so no row lands and the fallback waits out the 20 s virtual deadline | that method | `(h.Now - started).ShouldBeLessThan(10 s)` fails at ≈ 20 s virtual (2 s real): proves the converted elapsed assertion still reads the pipeline's wait |
 
 ### Checkpoints
