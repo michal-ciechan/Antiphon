@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -198,6 +199,77 @@ public sealed class RunnerAlarmDeliveryTests
         await rig.Worker.StopAsync(CancellationToken.None);
     }
 
+    [Test]
+    [Timeout(90_000)]
+    public async Task a_status_read_failure_after_a_recovery_retry_delivers_that_note_once()
+    {
+        var fault = new DrainFault();
+        await using var rig = await StartAsync(configure: options => options.AddInterceptors(
+            new FailFirstRecoveryInsert(fault), new ThrowOnceOnStatusRead(fault)));
+        await SeedPinnedAsync(rig, AgentTaskStatus.Working);
+        await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        await UntilPromptAsync(rig, "[runner server2 unavailable]");
+
+        rig.Source.Rows[0] = rig.Source.Rows[0] with { Eligible = true, DisconnectReason = null };
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(444), CancellationToken.None);
+        (await PromptsAsync(rig)).ShouldNotContain(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal));
+        var noteA = rig.State.Current.PendingRecoveries.ShouldHaveSingleItem();
+        noteA.RowId.ShouldBeNull();
+
+        var rowB = Guid.NewGuid();
+        rig.Db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = rowB,
+            AgentSessionId = rig.Harness.SessionId,
+            Body = "earlier recovery row",
+            Status = QueuedMessageStatus.Sent,
+            Sequence = 50,
+            Origin = QueuedMessageOrigin.System,
+            NoteHeader = "[runner server2 recovered]",
+            CreatedAt = DateTime.UtcNow,
+            SentAt = DateTime.UtcNow,
+            DeliveryAttempts = 1,
+        });
+        await rig.Db.SaveChangesAsync();
+        rig.Db.ChangeTracker.Clear();
+        fault.StatusReadId = rowB;
+        rig.State.Publish(rig.State.Current with
+        {
+            PendingRecoveries =
+            [
+                noteA,
+                new PendingRecoveryNote("server2", rig.Harness.SessionId, rowB, noteA.Header, "earlier recovery row"),
+            ],
+        });
+
+        try
+        {
+            await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(445), CancellationToken.None);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("owned recovery status read", StringComparison.Ordinal))
+        {
+            // The unfixed drain leaves the retried note without a row id.
+        }
+
+        await using var retryDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(rig.Schema.ConnectionString));
+        var retry = NewCoordinator(retryDb, rig.Source, rig.State, rig.Flush, rig.Harness);
+        await retry.EvaluateRunnersAsync(T0.AddSeconds(446), CancellationToken.None);
+
+        var recovery = await UntilPromptAsync(rig, "[runner server2 recovered]");
+        recovery.ShouldContain("after 7.4 min");
+        (await RowAsync(rig, recovery)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        fault.StatusThrows.ShouldBe(1);
+        (await PromptsAsync(rig)).Count(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal)
+            && text.Contains("after 7.4 min", StringComparison.Ordinal)).ShouldBe(1);
+        rig.Db.ChangeTracker.Clear();
+        (await rig.Db.SessionQueuedMessages.AsNoTracking()
+            .Where(row => row.AgentSessionId == rig.Harness.SessionId)
+            .ToListAsync())
+            .Count(row => (row.Body ?? "").Contains("after 7.4 min", StringComparison.Ordinal)).ShouldBe(1);
+        await rig.Worker.StopAsync(CancellationToken.None);
+    }
+
     private static async Task<Rig> StartAsync(CompletionNoteFlushQueue? flush = null, Action<DbContextOptionsBuilder>? configure = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -300,6 +372,63 @@ public sealed class RunnerAlarmDeliveryTests
     }
 
     private static string Short(Guid id) => id.ToString("N")[..8];
+
+    private sealed class DrainFault
+    {
+        public Guid? StatusReadId;
+        public int RecoveryInserts;
+        public int StatusThrows;
+    }
+
+    /// <summary>The first recovery insert fails; the retry is what the status-read fault follows.</summary>
+    private sealed class FailFirstRecoveryInsert(DrainFault fault) : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var added = data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(entry => entry.State == EntityState.Added
+                    && (entry.Entity.Body ?? "").Contains("[runner server2 recovered]", StringComparison.Ordinal));
+            if (added && Interlocked.CompareExchange(ref fault.RecoveryInserts, 1, 0) == 0)
+                throw new InvalidOperationException("owned recovery insert failure");
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    /// <summary>Throws once on the drain's status read for note B, after note A's retry has been saved.</summary>
+    private sealed class ThrowOnceOnStatusRead(DrainFault fault) : DbCommandInterceptor
+    {
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            if (fault.StatusReadId is Guid id && fault.StatusThrows == 0 && Targets(command, id))
+            {
+                fault.StatusThrows = 1;
+                throw new InvalidOperationException("owned recovery status read failure");
+            }
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            ReaderExecuting(command, eventData, result);
+            return ValueTask.FromResult(result);
+        }
+
+        private static bool Targets(DbCommand command, Guid id)
+        {
+            foreach (DbParameter parameter in command.Parameters)
+            {
+                if (parameter.Value is Guid guid && guid == id)
+                    return true;
+                if (parameter.Value is string text && Guid.TryParse(text, out var parsed) && parsed == id)
+                    return true;
+            }
+            return command.CommandText.Contains(id.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
 
     private sealed class FailFirstInsert : SaveChangesInterceptor
     {
