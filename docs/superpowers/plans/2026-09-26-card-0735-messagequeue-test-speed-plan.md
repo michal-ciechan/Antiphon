@@ -178,38 +178,42 @@ Each PC is one method, run red then green. A production mutation is restored wit
 | PC-C | Same file, `GraceConfirmAsync` (`:3743`), whose `grace` reads `PostFailureConfirmGraceSeconds` at `:3748`: `var grace = TimeSpan.Zero;` | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | `Killed.ShouldBeFalse` fails (no grace, always-on kill) |
 | PC-D | Test-side, in `A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback`: add `h.Adapter.OnSubmitted = _ => Task.CompletedTask;` before the enqueue, so no row lands and the unobservable deadline loop pulls until the 20 s virtual deadline | that method | `h.Runner.TranscriptGets.ShouldBe(0)` fails: the fallback calls `CatchUpTranscriptAsync`. A stored timestamped row returns before any pull |
 
+### Round 3 — re-press margin
+
+`TestClockSpeed` stays 5. Tests that assert a re-press count set `TranscriptConfirmTimeoutSeconds` to `3 * TestClockSpeed` (15 at speed 5). The interval stays 1 virtual second, so the presses still happen on the fast clock and `SubmitAttempts` still caps the count at 3. The deadline is 3 seconds of real time, the margin those tests had before the scaled clock. A host stall no longer reaches the deadline before the last Enter. The 4-second grace rows keep the unscaled 3-second virtual deadline, so a row scheduled at 4 virtual seconds is still outside the confirm window. Swallowed-submit tests that do not assert an Enter count stay on the fast clock: an early deadline still fails them the same way.
+
 ### Checkpoints
 
-All builds go to one `bin-c735/` (forward slash); the first is cold (about 3 m 44 s on server2), later ones are incremental after a test edit (about 1.5 min) or no-op (11 s). Every row runs through `scripts/run-checkpoint.ps1` (it takes the build slot itself); `-ResultsRoot .antiphon/c735-checkpoints`. Rows marked "mutated" build after applying the PC's temporary change and "restored" after reverting it.
+Each `After` slice that builds uses its own `bin-c735-<slice>/` (forward slash). A later row in the same slice reuses that output as `CP-n` (`--no-build`) and repeats the filter text. A Build cell is either `tests/Antiphon.Tests -> bin-c735-.../` or `CP-n`. Positive-control rows are separate builds: Mutation applies the temporary edit, then builds `bin-c735-pc<letter>/`, and builds `bin-c735-pc<letter>-green/` after restoring. The first build of a slice is cold (about 3 m 44 s on server2); a later slice is incremental. Every row runs through `scripts/run-checkpoint.ps1` (it takes the build slot itself); `-ResultsRoot .antiphon/c735-checkpoints`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c735/` | clock-unit | `/*/*/ScaledTimeProviderTests/*` | V-1–V-6 | all 6 methods, 0 failed/skipped | 6 | 6 |
-| CP-2 | S2a | `tests/Antiphon.Tests -> bin-c735/` | pc-a-red-whenidle | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | PC-A | 1 executed, **1 failed** (killed) | 1 | 3 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c735-s1/` | clock-unit | `/*/*/ScaledTimeProviderTests/*` | V-1–V-6 | all 6 methods, 0 failed/skipped | 6 | 6 |
+| CP-2 | S2a | `tests/Antiphon.Tests -> bin-c735-s2a/` | pc-a-red-whenidle | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | PC-A | 1 executed, **1 failed** (killed) | 1 | 3 |
 | CP-3 | S2a | CP-2 | pc-a-red-modenow | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_grace_confirms_late_record_without_409` | PC-A | 1 executed, **1 failed** (409) | 1 | 2 |
-| CP-4 | S2b | `tests/Antiphon.Tests -> bin-c735/` | class-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-1, PC-A green | 123 executed, 0 failed/skipped; class span ≤ 60 s reported from the TRX | 123 | 4 |
-| CP-5 | S2b | CP-4 | class-soak-1 | same as CP-4 | R-2 | 123 executed, 0 failed | 123 | 2 |
-| CP-6 | S2b | CP-4 | class-soak-2 | same as CP-4 | R-2 | 123 executed, 0 failed | 123 | 2 |
-| CP-7 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-B) | pc-b-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/Swallowed_submit_reverts_message_and_restarts_always_on_agent` | PC-B | 1 executed, **1 failed** | 1 | 3 |
-| CP-8 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-b-green | same as CP-7 | PC-B | 1 executed, 0 failed | 1 | 3 |
-| CP-9 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-C) | pc-c-red | same as CP-2 | PC-C | 1 executed, **1 failed** | 1 | 3 |
-| CP-10 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-c-green | same as CP-2 | PC-C | 1 executed, 0 failed | 1 | 3 |
-| CP-11 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-D) | pc-d-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | PC-D | 1 executed, **1 failed** | 1 | 3 |
-| CP-12 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-d-green | same as CP-11 | PC-D | 1 executed, 0 failed | 1 | 3 |
-| CP-13 | S3 | `tests/Antiphon.Tests -> bin-c735/` | neighbours-default-clock | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueBootWedgeTests*)/*` | R-3 | all 38 methods, 0 failed | 38 | 4 |
+| CP-4 | S2b | `tests/Antiphon.Tests -> bin-c735-s2b/` | class-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-1, PC-A green | 123 executed, 0 failed/skipped; class span reported from the TRX | 123 | 4 |
+| CP-5 | S2b | CP-4 | class-soak-1 | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-2 | 123 executed, 0 failed | 123 | 2 |
+| CP-6 | S2b | CP-4 | class-soak-2 | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-2 | 123 executed, 0 failed | 123 | 2 |
+| CP-7 | S2b | `tests/Antiphon.Tests -> bin-c735-pcb/` | pc-b-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/Swallowed_submit_reverts_message_and_restarts_always_on_agent` | PC-B | 1 executed, **1 failed** | 1 | 3 |
+| CP-8 | S2b | `tests/Antiphon.Tests -> bin-c735-pcb-green/` | pc-b-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/Swallowed_submit_reverts_message_and_restarts_always_on_agent` | PC-B | 1 executed, 0 failed | 1 | 3 |
+| CP-9 | S2b | `tests/Antiphon.Tests -> bin-c735-pcc/` | pc-c-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | PC-C | 1 executed, **1 failed** | 1 | 3 |
+| CP-10 | S2b | `tests/Antiphon.Tests -> bin-c735-pcc-green/` | pc-c-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | PC-C | 1 executed, 0 failed | 1 | 3 |
+| CP-11 | S2b | `tests/Antiphon.Tests -> bin-c735-pcd/` | pc-d-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | PC-D | 1 executed, **1 failed** | 1 | 3 |
+| CP-12 | S2b | `tests/Antiphon.Tests -> bin-c735-pcd-green/` | pc-d-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | PC-D | 1 executed, 0 failed | 1 | 3 |
+| CP-13 | S3 | `tests/Antiphon.Tests -> bin-c735-s3/` | neighbours-default-clock | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueBootWedgeTests*)/*` | R-3 | all 38 methods, 0 failed | 38 | 4 |
 | CP-14 | S3 | CP-13 | guards | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` | R-4 | all 8 methods, 0 failed | 8 | 2 |
-| CP-15 | S3 | `tests/Antiphon.Tests -> bin-c735/` | cold-no-grace | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_NoComposerEvidence_gets_no_grace` | cold pin, NoComposerEvidence | 1 executed, 0 failed, own process | 1 | 3 |
-| CP-16 | S3 | CP-15 | cold-transcript-confirm | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | cold pin, PC-D method | 1 executed, 0 failed, own process | 1 | 3 |
+| CP-15 | S3 | CP-13 | cold-no-grace | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_NoComposerEvidence_gets_no_grace` | cold pin, NoComposerEvidence | 1 executed, 0 failed, own process | 1 | 3 |
+| CP-16 | S3 | CP-13 | cold-transcript-confirm | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | cold pin, PC-D method | 1 executed, 0 failed, own process | 1 | 3 |
 
 CP-15 and CP-16 are the cold-alone pins. A single filter cannot name both methods: method-level OR matches nothing on this runner, so each method is its own process.
 
 The backslashes before table pipes are Markdown escaping only; the actual arguments use `|`. Ordinary floor: 49 minutes, of which about 13 is the per-row build-slot grace while `/build-slots` is still 404 on this runner (CARD-0589). One row, for the record:
 
 ```
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-4 -Project tests/Antiphon.Tests -OutputPath bin-c735/ -Filter "/*/*/SessionMessageQueueDeliveryVerificationTests/*" -MinExecuted 123 -ResultsRoot .antiphon/c735-checkpoints
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-4 -Project tests/Antiphon.Tests -OutputPath bin-c735-s2b/ -Filter "/*/*/SessionMessageQueueDeliveryVerificationTests/*" -MinExecuted 123 -ResultsRoot .antiphon/c735-checkpoints
 ```
 
-Delete `bin-c735/` in every project before finishing. Windows: `Task.Delay` resolution is coarser (about 15 ms), so CP-4 there is slower than on server2 but still green; the ≤ 60 s target is a server2 number.
+Delete every `bin-c735-*/` directory before finishing. Windows: `Task.Delay` resolution is coarser (about 15 ms), so CP-4 there is slower than on server2 but still green. The class span is whatever the TRX reports at speed 5; the old ≤ 60 s figure was the speed-10 target.
 
 ## Target and what it buys
 

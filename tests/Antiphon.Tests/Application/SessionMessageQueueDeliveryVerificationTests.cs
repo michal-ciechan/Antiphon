@@ -32,13 +32,22 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 {
     private const double TestClockSpeed = 5;
 
+    // Re-press every 1s virtual inside a 3s deadline. At speed 5 that last Enter is due
+    // 200ms of real time before the deadline, and a host stall drops it. These tests scale
+    // only the deadline so the window stays 3s real. The interval stays on the fast clock
+    // and SubmitAttempts still caps the count. Grace rows keep the 3s virtual deadline.
+    private static int RePressConfirmTimeoutSeconds => (int)(3 * TestClockSpeed);
+
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
-    private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
+    private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn, bool rePressMargin = false) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = alwaysOn,
             ClockSpeed = TestClockSpeed,
+            ConfigureDeliveryVerification = rePressMargin
+                ? v => v.TranscriptConfirmTimeoutSeconds = RePressConfirmTimeoutSeconds
+                : null,
         });
 
     // "No incident" assertions go through this so a failure names the incident instead of
@@ -102,7 +111,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Swallowed_submit_reverts_message_and_restarts_always_on_agent()
     {
-        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
         // Enter lands but produces no output AND submits nothing. Both knobs: SubmitAck alone
         // still records the prompt in the fake, and a recorded (stamped) prompt IS a confirmed
         // delivery whatever the screen did (CARD-0201) — the swallow is what this test is about.
@@ -485,9 +494,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     // states are reproducible — SwallowSubmits (redraw, no submit, composer keeps the body) and
     // StaleSubmitBody (someone else's body goes in, ours stays behind).
 
-    private static async Task<BridgeQueueHarness> ObservableHarnessAsync(bool alwaysOn = true)
+    private static async Task<BridgeQueueHarness> ObservableHarnessAsync(bool alwaysOn = true, bool rePressMargin = false)
     {
-        var h = await CreateHarnessAsync(alwaysOn);
+        var h = await CreateHarnessAsync(alwaysOn, rePressMargin);
         // The observability gate wants a bound, ingesting transcript. One completed turn is the
         // cheapest honest way to say "this session's transcript is live" — and it leaves the
         // session idle, so a WhenIdle enqueue delivers straight away.
@@ -498,7 +507,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task A_swallowed_first_enter_is_re_pressed_and_the_delivery_confirms()
     {
-        await using var h = await ObservableHarnessAsync();
+        await using var h = await ObservableHarnessAsync(rePressMargin: true);
         h.Adapter.SwallowSubmits = 1; // ea2feb92: the screen redraws, the composer keeps the body
 
         await h.Queue.EnqueueAsync(
@@ -522,7 +531,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task A_record_carrying_a_stale_body_is_rejected_and_the_enter_is_re_pressed()
     {
-        await using var h = await ObservableHarnessAsync();
+        await using var h = await ObservableHarnessAsync(rePressMargin: true);
         const string stale = "the previous note, still sitting in the composer";
         const string ours = "the note this delivery is actually about";
         h.Adapter.StaleSubmitBody = stale;
@@ -583,7 +592,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Screen_output_advancing_without_a_record_is_no_longer_delivered()
     {
-        await using var h = await ObservableHarnessAsync();
+        await using var h = await ObservableHarnessAsync(rePressMargin: true);
         h.Adapter.SwallowSubmits = 99; // every Enter redraws and submits nothing
         h.Adapter.SubmitAck.ShouldNotBeEmpty("sanity: the screen really does advance on each Enter");
 
@@ -636,7 +645,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Codex_unobservable_body_trailing_frames_are_not_submit_evidence_and_re_enter_until_no_submit_output()
     {
-        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
         await SetKindAsync(h.SessionId, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
@@ -655,7 +664,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Codex_unobservable_no_post_enter_output_returns_no_submit_output_after_three_enters()
     {
-        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
         await SetKindAsync(h.SessionId, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
@@ -673,7 +682,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         // CARD-0299: echo the body, one empty/ghost snapshot, then the body again. Today's
         // hole latched emptied-composer on that single poll, suppressed re-Enter, and
         // certified Sent after 1 Enter. Must send 3 Enters and return NoSubmitOutput.
-        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await using var h = await CreateHarnessAsync(alwaysOn: true, rePressMargin: true);
         await SetKindAsync(h.SessionId, AgentKind.Codex);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
@@ -728,7 +737,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Grok_unobservable_redraw_with_body_visible_is_NoSubmitOutput_not_Sent()
     {
-        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await using var h = await CreateHarnessAsync(alwaysOn: false, rePressMargin: true);
         await SetKindAsync(h.SessionId, AgentKind.Grok);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "\nStarting session\nMCP (0/2)";
@@ -752,7 +761,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Grok_unobservable_transient_empty_frame_does_not_latch_emptied_composer()
     {
-        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await using var h = await CreateHarnessAsync(alwaysOn: false, rePressMargin: true);
         await SetKindAsync(h.SessionId, AgentKind.Grok);
         h.Adapter.SwallowSubmits = 99;
         h.Adapter.SubmitAck = "";
@@ -818,7 +827,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Category("Card0355")]
     public async Task Grok_observable_queued_body_without_UserPrompt_reverts_to_Pending()
     {
-        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        await using var h = await ObservableHarnessAsync(alwaysOn: false, rePressMargin: true);
         await SetKindAsync(h.SessionId, AgentKind.Grok);
         const string body = "CARD0355-GK-Q marker that leaves the composer with no UserPrompt";
         h.Adapter.OnSubmitted = _ => Task.CompletedTask;
