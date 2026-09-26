@@ -23,7 +23,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
-        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
+        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         if (channelBound)
@@ -62,7 +62,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
-        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
+        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         clock.Advance(TimeSpan.FromSeconds(31));
@@ -92,7 +92,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
-        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
+        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var id = await h.SeedPendingMessageAsync(
@@ -117,7 +117,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
-        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
+        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var a = await h.SeedPendingMessageAsync(
@@ -149,7 +149,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var clock = new ScaledTimeProvider(TestClockSpeed);
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
-        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1), default);
+        await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
         await h.InsertTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var id = await h.SeedPendingMessageAsync(
@@ -174,7 +174,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 
         if (shape == "still-failing")
         {
-            h.Adapter.OnSubmitted = body => h.Runtime.ObserveTranscriptAsync(StubbedUserPrompt(h.SessionId, body), default);
+            h.Adapter.OnSubmitted = body => h.Runtime.ObserveTranscriptAsync(StubbedUserPrompt(h.SessionId, body, clock), default);
             await h.Queue.FlushStrandedQueuesAsync(default);
             h.Adapter.Inputs.Count(i => i == "the brief that must persist").ShouldBe(1);
             await using var failDb = CreateContext();
@@ -211,12 +211,12 @@ public partial class SessionMessageQueueDeliveryVerificationTests
             TimeProvider = clock,
         });
 
-    private static SessionRunnerTranscriptEvent PoisonToolCall(Guid sessionId, long seq) =>
-        new(sessionId, seq, TranscriptKinds.ToolCall, "poison", null, DateTimeOffset.UtcNow,
+    private static SessionRunnerTranscriptEvent PoisonToolCall(Guid sessionId, long seq, TimeProvider clock) =>
+        new(sessionId, seq, TranscriptKinds.ToolCall, "poison", null, clock.GetUtcNow(),
             "assistant", null, new string('x', 201), "SECRET-INPUT-MARKER", null, null, null);
 
-    private static SessionRunnerTranscriptEvent StubbedUserPrompt(Guid sessionId, string body) =>
-        new(sessionId, 99, TranscriptKinds.UserPrompt, new string('u', 65), null, DateTimeOffset.UtcNow,
+    private static SessionRunnerTranscriptEvent StubbedUserPrompt(Guid sessionId, string body, TimeProvider clock) =>
+        new(sessionId, 99, TranscriptKinds.UserPrompt, new string('u', 65), null, clock.GetUtcNow(),
             "user", body, null, null, null, null, null);
 
     private static async Task<DateTime> StartedAtAsync(BridgeQueueHarness h)
