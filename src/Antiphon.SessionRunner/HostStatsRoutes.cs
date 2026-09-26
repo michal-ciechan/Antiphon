@@ -18,12 +18,6 @@ public static class HostStatsRoutes
             .Bind(configuration.GetSection(HostStatsSettings.SectionName))
             .PostConfigure(settings =>
             {
-                if (settings.Volumes is { Length: 1 } && settings.Volumes[0].Contains(',', StringComparison.Ordinal))
-                {
-                    settings.Volumes = settings.Volumes[0]
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                }
-
                 if (settings.Volumes is null || settings.Volumes.Length == 0)
                 {
                     var log = configuration["SessionRunner:SessionLogPath"];

@@ -20,7 +20,6 @@ public sealed class HostStatsSettings
 
     /// <summary>
     /// Volumes to stat. Empty until bound: registration fills cwd and <c>SessionLogPath</c>.
-    /// A single comma-separated value (the server2 compose env var) is split.
     /// </summary>
     public string[] Volumes { get; set; } = [];
 
