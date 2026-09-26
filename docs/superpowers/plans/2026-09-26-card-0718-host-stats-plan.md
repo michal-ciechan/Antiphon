@@ -925,6 +925,55 @@ Totals: guards = 77, mapped = 77, missing = 0, duplicate PC maps = 0. Not guards
 V-13's live reads and CP-4's overhead number (a measurement with its own threshold), CP-9's
 activation check.
 
+### Positive controls
+
+Mutation runs each after land: apply the compiling defect, run **only** the named method with
+`--treenode-filter "/*/*/<Class>/<Method>"` (method-level OR matches nothing on this runner, so one
+invocation per method), see the named assertion fail, restore (refresh the timestamp), run the
+same method green. Batch only PCs in different files and methods. Code runs the V/R rows; Review
+judges this list before land. Runner PCs use `tests/Antiphon.SessionRunner.Tests`, server PCs
+`tests/Antiphon.Tests`, client PCs `pwsh -File scripts/test-client.ps1 <file> -t "<test name>"`.
+
+| PC | Break (file: compiling defect) | Red method | At |
+|---|---|---|---|
+| PC-1 | `HostStatsStore.cs`: empty window returns `new HostRollup(0, 0)` | `HostStatsStoreTests.Empty_store_answers_null_latest_and_null_rollups` | rollup `ShouldBeNull` |
+| PC-2 | `HostStatsStore.cs`: capacity `+ 1` | `HostStatsStoreTests.Ring_evicts_oldest_at_capacity_and_series_is_time_ordered` | `points.Count.ShouldBe(360)` after 361 |
+| PC-3 | `HostStatsStore.cs`: `Series` iterates slots `0..n` instead of from the head | same method as PC-2 | first point `At` = `At(1)` |
+| PC-4 | `HostStatsStore.cs`: `Avg = values.Max()` | `HostStatsStoreTests.Rollups_match_hand_computed_avg_and_max_for_a_sawtooth` | `1m` avg 13.5 |
+| PC-5 | `HostStatsStore.cs`: `Max = values[^1]` | same method as PC-4 | `5m` max 19 (newest value is 19 only by accident at 360: the method also asserts after 359 samples, newest 18) |
+| PC-6 | `HostStatsStore.cs`: divide by `window / interval` | `HostStatsStoreTests.Partial_window_averages_only_the_samples_it_holds` | `5m` avg 11.5 |
+| PC-7 | `HostStatsStore.cs`: cutoff `>` instead of `>=` | `HostStatsStoreTests.Window_boundary_includes_sixty_seconds_and_excludes_beyond` | the 60 s sample is in `1m` |
+| PC-8 | `HostStatsStore.cs`: cutoff `now − window − interval` | same method as PC-7 | the 60.001 s sample is not in `1m` |
+| PC-9 | `HostStatsStore.cs`: selector `s.Load1 ?? 0` | `HostStatsStoreTests.Metric_absent_from_samples_yields_null_rollups` | `load1` rollup `ShouldBeNull` |
+| PC-10 | `HostStatsStore.cs`: metric switch `_ => s.CpuPercent` | `HostStatsStoreTests.Series_rejects_unknown_metric_and_window` | `Should.Throw<ArgumentException>` |
+| PC-11 | `HostStatsStore.cs`: `Series` returns the `Where(...)` enumerable without `ToArray()` | `HostStatsStoreTests.Snapshot_carries_interval_and_retention_and_copies` | earlier series count unchanged |
+| PC-12 | `HostStatsStore.cs`: remove `lock (_gate)` in `Add` | `HostStatsStoreTests.Writers_and_readers_wait_for_the_store_gate` | `add.IsCompleted.ShouldBeFalse()` |
+| PC-13 | `HostStatsStore.cs`: remove `lock (_gate)` in the read path | same method as PC-12 | `read.IsCompleted.ShouldBeFalse()` |
+| PC-14 | `LinuxHostStatsProbe.cs`: idle = column 4 only | `HostStatsProbeParseTests.ProcStat_cpu_percent_is_busy_delta_over_total_delta` | 50.0 (got 57.14) |
+| PC-15 | `LinuxHostStatsProbe.cs`: total sums all columns | same method as PC-14 | 50.0 (got 51.72) |
+| PC-16 | `LinuxHostStatsProbe.cs`: read `parts[9]` unconditionally | `HostStatsProbeParseTests.ProcStat_short_first_line_still_parses` | `Should.NotThrow` |
+| PC-17 | `LinuxHostStatsProbe.cs`: drop `* 1024` | `HostStatsProbeParseTests.MemInfo_yields_total_available_and_swap` | total bytes |
+| PC-18 | `LinuxHostStatsProbe.cs`: available `?? 0` | `HostStatsProbeParseTests.MemInfo_without_MemAvailable_yields_null_available` | `ShouldBeNull` |
+| PC-19 | `LinuxHostStatsProbe.cs`: `split('/')[0]` | `HostStatsProbeParseTests.LoadAvg_yields_three_loads_and_host_process_count` | 3789 |
+| PC-20 | `WindowsHostStatsProbe.cs`: denominator `Δkernel + Δuser + Δidle` | `HostStatsProbeParseTests.Windows_cpu_percent_treats_kernel_as_including_idle` | 40.0 |
+| PC-21 | `LinuxHostStatsProbe.cs`: previous reading initialised to zeros | `HostStatsProbeParseTests.First_read_has_no_cpu_and_second_read_has_the_delta` | first `CpuPercent` null |
+| PC-22 | `HostStatsRoutes.cs`: remove the `AddSingleton<IHostMemoryProbe>` forwarder | `HostStatsProbeParseTests.Linux_probe_memory_floor_and_sample_read_the_same_meminfo` | `ShouldBeSameAs` (broker-first order) |
+| PC-23 | `HostStatsProbe.cs`: `SelectArm` returns null for Linux | `HostStatsProbeParseTests.Platform_switch_selects_the_arm_for_each_os` | `ShouldBeOfType<LinuxHostStatsProbe>` |
+| PC-24 | `WindowsHostStatsProbe.cs`: failed read -> `(0, 0, 0)` | `HostStatsProbeParseTests.Windows_probe_maps_a_failed_GetSystemTimes_to_null` | `CpuPercent` null |
+| PC-25 | `HostStatsSamplerService.cs`: `DateTimeOffset.UtcNow` | `HostStatsSamplerTests.SampleOnce_adds_one_sample_at_the_fake_clock_time` | `At` = fake now |
+| PC-26 | `HostStatsSamplerService.cs`: remove the probe `try/catch` | `HostStatsSamplerTests.Faulting_probe_leaves_store_unchanged_and_sampler_alive` | `Should.NotThrowAsync` |
+| PC-27 | `HostStatsSamplerService.cs`: `?? TimeSpan.Zero` | `HostStatsSamplerTests.Session_process_cpu_is_delta_over_wall_and_null_sample_is_null` | second target `CpuPercent` null |
+| PC-28 | `HostStatsSamplerService.cs`: divide by `_interval` | same method as PC-27 | 41.67 at the 6 s gap |
+| PC-29 | `HostStatsSamplerService.cs`: remove the `Enabled` early return | `HostStatsSamplerTests.Disabled_sampler_never_calls_the_probe` | calls 0 |
+| PC-30 | `HostStatsRoutes.cs`: answer `store.Latest()` without rollups | `HostStatsEndpointTests.Host_stats_answers_newest_sample_and_one_minute_rollups` | `rollups["1m"]` non-null |
+| PC-31 | `HostStatsRoutes.cs`: pass `"30m"` instead of the query `window` | `HostStatsEndpointTests.Series_route_answers_points_in_window` | `window` echoed `5m` |
+| PC-32 | `HostStatsRoutes.cs`: remove the validation block | `HostStatsEndpointTests.Bad_metric_or_window_is_400_problem` | status 400 |
+| PC-33 | `HostStatsRoutes.cs`: map regardless of `Enabled` | `HostStatsEndpointTests.Disabled_host_stats_is_404` | status 404 |
+| PC-34 | `HostStatsRoutes.cs`: `CapabilityFeatures` appends unconditionally | `RunnerCapabilitiesTests.Host_stats_feature_is_advertised_only_when_enabled` | `ShouldNotContain("hostStatsV1")` |
+| PC-35 | `PhoneHomeCommandDispatcher.cs`: case 29 `Result(request, null)` | `PhoneHomeCommandDispatcherTests.Host_stats_operation_answers_the_store_snapshot` | payload `At` |
+| PC-36 | `PhoneHomeCommandDispatcher.cs`: case 30 without the `ArgumentException` catch | `PhoneHomeCommandDispatcherTests.Host_stats_series_answers_points_and_rejects_a_bad_window` | `StatusCode` 400 |
+| PC-37 | `PhoneHomeCommandDispatcher.cs`: null seam answers `Result` with null payload | `PhoneHomeCommandDispatcherTests.Host_stats_without_the_seam_is_unsupported` | `ErrorCode` unsupported |
+
 ### Checkpoints
 
 Isolated outputs `bin-c718r/` (`Antiphon.SessionRunner.Tests`) and `bin-c718a/`
