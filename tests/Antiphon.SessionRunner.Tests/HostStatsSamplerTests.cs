@@ -57,6 +57,36 @@ public class HostStatsSamplerTests
         probe.Calls.ShouldBe(0);
     }
 
+    [Test]
+    public async Task Reused_pid_and_returning_target_start_with_no_cpu_delta()
+    {
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var cpu = new QueueCpu();
+        cpu.Values[4242] = new Queue<TimeSpan?>([
+            TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)]);
+        var firstStart = new DateTime(2026, 9, 26, 11, 0, 0, DateTimeKind.Utc);
+        var secondStart = firstStart.AddMinutes(1);
+        var targets = new List<HostStatsProcessTarget> { new("first", 4242, null, firstStart) };
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time,
+            new HostStatsSettings(), cpu, () => targets);
+
+        await sampler.SampleOnceAsync();
+        targets[0] = new HostStatsProcessTarget("second", 4242, null, secondStart);
+        time.Advance(TimeSpan.FromSeconds(5));
+        await sampler.SampleOnceAsync();
+        store.Latest()!.Processes.Single().CpuPercent.ShouldBeNull();
+
+        targets.Clear();
+        time.Advance(TimeSpan.FromSeconds(5));
+        await sampler.SampleOnceAsync();
+        targets.Add(new HostStatsProcessTarget("second", 4242, null, secondStart));
+        time.Advance(TimeSpan.FromSeconds(5));
+        await sampler.SampleOnceAsync();
+        store.Latest()!.Processes.Single().CpuPercent.ShouldBeNull();
+    }
+
     private static async Task<double> PercentAfter(TimeSpan gap)
     {
         var time = new FakeTimeProvider(T0);
