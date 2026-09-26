@@ -406,6 +406,45 @@ public sealed class ChannelInboundRecoveryTests
         legacyInbound.EnvelopeJson.ShouldContain(legacyMessage.Text!);
         legacyInbound.QueueMessageId.ShouldNotBeNull();
 
+        // The database, not a process-local lookup, owns both uniqueness rules.
+        await Should.ThrowAsync<DbUpdateException>(async () =>
+        {
+            await using var duplicate = Db(schema.ConnectionString);
+            duplicate.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = first.Channel,
+                ConversationId = chat, NativeMessageId = first.ChannelMessageId,
+                EnvelopeJson = "{}", AgentId = h.AgentId,
+                ChatChannelId = inbounds[0].ChatChannelId, AcceptedAt = DateTime.UtcNow,
+            });
+            await duplicate.SaveChangesAsync();
+        });
+        await Should.ThrowAsync<DbUpdateException>(async () =>
+        {
+            await using var duplicate = Db(schema.ConnectionString);
+            duplicate.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(), AgentSessionId = h.SessionId,
+                SourceChannelInboundId = owners[0].SourceChannelInboundId,
+                Body = "second physical owner is forbidden", Sequence = long.MaxValue,
+                Origin = QueuedMessageOrigin.Channel, ConversationKey = $"telegram:{chat}",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await duplicate.SaveChangesAsync();
+        });
+        var otherChat = await h.BindChannelAsync($"other-{Guid.NewGuid():N}");
+        await Bridge(h).HandleInboundAsync(first with
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Conversation = first.Conversation with { Id = otherChat },
+            ReplyHandle = otherChat,
+        }, Ct);
+        await Bridge(h).HandleInboundAsync(first with
+        {
+            Id = Guid.NewGuid().ToString("N"), Channel = "other-provider",
+        }, Ct);
+        (await db.ChannelInbounds.CountAsync(i => i.NativeMessageId == first.ChannelMessageId)).ShouldBe(3);
+
         // These are deliberate routing dispositions, so the hosted consumer may ack
         // each one without creating a deliverable journal owner or typing input.
         await using var dispositionSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -811,6 +850,11 @@ public sealed class ChannelInboundRecoveryTests
         await IngestAsync(TranscriptKinds.QueuedUserPrompt, marked);
         await IngestAsync(TranscriptKinds.AssistantText, marked);
         await IngestAsync(TranscriptKinds.UserPrompt, marked[..^13] + "different tail");
+        await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
+        var markerEnd = marked.IndexOf(']');
+        markerEnd.ShouldBeGreaterThan(0);
+        var wrongMarker = $"[antiphon-channel:{Guid.NewGuid():N}]" + marked[(markerEnd + 1)..];
+        await IngestAsync(TranscriptKinds.UserPrompt, wrongMarker);
         await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
         var stillPending = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId);
         stillPending.Status.ShouldBe(QueuedMessageStatus.Pending);
