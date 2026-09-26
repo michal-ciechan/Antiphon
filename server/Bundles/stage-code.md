@@ -14,4 +14,4 @@ next: review when implementation and ordinary V/R are complete, even with zero P
 
 next: code when implementation or ordinary verification remains; decide when a human choice blocks. Do not settle next: land; never land or deploy. After Review the caller lands the original Code task and commissions SourceLanding Mutation.
 
-OS: inherits its predecessor's platform > inherits the card's platform > unpinned (Any); runtime default places it; pass -Platform Any explicitly; pin only when that piece of work requires it; scope a platform-pinned task to just the OS-specific part; no habit, stage name.
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.

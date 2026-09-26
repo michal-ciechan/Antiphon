@@ -4,7 +4,7 @@ Read touched tests/fixtures/helpers before naming cases, the nearest fixture for
 
 ## Verification design
 ### Inspection
-- <test/fixture bodies read> | <boundaries -> V/R IDs or exclusion>
+- <bodies read> | <boundaries -> V/R IDs or exclusion>
 ### Delivery inventory
 For each new/changed async delivery path enumerate producer, destination, persistence boundary, recovery and observable receipt, joined by the durable identity. Include a producer-to-recipient test via the real queue: busy recipient, one already eligible, crash/enqueue-failure recovery at each handoff. A request, queue insert, event, Sent flag or ack never proves delivery. Session input needs the matching complete UserPrompt transcript. Declare substitutes and what each cannot prove. Reject a design stopping before recipient evidence. Each safety-critical delivery/recovery guard needs a named positive control.
 ### Proves it works now

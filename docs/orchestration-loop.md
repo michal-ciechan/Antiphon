@@ -443,7 +443,8 @@ flaky test.
 Say this in the brief explicitly; do not assume the role name carries it.
 
 **Runner defaults are not model pins.** Read `GET /api/runner-defaults` and `GET /api/session-runners`
-when a fresh task needs a host. Omit `-Platform`: a follow-up inherits its predecessor's platform and
+when a fresh task needs a host. Normally omit `-Runner`; the runtime default places the task.
+Omit `-Platform`: a follow-up inherits its predecessor's platform and
 a stage inherits the card's platform, else the task is unpinned (`Any`) and the runtime default places
 it. To unpin a stage on a pinned card pass `-Platform Any` explicitly. Pass a specific platform only
 when that piece of work requires it: a test, tool, behaviour or OS-specific API; path or line-ending

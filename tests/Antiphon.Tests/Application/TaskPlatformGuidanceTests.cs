@@ -8,32 +8,45 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskPlatformGuidanceTests
 {
     [Test]
-    public void Stage_guidance_inherits_platform_before_using_any_and_names_the_platform_contract()
+    public void Stage_bundles_leave_twenty_characters_below_the_size_cap()
+    {
+        foreach (var name in new[] { "stage-investigate.md", "stage-plan.md", "stage-test-design.md", "stage-code.md", "stage-mutation.md", "stage-review.md" })
+        {
+            var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", name))
+                .Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+            text.Length.ShouldBeLessThanOrEqualTo(2_480, name);
+        }
+    }
+
+    [Test]
+    public void Stage_guidance_omits_platform_unless_needed_and_preserves_runner_routes()
     {
         foreach (var name in new[] { "stage-code.md", "stage-review.md", "stage-mutation.md", "stage-plan.md" })
         {
             var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", name));
-            text.ShouldContain("inherits its predecessor's platform");
-            text.ShouldContain("inherits the card's platform");
-            text.ShouldContain("unpinned (Any)");
-            text.ShouldContain("runtime default places it");
-            text.ShouldContain("pass -Platform Any explicitly");
-            text.ShouldContain("only when that piece of work requires it");
-            text.ShouldContain("scope a platform-pinned task to just the OS-specific part");
-            text.ShouldContain("OS-specific");
-            text.ShouldContain("habit, stage name");
-            text.ShouldNotContain("-Platform Windows for");
+            text.ShouldContain("Omit -Runner unless pinning one host.");
+            text.ShouldContain("Omit -Platform unless OS needed");
+            text.ShouldContain("-Platform Any unpins.");
+            text.ShouldContain("GET /api/runner-defaults");
+            text.ShouldContain("/api/session-runners");
+            text.ShouldNotContain("pass -Platform Any explicitly");
+            if (name is "stage-code.md" or "stage-mutation.md")
+                text.ShouldContain("Do not embed a fleet location.");
         }
 
         var orchestrator = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "orchestrator.md"));
         orchestrator.ShouldContain("inherits its predecessor's platform");
         orchestrator.ShouldContain("inherits the card's platform");
         orchestrator.ShouldContain("unpinned (Any)");
+        orchestrator.ShouldContain("runtime default places it");
         orchestrator.ShouldContain("pass -Platform Any explicitly");
         orchestrator.ShouldContain("only when that piece of work requires it");
         orchestrator.ShouldContain("scope a platform-pinned task to just the OS-specific part");
         orchestrator.ShouldContain("habit, a stage name");
-        orchestrator.ShouldNotContain("-Platform Windows for");
+        orchestrator.ShouldContain("Normally omit -Runner; the runtime default places the task.");
+        orchestrator.ShouldContain("To unpin a stage on a pinned card");
+        orchestrator.ShouldContain("with its own filter and budget; leave the rest unpinned");
+        orchestrator.ShouldContain("Do not embed a fleet location.");
     }
 
     [Test]
@@ -45,6 +58,12 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("else the task is unpinned (`Any`)");
         text.ShouldContain("pass `-Platform Any` explicitly");
         text.ShouldContain("Pass a specific platform only");
+        text.ShouldContain("scope a platform-pinned task to just the OS-specific part");
+        text.ShouldContain("Normally omit `-Runner`; the runtime default places the task.");
+        text.ShouldContain("the runtime default places");
+        text.ShouldContain("To unpin a stage on a pinned card");
+        text.ShouldContain("Habit, a stage name");
+        text.ShouldContain("with its own filter and budget; leave the rest unpinned");
     }
 
     [Test]
@@ -56,6 +75,10 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("GET /api/runner-defaults");
         text.ShouldContain("GET /api/session-runners");
         text.ShouldContain("embed no fleet location");
+        text.ShouldContain("the brief's verification profile governs");
+        text.ShouldContain("through the real queue");
+        text.ShouldContain("Acceptance needs");
+        text.ShouldContain("Re-run the claimed checks (Unit plus named affected integration classes)");
     }
 
     private static string RepoRoot()
@@ -80,7 +103,7 @@ public sealed class RunnerDefaultGuidanceTests
     }
 
     [Test]
-    public void Platform_pins_are_explicit_and_bundles_inherit_before_any()
+    public void Platform_pins_are_explicit_and_bundles_defer_to_orchestrator_contract()
     {
         var plan = File.ReadAllText(Path.Combine(Root(), "docs", "superpowers", "plans", "2026-09-25-card-0710-task-platform-placement-plan.md"));
         plan.ShouldContain("CP-13");
@@ -90,10 +113,9 @@ public sealed class RunnerDefaultGuidanceTests
         foreach (var name in new[] { "stage-plan.md", "stage-code.md", "stage-review.md", "stage-mutation.md" })
         {
             var text = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", name));
-            text.ShouldContain("inherits its predecessor's platform");
-            text.ShouldContain("inherits the card's platform");
-            text.ShouldContain("pass -Platform Any explicitly");
-            text.ShouldContain("OS-specific");
+            text.ShouldContain("Omit -Platform unless OS needed");
+            text.ShouldContain("-Platform Any unpins.");
+            text.ShouldContain("Omit -Runner unless pinning one host.");
             text.Contains("CP-13", StringComparison.Ordinal).ShouldBeFalse(name + " names CP-13");
             text.Contains("server2", StringComparison.Ordinal).ShouldBeFalse(name + " names server2");
         }
