@@ -12,50 +12,68 @@ public sealed class CheckpointTaskOwnershipTests
     [Test]
     public async Task settlement_cancels_two_drivers_and_skips_later_rows()
     {
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var count = 0;
-        var driver = new FakeDriver();
-        driver.When(_ => true, async (_, cancellationToken) =>
+        foreach (var terminal in new[] { "Succeeded", "Failed", "Canceled" })
         {
-            if (Interlocked.Increment(ref count) == 2)
-                entered.TrySetResult();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
-            catch (OperationCanceledException) { }
-            await release.Task;
-            throw new OperationCanceledException(cancellationToken);
-        });
-        var manifest = new CheckpointManifest();
-        for (var i = 1; i <= 3; i++)
-            manifest.Checkpoints.Add(new CheckpointSpec { Id = $"CP-{i}", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
-        using var cancel = new CancellationTokenSource();
-        var state = new RunState();
-        var run = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
-        {
-            Manifest = manifest,
-            Rows = manifest.Checkpoints,
-            RunDirectory = CheckpointFixtures.TempDir(),
-            WorkingDirectory = CheckpointFixtures.RepoRoot,
-            State = state,
-            Slots = new FixedSlotClient("off"),
-            Width = 2,
-            TotalTimeout = TimeSpan.FromMinutes(5),
-            OwnerBound = true,
-        }, cancel.Token);
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            cancel.Cancel();
-            run.IsCompleted.ShouldBeFalse();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var poll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entries = 0;
+            var cancellations = 0;
+            var driver = new FakeDriver();
+            driver.When(_ => true, async (_, token) =>
+            {
+                if (Interlocked.Increment(ref entries) == 2)
+                    entered.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+                catch (OperationCanceledException)
+                {
+                    if (Interlocked.Increment(ref cancellations) == 2)
+                        canceled.TrySetResult();
+                }
+                await release.Task;
+                throw new OperationCanceledException(token);
+            });
+            var manifest = new CheckpointManifest();
+            for (var i = 1; i <= 3; i++)
+                manifest.Checkpoints.Add(new CheckpointSpec { Id = $"CP-{i}", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
+            var repo = CheckpointFixtures.TempDir();
+            var run = CheckpointApp.CreateRun(manifest, new RunRequest
+            {
+                Slots = "off", KeepOutputs = true, Parallel = 2,
+                OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
+            }, repo);
+            var handler = new OwnerHandler();
+            var slots = new BoundarySlots();
+            var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None,
+                Runtime(handler, driver, slots, (_, token) => poll.Task.WaitAsync(token)));
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                handler.TaskStatus = terminal;
+                poll.TrySetResult();
+                await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                execute.IsCompleted.ShouldBeFalse();
+                release.TrySetResult();
+                (await execute).ShouldBe(ExitCodes.OwnerEnded);
+                driver.Count(_ => true).ShouldBe(2);
+                slots.Acquires.ShouldBe(2);
+                slots.Releases.ShouldBe(2);
+                var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+                state.Rows.Single(row => row.Id == "CP-3").State.ShouldBe("owner-ended");
+                state.Reason.ShouldBe("owner-ended");
+                File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("exit=7");
+                (await new WaitCommand(liveness: new DeadLiveness()).WaitAsync(run, TimeSpan.FromSeconds(1),
+                    TimeSpan.FromMinutes(1), TextWriter.Null, CancellationToken.None)).ShouldBe(ExitCodes.OwnerEnded);
+            }
+            finally
+            {
+                handler.TaskStatus = "Succeeded";
+                poll.TrySetResult();
+                release.TrySetResult();
+                await execute;
+            }
         }
-        finally
-        {
-            release.TrySetResult();
-        }
-        var result = await run.WaitAsync(TimeSpan.FromSeconds(5));
-        driver.Count(_ => true).ShouldBe(2);
-        result.Rows.Single(row => row.Id == "CP-3").State.ShouldBe("owner-ended");
-        result.ExitCode.ShouldBe(ExitCodes.OwnerEnded);
     }
 
     private static readonly Guid TaskId = Guid.Parse("11111111-1111-4111-8111-111111111111");
@@ -154,6 +172,33 @@ public sealed class CheckpointTaskOwnershipTests
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(handler, driver, slots))).ShouldBe(ExitCodes.OwnerEnded);
         driver.Count(_ => true).ShouldBe(0);
         new RunStateStore().TryRead(Path.Combine(run, "state.json"))!.Reason.ShouldBe("owner-ended");
+
+        const string flaky = "Antiphon.Tests.FlakyTests.flaky";
+        var retryHandler = new OwnerHandler();
+        var retryDriver = new FakeDriver();
+        retryDriver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        retryDriver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), (flaky, "Failed"));
+            retryHandler.TaskStatus = "Succeeded";
+            return Task.FromResult(new DriverResult(1, "", ""));
+        });
+        var retryManifest = new CheckpointManifest();
+        retryManifest.Builds.Add(new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" });
+        retryManifest.Checkpoints.Add(new CheckpointSpec
+        {
+            Id = "CP-1", After = ["S1"], Build = "bin-a", Filter = "/*/*/FlakyTests/*",
+            Expect = ["FlakyTests"], MinExecuted = 1, EstimatedMinutes = 1,
+        });
+        var repo = CheckpointFixtures.TempDir();
+        var retryRun = CheckpointApp.CreateRun(retryManifest, new RunRequest
+        {
+            Slots = "off", KeepOutputs = true, KnownFlaky = [flaky],
+            OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
+        }, repo);
+        (await CheckpointApp.ExecuteAsync(retryRun, CancellationToken.None, Runtime(retryHandler, retryDriver))).ShouldBe(ExitCodes.OwnerEnded);
+        retryDriver.Count(CheckpointFixtures.IsRun).ShouldBe(1);
+        new RunStateStore().TryRead(Path.Combine(retryRun, "state.json"))!.Reason.ShouldBe("owner-ended");
     }
 
     [Test]
@@ -298,6 +343,32 @@ public sealed class CheckpointTaskOwnershipTests
         var bound = NewBoundRun();
         (await CheckpointApp.ExecuteAsync(bound, CancellationToken.None, Runtime(handler))).ShouldBe(0);
         handler.Calls.ShouldBeGreaterThan(0);
+
+        var starterRoot = CheckpointFixtures.TempDir();
+        var starterHandler = new OwnerHandler();
+        var starterRuntime = new CheckpointApp.Runtime
+        {
+            EnvironmentLookup = OwnerEnvironment(), OwnerHandler = starterHandler,
+            Delay = HoldDelay, Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
+            Launch = _ => 123,
+        };
+        var started = await CheckpointApp.StartAsync(CommandManifest(), new RunRequest { Slots = "off", KeepOutputs = true },
+            starterRoot, TextWriter.Null, starterRuntime);
+        started.ExitCode.ShouldBe(0);
+        (await CheckpointApp.ExecuteAsync(started.RunDirectory, CancellationToken.None, starterRuntime)).ShouldBe(0);
+
+        var crashing = new FakeDriver();
+        crashing.When(_ => true, (_, _) => throw new IOException("synthetic unbound crash"));
+        var crashRun = NewBoundRun();
+        var crashRequestPath = Path.Combine(crashRun, "request.json");
+        var crashRequest = System.Text.Json.JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(crashRequestPath), CheckpointApp.Json)!;
+        crashRequest.OwnerTaskId = null;
+        crashRequest.OwnerSessionId = null;
+        File.WriteAllText(crashRequestPath, System.Text.Json.JsonSerializer.Serialize(crashRequest, CheckpointApp.Json));
+        (await CheckpointApp.ExecuteAsync(crashRun, CancellationToken.None, new CheckpointApp.Runtime
+        {
+            EnvironmentLookup = _ => null, Driver = crashing, Slots = new FixedSlotClient("off"),
+        })).ShouldBe(ExitCodes.ExecutorCrashed);
     }
 
     [Test]
@@ -368,6 +439,13 @@ public sealed class CheckpointTaskOwnershipTests
         string.Join(' ', launch.Arguments).ShouldNotContain(Token);
         var request = System.Text.Json.JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(Path.Combine(started.RunDirectory, "request.json")), CheckpointApp.Json)!;
         request.OwnerTaskId.ShouldBe(TaskId.ToString());
+        (await CheckpointApp.ExecuteAsync(started.RunDirectory, CancellationToken.None, new CheckpointApp.Runtime
+        {
+            EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = HoldDelay,
+            Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
+        })).ShouldBe(0);
+        foreach (var name in new[] { "request.json", "manifest.resolved.yaml", "executor.log", "report.md", "report.json", "state.json" })
+            File.ReadAllText(Path.Combine(started.RunDirectory, name)).ShouldNotContain(Token);
     }
 
     [Test]
@@ -420,6 +498,8 @@ public sealed class CheckpointTaskOwnershipTests
         windows.TimeoutMinutes.ShouldBe(81);
         RowTimeout.DeriveTotalMinutes([linux.EstimatedMinutes!.Value], null).ShouldBe(30);
         RowTimeout.DeriveTotalMinutes([windows.EstimatedMinutes!.Value], null).ShouldBe(64);
+        PlanTableImporter.ImportMarkdown(markdown.Replace("| 9 | 27 |", "| 9 | n/a |"), isWindows: true)
+            .Manifest!.Checkpoints.Single().EstimatedMinutes.ShouldBe(9);
         var manifest = new CheckpointManifest { Checkpoints = [windows] };
         var repo = CheckpointFixtures.TempDir();
         var run = CheckpointApp.CreateRun(manifest, new RunRequest { Slots = "off", KeepOutputs = true }, repo);
@@ -428,6 +508,15 @@ public sealed class CheckpointTaskOwnershipTests
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(0);
         var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
         (state.TotalTimeoutAt!.Value - state.StartedAt).TotalMinutes.ShouldBe(64);
+
+        var overridden = CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            Slots = "off", KeepOutputs = true, RowTimeoutMinutes = 7, TotalTimeoutMinutes = 11,
+        }, repo);
+        (await CheckpointApp.ExecuteAsync(overridden, CancellationToken.None, runtime)).ShouldBe(0);
+        var overrideState = new RunStateStore().TryRead(Path.Combine(overridden, "state.json"))!;
+        (overrideState.TotalTimeoutAt!.Value - overrideState.StartedAt).TotalMinutes.ShouldBe(11);
+        RowTimeout.DeriveRowMinutes(27, 7, 15).ShouldBe(7);
     }
 
     [Test]
@@ -548,5 +637,10 @@ public sealed class CheckpointTaskOwnershipTests
             _exit.TrySetResult();
         }
         public void Dispose() { }
+    }
+
+    private sealed class DeadLiveness : IProcessLiveness
+    {
+        public bool IsAlive(int pid) => false;
     }
 }
