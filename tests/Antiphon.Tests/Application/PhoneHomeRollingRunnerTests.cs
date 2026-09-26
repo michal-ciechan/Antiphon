@@ -252,12 +252,13 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 .SetProperty(t => t.WorktreeBranch, "feat/rolling-pin"));
         }
 
-        public Task<AgentTaskDispatcher.TickResult> TickAsync()
+        public Task<AgentTaskDispatcher.TickResult> TickAsync(Action<AgentTaskDispatcher>? configure = null)
         {
             var scope = Harness.Provider.CreateScope();
             _scopes.Add(scope);
-            return scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
-                .TickAsync(CancellationToken.None);
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            configure?.Invoke(dispatcher);
+            return dispatcher.TickAsync(CancellationToken.None);
         }
 
         public async Task WaitForLaunchesAsync(TimeSpan budget)
