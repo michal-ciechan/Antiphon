@@ -457,6 +457,11 @@ Missing setup the Code stage adds (test-only or seam, named so no row is a stub)
 - **MS-1** `LinuxHostStatsProbe` internal ctor seam `(Func<string, IReadOnlyList<string>> readLines,
   Func<string, (long Free, long Total)?> statVolume, IReadOnlyList<string> volumes)`; the public ctor
   passes `File.ReadAllLines` and `DriveInfo`. V-2 m7, m8 feed fixture strings through it.
+  `WindowsHostStatsProbe` gets the same kind of internal seam: `Func<(long Idle, long Kernel, long
+  User)?> readSystemTimes`, `Func<(ulong TotalPhys, ulong AvailPhys, ulong TotalPageFile, ulong
+  AvailPageFile)?> readMemoryStatus` (the public ctor passes the P/Invokes; null = the call
+  returned false). `SystemHostStatsProbe.SelectArm(bool isWindows, bool isLinux)` is the platform
+  switch as a pure internal static. V-2 m9, m10 use them on either lane.
 - **MS-2** `HostStatsSamplerService` depends on `IHostStatsProbe`, `HostStatsStore`, `IProcessCpuProbe`,
   a `Func<IReadOnlyList<HostStatsProcessTarget>>` (session id, pid, host pid, started-at; the DI
   registration adapts `SessionRunnerRuntime.List()`), a `Func<int, long?>` working-set reader
@@ -493,10 +498,10 @@ No path carries session input, so no UserPrompt transcript applies.
 
 | Path | Producer | Destination | Persistence boundary | Recovery | Observable receipt |
 |---|---|---|---|---|---|
-| DP-1 sample | `HostStatsSamplerService.SampleOnceAsync` | `HostStatsStore` ring | none (runner memory; a runner restart empties the ring, accepted in D-4) | next tick; a faulting probe skips one tick (G-21) | `Latest().At` equals the fake clock (V-3 m1); `GET /host-stats` newest `At` (V-4 m1) |
-| DP-2 local pull | runner `GET /host-stats` | server `HostStatsCache.Record("desktop", dto)` | none | next 5 s tick; a fault or 3 s timeout marks the host for `stale` (G-43, G-44) | projection `live` with the answered `At` (V-8 m1, m4) |
+| DP-1 sample | `HostStatsSamplerService.SampleOnceAsync` | `HostStatsStore` ring | none (runner memory; a runner restart empties the ring, accepted in D-4) | next tick; a faulting probe skips one tick (G-26) | `Latest().At` equals the fake clock (V-3 m1); `GET /host-stats` newest `At` (V-4 m1) |
+| DP-2 local pull | runner `GET /host-stats` | server `HostStatsCache.Record("desktop", dto)` | none | next 5 s tick; a fault or 3 s timeout marks the host for `stale` (G-53, G-55) | projection `live` with the answered `At` (V-8 m1, m4) |
 | DP-3 remote pull | runner dispatcher case 29 over the phone-home socket | `HostStatsCache.Record("server2", dto)` | none | silent peer: request cancelled at `RequestTimeoutMs`, host goes `stale`; disconnect: `offline`, then `live` on reconnect; old runner: `unsupported` | V-8 m2, m3, m5 against the real `PhoneHomeLiveConnection` |
-| DP-4 push | `HostStatsPollService` after a tick with `Changed` | browser query cache `['hosts','stats']` and mounted series keys, via `IEventBus.PublishToGroupAsync("hosts", "HostStatsUpdated", list)` | none; the page's `GET /api/hosts/stats` on mount and on reconnect is the resync | publish fault: the tick survives and `Changed` stays set so the next tick republishes (G-47); client reconnect: rejoin + refetch (G-60) | server: `RecordingEventBus` holds one `("hosts","HostStatsUpdated", list)` whose entries carry the answered `At` (V-8 m1, m6); client: `queryClient.getQueryData(['hosts','stats'])` equals the pushed list (V-10 live m2); live: CP-9 hub receipt |
+| DP-4 push | `HostStatsPollService` after a tick with `Changed` | browser query cache `['hosts','stats']` and mounted series keys, via `IEventBus.PublishToGroupAsync("hosts", "HostStatsUpdated", list)` | none; the page's `GET /api/hosts/stats` on mount and on reconnect is the resync | publish fault: the tick survives and `Changed` stays set so the next tick republishes (G-59); client reconnect: rejoin + refetch (G-76) | server: `RecordingEventBus` holds one `("hosts","HostStatsUpdated", list)` whose entries carry the answered `At` (V-8 m1, m6); client: `queryClient.getQueryData(['hosts','stats'])` equals the pushed list (V-10 live m2); live: CP-9 hub receipt |
 | DP-5 series read | runner `Series(...)` via `GET host-stats/series` / operation 30 | page series key | none | synchronous request; a failure is 409 and the page keeps its points | V-9 m2 (proxied points), V-4 m2, V-5 m2 |
 
 Producer-to-recipient through the real queue: V-8 drives the real `PhoneHomeLiveConnection` (the
@@ -562,7 +567,7 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     (first assertion) or in the read path (second). Replaces the draft's concurrent-loop method,
     which could not go red deterministically (a stub under CARD-0585 rule 4).
 - **V-2: the OS figures are parsed and differenced correctly on both platforms | runner Unit, pure |
-  `HostStatsProbeParseTests` (8) | all green on either lane.** TestDesign pins D-1's CPU formula:
+  `HostStatsProbeParseTests` (10) | all green on either lane.** TestDesign pins D-1's CPU formula:
   idle = `idle + iowait` (columns 4, 5), total = the first **eight** columns (user, nice, system,
   idle, iowait, irq, softirq, steal); `guest`/`guest_nice` are already inside `user`/`nice` and
   are excluded.
@@ -591,6 +596,15 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
     (IHostMemoryProbe)sp.GetRequiredService<IHostStatsProbe>())`, which beats the broker's
     `TryAddSingleton` either way). Red: `SystemHostMemoryProbe` left as the broker's independent
     registration, or `AvailableBytes` reading `MemFree`.
+  - m9 `Platform_switch_selects_the_arm_for_each_os`: `SystemHostStatsProbe.SelectArm(isWindows,
+    isLinux)` (internal static) returns a `WindowsHostStatsProbe` for (true, false), a
+    `LinuxHostStatsProbe` for (false, true), null for (false, false); constructing either arm does
+    no OS call. Red: the Linux branch missing from the switch (the live probe answers null on
+    server2), or the two branches swapped.
+  - m10 `Windows_probe_maps_a_failed_GetSystemTimes_to_null`: over MS-1's Windows seam, a
+    `readSystemTimes` answering null (the P/Invoke returned false) gives `CpuPercent` null and
+    keeps the memory figures; a `readMemoryStatus` answering null gives null memory fields, not 0.
+    Red: a failed `GetSystemTimes` mapped to zeros (then 0 % or a since-boot percentage).
 - **V-3: the sampler adds one timestamped sample per tick, survives faults and never charges an
   unknown process | runner Unit, MS-2 fakes, `FakeTimeProvider` | `HostStatsSamplerTests` (4) |
   all green.**
@@ -771,6 +785,8 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
   `Skip.Test` with the reason.** Idiom (the `CodexAuthProbeTests.cs:105` shape): each method opens
   with `if (!OperatingSystem.IsLinux()) { Skip.Test("Linux /proc probe; this lane is <os>, where
   <other method> runs."); return; }` (Windows method mirrors it).
+  V-13 is live evidence for the P/Invokes and `/proc` paths, not a guard's positive control: the
+  guards behind it (platform switch, failure-to-null) are V-2 m9/m10, which run on either lane.
   - `Linux_probe_reads_live_proc`: `new SystemHostStatsProbe(settings)` with `Volumes = [Path.GetTempPath()]`;
     first `Read()`: `MemoryTotalBytes` equals `MemTotal` kB x 1024 read independently from
     `/proc/meminfo` by the test, `0 < MemoryAvailableBytes <= MemoryTotalBytes`, `Cores ==
@@ -805,7 +821,7 @@ stubbed body, e.g. `throw new NotImplementedException()` or a constant answer).
 - **R-3: the `Antiphon.Tests` Unit lane | `/*/*/*/*[Category=Unit]` | >= 2900 executed, 0 failed.**
   Static count at `bafc3366`: 225 files with a class-level `[Category("Unit")]`, 2238 `[Test]` and
   1195 `[Arguments]` lines (about 3.2k executions before data-source expansion); last measured run
-  3021 total / 2993 executed at `c18a6c67`. This card adds 12 (V-6 6, V-7 3, V-12 3). A failure
+  3021 total / 2993 executed at `c18a6c67`. This card adds 12 to it (V-6 6, V-7 3, V-12 3). A failure
   that also fails at `bafc3366` is reported as pre-existing, not fixed here.
 - **R-4: client lint and the whole vitest suite | `npm run lint` 0 warnings; `test-client.ps1`
   (all 106 files at `bafc3366` plus 4) | exit 0.** Decisive: `App.test.tsx` still renders every
