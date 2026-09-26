@@ -1050,7 +1050,7 @@ green for the client file; `tests/Antiphon.Tests/Application/RunnerAlarmAttentio
   cover the two kinds; the new `it.each` cases assert
   `ATTENTION_VISUALS[kind]` is defined and `homeBucketOf(item({ kind, severity: 'Error' })) ===
   'broken'`. Red (the S4-tests commit: union and test lists updated, visuals not): the two new
-  `it.each` cases and `maps every kind ...` fail at `toBeDefined`. Label/colour/icon/hint strings are
+  `it.each` cases and `maps every kind ...` fail at `toBeDefined` (other every-kind loops may fail on the same two kinds; CP-10). Label/colour/icon/hint strings are
   D-6 copy, asserted non-empty only.
 
 ### Guards the regression
@@ -1291,7 +1291,7 @@ used. `Min` is the source execution count at `4fe3bce9` plus this card's new met
 | CP-7 | S3 | CP-6 | r1-regression | `/*/*/(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeDirectoryTests*)\|(DefaultRunnerEligibilityTests*)\|(RepositoryMutationLeaseTests*)\|(RepositoryMutationLeaseDescribeTests*)\|(RepositoryMutationLeaseOwnerTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1, R-2, R-5 | 63 results (25 + 37 + 1): 61 passed, 2 skipped (`C448_V28_...`, `C448_V13_...`, Windows-only), 0 failed | 61 | 8 |
 | CP-8 | S4-tests | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-red | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | 3 executed, 3 failed: V-17 and V-18 at "one item of the kind", V-19 at `Open` base + 2 | 3 | 6 |
 | CP-9 | S4 | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-green | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | all 3 listed, 0 failed/skipped | 3 | 5 |
-| CP-10 | S4-tests | n/a | client-visuals-red | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client-red -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20 | `CLIENT TESTS EXIT CODE: 1`; failed exactly `maps every kind to a label, a colour, an icon and a hint` and the two new `draws ... in the Error severity bucket` cases, at `toBeDefined`; the other 18 pass | n/a | 3 |
+| CP-10 | S4-tests | n/a | client-visuals-red | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client-red -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20 | `CLIENT TESTS EXIT CODE: 1`; the failures include `maps every kind to a label, a colour, an icon and a hint` and the two new `draws ... in the Error severity bucket` cases at `toBeDefined`, and may include the other every-kind loops (`keeps kinds off the violet tier axis`, `lands every kind in a declared group`, the `unique == visualKeys` lockstep); every failure names `RunnerUnavailable` or `RepositoryChildJournalStale`, and no other case fails | n/a | 3 |
 | CP-11 | S4 | n/a | client-visuals-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20, R-4 | 21 tests (15 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
 | CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` with `TUNIT_MAX_PARALLEL_TESTS=1` in the environment | R-3 | 176 executed (124 + 32 + 9 + 11), 0 failed | 176 | 24 |
 
