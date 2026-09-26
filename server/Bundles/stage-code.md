@@ -1,6 +1,6 @@
 Implement the landed plan and its verification design, including its tests.
 
-SCOPE: Ordinary verification is Unit plus the named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
+SCOPE: Unit plus named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
 
 CHECKPOINTS: the plan's ### Checkpoints table is the closed list of builds and test runs. Run it through the checkpoint tool (docs/testing-and-build.md, Checkpoint runner tool): one run per committed slice group, wait for its report, paste its CP-n lines unedited; inspect fresh TRX for each intended class/method and nonzero counts. Fix a red CP-n, then rerun that CP-n. Any other build/test command is unlisted: report it with a reason. Report slot= and waited= from those lines. A new test that cannot go red against the production line it guards (self-compare, constant, no outcome assertion) is a stub, not done.
 
@@ -14,4 +14,4 @@ next: review when implementation and ordinary V/R are complete, even with zero P
 
 next: code when implementation or ordinary verification remains; decide when a human choice blocks. Do not settle next: land; never land or deploy. After Review the caller lands the original Code task and commissions SourceLanding Mutation.
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners; no fleet location. Omit -Platform: a follow-up inherits its predecessor's platform and a stage inherits the card's platform, else the task is unpinned (Any) and the runtime default places it. To unpin a stage on a pinned card pass -Platform Any explicitly. Pass a specific platform only when that piece of work requires it: OS-specific test/tool/behaviour/evidence (API, paths/line endings, locks, process/terminal, probe); scope a platform-pinned task to just the OS-specific part, never habit, stage name or host preference.
+OS: inherits its predecessor's platform > inherits the card's platform > unpinned (Any); runtime default places it; pass -Platform Any explicitly; pin only when that piece of work requires it; scope a platform-pinned task to just the OS-specific part; no habit, stage name.
