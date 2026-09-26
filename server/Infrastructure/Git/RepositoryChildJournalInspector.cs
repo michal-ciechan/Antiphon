@@ -27,7 +27,7 @@ public sealed record JournalInspection(string? CommonDirectory, IReadOnlyList<Jo
 /// <summary>CARD-0726 D-8: read-only classification of one repository's child journal.</summary>
 public sealed class RepositoryChildJournalInspector(ILandingGit git)
 {
-    public async Task<JournalInspection> InspectAsync(
+    public virtual async Task<JournalInspection> InspectAsync(
         string repository, TimeSpan staleAfter, DateTimeOffset now, CancellationToken ct)
     {
         var common = await git.CommonDirectoryAsync(repository, ct);
