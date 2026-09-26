@@ -30,6 +30,24 @@ describe('Hosts page', () => {
     expect(within(card).queryByText(/\b0 ?%/)).not.toBeInTheDocument()
   })
 
+  it('explains when polling is disabled', async () => {
+    server.use(http.get('/api/hosts/stats', () => HttpResponse.json([host({ state: 'offline', reason: 'disabled', current: null, rollups: null })])))
+    renderWithProviders(<HostsPage live={false} />)
+    const card = await screen.findByRole('region', { name: 'Desktop' })
+    expect(within(card).getByText('disabled')).toBeInTheDocument()
+  })
+
+  it('labels Windows commit charge and Linux swap separately', async () => {
+    server.use(http.get('/api/hosts/stats', () => HttpResponse.json([
+      host(), host({ hostId: 'server2', displayName: 'Server 2', platform: 'linux' }),
+    ])))
+    renderWithProviders(<HostsPage live={false} />)
+    const desktop = await screen.findByRole('region', { name: 'Desktop' })
+    const server2 = screen.getByRole('region', { name: 'Server 2' })
+    expect(within(desktop).getByText('Commit charge / limit')).toBeInTheDocument()
+    expect(within(server2).getByText('Swap used / total')).toBeInTheDocument()
+  })
+
   it('links the Hosts nav item to /hosts', async () => {
     renderWithProviders(<Layout />)
     await waitFor(() => expect(screen.getAllByRole('link', { name: 'Hosts' }).some(link => link.getAttribute('href') === '/hosts')).toBe(true))

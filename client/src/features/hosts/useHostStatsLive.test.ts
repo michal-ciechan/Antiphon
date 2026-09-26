@@ -38,6 +38,8 @@ describe('useHostStatsLive', () => {
     signalr.connection.reconnected = undefined
     signalr.connection.invoke.mockClear()
     signalr.connection.start.mockClear()
+    signalr.connection.stop.mockClear()
+    signalr.connection.off.mockClear()
   })
 
   it('joins group hosts on start', async () => {
@@ -77,5 +79,23 @@ describe('useHostStatsLive', () => {
     await act(async () => { signalr.connection.reconnected?.() })
     await waitFor(() => expect(requests).toBe(before + 1))
     expect(signalr.connection.invoke).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves the group and ignores a late push after unmount', async () => {
+    const view = renderHookWithProviders(() => useHostStatsLive())
+    await waitFor(() => expect(signalr.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'hosts'))
+    const handler = signalr.connection.handlers.get('HostStatsUpdated')
+    expect(handler).toBeTypeOf('function')
+    const initial = [host()]
+    view.queryClient.setQueryData(hostKeys.stats, initial)
+
+    view.unmount()
+    await waitFor(() => expect(signalr.connection.invoke).toHaveBeenCalledWith('LeaveGroup', 'hosts'))
+    await waitFor(() => expect(signalr.connection.stop).toHaveBeenCalledTimes(1))
+    expect(signalr.connection.off).toHaveBeenCalledWith('HostStatsUpdated', handler)
+    expect(signalr.connection.handlers.has('HostStatsUpdated')).toBe(false)
+
+    act(() => handler?.([host({ state: 'stale' })]))
+    expect(view.queryClient.getQueryData(hostKeys.stats)).toEqual(initial)
   })
 })
