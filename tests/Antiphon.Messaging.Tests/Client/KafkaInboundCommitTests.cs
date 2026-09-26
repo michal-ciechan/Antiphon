@@ -136,6 +136,23 @@ public sealed class KafkaInboundCommitTests
             found.ShouldBeTrue();
         }
         (await CommittedAsync(topic, group, 0)).ShouldBe(1);
+
+        var (gapTopic, gapGroup) = await CreateTopicAsync();
+        await ProduceAsync(gapTopic, 0, "gap first");
+        await ProduceAsync(gapTopic, 0, "gap second");
+        var gapClient = Client(gapTopic, gapGroup);
+        await using (var e = gapClient.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message!.Text.ShouldBe("gap first");
+            var unresolved = e.Current;
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message!.Text.ShouldBe("gap second");
+            await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+            (await CommittedAsync(gapTopic, gapGroup, 0)).ShouldBeLessThanOrEqualTo(0);
+            await unresolved.AcknowledgeAsync("accepted", timeout.Token);
+        }
+        (await CommittedAsync(gapTopic, gapGroup, 0)).ShouldBe(2);
     }
 
     private static KafkaAntiphonMessagingConsumer Client(string topic, string group,
