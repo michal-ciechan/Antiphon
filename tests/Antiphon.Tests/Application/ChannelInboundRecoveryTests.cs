@@ -114,6 +114,38 @@ public sealed class ChannelInboundRecoveryTests
             i.Message.Contains("has not reached"))).ShouldBe(1);
         await Bridge(h).DrainPendingAsync(Ct);
         (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.FailureReason == "ChannelWakeTimeout")).ShouldBe(1);
+
+        await using var faultSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var incidentFault = new IncidentCommitFault();
+        await using var faultHarness = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = faultSchema.ConnectionString, ClockSpeed = 20,
+            Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(incidentFault),
+        });
+        var faultChat = await faultHarness.BindChannelAsync();
+        await using (var setup = Db(faultSchema.ConnectionString))
+            await setup.AgentSessions.Where(s => s.Id == faultHarness.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+        var faultMessage = Message(faultChat, $"incident-fault-{Guid.NewGuid():N}", "incident failure must be retryable");
+        incidentFault.Arm();
+        await Should.ThrowAsync<InvalidOperationException>(
+            async () => await Bridge(faultHarness).HandleInboundAsync(faultMessage, Ct));
+        await using (var cut = Db(faultSchema.ConnectionString))
+        {
+            var retained = await cut.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.NativeMessageId == faultMessage.ChannelMessageId);
+            retained.EnvelopeJson.ShouldContain(faultMessage.Text!);
+            retained.WakeTimeoutIncidentAt.ShouldBeNull();
+            (await cut.AgentIncidents.CountAsync(i => i.AgentId == faultHarness.AgentId
+                && i.FailureReason == "ChannelWakeTimeout")).ShouldBe(0);
+        }
+        await Bridge(faultHarness).DrainPendingAsync(Ct);
+        await using var repaired = Db(faultSchema.ConnectionString);
+        (await repaired.AgentIncidents.CountAsync(i => i.AgentId == faultHarness.AgentId
+            && i.FailureReason == "ChannelWakeTimeout")).ShouldBe(1);
+        (await repaired.ChannelInbounds.Where(i => i.NativeMessageId == faultMessage.ChannelMessageId)
+            .Select(i => i.WakeTimeoutIncidentAt).SingleAsync()).ShouldNotBeNull();
     }
 
     [Test]
@@ -613,6 +645,22 @@ public sealed class ChannelInboundRecoveryTests
                 }
             }
             return await base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed class IncidentCommitFault : SaveChangesInterceptor
+    {
+        private int _armed;
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context?.ChangeTracker.Entries<AgentIncident>()
+                .Any(e => e.State == EntityState.Added && e.Entity.FailureReason == "ChannelWakeTimeout") == true
+                && Interlocked.Exchange(ref _armed, 0) == 1)
+                throw new InvalidOperationException("synthetic incident commit failure");
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
     }
 }
