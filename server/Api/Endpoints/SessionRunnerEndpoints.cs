@@ -71,11 +71,13 @@ public static class SessionRunnerEndpoints
             string runnerId,
             RunnerDrainClearRequest body,
             RunnerStateService drains,
+            AgentTaskService tasks,
             IOptions<PhoneHomeRunnerSettings> settings,
             CancellationToken ct) =>
         {
             OperatorCredential.Require(http, settings.Value, "Clearing a drain requires the operator token.");
-            await drains.ClearAsync(runnerId, body.Reason, ct);
+            var caller = await AgentTaskEndpoints.ResolvePollingCallerAsync(http, tasks, ct);
+            await drains.ClearAsync(runnerId, body.Reason, caller?.Task?.Id, ct);
             return Results.Ok();
         }).WithTags("SessionRunners");
 

@@ -55,6 +55,24 @@ function Get-ResponseStatus {
     return [int]$response.StatusCode
 }
 
+function Get-ErrorBody {
+    param($ErrorRecord)
+    if ($null -ne $ErrorRecord.ErrorDetails -and -not [string]::IsNullOrWhiteSpace([string]$ErrorRecord.ErrorDetails.Message)) {
+        return [string]$ErrorRecord.ErrorDetails.Message
+    }
+    $response = $ErrorRecord.Exception.Response
+    if ($null -eq $response) { return $null }
+    try {
+        $stream = $response.GetResponseStream()
+        if ($null -eq $stream) { return $null }
+        $reader = New-Object System.IO.StreamReader($stream)
+        return $reader.ReadToEnd()
+    }
+    catch {
+        return $null
+    }
+}
+
 function Invoke-RunnerApi {
     param([string]$Method, [string]$Path, $Body)
     $uri = "$api$Path"
@@ -73,7 +91,11 @@ function Invoke-RunnerApi {
             throw "Runner '$RunnerId' is not eligible (HTTP 404)."
         }
         if ($null -eq $status) { throw }
-        throw "Runner '$RunnerId' request failed with HTTP $status."
+        $body = Get-ErrorBody $_
+        if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "Runner '$RunnerId' request failed with HTTP $status."
+        }
+        throw "Runner '$RunnerId' request failed with HTTP $status. $body"
     }
 
     if ([int]$response.StatusCode -ne 200) {
@@ -86,21 +108,22 @@ function Invoke-RunnerApi {
     Write-Output $response.Content
 }
 
+$runnerPath = [uri]::EscapeDataString($RunnerId)
 switch ($Verb) {
     'status' {
-        Invoke-RunnerApi -Method Get -Path "/api/session-runners/$RunnerId/status"
+        Invoke-RunnerApi -Method Get -Path "/api/session-runners/$runnerPath/status"
     }
     'drain' {
         if ([string]::IsNullOrWhiteSpace($Reason)) { throw 'drain requires -Reason' }
         Add-OperatorToken
         $body = @{ reason = $Reason; retireWhenIdle = [bool]$RetireWhenIdle }
         if (-not [string]::IsNullOrWhiteSpace($RedirectTo)) { $body.redirectTo = $RedirectTo }
-        Invoke-RunnerApi -Method Post -Path "/api/session-runners/$RunnerId/drain" -Body $body
+        Invoke-RunnerApi -Method Post -Path "/api/session-runners/$runnerPath/drain" -Body $body
     }
     'clear' {
         if ([string]::IsNullOrWhiteSpace($Reason)) { throw 'clear requires -Reason' }
         Add-OperatorToken
         $body = @{ reason = $Reason }
-        Invoke-RunnerApi -Method Post -Path "/api/session-runners/$RunnerId/drain/clear" -Body $body
+        Invoke-RunnerApi -Method Post -Path "/api/session-runners/$runnerPath/drain/clear" -Body $body
     }
 }

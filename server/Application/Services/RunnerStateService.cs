@@ -74,21 +74,22 @@ public sealed class RunnerStateService(
         directory.ApplyState(id, ToState(row));
     }
 
-    public async Task ClearAsync(string runnerId, string? reason, CancellationToken ct)
+    public async Task ClearAsync(string runnerId, string? reason, Guid? updatedByTaskId, CancellationToken ct)
     {
         var id = RequireKnown(runnerId);
-        RequireReason(reason);
+        var why = RequireReason(reason);
         var now = clock.GetUtcNow();
         var row = await store.FindAsync(id, ct) ?? new SessionRunnerState { RunnerId = id };
         row.Draining = false;
         row.DrainedAt = null;
-        row.DrainReason = null;
+        row.DrainReason = why;
         row.RedirectTo = null;
         row.RetireWhenIdle = false;
         row.IdleObservedAt = null;
         row.RetiredAt = null;
         row.RetireReason = null;
         row.UpdatedAt = now;
+        row.UpdatedByTaskId = updatedByTaskId;
         await store.SaveAsync(row, ct);
         directory.ApplyState(id, ToState(row));
     }

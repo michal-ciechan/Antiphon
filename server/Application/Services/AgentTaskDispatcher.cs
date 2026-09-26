@@ -1004,15 +1004,17 @@ public sealed class AgentTaskDispatcher
     {
         if (_runners is null || task.RunnerId is not { Length: > 0 } runnerId)
             return null;
+        // A mirror in flight belongs to the runner it was asked of. Rebinding first lets that
+        // mirror's path land on the redirect, and the task then launches there in a directory
+        // that exists only on the drained runner. The next tick rebinds and removes it.
+        if (_remotePrep is not null && _remotePrep.IsInFlight(task.Id, out var since))
+            return (HoldKind.RemotePrep, DispatchHoldDetails.RemoteMirrorRequested(runnerId, since));
         runnerId = await RebindDrainingAsync(task, runnerId, ct);
         if (task.DispatchNotBeforeAt is { } notBefore && notBefore > UtcNow())
         {
             return (HoldKind.RemotePrepBackoff,
                 DispatchHoldDetails.RemotePrepBackoff(runnerId, task.RemotePrepFailures, notBefore));
         }
-
-        if (_remotePrep is not null && _remotePrep.IsInFlight(task.Id, out var since))
-            return (HoldKind.RemotePrep, DispatchHoldDetails.RemoteMirrorRequested(runnerId, since));
         try
         {
             _runners.ResolveForNewWork(runnerId);
