@@ -5781,9 +5781,9 @@ public sealed class AgentTaskDispatcher
         if (claimed.RemoteWorktreePath is { Length: > 0 } recorded)
             return recorded;
 
-        // Unreachable while DispatchOneAsync hands unprepared tasks to the preparer first.
-        await RemoteWarnAsync(claimed, now,
-            "The remote workspace has not been prepared yet; the task stays Queued.", ct);
+        // The caller commits and hands this to the preparer. A warning here would insert an
+        // event while the claim still holds the task row, and that insert waits out the command
+        // timeout (the serial tick then misses every later task).
         return null;
     }
 
