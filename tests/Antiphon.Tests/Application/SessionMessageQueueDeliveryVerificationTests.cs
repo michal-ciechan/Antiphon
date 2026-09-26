@@ -277,7 +277,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.QueuedUserPrompt,
             "a completion note accepted by a busy composer",
-            timestamp: DateTime.UtcNow.AddMinutes(1));
+            timestamp: h.Now.AddMinutes(1));
 
         await using var db = CreateContext();
         (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None))
@@ -289,9 +289,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueEnqueue, "Hi", timestamp: DateTime.UtcNow.AddMinutes(1));
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueDequeue, "Hi", timestamp: DateTime.UtcNow.AddMinutes(1));
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueRemove, "Hi", timestamp: DateTime.UtcNow.AddMinutes(1));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueEnqueue, "Hi", timestamp: h.Now.AddMinutes(1));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueDequeue, "Hi", timestamp: h.Now.AddMinutes(1));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueRemove, "Hi", timestamp: h.Now.AddMinutes(1));
 
         await using var db = CreateContext();
         (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None))
@@ -307,11 +307,11 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         // orders; Timestamp only meets DispatchedAt). Working/idle stays inert — see
         // Queued_user_prompt_is_inert_for_the_server_working_rule, which must stay green unedited.
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        var dispatchedAt = DateTime.UtcNow.AddMinutes(-1);
+        var dispatchedAt = h.Now.AddMinutes(-1);
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.QueuedUserPrompt,
             "a queued completion note is not a task brief",
-            timestamp: DateTime.UtcNow);
+            timestamp: h.Now);
 
         await using var db = CreateContext();
         var span = await TranscriptPromptSpan.LoadAsync(db, h.SessionId, dispatchedAt, CancellationToken.None);
@@ -440,7 +440,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await h.SeedPendingMessageAsync("the stranded brief");
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
 
-        await h.Runtime.ObserveTranscriptAsync(ManualBoundaryEvent(h.SessionId, 100), CancellationToken.None);
+        await h.Runtime.ObserveTranscriptAsync(ManualBoundaryEvent(h.SessionId, 100, h.Clock.GetUtcNow()), CancellationToken.None);
 
         h.Adapter.SubmittedBodies.ShouldBe(["the stranded brief"]);
         await using var db = CreateContext();
@@ -459,7 +459,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await h.InsertTurnAsync("earlier question", "earlier answer");
         h.EventBus.Clear();
 
-        await h.Runtime.ObserveTranscriptAsync(ManualBoundaryEvent(h.SessionId, 101), CancellationToken.None);
+        await h.Runtime.ObserveTranscriptAsync(ManualBoundaryEvent(h.SessionId, 101, h.Clock.GetUtcNow()), CancellationToken.None);
 
         h.EventBus.PublishedEvents.ShouldNotContain(
             e => e.EventName == "SessionFinished",
@@ -467,9 +467,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
     }
 
-    private static SessionRunnerTranscriptEvent ManualBoundaryEvent(Guid sessionId, long sequence) => new(
+    private static SessionRunnerTranscriptEvent ManualBoundaryEvent(Guid sessionId, long sequence, DateTimeOffset timestamp) => new(
         sessionId, sequence, TranscriptKinds.CompactBoundary,
-        Guid.NewGuid().ToString(), null, DateTimeOffset.UtcNow, null,
+        Guid.NewGuid().ToString(), null, timestamp, null,
         "Context compacted (manual)", null, null, null, null, null);
 
     // ---- CARD-0055: a delivery is Sent only when its UserPrompt record exists ------------------
@@ -865,11 +865,11 @@ public partial class SessionMessageQueueDeliveryVerificationTests
             ConfigureDeliveryVerification = v => v.TranscriptConfirmTimeoutSeconds = 20,
         });
         const string body = "the launch note, before any transcript exists, confirmed by its row";
-        var started = DateTime.UtcNow;
+        var started = h.Now;
 
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
 
-        (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(10),
+        (h.Now - started).ShouldBeLessThan(TimeSpan.FromSeconds(10),
             "a transcript-confirmed delivery returns as soon as the row lands; only the fallback waits out the 20s deadline");
         h.Adapter.Inputs.ShouldBe([body, "\r"], "confirmed on the first Enter — no re-press");
         h.Adapter.SubmittedBodies.ShouldBe([body]);
@@ -1287,7 +1287,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         {
             _ = Task.Run(async () =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(4));
+                await Task.Delay(TimeSpan.FromSeconds(4), h.Clock);
                 await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
             });
             return Task.CompletedTask;
@@ -1644,7 +1644,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.EchoTypedInputToScreen = false;
         await h.SeedPendingMessageAsync(
             "a brief that has been failing for twenty minutes",
-            createdAtUtc: DateTime.UtcNow - TimeSpan.FromMinutes(20));
+            createdAtUtc: h.Now - TimeSpan.FromMinutes(20));
 
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
 
@@ -2057,9 +2057,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 #pragma warning disable CS4014
             Task.Run(async () =>
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(400));
+                await Task.Delay(TimeSpan.FromMilliseconds(400), h.Clock);
                 await h.InsertTranscriptEntryAsync(
-                    TranscriptKinds.UserPrompt, b, timestamp: DateTime.UtcNow);
+                    TranscriptKinds.UserPrompt, b, timestamp: h.Now);
             });
 #pragma warning restore CS4014
             return Task.CompletedTask;
@@ -2104,7 +2104,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.OnSubmitted = _ => Task.CompletedTask;
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.UserPrompt, body,
-            timestamp: DateTime.UtcNow - TimeSpan.FromMinutes(10));
+            timestamp: h.Now - TimeSpan.FromMinutes(10));
 
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
 
@@ -2146,9 +2146,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 #pragma warning disable CS4014
             Task.Run(async () =>
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(300));
+                await Task.Delay(TimeSpan.FromMilliseconds(300), h.Clock);
                 await h.InsertTranscriptEntryAsync(
-                    TranscriptKinds.UserPrompt, clipped, timestamp: DateTime.UtcNow);
+                    TranscriptKinds.UserPrompt, clipped, timestamp: h.Now);
             });
 #pragma warning restore CS4014
             return Task.CompletedTask;
@@ -2177,7 +2177,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.UserPrompt, "unrelated old",
-            timestamp: DateTime.UtcNow - TimeSpan.FromHours(1));
+            timestamp: h.Now - TimeSpan.FromHours(1));
 
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
 
@@ -2198,9 +2198,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
 #pragma warning disable CS4014
             Task.Run(async () =>
             {
-                await Task.Delay(200);
+                await Task.Delay(TimeSpan.FromMilliseconds(200), h.Clock);
                 await h.InsertTranscriptEntryAsync(
-                    TranscriptKinds.UserPrompt, "any fresh row", timestamp: DateTime.UtcNow);
+                    TranscriptKinds.UserPrompt, "any fresh row", timestamp: h.Now);
             });
 #pragma warning restore CS4014
             return Task.CompletedTask;
@@ -2256,7 +2256,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         const string body = "CARD0164 null-baseline late-confirm body long enough";
         var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: null);
         await h.InsertTranscriptEntryAsync(
-            TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+            TranscriptKinds.UserPrompt, body, timestamp: h.Now);
 
         var inputsBefore = h.Adapter.Inputs.Count;
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
@@ -2277,7 +2277,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: null);
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.UserPrompt, body,
-            timestamp: DateTime.UtcNow - TimeSpan.FromHours(2));
+            timestamp: h.Now - TimeSpan.FromHours(2));
 
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
@@ -2300,9 +2300,9 @@ public partial class SessionMessageQueueDeliveryVerificationTests
             // Past the 3s confirm timeout, inside the 3s grace.
             Task.Run(async () =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(4));
+                await Task.Delay(TimeSpan.FromSeconds(4), h.Clock);
                 await h.InsertTranscriptEntryAsync(
-                    TranscriptKinds.UserPrompt, b, timestamp: DateTime.UtcNow);
+                    TranscriptKinds.UserPrompt, b, timestamp: h.Now);
             });
 #pragma warning restore CS4014
             return Task.CompletedTask;
@@ -2342,13 +2342,13 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await CreateHarnessAsync(alwaysOn: false);
         h.Adapter.EchoTypedInputToScreen = false;
 
-        var started = DateTime.UtcNow;
+        var started = h.Now;
         var ex = await Should.ThrowAsync<ConflictException>(() =>
             h.Queue.EnqueueAsync(
                 h.SessionId, "CARD0164 ModeNow no-composer body long enough",
                 MessageSendMode.Now, CancellationToken.None));
         ex.Message.ShouldContain("never appeared in the composer");
-        (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(5),
+        (h.Now - started).ShouldBeLessThan(TimeSpan.FromSeconds(5),
             "NoComposerEvidence must not burn the grace window");
     }
 
@@ -2514,7 +2514,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
             h.SessionId,
             [new SessionRunnerTranscriptEvent(
                 h.SessionId, 2, TranscriptKinds.AssistantText, Guid.NewGuid().ToString("N"), null,
-                DateTimeOffset.UtcNow, "assistant", "fresh assistant text after catch-up",
+                h.Clock.GetUtcNow(), "assistant", "fresh assistant text after catch-up",
                 null, null, null, null, null)],
             2));
         h.Adapter.OverlayOpen = true;
@@ -2651,8 +2651,8 @@ public partial class SessionMessageQueueDeliveryVerificationTests
                 Status = QueuedMessageStatus.Canceled,
                 Sequence = 50,
                 Origin = QueuedMessageOrigin.Ui,
-                CreatedAt = DateTime.UtcNow,
-                CanceledAt = DateTime.UtcNow,
+                CreatedAt = h.Inner.Now,
+                CanceledAt = h.Inner.Now,
             };
             db.SessionQueuedMessages.Add(extra);
             await db.SaveChangesAsync();
