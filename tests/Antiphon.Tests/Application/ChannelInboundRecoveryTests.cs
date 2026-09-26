@@ -395,6 +395,34 @@ public sealed class ChannelInboundRecoveryTests
         owner.Body.IndexOf("line one tail", StringComparison.Ordinal).ShouldBeLessThan(owner.Body.IndexOf("line two tail", StringComparison.Ordinal));
         recovered.Adapter.SubmittedBodies.Count.ShouldBe(1);
 
+        // Delimiter-bearing native IDs must still form distinct (conversation, sender) lanes.
+        // These two tuples collide under a colon-concatenated string key.
+        var leftChat = await recovered.BindChannelAsync($"lane-{Guid.NewGuid():N}:a:b");
+        var rightChat = leftChat[..^2];
+        await recovered.BindChannelAsync(rightChat);
+        var leftNative = $"left-{Guid.NewGuid():N}";
+        var rightNative = $"right-{Guid.NewGuid():N}";
+        var laneBridge = Bridge(recovered);
+        await laneBridge.HandleInboundAsync(Message(leftChat, leftNative, "left lane tail", "c"), Ct);
+        await laneBridge.HandleInboundAsync(Message(rightChat, rightNative, "right lane tail", "b:c"), Ct);
+        await WaitForAsync(async () =>
+        {
+            await using var pending = Db(schema.ConnectionString);
+            return await pending.ChannelInbounds.CountAsync(i =>
+                (i.NativeMessageId == leftNative || i.NativeMessageId == rightNative)
+                && i.QueueMessageId != null) == 2;
+        });
+        var laneMembers = await db.ChannelInbounds.AsNoTracking()
+            .Where(i => i.NativeMessageId == leftNative || i.NativeMessageId == rightNative)
+            .Select(i => i.QueueMessageId).ToListAsync();
+        laneMembers.Distinct().Count().ShouldBe(2);
+        recovered.Adapter.SubmittedBodies.Count.ShouldBe(3);
+        recovered.Adapter.SubmittedBodies.Count(b => b.Contains("left lane tail") && b.Contains("right lane tail")).ShouldBe(0);
+        await laneBridge.HandleInboundAsync(Message(chat, secondId, "line two tail"), Ct);
+        (await db.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId != null
+            && (q.AgentSessionId == session))).ShouldBe(3);
+        recovered.Adapter.SubmittedBodies.Count.ShouldBe(3);
+
         // A held first page must not starve the next accepted message forever.
         await using var pageSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var held = await BridgeQueueHarness.CreateAsync(new()
