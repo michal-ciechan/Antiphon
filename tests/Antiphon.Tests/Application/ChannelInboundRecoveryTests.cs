@@ -29,7 +29,8 @@ public sealed class ChannelInboundRecoveryTests
         h.Messaging, h.Queue, h.Provider.GetRequiredService<ChannelInboundDebouncer>(), h.EventBus,
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
         h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(), h.Clock,
-        NullLogger<ChannelBridgeService>.Instance);
+        NullLogger<ChannelBridgeService>.Instance,
+        h.Provider.GetRequiredService<ChannelInboundWakeSignal>());
 
     private static AppDbContext Db(string connectionString) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
@@ -134,7 +135,14 @@ public sealed class ChannelInboundRecoveryTests
             recovered.Runner.SetTranscript(new SessionRunnerTranscriptDto(session, [record], 1));
             await recovered.Runtime.SyncTranscriptAsync(session, Ct);
         };
-        await Bridge(recovered).DrainPendingAsync(Ct);
+        var recoveredBridge = Bridge(recovered);
+        await recoveredBridge.StartAsync(Ct);
+        await WaitForAsync(async () =>
+        {
+            await using var pending = Db(schema.ConnectionString);
+            return await pending.ChannelInbounds.AnyAsync(i => i.NativeMessageId == native && i.QueueMessageId != null);
+        });
+        await recoveredBridge.StopAsync(Ct);
         await using var verify = Db(schema.ConnectionString);
         var inbound = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
         var owner = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
