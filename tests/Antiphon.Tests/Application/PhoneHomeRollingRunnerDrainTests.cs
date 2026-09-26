@@ -224,6 +224,83 @@ public sealed partial class PhoneHomeRollingRunnerTests
     }
 
     [Test]
+    [Timeout(180_000)]
+    public async Task A_mirror_that_finishes_after_the_queued_snapshot_is_removed_before_the_redirect_launch()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        world.PeerA.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "stale-snapshot");
+
+        await world.TickAsync();
+        var mirror = await world.PeerA.WaitForAsync(PhoneHomeOperation.WorkspaceMirror, TimeSpan.FromSeconds(15));
+        var request = mirror.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json);
+        request.ShouldNotBeNull();
+        var oldPath = "/work/runners/server2/" + request.Name;
+        var newPath = "/work/worktrees/" + request.Name;
+
+        (await PostDrainAsync(
+                world, RollingRunnerSettings.Server2, new DrainBody("after snapshot", RollingRunnerSettings.Server2Temp), token: true))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // The mirror commits after this tick has loaded Queued rows and before that row's hold
+        // check. The preparer records the path before it drops the in-flight entry.
+        await world.TickAsync(dispatcher =>
+        {
+            dispatcher.AfterQueuedSnapshotAsync = async (_, _) =>
+            {
+                await world.PeerA.EmitAsync(new PhoneHomeFrame(
+                    PhoneHomeFrameKind.Result, mirror.Epoch, mirror.RequestId, mirror.Operation,
+                    JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(oldPath), PhoneHomeFraming.Json)));
+                await world.WaitPrepAsync();
+            };
+        });
+
+        for (var tick = 0; tick < 6 && world.PeerB.Launches.Count == 0; tick++)
+        {
+            await world.TickAsync();
+            await world.WaitPrepAsync();
+        }
+
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBeGreaterThanOrEqualTo(1);
+        world.PeerB.Launches.Count.ShouldBe(1);
+        var cwd = world.PeerB.Launches[0].Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)?.Cwd;
+        cwd.ShouldBe(newPath);
+        var saved = await world.ReadTaskAsync(id);
+        saved.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
+        saved.Task.RemoteWorktreePath.ShouldBe(cwd);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task A_rebind_after_the_tracker_is_cleared_saves_the_runner_it_announces()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        const string stalePath = "/work/runners/server2/detached";
+        var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "detached", task =>
+            task.RemoteWorktreePath = stalePath);
+        (await PostDrainAsync(
+                world, RollingRunnerSettings.Server2, new DrainBody("detach", RollingRunnerSettings.Server2Temp), token: true))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // An earlier row's claim rollback calls ChangeTracker.Clear. This tick has only one
+        // queued row, so the hook is that clear: the snapshot entity is detached before rebind.
+        await world.TickAsync(dispatcher =>
+        {
+            dispatcher.AfterQueuedSnapshotAsync = (db, _) =>
+            {
+                db.ChangeTracker.Clear();
+                return Task.CompletedTask;
+            };
+        });
+
+        var saved = await world.ReadTaskAsync(id);
+        saved.Warnings.ShouldContain(text => text.Contains(
+            "drain_redirect from=server2 to=server2-temp", StringComparison.Ordinal));
+        saved.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
+        saved.Task.RemoteWorktreePath.ShouldNotBe(stalePath);
+    }
+
+    [Test]
     [Timeout(120_000)]
     public async Task Loader_skips_a_state_row_for_an_unknown_runner_and_still_applies_configured_rows()
     {

@@ -416,6 +416,10 @@ public sealed class AgentTaskDispatcher
             .Where(t => t.Status == AgentTaskStatus.Queued)
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
+        // The list above is this tick's snapshot. A mirror can commit after it and before the
+        // row's hold check; tests finish that mirror here. Production leaves the hook null.
+        if (AfterQueuedSnapshotAsync is { } afterQueued)
+            await afterQueued(_db, ct);
         if (queued.Count == 0)
         {
             _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>());
@@ -2890,6 +2894,12 @@ public sealed class AgentTaskDispatcher
     /// sweep is about to raise, without constructing a live runner.
     /// </summary>
     internal Func<Guid, CancellationToken, Task>? CatchUpOverride { get; set; }
+
+    /// <summary>
+    /// CARD-0727 test seam. Runs after this tick's Queued snapshot is loaded and before any row
+    /// is claimed. Production leaves it null.
+    /// </summary>
+    internal Func<AppDbContext, CancellationToken, Task>? AfterQueuedSnapshotAsync { get; set; }
 
     /// <summary>The reply singleton this dispatcher settles through. Tests share it with the watchdog.</summary>
     internal AgentTaskReplyService? Replies => _replies;
