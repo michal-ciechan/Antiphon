@@ -11,18 +11,32 @@ public sealed class KafkaAntiphonMessagingConsumer : IAntiphonMessagingConsumer
 {
     private readonly AntiphonMessagingOptions _options;
     private readonly ILogger<KafkaAntiphonMessagingConsumer> _logger;
-    private readonly Func<ConsumerConfig, IConsumer<string, string>> _buildConsumer;
+    private readonly Func<ConsumerConfig, Action, IConsumer<string, string>> _buildConsumer;
 
     public KafkaAntiphonMessagingConsumer(
         IOptions<AntiphonMessagingOptions> options,
         ILogger<KafkaAntiphonMessagingConsumer> logger)
-        : this(options, logger, config => new ConsumerBuilder<string, string>(config).Build()) { }
+        : this(options, logger, (config, revoked) => new ConsumerBuilder<string, string>(config)
+            .SetPartitionsRevokedHandler((_, _) => revoked())
+            .SetPartitionsLostHandler((_, _) => revoked())
+            .Build()) { }
 
     /// <summary>Injectable construction keeps the actual commit and configuration contract observable.</summary>
     public KafkaAntiphonMessagingConsumer(
         IOptions<AntiphonMessagingOptions> options,
         ILogger<KafkaAntiphonMessagingConsumer> logger,
         Func<ConsumerConfig, IConsumer<string, string>> buildConsumer)
+    {
+        _options = options.Value;
+        _logger = logger;
+        _buildConsumer = (config, _) => buildConsumer(config);
+    }
+
+    /// <summary>Injectable rebalance callback makes revoked delivery handles observable.</summary>
+    public KafkaAntiphonMessagingConsumer(
+        IOptions<AntiphonMessagingOptions> options,
+        ILogger<KafkaAntiphonMessagingConsumer> logger,
+        Func<ConsumerConfig, Action, IConsumer<string, string>> buildConsumer)
     {
         _options = options.Value;
         _logger = logger;
@@ -51,11 +65,17 @@ public sealed class KafkaAntiphonMessagingConsumer : IAntiphonMessagingConsumer
             FetchMaxBytes = Math.Max(_options.MaxMessageBytes, 50 * 1024 * 1024),
         };
 
-        using var consumer = _buildConsumer(config);
-        consumer.Subscribe(_options.InboundTopic);
         var pending = new Dictionary<TopicPartition, SortedDictionary<long, bool>>();
-        var assignment = consumer.Assignment.ToHashSet();
         var generation = 0L;
+        using var consumer = _buildConsumer(config, () =>
+        {
+            // The same partition can be revoked and reassigned before the next poll.
+            // Its prior delivery handle must still be invalid.
+            generation++;
+            pending.Clear();
+        });
+        consumer.Subscribe(_options.InboundTopic);
+        var assignment = consumer.Assignment.ToHashSet();
         _logger.LogInformation("[antiphon] consuming {Topic} as {Group}",
             _options.InboundTopic, _options.ConsumerGroup);
 
