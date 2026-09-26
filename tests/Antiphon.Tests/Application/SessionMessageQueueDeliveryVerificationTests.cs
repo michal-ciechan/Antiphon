@@ -30,10 +30,16 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 public partial class SessionMessageQueueDeliveryVerificationTests
 {
+    private const double TestClockSpeed = 10;
+
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
     private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
-        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = alwaysOn });
+        BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = alwaysOn,
+            ClockSpeed = TestClockSpeed,
+        });
 
     // "No incident" assertions go through this so a failure names the incident instead of
     // reading "True should be False" (CARD-0201 spent a build cycle learning it was kind 36).
@@ -854,6 +860,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
+            ClockSpeed = TestClockSpeed,
             // The fallback fires only AT the deadline; make reaching it unmistakable in the timing.
             ConfigureDeliveryVerification = v => v.TranscriptConfirmTimeoutSeconds = 20,
         });
@@ -900,6 +907,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
+            ClockSpeed = TestClockSpeed,
             Bridge = new Antiphon.Server.Application.Settings.ChannelBridgeSettings
             {
                 Enabled = true,
@@ -1200,6 +1208,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
+            ClockSpeed = TestClockSpeed,
             Supervision = new SupervisionSettings
             {
                 DeliveryVerification = new DeliveryVerificationSettings
@@ -1211,6 +1220,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
                     StrandedAgeSeconds = 0,
                     TranscriptConfirmTimeoutSeconds = 2,
                     ReEnterIntervalSeconds = 1,
+                    PostFailureConfirmGraceSeconds = 3,
                     MaxDeliveryAttempts = 1,
                 },
             },
@@ -2483,6 +2493,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
+            ClockSpeed = TestClockSpeed,
             ConfigureDeliveryVerification = v => v.OverlayRecoveryEnabled = false,
         });
         await h.InsertTurnAsync("prior", "answer");
