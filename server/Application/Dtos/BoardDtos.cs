@@ -217,12 +217,22 @@ public sealed record MoveCardRequest(
 /// into a column where work happens and NO work started. Saying so is the point — the alternative
 /// is a caller discovering a card sitting in In Progress with nobody on it, days later.
 /// </param>
+/// <summary>
+/// Short ids of bound tasks a terminal move settled or left running (CARD-0738).
+/// Omitted when the move settled nothing, so an unaffected move's JSON is unchanged.
+/// </summary>
+public sealed record CardTaskSettlementDto(
+    IReadOnlyList<string> Canceled,
+    IReadOnlyList<string> LeftOpen);
+
 public sealed record MoveCardResult(
     CardDto Card,
     Guid? SpawnedSessionId,
     bool SpawnSuppressed,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    TrackerCardStatePushResult? TrackerPush = null);
+    TrackerCardStatePushResult? TrackerPush = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    CardTaskSettlementDto? TaskSettlement = null);
 
 /// <summary>
 /// CARD-0347: what a reopen DID, including the optional tracker push on a linked card.

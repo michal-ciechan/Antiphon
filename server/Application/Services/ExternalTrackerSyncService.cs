@@ -13,6 +13,8 @@ public sealed class ExternalTrackerSyncService
     private readonly IReadOnlyDictionary<TrackerKind, IIssueTracker> _trackers;
     private readonly IEventBus _eventBus;
     private readonly ILogger<ExternalTrackerSyncService> _logger;
+    // CARD-0738. Null in harnesses; production DI always supplies it.
+    private readonly CardTaskSettlement? _taskSettlement;
 
     // The self-reported author on revisions this service writes: a tracker-driven move is nobody's
     // decision on this side of the sync, and a history that attributed it to a person would lie.
@@ -25,12 +27,14 @@ public sealed class ExternalTrackerSyncService
         AppDbContext db,
         IEnumerable<IIssueTracker> trackers,
         IEventBus eventBus,
-        ILogger<ExternalTrackerSyncService> logger)
+        ILogger<ExternalTrackerSyncService> logger,
+        CardTaskSettlement? taskSettlement = null)
     {
         _db = db;
         _trackers = trackers.ToDictionary(t => t.Kind);
         _eventBus = eventBus;
         _logger = logger;
+        _taskSettlement = taskSettlement;
     }
 
     public Task<int> SyncAsync(DateTime utcNow, CancellationToken ct) =>
