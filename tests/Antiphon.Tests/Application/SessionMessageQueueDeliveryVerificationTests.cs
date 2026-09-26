@@ -853,7 +853,8 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     // observation, because nothing was left unverified. Two "leaves no incident" tests in this
     // class rode the fallback for a day after CARD-0180 S3 made it an incident, because the
     // harness stamped no timestamp and the loop treats a null stamp as no evidence — this pins
-    // the boundary with a deadline long enough that falling back cannot pass unnoticed.
+    // the boundary by pull count. The unobservable deadline loop is the only path here that
+    // calls CatchUpTranscriptAsync; scaled elapsed time also counts cold JIT and database work.
     [Test]
     public async Task A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback()
     {
@@ -861,16 +862,16 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         {
             AlwaysOn = true,
             ClockSpeed = TestClockSpeed,
-            // The fallback fires only AT the deadline; make reaching it unmistakable in the timing.
+            // The fallback fires only AT the deadline. Reaching it pulls the transcript
+            // (PC-D: OnSubmitted that writes no row). A stored timestamped row returns first.
             ConfigureDeliveryVerification = v => v.TranscriptConfirmTimeoutSeconds = 20,
         });
         const string body = "the launch note, before any transcript exists, confirmed by its row";
-        var started = h.Now;
 
         await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
 
-        (h.Now - started).ShouldBeLessThan(TimeSpan.FromSeconds(10),
-            "a transcript-confirmed delivery returns as soon as the row lands; only the fallback waits out the 20s deadline");
+        h.Runner.TranscriptGets.ShouldBe(0,
+            "a timestamped UserPrompt confirms before any catch-up pull; only the 20s fallback pulls");
         h.Adapter.Inputs.ShouldBe([body, "\r"], "confirmed on the first Enter — no re-press");
         h.Adapter.SubmittedBodies.ShouldBe([body]);
 
@@ -2338,18 +2339,19 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Card0164_ModeNow_NoComposerEvidence_gets_no_grace()
     {
-        // (vii) Enter withheld — grace must not wait 20s to learn nothing.
+        // (vii) Enter withheld — Mode:Now grace must not pull. One catch-up is the
+        // overlay-recovery arm; the grace loop would pull again. Scaled elapsed time
+        // also counts cold JIT and database work, so it cannot see that difference.
         await using var h = await CreateHarnessAsync(alwaysOn: false);
         h.Adapter.EchoTypedInputToScreen = false;
 
-        var started = h.Now;
         var ex = await Should.ThrowAsync<ConflictException>(() =>
             h.Queue.EnqueueAsync(
                 h.SessionId, "CARD0164 ModeNow no-composer body long enough",
                 MessageSendMode.Now, CancellationToken.None));
         ex.Message.ShouldContain("never appeared in the composer");
-        (h.Now - started).ShouldBeLessThan(TimeSpan.FromSeconds(5),
-            "NoComposerEvidence must not burn the grace window");
+        h.Runner.TranscriptGets.ShouldBe(1,
+            "NoComposerEvidence performs the overlay catch-up and must not enter the Mode:Now grace pull loop");
     }
 
     [Test]
