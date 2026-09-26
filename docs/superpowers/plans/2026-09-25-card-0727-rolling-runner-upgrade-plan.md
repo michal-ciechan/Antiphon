@@ -502,7 +502,7 @@ active on the desktop server.
   No timeout widened, no assertion loosened; a failure not explained by the slice is re-run alone
   at the base commit and reported as inherited or owned.
 
-### Coverage roster and decisive assertions
+### Coverage roster and decisive assertions (Plan draft; superseded by the TestDesign roster in `## Verification design (TestDesign, task 700c3a06)` below)
 
 | ID | Class.Method | Assertion / red mechanism |
 |---|---|---|
@@ -582,7 +582,7 @@ tables: R1 **11** minutes, R2 **30** minutes, R3 **53** minutes (plus L-1..L-3, 
 desktop wall clock dominated by the 30-minute overlap wait and however long the old runner's last
 task takes). Suggested `-ExpectAbout`: R1 200 minutes, R2 480 minutes, R3 760 minutes.
 
-### Checkpoints
+### Checkpoints (Plan draft; superseded by the TestDesign tables below)
 
 The closed lists for Code, one table per round. `Sn-tests` means the slice's compiling red tests
 are committed before its production change; `Sn` means the production change is committed.
@@ -684,3 +684,586 @@ scope, not part of R1 to R3:
 - D-16: the broker uses renewal, not pid liveness, only when configured so; the desktop broker and
   wrapper behaviour is unchanged; the old server2 container stays unleased until its redeploy.
 - Operation number: `Retire = 27`.
+
+## Verification design (TestDesign, task 700c3a06)
+
+Date: 2026-09-25. Stage: TestDesign, written on the server2 Linux runner against `origin/master`
+`aa1b42d6` (this plan landed) and the CARD-0710 Code branch `origin/feat/card-task-8752034b` at
+`fdf3778a` (114 commits behind master; repair task `7fa08907` starts there). Nothing below changes
+the fix design (D-1 to D-20). This section **supersedes** the Plan's `### Coverage roster and
+decisive assertions` and the three `### Checkpoints` tables above: every V/L row is pinned to a
+file, a method, the decisive assertion, the production line that turns it red and the checkpoint
+that runs it. Where the Plan's row could not go red as written, the row is re-scoped here and the
+change is listed under *Stub flags*. No production code was changed; no test was run.
+
+### Inspection
+
+Bodies read at `fdf3778a` (0710 tip) unless marked *master*:
+
+- `tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs` (0710 and *master*): 0710 adds
+  `StartAsync(configured:)`, `RegisterAsync(runnerId:, storeId:, secret:, platform:,
+  capabilities:)`, `ConnectPeerAsync(runnerId:, storeId:, secret:)`, `WaitLiveAsync(runnerId:)`;
+  master (CARD-0716) adds `StartAsync(shutdownTimeout:)`, `MapOperatorEndpoints`,
+  `MapVersionEndpoints`, `OperatorShutdownCoordinator`, `ILaunchDrain`, a `TimeProvider.System`
+  singleton and the peer's `CloseObserved`. `PostOperatorAsync(path, body, token, proxied)` and
+  `OperatorTokenPath` exist on both. Boundary: R1 compiles only against the **union**; the 0710
+  repair rebase owns it (see *Missing setup* M-1). The peer's `Launches` records
+  `LaunchPlatformConstrained` on 0710 only; `Inputs`, `RequestCount(op)`, `Sessions`,
+  `Transcripts`, `Reply`, `SilentFor`, `EmitAsync` on both. No `Retires`; default reply for
+  `WorkspaceMirror`/`WorkspaceRemove` is `{ ok = true }`, which is not a
+  `PhoneHomeWorkspaceMirrorResponse` (-> M-4).
+- `tests/Antiphon.Tests/Application/MultiRunnerDirectoryTests.cs`: `Pair(secretA, secretB)` and
+  `Entry(display, secret, pin)` are **private**; ids are `runner-a`/`runner-b`; `MaxCapacity = 4`;
+  `host.Capacity = 2` before connecting two peers; `MarkRecovered(live)` makes a slot eligible
+  without the pump; `Status("runner-c")` throws `NotFoundException` (-> V-1 boundary at HTTP).
+- `tests/Antiphon.Tests/Application/PhoneHomeLaunchTransportTests.cs` `LaunchWorld`: isolated
+  schema (`TestDbFixture.CreateIsolatedSchemaAsync`), `BridgeQueueHarness.CreateAsync` with the
+  real `AgentProtocolAdapterFactory(..., directory: host.Directory)`, `AgentSessionService
+  .LaunchInteractiveAsync`, `FakeTimeProvider` on the harness; `ReconnectAsync` waits for
+  `SnapshotLive()` to change. Boundary: it launches through the service, not the dispatcher.
+- `tests/Antiphon.Tests/Application/DispatcherRemotePrepStarvationTests.cs`: the dispatcher
+  inside `BridgeQueueHarness` (`Configure`: `AddDelegationWorktreeGraph`, `PushGit` fake
+  `ILandingGit`, `PhoneHomeLaunchPolicy`, `ISessionRunnerDirectory = host.Directory`,
+  `RemoteWorkspaceService`, `RemoteWorkspacePreparer`, scoped `AgentTaskService` and
+  `AgentTaskDispatcher`), `TickAsync`, `RemoteWorkspacePreparer.WhenIdleAsync`,
+  `AgentSessionLaunchQueue.WaitForIdleAsync`. This is the RollingWorld base (-> H-1).
+- `tests/Antiphon.Tests/Application/TaskPlatformDispatchTests.cs`: `SeedAsync` presets
+  `WorktreePath`/`WorktreeBranch` so a Worktree task dispatches without git; `CreateDispatcher`
+  with `RecordingSink : IAgentTaskLaunchSink` (a sink swallows the launch; RollingWorld must
+  **not** register a sink so the claim reaches `AgentSessionLaunchQueue` -> peer). Boundary ->
+  V-2 launch evidence is the peer frame, never the sink.
+- `tests/Antiphon.Tests/Application/DefaultRunnerCreateTests.cs` `DefaultRunnerKit`: `Service(db,
+  runnerDefaults:)`, `realDirectory:`, `ReadAsync` (Created audit + Warnings), Created segment
+  `runner source=... reason=...`. Its `PhoneHome` is the legacy singleton (`required init`), so
+  a two-id create test cannot use it (-> V-6 uses RollingWorld's `AgentTaskService`).
+- `tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs`: `BuildLaunchHarness(schema,
+  host, workspace, agentId, adapters, insertFault, gate)`, `harness.Control.StartAsync(agentId,
+  new StartAgentRequest(Fresh: true))`, `SeedPinnedAgentAsync`; 14 `[Test]`.
+- `tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs`: 19 on 0710, **23 on master**;
+  `Recovery_barrier_withholds_dispatch` / `Disconnect_and_lease_expiry_refuse_new_work` show the
+  `Resolve` refusal shape; `PostRegister`-style raw register lives in MultiRunnerDirectoryTests.
+- *master* `tests/Antiphon.Tests/Api/OperatorShutdownEndpointTests.cs` (3): 403 body contains
+  `operator_token_required`; token via `OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath)`.
+- *master* `tests/Antiphon.SessionRunner.Tests/BuildSlotBrokerTests.cs` (11): `Fixture(maxConcurrent,
+  maxCpuCount, floorMb, ttlMinutes, retryAfterMs, waiterSilenceMs, enabled)`, `FakeLiveness`
+  (`Start/Kill/IsAlive`), `FakeMemory`, `FakeTimeProvider Time`, `ListLogger`. No
+  `holderLiveness`/`renewGraceSeconds` parameter (-> M-8). `BuildSlotEndpointTests` (4) uses
+  `BuildSlotTestHost.StartAsync(...)`, a mini host mapping `MapBuildSlotRoutes()` only; it does
+  **not** boot `Program` (-> V-27, M-9). `BuildSlotSettingsTests` (2), `BuildSlotEndToEndTests` (2).
+- *master* `tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs` (7) -> `ScriptHarness
+  .RunHarnessCaseAsync("test-build-slot.ps1", "C589", case, rows, required)`; requires `C487 HARNESS
+  EXIT CODE: 0`, `C487: N passed, 0 failed, N rows`, no `FAIL ` line. `scripts/test-build-slot.ps1`
+  seams `C589_SLOT_SHIM`, `C589_SLOT_LOG`, `C589_SLOT_SCRIPT`, `C589_COMMAND_SHIM`;
+  `scripts/fixtures/c589-slot-shim.ps1` answers `POST` and `DELETE` only (-> M-10).
+- *master* `tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs` (34):
+  `new PhoneHomeCommandDispatcher(runtime, settings, authProbe?, logger?)`; `RecordingRuntime :
+  IPhoneHomeRuntimeSurface` (`Owned`, `Mutations`, `MarkExited`, `ReleaseSlotAsync`); an unknown
+  operation answers `PhoneHomeFrameKind.Error` with `phone_home_unsupported_operation`
+  (`PhoneHomeCommandDispatcher.cs:269`). `KillAllAsync(TimeSpan, ct)` exists on
+  `SessionRunnerRuntime` (`:1088`) but **not** on `IPhoneHomeRuntimeSurface` (-> M-7).
+- *master* `tests/Antiphon.SessionRunner.Tests/PhoneHomeConnectionServiceTests.cs` (10): close
+  description is not observed by any test; `PhoneHomeConnectionService.cs:164` closes with
+  `"disconnect"` or the overflow code (-> Out of scope O-2).
+- *master* `RunnerSlotReconcileJob.cs`, `HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob`
+  (`server/Infrastructure/Agents/HangfireConfiguration.cs:27`, `AddOrUpdate` + `Trigger`),
+  `RunnerSlotEndpointTests.cs:160` constructs the job directly and calls `ExecuteAsync`;
+  `HangfireStartupSafetyTests` (12) registers a job on `InMemoryStorage` and reads
+  `GetRecurringJobs()` (model for V-16b). `server/Program.cs:943` registers the reconcile job
+  only when `phoneHome.Enabled`. `AgentIncidentKind` ends at `DelegateReleaseUnresolved = 76`
+  (the Plan said "next after 74": **`RunnerForceRetired = 77`**).
+- *master* `tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs` (108):
+  `ComposeFiles()` globs **`docker-compose*.yml`** at the repo root, so the new temp override is
+  swept by `Only_the_server2_runner_is_privileged`, `Compose_never_lists_the_claude_token_under_
+  environment` and the socket test without any edit; `Server2_file_defines_only_runner_and_state_
+  init` collects every two-space key ending in `:`, so a top-level `networks:` block contributes
+  **its child key `antiphon-build-slots`** to the list (-> V-29 expected list);
+  `Server2_services_name_their_images` iterates `state-init, session-runner`;
+  `Server2_runner_restarts_unless_stopped` reads the base `session-runner` block only.
+  `DindRunnerContractTests` (22) `Server2_healthcheck_covers_phone_home_secret_readability` uses
+  `SingleOrDefault(test:)` on the base runner block. `RemoteScriptContractTests` (25): `Remote()`,
+  `Block(text, function)` (a `name() {` ... `}` body), `Executable`, the roster/stub-arm routing
+  test reads `scripts/c590-real.ps1` and `scripts/verify-docker-stack.ps1`, and requires the
+  `case) case_fn` dispatch line. `DockerStackDocumentationTests` (10) `Testing_doc_names_the_
+  production_enablement_steps` asserts the literal `AllowedRunnerId=server2` (-> S2 edits it).
+- *master* `scripts/test-apphost-graceful-stop.ps1` (CARD-0716; `-Case`, `Write-Pass/Write-Fail`,
+  `seams.json`, `trace.jsonl`, `$script:Sentinel`): the C495 harness shape; a new
+  `scripts/test-*.ps1` gets a `scriptCensus` row in `tests/test-execution-policy.json`
+  (`disposition: unattended`) and a TUnit wrapper class (-> V-32, M-11). `ScriptHarness
+  .RunHarnessCaseAsync` passes `-Case` and `-ResultsDirectory`.
+- Production seams (0710): `PhoneHomeRunnerDirectory.cs` `Resolve` (`:85-98`), `Register`
+  (`:195-260`, `RunnerMismatch` at `:200`), `Status` (`:459-507`, `NotFoundException` at `:468`),
+  `DescribeAsync` (`:509-550`), `RunnerSlot` (`:583-599`), `SnapshotOf` flips `DispatchEligible`
+  on lease expiry (`:575`); `SessionRunnerEndpoints.cs` status route `:47`, `RequireOperator` ->
+  `OperatorCredential.Require` (403 `operator_token_required`); `ExceptionMiddleware` maps
+  `HttpException.StatusCode` (`NotFoundException` -> 404); `RoutingSessionRunnerClient.Route`
+  (`:85-97`); `RunnerScopedSessionRunnerClient.Current` (`:30`);
+  `AgentProtocolAdapterFactory.Create(kind, runnerId)` -> `RemoteClient` (`:37-70`);
+  `DefaultRunnerRoutingPolicy.Decide` (`_runners.Resolve(configured)` at `:205`) and
+  `TryKindDefault` (`:262`); `AgentTaskService.cs:1214-1217` applies the runtime snapshot;
+  `AgentTaskDispatcher.RemoteHoldForAsync` (`:936-967`, `Resolve` at `:950`),
+  `CountRunnerOccupancyAsync` (`:969`), `PrepareRemoteWorkspaceAsync` (`:5532`), session
+  stamping `RunnerId`/`RunnerStoreId = _runners.GetLiveStoreId(claimed.RunnerId)` (`:4455-4457`),
+  launch handoff `_launchQueue.EnqueueInteractiveSession` when no sink (`:4536-4539`);
+  `AgentControlService.cs:649-653` binds the standing session's runner (the D-7 gate goes before
+  `_db.AgentSessions.Add(session)`); `SourceLandingAdmission.RequireSupportAsync` (`:59-61`) keeps
+  `Resolve`; `PhoneHomeLiveConnection.cs:303-306` `DispatchEligible` gate;
+  `RemoteWorkspaceService.RemoveMirrorAsync` (`:523-537`, best effort);
+  `RemoteWorkspacePreparer` sets `RemoteWorktreePath`/resets backoff (`:139-141`);
+  `RunnerDefaultSettingsService(db, settings, clock, events?, runners?)`,
+  `EnsureInitializedAsync` imports `Delegation:DefaultRunnerId`, `PutAsync(PutRunnerDefaultsRequest(
+  ExpectedRevision, GlobalRunnerId, KindDefaults, Reason, Provenance), callerTaskId, ct)`;
+  `PhoneHomeRunnerSettingsRules.ValidateMapped` (`seen` is `OrdinalIgnoreCase`, `:294`);
+  `PhoneHomeOperation` ends at `LaunchPlatformConstrained = 26`; `PhoneHomeRunnerStatusDto`
+  (15 members, all trailing ones defaulted); `SessionRunnerCatalogueEntryDto` (13 members,
+  `UnavailableReason`); *master* `BuildSlotBroker.SweepLocked` (`:162-188`: TTL then
+  `_liveness.IsAlive`), `Release` (`:124`), `BuildSlotRoutes` (`POST`/`DELETE`/`GET /build-slots`),
+  `src/Antiphon.SessionRunner/Program.cs` (top-level statements, **no `partial class Program`**,
+  `MapBuildSlotRoutes()` at `:230`, `/sessions` at `:228`, `/capabilities` at `:205`,
+  `AddHostedService<PhoneHomeConnectionService>()` at `:60`; the test project has no
+  `Microsoft.AspNetCore.Mvc.Testing` reference).
+- Boundaries mapped: unknown id vs configured-offline id vs desktop alias (V-1); same secret vs
+  distinct secrets (V-3 + H-1 uses distinct); redirect = self / desktop / unknown / draining /
+  offline (V-4b, V-6c, V-8b); reason length 200 vs 201 and empty (V-4b, V-22); `confirmRunnerId`
+  case (V-22); `RetireMinDrainSeconds` at 59 s vs 60 s and `RetireIdleSeconds` at 119 s vs
+  120 s (V-16); lease live vs expired with and without bound rows (V-19); grace at 89 s vs
+  90 s (V-24); `renewEverySeconds` present vs absent (V-28); Queued+no session vs Dispatched
+  (inherent: the rebind sweep is `Queued && AgentSessionId == null`, V-7 arm c pins the
+  Dispatched row stays). Excluded boundaries are in *Out of scope*.
+
+### Harness: `RollingWorld` and missing setup
+
+**H-1 `RollingWorld`** (`tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs`, S1):
+
+- `CreateAsync(globalDefault: "server2" | "server2-temp" | null, distinctSecrets: false)`:
+  `IsolatedTestSchema`; `FakeTimeProvider Clock` shared by **host and harness**
+  (`PhoneHomeTestHost.StartAsync(Clock, connectionString: schema, configured: RollingPair(...))`);
+  `host.Capacity = 2`; peers `A = ConnectPeerAsync(runnerId: "server2", storeId: StoreA, secret:
+  SecretA)`, `B = ConnectPeerAsync(runnerId: "server2-temp", storeId: StoreB, secret: SecretB)`
+  (equal by default, D-2; `distinctSecrets: true` for one V-23 arm), both `MarkRecovered`;
+  `BridgeQueueHarness.CreateAsync` with `AlwaysOn = false`, `ConnectionString`, `TimeProvider =
+  Clock`, `Delegation = { MaxConcurrentTasks = 32, AllowedRoots = ["/", "C:\\"],
+  DefaultRunnerId = globalDefault }`, `ConfigureServices` = DispatcherRemotePrepStarvationTests'
+  `Configure` **minus** `AdapterSlot` **plus** `AgentProtocolAdapterFactory(Options.Create(new
+  AgentRegistrySettings()), sp.GetRequiredService<ISessionRunnerClient>(), directory:
+  host.Directory)` (LaunchWorld's), `IOptions<PhoneHomeRunnerSettings> = RollingPair(...)` (the
+  **map**, so `PhoneHomeLaunchPolicy.IsRunnerBound("server2-temp")` is true), scoped
+  `RunnerDefaultSettingsService`, and from S3 `RunnerStateService`/`RunnerStateLoader`. No
+  `IAgentTaskLaunchSink` is registered. After build: `RunnerDefaultSettingsService
+  .EnsureInitializedAsync` (imports `globalDefault`).
+- `RollingPair(idA, idB, secretA, secretB)` -> new `TestHelpers/PhoneHomeRunnerPairs.cs`
+  (`internal static`), the `MultiRunnerDirectoryTests.Entry` shape with `MaxCapacity = 10`,
+  `HostWorkspaceRoot = DelegateScriptRunner.RepoRoot`, `AllowDelegatedTasks = true`,
+  `DisplayName = "server2" / "server2 (temp)"` (M-2).
+- `SeedRunningSessionAsync(runnerId, storeId)` -> `AgentSession` Running with
+  `RunnerId/RunnerStoreId/RunnerCwd = "/work"`, plus its owning `Agent` and `AgentTask`
+  Dispatched (LaunchWorld's `SeedAsync` shape); peer `Sessions.Add(RunnerSessionDto(id, ...,
+  "Running"))`. Returns `S_A`/`S_B`.
+- `CreateDefaultPlacedTaskAsync(kind = ClaudeCode)` -> `AgentTaskService.CreateAsync(new
+  CreateAgentTaskRequest("c727 ...", Role: Code, AgentKind: kind, Workspace: Worktree),
+  new AgentTaskService.Caller(null, null, DelegateScriptRunner.RepoRoot))` through the harness
+  scope (real `DefaultRunnerRoutingPolicy` + snapshot), then `ExecuteUpdate` `WorktreePath =
+  <temp dir>`, `WorktreeBranch = "feat/c727-" + id[..8]` so dispatch needs no git (the
+  TaskPlatformDispatchTests shape). `SeedQueuedRemoteTaskAsync(runnerId, remoteWorktreePath?,
+  sourceLanding: false)` seeds the row directly (V-7/V-8/V-23 arms).
+- `DispatchCycleAsync()` = `TickAsync`; `RemoteWorkspacePreparer.WhenIdleAsync()`; `TickAsync`;
+  `AgentSessionLaunchQueue.WaitForIdleAsync(15 s)`; bounded by 20 s wall clock. A remote task
+  needs two ticks (prep then claim), so "one tick" in the Plan's V-7 means one cycle.
+- Peers script `Reply` for `WorkspaceMirror` -> `PhoneHomeWorkspaceMirrorResponse("/work/mirrors/"
+  + name)` and `WorkspaceRemove` -> `PhoneHomeWorkspaceRemoveResponse(true, null)` (M-4); from
+  S6 the peer's `DefaultReply` answers `Retire` with `RunnerRetireResult(bootId, 0, now)` and
+  records `Retires` (M-5).
+- Operator calls: `host.PostOperatorAsync("/api/session-runners/{id}/drain", new { reason,
+  redirectTo, retireWhenIdle }, token)`; `token = OperatorTokenFile.ReadOrCreate(host
+  .OperatorTokenPath)`; the 403 arm posts `token: null, proxied: true`.
+- `ReadStateAsync(id)` reads `SessionRunnerStates` through a fresh context;
+  `StatusAsync(id)` = `GET /api/session-runners/{id}/status` as `JsonElement`;
+  `ReadTaskEventsAsync(taskId, type)`.
+- `RebuildDirectoryAsync()` (V-4): `new PhoneHomeRunnerDirectory(host.Local, settings,
+  scopeFactory over the same schema, Clock)` fed by `RunnerStateLoader.LoadAsync(directory)`.
+- Job: `new RunnerRetireJob(host.Directory, db, stateService, Options.Create(settings), Clock,
+  NullLogger)`; `ExecuteAsync(ct)` returns the number retired. Never through Hangfire.
+
+**Missing setup** (record; each is a Code deliverable in the named slice):
+
+- M-1 (0710 repair, before R1): `PhoneHomeTestHost` must carry **both** the 0710 members
+  (`configured:`, `runnerId:`/`storeId:`/`secret:`/`platform:`/`capabilities:`,
+  `WaitLiveAsync(runnerId:)`) and master's CARD-0716 members. R1's CP-1 build is the check.
+- M-2 (S1): `TestHelpers/PhoneHomeRunnerPairs.cs` (`Pair`/`Entry` are private in
+  `MultiRunnerDirectoryTests`).
+- M-3 (S1): `PhoneHomeTestHost.StartAsync(configured:)` with `connectionString` and a clock
+  (the three-argument call is new; today's callers pass at most two).
+- M-4 (S1): scripted `WorkspaceMirror`/`WorkspaceRemove` replies (peer default is `{ ok }`).
+- M-5 (S6): `PhoneHomeScriptedPeer.Retires` + `RunnerRetireResult` default reply.
+- M-6 (S3): `PhoneHomeTestHost` registers `RunnerStateService`/`RunnerStateLoader` when a
+  connection string is present, an in-memory `IRunnerStateStore` otherwise; `ApplyState(runnerId,
+  RunnerState)` on the directory for the DB-less classes (V-9, V-11, V-12).
+- M-7 (S6): `IPhoneHomeRuntimeSurface.KillAllAsync(TimeSpan, ct)` (default: refuse) and a
+  `RecordingRuntime` implementation recording `"kill-all"`; a `RecordingLifetime :
+  IHostApplicationLifetime` with `StoppedAt` (Stopwatch ticks) in the test file;
+  `PhoneHomeCommandDispatcher` ctor gains `IHostApplicationLifetime? lifetime = null`.
+- M-8 (S8): `BuildSlotBrokerTests.Fixture(holderLiveness:, renewGraceSeconds:)`.
+- M-9 (S8): `public partial class Program;` appended to `src/Antiphon.SessionRunner/Program.cs`
+  and `Microsoft.AspNetCore.Mvc.Testing` in `Antiphon.SessionRunner.Tests.csproj`, so V-27 boots
+  the **real** runner `Program` with `SessionRunner:BuildSlotsOnly=true`, `PhoneHome:Enabled=false`
+  through `WebApplicationFactory<Program>` (TestServer, no port, never 17204). If the top-level
+  program cannot boot under TestServer, V-27 downgrades to a route-map pin (`SessionRunnerRouteMap
+  .For(buildSlotsOnly)`) **and** L-1 records `broker-routes.txt` (`curl` of `/sessions` -> 404,
+  `/build-slots` -> 200 from the broker container); Code states which.
+- M-10 (S8): `scripts/fixtures/c589-slot-shim.ps1` gains a `renew` arm (`POST .../{id}/renew` ->
+  `SLOT RENEW <id>` log row, 204) and `C589_SLOT_SCRIPT` grants may carry `renewEverySeconds`.
+- M-11 (S9): `tests/test-execution-policy.json` `scriptCensus` row for
+  `scripts/test-deploy-server2.ps1` (`unattended`); `DeployServer2ScriptTests` wrapper class;
+  harness seams `C727_VERIFY_SHIM` (stands in for `verify-docker-stack.ps1`), `C727_HTTP_SHIM`
+  (scripted status/drain/clear answers per phase from `seams.json`), `C727_POLL_SECONDS=0`,
+  `ANTIPHON_OPERATOR_TOKEN_FILE` -> a temp file holding `$script:Sentinel`.
+- M-12 (S7): `RunnerRetireJob(directory, db, stateService, IOptions<PhoneHomeRunnerSettings>,
+  TimeProvider, logger)` takes the clock as a constructor argument (Hangfire resolves
+  `TimeProvider` from DI; tests pass the `FakeTimeProvider`).
+
+### Delivery inventory
+
+Each new or changed asynchronous path, joined by its durable identity. A request, a queue insert,
+an event, a flag or an ack is never the delivery proof; the recipient's evidence is named.
+
+| # | Path | Producer | Destination | Persistence boundary | Recovery | Observable receipt | Durable identity | Rows |
+|---|---|---|---|---|---|---|---|---|
+| P-1 | New task -> runner launch | `AgentTaskDispatcher.TickAsync` claim -> `AgentSessionLaunchQueue` -> `AgentSessionService.LaunchInteractiveAsync` -> `RunnerScopedSessionRunnerClient` | the bound runner's socket (peer B) | `AgentSessions` row (`RunnerId`, `RunnerStoreId`, `RunnerCwd`) committed with the claim before the frame | CARD-0679 launch-transport retries (regression class in CP-1); remote-prep backoff (`DispatchNotBeforeAt`) | peer `Launches` frame whose `RunnerLaunchRequest.SessionId` equals the row id, **and** the row `RunnerId`/`RunnerStoreId` | session id + `AcceptedStartedAt` generation | V-2, V-6, V-7, V-23 |
+| P-2 | Input to a bound session | `RoutingSessionRunnerClient.SendInputAsync` (binding) and the adapter's `RunnerScopedSessionRunnerClient` | the owning runner's socket (peer A) | `AgentSessions` binding (all-or-none) | connection re-resolve on every call (CARD-0679 D-6) | peer `Inputs` frame for the session id | session id | V-2, V-5, V-23 |
+| P-3 | Drain redirect rebind | dispatcher tick, before claim | task row + `WorkspaceRemove` to the **old** runner + P-1 on the **new** runner | `AgentTasks.RunnerId`, `RemoteWorktreePath = null`, `RemotePrepFailures = 0`, `DispatchNotBeforeAt = null`, event `runner drain_redirect from=.. to=..` | next tick (idempotent: a rebound row is no longer bound to a draining runner) | peer A `RequestCount(WorkspaceRemove) == 1`; peer B `Launches == 1`; row `RunnerId` | task id | V-7, V-8, V-23 |
+| P-4 | Retire | `RunnerRetireJob.ExecuteAsync` (cron) / `POST .../retire` | runner process exit through the `Retire` frame | `SessionRunnerStates.RetiredAt/RetireReason`; the runner's own exit (container `restart: "no"`) | next cron run; a `phone_home_runner_busy` answer clears `IdleObservedAt`; a lease expiry with no rows closes the book without a send | peer B `Retires` frame with the expected `Force`; row `RetiredAt`; **live**: `status-temp-retired.json` `retiredAt` and `temp-down.txt` (L-3) | runner id + `ProcessBootId` in the result | V-16 to V-23, L-3 |
+| P-5 | Broker lease renewal | `scripts/lib/build-slot.ps1` renewer thread | broker `POST /build-slots/{id}/renew` | broker memory (`LastRenewedAt`); reaped at `RenewGraceSeconds` | the sweep itself; a dead wrapper is reaped, never revoked while renewing | shim log `SLOT RENEW <id>` rows before the `SLOT DELETE`; `List().Leases[..].LastRenewedAt` | lease id | V-24 to V-28 |
+| P-6 | Retire job registration | `Program.cs` startup -> `HangfireConfiguration.AddOrUpdateRunnerRetireJob` | Hangfire storage | recurring job row | `AddOrUpdate` on every start | `GetRecurringJobs()` has `antiphon:runner-retire` with the cron | job id | V-16b |
+
+Producer-to-recipient through the **real queue**: P-1/P-3 run the real `AgentTaskDispatcher`,
+`AgentSessionLaunchQueue` and `AgentProtocolAdapterFactory` against two real phone-home sockets
+(H-1). Arms: *busy recipient* = V-8b (redirect target `server2-temp` at `DeclaredCapacity`:
+held `RunnerAtCapacity`, nothing launched, `RunnerId` already rebound); *one already eligible* =
+V-2 and V-6a; *crash / enqueue-failure recovery at each handoff* = V-7c (peer A `SilentFor
+(WorkspaceRemove)`: the rebind still completes, one Warning names the old path, the launch
+reaches B), V-23 arm (peer B aborted under its first `Launch`: CARD-0679 pre-ack re-send on
+the replacement connection, `Launches` on the replacement == 1) and the CP-1/CP-4 regression
+classes (`PhoneHomeLaunchTransportTests`, `MultiRunnerRecoveryTests`).
+
+Declared substitutes: (a) a `PhoneHomeScriptedPeer` frame proves the **transport** reached the
+right runner's socket; it is not a transcript and proves no UserPrompt was recorded by a real
+agent; (b) the retire evidence in tests is the peer frame plus the state row; the process exit and
+the container stopping are only proven by L-3. The transcript-confirmed proof that a session on
+the new generation takes work is **L-1**: one real `delegate.ps1 -Runner server2-temp -Worktree`
+task settles and its session transcript, read through the ops HTTP surface, shows the
+`UserPrompt` row carrying the brief (`provider-auth`, `status.json` and the settlement receipt are
+not that proof). A design stopping at "the frame was written" is rejected here: every P row above
+ends at the recipient (frame observed **on the peer** + persisted row), and the live rows end at
+the runner's own exit and the transcript.
+
+### Proves it works now
+
+Layer key: HTTP = `PhoneHomeTestHost` route; Dir = directory in memory; World = `RollingWorld`
+(DB + dispatcher + two peers); Runner = `Antiphon.SessionRunner.Tests`; Text = file contract;
+Script = pwsh harness; Live = server2. "Red" names the production line whose absence or change
+turns the row red **at the decisive assertion**; R1 rows are green pins whose red is a PC.
+
+| ID | Behaviour | Layer | File / method | Decisive assertion (first to fail) | Red mechanism | CP |
+|---|---|---|---|---|---|---|
+| V-1 | An unknown runner id is 404 with no live identity; a configured offline id is 200 not available; desktop is 200 both false; the connected id is eligible with its own store | HTTP | `tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs` `Unknown_runner_status_is_404_and_carries_no_live_runner_identity` | `((int)other.StatusCode).ShouldBe(404)` for `GET /api/session-runners/server2-other/status`; then body JSON has no `runnerStoreId`/`processBootId`/`buildVersion` properties; `server2-temp` -> 200 `available:false, dispatchEligible:false`; `desktop` -> 200 both false; `server2` -> `dispatchEligible:true`, `runnerStoreId == StoreA` | green pin; `PhoneHomeRunnerDirectory.Status` `:468` throw (PC-4) | CP-1 |
+| V-2 | A default-placed task launches on `server2-temp` only while input to a session bound to `server2` reaches `server2` only | World | `PhoneHomeRollingRunnerTests.Input_to_a_session_on_server2_reaches_server2_while_a_new_launch_goes_to_server2_temp` | after `DispatchCycleAsync`: `peerB.Launches.Count.ShouldBe(1)`, `peerA.Launches.Count.ShouldBe(0)`, row `RunnerId.ShouldBe("server2-temp")`, `RunnerStoreId.ShouldBe(StoreB)`; then `RoutingSessionRunnerClient.SendInputAsync(S_A, "x")` and `AgentProtocolAdapterFactory.Create(Raw, "server2").SendInputAsync(S_A, "y")`: `peerA.Inputs.Count.ShouldBe(2)`, **`peerB.Inputs.Count.ShouldBe(0)`** | green pin; `RoutingSessionRunnerClient.Route` `:94` (PC-1), `RunnerScopedSessionRunnerClient.Current` `:30` (PC-2), `AgentProtocolAdapterFactory.RemoteClient` `:66-69` (PC-3) | CP-1 |
+| V-3 | The D-2 map (two entries, same secret, same host root) validates; both ids are known; a case-variant duplicate id fails | Dir | `tests/Antiphon.Tests/Application/PhoneHomeRunnerSettingsValidatorTests.cs` `Two_entries_with_the_same_secret_and_host_root_validate` | `PhoneHomeRunnerSettingsRules.Validate(RollingPair(...)).ShouldBeEmpty()`; `new PhoneHomeRunnerDirectory(local, Options.Create(pair), NoScope, TimeProvider.System).KnownRunnerIds.ShouldContain("server2")`/`("server2-temp")`; a map built with `StringComparer.Ordinal` holding `server2` and `SERVER2` -> `failures.ShouldContain(f => f.Contains("duplicated"))` | green pin; `ValidateMapped` `:294-312` (PC-5) | CP-2 |
+| V-4 | Drain needs the token, persists, shows in status, survives a directory rebuild | World | `PhoneHomeRollingRunnerTests.Drain_requires_the_operator_token_persists_the_state_and_survives_a_directory_rebuild` | `((int)noToken.StatusCode).ShouldBe(403)` and `body.ShouldContain("operator_token_required")`, `ReadStateAsync("server2").ShouldBeNull()`; with token 200; row `Draining == true`, `DrainedAt` within Clock, `RedirectTo == "server2-temp"`, `DrainReason == reason`; status `draining:true`, **`acceptingNewWork:false`**, `dispatchEligible:true`; `RebuildDirectoryAsync()` then `Should.Throw<ServiceUnavailableException>(() => rebuilt.ResolveForNewWork("server2")).Code.ShouldBe("phone_home_runner_draining")` | S3/S4-tests: route absent -> 404 at the first `ShouldBe(403)`; post-land PC-15, PC-19, PC-8 | CP-3 red, CP-4 green |
+| V-4b | A redirect must name another configured, enabled, non-draining runner; the reason is bounded | HTTP+World | `PhoneHomeRollingRunnerTests.Drain_redirect_must_name_another_configured_non_draining_runner` | `redirectTo: "server2"` (self) -> `((int)r.StatusCode).ShouldBe(409)` and code `phone_home_redirect_invalid`; `"desktop"` -> 409; `"nobody"` -> 409; to `server2-temp` while it is draining -> 409; empty reason -> 400; 201-char reason -> 400; 200-char reason -> 200; re-POST with a new reason -> 200 and the row updated (idempotent) | S4-tests: 404 at the first `ShouldBe(409)`; PC-18 | CP-3, CP-4 |
+| V-5 | A draining runner still serves its sessions | World | `PhoneHomeRollingRunnerTests.A_draining_runner_still_serves_input_transcript_kill_and_release_for_its_sessions` | after the drain, via `RoutingSessionRunnerClient` for `S_A`: `SendInputAsync`, `GetTranscriptAsync`, `KillGenerationAsync(S_A, gen)`, `ReleaseSlotAsync`: **`peerA.RequestCount(Input).ShouldBe(1)`**, then Transcript/KillGeneration/ReleaseSlot each `>= 1`, and `peerB.RequestCount(op).ShouldBe(0)` for all four; `(await host.Directory.GetInventoryAsync("server2", ct)).ShouldBeOfType<RunnerInventory.Available>()` | Code red: the drain POST is 404 (S3/S4-tests); the guard itself is PC-7 (`Resolve` `:85-98` refuses when draining) | CP-3, CP-4 |
+| V-6 | Create-time placement follows an eligible redirect, falls back with `runner_draining`, never moves an explicit pin | World | `PhoneHomeRollingRunnerTests.Default_placement_follows_the_drain_redirect_and_falls_back_without_one` | arm a (global default `server2`, drained -> `server2-temp` eligible): **`saved.Task.RunnerId.ShouldBe("server2-temp")`**, Created contains `reason=drain_redirect:server2`, `Warnings.ShouldBeEmpty()`; arm b (drained, no redirect): `RunnerId.ShouldBeNull()`, Created `reason=runner_draining`, one Warning; arm c (redirect to `server2-temp` whose peer was disposed and lease expired on Clock): `RunnerId.ShouldBeNull()`, `reason=runner_draining`; arm d (`RunnerId: "server2"` explicit while draining): `RunnerId.ShouldBe("server2")`, `source=explicit` | S4-tests: `DefaultRunnerRoutingPolicy.Decide` `:205` still `Resolve`s the draining runner -> arm a gets `"server2"`; PC-9 | CP-3, CP-4 |
+| V-7 | A Queued task bound to a draining runner is rebound before claim, its old mirror removed through the old runner; SourceLanding and Dispatched rows never move | World | `PhoneHomeRollingRunnerTests.A_queued_task_bound_to_a_draining_runner_is_rebound_to_the_redirect_before_claim` | arm a (Queued on `server2`, `RemoteWorktreePath = "/work/mirrors/old"`): after one `DispatchCycleAsync`: **`task.RunnerId.ShouldBe("server2-temp")`**, `peerA.RequestCount(WorkspaceRemove).ShouldBe(1)` with payload path `/work/mirrors/old`, `RemoteWorktreePath.ShouldStartWith("/work/mirrors/")` and `ShouldNotBe("/work/mirrors/old")`, `peerB.Launches.Count.ShouldBe(1)`, `peerA.Launches.Count.ShouldBe(0)`, one task event Detail containing `drain_redirect from=server2 to=server2-temp`, `RemotePrepFailures == 0`; arm b (`SourceLandingOperationId = Guid`, `WorktreePath = "/work/snap"`): `RunnerId.ShouldBe("server2")`, `peerA.RequestCount(WorkspaceRemove)` unchanged, a Held event `Held: runner 'server2' is draining`; arm c (peer A `SilentFor(WorkspaceRemove)`): rebound anyway, one Warning naming `/work/mirrors/old`, launch on B; arm d (a Dispatched row with a session on `server2`): untouched | S4-tests: `RemoteHoldForAsync` `:936-967` has no rebind -> arm a gets `"server2"` (claimed and launched on A); PC-10, PC-11 | CP-3, CP-4 |
+| V-8 | Without an eligible redirect the task is held, never launched | World | `PhoneHomeRollingRunnerTests.A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held` | arm a (no redirect): **`peerA.Launches.ShouldBeEmpty()`**, `task.Status.ShouldBe(Queued)`, `RunnerId.ShouldBe("server2")`, Held Detail `ShouldStartWith("Held: runner 'server2' is draining")`, exactly one Held row after two cycles (deduplicated); arm b (redirect `server2-temp` at capacity: `host.Capacity = 1` and one Running row bound to it): rebound `RunnerId == "server2-temp"`, then held `RunnerAtCapacity`, `peerB.Launches.ShouldBeEmpty()`; arm c (redirect to an offline `server2-temp`): held naming `redirect 'server2-temp' is not accepting work`, `RunnerId` unchanged | S4-tests: launched on A (`Resolve` passes) -> arm a red; PC-12 | CP-3, CP-4 |
+| V-9 | Draining changes neither eligibility nor capacity; only `ResolveForNewWork` refuses; the catalogue says so | Dir+HTTP | `PhoneHomeConnectionTests.Draining_changes_neither_dispatch_eligibility_nor_capacity` | `host.Directory.ApplyState("server2", draining)`; `DeclaredCapacity("server2").ShouldBe(2)`; `Resolve("server2").ShouldBeOfType<PhoneHomeRunnerClient>()`; **`Should.Throw<ServiceUnavailableException>(() => host.Directory.ResolveForNewWork("server2")).Code.ShouldBe("phone_home_runner_draining")`**; `GET /api/session-runners` entry `server2`: `acceptingNewWork == false`, `dispatchEligible == true`, `unavailableReason == "draining"`; `server2-temp` entry `acceptingNewWork == true` | S4-tests: `ISessionRunnerDirectory.ResolveForNewWork` default body is `Resolve` -> no throw; PC-6, PC-20 | CP-3, CP-4 |
+| V-10 | Clear needs the token, restores new work, resets the retire fields | World | `PhoneHomeRollingRunnerTests.Clear_drain_restores_new_work_and_resets_the_retire_fields` | `POST .../drain/clear` without token -> `ShouldBe(403)`; with token after a drain whose row was given `RetiredAt`/`RetireReason`/`IdleObservedAt`/`RetireWhenIdle` by direct update: **`row.Draining.ShouldBeFalse()`**, `RedirectTo.ShouldBeNull()`, `RetireWhenIdle.ShouldBeFalse()`, `IdleObservedAt.ShouldBeNull()`, `RetiredAt.ShouldBeNull()`, `RetireReason.ShouldBeNull()`; a new default-placed task binds `server2`; status `acceptingNewWork:true`; clear on an id that is not draining -> 200 no-op | S4-tests: 404; PC-16, PC-21 | CP-3, CP-4 |
+| V-11 | A retired id cannot register until cleared | HTTP | `PhoneHomeConnectionTests.A_retired_runner_id_cannot_register_until_its_drain_is_cleared` | `host.Directory.ApplyState("server2-temp", retired)`; raw `POST /api/session-runners/register` for `server2-temp`: **`((int)refused.StatusCode).ShouldBe(409)`** and body contains `phone_home_runner_retired`; `SnapshotLive("server2-temp").ShouldBeNull()`; `ApplyState(cleared)` -> 200 with a ticket; `server2` registers throughout | S4-tests: `Register` `:195-260` has no `RetiredAt` check -> 200 ticket; PC-13 | CP-3, CP-4 |
+| V-12 | A standing agent start on a draining runner is refused before any launch | World-like | `PhoneHomeStandingLaunchTests.Standing_agent_start_on_a_draining_runner_is_refused` | `host.Directory.ApplyState("grok-linux", draining)`; `BuildLaunchHarness(...)`; **`(await Should.ThrowAsync<ConflictException>(() => harness.Control.StartAsync(agentId, new StartAgentRequest(Fresh: true), ct))).Code.ShouldBe("phone_home_runner_draining")`**; `peer.Launches.Count.ShouldBe(launchesBefore)`; no `AgentSessions` row for the agent; `ApplyState(cleared)` then the start returns a `PersistentSessionId` and `harness.LaunchQueue.Owns(sessionId)` | S4-tests: `AgentControlService.cs:625` has no gate -> the start returns and a session row exists; PC-14 | CP-3, CP-4 |
+| V-13 | Status reports per-runner sessions, queued tasks and runner sessions, plus the drain stamps | World | `PhoneHomeRollingRunnerTests.Status_reports_sessions_queued_tasks_and_runner_sessions_per_runner` | one Running row + one Queued unlaunched task bound to `server2`, peer A listing one session, `GetInventoryAsync("server2")` once: **`server2.GetProperty("sessions").GetInt32().ShouldBe(1)`**, `queuedTasks == 1`, `runnerSessions == 1`; `server2-temp`: `0, 0` and `runnerSessions` null before any List; after a drain `drainedAt` set and `drainReason == reason` | S3/S4-tests: the DTO members exist (allowed in the red commit) but stay null -> `GetInt32()` on null fails at the first assertion | CP-3, CP-4 |
+| V-14 | The runner refuses an unforced retire while sessions are owned; a forced retire kills first | Runner | `tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs` `Retire_refuses_while_sessions_are_owned_unless_forced` | `runtime.Owned = 1`; `Retire(force:false)`: **`busy.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RunnerBusy)`**, `busy.StatusCode.ShouldBe(409)`, `busy.ErrorDetail.ShouldContain("1")`, `runtime.Mutations.ShouldBeEmpty()`; `Retire(force:true)`: `runtime.Mutations.ShouldContain("kill-all")`, result `KilledSessions.ShouldBe(1)`, `ProcessBootId.ShouldBe(runtime.BootId)` | S6-tests: `:269` answers `phone_home_unsupported_operation` -> the first assertion; PC-22, PC-23 | CP-9 red, CP-10 green |
+| V-15 | The reply is written before the host stops, and the stop follows within one second | Runner | `PhoneHomeCommandDispatcherTests.Retire_reply_is_written_before_the_host_stops` | `RecordingLifetime`; `var reply = await dispatcher.DispatchAsync(Retire(force:false))` with `Owned = 0`: `reply.Kind.ShouldBe(Result)`; **`lifetime.Stopped.ShouldBeFalse()`** at return; `lifetime.StoppedWithin(TimeSpan.FromSeconds(1)).ShouldBeTrue()`; `Retire` while `Owned = 1` unforced: `Stopped` stays false for 500 ms | S6-tests: `StopApplication` never called -> `StoppedWithin` false; PC-24 | CP-9, CP-10 |
+| V-16 | The job stamps idle first and retires only on a later run past the idle window | World+Job | `tests/Antiphon.Tests/Application/RunnerRetireJobTests.cs` `Draining_runner_with_retire_when_idle_is_retired_after_the_idle_window` | drain `server2-temp` (`retireWhenIdle:true`) at T0; run at T0+59 s: `IdleObservedAt.ShouldBeNull()`, `Retires.ShouldBeEmpty()`; run at T0+60 s: `IdleObservedAt.ShouldBe(T0+60 s)`, **`peerB.Retires.ShouldBeEmpty()`**, `RetiredAt.ShouldBeNull()`; run at +119 s after that: still empty; run at +120 s: `peerB.Retires.Count.ShouldBe(1)`, frame `Force.ShouldBeFalse()`, `RetiredAt.ShouldBe(Clock now)`, `RetireReason.ShouldBe("idle")`, return value 1; a fifth run sends nothing more | S7-tests: `RunnerRetireJob.ExecuteAsync` stub returns 0 and writes nothing -> the +120 s `Count.ShouldBe(1)` fails (the earlier `ShouldBeEmpty` pass on a no-op); PC-25, PC-49 | CP-11 red, CP-12 green |
+| V-16b | The retire job is registered with its cron and triggered at startup like the reconcile job | Unit | `tests/Antiphon.Tests/Infrastructure/HangfireStartupSafetyTests.cs` `Recurring_retire_job_is_re_added_with_its_cron` | `InMemoryStorage` + `RecurringJobManager`; `HangfireConfiguration.AddOrUpdateRunnerRetireJob(manager, new PhoneHomeRunnerSettings())`; **`connection.GetRecurringJobs().ShouldHaveSingleItem().Id.ShouldBe("antiphon:runner-retire")`**, `Cron.ShouldBe("* * * * *")` | S7-tests: stub method registers nothing -> `ShouldHaveSingleItem` fails; PC-48 | CP-11, CP-12 |
+| V-17 | A live row, a queued task, a listed runner session or a busy answer each keep the runner draining | World+Job | `RunnerRetireJobTests.Live_session_queued_task_or_busy_answer_keeps_the_runner_draining` | four arms on fresh worlds, each past both windows: a) Running row bound to `server2-temp`: **`peerB.Retires.ShouldBeEmpty()`**, `RetiredAt.ShouldBeNull()`; b) Queued unlaunched task bound: empty, and `host.Logs.Entries` has one Warning naming the task id; c) peer B `Sessions` holds one `Running`: empty; d) peer B replies `Retire` with error `phone_home_runner_busy`: `Retires.Count == 1`, `RetiredAt.ShouldBeNull()`, `IdleObservedAt.ShouldBeNull()` (was set) | S7-tests: no-op stub -> arms a-c pass vacuously and arm d fails at `Retires.Count.ShouldBe(1)`; the guards are PC-26 to PC-29 | CP-11, CP-12 |
+| V-18 | `retireWhenIdle:false` is never retired | World+Job | `RunnerRetireJobTests.A_drain_without_retire_when_idle_is_never_retired` | `server2` drained with `retireWhenIdle:false`, idle through three windows: **`peerA.Retires.ShouldBeEmpty()`**, `RetiredAt.ShouldBeNull()`, `IdleObservedAt.ShouldBeNull()`, return 0 | S7-tests: passes vacuously (declared: its red is PC-30 only) | CP-11, CP-12 |
+| V-19 | A disconnected, expired, idle runner is marked retired without a send; with bound rows it stays draining | World+Job | `RunnerRetireJobTests.Disconnected_draining_runner_with_no_bound_rows_is_marked_retired_without_a_send` | arm a: `peerB.Socket.Abort()`, `Clock.Advance(LeaseSeconds + 1 s)` past both windows: **`RetiredAt.ShouldNotBeNull()`**, `RetireReason.ShouldBe("idle_disconnected")`, `peerB.Retires.ShouldBeEmpty()`; arm b: same with one Running row bound: `RetiredAt.ShouldBeNull()`; arm c: peer aborted but lease still live: `RetiredAt.ShouldBeNull()` (no send possible, no stamp) | S7-tests: no-op stub -> arm a fails at `ShouldNotBeNull`; PC-31, PC-49 | CP-11, CP-12 |
+| V-20 | Forced retire needs the token, the confirmation and a draining runner | World | `PhoneHomeRollingRunnerTests.Forced_retire_requires_the_operator_token_and_the_runner_id_confirmation` | `POST .../server2-temp/retire` without token -> **`ShouldBe(403)`**; wrong `confirmRunnerId` -> 400; not draining -> 409 `phone_home_runner_not_draining`; `peerB.Retires.ShouldBeEmpty()` after all three; no state row change | S7-tests: 404; PC-17, PC-32, PC-33 | CP-11, CP-12 |
+| V-21 | Forced retire fails bound rows, writes the incident, sends `force:true`, stamps `forced:` | World | `PhoneHomeRollingRunnerTests.Forced_retire_fails_bound_sessions_writes_an_incident_and_sends_a_forced_retire` | `S_B` Running + a Dispatched task; drain then retire with the token and `confirmRunnerId`: **`S_B.Status.ShouldBe(SessionStatus.Failed)`**, `FailureReason.ShouldContain("server2-temp")` and the reason, `TerminationSource.ShouldBe(SystemRequest)`; `peerB.Retires.Count.ShouldBe(1)` and `Force.ShouldBeTrue()`; `AgentIncidents.Count(k == RunnerForceRetired).ShouldBe(1)`; row `RetiredAt` set, `RetireReason.ShouldStartWith("forced:")`; peer B disconnected afterwards -> `RetiredAt` still set (stamped either way) | S7-tests: 404; PC-34, PC-35 | CP-11, CP-12 |
+| V-22 | Forced-retire boundaries: reason 200 vs 201, `confirmRunnerId` exact case, unknown id | World | `PhoneHomeRollingRunnerTests.Forced_retire_boundaries_reason_length_confirmation_case_and_unknown_id` | 201-char reason -> **`ShouldBe(400)`**; 200-char reason -> 200; `confirmRunnerId: "Server2-Temp"` -> 400; `.../nobody/retire` -> 404; `.../desktop/retire` -> 404; `Retires.Count.ShouldBe(1)` (only the 200 arm sent) | S7-tests: 404 at the first `ShouldBe(400)`; PC-33 | CP-11, CP-12 |
+| V-23 | The whole rolling flow in one process | World+Job | `PhoneHomeRollingRunnerTests.Rolling_upgrade_moves_new_launches_to_server2_temp_keeps_server2_reachable_and_retires_server2_temp_when_idle` | global default `server2`; `S_A` on A; drain `server2 -> server2-temp` (`retireWhenIdle:false`); task 1 -> `peerB.Launches == 1`, `RunnerId == "server2-temp"`; input to `S_A` -> `peerA.Inputs == 1`, `peerB.Inputs == 0`; peer A emits `S_A` exit (session event) and the row leaves Running; `drain/clear server2`; task 2 -> `peerA.Launches == 1`; drain `server2-temp -> server2` (`retireWhenIdle:true`); peer B marks `S_B` Exited and clears `Sessions`; task 1's row set Succeeded; `Clock.Advance(60 s)`, run, `Clock.Advance(120 s)`, run: **`peerB.Retires.Count.ShouldBe(1)`**; status `server2-temp.retiredAt` set, `server2.acceptingNewWork == true`; raw register `server2-temp` -> 409 until `drain/clear`; then 200. One arm with `distinctSecrets: true` repeats the first two steps only | after R2 (S7-tests): the retire step (no-op job) -> `Count.ShouldBe(1)` fails; every earlier step is R2's green | CP-11, CP-12 |
+| V-24 | Renew mode reaps a lease not renewed within the grace and ignores pid liveness | Runner | `BuildSlotBrokerTests.Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness` | `Fixture(holderLiveness: "renew", renewGraceSeconds: 90)`; grant; `Liveness.Kill(pid)`; `Time.Advance(10 s)`; `Sweep().ShouldBe(0)`; **`Broker.List().Leases.Count.ShouldBe(1)`**; `Time.Advance(79 s)` (89 s): `Sweep().ShouldBe(0)`; `Renew(id).ShouldBeTrue()`; `Time.Advance(89 s)`: 0 reaped; `Time.Advance(2 s)`: `Sweep().ShouldBe(1)`, `Leases.ShouldBeEmpty()`, log names `renew grace`; pid mode `Fixture()` with the dead pid: `Sweep().ShouldBe(1)` at once (unchanged) | S8-tests: `SweepLocked` `:170` consults pid -> reaped at once -> `Count.ShouldBe(1)` gets 0; PC-36, PC-37 | CP-13 red, CP-14 green |
+| V-25 | Renew extends a held lease and answers false for an unknown one | Runner | `BuildSlotBrokerTests.Renew_extends_a_held_lease_and_an_unknown_lease_answers_false` | **`Broker.Renew(grant.LeaseId).ShouldBeTrue()`**; `List().Leases.Single().LastRenewedAt.ShouldBe(Time.GetUtcNow().UtcDateTime)` after `Time.Advance(5 s)`; `Renew(Guid.NewGuid()).ShouldBeFalse()`; after `Release`, `Renew(id).ShouldBeFalse()`; TTL still reaps a renewed lease at `LeaseTtlMinutes` | S8-tests: `Renew` stub returns false; PC-38 | CP-13, CP-14 |
+| V-25b | Settings validate the holder-liveness mode and grace | Runner | `BuildSlotSettingsTests.Holder_liveness_must_be_pid_or_renew_and_the_grace_positive` | `HolderLiveness = "renew"` validates; `"pids"` -> `Should.Throw<InvalidOperationException>` naming `HolderLiveness`; `RenewGraceSeconds = 0` -> throws; defaults `pid`, 90, 20 | S8-tests: no validation -> no throw | CP-14 |
+| V-26 | `POST /build-slots/{id}/renew` is 204 for a held lease and 404 otherwise; the grant carries `renewEverySeconds` only in renew mode | Runner | `BuildSlotEndpointTests.Post_renew_answers_204_for_a_held_lease_and_404_otherwise` | grant on a renew-mode host: body `renewEverySeconds == 20`; **`(await Http.PostAsync($"build-slots/{id}/renew", null)).StatusCode.ShouldBe(NoContent)`**; unknown id -> 404 with `type == BuildSlotProblemTypes.Unknown`; pid-mode host: `renewEverySeconds` is null | S8-tests: route absent -> 404 at `NoContent` | CP-13, CP-14 |
+| V-27 | A `BuildSlotsOnly` runner serves `/health` and `/build-slots` and nothing else | Runner (real Program) | `tests/Antiphon.SessionRunner.Tests/BuildSlotsOnlyHostTests.cs` `Build_slots_only_host_serves_health_and_build_slots_and_nothing_else` | `WebApplicationFactory<Program>` with `SessionRunner:BuildSlotsOnly=true`, `PhoneHome:Enabled=false`, `SessionRunner:BuildSlots:Enabled=true`: `GET /build-slots` 200; `GET /health` 200; **`GET /sessions` -> 404**; `GET /capabilities` -> 404; `services.GetServices<IHostedService>().ShouldNotContain(s => s is PhoneHomeConnectionService)` | S8-tests: `Program.cs:228` maps `/sessions` unconditionally -> 200; PC-39. Needs M-9; fallback declared there | CP-13, CP-14 |
+| V-28 | The wrapper renews a renew-mode grant while the command runs and never renews a pid-mode grant | Script | `tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs` `C589_WrapperRenewsRenewModeGrant` -> `scripts/test-build-slot.ps1` `Test-C589_WrapperRenewsRenewModeGrant` | PASS rows: `renews at least twice before release` (shim log `SLOT RENEW` count >= 2 and all before `SLOT DELETE`), `pid-mode grant is never renewed` (0 `SLOT RENEW`), `renewer stops after release` (no `SLOT RENEW` after `DELETE`), `exit code propagates`; `RunHarnessCaseAsync(..., 4, ...)` -> **`passed.Count.ShouldBe(4)`** | S8-tests: no renewer -> `FAIL ... renews at least twice` -> the wrapper's `lines.ShouldNotContain(FAIL)`; PC-40, PC-41 | CP-15 red, CP-16 green |
+| V-29 | Compose contracts: base block list with the broker and network; override changes only the named keys; broker unprivileged and pinned by its own tag | Text | `DockerStackContractTests.Server2_file_defines_runner_state_init_and_broker` (replaces `..._only_runner_and_state_init`), `Temp_override_changes_only_runner_id_restart_broker_url_network_and_grok_store`, `Server2_broker_is_unprivileged_pinned_by_its_own_tag_and_on_the_external_network`; `Server2_services_name_their_images` iterates `state-init, session-runner, build-slots` | block list **`ShouldBe(["state-init", "session-runner", "build-slots", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data", "antiphon-build-slots"])`**; override file's only service is `session-runner` with `PhoneHome__RunnerId: server2-temp`, `restart: "no"`, `ANTIPHON_BUILD_SLOTS_URL: http://build-slots:8080/build-slots`, `networks` listing `antiphon-build-slots`, one volume `${RUNNER_GROK_STORE_DIR:?}` -> `/state/grok`, and **no** `work:`/`runner-state:`/`dind-data:`/`privileged`/`healthcheck`/`PhoneHome__SecretPath`; broker block: no `privileged`, `user: "1654:1654"`, `SessionRunner__BuildSlotsOnly: "true"`, `image:` contains `${BUILD_SLOTS_SHA12`, `restart: unless-stopped`, `profiles` contains `broker`; base `session-runner` `ANTIPHON_BUILD_SLOTS_URL` set and `restart: unless-stopped` kept | S9-tests: today's files -> the block list assertion; PC-42 | CP-17 red, CP-18 green |
+| V-30 | The override does not override the secret staging or the healthcheck | Text | `DindRunnerContractTests.Temp_override_keeps_the_base_secret_staging_and_healthcheck` | override `session-runner` block: `ShouldNotContain("healthcheck")`, `ShouldNotContain("PhoneHome__SecretPath")`, `ShouldNotContain("ANTIPHON_PHONE_HOME_SECRET_SOURCE")`; base assertions of `Server2_compose_reads_the_staged_phone_home_secret` and `Server2_healthcheck_covers_phone_home_secret_readability` still hold (unchanged methods) | S9-tests: override file missing -> `File.ReadAllText` throws at the first read (named: the override read is the first statement) | CP-17, CP-18 |
+| V-31 | Host-lane cases are routed, bounded and safe | Text | `RemoteScriptContractTests.Rolling_cases_are_routed_and_have_stub_boundaries`, `Temp_deploy_never_removes_orphans_and_resolves_the_grok_store_from_the_volume`, `Deploy_parent_keeps_the_temp_and_broker_tags`, `Retire_temp_runner_requires_the_retired_evidence` | `c590-real.ps1` contains `'deploy-temp-runner'` and `'retire-temp-runner'`; `verify-docker-stack.ps1` has `'deploy-temp-runner' {` with `NestedStoreDiskLow`, `GrokStoreUnresolved`, and `'retire-temp-runner' {` with `TempRunnerNotRetired`; `Remote()` contains `deploy-temp-runner) case_deploy_temp_runner` and `retire-temp-runner) case_retire_temp_runner`; `Block(remote, "case_deploy_temp_runner")` contains `-p antiphon-runner-temp`, `docker volume inspect`, `NestedStoreDiskLow`, `GrokStoreUnresolved`, `stack.temp.env`, and **`ShouldNotContain("--remove-orphans")`**; `Block(remote, "retire_superseded_server2_images")` keeps `BUILD_SLOTS_SHA12` and the temp env sha; `Block(remote, "case_retire_temp_runner")` contains `TempRunnerNotRetired`, `down -v`, `-p antiphon-runner-temp`, and every `down` line names `-p antiphon-runner-temp` | S9-tests: text absent -> `Block` fails "function ... is missing"; PC-43 | CP-17, CP-18 |
+| V-32 | `deploy-server2.ps1 -Rolling` drives the phases idempotently and safely | Script (TUnit-wrapped) | `tests/Antiphon.Tests/Scripts/DeployServer2ScriptTests.cs` methods `T1_happy_path_runs_the_phases_in_order`, `T2_a_404_temp_status_is_not_eligible_and_posts_no_drain`, `T3_old_runner_still_busy_exits_2_and_leaves_the_drain`, `T4_drain_temp_rerun_posts_nothing_when_already_draining`, `T5_missing_token_file_exits_2_before_any_case`, `T6_sentinel_never_printed_and_script_is_ascii` -> `scripts/test-deploy-server2.ps1` cases `T1`..`T6` | T1: `trace.jsonl` kinds in order `case:deploy-temp-runner`, `http:POST /api/session-runners/server2/drain`, `case:deploy-parent`, `http:POST .../server2/drain/clear`, `http:POST .../server2-temp/drain`, `case:retire-temp-runner`, exit 0; T2: scripted 404 for `server2-temp/status` -> exit 2, output `TempRunnerNotEligible`, **no `http:POST ... /drain` row**; T3: `sessions: 1` for `-WaitIdleMinutes 0` -> exit 2 `OldRunnerStillBusy`, no `case:deploy-parent`, no `drain/clear`; T4: status already `draining: true` for `server2-temp` -> no POST, waits for `retiredAt`, exit 0; T5: no token file -> exit 2 before any `case:` row; T6: stdout/stderr and `trace.jsonl` never contain the sentinel, `deploy-server2.ps1` and the harness are ASCII | S9-tests: the harness exists, `deploy-server2.ps1` does not -> every case `FAIL deploy-server2.ps1 missing` -> `process.ExitCode.ShouldBe(0, output)`; PC-44, PC-45, PC-46 | CP-19 red, CP-20 green |
+| V-33a | `runner-drain.ps1` (R2): ASCII, three verbs, token sent and never printed, 404 is "not eligible" | Text | `tests/Antiphon.Tests/Scripts/RunnerDrainScriptTests.cs` `Script_is_ascii_offers_the_verbs_and_sends_the_token_without_printing_it` | text of `scripts/runner-drain.ps1`: all chars < 128; `ValidateSet(` contains `'status', 'drain', 'clear'`; contains `X-Antiphon-Operator-Token`; **no line matching `Write-Host.*\$token`** or `Write-Output.*\$token`; contains `not eligible` in the 404 branch; `ANTIPHON_OPERATOR_TOKEN_FILE` | S5: file missing -> `File.ReadAllText` throws at the first statement; PC-47 | CP-8 |
+| V-33b | `runner-drain.ps1` (R3): `retire` verb with `-Confirm` and `confirmRunnerId` | Text | same method, assertion extended | `ValidateSet` contains `'retire'`; contains `confirmRunnerId`; `-Confirm` required for `retire` (`if ($Verb -eq 'retire' -and -not $Confirm)` text) | S9-tests: the R2 script has no `retire` -> `ShouldContain("'retire'")` | CP-17, CP-18 |
+| L-1 | Live: temp runner deploys beside server2 on the new image and takes a real task | Live (desktop) | `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase deploy-temp` (main checkout) | evidence root `.antiphon/c727/live/`: `docker-info-old.txt`/`docker-info-temp.txt` daemon names equal each container hostname; `nested-run-temp.txt` exit 0; `bridge-nf.txt` from both; `broker-routes.txt` (`/build-slots` 200, `/sessions` 404 from the broker container); `catalogue.json` (`GET /api/session-runners`) with `server2` and `server2-temp` `dispatchEligible:true, acceptingNewWork:true`; `status-temp.json` `buildVersion == sha`; then one `delegate.ps1 -Runner server2-temp -Worktree` task settles `Succeeded` and `transcript-temp.json` (its session transcript via the ops HTTP surface) holds the `UserPrompt` row carrying the brief | n/a (live) | CP-22 |
+| L-2 | Live: shared login stores stay signed in across the overlap | Live | six `GET /api/session-runners/{server2,server2-temp}/provider-auth/{claude,codex,grok}` at L-1 and >= 30 min later | `provider-auth-overlap.json`: six `loggedIn` values unchanged | n/a | CP-23 |
+| L-3 | Live: drain, redeploy, drain-temp, retire-temp; no git lock contention | Live | `-Phase drain-old`, `redeploy-old`, `drain-temp`, `retire-temp` on the same run + the log grep | `status-old-idle.json` `sessions == 0 && runnerSessions == 0 && queuedTasks == 0`; `deploy-parent` evidence at the new sha; `status-old-after-clear.json` `acceptingNewWork:true`; `status-temp-retired.json` `retiredAt` set by the job (Hangfire log line `antiphon:runner-retire`); `temp-down.txt`; `docker ps -a` shows no `antiphon-runner-temp` container and the base project's three volumes intact; zero hits for `index.lock`, `packed-refs.lock`, `Mirror fetch failed` in both containers' logs over the window | n/a | CP-24 |
+
+R1 check: V-1, V-2, V-3 are **green pins** on top of CARD-0710; none has a red commit and none
+needs one (no R1 production change). Their reds are PC-1 to PC-5, executed by Mutation after
+the R1 land. CP-1 and CP-2 are green-only rows.
+
+### Guards the regression
+
+| ID | Regression guarded | Test and decisive assertion | CP |
+|---|---|---|---|
+| R-1 | 0710's per-id connection, ticket, store, inventory and recovery keep working with the two-entry map used by RollingWorld | `MultiRunnerDirectoryTests` (7), `MultiRunnerRecoveryTests` (7), `MultiRunnerProjectionTests` (4): `Two_connections_keep_distinct_owners` `liveA.ShouldNotBeSameAs(liveB)` | CP-1, CP-12 |
+| R-2 | Launch-transport retries and session routing are unchanged by the adapter-factory pin | `PhoneHomeLaunchTransportTests` (7) `peerB.Launches.Count.ShouldBe(1)` in `Loss_before_the_ack_requeues_the_launch_within_the_bound`; `PhoneHomeSessionRoutingTests` (5) | CP-1 |
+| R-3 | Connection lifecycle, lease, epoch and CARD-0716 close handshake | `PhoneHomeConnectionTests` (23 existing) `Live_boot_and_store_identity_cannot_be_replaced` (D-5) | CP-1, CP-4, CP-12 |
+| R-4 | Catalogue and status shapes for existing readers | `RunnerCatalogueTests` (4), `RunnerSlotEndpointTests` (8), `OperatorShutdownEndpointTests` (3): 403 body `operator_token_required` unchanged for the shutdown route | CP-4, CP-12 |
+| R-5 | Create-time placement, pins, reroutes and platform placement are unchanged when no runner is draining | `DefaultRunnerCreateTests` (7) `Eligible_worktree_uses_default` `reason=eligible`; `DefaultRunnerEligibilityTests` (3), `DefaultRunnerPinTests` (6), `DefaultRunnerRerouteTests` (6), `RunnerDefault*` (27: `RunnerDefaultGuidanceTests` 4, `RunnerDefaultMigrationTests`/`RunnerDefaultPlacementTests`/`RunnerDefaultSettingsTests`/`RunnerDefaultsWireTests` 23), `TaskPlatformDispatchTests` (6), `TaskPlatformPlacementTests` (8), `DispatcherRemotePrepStarvationTests` (1 method, 4 results) `remotes.Count.ShouldBe(3)` all Queued | CP-5 |
+| R-6 | Inventory, reconciliation and recovery ignore the drain flag | `PhoneHomeReconciliationTests` (4), `SessionReconciliationServiceTests` (57 methods), `PhoneHomePendingInventoryTests` (8), `PhoneHomeRecoveryEligibilityTests` (3), `MultiRunnerRecoveryTests` (7), `PhoneHomeEventPumpTests` (8) | CP-6 |
+| R-7 | The runner's other operations, connection loops and overflow handling | `PhoneHomeCommandDispatcherTests` (34) `Unsupported_operation_or_launch_never_enters_runtime` still answers `Error` for `(PhoneHomeOperation)999`; `PhoneHomeConnectionServiceTests` (10) | CP-9, CP-10 |
+| R-8 | Pid-mode broker behaviour is byte-for-byte today's | `BuildSlotBrokerTests` (11) `A_dead_holder_is_reaped_on_the_next_acquire`; `BuildSlotEndpointTests` (4); `BuildSlotSettingsTests` (2); wrapper `BuildSlotScriptTests` (7) `C589_WrapperRunsUnderLease` | CP-13 to CP-16 |
+| R-9 | Every compose, entrypoint, remote-script and docs contract not touched by this card | `DockerStackContractTests` (105 untouched), `DindRunnerContractTests` (22), `RemoteScriptContractTests` (25), `DockerStackDocumentationTests` (10) | CP-17, CP-18, CP-21 |
+| R-10 | Hangfire startup safety (no worker in tests, census/residue jobs) | `HangfireStartupSafetyTests` (12) | CP-11, CP-12 |
+| R-11 | The settings validator's existing rules | `PhoneHomeRunnerSettingsValidatorTests` (6) | CP-2 |
+| R-12 | Slot release and reconcile through the same operator surface | `RunnerSlotEndpointTests` (8) `(await job.ExecuteAsync(...)).ShouldBe(1)` | CP-4, CP-12 |
+
+### Guard inventory
+
+Safety-critical = a wrong-runner delivery, work admitted on a draining or retired runner, a
+premature or wrong retire (kills or strands sessions), a token exposed or not required, a false
+eligibility answer, or a deploy step that could remove the wrong project's state. Independently
+bypassable checks are split; each maps to one distinct PC.
+
+| G | Plan ref + guard | PC |
+|---|---|---|
+| G-1 | D-3: session input routes by the session's **own** binding (`RoutingSessionRunnerClient.Route`) | PC-1 |
+| G-2 | D-3/CARD-0679 D-6: the adapter's scoped client resolves its **own** runner id (`RunnerScopedSessionRunnerClient.Current`) | PC-2 |
+| G-3 | D-3: a launch reaches the task's bound runner (`AgentProtocolAdapterFactory.RemoteClient(runnerId)`) | PC-3 |
+| G-4 | D-4/CARD-0729: an unknown id is 404 and never another slot's identity (`Status`) | PC-4 |
+| G-5 | D-2: two entries with one secret validate (`ValidateMapped` admits duplicate secrets) | PC-5 |
+| G-6 | D-7: `ResolveForNewWork` refuses a draining runner | PC-6 |
+| G-7 | D-7: `Resolve` never refuses for draining (sessions keep their transport) | PC-7 |
+| G-8 | D-6: the drain row is loaded into a rebuilt directory before anything is recovered (`RunnerStateLoader`) | PC-8 |
+| G-9 | D-8: placement selects the redirect only when it is eligible and not draining | PC-9 |
+| G-10 | D-8: rebind never moves a SourceLanding task | PC-10 |
+| G-11 | D-8: rebind removes the old mirror through the draining runner before clearing the path | PC-11 |
+| G-12 | D-8: without an eligible redirect the task holds; nothing launches on the draining runner | PC-12 |
+| G-13 | D-11: a retired id cannot register (`Register`) | PC-13 |
+| G-14 | D-7: a standing-agent start on a draining runner is refused before the session row | PC-14 |
+| G-15 | D-9: `drain` requires the operator token | PC-15 |
+| G-16 | D-9: `drain/clear` requires the operator token | PC-16 |
+| G-17 | D-14: `retire` requires the operator token | PC-17 |
+| G-18 | D-9: `redirectTo` self/desktop/unknown/draining is 409 | PC-18 |
+| G-19 | D-10: `acceptingNewWork` is false while draining | PC-19 |
+| G-20 | D-10: `dispatchEligible` is unchanged by draining (policy and scripts keep reading a healthy runner) | PC-20 |
+| G-21 | D-9: `clear` resets `RetiredAt`/`RetireReason`/`IdleObservedAt`/`RetireWhenIdle`/`RedirectTo` | PC-21 |
+| G-22 | D-12: unforced `Retire` refuses while `OwnedSessionCount > 0` | PC-22 |
+| G-23 | D-12: forced `Retire` runs `KillAllAsync` before stopping | PC-23 |
+| G-24 | D-12: the reply is written before `StopApplication` | PC-24 |
+| G-25 | D-13: the job needs two observations >= `RetireIdleSeconds` apart before sending | PC-25 |
+| G-26 | D-13: no retire while a non-terminal desktop row is bound | PC-26 |
+| G-27 | D-13: no retire while a Queued unlaunched task is bound | PC-27 |
+| G-28 | D-13: no retire while the runner lists a non-Exited session | PC-28 |
+| G-29 | D-13: a `phone_home_runner_busy` answer clears `IdleObservedAt` | PC-29 |
+| G-30 | D-13: `retireWhenIdle:false` is never retired by the job | PC-30 |
+| G-31 | D-13: a disconnected runner with bound rows stays draining | PC-31 |
+| G-32 | D-14: `confirmRunnerId` must equal the path id | PC-32 |
+| G-33 | D-14: forced retire is refused unless draining | PC-33 |
+| G-34 | D-14: the forced retire frame carries `force:true` | PC-34 |
+| G-35 | D-14: forced retire fails the bound rows with `SystemRequest` and the incident | PC-35 |
+| G-36 | D-16: renew mode ignores pid liveness | PC-36 |
+| G-37 | D-16: renew mode reaps at `RenewGraceSeconds` | PC-37 |
+| G-38 | D-16: `Renew` extends only a held lease | PC-38 |
+| G-39 | D-16: a `BuildSlotsOnly` host maps no session or phone-home surface | PC-39 |
+| G-40 | D-16: the wrapper never renews a pid-mode grant (desktop behaviour unchanged) | PC-40 |
+| G-41 | D-16: the wrapper renews a renew-mode grant while the command runs | PC-41 |
+| G-42 | D-15: the temp override is `restart: "no"` (a retired container never restarts itself) | PC-42 |
+| G-43 | D-17: `retire-temp-runner` runs `down -v` only for `antiphon-runner-temp` | PC-43 |
+| G-44 | D-4/D-17: the wrapper treats a non-200 status as not eligible and posts no drain | PC-44 |
+| G-45 | D-17: the wrapper never prints the operator token | PC-45 |
+| G-46 | D-17: a busy old runner exits 2 with the drain left in place and no `deploy-parent` | PC-46 |
+| G-47 | D-17: `runner-drain.ps1` never prints the token | PC-47 |
+| G-48 | D-13: the retire job is registered with its cron | PC-48 |
+| G-49 | D-13: `idle_disconnected` is stamped only when the lease has expired (never for a live but momentarily silent runner) | PC-49 |
+
+guards = 49, mapped = 49, missing = 0, duplicate PC maps = 0. Not safety-critical and therefore
+without a PC (text pins only): `--remove-orphans` (Compose orphan removal is project-scoped;
+V-31 pins it as hygiene), `retire_superseded_server2_images` keep set (image loss is a re-build,
+not a state loss; V-31), the `retiring` close description (O-2), doc wording (CP-21).
+
+### Positive controls
+
+Mutation runs each after the round's land, method-scoped
+(`--treenode-filter "/*/*/<Class>/<Method>"`), red -> restore -> green, refreshing restored
+timestamps; Code runs the V/R rows; Review judges the design before land. `Antiphon.Tests` PCs
+run `tests/Antiphon.Tests`; `Antiphon.SessionRunner.Tests` PCs run that project. Batches may
+combine PCs that touch different files **and** different methods; PCs sharing a file run alone.
+
+| PC | Break (compiling defect) | Expect red | Method filter (`/*/*/Class/Method`) |
+|---|---|---|---|
+| PC-1 | `RoutingSessionRunnerClient.Route`: `Remote remote => _directory.Resolve(_directory.KnownRunnerIds[^1])` | V-2 `peerB.Inputs.Count.ShouldBe(0)` (1) | `PhoneHomeRollingRunnerTests/Input_to_a_session_on_server2_reaches_server2_while_a_new_launch_goes_to_server2_temp` |
+| PC-2 | `RunnerScopedSessionRunnerClient.Current => _directory.Resolve(_directory.KnownRunnerIds[^1])` | V-2 same assertion | same |
+| PC-3 | `AgentProtocolAdapterFactory.Create`: `RemoteClient(_directory, _directory.KnownRunnerIds[1])` | V-2 `peerA.Launches.Count.ShouldBe(0)` (1) | same |
+| PC-4 | `PhoneHomeRunnerDirectory.Status`: replace the `:468` throw with `slot = _slots.Values.First();` | V-1 `ShouldBe(404)` gets 200 | `PhoneHomeConnectionTests/Unknown_runner_status_is_404_and_carries_no_live_runner_identity` |
+| PC-5 | `ValidateMapped`: add `var secrets = new HashSet<string>();` and `if (!secrets.Add(entry.SharedSecret)) failures.Add("dup secret");` | V-3 `failures.ShouldBeEmpty()` | `PhoneHomeRunnerSettingsValidatorTests/Two_entries_with_the_same_secret_and_host_root_validate` |
+| PC-6 | `ResolveForNewWork`: drop the `State.Draining || RetiredAt != null` check (return `Resolve`) | V-9 `Should.Throw<ServiceUnavailableException>` | `PhoneHomeConnectionTests/Draining_changes_neither_dispatch_eligibility_nor_capacity` |
+| PC-7 | `Resolve`: add `if (slot.State.Draining) throw new ServiceUnavailableException(..., "phone_home_runner_draining");` | V-5 `peerA.RequestCount(Input).ShouldBe(1)` (throws) | `PhoneHomeRollingRunnerTests/A_draining_runner_still_serves_input_transcript_kill_and_release_for_its_sessions` |
+| PC-8 | `RunnerStateLoader`: query `.Where(s => false)` | V-4 rebuilt `ResolveForNewWork` does not throw | `PhoneHomeRollingRunnerTests/Drain_requires_the_operator_token_persists_the_state_and_survives_a_directory_rebuild` |
+| PC-9 | `DefaultRunnerRoutingPolicy.Decide`: select `RedirectTo` without `ResolveForNewWork(redirect)` | V-6 arm c `RunnerId.ShouldBeNull()` gets `server2-temp` | `PhoneHomeRollingRunnerTests/Default_placement_follows_the_drain_redirect_and_falls_back_without_one` |
+| PC-10 | rebind filter: remove `&& task.SourceLandingOperationId is null` | V-7 arm b `sourced.RunnerId.ShouldBe("server2")` | `PhoneHomeRollingRunnerTests/A_queued_task_bound_to_a_draining_runner_is_rebound_to_the_redirect_before_claim` |
+| PC-11 | rebind: skip `RemoveMirrorAsync` (clear the path only) | V-7 `peerA.RequestCount(WorkspaceRemove).ShouldBe(1)` (0) | same |
+| PC-12 | `RemoteHoldForAsync`: `return null` when draining and no eligible redirect | V-8 `peerA.Launches.ShouldBeEmpty()` | `PhoneHomeRollingRunnerTests/A_queued_task_on_a_draining_runner_without_an_eligible_redirect_is_held` |
+| PC-13 | `Register`: remove the `RetiredAt` refusal | V-11 `ShouldBe(409)` gets 200 | `PhoneHomeConnectionTests/A_retired_runner_id_cannot_register_until_its_drain_is_cleared` |
+| PC-14 | `AgentControlService`: remove the `ResolveForNewWork(bound)` gate | V-12 `Should.ThrowAsync<ConflictException>` | `PhoneHomeStandingLaunchTests/Standing_agent_start_on_a_draining_runner_is_refused` |
+| PC-15 | drain route: delete `RequireOperator(http, settings.Value)` | V-4 `ShouldBe(403)` gets 200 | as PC-8 |
+| PC-16 | clear route: delete `RequireOperator` | V-10 `ShouldBe(403)` | `PhoneHomeRollingRunnerTests/Clear_drain_restores_new_work_and_resets_the_retire_fields` |
+| PC-17 | retire route: delete `RequireOperator` | V-20 `ShouldBe(403)` | `PhoneHomeRollingRunnerTests/Forced_retire_requires_the_operator_token_and_the_runner_id_confirmation` |
+| PC-18 | `RunnerStateService.ValidateRedirect`: `return;` | V-4b self -> `ShouldBe(409)` gets 200 | `PhoneHomeRollingRunnerTests/Drain_redirect_must_name_another_configured_non_draining_runner` |
+| PC-19 | `Status`: `AcceptingNewWork = dispatchEligible` (drop `!Draining`) | V-4 `acceptingNewWork:false` | as PC-8 |
+| PC-20 | `Status`: `DispatchEligible = live is { DispatchEligible: true } && available && !slot.State.Draining` | V-9 `dispatchEligible == true` | as PC-6 |
+| PC-21 | clear: do not null `RetiredAt` | V-10 `RetiredAt.ShouldBeNull()` | as PC-16 |
+| PC-22 | `PhoneHomeCommandDispatcher` Retire: drop `if (!force && _runtime.OwnedSessionCount > 0)` | V-14 `ErrorCode.ShouldBe(RunnerBusy)` | `PhoneHomeCommandDispatcherTests/Retire_refuses_while_sessions_are_owned_unless_forced` |
+| PC-23 | Retire: skip `KillAllAsync` when forced | V-14 `Mutations.ShouldContain("kill-all")` | same |
+| PC-24 | Retire: call `_lifetime.StopApplication()` before building the reply (no delay) | V-15 `lifetime.Stopped.ShouldBeFalse()` at return | `PhoneHomeCommandDispatcherTests/Retire_reply_is_written_before_the_host_stops` |
+| PC-25 | `RunnerRetireJob`: send on the run that first observes idle | V-16 `peerB.Retires.ShouldBeEmpty()` after the +60 s run | `RunnerRetireJobTests/Draining_runner_with_retire_when_idle_is_retired_after_the_idle_window` |
+| PC-26 | job: drop the non-terminal-row count | V-17 arm a `Retires.ShouldBeEmpty()` | `RunnerRetireJobTests/Live_session_queued_task_or_busy_answer_keeps_the_runner_draining` |
+| PC-27 | job: drop the Queued-task count | V-17 arm b | same |
+| PC-28 | job: treat `RunnerInventory.Available` with sessions as idle | V-17 arm c | same |
+| PC-29 | job: keep `IdleObservedAt` on a busy answer | V-17 arm d `IdleObservedAt.ShouldBeNull()` | same |
+| PC-30 | job: select rows regardless of `RetireWhenIdle` | V-18 `Retires.ShouldBeEmpty()` | `RunnerRetireJobTests/A_drain_without_retire_when_idle_is_never_retired` |
+| PC-31 | job: stamp `idle_disconnected` without the bound-row check | V-19 arm b `RetiredAt.ShouldBeNull()` | `RunnerRetireJobTests/Disconnected_draining_runner_with_no_bound_rows_is_marked_retired_without_a_send` |
+| PC-32 | retire route: drop the `confirmRunnerId` comparison | V-20 `ShouldBe(400)` gets 200 | as PC-17 |
+| PC-33 | retire route: drop the draining check | V-22 `.../retire` on a non-draining id 409 -> 200 | `PhoneHomeRollingRunnerTests/Forced_retire_boundaries_reason_length_confirmation_case_and_unknown_id` |
+| PC-34 | `RunnerRetireService.ForceAsync`: send `new RunnerRetireRequest(false, reason)` | V-21 `Force.ShouldBeTrue()` | `PhoneHomeRollingRunnerTests/Forced_retire_fails_bound_sessions_writes_an_incident_and_sends_a_forced_retire` |
+| PC-35 | `ForceAsync`: skip failing the bound rows | V-21 `S_B.Status.ShouldBe(Failed)` | same |
+| PC-36 | `SweepLocked` renew mode: keep `else if (!_liveness.IsAlive(...))` | V-24 `Leases.Count.ShouldBe(1)` at 10 s (0) | `BuildSlotBrokerTests/Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness` |
+| PC-37 | `SweepLocked` renew mode: never reap on grace | V-24 `Sweep().ShouldBe(1)` at 91 s (0) | same |
+| PC-38 | `Renew`: `return true` for an unknown id | V-25 `Renew(unknown).ShouldBeFalse()` | `BuildSlotBrokerTests/Renew_extends_a_held_lease_and_an_unknown_lease_answers_false` |
+| PC-39 | `Program.cs`: map `/sessions` outside the `!buildSlotsOnly` branch | V-27 `/sessions` 200 | `BuildSlotsOnlyHostTests/Build_slots_only_host_serves_health_and_build_slots_and_nothing_else` |
+| PC-40 | `scripts/lib/build-slot.ps1`: start the renewer whenever a lease is held (ignore `renewEverySeconds`) | V-28 `pid-mode grant is never renewed` FAIL | `BuildSlotScriptTests/C589_WrapperRenewsRenewModeGrant` |
+| PC-41 | wrapper: never start the renewer | V-28 `renews at least twice` FAIL | same |
+| PC-42 | `docker-compose.server2-runner.temp.yml`: `restart: unless-stopped` | V-29 `restart: "no"` assertion | `DockerStackContractTests/Temp_override_changes_only_runner_id_restart_broker_url_network_and_grok_store` |
+| PC-43 | `case_retire_temp_runner`: `compose_host down -v` without `-p antiphon-runner-temp` | V-31 every `down` line names the temp project | `RemoteScriptContractTests/Retire_temp_runner_requires_the_retired_evidence` |
+| PC-44 | `deploy-server2.ps1`: treat a 404 status as eligible | T2 `no drain posted` FAIL | `DeployServer2ScriptTests/T2_a_404_temp_status_is_not_eligible_and_posts_no_drain` |
+| PC-45 | wrapper: `Write-Host "token=$token"` in the token helper | T6 sentinel found in output | `DeployServer2ScriptTests/T6_sentinel_never_printed_and_script_is_ascii` |
+| PC-46 | wrapper: run `deploy-parent` when the idle wait times out | T3 `no deploy-parent` FAIL | `DeployServer2ScriptTests/T3_old_runner_still_busy_exits_2_and_leaves_the_drain` |
+| PC-47 | `runner-drain.ps1`: add `Write-Host $token` after reading the file | V-33a regex assertion | `RunnerDrainScriptTests/Script_is_ascii_offers_the_verbs_and_sends_the_token_without_printing_it` |
+| PC-48 | `HangfireConfiguration.AddOrUpdateRunnerRetireJob`: body `{ }` | V-16b `ShouldHaveSingleItem()` | `HangfireStartupSafetyTests/Recurring_retire_job_is_re_added_with_its_cron` |
+| PC-49 | job: stamp `idle_disconnected` when `SnapshotLive(id)` is null **or** the lease is live | V-19 arm c `RetiredAt.ShouldBeNull()` | as PC-31 |
+
+Every PC compiles (a text PC edits a script or compose file), each breaks exactly one guard, and
+each names the method that goes red at the stated assertion. Zero-test runs, fixture errors and
+build failures are not red.
+
+### Stub flags (rows that could not go red as the Plan wrote them)
+
+- Plan V-5 "the S4-tests stub gate refuses `Resolve` too": an artificial red. Re-scoped: Code
+  red is the drain route's 404; the guard is PC-7.
+- Plan V-16 "Red: class stub": a throwing stub fails before the assertion. Re-scoped: the
+  S7-tests stub is a **no-op** returning 0, so V-16/V-19/V-23 go red at their named assertions,
+  and V-17/V-18 are declared vacuous-green in Code with their reds in PC-26 to PC-31.
+- Plan V-22 duplicated V-20's 409 arm (no independent red). Re-scoped to the boundary set.
+- Plan V-33 named four verbs in R2, which cannot be green in R2. Split into V-33a/V-33b.
+- Plan V-32 was a non-TUnit row (no `Min`). Now `DeployServer2ScriptTests` (6 methods).
+- Plan V-27 needs a real `Program` boot the runner test project cannot do today (M-9).
+- Plan CP-5 named `RunnerDefaultTests`, a class that does not exist; the filter is now
+  `(RunnerDefault*)` (27 results).
+- Plan D-14 "next value after `RunnerSlotForceReleased = 74`" is wrong: `RunnerForceRetired = 77`.
+- Plan V-29's expected block list omitted the `networks` child key `antiphon-build-slots`.
+- Plan V-7 "one dispatch tick" is one `DispatchCycleAsync` (a remote task needs prep then claim).
+
+### Out of scope
+
+- O-1 A server restart mid-drain end to end: covered by V-4's rebuilt-directory half plus the
+  pump's existing recovery classes (CP-6); a full process restart is not scriptable in TUnit.
+- O-2 The `retiring` WebSocket close description (D-12): observability only; nothing keys on
+  it (the server stamps `RetiredAt` from the result frame). L-3 records the desktop log line.
+- O-3 `--remove-orphans` and image keep-set as PCs: project-scoped hygiene, pinned by text (V-31).
+- O-4 Codex/Grok token-rotation contention: accepted by the operator; L-2 observes, no test.
+- O-5 Two nested dockerd on one kernel: L-1 evidence only; no unit seam.
+- O-6 Desktop runner / 17204 rolling restart: the follow-up card.
+- O-7 A drain redirect chain (`a -> b -> c`): D-8 is one hop; V-4b refuses a draining target.
+- O-8 Reason lengths between 1 and 199 and non-ASCII reasons: the bound is the contract; one
+  inside value (the ordinary reason) and both edges (200, 201, empty) are covered.
+- O-9 `RetireMinDrainSeconds`/`RetireIdleSeconds` at 0: the validator refuses (D-19 "validated
+  when enabled"); the enabled path is not a boundary of the job.
+
+### Checkpoints
+
+One isolated build and one exact filter per row; the union of `Covers` is the whole ordinary
+scope (V-1 to V-33b and R-1 to R-12; L rows are live). `Min` = `-MinExecuted` (TUnit executed
+results, post-merge class sizes above); `EstimatedMinutes` = wall clock including the build.
+Filters use the CARD-0403 combined-class syntax (backslashes before `|` are Markdown escaping).
+Results roots `.antiphon/c727/CP-n-<sha>`; outputs `bin-c727-rN/`, deleted after the round.
+Red rows require the **named** assertion failures.
+
+#### R1 checkpoints (after CARD-0710 lands; green pins only)
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c727-r1/` | pins-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(MultiRunnerProjectionTests*)\|(RunnerCatalogueTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeLaunchTransportTests*)/*` | V-1, V-2, R-1, R-2, R-3, R-4 (catalogue) | all listed, 0 failed/skipped; `-Expect PhoneHomeRollingRunnerTests,PhoneHomeConnectionTests,MultiRunnerDirectoryTests,MultiRunnerRecoveryTests,MultiRunnerProjectionTests,RunnerCatalogueTests,PhoneHomeSessionRoutingTests,PhoneHomeLaunchTransportTests` | 59 | 6 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c727-r1/` | config-docs-green | `/*/*/(PhoneHomeRunnerSettingsValidatorTests*)\|(DockerStackDocumentationTests*)/*` | V-3, R-11, the S2 doc contract | all listed, 0 failed/skipped; 1 new method | 17 | 5 |
+
+R1 floor = 6 + 5 = **11** minutes.
+
+#### R2 checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-3 | S3-tests, S4-tests | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-red | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)/*` | V-4, V-4b, V-5 to V-13 | 50 executed; exactly the 11 new methods fail, each at its named assertion; every pre-existing method passes | 50 | 6 |
+| CP-4 | S3, S4 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-green | `/*/*/(PhoneHomeRollingRunnerTests*)\|(PhoneHomeConnectionTests*)\|(PhoneHomeStandingLaunchTests*)\|(RunnerSlotEndpointTests*)\|(OperatorShutdownEndpointTests*)\|(RunnerCatalogueTests*)/*` | V-4 to V-13, R-3, R-4, R-12 | all listed, 0 failed/skipped | 65 | 6 |
+| CP-5 | S4 | CP-4 | placement-green | `/*/*/(DefaultRunnerCreateTests*)\|(DefaultRunnerEligibilityTests*)\|(DefaultRunnerPinTests*)\|(DefaultRunnerRerouteTests*)\|(RunnerDefault*)\|(TaskPlatformDispatchTests*)\|(TaskPlatformPlacementTests*)\|(DispatcherRemotePrepStarvationTests*)/*` | R-5 | all listed classes, 0 failed (`RunnerDefault*` expands to 5 classes; the starvation method to 4 results) | 67 | 7 |
+| CP-6 | S4 | CP-4 | reconcile-green | `/*/*/(PhoneHomeReconciliationTests*)\|(SessionReconciliationServiceTests*)\|(PhoneHomePendingInventoryTests*)\|(PhoneHomeRecoveryEligibilityTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeEventPumpTests*)/*` | R-6 | all listed classes, 0 failed (57 reconciliation methods expand to more results) | 87 | 6 |
+| CP-7 | S3 | n/a | migration-clean | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c727-ef -- dotnet ef migrations has-pending-model-changes --project server` | D-6 | exit 0, "No changes have been made to the model" | n/a | 2 |
+| CP-8 | S5 | `tests/Antiphon.Tests -> bin-c727-r2/` | drain-script-green | `/*/*/RunnerDrainScriptTests*/*` | V-33a | 1 executed, 0 failed | 1 | 3 |
+
+R2 floor = 6 + 6 + 7 + 6 + 2 + 3 = **30** minutes.
+
+#### R3 checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-9 | S6-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-red | `/*/*/PhoneHomeCommandDispatcherTests*/*` | V-14, V-15 | 36 executed; V-14 fails at `ErrorCode.ShouldBe(RunnerBusy)`, V-15 at `StoppedWithin(1 s)`; 34 pass | 36 | 4 |
+| CP-10 | S6 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | retire-op-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-14, V-15, R-7 | all listed, 0 failed/skipped | 46 | 5 |
+| CP-11 | S7-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-red | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)\|(HangfireStartupSafetyTests*)/*` | V-16, V-16b, V-17 to V-23 | 30 executed; V-16, V-16b, V-19, V-20, V-21, V-22, V-23 fail at their named assertions; V-17 arm d fails; V-18 passes vacuously (declared); every R2 method passes | 30 | 5 |
+| CP-12 | S7 | `tests/Antiphon.Tests -> bin-c727-r3/` | retire-job-green | `/*/*/(RunnerRetireJobTests*)\|(PhoneHomeRollingRunnerTests*)\|(HangfireStartupSafetyTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeConnectionTests*)\|(MultiRunnerDirectoryTests*)/*` | V-16 to V-23, R-1, R-3, R-10, R-12 | all listed, 0 failed/skipped | 71 | 6 |
+| CP-13 | S8-tests | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | broker-red | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(BuildSlotsOnlyHostTests*)/*` | V-24 to V-27 | 19 executed; V-24 to V-27 fail at their named assertions; 15 pass | 19 | 5 |
+| CP-14 | S8 | `tests/Antiphon.SessionRunner.Tests -> bin-c727-r3s/` | broker-green | `/*/*/(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(BuildSlotsOnlyHostTests*)\|(BuildSlotSettingsTests*)/*` | V-24 to V-27, V-25b, R-8 | all listed, 0 failed/skipped | 22 | 4 |
+| CP-15 | S8-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | wrapper-red | `/*/*/BuildSlotScriptTests*/*` | V-28 | 8 executed; `C589_WrapperRenewsRenewModeGrant` fails at the `FAIL renews at least twice` line; 7 pass | 8 | 4 |
+| CP-16 | S8 | `tests/Antiphon.Tests -> bin-c727-r3/` | wrapper-green | `/*/*/BuildSlotScriptTests*/*` | V-28, R-8 | all listed, 0 failed/skipped | 8 | 3 |
+| CP-17 | S9-tests | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-red | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)/*` | V-29, V-30, V-31, V-33b | 163 executed; the 3 new/renamed compose methods, `Server2_services_name_their_images`, the Dind method, the 4 remote methods and the drain-script method fail at their text assertions; all others pass | 163 | 5 |
+| CP-18 | S9 | `tests/Antiphon.Tests -> bin-c727-r3/` | compose-green | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(RemoteScriptContractTests*)\|(RunnerDrainScriptTests*)\|(DockerStackDocumentationTests*)/*` | V-29 to V-31, V-33b, R-9 | all listed, 0 failed/skipped | 173 | 5 |
+| CP-19 | S9-tests | CP-17 | deploy-script-red | `/*/*/DeployServer2ScriptTests*/*` | V-32 | 6 executed, 6 failed at `process.ExitCode.ShouldBe(0)` with `FAIL deploy-server2.ps1 missing` in the output | 6 | 2 |
+| CP-20 | S9 | CP-18 | deploy-script-green | `/*/*/DeployServer2ScriptTests*/*` | V-32 | 6 executed, 0 failed | 6 | 3 |
+| CP-21 | S10 | `tests/Antiphon.Tests -> bin-c727-r3/` | docs-green | `/*/*/DockerStackDocumentationTests*/*` | D-20 (`Ops_http_doc_names_drain_retire_and_the_404_rule`, `Invariants_doc_names_the_three_rolling_invariants`), R-9 | 12 executed, 0 failed/skipped | 12 | 4 |
+| CP-22 | R1 to R3 active on the desktop + S9 landed | n/a | live-deploy-temp | `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase deploy-temp` (desktop main checkout) | L-1 | exit 0; the L-1 evidence files incl. `transcript-temp.json` with the `UserPrompt` row | n/a | 25 |
+| CP-23 | CP-22 | n/a | live-auth-overlap | the six `provider-auth` reads at L-1 and >= 30 min later | L-2 | `loggedIn` unchanged for claude, codex, grok on both ids | n/a | 35 |
+| CP-24 | CP-23 | n/a | live-drain-redeploy-retire | `-Phase drain-old`, `redeploy-old`, `drain-temp`, `retire-temp` on the same run, plus the log grep | L-3 | exit 0 each; `retiredAt` set by the job; `temp-down.txt`; base volumes intact; zero lock hits | n/a | 30 |
+
+R3 ordinary floor = 4 + 5 + 5 + 6 + 5 + 4 + 4 + 3 + 5 + 5 + 2 + 3 + 4 = **55** minutes; the live
+rows add about 90 minutes on the desktop lane plus the old runner's drain time and are reported
+not run by a server2-placed task.
+
+### Cost
+
+- Ordinary V/R floor (Code) = sum of `EstimatedMinutes`: R1 **11**, R2 **30**, R3 **55** (filters
+  and minutes per row above). Estimated. Live rows: **90** desktop minutes plus drain time.
+- PC floor (Mutation), estimated on server2 (incremental build ~2.5 min, one method run ~0.5 min,
+  red + restore + green = one build and one run each way, ~6 min per batch of independent PCs):
+  R1: PC-1..PC-5 touch five files -> 1 batch, **6** min. R2: PC-6..PC-21 (16 PCs) -> shared files
+  force separate batches for `PhoneHomeRunnerDirectory.cs` (PC-6, PC-7, PC-13, PC-19, PC-20),
+  `AgentTaskDispatcher.cs` (PC-10, PC-11, PC-12), `SessionRunnerEndpoints.cs` (PC-15, PC-16) and
+  `RunnerStateService.cs` (PC-18, PC-21) -> 5 batches, **30** min. R3: PC-22..PC-49 (28 PCs) ->
+  `PhoneHomeCommandDispatcher.cs` (PC-22, PC-23, PC-24), `RunnerRetireJob.cs` (PC-25..PC-31,
+  PC-49), the retire route/service (PC-17, PC-32..PC-35), `BuildSlotBroker.cs` (PC-36..PC-38),
+  the wrapper (PC-40, PC-41), plus singletons -> 9 batches, **54** min (12 of them
+  `Antiphon.SessionRunner.Tests`). PC total **90** min serial; two shards off the same tip
+  (>15 rows, allowed) bring R3 to ~30 wall-clock minutes.
+- Total (estimated) = setup/build + V/R + PC: R1 11 + 6 = **17**; R2 30 + 30 = **60**;
+  R3 55 + 54 = **109**; live **90**. Savings: batching 49 PCs into 15 batches instead of 49
+  serial cycles (49 x 6 = 294 min) saves ~204 minutes; reusing CP-4/CP-17/CP-18 outputs for
+  CP-5, CP-6, CP-19, CP-20 saves four builds (~10 min).
+
+Before handoff: bodies read (listed under *Inspection*); guards = 49, mapped = 49, missing = 0,
+duplicate PC maps = 0; every PC executable by a method filter; Cost numeric. Next: Code (R1) once
+CARD-0710 lands with M-1 satisfied; R2 and R3 Code follow as separate dispatches; Mutation after
+each land.
