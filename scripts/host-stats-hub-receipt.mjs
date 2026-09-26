@@ -30,10 +30,16 @@ connection.on('HostStatsUpdated', payload => {
   }
 })
 
+const deadline = Date.now() + timeoutSeconds * 1000
+const timeout = setTimeout(() => {
+  console.error(`Host stats receipt failed: timed out after ${received} receipts`)
+  process.exit(1)
+}, timeoutSeconds * 1000)
+timeout.unref()
+
 try {
   await connection.start()
   await connection.invoke('JoinGroup', 'hosts')
-  const deadline = Date.now() + timeoutSeconds * 1000
   while (received < count && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -44,5 +50,9 @@ try {
   console.error(`Host stats receipt failed: ${error.message}`)
   process.exitCode = 1
 } finally {
-  await connection.stop()
+  try {
+    await connection.stop()
+  } finally {
+    clearTimeout(timeout)
+  }
 }
