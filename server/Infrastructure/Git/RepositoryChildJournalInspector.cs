@@ -31,6 +31,12 @@ public class RepositoryChildJournalInspector(ILandingGit git)
         string repository, TimeSpan staleAfter, DateTimeOffset now, CancellationToken ct)
     {
         var common = await git.CommonDirectoryAsync(repository, ct);
+        return await InspectCommonAsync(common, staleAfter, now, ct);
+    }
+
+    public virtual async Task<JournalInspection> InspectCommonAsync(
+        string common, TimeSpan staleAfter, DateTimeOffset now, CancellationToken ct)
+    {
         var children = Path.Combine(common, "antiphon", "children");
         if (!PathExists(children))
             return new JournalInspection(common, []);
