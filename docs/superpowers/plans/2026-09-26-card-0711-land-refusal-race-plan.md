@@ -645,17 +645,16 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   `Diagnostic` contains `rejected`, `RemoteTarget == moved`. (4) push `git.SeedSha` → exit 1, `RemoteTarget == moved`.
   (5) `PushAsync` of `git.SeedSha` to `SourceRef` destination → exit 0 (the source ref keeps today's unconditional model).
   Red at CP-0 (S4b not yet applied): step (3) exits 0 and moves the tip. Turned red by: `ControlledLandingGit.cs:664–673` (S4b).
-- **V-9** The retry in the fake harness | fake protocol | `AgentTaskLandSourceFreshnessTests.C711_RaceRetriesInTheFakeHarness`, CP-0 n/a
-  (CP-0 does not run this class), CP-3 | The `C488_TargetCheckpointStillGuarded` shape with a one-shot guard
+- **V-9** The retry in the fake harness | fake protocol | `AgentTaskLandTargetRaceFakeTests.C711_RaceRetriesInTheFakeHarness`, CP-0, CP-3 | The `C488_TargetCheckpointStillGuarded` shape with a one-shot guard
   (`if (phase == LandPhase.Verified && !raced) { raced = true; h.Git.RewriteRemoteAwayFromSource(); }`), default budget.
   Assert `h.Git.OwnedTrace.Count(a => a.Contains("rebase") && !a.Contains("--abort")) == 2`,
   `h.Git.Trace.Count(a => a[0] == "push") == 1`, `h.Verifier.Calls == 2`, operations 2 (A `Refused remote_changed_before_push`,
-  B `Landed`), `h.Git.RemoteTarget == B.VerifiedSourceSha`, one `Warning` containing `retry 1 of 2`. Red at `989abc9f`: one
-  rebase, A `Refused`, no B (shown by CP-3's first run only if Code chooses; CP-0 carries the real-git equivalent V-2).
+  B `Landed`), `h.Git.RemoteTarget == B.VerifiedSourceSha`, one `Warning` containing `retry 1 of 2`. Red at CP-0: one
+  rebase, A `Refused`, no B. Turned red by: S1 + S2 (and S4b makes the retry's push a checked fast-forward).
 - **V-10** Legacy schema-2 rows become terminal and the operator step is named | fake protocol |
-  `AgentTaskLandRecoveryTests.C711_LegacyAdvancedRowsBecomeTerminal(string change)` `[Arguments("remote")] [Arguments("branch")]
-  [Arguments("push-rejected")]`, CP-1 | The `C688_SchemaTwoOperationsOnResume` preamble (`original = AddSourceAsync()`,
-  empty commit, `rebased = h.Git.SourceHead`, `SeedSchemaTwoAsync(h, "local-target-advanced", original, rebased)` — the
+  `AgentTaskLandTargetRaceFakeTests.C711_LegacyAdvancedRowsBecomeTerminal(string change)` `[Arguments("remote")] [Arguments("branch")]
+  [Arguments("push-rejected")]`, CP-0, CP-3 | The `C688_SchemaTwoOperationsOnResume` preamble (`original = AddSourceAsync()`,
+  empty commit, `rebased = h.Git.SourceHead`, `AgentTaskLandRecoveryTests.SeedSchemaTwoAsync(h, "local-target-advanced", original, rebased)` (S4a: `private` → `internal`) — the
   seed advances local `master` to `rebased`: the residue). `remote`: `h.Git.RewriteRemoteAwayFromSource()`; `RunQueuedAsync()`
   → the seeded op `Phase Refused, Publication Refused, LastReason remote_changed_before_push`, no `push` in `h.Git.Commands`.
   `branch`: `h.Git.RewindSource(original)`; `RunQueuedAsync()` → `Refused`, `LastReason source_changed`, no `push`. Then (both):
@@ -669,7 +668,7 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   arm is limited to its two reasons) — a guard row, green before and after. Red at `989abc9f` (`remote`, `branch`): the op
   stays `LocalTargetAdvanced` (catch arm `AgentTaskLandingProtocol.cs:292` is schema-3 only), and the detail lacks the reset
   text. Turned red by: S3 (protocol catch arm, factory detail, resolver pass-through).
-- **V-11** A retry restarts the progress clock | fake protocol + monitor | `AgentTaskLandMonitoringTests.C711_RetryRestartsTheProgressClock`, CP-3 |
+- **V-11** A retry restarts the progress clock | fake protocol + monitor | `AgentTaskLandTargetRaceFakeTests.C711_RetryRestartsTheProgressClock`, CP-0, CP-3 |
   `LandingProtocolHarness` with `var clock = new FakeTimeProvider(start); h.Clock = clock;`. One-shot at
   `Fault.AfterAcknowledged(Verified)`: `clock.Advance(LandWarningSeconds + 5 s)`; run one
   `AgentTaskLandMonitorService(h.CreateContext(), clock, Options.Create(h.LandSettings), new MockEventBus()).SweepAsync`
@@ -682,7 +681,7 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   sweep collides with the service's request token, Code moves the two sweeps after a second `Fault.AfterAcknowledged(Prepared)`
   hook for B; the decisive assertions do not change.
 - **V-14** A non-race refusal is not replaced by the same request's re-entry | fake protocol |
-  `AgentTaskLandSourceFreshnessTests.C711_NonRaceRefusalIsNotReplacedBySameRequest`, CP-3 | `h.Verifier.Passed = false`;
+  `AgentTaskLandTargetRaceFakeTests.C711_NonRaceRefusalIsNotReplacedBySameRequest`, CP-0 (passes), CP-3 | `h.Verifier.Passed = false`;
   `RequestAsync(expectedSourceSha: source)` + `RunQueuedAsync()` → A `Refused verification_failed`. Re-open the same request
   in the DB exactly as a crash before the terminal commit would leave it: `request.IsPending = true`, `State = Queued`,
   `TerminalEventId = null`, `task.CurrentLandRequestId = request.Id`, `task.LandRequestedAt = request.RequestedAt`,
@@ -690,10 +689,25 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   `request.SourceResolutionState` stays `Resolved`. `h.Verifier.Passed = true`; `h.RunAsync()`. Assert operations count 1,
   A unchanged (`Refused verification_failed`), `h.Verifier.Calls == 1`, no `push`, terminal `LandRefused` contains
   `verification_failed`. Green before and after — guard row, flagged; its value is PC-5.
-- **V-15** The operator step on real git | real git | amended `AgentTaskLandPublicationTests.C688_LocalMasterAheadOfOriginRefuses`, CP-2 |
-  Add to the existing `(await TerminalAsync(h)).Detail.ShouldContain("target_local_ahead")` (line 733):
-  `.ShouldContain("git fetch origin && git reset --hard origin/master")` and `.ShouldNotContain("pull --rebase")`. Red at
-  `989abc9f`: no detail. Turned red by: S3 factory detail.
+- **V-15** The operator step on real git | real git | `AgentTaskLandTargetRaceTests.C711_LocalMasterAheadNamesTheOperatorReset`, CP-0, CP-1 |
+  The `AgentTaskLandPublicationTests.C688_LocalMasterAheadOfOriginRefuses` setup (`commit --allow-empty` on canonical
+  `master`, not pushed), then `RequestAsync(expectedSourceSha: reviewed)` + `RunQueuedAsync()`. Terminal `LandRefused`
+  detail contains `target_local_ahead`, `git fetch origin && git reset --hard origin/master` and does not contain
+  `pull --rebase`; the request's `SourceRefusalReason == "target_local_ahead"` exactly (R-6 on the same path); no operation.
+  Red at CP-0: no detail. Turned red by: S3 factory detail. (`C688_LocalMasterAheadOfOriginRefuses` itself is unchanged.)
+
+**Fake class.** New file `tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceFakeTests.cs`,
+`[Category("Integration")] public sealed class AgentTaskLandTargetRaceFakeTests` (`LandingProtocolHarness`; no process
+spawns, so no limiter, as `LandingProtocolGuardTests`). It holds V-9, V-10 (3 rows), V-11 and V-14 so that CP-0 can prove
+each red with class-level filters, instead of running three large existing classes in the red gate.
+
+**Code order (replaces the plan's "S4 → tests → S1…").** S0 compile seam: `AgentTaskLandingState.IsTargetRaceRefusal(op)`
+returning `false` and `DelegationSettings.LandTargetRaceRetries { get; set; } = 2` with no reader and no validation —
+without them V-7/V-12/V-3 do not compile and CP-0 would be a build failure, not a red. S4a fixtures:
+`LandingGitFixture.PushIndependentAsync(name)` and `(name, path, content)`, `ControlledLandingGit.AdvanceRemoteTarget()`,
+`LandingProtocolHarness.LandSettings` (used by `CreateLand` line 138), `AgentTaskLandRecoveryTests.SeedSchemaTwoAsync`
+`internal`. Then all tests and the R-2/R-3/R-4 amendments → **CP-0** (red gate, committed first). Then S4b (the fake
+push rejection), S1, S2, S3, S5 → CP-1..CP-4. S0's two members become the real S1/S2 members; nothing is deleted.
 
 ### Guards the regression
 
