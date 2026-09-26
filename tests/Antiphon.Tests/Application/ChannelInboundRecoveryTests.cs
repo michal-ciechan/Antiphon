@@ -377,6 +377,20 @@ public sealed class ChannelInboundRecoveryTests
             q.SourceChannelInboundId != null).ToListAsync();
         owners.Count.ShouldBe(3);
         owners.Select(o => o.SourceChannelInboundId!.Value).Distinct().Count().ShouldBe(3);
+
+        // A catalog row from before the inbound journal can already name this message.
+        // That one-slot hint is not an acceptance or delivery receipt.
+        var legacyChat = await h.BindChannelAsync($"legacy-{Guid.NewGuid():N}");
+        var legacyMessage = Message(legacyChat, $"legacy-native-{Guid.NewGuid():N}",
+            "complete legacy replay body");
+        await db.ChatChannels.Where(c => c.ExternalId == legacyChat)
+            .ExecuteUpdateAsync(u => u.SetProperty(c => c.LastChannelMessageId,
+                legacyMessage.ChannelMessageId));
+        await Bridge(h).HandleInboundAsync(legacyMessage, Ct);
+        var legacyInbound = await db.ChannelInbounds.AsNoTracking()
+            .SingleAsync(i => i.NativeMessageId == legacyMessage.ChannelMessageId);
+        legacyInbound.EnvelopeJson.ShouldContain(legacyMessage.Text!);
+        legacyInbound.QueueMessageId.ShouldNotBeNull();
     }
 
     [Test]
