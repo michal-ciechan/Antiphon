@@ -1892,6 +1892,13 @@ public sealed class AgentTaskReplyService
         if (conflicted is null)
             return;
 
+        // A merge helper cannot turn an explicitly reviewed recovery into an ordinary
+        // Succeeded landing. Its reviewed source and approval must be requested again.
+        if (conflicted.CurrentLandRequestId is Guid currentId
+            && await db.AgentTaskLandRequests.AnyAsync(r => r.Id == currentId
+                && r.RecoveryMode != LandRecoveryMode.None, ct))
+            return;
+
         conflicted.Status = AgentTaskStatus.Succeeded;
         conflicted.FailureReason = null;
         conflicted.LandRequestedAt = null;

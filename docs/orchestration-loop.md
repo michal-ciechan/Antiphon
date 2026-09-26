@@ -88,9 +88,13 @@ the reviewed replacement contains each old owner patch; uncontained commit IDs r
 An open land-origin Merge helper with a live session blocks supersession; an inactive helper is
 canceled as the new reviewed request takes custody. If a helper fails or is canceled while its
 request still needs resolution, the owner gets a Warning and a fresh Conflict notification.
+If a reviewed recovery rebases with conflicts, the owner keeps its historical status and the
+request remains NeedsResolution. A plain `-Land` or a completed Merge helper cannot turn that
+request into an ordinary land; commission a new reviewed recovery after resolving the source.
 An unconfirmed previous publication needs its own recovery before another source is adopted.
 After publication, a cleanup-only retry uses that operation's saved recovery authority even if
-the owner's later task status changes; it cannot publish again or select a new source.
+the owner's later task status changes; it cannot publish again or select a new source. Cleanup
+does not remove an owner worktree while its task is Queued, Dispatched or Working.
 
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
 checked out elsewhere, pass `delegate.ps1 -RepairSource <owner-guid>` (full GUID of the original

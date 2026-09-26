@@ -1,8 +1,11 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -12,6 +15,90 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandAdoptionTests
 {
+    [Test]
+    [Arguments(AgentTaskStatus.Failed)]
+    [Arguments(AgentTaskStatus.Succeeded)]
+    public async Task C753_ConflictedRecoveryPreservesOwnerStatusAndRefusesPlainResume(AgentTaskStatus status)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var reviewed = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        await h.Fixture.PushIndependentAsync("conflicting-target", "feature.txt", "different feature\n");
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = status;
+            if (status == AgentTaskStatus.Failed)
+                owner.FailureReason = "Runner sync diverged before reviewed recovery.";
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+
+        var recovery = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status.ShouldBe(status);
+            if (status == AgentTaskStatus.Failed)
+                owner.FailureReason.ShouldBe("Runner sync diverged before reviewed recovery.");
+            (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == recovery.RequestId)).State
+                .ShouldBe(LandRequestState.NeedsResolution);
+            var operation = await db.AgentTaskLandings.SingleAsync(o => o.TaskId == h.Fixture.TaskId && o.Active);
+            operation.LastReason.ShouldBe("rebase_conflict");
+            new AgentTaskLandingState().HasPublication(operation).ShouldBeFalse();
+        }
+        var refusal = await Should.ThrowAsync<ConflictException>(() =>
+            h.RequestAsync(expectedSourceSha: reviewed));
+        if (status == AgentTaskStatus.Succeeded)
+            refusal.Code.ShouldBe("recovery_requires_explicit_request");
+    }
+
+    [Test]
+    [Arguments(AgentTaskStatus.Queued)]
+    [Arguments(AgentTaskStatus.Dispatched)]
+    [Arguments(AgentTaskStatus.Working)]
+    public async Task C753_RedispatchedRecoveryOwnerCannotAuthorizeWorktreeRemoval(AgentTaskStatus status)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var reviewed = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        await File.WriteAllTextAsync(sentinel, "fixture report");
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+        await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        var operation = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(operation).ShouldBeTrue();
+        operation.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = status;
+            await db.SaveChangesAsync();
+            LandApproval.RequestStatusEligible(owner, new AgentTaskLandRequest
+            {
+                CleanupOnly = true, RecoveryMode = LandRecoveryMode.OwnerReviewedSource,
+                RecoveryOwnerStatus = AgentTaskStatus.Failed,
+            }).ShouldBeFalse();
+        }
+        (await h.Services.GetRequiredService<IWorktreeRemovalEvidence>()
+            .ReadAsync(operation.Id, CancellationToken.None)).ShouldBeNull();
+    }
+
     [Test]
     public async Task C753_SupersededConflictedOperationGetsFreshReviewedPublication()
     {

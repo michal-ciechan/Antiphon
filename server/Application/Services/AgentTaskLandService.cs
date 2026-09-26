@@ -103,7 +103,8 @@ public sealed class AgentTaskLandService
             && task.Status == AgentTaskStatus.Blocked && task.LandRequestedAt is not null
             && task.CurrentLandRequestId is Guid currentId
             && await _db.AgentTaskLandRequests.AsNoTracking().AnyAsync(r => r.Id == currentId
-                && r.IsPending && r.State == LandRequestState.NeedsResolution, ct);
+                && r.IsPending && r.State == LandRequestState.NeedsResolution
+                && r.RecoveryMode == LandRecoveryMode.None, ct);
         if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded && !resumeConflict)
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
         WorkspaceReservationSnapshot? admitted = null;
@@ -157,6 +158,9 @@ public sealed class AgentTaskLandService
                         "land_request_identity_conflict");
                 if (request!.State == LandRequestState.NeedsResolution)
                 {
+                    if (request.RecoveryMode != LandRecoveryMode.None)
+                        throw new ConflictException("A reviewed recovery conflict requires a new explicit recovery request.",
+                            "recovery_requires_explicit_request");
                     request.State = LandRequestState.Queued;
                     if (task.Status == AgentTaskStatus.Blocked)
                     {
@@ -595,8 +599,11 @@ public sealed class AgentTaskLandService
             await _db.Entry(request).ReloadAsync(ct);
             if (task.CurrentLandRequestId != request.Id || !request.IsPending || request.State == LandRequestState.NeedsResolution)
                 return LandRunResult.Complete;
-            task.Status = AgentTaskStatus.Blocked;
-            task.FailureReason = "Landing rebase conflicted.";
+            if (request.RecoveryMode == LandRecoveryMode.None)
+            {
+                task.Status = AgentTaskStatus.Blocked;
+                task.FailureReason = "Landing rebase conflicted.";
+            }
             var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct,
                 task.MergeTargetRef ?? "master", result.Operation?.SourceRemoteSha);
             Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, DurationSeconds(result.Operation, OrchestrationStage.Rebase),
