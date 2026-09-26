@@ -379,7 +379,9 @@ public class SessionReconciliationServiceTests
             await using (var db = CreateContext())
             {
                 await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
-                    .SetProperty(s => s.RunnerId, "grok-linux"));
+                    .SetProperty(s => s.RunnerId, "grok-linux")
+                    .SetProperty(s => s.RunnerStoreId, Guid.NewGuid())
+                    .SetProperty(s => s.RunnerCwd, "/work"));
                 var now = DateTime.UtcNow;
                 db.AgentTasks.Add(new AgentTask
                 {
