@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
@@ -126,6 +127,13 @@ public sealed class CardTaskSettlement
             string.Join(", ", leftOpen.Select(t => t.ShortId)));
 
         return new CardTaskSettlementResult(canceled, leftOpen);
+    }
+
+    public Task<ClosedCardSweepDto> SweepAsync(bool apply, CancellationToken ct)
+    {
+        _ = apply;
+        _ = ct;
+        return Task.FromResult(new ClosedCardSweepDto(_time.GetUtcNow().UtcDateTime, false, [], 0, 0));
     }
 
     /// <summary>
