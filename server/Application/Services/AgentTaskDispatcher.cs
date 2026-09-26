@@ -4583,11 +4583,25 @@ public sealed class AgentTaskDispatcher
             // mirror budget, CARD-0629). Commit the claim with the task still Queued - the desktop
             // worktree is recorded exactly once - and hand the network work to the preparer.
             // CARD-0727 D-7: the new-work gate runs again here, so a drain that began after the
-            // claim check refuses the mirror.
-            var prepared = await PrepareRemoteWorkspaceAsync(claimed, remoteRunner, now, ct);
+            // claim check refuses the mirror. The refusal is recorded after the claim lock
+            // drops: an event insert waits on that row, and waiting inside the lock times out.
+            string? prepared;
+            try
+            {
+                prepared = await PrepareRemoteWorkspaceAsync(claimed, remoteRunner, now, ct);
+            }
+            catch (ServiceUnavailableException ex) when (ex.Code is PhoneHomeProblemTypes.RunnerDraining or PhoneHomeProblemTypes.RunnerRetired)
+            {
+                var state = _runners?.DrainState(remoteRunner);
+                var detail = DispatchHoldDetails.RunnerDraining(remoteRunner, state?.DrainReason, state?.RedirectTo);
+                await transaction.RollbackAsync(ct);
+                _db.ChangeTracker.Clear();
+                await RemoteWarnAsync(claimed, now, detail, ct);
+                return DispatchOneResult.NotClaimed;
+            }
+
             if (prepared is null && claimed.RemoteWorktreePath is null && claimed.SourceLandingOperationId is null
-                && _remotePrep is not null && _remoteWorkspace is not null
-                && _runners?.DrainState(remoteRunner) is not { Draining: true })
+                && _remotePrep is not null && _remoteWorkspace is not null)
             {
                 claimed.ConcurrencyToken = Guid.NewGuid();
                 await _db.SaveChangesAsync(ct);
@@ -5737,10 +5751,12 @@ public sealed class AgentTaskDispatcher
         }
         catch (Exception ex) when (ex is ServiceUnavailableException or ConflictException)
         {
-            var detail = ex is HttpException http && http.Code is PhoneHomeProblemTypes.RunnerDraining or PhoneHomeProblemTypes.RunnerRetired
-                ? DispatchHoldDetails.RunnerDraining(runnerId, _runners.DrainState(runnerId)?.DrainReason, _runners.DrainState(runnerId)?.RedirectTo)
-                : $"RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({ex.Message}); the task stays Queued.";
-            await RemoteWarnAsync(claimed, now, detail, ct);
+            // Drain and retire are rethrown so the claim can release its row lock before the
+            // warning insert. Writing it here waits on that lock until the command times out.
+            if (ex is HttpException http && http.Code is PhoneHomeProblemTypes.RunnerDraining or PhoneHomeProblemTypes.RunnerRetired)
+                throw;
+            await RemoteWarnAsync(claimed, now,
+                $"RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({ex.Message}); the task stays Queued.", ct);
             return null;
         }
 
