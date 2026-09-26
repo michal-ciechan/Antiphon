@@ -1,0 +1,160 @@
+using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
+using Antiphon.Messaging.Client.Testing;
+using Confluent.Kafka;
+using Confluent.Kafka.Admin;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using Testcontainers.Redpanda;
+using TUnit.Core;
+
+namespace Antiphon.Messaging.Tests.Client;
+
+[Category("Integration")]
+[Category("Slow")]
+[NotInParallel]
+public sealed class KafkaInboundCommitTests
+{
+    private static RedpandaContainer? _broker;
+
+    [Before(Class)]
+    public static async Task StartAsync()
+    {
+        _broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
+        await _broker.StartAsync();
+    }
+
+    [After(Class)]
+    public static async Task StopAsync()
+    {
+        if (_broker is not null) await _broker.DisposeAsync();
+    }
+
+    [Test]
+    public async Task C593_ManualCommit_UsesAcceptedRecordAndAssignment()
+    {
+        var (topic, group) = await CreateTopicAsync();
+        await ProduceAsync(topic, 0, "one");
+        ConsumerConfig? captured = null;
+        var client = Client(topic, group, config =>
+        {
+            captured = config;
+            return new ConsumerBuilder<string, string>(config).Build();
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using (var e = client.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message.ShouldNotBeNull();
+            captured!.EnableAutoCommit.ShouldBe(false);
+            captured.EnableAutoOffsetStore.ShouldBe(false);
+            // Dispose before acknowledgement: no committed offset, so the same native record replays.
+        }
+        var replay = Client(topic, group);
+        await using (var e = replay.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message!.Text.ShouldBe("one");
+            await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+            await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+        }
+        (await CommittedAsync(topic, group, 0)).ShouldBe(1);
+
+        var fake = new FakeAntiphonMessagingClient();
+        fake.InjectTelegramText("c593", "replay me");
+        fake.Complete();
+        await using (var e = fake.ConsumeDeliveriesAsync().GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message!.Text.ShouldBe("replay me");
+        }
+        fake.AcknowledgedCount.ShouldBe(0);
+        await using (var e = fake.ConsumeDeliveriesAsync().GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message!.Text.ShouldBe("replay me");
+            await e.Current.AcknowledgeAsync("accepted");
+        }
+        fake.AcknowledgedCount.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C593_BrokerRestart_ReplaysOnlyUnacknowledgedOffsets()
+    {
+        var (topic, group) = await CreateTopicAsync(2);
+        await ProduceAsync(topic, 0, "first");
+        await ProduceAsync(topic, 0, "second");
+        await ProduceAsync(topic, 1, "other partition");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var first = Client(topic, group);
+        await using (var e = first.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            // Keep partition zero's first record unresolved.
+        }
+        (await CommittedAsync(topic, group, 0)).ShouldBeLessThanOrEqualTo(0);
+        var restart = Client(topic, group);
+        await using (var e = restart.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            var found = false;
+            for (var i = 0; i < 3 && !found; i++)
+            {
+                (await e.MoveNextAsync()).ShouldBeTrue();
+                if (e.Current.Message!.Text != "first")
+                {
+                    await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+                    continue;
+                }
+                found = true;
+                await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+            }
+            found.ShouldBeTrue();
+        }
+        (await CommittedAsync(topic, group, 0)).ShouldBe(1);
+    }
+
+    private static KafkaAntiphonMessagingConsumer Client(string topic, string group,
+        Func<ConsumerConfig, IConsumer<string, string>>? factory = null)
+    {
+        var settings = Options.Create(new AntiphonMessagingOptions
+        {
+            BootstrapServers = _broker!.GetBootstrapAddress(), InboundTopic = topic, ConsumerGroup = group,
+        });
+        return factory is null
+            ? new KafkaAntiphonMessagingConsumer(settings, NullLogger<KafkaAntiphonMessagingConsumer>.Instance)
+            : new KafkaAntiphonMessagingConsumer(settings, NullLogger<KafkaAntiphonMessagingConsumer>.Instance, factory);
+    }
+
+    private static async Task<(string Topic, string Group)> CreateTopicAsync(int partitions = 1)
+    {
+        var topic = "c593-" + Guid.NewGuid().ToString("N");
+        using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = _broker!.GetBootstrapAddress() }).Build();
+        await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = partitions, ReplicationFactor = 1 }]);
+        return (topic, "c593-group-" + Guid.NewGuid().ToString("N"));
+    }
+
+    private static async Task ProduceAsync(string topic, int partition, string text)
+    {
+        using var producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _broker!.GetBootstrapAddress() }).Build();
+        var message = new ChannelMessage
+        {
+            Id = Guid.NewGuid().ToString("N"), Channel = "telegram", ChannelMessageId = Guid.NewGuid().ToString("N"),
+            Conversation = new Conversation { Id = "c593", Kind = ConversationKind.Group },
+            Author = new Participant { Id = "sender" }, Timestamp = DateTimeOffset.UtcNow, Text = text,
+            ReplyHandle = "c593", Raw = System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(),
+        };
+        await producer.ProduceAsync(new TopicPartition(topic, partition), new Message<string, string>
+        {
+            Key = "c593", Value = System.Text.Json.JsonSerializer.Serialize(message, Antiphon.Messaging.MessagingJson.Options),
+        });
+    }
+
+    private static async Task<long> CommittedAsync(string topic, string group, int partition)
+    {
+        using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = _broker!.GetBootstrapAddress() }).Build();
+        var results = await admin.ListConsumerGroupOffsetsAsync(
+            [new ConsumerGroupTopicPartitions(group, [new TopicPartition(topic, partition)])]);
+        return results.SelectMany(r => r.Partitions).Single().Offset.Value;
+    }
+}
