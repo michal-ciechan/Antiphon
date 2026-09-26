@@ -47,6 +47,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.List, null, ct);
         var dtos = Read<IReadOnlyList<RunnerSessionDto>>(frame) ?? [];
+        _connection.NoteListed(dtos);
         return dtos.Select(_mapper.Map).ToArray();
     }
 

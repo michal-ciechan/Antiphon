@@ -81,6 +81,13 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public TimeProvider Clock { get; }
     public DateTimeOffset LastHeartbeatUtc { get; private set; }
     public bool DispatchEligible { get; set; }
+
+    /// <summary>CARD-0727 D-10. Non-exited sessions from the last List. Null before one.</summary>
+    public int? ListedNonExited { get; private set; }
+
+    internal void NoteListed(IReadOnlyList<RunnerSessionDto> sessions) =>
+        ListedNonExited = sessions.Count(session =>
+            !string.Equals(session.Status, "Exited", StringComparison.OrdinalIgnoreCase));
     public bool SocketOpen => _socket.State == WebSocketState.Open;
     internal WebSocketState SocketState => _socket.State;
     public ChannelReader<PhoneHomeFrame> Events => _events.Reader;

@@ -129,6 +129,7 @@ public sealed class DefaultRunnerRoutingPolicy
     public const string ReasonTasksDisabled = "runner_tasks_disabled";
     public const string ReasonDirectoryUnavailable = "runner_directory_unavailable";
     public const string ReasonNotDispatchEligible = "runner_not_dispatch_eligible";
+    public const string ReasonRunnerDraining = "runner_draining";
     public const string ReasonRunnerKindUnsupported = "runner_kind_unsupported";
 
     /// <summary>
@@ -224,26 +225,7 @@ public sealed class DefaultRunnerRoutingPolicy
         if (ExclusionFor(shape) is { } excluded)
             return Local(configured, excluded, warn: false);
 
-        if (_phoneHome?.IsRunnerBound(configured) != true)
-            return Local(configured, ReasonNotEnabled, warn: true);
-        if (!_phoneHome.AllowsDelegatedTasks(configured))
-            return Local(configured, ReasonTasksDisabled, warn: true);
-        if (_runners is null)
-            return Local(configured, ReasonDirectoryUnavailable, warn: true);
-
-        try
-        {
-            _runners.Resolve(configured);
-        }
-        // Only the directory's own typed "not ready" refusal is a fallback. Cancellation and any
-        // other fault propagate: they are not permission to run the work on the desktop.
-        catch (HttpException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable
-                                       && ex is ServiceUnavailableException or ConflictException)
-        {
-            return Local(configured, ReasonNotDispatchEligible, warn: true);
-        }
-
-        return new DefaultRunnerDecision(configured, "default", "unset", configured, ReasonEligible, Warn: false);
+        return PlaceAutomatic(configured, "default");
     }
 
     /// <summary>
@@ -287,19 +269,63 @@ public sealed class DefaultRunnerRoutingPolicy
                 ReasonLocalRequested, Warn: false);
         if (ExclusionFor(shape) is not null)
             return null;
-        if (_phoneHome?.IsRunnerBound(kindRunner) != true || !_phoneHome.AllowsDelegatedTasks(kindRunner) || _runners is null)
-            return null;
+        return PlaceAutomatic(kindRunner, "kind-default");
+    }
+
+    /// <summary>
+    /// CARD-0727 D-8. A draining runner with an eligible redirect is that redirect. A global default
+    /// with no eligible redirect falls back to the desktop; a kind default falls through.
+    /// </summary>
+    private DefaultRunnerDecision? PlaceAutomatic(string configured, string source)
+    {
+        var global = source == "default";
+        if (_phoneHome?.IsRunnerBound(configured) != true)
+            return global ? Local(configured, ReasonNotEnabled, warn: true) : null;
+        if (!_phoneHome.AllowsDelegatedTasks(configured))
+            return global ? Local(configured, ReasonTasksDisabled, warn: true) : null;
+        if (_runners is null)
+            return global ? Local(configured, ReasonDirectoryUnavailable, warn: true) : null;
+
         try
         {
-            _runners.Resolve(kindRunner);
+            _runners.ResolveForNewWork(configured);
+        }
+        catch (HttpException ex) when (ex.Code == PhoneHomeProblemTypes.RunnerDraining)
+        {
+            var redirect = _runners.DrainState(configured)?.RedirectTo;
+            if (redirect is not null && RedirectEligible(redirect))
+                return new DefaultRunnerDecision(
+                    redirect, source, "unset", configured, "drain_redirect:" + configured, Warn: false);
+            return global ? Local(configured, ReasonRunnerDraining, warn: true) : null;
+        }
+        // Only the directory's own typed "not ready" refusal is a fallback. Cancellation and any
+        // other fault propagate: they are not permission to run the work on the desktop.
+        catch (HttpException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable
+                                       && ex is ServiceUnavailableException or ConflictException)
+        {
+            return global ? Local(configured, ReasonNotDispatchEligible, warn: true) : null;
+        }
+
+        return new DefaultRunnerDecision(configured, source, "unset", configured, ReasonEligible, Warn: false);
+    }
+
+    private bool RedirectEligible(string runnerId)
+    {
+        if (_phoneHome?.IsRunnerBound(runnerId) != true || !_phoneHome.AllowsDelegatedTasks(runnerId) || _runners is null)
+            return false;
+        var state = _runners.DrainState(runnerId);
+        if (state is { Draining: true } || state?.RetiredAt is not null)
+            return false;
+        try
+        {
+            _runners.Resolve(runnerId);
+            return true;
         }
         catch (HttpException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable
                                        && ex is ServiceUnavailableException or ConflictException)
         {
-            return null;
+            return false;
         }
-
-        return new DefaultRunnerDecision(kindRunner, "kind-default", "unset", kindRunner, ReasonEligible, Warn: false);
     }
 
     private static DefaultRunnerDecision Local(string configured, string reason, bool warn) =>
