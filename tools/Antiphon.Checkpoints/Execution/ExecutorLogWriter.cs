@@ -12,7 +12,8 @@ internal sealed class FileExecutorLogSink : IExecutorLogSink
     public FileExecutorLogSink(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        _writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read));
+        _writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write,
+            FileShare.ReadWrite | FileShare.Delete));
     }
     public async Task AppendAsync(string line, CancellationToken cancellationToken)
     {

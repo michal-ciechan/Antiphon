@@ -8,7 +8,7 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class TimeoutTests
 {
     [Test]
-    public async Task row_deadline_kills_the_driver_tree_and_marks_timeout()
+    public async Task row_deadline_marks_timeout_without_global_driver_kill()
     {
         var driver = new FakeDriver();
         driver.When(_ => true, (_, token) => Task.Delay(Timeout.Infinite, token).ContinueWith(
@@ -20,8 +20,7 @@ public sealed class TimeoutTests
             CancellationToken.None);
         result.TimedOut.ShouldBeTrue();
         result.ExitCode.ShouldBe(5);
-        driver.KillCount.ShouldBe(1);
-        driver.LastKillEntireTree.ShouldBeTrue();
+        driver.KillCount.ShouldBe(0);
     }
 
     [Test]

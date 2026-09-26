@@ -89,7 +89,22 @@ public sealed class ProcessDriver : IDriver
         catch (OperationCanceledException)
         {
             KillProcess(process, entireProcessTree: true);
-            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            // WaitForExitAsync also waits for redirected pipes. A descendant can retain a pipe
+            // after its parent dies, even when the requested tree kill has returned.
+            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try
+            {
+                await process.WaitForExitAsync(drain.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (drain.IsCancellationRequested)
+            {
+                const string message = "process kill drain timed out after 10s; abandoning redirected output";
+                lock (outputGate)
+                {
+                    log?.WriteLine(message);
+                    request.OnOutput?.Invoke(message);
+                }
+            }
             throw;
         }
         finally

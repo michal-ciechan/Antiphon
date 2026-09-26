@@ -33,7 +33,6 @@ public static class RowTimeout
             var result = await driver.RunAsync(request, timeout.Token).ConfigureAwait(false);
             if (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                driver.Kill(entireProcessTree: true);
                 return result with { Killed = true, TimedOut = true, ExitCode = ExitCodes.Timeout };
             }
 
@@ -41,7 +40,6 @@ public static class RowTimeout
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            driver.Kill(entireProcessTree: true);
             return new DriverResult(ExitCodes.Timeout, "", "", Killed: true, TimedOut: true);
         }
     }
