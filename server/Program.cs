@@ -296,6 +296,11 @@ try
         var runnerSettings = sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
         client.Timeout = TimeSpan.FromSeconds(Math.Max(1, runnerSettings.RequestTimeoutSeconds));
     });
+    builder.Services.AddSingleton<RunnerAlarmState>();
+    builder.Services.AddSingleton<AlarmWakeQueue>();
+    builder.Services.AddSingleton<IRunnerEligibilityObserver>(sp => sp.GetRequiredService<AlarmWakeQueue>());
+    builder.Services.AddSingleton<IRepositoryFenceObserver>(sp => sp.GetRequiredService<AlarmWakeQueue>());
+    builder.Services.AddSingleton<IRunnerAlarmExclusion, NeverExcluded>();
     builder.Services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
         sp.GetRequiredService<SessionRunnerHttpClient>(),
         sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
@@ -377,6 +382,8 @@ try
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
     builder.Services.AddSingleton<RepositoryChildJournalInspector>();
+    builder.Services.AddScoped<IRunnerAlarmNotifier, QueueRunnerAlarmNotifier>();
+    builder.Services.AddScoped<RunnerAlarmCoordinator>();
     builder.Services.AddSingleton<ILandWorkspace, LandWorkspace>();
     // CARD-0666: a caller start SHA only origin has is fetched at create, never in the dispatch claim.
     builder.Services.AddSingleton<StartRefAvailability>();
@@ -797,6 +804,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
     builder.Services.AddHostedService<PhoneHomeRecoveryPump>();
+    builder.Services.AddHostedService<RunnerAlarmHostedService>();
 
     // CARD-0298: Hangfire storage is always registered (dashboard + job serialization). The worker
     // is the dangerous bit — it must not WMI-scan or call the runner from a test Program boot.
