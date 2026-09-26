@@ -39,8 +39,21 @@ internal sealed class SingleRunnerDirectory(
     public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
 
-    public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
-        Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("no inventory in this world"));
+    public async Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct)
+    {
+        // CARD-0716 V-13: the one remote runner this directory models answers from its client.
+        // Every other id, including a local-only directory, stays unavailable.
+        if (remoteRunnerId is null || !string.Equals(runnerId, remoteRunnerId, StringComparison.Ordinal))
+            return new RunnerInventory.Unavailable("no inventory in this world");
+        try
+        {
+            return new RunnerInventory.Available(await client.ListAsync(ct));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new RunnerInventory.Unavailable(ex.Message);
+        }
+    }
 
     public IReadOnlyList<string> KnownRunnerIds => remoteRunnerId is null ? [] : [remoteRunnerId];
 

@@ -367,6 +367,61 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task Remote_Starting_row_the_runner_serves_is_handed_to_resume()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        var taskId = Guid.NewGuid();
+        try
+        {
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+            await using (var db = CreateContext())
+            {
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.RunnerId, "grok-linux"));
+                var now = DateTime.UtcNow;
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId,
+                    RootTaskId = taskId,
+                    Title = "remote resume",
+                    Goal = "Do the thing.",
+                    Role = AgentTaskRole.Code,
+                    AgentKind = AgentKind.Raw,
+                    ModelLevel = AgentModelLevel.Frontier,
+                    Workspace = WorkspaceMode.Shared,
+                    WorkingDirectory = Path.Combine(Path.GetTempPath(), marker),
+                    AgentSessionId = sessionId,
+                    AgentId = agentId,
+                    Status = AgentTaskStatus.Dispatched,
+                    CreatedAt = now,
+                    DispatchedAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var scan = CreateContext();
+            var client = RunnerRunning(sessionId, startedAt);
+            var service = BuildService(
+                scan, client, new MockEventBus(),
+                ownership: ownership,
+                directory: new SingleRunnerDirectory(client, "grok-linux"));
+
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.Select(r => r.SessionId).ShouldBe([sessionId]);
+        }
+        finally
+        {
+            await using var db = CreateContext();
+            await db.AgentTaskEvents.Where(e => e.AgentTaskId == taskId).ExecuteDeleteAsync();
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task Starting_runner_Running_owned_is_not_resumed()
     {
         var marker = NewMarker();
@@ -1908,7 +1963,8 @@ public class SessionReconciliationServiceTests
         bool launchResumeEnabled = true,
         int maxReAdoptions = 3,
         ILogger<SessionReconciliationService>? logger = null,
-        SessionGenerationCompatState? generationCompat = null) =>
+        SessionGenerationCompatState? generationCompat = null,
+        ISessionRunnerDirectory? directory = null) =>
         new(
             db,
             runnerClient,
@@ -1936,7 +1992,8 @@ public class SessionReconciliationServiceTests
             }),
             time ?? TimeProvider.System,
             logger ?? NullLogger<SessionReconciliationService>.Instance,
-            ownership);
+            ownership,
+            directory);
 
     /// <summary>A runner that reports one session Running, with a real process behind it.</summary>
     private static FakeRunnerClient RunnerRunning(
