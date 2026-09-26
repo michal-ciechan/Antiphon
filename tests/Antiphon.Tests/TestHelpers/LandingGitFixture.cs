@@ -59,6 +59,10 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     public async Task<string> PushIndependentAsync(string name, string path, string content)
     {
         var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId);
+        var fetched = await reader.RunAsync(Observer, ["fetch", "origin", TargetRef], CancellationToken.None);
+        fetched.Succeeded.ShouldBeTrue(fetched.Diagnostic);
+        var based = await reader.RunAsync(Observer, ["reset", "--hard", "FETCH_HEAD"], CancellationToken.None);
+        based.Succeeded.ShouldBeTrue(based.Diagnostic);
         var full = Path.Combine(Observer, path.Replace('/', Path.DirectorySeparatorChar));
         var parent = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
