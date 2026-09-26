@@ -38,89 +38,113 @@ public sealed class RunnerAlarmCoordinator(
         var recoveryHints = await DrainPendingRecoveriesAsync(pending, ct);
         Publish(current, episodes, resolved, pending);
         await RehintAsync(recoveryHints, ct);
+        Exception? failure = null;
         foreach (var snapshot in runners.Snapshots())
         {
             if (!snapshot.Enabled)
                 continue;
-            episodes.TryGetValue(snapshot.RunnerId, out var episode);
-            var excluded = exclusion.Excluded(snapshot.RunnerId);
-            if (excluded is not null)
+            try
             {
-                if (episode is { RaisedAt: not null })
-                    await ResolveAsync(episode, now, pending, ct);
-                if (episode is not null)
-                    logger.LogDebug("Runner {RunnerId} alarm closed because it is {Reason}", snapshot.RunnerId, excluded);
-                episodes.Remove(snapshot.RunnerId);
+                await EvaluateRunnerAsync(snapshot, now, grace, episodes, resolved, pending, ct);
                 Publish(current, episodes, resolved, pending);
-                continue;
             }
-
-            if (snapshot.Eligible)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (episode is null)
-                    continue;
-                if (episode.RaisedAt is not null)
-                    await ResolveAsync(episode, now, pending, ct);
-                resolved[snapshot.RunnerId] = now;
-                episodes.Remove(snapshot.RunnerId);
+                // A later runner must not drop notes the earlier runners already sent (G-30).
+                logger.LogWarning(ex, "Runner {RunnerId} alarm pass failed", snapshot.RunnerId);
                 Publish(current, episodes, resolved, pending);
-                continue;
+                failure ??= ex;
             }
-
-            if (episode is null)
-            {
-                var downSince = now;
-                if (snapshot.LastDisconnectAtUtc is { } disconnected && disconnected <= now
-                    && (!resolved.TryGetValue(snapshot.RunnerId, out var last) || disconnected > last))
-                    downSince = disconnected;
-                episodes[snapshot.RunnerId] = new RunnerOutageEpisode(
-                    snapshot.RunnerId, snapshot.DisplayName, downSince, snapshot.DisconnectReason,
-                    null, 0, 0, [], []);
-                continue;
-            }
-
-            if (episode.RaisedAt is null)
-            {
-                if (now - episode.DownSince < grace)
-                {
-                    episodes[snapshot.RunnerId] = episode with { LastReason = snapshot.DisconnectReason ?? episode.LastReason };
-                    continue;
-                }
-
-                var counts = await LoadPinnedAsync(snapshot.RunnerId, ct);
-                var notified = episode.NotifiedSessionIds.ToList();
-                var noted = episode.NotedRows.ToList();
-                await NotifyCallersAsync(snapshot, episode.DownSince, now, counts, notified, noted, recovered: false, ct);
-                episodes[snapshot.RunnerId] = episode with
-                {
-                    LastReason = snapshot.DisconnectReason ?? episode.LastReason,
-                    RaisedAt = now,
-                    PinnedOpenTasks = counts.Count,
-                    LiveSessions = await LiveSessionsAsync(snapshot.RunnerId, ct),
-                    NotifiedSessionIds = notified,
-                    NotedRows = noted,
-                };
-                logger.LogWarning("Runner {RunnerId} unavailable for {Minutes:0.0} min ({Reason})",
-                    snapshot.RunnerId, (now - episode.DownSince).TotalMinutes, snapshot.DisconnectReason);
-                continue;
-            }
-
-            var refreshed = await LoadPinnedAsync(snapshot.RunnerId, ct);
-            var stillNotified = episode.NotifiedSessionIds.ToList();
-            var stillNoted = episode.NotedRows.ToList();
-            await NotifyCallersAsync(snapshot, episode.DownSince, now, refreshed, stillNotified, stillNoted, recovered: false, ct);
-            await RehintAsync(stillNoted.Select(row => row.RowId).ToArray(), ct);
-            episodes[snapshot.RunnerId] = episode with
-            {
-                LastReason = snapshot.DisconnectReason ?? episode.LastReason,
-                PinnedOpenTasks = refreshed.Count,
-                LiveSessions = await LiveSessionsAsync(snapshot.RunnerId, ct),
-                NotifiedSessionIds = stillNotified,
-                NotedRows = stillNoted,
-            };
         }
 
         Publish(current, episodes, resolved, pending);
+        if (failure is not null)
+            throw failure;
+    }
+
+    private async Task EvaluateRunnerAsync(RunnerEligibilitySnapshot snapshot, DateTimeOffset now, TimeSpan grace,
+        Dictionary<string, RunnerOutageEpisode> episodes, Dictionary<string, DateTimeOffset> resolved,
+        List<PendingRecoveryNote> pending, CancellationToken ct)
+    {
+        episodes.TryGetValue(snapshot.RunnerId, out var episode);
+        var excluded = exclusion.Excluded(snapshot.RunnerId);
+        if (excluded is not null)
+        {
+            if (episode is { RaisedAt: not null })
+                await ResolveAsync(episode, now, pending, ct);
+            if (episode is not null)
+                logger.LogDebug("Runner {RunnerId} alarm closed because it is {Reason}", snapshot.RunnerId, excluded);
+            episodes.Remove(snapshot.RunnerId);
+            return;
+        }
+
+        if (snapshot.Eligible)
+        {
+            if (episode is null)
+                return;
+            if (episode.RaisedAt is not null)
+                await ResolveAsync(episode, now, pending, ct);
+            resolved[snapshot.RunnerId] = now;
+            episodes.Remove(snapshot.RunnerId);
+            return;
+        }
+
+        if (episode is null)
+        {
+            var downSince = now;
+            if (snapshot.LastDisconnectAtUtc is { } disconnected && disconnected <= now
+                && (!resolved.TryGetValue(snapshot.RunnerId, out var last) || disconnected > last))
+                downSince = disconnected;
+            episodes[snapshot.RunnerId] = new RunnerOutageEpisode(
+                snapshot.RunnerId, snapshot.DisplayName, downSince, snapshot.DisconnectReason,
+                null, 0, 0, [], []);
+            return;
+        }
+
+        if (episode.RaisedAt is null)
+        {
+            if (now - episode.DownSince < grace)
+            {
+                episodes[snapshot.RunnerId] = episode with { LastReason = snapshot.DisconnectReason ?? episode.LastReason };
+                return;
+            }
+
+            var counts = await LoadPinnedAsync(snapshot.RunnerId, ct);
+            var live = await LiveSessionsAsync(snapshot.RunnerId, ct);
+            var notified = episode.NotifiedSessionIds.ToList();
+            var noted = episode.NotedRows.ToList();
+            await NotifyCallersAsync(snapshot, episode.DownSince, now, counts, notified, noted, recovered: false, ct);
+            episodes[snapshot.RunnerId] = episode with
+            {
+                LastReason = snapshot.DisconnectReason ?? episode.LastReason,
+                RaisedAt = now,
+                PinnedOpenTasks = counts.Count,
+                LiveSessions = live,
+                NotifiedSessionIds = notified,
+                NotedRows = noted,
+            };
+            logger.LogWarning("Runner {RunnerId} unavailable for {Minutes:0.0} min ({Reason})",
+                snapshot.RunnerId, (now - episode.DownSince).TotalMinutes, snapshot.DisconnectReason);
+            return;
+        }
+
+        // A caller pinned after the raise was never told, so this pass sends that caller one
+        // outage note. D-3's "nothing else" is the feed row: refresh the counts and the reason,
+        // and do not send a second note to a caller already in NotifiedSessionIds.
+        var refreshed = await LoadPinnedAsync(snapshot.RunnerId, ct);
+        var liveSessions = await LiveSessionsAsync(snapshot.RunnerId, ct);
+        var stillNotified = episode.NotifiedSessionIds.ToList();
+        var stillNoted = episode.NotedRows.ToList();
+        await NotifyCallersAsync(snapshot, episode.DownSince, now, refreshed, stillNotified, stillNoted, recovered: false, ct);
+        episodes[snapshot.RunnerId] = episode with
+        {
+            LastReason = snapshot.DisconnectReason ?? episode.LastReason,
+            PinnedOpenTasks = refreshed.Count,
+            LiveSessions = liveSessions,
+            NotifiedSessionIds = stillNotified,
+            NotedRows = stillNoted,
+        };
+        await RehintAsync(stillNoted.Select(row => row.RowId).ToArray(), ct);
     }
 
     private void Publish(RunnerAlarmSnapshot basis, Dictionary<string, RunnerOutageEpisode> episodes,
