@@ -30,7 +30,7 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 public partial class SessionMessageQueueDeliveryVerificationTests
 {
-    private const double TestClockSpeed = 10;
+    private const double TestClockSpeed = 5;
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
