@@ -1033,6 +1033,25 @@ Client PCs run as `pwsh -File scripts/test-client.ps1 <file> -t "<test name>"` (
 through to vitest; one test per invocation). PC-77 runs the CP-4 step 0 command only; it starts
 no runner.
 
+### Out of scope
+
+- `SessionCpuWatchdogTests` (draft R-1): the plan changes neither `IProcessCpuProbe` nor the
+  watchdog (the sampler only consumes the interface), and the class starts a real `cmd.exe` pty
+  session from `Environment.SystemDirectory`, so it cannot be an either-lane row.
+- Round 2 (S5–S6) and the draft's CP-11..CP-13: their V rows are named only as "R2 V", which is a
+  placeholder; Round 2 gets its own TestDesign pass after Round 1 lands and CP-11 has been seen
+  live, and its rows are not part of this closed list.
+- A server-side SignalR hub test: `Antiphon.Tests` has no `Microsoft.AspNetCore.SignalR.Client`
+  reference, and adding one for a single hop is not worth a package change; CP-11's live receipt
+  covers the hop (Delivery inventory).
+- A Playwright check of `/hosts`: V-10 plus CP-11's hub receipt cover the data path; the visual
+  layout (mobile one-column, rollup table collapse) is the operator's acceptance look.
+- A per-tick query-count assertion for D-5: the grouping is V-7, the real query V-9 m1; 0.2
+  queries/s is not a correctness property and `efReadAttempts` is observable after land.
+- New runner x old server, and two browser tabs in one group: see the boundary table.
+- D-12's exclusions (placement/backpressure, Attention on overload, rollup persistence, Postgres
+  CPU, Windows processor queue, container CPU).
+
 ### Checkpoints
 
 Isolated outputs `bin-c718r/` (`Antiphon.SessionRunner.Tests`) and `bin-c718a/`
