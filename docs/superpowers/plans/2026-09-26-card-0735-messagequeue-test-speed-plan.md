@@ -130,3 +130,101 @@ At speed 10, virtual time runs ahead of real time by nine times the real elapsed
 | **R-G** Delete the eight duplicate pairs | 2.5 s after D-1 (D-4). |
 | **R-H** Lower the production floors (`Math.Max(1000, …)`) | Production code, and the floor exists because each pull fetches a whole transcript (`SessionMessageQueueService.cs:3795`). |
 
+## Slices
+
+One Code round, four commits, all under `tests/` and `docs/`. No file under `server/`, `src/` or `scripts/` changes except as a temporary, restored positive-control mutation (never committed).
+
+| Slice | Files | Change |
+|---|---|---|
+| **S1** clock and harness option | new `tests/Antiphon.Tests/TestHelpers/ScaledTimeProvider.cs`; new `tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs`; `tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs` | D-1 clock; D-6 `HarnessOptions.ClockSpeed`, `Clock`, `Now`; D-5 harness stamps (ten sites) and the `createdAtUtc` parameter on the static `InsertEntryAsync`. Default behaviour identical when `ClockSpeed` is null. |
+| **S2a** switch the class to the clock only | `tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs` (`:35–36` `CreateHarnessAsync`; custom-harness sites `:854`, `:900`, `:1200`, `:2483`), `…C561.cs` (`BlindHarnessAsync` `:207–212` takes a `ScaledTimeProvider(TestClockSpeed)`; the five `MutableTimeProvider` constructions become that clock, `Advance` calls unchanged) | `private const double TestClockSpeed = 10;` and `ClockSpeed = TestClockSpeed` at every harness construction; D-7 grace on the parking test. Committed on its own so CP-2 and CP-3 run against it as the red state of PC-A. |
+| **S2b** stamps, schedules, elapsed assertions | the same two class files | D-5: twenty `DateTime.UtcNow` → `h.Now`; C561 `DateTimeOffset.UtcNow` → clock; five `Task.Delay(real)` → `Task.Delay(x, h.Clock)`; two elapsed assertions on `h.Now`. |
+| **S3** roster, docs, allowlist | `tests/linux-test-roster.json`; `docs/testing-and-build.md`; `tests/Antiphon.Tests/slow-tests-allowlist.txt` | D-8 roster row for `ScaledTimeProviderTests` plus refreshed hashes for the two class files; D-9 gotcha bullet and allowlist reason comment. |
+
+Commit messages carry the measured outcome ("CP-4 123/123 green, class span N s"), per the delegate rules.
+
+## Verification design
+
+Scope: the change is test infrastructure that could hide a regression in three ways: the queue's waits no longer scale (nothing gets faster, but nothing breaks either), the queue's waits are skipped rather than scaled (tests pass without the pipeline running its deadline logic), or a stamp or scheduled row drifts off the clock (a pin silently confirms via the wrong path). V rows prove the new helper; R rows prove the class and its neighbours; PC rows are red-first positive controls, one method per row because method-level alternation in a treenode filter discovers zero tests on this runner (CARD-0417 plan, 2026-09-07); only the class segment accepts `(X*)|(Y*)`.
+
+### V — new tests (`ScaledTimeProviderTests`, Unit, no database)
+
+| ID | Test | Goes red when |
+|---|---|---|
+| V-1 | `Speed_10_advances_ten_times_real_time`: `Task.Delay(100)` real, then `GetUtcNow()` moved by 0.8–3.0 s (upper bound generous for a loaded host) | `GetUtcNow` does not scale |
+| V-2 | `Delay_on_the_clock_completes_speed_times_sooner`: `Task.Delay(1 s, clock)` completes in 50–500 ms real | `CreateTimer` does not divide the due time |
+| V-3 | `Advance_jumps_now_without_firing_a_pending_delay`: start `Task.Delay(10 s, clock)`, `Advance(1 h)`; now jumped ≥ 1 h, delay still pending after 50 ms real | `Advance` fires timers or does not jump |
+| V-4 | `Speed_one_is_an_offset_clock`: speed 1, `Advance(31 s)`, now = real + 31 s ± 1 s; `Task.Delay(100 ms, clock)` takes ≥ 90 ms real | scaling is applied at speed 1 |
+| V-5 | `CancelAfter_on_the_clock_is_scaled`: `new CancellationTokenSource(1 s, clock)` cancels within 500 ms real | the timer path for CTS is not scaled |
+| V-6 | `Non_positive_speed_is_refused`: 0 and −1 throw `ArgumentOutOfRangeException` | guard missing |
+
+### R — regression rows
+
+| ID | What | Filter |
+|---|---|---|
+| R-1 | The class at speed 10: 123 results, 0 failed; TRX class span (first `startTime` to last `endTime`) ≤ 60 s on server2 | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` |
+| R-2 | Two more consecutive runs of R-1 with 0 failed (flake soak; feeds D-1's speed decision) | same |
+| R-3 | Neighbours on the default clock unchanged: `SessionMessageQueueServiceTests` (25), `SessionMessageQueueSupervisionTests` (3), `SessionMessageQueueBootWedgeTests` (10) | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueBootWedgeTests*)/*` |
+| R-4 | Guards after adding a Unit class and touching the roster and allowlist: `TestClassificationGuardTests` (1), `TestLaneCategoryGuardTests` (3), `LinuxTestRosterTests` (6) | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` |
+
+### PC — red-first positive controls
+
+Each PC is one method, run red then green. A production mutation is restored with `git checkout -- <file>` and `git status --short` must be empty before the green row builds. Zero executed tests, or a build error, is not red.
+
+| ID | Mutation (temporary) | Method | Expected red |
+|---|---|---|---|
+| PC-A | None: S2a switches the class to the clock while the two "row lands at 4 s" inserts still use **real** `Task.Delay(4 s)`, so the row lands at virtual 40 s, outside the 3–6 s grace. Proves the clock scales the pipeline before S2b converts them. | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing`; `Card0164_ModeNow_grace_confirms_late_record_without_409` | first: `Killed.ShouldBeFalse` fails; second: `ConflictException` (409). Green comes from CP-4 after S2b. |
+| PC-B | `server/Application/Services/SessionMessageQueueService.cs` confirm loop (`:3640–3646`): drop the re-press (`await _runtime.SendInputAsync(sessionId, "\r", ct); entersSent++;`), keep `lastEnter = UtcNow();` | `Swallowed_submit_reverts_message_and_restarts_always_on_agent` | `Inputs.ShouldBe(["swallowed submit", "\r", "\r", "\r"])` sees one CR |
+| PC-C | Same file, the WhenIdle grace method whose `grace` reads `PostFailureConfirmGraceSeconds` at `:3748`: `var grace = TimeSpan.Zero;` | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | `Killed.ShouldBeFalse` fails (no grace, always-on kill) |
+| PC-D | Test-side, in `A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` (`:848–870`): add `h.Adapter.OnSubmitted = _ => Task.CompletedTask;` before the enqueue, so no row lands and the fallback waits out the 20 s virtual deadline | that method | `(h.Now - started).ShouldBeLessThan(10 s)` fails at ≈ 20 s virtual (2 s real): proves the converted elapsed assertion still reads the pipeline's wait |
+
+### Checkpoints
+
+All builds go to one `bin-c735/` (forward slash); the first is cold (about 3 m 44 s on server2), later ones are incremental after a test edit (about 1.5 min) or no-op (11 s). Every row runs through `scripts/run-checkpoint.ps1` (it takes the build slot itself); `-ResultsRoot .antiphon/c735-checkpoints`. Rows marked "mutated" build after applying the PC's temporary change and "restored" after reverting it.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c735/` | clock-unit | `/*/*/ScaledTimeProviderTests/*` | V-1–V-6 | all 6 methods, 0 failed/skipped | 6 | 6 |
+| CP-2 | S2a | `tests/Antiphon.Tests -> bin-c735/` | pc-a-red-whenidle | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | PC-A | 1 executed, **1 failed** (killed) | 1 | 3 |
+| CP-3 | S2a | CP-2 | pc-a-red-modenow | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_grace_confirms_late_record_without_409` | PC-A | 1 executed, **1 failed** (409) | 1 | 2 |
+| CP-4 | S2b | `tests/Antiphon.Tests -> bin-c735/` | class-green | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-1, PC-A green | 123 executed, 0 failed/skipped; class span ≤ 60 s reported from the TRX | 123 | 4 |
+| CP-5 | S2b | CP-4 | class-soak-1 | same as CP-4 | R-2 | 123 executed, 0 failed | 123 | 2 |
+| CP-6 | S2b | CP-4 | class-soak-2 | same as CP-4 | R-2 | 123 executed, 0 failed | 123 | 2 |
+| CP-7 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-B) | pc-b-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/Swallowed_submit_reverts_message_and_restarts_always_on_agent` | PC-B | 1 executed, **1 failed** | 1 | 3 |
+| CP-8 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-b-green | same as CP-7 | PC-B | 1 executed, 0 failed | 1 | 3 |
+| CP-9 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-C) | pc-c-red | same as CP-2 | PC-C | 1 executed, **1 failed** | 1 | 3 |
+| CP-10 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-c-green | same as CP-2 | PC-C | 1 executed, 0 failed | 1 | 3 |
+| CP-11 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-D) | pc-d-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | PC-D | 1 executed, **1 failed** | 1 | 3 |
+| CP-12 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-d-green | same as CP-11 | PC-D | 1 executed, 0 failed | 1 | 3 |
+| CP-13 | S3 | `tests/Antiphon.Tests -> bin-c735/` | neighbours-default-clock | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueBootWedgeTests*)/*` | R-3 | all 38 methods, 0 failed | 38 | 4 |
+| CP-14 | S3 | CP-13 | guards | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` | R-4 | all 10 methods, 0 failed | 10 | 2 |
+
+The backslashes before table pipes are Markdown escaping only; the actual arguments use `|`. Ordinary floor: 43 minutes, of which about 13 is the per-row build-slot grace while `/build-slots` is still 404 on this runner (CARD-0589). One row, for the record:
+
+```
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-4 -Project tests/Antiphon.Tests -OutputPath bin-c735/ -Filter "/*/*/SessionMessageQueueDeliveryVerificationTests/*" -MinExecuted 123 -ResultsRoot .antiphon/c735-checkpoints
+```
+
+Delete `bin-c735/` in every project before finishing. Windows: `Task.Delay` resolution is coarser (about 15 ms), so CP-4 there is slower than on server2 but still green; the ≤ 60 s target is a server2 number.
+
+## Target and what it buys
+
+| | Today | Target (speed 10) | Stretch |
+|---|---:|---:|---:|
+| Class body, TRX span, server2 | 292–302 s | ≤ 60 s | 45 s |
+| Per Code stage that names the class | 4.9 min + lead | ≤ 1 min + lead | |
+| Per Review stage that re-runs it | same | same | |
+
+The 36–77 s process lead before the first test (Postgres warm-up, CARD-0732) and the 60 s build-slot grace (CARD-0589) are outside this card and stay on top of every row.
+
+## Risks
+
+- **Speed 10 under load.** TRX maxima show multi-second stalls on this host today (`C561_a_blind_matcher…` max 15.9 s against a 3.3 s median). A stall that hits a database call while the clock keeps running is ten times larger in virtual terms. CP-5/CP-6 are the evidence; D-1 names the fallback (speed 5) and who decides it (Code, in its report).
+- **A stamp missed in S2b.** Any `DateTime.UtcNow` left in the class or harness drifts by up to 21 s virtual on the longest test and would surface as `Card0164_unobservable_weak_arm_rejects_old_timestamp` / `…confirms_on_fresh_timestamp` behaving differently; CP-4 catches it, and a `grep -n "DateTime.UtcNow\|DateTimeOffset.UtcNow"` over the three files must return only the `Mode_Now_waits_for_the_per_session_lock` real bound (which uses `Task.Delay`, not a stamp) before S2b is committed.
+- **The default path.** Every other harness user runs with `TimeProvider.System`, where `Now` is what `DateTime.UtcNow` was. CP-13 is the check.
+
+## Out of scope, filed or noted
+
+- The three big neighbours on the same key (D-6): one follow-up card after this lands, same recipe.
+- The eight duplicate pairs (D-4): noted, no card.
+- The process lead and the slot grace: CARD-0732, CARD-0589.
