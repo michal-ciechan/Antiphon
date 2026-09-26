@@ -98,7 +98,7 @@ At speed 10, virtual time runs ahead of real time by nine times the real elapsed
 - `BridgeQueueHarness` exposes `TimeProvider Clock` and `DateTime Now` (`Clock.GetUtcNow().UtcDateTime`), and its ten `DateTime.UtcNow` sites (`BridgeQueueHarness.cs:215, 249, 295, 366, 388, 466, 468, 512, 562, 563`) read `Now`. The static `InsertEntryAsync` gains a `DateTime? createdAtUtc` parameter that the instance wrappers fill from `Now`.
 - The class's twenty `DateTime.UtcNow` sites read `h.Now`; C561's `DateTimeOffset.UtcNow` in `PoisonToolCall` and `StubbedUserPrompt` read the test's clock.
 - The five fire-and-forget inserts (`SessionMessageQueueDeliveryVerificationTests.cs:1278, 2048, 2137, 2189, 2291`) become `await Task.Delay(x, h.Clock)` inside the same `Task.Run`, so a "4 s" row still lands at virtual 4 s, inside the 3–6 s grace, and the 0.4/0.3/0.2 s rows still land inside the confirm window.
-- The two real-elapsed assertions (`:861–865` "< 10 s, only the fallback waits out the 20 s deadline" and `:2335–2341` "< 5 s, must not burn the grace") become `(h.Now - started)`, so they still discriminate: under real elapsed they would pass even if the pipeline ran the fallback (2 s real). PC-D proves it.
+- The two elapsed pins (`(h.Now - started) < 10 s` on the timestamped pre-first-turn confirm, and `< 5 s` on Mode:Now `NoComposerEvidence`) counted unscaled cold JIT and database work at `TestClockSpeed`. Alone on Windows that was 7.4–8.3 s virtual against the 5 s budget. They now read `EmptyRunnerClient.TranscriptGets`: the confirm returns before any catch-up pull (`ShouldBe(0)`), and `NoComposerEvidence` performs only the one overlay-recovery pull (`ShouldBe(1)`), not the Mode:Now grace loop. PC-D keeps the same mutation (no UserPrompt row). The deadline fallback calls `CatchUpTranscriptAsync`, so the pull count is no longer 0.
 - `Mode_Now_waits_for_the_per_session_lock`'s real `Task.Delay(400)` (`:1996`) stays: it bounds a semaphore wait, not a clock-driven path.
 
 ### D-6 — Opt-in per class; the harness default is unchanged
@@ -165,7 +165,7 @@ Scope: the change is test infrastructure that could hide a regression in three w
 | R-1 | The class at speed 10: 123 results, 0 failed; TRX class span (first `startTime` to last `endTime`) ≤ 60 s on server2 | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` |
 | R-2 | Two more consecutive runs of R-1 with 0 failed (flake soak; feeds D-1's speed decision) | same |
 | R-3 | Neighbours on the default clock unchanged: `SessionMessageQueueServiceTests` (25), `SessionMessageQueueSupervisionTests` (3), `SessionMessageQueueBootWedgeTests` (10) | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueBootWedgeTests*)/*` |
-| R-4 | Guards after adding a Unit class and touching the roster and allowlist: `TestClassificationGuardTests` (1), `TestLaneCategoryGuardTests` (3), `LinuxTestRosterTests` (6) | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` |
+| R-4 | Guards after adding a Unit class and touching the roster and allowlist: `TestClassificationGuardTests` (1), `TestLaneCategoryGuardTests` (1), `LinuxTestRosterTests` (6) | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` |
 
 ### PC — red-first positive controls
 
@@ -176,7 +176,7 @@ Each PC is one method, run red then green. A production mutation is restored wit
 | PC-A | None: S2a switches the class to the clock while the two "row lands at 4 s" inserts still use **real** `Task.Delay(4 s)`, so the row lands at virtual 40 s, outside the 3–6 s grace. Proves the clock scales the pipeline before S2b converts them. | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing`; `Card0164_ModeNow_grace_confirms_late_record_without_409` | first: `Killed.ShouldBeFalse` fails; second: `ConflictException` (409). Green comes from CP-4 after S2b. |
 | PC-B | `server/Application/Services/SessionMessageQueueService.cs` confirm loop (`:3640–3646`): drop the re-press (`await _runtime.SendInputAsync(sessionId, "\r", ct); entersSent++;`), keep `lastEnter = UtcNow();` | `Swallowed_submit_reverts_message_and_restarts_always_on_agent` | `Inputs.ShouldBe(["swallowed submit", "\r", "\r", "\r"])` sees one CR |
 | PC-C | Same file, `GraceConfirmAsync` (`:3743`), whose `grace` reads `PostFailureConfirmGraceSeconds` at `:3748`: `var grace = TimeSpan.Zero;` | `A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing` | `Killed.ShouldBeFalse` fails (no grace, always-on kill) |
-| PC-D | Test-side, in `A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` (`:848–870`): add `h.Adapter.OnSubmitted = _ => Task.CompletedTask;` before the enqueue, so no row lands and the fallback waits out the 20 s virtual deadline | that method | `(h.Now - started).ShouldBeLessThan(10 s)` fails at ≈ 20 s virtual (2 s real): proves the converted elapsed assertion still reads the pipeline's wait |
+| PC-D | Test-side, in `A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback`: add `h.Adapter.OnSubmitted = _ => Task.CompletedTask;` before the enqueue, so no row lands and the unobservable deadline loop pulls until the 20 s virtual deadline | that method | `h.Runner.TranscriptGets.ShouldBe(0)` fails: the fallback calls `CatchUpTranscriptAsync`. A stored timestamped row returns before any pull |
 
 ### Checkpoints
 
@@ -197,9 +197,13 @@ All builds go to one `bin-c735/` (forward slash); the first is cold (about 3 m 4
 | CP-11 | S2b | `tests/Antiphon.Tests -> bin-c735/` (mutated PC-D) | pc-d-red | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | PC-D | 1 executed, **1 failed** | 1 | 3 |
 | CP-12 | S2b | `tests/Antiphon.Tests -> bin-c735/` (restored) | pc-d-green | same as CP-11 | PC-D | 1 executed, 0 failed | 1 | 3 |
 | CP-13 | S3 | `tests/Antiphon.Tests -> bin-c735/` | neighbours-default-clock | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueSupervisionTests*)\|(SessionMessageQueueBootWedgeTests*)/*` | R-3 | all 38 methods, 0 failed | 38 | 4 |
-| CP-14 | S3 | CP-13 | guards | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` | R-4 | all 10 methods, 0 failed | 10 | 2 |
+| CP-14 | S3 | CP-13 | guards | `/*/*/(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(LinuxTestRosterTests*)/*` | R-4 | all 8 methods, 0 failed | 8 | 2 |
+| CP-15 | S3 | `tests/Antiphon.Tests -> bin-c735/` | cold-no-grace | `/*/*/SessionMessageQueueDeliveryVerificationTests/Card0164_ModeNow_NoComposerEvidence_gets_no_grace` | cold pin, NoComposerEvidence | 1 executed, 0 failed, own process | 1 | 3 |
+| CP-16 | S3 | CP-15 | cold-transcript-confirm | `/*/*/SessionMessageQueueDeliveryVerificationTests/A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback` | cold pin, PC-D method | 1 executed, 0 failed, own process | 1 | 3 |
 
-The backslashes before table pipes are Markdown escaping only; the actual arguments use `|`. Ordinary floor: 43 minutes, of which about 13 is the per-row build-slot grace while `/build-slots` is still 404 on this runner (CARD-0589). One row, for the record:
+CP-15 and CP-16 are the cold-alone pins. A single filter cannot name both methods: method-level OR matches nothing on this runner, so each method is its own process.
+
+The backslashes before table pipes are Markdown escaping only; the actual arguments use `|`. Ordinary floor: 49 minutes, of which about 13 is the per-row build-slot grace while `/build-slots` is still 404 on this runner (CARD-0589). One row, for the record:
 
 ```
 pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-4 -Project tests/Antiphon.Tests -OutputPath bin-c735/ -Filter "/*/*/SessionMessageQueueDeliveryVerificationTests/*" -MinExecuted 123 -ResultsRoot .antiphon/c735-checkpoints

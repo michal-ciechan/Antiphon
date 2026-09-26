@@ -664,10 +664,20 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
             => throw new NotSupportedException();
 
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(_transcripts.TryGetValue(sessionId, out var transcript)
+        /// <summary>
+        /// Catch-up pulls. A grace or unobservable-deadline loop calls this; a transcript
+        /// confirm that returns on the stored row does not. Scaled elapsed time cannot tell
+        /// those apart from cold JIT and database work.
+        /// </summary>
+        public int TranscriptGets { get; private set; }
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+        {
+            TranscriptGets++;
+            return Task.FromResult(_transcripts.TryGetValue(sessionId, out var transcript)
                 ? transcript
                 : new SessionRunnerTranscriptDto(sessionId, [], 0));
+        }
 
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
             => throw new NotSupportedException();
