@@ -37,9 +37,9 @@ public sealed class HostStatsPollService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await TickOnceAsync(stoppingToken);
         if (!_settings.Enabled)
             return;
-        await TickOnceAsync(stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_settings.PollIntervalMs), _time);
         while (await timer.WaitForNextTickAsync(stoppingToken))
             await TickOnceAsync(stoppingToken);
@@ -48,7 +48,19 @@ public sealed class HostStatsPollService : BackgroundService
     public async Task TickOnceAsync(CancellationToken ct = default)
     {
         if (!_settings.Enabled)
+        {
+            // Keep the catalogue visible during rollback without touching either runner.
+            var disabledRows = _directory.KnownRunnerIds
+                .Select(id => RunnerRequestIntent.IsDesktopAlias(id) ? RunnerPlatformWire.DesktopId : id)
+                .Distinct(StringComparer.Ordinal)
+                .Select(id => new SessionRunnerCatalogueEntryDto(id,
+                    id == RunnerPlatformWire.DesktopId ? "Desktop" : id, null, null, false, false,
+                    "disabled", null, null, "sessions", null, true, []))
+                .ToArray();
+            _cache.SetProjection(disabledRows, new Dictionary<string, HostStatsAntiphonDto>());
+            _cache.Project();
             return;
+        }
         _cache.BeginTick();
         var ids = _directory.KnownRunnerIds
             .Select(id => RunnerRequestIntent.IsDesktopAlias(id) ? RunnerPlatformWire.DesktopId : id)
@@ -95,7 +107,7 @@ public sealed class HostStatsPollService : BackgroundService
             using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(_settings.RequestTimeoutMs), _time);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
             var answer = await _directory.Resolve(id).GetHostStatsAsync(linked.Token);
-            if (answer is null)
+            if (answer is not { At: not null, Current: not null })
                 _cache.RecordFailure(id, HostStatsFailureKind.Transient);
             else
                 _cache.Record(id, id == RunnerPlatformWire.DesktopId ? AddServerProcess(answer) : answer);
