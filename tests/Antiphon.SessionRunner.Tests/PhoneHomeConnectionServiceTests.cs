@@ -1,9 +1,15 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests.TestHelpers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -410,6 +416,144 @@ public class PhoneHomeConnectionServiceTests
         ends[0].ShouldContain("overflow=true");
     }
 
+    // --- CARD-0716 D-4: registration and connect bounds, backoff cap, classified reconnects. ---
+
+    [Test]
+    public async Task Registration_that_never_answers_ends_within_the_registration_timeout()
+    {
+        var settings = RunnableSettings();
+        Bind(settings, ("RegistrationTimeoutSeconds", "1"));
+        var service = Service(new RecordingRuntime(), settings, new HangingHandler());
+
+        await Should.ThrowAsync<TaskCanceledException>(() =>
+            service.RunConnectionAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3)));
+    }
+
+    [Test]
+    public async Task Reconnect_backoff_caps_at_five_seconds()
+    {
+        var settings = RunnableSettings();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var gate = new PhoneHomeAdoptionGate();
+        gate.SignalReady();
+        var service = Service(new RecordingRuntime(), settings, new StatusHandler(HttpStatusCode.BadGateway), time, gate);
+        using var cts = new CancellationTokenSource();
+        var running = service.StartAsync(cts.Token);
+        try
+        {
+            await WaitUntilAsync(() => service.RegistrationAttempts >= 1);
+            service.RegistrationAttempts.ShouldBe(1);
+            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(1));
+            await WaitUntilAsync(() => service.RegistrationAttempts >= 2);
+            service.RegistrationAttempts.ShouldBe(2);
+            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(() => service.RegistrationAttempts >= 3);
+            service.RegistrationAttempts.ShouldBe(3);
+            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(4));
+            await WaitUntilAsync(() => service.RegistrationAttempts >= 4);
+            service.RegistrationAttempts.ShouldBe(4);
+            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => service.RegistrationAttempts >= 5);
+            service.RegistrationAttempts.ShouldBe(5);
+        }
+        finally
+        {
+            cts.Cancel();
+            try { await running.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (OperationCanceledException) { /* stopping */ }
+        }
+    }
+
+    [Test]
+    public async Task Registration_failure_line_names_the_status_attempt_and_backoff()
+    {
+        var settings = RunnableSettings();
+        var logs = new CapturingLogger<PhoneHomeConnectionService>();
+        var gate = new PhoneHomeAdoptionGate();
+        gate.SignalReady();
+        var service = Service(
+            new RecordingRuntime(), settings, new StatusHandler(HttpStatusCode.BadGateway),
+            TimeProvider.System, gate, logs);
+        using var cts = new CancellationTokenSource();
+        var running = service.StartAsync(cts.Token);
+        try
+        {
+            await WaitUntilAsync(() => logs.Warnings.Count >= 1);
+            logs.Warnings.Count.ShouldBe(1);
+            logs.Warnings[0].Exception.ShouldBeNull();
+            logs.Warnings[0].Message.ShouldBe(
+                "Phone-home registration failed: reason=http_502 attempt=1 backoffMs=1000");
+        }
+        finally
+        {
+            cts.Cancel();
+            try { await running.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (OperationCanceledException) { /* stopping */ }
+        }
+    }
+
+    [Test]
+    public async Task Websocket_connect_that_hangs_ends_within_the_connect_timeout()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            _ = listener.AcceptTcpClientAsync();
+            var settings = RunnableSettings();
+            settings.ServerOrigin = $"http://127.0.0.1:{port}";
+            Bind(settings, ("ConnectTimeoutSeconds", "1"));
+            var service = Service(new RecordingRuntime(), settings, new TicketHandler());
+            using var cts = new CancellationTokenSource();
+
+            await Should.ThrowAsync<OperationCanceledException>(() =>
+                service.RunConnectionAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(3)));
+            cts.IsCancellationRequested.ShouldBeFalse();
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    [Test]
+    public async Task Server_close_frame_ends_the_connection_cleanly_and_names_its_status()
+    {
+        const long epoch = 4;
+        var logs = new List<string>();
+        var (service, _) = Connected(logs);
+        var socket = new PhoneHomeTestWebSocket();
+        socket.EnqueueClose(WebSocketCloseStatus.EndpointUnavailable, "server_stopping");
+
+        await service.RunConnectedAsync(socket, epoch, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3));
+
+        var ends = EndLines(logs);
+        ends.Count.ShouldBe(1, string.Join(Environment.NewLine, logs));
+        ends[0].ShouldContain("loop=receive");
+        ends[0].ShouldContain("fault=none");
+        ends[0].ShouldContain("close=EndpointUnavailable:server_stopping");
+    }
+
+    [Test]
+    public async Task Handshake_fault_line_names_the_websocket_and_socket_errors()
+    {
+        const long epoch = 5;
+        var logs = new List<string>();
+        var (service, _) = Connected(logs);
+        var socket = new PhoneHomeTestWebSocket();
+        socket.FailNextReceive(new WebSocketException(
+            WebSocketError.ConnectionClosedPrematurely,
+            new IOException("reset", new SocketException((int)SocketError.ConnectionReset))));
+
+        await service.RunConnectedAsync(socket, epoch, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3));
+
+        var ends = EndLines(logs);
+        ends.Count.ShouldBe(1, string.Join(Environment.NewLine, logs));
+        ends[0].ShouldContain("wsError=ConnectionClosedPrematurely");
+        ends[0].ShouldContain("socketError=ConnectionReset");
+    }
+
     private static List<string> EndLines(List<string> logs)
     {
         lock (logs)
@@ -502,29 +646,75 @@ public class PhoneHomeConnectionServiceTests
     }
 
     private static PhoneHomeConnectionService Service(IPhoneHomeRuntimeSurface surface)
+        => Service(surface, RunnableSettings(), new RecordingHandler([]));
+
+    /// <summary>
+    /// Binds keys the production type may not have yet. An unknown key is ignored, which is
+    /// today's behaviour and the red for the timeout tests.
+    /// </summary>
+    private static void Bind(PhoneHomeSettings settings, params (string Key, string Value)[] values)
     {
-        var settings = Options.Create(new PhoneHomeSettings
+        var data = values.ToDictionary(pair => pair.Key, pair => (string?)pair.Value);
+        new ConfigurationBuilder().AddInMemoryCollection(data).Build().Bind(settings);
+    }
+
+    private static PhoneHomeSettings RunnableSettings()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c716-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var secret = Path.Combine(root, "secret");
+        File.WriteAllText(secret, "test-secret");
+        return new PhoneHomeSettings
         {
             Enabled = true,
             RunnerId = "grok-linux",
             ServerOrigin = "http://127.0.0.1:1",
+            SecretPath = secret,
+            StoreIdPath = Path.Combine(root, "store-id"),
             AllowedCwd = "/work",
             Capacity = 1,
-        });
+        };
+    }
+
+    private static PhoneHomeConnectionService Service(
+        IPhoneHomeRuntimeSurface surface,
+        PhoneHomeSettings settings,
+        HttpMessageHandler handler,
+        TimeProvider? clock = null,
+        IPhoneHomeAdoptionGate? adoption = null,
+        ILogger<PhoneHomeConnectionService>? logger = null)
+    {
         var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings
             {
-                SessionLogPath = Path.Combine(Path.GetTempPath(), "c631-runtime-" + Guid.NewGuid().ToString("N")),
+                SessionLogPath = Path.Combine(Path.GetTempPath(), "c716-runtime-" + Guid.NewGuid().ToString("N")),
             }),
             NullLogger<SessionRunnerRuntime>.Instance);
         return new PhoneHomeConnectionService(
-            settings,
-            new PhoneHomeAdoptionGate(),
-            new PhoneHomeCommandDispatcher(surface, settings.Value),
+            Options.Create(settings),
+            adoption ?? new PhoneHomeAdoptionGate(),
+            new PhoneHomeCommandDispatcher(surface, settings),
             runtime,
-            new SingleHandlerFactory(new RecordingHandler([])),
-            TimeProvider.System,
-            NullLogger<PhoneHomeConnectionService>.Instance);
+            new SingleHandlerFactory(handler),
+            clock ?? TimeProvider.System,
+            logger ?? NullLogger<PhoneHomeConnectionService>.Instance);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (!condition() && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+    }
+
+    /// <summary>
+    /// One advance, after a real pause so <c>Task.Delay</c> has armed its timer on the fake clock.
+    /// A second advance of the same step would walk past today's 8s backoff and hide the cap.
+    /// </summary>
+    private static async Task ArmAndAdvanceAsync(FakeTimeProvider time, TimeSpan step)
+    {
+        await Task.Delay(50);
+        time.Advance(step);
     }
 
     private static string WriteTemp(string name)
@@ -532,6 +722,57 @@ public class PhoneHomeConnectionServiceTests
         var path = Path.Combine(Path.GetTempPath(), "c490-" + Guid.NewGuid().ToString("N") + name);
         File.WriteAllText(path, "test-secret");
         return path;
+    }
+
+    private sealed class HangingHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(status));
+    }
+
+    private sealed class TicketHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var json = JsonSerializer.Serialize(
+                new PhoneHomeRegistrationResponse(
+                    "ticket", DateTimeOffset.UtcNow.AddMinutes(5), Guid.NewGuid(), Guid.NewGuid(), 1),
+                PhoneHomeFraming.Json);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(string Message, Exception? Exception)> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel != LogLevel.Warning)
+                return;
+            lock (Warnings)
+                Warnings.Add((formatter(state, exception), exception));
+        }
     }
 
     private sealed class RecordingHandler(List<int> registrations) : HttpMessageHandler

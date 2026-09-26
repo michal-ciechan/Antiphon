@@ -19,6 +19,10 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     private readonly List<PhoneHomeFrame> _sent = [];
     private readonly Queue<SendHold> _holds = new();
     private Exception? _failNextSend;
+    private Exception? _failNextReceive;
+    private bool _emitClose;
+    private WebSocketCloseStatus? _closeStatus;
+    private string? _closeDescription;
     private byte[]? _partial;
     private int _partialOffset;
     private int _activeSends;
@@ -38,6 +42,30 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     /// <summary>The peer closes: the pending/next receive returns a Close message.</summary>
     public void CompleteIncoming() => _incoming.Writer.TryComplete();
 
+    /// <summary>
+    /// CARD-0716 D-4: the peer sends a close frame. The next receive returns Close and
+    /// <see cref="CloseStatus"/> names the status the runner's ended line must log.
+    /// State stays Open so a heartbeat send in flight is not turned into the ending fault.
+    /// </summary>
+    public void EnqueueClose(WebSocketCloseStatus status, string? description)
+    {
+        lock (_sync)
+        {
+            _closeStatus = status;
+            _closeDescription = description;
+            _emitClose = true;
+        }
+
+        _incoming.Writer.TryWrite([]);
+    }
+
+    /// <summary>CARD-0716 D-4: the next receive throws <paramref name="exception"/>.</summary>
+    public void FailNextReceive(Exception exception)
+    {
+        lock (_sync) _failNextReceive = exception;
+        _incoming.Writer.TryWrite([]);
+    }
+
     /// <summary>Hold the next send inside SendAsync until the returned hold is released.</summary>
     public SendHold HoldNextSend()
     {
@@ -51,8 +79,15 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
         lock (_sync) _failNextSend = ex;
     }
 
-    public override WebSocketCloseStatus? CloseStatus => null;
-    public override string? CloseStatusDescription => null;
+    public override WebSocketCloseStatus? CloseStatus
+    {
+        get { lock (_sync) return _closeStatus; }
+    }
+
+    public override string? CloseStatusDescription
+    {
+        get { lock (_sync) return _closeDescription; }
+    }
     public override string? SubProtocol => null;
     public override WebSocketState State
     {
@@ -86,6 +121,25 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
             if (!await _incoming.Reader.WaitToReadAsync(cancellationToken)
                 || !_incoming.Reader.TryRead(out var message))
                 return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+
+            Exception? fail;
+            var emitClose = false;
+            lock (_sync)
+            {
+                fail = _failNextReceive;
+                _failNextReceive = null;
+                if (_emitClose)
+                {
+                    emitClose = true;
+                    _emitClose = false;
+                }
+            }
+
+            if (fail is not null)
+                throw fail;
+            if (emitClose)
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+
             _partial = message;
             _partialOffset = 0;
         }
