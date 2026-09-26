@@ -201,7 +201,8 @@ public sealed class RunnerAlarmCoordinator(
                     findings[key] = new JournalFinding(path, inspection.CommonDirectory ?? path, inspection.StaleCount, now)
                     {
                         Records = inspection.Findings.Select(record => new JournalAlarmRecord(
-                            record.File, record.State, record.Age, record.ProcessId, record.WrittenAt)).ToArray(),
+                            record.File, record.State, record.Age, record.ProcessId, record.WrittenAt)
+                        { Stale = record.Stale }).ToArray(),
                     };
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

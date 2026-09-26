@@ -32,7 +32,11 @@ public sealed record JournalAlarmRecord(
     JournalRecordState State,
     TimeSpan Age,
     int? ProcessId,
-    DateTimeOffset WrittenAt);
+    DateTimeOffset WrittenAt)
+{
+    /// <summary>The inspector's age and state verdict; the feed must not recalculate it.</summary>
+    public bool Stale { get; init; }
+}
 
 public sealed record JournalFinding(
     string Repository,

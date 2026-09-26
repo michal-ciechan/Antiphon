@@ -110,10 +110,11 @@ public sealed class RunnerAlarmAttentionTests
             [Guid.NewGuid(), Guid.NewGuid()], []);
 
     private static JournalAlarmRecord Record(string file, JournalRecordState kind, DateTimeOffset at) =>
-        new(file, kind, Now - at, 42, at);
+        new(file, kind, Now - at, 42, at)
+        { Stale = kind != JournalRecordState.Alive && Now - at >= TimeSpan.FromMinutes(5) };
 
     private static JournalFinding Finding(string repository, string common, params JournalAlarmRecord[] records) =>
-        new(repository, common, records.Count(record => record.State != JournalRecordState.Alive), Now)
+        new(repository, common, records.Count(record => record.Stale), Now)
         { Records = records };
 
     private static RunnerAlarmSnapshot Snapshot(
