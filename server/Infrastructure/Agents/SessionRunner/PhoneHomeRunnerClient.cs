@@ -35,6 +35,12 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<RunnerProviderAuthDto>(frame);
     }
 
+    public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
+        throw new NotImplementedException();
+
+    public Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct) =>
+        throw new NotImplementedException();
+
     public async Task<string?> GetHealthAsync(CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Health, null, ct);
