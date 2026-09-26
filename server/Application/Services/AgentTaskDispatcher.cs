@@ -936,6 +936,10 @@ public sealed class AgentTaskDispatcher
     /// <summary>
     /// CARD-0727 D-8. An unlaunched, non-SourceLanding task on a draining runner with an eligible
     /// redirect is moved before the ordinary gates. The row is saved before any request to the target.
+    /// The tick's Queued list is a snapshot: a mirror can record its path after that load, and an
+    /// earlier claim rollback can detach the instance. Reload before reading the path, reattaching
+    /// when the tracker was cleared, and leave the row alone when it is no longer a queued task
+    /// with no session on this runner.
     /// </summary>
     private async Task<string> RebindDrainingAsync(AgentTask task, string runnerId, CancellationToken ct)
     {
@@ -946,6 +950,12 @@ public sealed class AgentTaskDispatcher
             return runnerId;
         if (!DrainRedirectEligible(state.RedirectTo))
             return runnerId;
+        if (!await ReloadForDrainRebindAsync(task, ct)
+            || task.Status != AgentTaskStatus.Queued
+            || task.AgentSessionId is not null
+            || task.SourceLandingOperationId is not null
+            || !string.Equals(task.RunnerId, runnerId, StringComparison.Ordinal))
+            return task.RunnerId ?? runnerId;
 
         var target = state.RedirectTo;
         var oldPath = task.RemoteWorktreePath;
@@ -979,6 +989,22 @@ public sealed class AgentTaskDispatcher
         });
         await _db.SaveChangesAsync(ct);
         return target;
+    }
+
+    /// <summary>
+    /// Re-reads <paramref name="task"/> so a drain rebind uses the row the database has now.
+    /// A detached instance (an earlier rollback cleared the tracker) is attached first;
+    /// Reload throws on a detached entity.
+    /// </summary>
+    private async Task<bool> ReloadForDrainRebindAsync(AgentTask task, CancellationToken ct)
+    {
+        if (!await _db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id == task.Id, ct))
+            return false;
+        var entry = _db.Entry(task);
+        if (entry.State == EntityState.Detached)
+            _db.Attach(task);
+        await entry.ReloadAsync(ct);
+        return true;
     }
 
     private bool DrainRedirectEligible(string target)
