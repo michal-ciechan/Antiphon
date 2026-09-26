@@ -118,14 +118,14 @@ public sealed class RunnerAlarmDeliveryTests
         await SeedPinnedAsync(rig, AgentTaskStatus.Working);
         await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
-        await UntilProductionPromptAsync(rig, "[runner server2 unavailable]");
+        await UntilPromptAsync(rig, "[runner server2 unavailable]");
 
         rig.Source.Rows[0] = rig.Source.Rows[0] with { Eligible = true, DisconnectReason = null };
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(444), CancellationToken.None);
         (await PromptsAsync(rig)).ShouldNotContain(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal));
 
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(445), CancellationToken.None);
-        var recovery = await UntilProductionPromptAsync(rig, "[runner server2 recovered]");
+        var recovery = await UntilPromptAsync(rig, "[runner server2 recovered]");
         recovery.ShouldContain("after 7.4 min");
         (await PromptsAsync(rig)).Count(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal)).ShouldBe(1);
         (await RowAsync(rig, recovery)).Status.ShouldBe(QueuedMessageStatus.Sent);
@@ -142,7 +142,7 @@ public sealed class RunnerAlarmDeliveryTests
         await SeedPinnedAsync(rig, AgentTaskStatus.Working);
         await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
-        await UntilProductionPromptAsync(rig, "[runner server2 unavailable]");
+        await UntilPromptAsync(rig, "[runner server2 unavailable]");
 
         rig.Source.Rows[0] = rig.Source.Rows[0] with { Eligible = true, DisconnectReason = null };
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(444), CancellationToken.None);
@@ -155,7 +155,7 @@ public sealed class RunnerAlarmDeliveryTests
             .Status.ShouldBe(QueuedMessageStatus.Pending);
 
         await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(445), CancellationToken.None);
-        var recovery = await UntilProductionPromptAsync(rig, "[runner server2 recovered]");
+        var recovery = await UntilPromptAsync(rig, "[runner server2 recovered]");
         recovery.ShouldContain("after 7.4 min");
         (await RowAsync(rig, recovery)).Status.ShouldBe(QueuedMessageStatus.Sent);
         flush.Calls.Count(id => id == rig.Harness.SessionId).ShouldBeGreaterThanOrEqualTo(3);
@@ -179,16 +179,20 @@ public sealed class RunnerAlarmDeliveryTests
         var t1 = T0.AddHours(1);
         await coordinator.EvaluateRunnersAsync(t1, CancellationToken.None);
         await coordinator.EvaluateRunnersAsync(t1.AddSeconds(180), CancellationToken.None);
+        var secondBody = (await rig.Db.SessionQueuedMessages.AsNoTracking()
+            .Where(row => row.AgentSessionId == rig.Harness.SessionId && row.Id != first.Id)
+            .ToListAsync()).Single().Body;
+        await rig.Harness.Queue.OnTurnEndAsync(rig.Harness.SessionId, CancellationToken.None);
         await UntilAsync(async () =>
         {
-            await rig.Harness.Queue.FlushIfIdleAsync(rig.Harness.SessionId, CancellationToken.None);
             var text = string.Join("\n", await PromptsAsync(rig));
             return text.Contains(firstBody, StringComparison.Ordinal)
-                && text.Contains("[runner server2 unavailable]", StringComparison.Ordinal);
+                && text.Contains(secondBody, StringComparison.Ordinal);
         });
         rig.Db.ChangeTracker.Clear();
         var joined = string.Join("\n", await PromptsAsync(rig));
         joined.ShouldContain(firstBody);
+        joined.ShouldContain(secondBody);
         (await rig.Db.SessionQueuedMessages.AsNoTracking().Where(row => row.AgentSessionId == rig.Harness.SessionId).ToListAsync())
             .ShouldAllBe(row => row.Status == QueuedMessageStatus.Sent);
         await rig.Worker.StopAsync(CancellationToken.None);
@@ -261,20 +265,8 @@ public sealed class RunnerAlarmDeliveryTests
             .Where(entry => entry.AgentSessionId == rig.Harness.SessionId && entry.Kind == TranscriptKinds.UserPrompt)
             .Select(entry => entry.Text ?? "").ToListAsync();
 
-    private static async Task<string> UntilPromptAsync(Rig rig, string header)
-    {
-        string? found = null;
-        await UntilAsync(async () =>
-        {
-            await rig.Harness.Queue.FlushIfIdleAsync(rig.Harness.SessionId, CancellationToken.None);
-            found = (await PromptsAsync(rig)).FirstOrDefault(text => text.Contains(header, StringComparison.Ordinal));
-            return found is not null;
-        });
-        return found!;
-    }
-
     /// <summary>Polls the transcript only. A test-side flush would hide a missing production hint.</summary>
-    private static async Task<string> UntilProductionPromptAsync(Rig rig, string header)
+    private static async Task<string> UntilPromptAsync(Rig rig, string header)
     {
         string? found = null;
         await UntilAsync(async () =>
