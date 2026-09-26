@@ -32,6 +32,8 @@ handoff. A queue insert, Kafka acknowledgement, live screen or agent Running sta
 acceptance/attempt signal. Only a complete matching recipient `UserPrompt` beyond the original
 attempt floor confirms delivery. The existing queue attempt cap and decision hold apply to
 uncertain terminal writes.
+Capacity notices use the reply handle captured in that inbound envelope, even if the channel
+catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 
 ## What the chat sees
 

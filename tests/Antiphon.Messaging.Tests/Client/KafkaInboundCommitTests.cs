@@ -160,22 +160,28 @@ public sealed class KafkaInboundCommitTests
         }
         (await CommittedAsync(topic, group, 0)).ShouldBe(1);
 
-        var (gapTopic, gapGroup) = await CreateTopicAsync();
+        var (gapTopic, gapGroup) = await CreateTopicAsync(2);
         await ProduceAsync(gapTopic, 0, "gap first");
         await ProduceAsync(gapTopic, 0, "gap second");
+        await ProduceAsync(gapTopic, 1, "independent partition");
         var gapClient = Client(gapTopic, gapGroup);
         await using (var e = gapClient.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
         {
-            (await e.MoveNextAsync()).ShouldBeTrue();
-            e.Current.Message!.Text.ShouldBe("gap first");
-            var unresolved = e.Current;
-            (await e.MoveNextAsync()).ShouldBeTrue();
-            e.Current.Message!.Text.ShouldBe("gap second");
-            await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+            var records = new Dictionary<string, InboundDelivery>();
+            while (records.Count < 3)
+            {
+                (await e.MoveNextAsync()).ShouldBeTrue();
+                records.Add(e.Current.Message!.Text!, e.Current);
+            }
+            await records["gap second"].AcknowledgeAsync("accepted", timeout.Token);
             (await CommittedAsync(gapTopic, gapGroup, 0)).ShouldBeLessThanOrEqualTo(0);
-            await unresolved.AcknowledgeAsync("accepted", timeout.Token);
+            await records["independent partition"].AcknowledgeAsync("accepted", timeout.Token);
+            (await CommittedAsync(gapTopic, gapGroup, 1)).ShouldBe(1);
+            (await CommittedAsync(gapTopic, gapGroup, 0)).ShouldBeLessThanOrEqualTo(0);
+            await records["gap first"].AcknowledgeAsync("accepted", timeout.Token);
         }
         (await CommittedAsync(gapTopic, gapGroup, 0)).ShouldBe(2);
+        (await CommittedAsync(gapTopic, gapGroup, 1)).ShouldBe(1);
 
         var (poisonTopic, poisonGroup) = await CreateTopicAsync();
         await ProduceRawAsync(poisonTopic, 0, "{invalid-json");

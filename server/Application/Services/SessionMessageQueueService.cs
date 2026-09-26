@@ -3019,6 +3019,11 @@ public sealed partial class SessionMessageQueueService
         db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
             && m.Body == body && m.SpecialistInputPolicyJson != null, ct);
 
+    private static Task<bool> RequiresSubmittedChannelPromptAsync(
+        AppDbContext db, Guid sessionId, string body, CancellationToken ct) =>
+        db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
+            && m.Body == body && m.Origin == QueuedMessageOrigin.Channel, ct);
+
     private async Task<bool> RequiresCompleteSpecialistPromptAsync(
         Guid sessionId, string body, CancellationToken ct)
     {
@@ -3713,6 +3718,7 @@ public sealed partial class SessionMessageQueueService
         AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
     {
         var fullInline = await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
+        var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var candidates = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
@@ -3722,21 +3728,24 @@ public sealed partial class SessionMessageQueueService
                         && (t.ToolName == GrokQuestionTool.AskUserQuestionName
                             || (t.Text != null
                                 && t.Text.StartsWith(GrokQuestionTool.CompletedAnswerPrefix)))))
-                && (!fullInline || t.Kind == TranscriptKinds.UserPrompt)
+                && (!(fullInline || channelPrompt) || t.Kind == TranscriptKinds.UserPrompt)
                 && t.Timestamp != null
                 && t.Timestamp >= confirmFrom)
             .OrderBy(t => t.Sequence)
             .Select(t => t.Text)
             .ToListAsync(ct);
 
+        var incomplete = TranscriptConfirm.None;
         foreach (var text in candidates)
         {
             var match = TranscriptConfirm.Classify(body, text, fullInline);
-            if (match.Identity)
+            if (match.Complete)
                 return match;
+            if (match.Identity && !incomplete.Identity)
+                incomplete = match;
         }
 
-        return TranscriptConfirm.None;
+        return incomplete;
     }
 
     /// <summary>
@@ -3859,6 +3868,7 @@ public sealed partial class SessionMessageQueueService
         AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
     {
         var fullInline = await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
+        var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var texts = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
@@ -3871,20 +3881,23 @@ public sealed partial class SessionMessageQueueService
                         && (t.ToolName == GrokQuestionTool.AskUserQuestionName
                             || (t.Text != null
                                 && t.Text.StartsWith(GrokQuestionTool.CompletedAnswerPrefix)))))
-                && (!fullInline || t.Kind == TranscriptKinds.UserPrompt)
+                && (!(fullInline || channelPrompt) || t.Kind == TranscriptKinds.UserPrompt)
                 && t.Sequence > baselineSequence)
             .OrderBy(t => t.Sequence)
             .Select(t => t.Text)
             .ToListAsync(ct);
 
+        var incomplete = TranscriptConfirm.None;
         foreach (var text in texts)
         {
             var match = TranscriptConfirm.Classify(body, text, fullInline);
-            if (match.Identity)
+            if (match.Complete)
                 return match;
+            if (match.Identity && !incomplete.Identity)
+                incomplete = match;
         }
 
-        return TranscriptConfirm.None;
+        return incomplete;
     }
 
     private async Task<bool> WaitForComposerEvidenceAsync(
