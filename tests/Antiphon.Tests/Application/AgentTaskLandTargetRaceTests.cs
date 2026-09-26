@@ -178,6 +178,9 @@ public sealed class AgentTaskLandTargetRaceTests
         await h.InitializeAsync();
         var f = h.Fixture;
         var reviewed = await h.AddSourceAsync();
+        // A rebase onto the seed is a no-op and skips verification. Move master first so the candidate is verified once.
+        await f.RequiredAsync(f.Repository, "commit", "--allow-empty", "-m", "base moved");
+        await f.RequiredAsync(f.Repository, "push", "origin", f.TargetRef);
         var pushes = 0;
         f.Git.BeforeCommand = (_, a) =>
         {
