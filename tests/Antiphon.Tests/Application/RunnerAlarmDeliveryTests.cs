@@ -110,6 +110,56 @@ public sealed class RunnerAlarmDeliveryTests
     }
 
     [Test]
+    [Timeout(60_000)]
+    public async Task a_failed_recovery_insert_is_retried_and_delivered_once()
+    {
+        var fault = new FailFirstBodyInsert("[runner server2 recovered]");
+        await using var rig = await StartAsync(configure: options => options.AddInterceptors(fault));
+        await SeedPinnedAsync(rig, AgentTaskStatus.Working);
+        await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        await UntilProductionPromptAsync(rig, "[runner server2 unavailable]");
+
+        rig.Source.Rows[0] = rig.Source.Rows[0] with { Eligible = true, DisconnectReason = null };
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(444), CancellationToken.None);
+        (await PromptsAsync(rig)).ShouldNotContain(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal));
+
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(445), CancellationToken.None);
+        var recovery = await UntilProductionPromptAsync(rig, "[runner server2 recovered]");
+        recovery.ShouldContain("after 7.4 min");
+        (await PromptsAsync(rig)).Count(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal)).ShouldBe(1);
+        (await RowAsync(rig, recovery)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        await rig.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task a_dropped_recovery_hint_is_re_hinted_and_delivered_once()
+    {
+        // Call 1 is the outage hint. Call 2 is the recovery hint, which is dropped.
+        var flush = new DropNthFlushQueue(2);
+        await using var rig = await StartAsync(flush);
+        await SeedPinnedAsync(rig, AgentTaskStatus.Working);
+        await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        await UntilProductionPromptAsync(rig, "[runner server2 unavailable]");
+
+        rig.Source.Rows[0] = rig.Source.Rows[0] with { Eligible = true, DisconnectReason = null };
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(444), CancellationToken.None);
+        await Task.Delay(100);
+        (await PromptsAsync(rig)).ShouldNotContain(text => text.Contains("[runner server2 recovered]", StringComparison.Ordinal));
+        (await rig.Db.SessionQueuedMessages.AsNoTracking().SingleAsync(row => row.Body.Contains("[runner server2 recovered]", StringComparison.Ordinal)))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(445), CancellationToken.None);
+        var recovery = await UntilProductionPromptAsync(rig, "[runner server2 recovered]");
+        recovery.ShouldContain("after 7.4 min");
+        (await RowAsync(rig, recovery)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        flush.Calls.Count(id => id == rig.Harness.SessionId).ShouldBeGreaterThanOrEqualTo(3);
+        await rig.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
     [Timeout(90_000)]
     public async Task a_note_orphaned_by_a_restart_is_typed_with_the_next_flush()
     {
@@ -220,6 +270,18 @@ public sealed class RunnerAlarmDeliveryTests
         return found!;
     }
 
+    /// <summary>Polls the transcript only. A test-side flush would hide a missing production hint.</summary>
+    private static async Task<string> UntilProductionPromptAsync(Rig rig, string header)
+    {
+        string? found = null;
+        await UntilAsync(async () =>
+        {
+            found = (await PromptsAsync(rig)).FirstOrDefault(text => text.Contains(header, StringComparison.Ordinal));
+            return found is not null;
+        });
+        return found!;
+    }
+
     private static async Task<SessionQueuedMessage> PendingAsync(Rig rig) =>
         await rig.Db.SessionQueuedMessages.AsNoTracking().SingleAsync(row => row.AgentSessionId == rig.Harness.SessionId);
 
@@ -253,6 +315,21 @@ public sealed class RunnerAlarmDeliveryTests
             if (data.Context!.ChangeTracker.Entries<SessionQueuedMessage>().Any(entry => entry.State == EntityState.Added)
                 && Interlocked.CompareExchange(ref _failures, 1, 0) == 0)
                 throw new InvalidOperationException("owned first alarm insert failure");
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class FailFirstBodyInsert(string marker) : SaveChangesInterceptor
+    {
+        private int _failures;
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var added = data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(entry => entry.State == EntityState.Added
+                    && (entry.Entity.Body ?? "").Contains(marker, StringComparison.Ordinal));
+            if (added && Interlocked.CompareExchange(ref _failures, 1, 0) == 0)
+                throw new InvalidOperationException("owned recovery insert failure");
             return ValueTask.FromResult(result);
         }
     }

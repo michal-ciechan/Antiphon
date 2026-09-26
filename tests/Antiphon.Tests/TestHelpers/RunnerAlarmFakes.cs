@@ -60,6 +60,24 @@ internal sealed class RecordingFenceObserver : IRepositoryFenceObserver
     public void Fenced(string commonDirectory) => Commons.Add(commonDirectory);
 }
 
+/// <summary>Drops one 1-based <see cref="TryEnqueue"/> call and records every call.</summary>
+internal sealed class DropNthFlushQueue : CompletionNoteFlushQueue
+{
+    private readonly int _dropAt;
+    private int _calls;
+    public List<Guid> Calls { get; } = [];
+
+    public DropNthFlushQueue(int dropAt) => _dropAt = dropAt;
+
+    public override bool TryEnqueue(Guid sessionId)
+    {
+        Calls.Add(sessionId);
+        if (++_calls == _dropAt)
+            return true;
+        return base.TryEnqueue(sessionId);
+    }
+}
+
 internal sealed class DroppingFlushQueue : CompletionNoteFlushQueue
 {
     private int _remaining;
