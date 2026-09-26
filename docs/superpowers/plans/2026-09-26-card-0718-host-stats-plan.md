@@ -880,6 +880,50 @@ can be broken independently, and maps 1:1 to a distinct PC.
 | G-35 | D-3 | operation 29 answers the store snapshot | PC-35 |
 | G-36 | D-3 | operation 30 with a bad window is a 400 error frame | PC-36 |
 | G-37 | D-3 | no seam answers `phone_home_unsupported_operation` | PC-37 |
+| G-38 | D-4 | age is measured from the server's `observedAt`, never the runner's `At` | PC-38 |
+| G-39 | D-4 | `live` through exactly `StaleAfterMs` (inclusive) | PC-39 |
+| G-40 | D-4 | a stale host keeps its last values | PC-40 |
+| G-41 | D-4 | a never-sampled host projects null `current`, never zeros | PC-41 |
+| G-42 | D-4 | an unsupported failure projects `unsupported` | PC-42 |
+| G-43 | D-7 | `Changed` is false when nothing new arrived | PC-43 |
+| G-44 | D-7 | a state transition alone sets `Changed` | PC-44 |
+| G-45 | D-9 | a disabled poll projects `offline` with reason `disabled` | PC-45 |
+| G-46 | D-5 | `byStage` groups by `AgentTaskRole`, partitioned per host | PC-46 |
+| G-47 | D-5 | `held` counts only `CapacityWaitRetained` | PC-47 |
+| G-48 | D-5 | `landsPending` counts only `LandRequestedAt != null` | PC-48 |
+| G-49 | D-5 | a null **or empty** `RunnerId` is the desktop | PC-49 |
+| G-50 | D-5 | Blocked is open but not in flight | PC-50 |
+| G-51 | D-7 | the push goes to group `hosts`, not to all clients | PC-51 |
+| G-52 | D-7 | the poll publishes only when `Changed` | PC-52 |
+| G-53 | D-3 | each host request is cancelled at `RequestTimeoutMs` on the injected clock | PC-53 |
+| G-54 | D-3 | an unsupported error frame becomes a typed unsupported answer in `PhoneHomeRunnerClient` | PC-54 |
+| G-55 | D-3 | one host's failure is caught per host; the tick never faults | PC-55 |
+| G-56 | D-4 | a failure does not clear the last good sample | PC-56 |
+| G-57 | D-4 | an offline host keeps its last values | PC-57 |
+| G-58 | D-4 | a remote id with no live connection is `offline`, not `stale`/`live` | PC-58 |
+| G-59 | D-7 | `Changed` is cleared only after a publish succeeds | PC-59 |
+| G-60 | D-5, D-7 | the API projection carries the per-host counters | PC-60 |
+| G-61 | D-4, D-7 | series requests go to the resolved runner, not always the local one | PC-61 |
+| G-62 | D-7 | an unknown host id is 404 and reaches no runner | PC-62 |
+| G-63 | D-7 | metric/window are validated before any runner call | PC-63 |
+| G-64 | D-7 | a disconnected runner's series is 409 `phone_home_unavailable` | PC-64 |
+| G-65 | D-3 | the local host-stats read is one attempt (not an admitted read) | PC-65 |
+| G-66 | D-4 | a runner 404 is unsupported, not offline | PC-66 |
+| G-67 | D-3 | the local read ends at `RequestTimeoutMs` | PC-67 |
+| G-68 | D-8 | the series hook sends the requested window | PC-68 |
+| G-69 | D-4, D-8 | the page keeps a stale host's values under a Stale badge | PC-69 |
+| G-70 | D-4, D-8 | an offline card shows "No data", never `0 %` | PC-70 |
+| G-71 | D-8 | the sparkline path is one `M` then `L` per further point | PC-71 |
+| G-72 | D-8 | an empty series renders the placeholder, not a flat line | PC-72 |
+| G-73 | D-7, D-8 | the live hook joins group `hosts` | PC-73 |
+| G-74 | D-8 | a push is written with `setQueryData`, not a refetch | PC-74 |
+| G-75 | D-8 | a push appends to mounted series keys | PC-75 |
+| G-76 | D-8 | on reconnect the hook rejoins `hosts` and refetches the list | PC-76 |
+| G-77 | D-10 | the CP-4 measurement runner is launched with `PhoneHome__*`/`SessionRunner__*`/`ASPNETCORE_*` scrubbed, `--PhoneHome:Enabled false` and `--urls http://127.0.0.1:0` | PC-77 |
+
+Totals: guards = 77, mapped = 77, missing = 0, duplicate PC maps = 0. Not guards (evidence only):
+V-13's live reads and CP-4's overhead number (a measurement with its own threshold), CP-9's
+activation check.
 
 ### Checkpoints
 
