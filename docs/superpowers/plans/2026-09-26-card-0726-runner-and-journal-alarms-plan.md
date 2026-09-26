@@ -1158,3 +1158,50 @@ note's wording) are named in their V row but carry no PC.
 | G-67 | D-6 | the client puts both kinds in the `broken` home bucket at `Error` | PC-67 |
 
 Guards = 67, mapped = 67, missing = 0, duplicate PC maps = 0.
+
+### Positive controls
+
+Mutation runs each after land: apply the compiling defect, run **only** the named method with
+`--treenode-filter "/*/*/<Class>/<Method>"` through `scripts/build-slot.ps1` (one invocation per
+method; method-level OR is never used), see the named assertion fail, restore the file and
+refresh its timestamp, run the same method green. A build error, a fixture error or zero executed
+tests is not red. Batch only PCs in different production files **and** different test methods.
+Code runs the V/R rows; Review judges this list before land. Server PCs use
+`tests/Antiphon.Tests` into `bin-c726-pc/`; client PCs run
+`pwsh -File scripts/test-client.ps1 attentionVisuals.test -t "<test name>"` under a build slot.
+
+| PC | Break (file: compiling defect) | Red method | At |
+|---|---|---|---|
+| PC-1 | `PhoneHomeRunnerDirectory.cs`: delete the `Notify(runnerId)` after `MarkRecovered`'s flip | `RunnerEligibilityObserverTests.disconnect_recovery_and_supersede_notify_the_observer_with_the_runner_id` | recorder `[a]` after `MarkRecovered` |
+| PC-2 | same file: delete the `Notify` for the superseded connection in `AcceptConnect` | same method | recorder `[a, a]` after the replacement connects |
+| PC-3 | same file: delete the `Notify` after `Disconnect` | same method | fourth `a` after the abort |
+| PC-4 | same file: delete the `Notify` in `SnapshotOf`'s expiry branch | `RunnerEligibilityObserverTests.lease_expiry_seen_by_a_snapshot_notifies_once` | recorder count 2 (is 1) |
+| PC-5 | same file: notify on every expired read (drop the "was eligible" edge test) | same method | recorder count 2 (is 4) |
+| PC-6 | same file (snapshot source): `Eligible = status.Available` | `RunnerEligibilityObserverTests.snapshots_carry_one_row_per_configured_remote_with_the_dispatch_predicate` | connected-not-recovered `Eligible == false` |
+| PC-7 | `RepositoryMutationLease.cs`: call `fences?.Fenced(common)` in the `catch (IOException)` branch | `RepositoryFenceObserverTests.a_fenced_acquire_and_a_describe_name_the_common_directory_once_each` | busy-lock recorder `[]` |
+| PC-8 | `PhoneHomeRunnerDirectory.cs`: remove the `try/catch` around the observer call | `RunnerEligibilityObserverTests.a_throwing_observer_is_contained_and_logged` | first `Should.NotThrow` |
+| PC-9 | same file: move `MarkRecovered`'s `Notify` inside `lock (_gate)` | `RunnerEligibilityObserverTests.the_observer_runs_outside_the_directory_gate` | first recorded cross-thread result `true` |
+| PC-10 | `RepositoryMutationLease.cs`: delete the `Fenced` call in `AcquireAsync`'s journal branch | `RepositoryFenceObserverTests.a_fenced_acquire_and_a_describe_name_the_common_directory_once_each` | recorder `[common]` |
+| PC-11 | same file: delete the `Fenced` call in `DescribeUnavailableAsync` | same method | recorder `[common, common]` |
+| PC-12 | `AlarmSettingsValidator.cs`: delete the `RunnerGraceSeconds <= 0` check | `AlarmSettingsValidatorTests.defaults_validate_and_nonpositive_values_are_named` | `Alarms:RunnerGraceSeconds` failure |
+| PC-13 | same file: delete the `SweepMinutes <= 0` check | same method | `Alarms:SweepMinutes` failure |
+| PC-14 | same file: delete the `JournalStaleMinutes <= 0` check | same method | `Alarms:JournalStaleMinutes` failure |
+| PC-15 | `RepositoryChildJournalInspector.cs`: `Stale = age >= staleAfter` (drop `State != Alive`) | `RepositoryChildJournalInspectorTests.a_live_record_is_alive_and_never_stale` | `Stale == false` |
+| PC-16 | same file: map a `false` liveness read to `Alive` | `RepositoryChildJournalInspectorTests.dead_completed_unknown_and_malformed_records_past_the_threshold_are_stale` | state multiset |
+| PC-17 | same file: map `Completed` to `Alive` | same method | state multiset |
+| PC-18 | same file: the fall-through arm returns `Alive` instead of `Unknown` | same method | state multiset |
+| PC-19 | same file: `continue` past non-`.json` names | same method | state multiset (5 findings) |
+| PC-20 | same file: `File.Delete(path)` after classifying `Dead` | same method | all seven files exist |
+| PC-21 | same file: open `<common>/antiphon/landing.lock` with `FileMode.OpenOrCreate` at the start of `InspectAsync` | same method | `landing.lock` absent |
+| PC-22 | same file: `Stale = State != Alive` (drop the age term) | `RepositoryChildJournalInspectorTests.age_threshold_is_inclusive_and_an_absent_journal_raises_nothing` | 4:59 `Stale == false` |
+| PC-23 | same file: map a `null` liveness read to `Alive` | `RepositoryChildJournalInspectorTests.a_record_whose_process_cannot_be_read_is_unknown_and_stale` | `State == Unknown` |
+| PC-24 | same file: return an empty inspection when `children` is not a directory | `RepositoryChildJournalInspectorTests.a_children_path_that_is_a_file_is_one_malformed_finding` | finding count 1 |
+| PC-25 | `RunnerAlarmCoordinator.cs`: compare against `grace / 2` | `RunnerAlarmCoordinatorTests.a_runner_down_past_the_grace_raises_once_with_counts_and_one_note_per_caller` | `RaisedAt == null` at `t0+179` |
+| PC-26 | same file: delete the `RaisedAt = now` raise assignment | same method | `RaisedAt == t0+180` |
+| PC-27 | same file: drop `Queued` from the open-status set | same method | `PinnedOpenTasks == 4` (is 3) |
+| PC-28 | same file: drop the `NotSpecialist` filter | same method | `PinnedOpenTasks == 4` (is 5) |
+| PC-29 | same file: drop the `ReplyTo == Session` caller filter | same method | exactly two notes (P5 added) |
+| PC-30 | same file: drop the "already in `NotifiedSessionIds`" check | same method | note count at `t0+240` |
+| PC-31 | same file: close an unraised episode through the resolve branch | `RunnerAlarmCoordinatorTests.a_flap_inside_the_grace_leaves_no_trace` | notifier empty |
+| PC-32 | same file: send recovery notes to the current callers query instead of `NotifiedSessionIds` | `RunnerAlarmCoordinatorTests.recovery_resolves_and_tells_only_the_notified_callers` | recovery set `{P1, P2}` (P3 added) |
+| PC-33 | same file: keep the episode after resolving | same method | no episode |
