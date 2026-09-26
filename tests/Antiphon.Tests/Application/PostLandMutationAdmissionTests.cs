@@ -4,6 +4,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -236,7 +237,9 @@ public sealed class PostLandMutationAdmissionTests
         {
             var project = await db.Projects.SingleAsync();
             (await db.AgentTasks.SingleAsync(t => t.Id == world.Host.Fixture.TaskId)).ProjectId = project.Id;
-            for (var i = 0; i < 3; i++)
+            // TaskService falls back to new DelegationSettings(); fill that absolute cap.
+            var openCap = new DelegationSettings().MaxOpenTasks;
+            for (var i = 0; i < openCap; i++)
             {
                 var id = Guid.NewGuid();
                 db.AgentTasks.Add(new AgentTask
