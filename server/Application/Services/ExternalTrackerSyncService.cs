@@ -22,6 +22,8 @@ public sealed class ExternalTrackerSyncService
 
     // Queue removals accumulated while reconciling boards; published after SyncAsync's save.
     private readonly List<AgentQueueRemoval> _pendingQueueRemovals = [];
+    // CARD-0738. Terminal landings accumulated beside the queue removals and settled after the save.
+    private readonly List<CardClosure> _pendingClosures = [];
 
     public ExternalTrackerSyncService(
         AppDbContext db,
@@ -63,6 +65,7 @@ public sealed class ExternalTrackerSyncService
         var changedBoardIds = new HashSet<Guid>();
         var syncedIssues = 0;
         _pendingQueueRemovals.Clear();
+        _pendingClosures.Clear();
 
         foreach (var board in boards)
         {
@@ -122,6 +125,7 @@ public sealed class ExternalTrackerSyncService
                 AgentService.DescribeDbFailure(ex));
             _db.ChangeTracker.Clear();
             _pendingQueueRemovals.Clear();
+            _pendingClosures.Clear();
             return syncedIssues;
         }
 
@@ -129,7 +133,13 @@ public sealed class ExternalTrackerSyncService
             await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = changedBoardId }, ct);
         foreach (var queueRemoval in _pendingQueueRemovals)
             await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
+        if (_taskSettlement is not null)
+        {
+            foreach (var closure in _pendingClosures)
+                await _taskSettlement.SettleClosedCardAsync(closure, ct);
+        }
 
+        _pendingClosures.Clear();
         return syncedIssues;
     }
 
@@ -191,9 +201,12 @@ public sealed class ExternalTrackerSyncService
                     continue;
                 }
 
+                var wasTerminal = existingRef.Card.BoardColumn.IsTerminal;
                 if (UpdateExisting(existingRef, targetColumn, issue, isBlocked, ownsNonTerminal, utcNow, config.OperatorLogins))
                 {
                     changed = true;
+                    if (!wasTerminal && existingRef.Card.BoardColumn.IsTerminal)
+                        RememberClosure(existingRef.Card, utcNow);
                     // Self-guarding: only acts if the tracker state landed the card in
                     // Review/Done/Canceled (possible when a board maps its active column oddly).
                     var upsertQueueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(
@@ -635,6 +648,7 @@ public sealed class ExternalTrackerSyncService
                 continue;
 
             changed = true;
+            RememberClosure(staleRef.Card, utcNow);
             // A terminal status ends the card's stay in its agent's queue (work remaining only) —
             // otherwise the next agent start re-spawns a session onto the closed card.
             var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(
@@ -648,6 +662,16 @@ public sealed class ExternalTrackerSyncService
 
         return changed;
     }
+
+    private void RememberClosure(Card card, DateTime at) =>
+        _pendingClosures.Add(new CardClosure(
+            card.Id,
+            card.Identifier,
+            card.BoardId,
+            CardClosureKind.Closed,
+            card.Status,
+            card.TerminalReason ?? string.Empty,
+            card.CompletedAt ?? at));
 
     private static bool MarkInactive(
         ExternalIssueRef externalRef,
