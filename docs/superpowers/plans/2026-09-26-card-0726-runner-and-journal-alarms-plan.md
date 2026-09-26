@@ -558,7 +558,7 @@ behaviour is fixed:
   returns" would leave a failed caller permanently untold and would then send it a recovery note
   for an outage it never heard of.)
 - **TD-2 (lost flush hint).** The CARD-0699 backstop sweep re-flushes only rows with a
-  `SourceTaskId` and `ContentDigest` (`CompletionNoteWorkHostedService.cs:69-71`), and
+  `SourceTaskId` and `ContentDigest` (`CompletionNoteWorkHostedService.cs:69-71`, `:156`), and
   `FlushStrandedQueuesAsync` picks up only always-on sessions or Delegation/Supervision/Mention
   origins (`QueueAttention.cs:85-90`). A `System` alarm note whose `TryEnqueue` was dropped, or
   whose flush threw, therefore waits for the caller's next turn end, which never comes for an
@@ -588,14 +588,14 @@ Bodies read by TestDesign at `4fe3bce9`, and what each changes in the roster:
   inline with no observer: **MS-1** adds `IRunnerEligibilityObserver? observer = null` passed to
   the constructor; `Logs` (`CapturingLoggerProvider`) captures the Warning V-22 asserts;
   `ConnectPeerAsync(runnerId:, storeId:, secret:)` and `WaitLiveAsync(runnerId:)` are the peer
-  verbs -> V-2, V-3, V-21..V-23, V-34 is not a directory test.
+  verbs -> V-2, V-3, V-21..V-23, V-35.
 - `tests/Antiphon.Tests/Application/MultiRunnerDirectoryTests.cs` (7 `[Test]`, `Pair(secretA,
   secretB)` configured map, `Socket.Abort()` then replacement at `:88-89`) and
   `DefaultRunnerEligibilityTests.cs` (3, `FakeTimeProvider` host, `Advance(91 s)` expires the lease
   at `:79`) | the supersede and lease-expiry recipes V-2 and V-3 copy; both classes join R-1.
 - `server/Infrastructure/Git/RepositoryMutationLease.cs:20-80` | `AcquireAsync` returns null for
   two different reasons: the journal fence (`:33-37`) and a busy `landing.lock` (`IOException`,
-  `:52`); only the first may call `Fenced` -> V-4 gains the busy-lock boundary (G-7).
+  `:53`); only the first may call `Fenced` -> V-4 gains the busy-lock boundary (G-7).
 - `server/Infrastructure/Git/RepositoryChildJournal.cs:1-140` and `LandingGit.cs:35-46` |
   `HasUnfinishedAsync` fences on a `children` file, any non-`.json` name, a torn or foreign record,
   an alive or unreadable PID, and a dead one; `IsProcessAliveAsync` is non-virtual, returns false
@@ -621,7 +621,7 @@ Bodies read by TestDesign at `4fe3bce9`, and what each changes in the roster:
   transcript row (CARD-0055), so a delivered note is observable as a transcript row; the
   busy-caller recipe is `SetWorkingAsync(connection, session, true)` then `FlushIfIdleAsync`
   (zero `Adapter.Inputs`) then TurnEnd + `OnTurnEndAsync` -> V-16, V-30..V-34 use it; the
-  `RecoveryWorker(h, clock)` / `RecoveryClock` shape of `PostLandMutationDeliveryTests.CompletionRecovery.cs:258-285`
+  `RecoveryWorker(h, clock)` / `RecoveryClock` shape of `PostLandMutationDeliveryTests.CompletionRecovery.cs:234-263`
   is copied (it is `private` there: **MS-3** copies the two helpers into the new class).
 - `server/Application/Services/AttentionService.cs:128-156, 225-235` and
   `DispatchHeldAttentionTests.cs:262-277` | six positional arguments plus named optionals;
@@ -651,3 +651,45 @@ expiry read once and twice (V-3); fence vs busy lock (V-4); two worktrees of one
 (V-13); idle, busy and failing recipients (V-30..V-34). Excluded: a runner removed from
 configuration while an episode is open (configuration is bound at startup; a change restarts the
 server and D-3's restart rule applies).
+
+### Delivery inventory
+
+Two paths deliver session input (DP-1, DP-2); three are in-process signals or read-time
+projections whose "recipient" is the alarm state or the feed (DP-3..DP-5). The durable identity
+for DP-1/DP-2 is the **queue row id** (`SessionQueuedMessage.Id`, returned through `onCreated`,
+TD-2), joined to the episode `(RunnerId, DownSince)` and the caller `AgentSessionId`. The
+recipient receipt is a **complete `UserPrompt` transcript row** on the caller session whose text
+contains the note's header line and its whole body, with the row `Sent`; a queue row, a
+`TryEnqueue` call, a `NotifiedSessionIds` entry or a `Sent` flag alone is never counted.
+
+| Path | Producer | Destination | Persistence boundary | Recovery at each handoff | Observable receipt |
+|---|---|---|---|---|---|
+| DP-1 outage note | `RunnerAlarmCoordinator` raise (D-4) -> `QueueRunnerAlarmNotifier.NotifyAsync` | caller session composer, via `EnqueueAsync(System, WhenIdle, deliverIfIdle: false)` -> `CompletionNoteFlushQueue.TryEnqueue` -> flush worker `FlushIfIdleAsync`, or `OnTurnEndAsync` for a busy caller | `SessionQueuedMessages` row `Pending` (the only durable hop; the episode is memory, D-3) | H1 enqueue throws: session not recorded, retried next wake (TD-1; V-28, V-33). H2 row saved, hint dropped: re-hint by row id on the next wake/sweep (TD-2; V-32). H3 caller busy: held, typed at its turn end (V-31). H4 crash after the row, before the hint: the row survives; the restart re-raises after the grace and that note's flush drains every Pending row of the session (V-34). H5 crash before the enqueue: nothing durable; the restart re-opens the episode (D-3) and raises again (V-12 + V-30). | `UserPrompt` on the caller starting `[runner server2 unavailable]` with the pinned short ids and reason, exactly one per episode per caller (V-30, V-31, V-33); row `Origin == System`, `Status == Sent` |
+| DP-2 recovery note | coordinator resolve (D-3 table rows 5 and 6) | as DP-1, only to `NotifiedSessionIds` | as DP-1 | as DP-1 H1..H3; H4/H5: a restart loses `NotifiedSessionIds`, so no recovery note follows a pre-restart outage note (accepted: the restart's own episode starts clean, D-3) | `UserPrompt` starting `[runner server2 recovered]` on P1 only, none on a caller never told (V-30, V-10) |
+| DP-3 eligibility signal | `PhoneHomeRunnerDirectory` `Notify` at the four transitions (D-2) | `AlarmWakeQueue.Signal(runnerId)` -> hosted-service wake | none | a lost or late signal is harmless: every wake re-reads every runner; the 15-minute sweep and the startup pass re-read with no signal (V-15, V-12) | `RunnerAlarmState` episode for the runner (V-14, V-35) |
+| DP-4 fence signal | `RepositoryMutationLease` fence refusal / describe (D-8) | `AlarmWakeQueue.Fenced(common)` -> one inspection on the next wake | none | the sweep and the startup pass inspect every repository (V-13, V-15) | `RunnerAlarmState` `JournalFinding` (V-14, V-36) |
+| DP-5 feed projection | `AttentionService` builders at read time | `GET /api/attention` item | none (read-time, D-6) | next read | item of the kind (V-17..V-19) |
+
+Producer-to-recipient through the real queue: `RunnerAlarmDeliveryTests` (V-30..V-34) runs the
+real coordinator, the real `QueueRunnerAlarmNotifier`, the real `SessionMessageQueueService`, the
+real `CompletionNoteFlushQueue` and the real `CompletionNoteWorkHostedService` flush workers over
+`BridgeQueueHarness`, whose adapter writes the `UserPrompt` row only when the queue actually
+submits. It covers **one already eligible** recipient (idle caller, V-30), **a busy recipient**
+(V-31), **enqueue failure** at the database boundary (V-33), **a dropped hint** (V-32) and **a
+crash between the durable row and the hint** (V-34).
+
+Declared substitutes and what each cannot prove:
+
+- `FakeAgentProtocolAdapter` for a real TUI: proves the queue submitted the whole body and that the
+  transcript-confirmation path saw a `UserPrompt`; cannot prove a real Claude composer accepts the
+  bracketed paste. The note uses the unchanged multi-line delivery path already covered by
+  `SessionMessageQueuePtyIntegrationTests` (CARD-0055); nothing here alters it, so no new pty row.
+- `RecordingNotifier` (coordinator tests V-8..V-12, V-27, V-28): proves which sessions, which
+  header and when; cannot prove delivery. Closed by V-30..V-34.
+- `FakeEligibilitySource` (coordinator and hosted-service tests): proves the state machine;
+  cannot prove the directory's predicate or its observer calls. Closed by V-2, V-3, V-21..V-23 and
+  the real-directory loop test V-35.
+- Test-side `OnTurnEndAsync` call for the caller's turn end: proves the queue's turn-end flush
+  types the held note; cannot prove the transcript ingester calls `OnTurnEndAsync` on a real
+  TurnEnd, which is existing CARD-0055/0164 behaviour this card does not touch.
+- Dead or stopped caller (the note is never typed): out of scope per D-7; no substitute claims it.
