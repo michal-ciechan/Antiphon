@@ -12,9 +12,11 @@ public sealed class TaskOwnerGuard : IDisposable
     private readonly string? _token;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly Func<TimeSpan, CancellationToken, CancellationTokenSource> _deadline;
+    private readonly Func<DateTimeOffset> _now;
+    private readonly TimeSpan _uncertaintyBudget;
+    private readonly Action<string>? _log;
     private readonly SemaphoreSlim _read = new(1, 1);
     private readonly CancellationTokenSource _ended = new();
-    private int _failures;
     private string? _sessionId;
 
     public TaskOwnerGuard(
@@ -23,7 +25,10 @@ public sealed class TaskOwnerGuard : IDisposable
         Func<TimeSpan, CancellationToken, Task>? delay = null,
         string? expectedTaskId = null,
         string? expectedSessionId = null,
-        Func<TimeSpan, CancellationToken, CancellationTokenSource>? deadline = null)
+        Func<TimeSpan, CancellationToken, CancellationTokenSource>? deadline = null,
+        Func<DateTimeOffset>? now = null,
+        TimeSpan? uncertaintyBudget = null,
+        Action<string>? log = null)
     {
         environment ??= Environment.GetEnvironmentVariable;
         _taskId = expectedTaskId ?? environment("ANTIPHON_TASK_ID");
@@ -31,6 +36,9 @@ public sealed class TaskOwnerGuard : IDisposable
         _token = environment("ANTIPHON_TASK_TOKEN");
         _sessionId = expectedSessionId ?? environment("ANTIPHON_SESSION_ID");
         _delay = delay ?? Task.Delay;
+        _now = now ?? (() => DateTimeOffset.UtcNow);
+        _uncertaintyBudget = uncertaintyBudget ?? TimeSpan.FromMinutes(3);
+        _log = log;
         _deadline = deadline ?? ((span, token) =>
         {
             var source = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -58,26 +66,37 @@ public sealed class TaskOwnerGuard : IDisposable
         {
             if (_ended.IsCancellationRequested)
                 return false;
-            while (_failures < 3)
+            if (string.IsNullOrWhiteSpace(_api) || string.IsNullOrWhiteSpace(_token)
+                || !Guid.TryParse(_taskId, out _))
             {
-                var status = await ReadOnceAsync(cancellationToken).ConfigureAwait(false);
-                if (status == "live")
+                _log?.Invoke("owner read failed: missing task API, token, or valid task id");
+                End("owner-unverified");
+                return false;
+            }
+            DateTimeOffset? firstFailure = null;
+            while (true)
+            {
+                var result = await ReadOnceAsync(cancellationToken).ConfigureAwait(false);
+                if (result.State == "live")
                 {
-                    _failures = 0;
                     return true;
                 }
-                if (status == "owner-ended")
+                if (result.State == "owner-ended")
                 {
                     End("owner-ended");
                     return false;
                 }
-                _failures++;
-                if (_failures >= 3)
-                    break;
-                await _delay(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+                firstFailure ??= _now();
+                _log?.Invoke("owner read failed: " + result.Failure);
+                var remaining = _uncertaintyBudget - (_now() - firstFailure.Value);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    End("owner-unverified");
+                    return false;
+                }
+                await _delay(TimeSpan.FromSeconds(3) < remaining ? TimeSpan.FromSeconds(3) : remaining,
+                    cancellationToken).ConfigureAwait(false);
             }
-            End("owner-unverified");
-            return false;
         }
         finally
         {
@@ -102,20 +121,19 @@ public sealed class TaskOwnerGuard : IDisposable
         }
     }
 
-    private async Task<string> ReadOnceAsync(CancellationToken cancellationToken)
+    private readonly record struct OwnerReadResult(string State, string? Failure = null);
+
+    private async Task<OwnerReadResult> ReadOnceAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_api) || string.IsNullOrWhiteSpace(_token)
-            || !Guid.TryParse(_taskId, out _))
-            return "owner-unverified";
         try
         {
-            using var deadline = _deadline(TimeSpan.FromSeconds(2), cancellationToken);
+            using var deadline = _deadline(TimeSpan.FromSeconds(12), cancellationToken);
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 _api.TrimEnd('/') + "/api/agent-tasks/" + Uri.EscapeDataString(_taskId!));
             request.Headers.TryAddWithoutValidation("X-Antiphon-Task-Token", _token);
             using var response = await _http.SendAsync(request, deadline.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
-                return "owner-unverified";
+                return new("owner-unverified", "http " + (int)response.StatusCode);
             using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false));
             var root = document.RootElement;
             if (!root.TryGetProperty("summary", out var summary)
@@ -123,35 +141,37 @@ public sealed class TaskOwnerGuard : IDisposable
                 || !Guid.TryParse(id.GetString(), out var parsed)
                 || !parsed.ToString().Equals(_taskId, StringComparison.OrdinalIgnoreCase)
                 || !summary.TryGetProperty("status", out var statusElement))
-                return "owner-unverified";
+                return new("owner-unverified", "invalid task identity or status in response");
             var status = statusElement.GetString();
             if (status is "Succeeded" or "Failed" or "Canceled")
-                return "owner-ended";
+                return new("owner-ended");
             if (status is not ("Dispatched" or "Working" or "Blocked"))
-                return "owner-unverified";
+                return new("owner-unverified", "unknown task status " + status);
             if (!summary.TryGetProperty("agentSessionId", out var boundId)
                 || !Guid.TryParse(boundId.GetString(), out var sessionId))
-                return "owner-unverified";
+                return new("owner-unverified", "missing session identity in response");
             if (_sessionId is not null && !sessionId.ToString().Equals(_sessionId, StringComparison.OrdinalIgnoreCase))
-                return "owner-unverified";
+                return new("owner-unverified", "session identity mismatch");
             _sessionId ??= sessionId.ToString();
             if (!root.TryGetProperty("session", out var session) || session.ValueKind != JsonValueKind.Object
                 || !session.TryGetProperty("sessionId", out var actualId)
                 || !Guid.TryParse(actualId.GetString(), out var parsedSession)
                 || parsedSession != sessionId
                 || !session.TryGetProperty("status", out var sessionStatus))
-                return "owner-unverified";
+                return new("owner-unverified", "invalid session identity or status in response");
             return sessionStatus.GetString() switch
             {
-                "Stopped" or "Failed" or "Stopping" => "owner-ended",
-                "Running" or "Starting" or "Created" => "live",
-                _ => "owner-unverified",
+                "Stopped" or "Failed" or "Stopping" => new("owner-ended"),
+                "Running" or "Starting" or "Created" => new("live"),
+                var unknown => new("owner-unverified", "unknown session status " + unknown),
             };
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested
             && ex is HttpRequestException or IOException or OperationCanceledException or JsonException or InvalidOperationException or UriFormatException)
         {
-            return "owner-unverified";
+            if (ex is OperationCanceledException)
+                return new("owner-unverified", "timeout after 12s");
+            return new("owner-unverified", ex.GetType().Name + ": " + ex.Message.Replace(_token ?? "", "[redacted]", StringComparison.Ordinal));
         }
     }
 

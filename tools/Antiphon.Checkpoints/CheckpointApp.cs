@@ -13,6 +13,8 @@ public static class CheckpointApp
         public HttpMessageHandler? OwnerHandler { get; init; }
         public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
         public Func<TimeSpan, CancellationToken, CancellationTokenSource>? OwnerDeadline { get; init; }
+        public Func<DateTimeOffset>? OwnerClock { get; init; }
+        public TimeSpan? OwnerUncertaintyBudget { get; init; }
         public IDriver? Driver { get; init; }
         public IBuildSlotClient? Slots { get; init; }
         public IPlatform? Platform { get; init; }
@@ -70,18 +72,18 @@ public static class CheckpointApp
         var repo = request.RepoRoot;
         var manifest = ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
+        var log = Path.Combine(runDirectory, "executor.log");
+        await using var logWriter = new ExecutorLogWriter(runtime.LogSinkFactory?.Invoke(log) ?? new FileExecutorLogSink(log));
+        void Note(string line) => logWriter.Note(line);
         using var owner = new TaskOwnerGuard(runtime.EnvironmentLookup, runtime.OwnerHandler, runtime.Delay,
-            request.OwnerTaskId, request.OwnerSessionId, runtime.OwnerDeadline);
+            request.OwnerTaskId, request.OwnerSessionId, runtime.OwnerDeadline,
+            runtime.OwnerClock, runtime.OwnerUncertaintyBudget, Note);
         var entryAdmitted = await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (entryAdmitted)
         {
             File.WriteAllText(Path.Combine(runDirectory, "host.txt"), HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
             File.WriteAllText(Path.Combine(runDirectory, "git.txt"), GitSnapshot.Capture(repo));
         }
-        var log = Path.Combine(runDirectory, "executor.log");
-        await using var logWriter = new ExecutorLogWriter(runtime.LogSinkFactory?.Invoke(log) ?? new FileExecutorLogSink(log));
-        void Note(string line) => logWriter.Note(line);
-
         var store = new RunStateStore();
         var state = new RunState
         {
@@ -319,7 +321,8 @@ public static class CheckpointApp
     {
         runtime ??= new Runtime();
         using var owner = new TaskOwnerGuard(runtime.EnvironmentLookup, runtime.OwnerHandler, runtime.Delay,
-            deadline: runtime.OwnerDeadline);
+            deadline: runtime.OwnerDeadline, now: runtime.OwnerClock,
+            uncertaintyBudget: runtime.OwnerUncertaintyBudget);
         if (!await owner.EnsureLiveAsync(CancellationToken.None).ConfigureAwait(false))
         {
             output.WriteLine("CHECKPOINT owner " + owner.Reason);

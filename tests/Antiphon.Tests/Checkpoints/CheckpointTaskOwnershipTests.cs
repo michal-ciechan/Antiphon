@@ -389,7 +389,9 @@ public sealed class CheckpointTaskOwnershipTests
         foreach (var (wrongTask, wrongSession) in new[] { (true, false), (false, true) })
         {
             var handler = new OwnerHandler { WrongTask = wrongTask, WrongSession = wrongSession };
-            using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask);
+            var clock = new FastUncertaintyClock();
+            using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, clock.Delay,
+                now: clock.Now, uncertaintyBudget: TimeSpan.FromSeconds(6));
             (await owner.EnsureLiveAsync(CancellationToken.None)).ShouldBeFalse();
             owner.Reason.ShouldBe("owner-unverified");
             handler.Calls.ShouldBe(3);
@@ -450,7 +452,9 @@ public sealed class CheckpointTaskOwnershipTests
         var handler = new OwnerHandler();
         handler.Next.Enqueue("HTTP500");
         handler.Next.Enqueue("Working");
-        using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, (_, _) => Task.CompletedTask);
+        var clock = new FastUncertaintyClock();
+        using var owner = new TaskOwnerGuard(OwnerEnvironment(), handler, clock.Delay,
+            now: clock.Now, uncertaintyBudget: TimeSpan.FromSeconds(6));
         (await owner.EnsureLiveAsync(CancellationToken.None)).ShouldBeTrue();
         handler.Next.Enqueue("HTTP500");
         handler.Next.Enqueue("HTTP500");
@@ -469,14 +473,15 @@ public sealed class CheckpointTaskOwnershipTests
         var deadlines = Enumerable.Range(0, 3)
             .Select(_ => new TaskCompletionSource<CancellationTokenSource>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
         var index = 0;
-        using var timed = new TaskOwnerGuard(OwnerEnvironment(), held, (_, _) => Task.CompletedTask,
+        var timedClock = new FastUncertaintyClock();
+        using var timed = new TaskOwnerGuard(OwnerEnvironment(), held, timedClock.Delay,
             deadline: (span, token) =>
             {
-                span.ShouldBe(TimeSpan.FromSeconds(2));
+                span.ShouldBe(TimeSpan.FromSeconds(12));
                 var source = CancellationTokenSource.CreateLinkedTokenSource(token);
                 deadlines[index++].TrySetResult(source);
                 return source;
-            });
+            }, now: timedClock.Now, uncertaintyBudget: TimeSpan.FromSeconds(6));
         var observation = timed.EnsureLiveAsync(CancellationToken.None);
         foreach (var gate in deadlines)
             (await gate.Task.WaitAsync(TimeSpan.FromSeconds(5))).Cancel();
@@ -486,7 +491,9 @@ public sealed class CheckpointTaskOwnershipTests
 
         var brokenBody = new OwnerHandler();
         for (var i = 0; i < 3; i++) brokenBody.Next.Enqueue("IO");
-        using var unreadable = new TaskOwnerGuard(OwnerEnvironment(), brokenBody, (_, _) => Task.CompletedTask);
+        var brokenClock = new FastUncertaintyClock();
+        using var unreadable = new TaskOwnerGuard(OwnerEnvironment(), brokenBody, brokenClock.Delay,
+            now: brokenClock.Now, uncertaintyBudget: TimeSpan.FromSeconds(6));
         (await unreadable.EnsureLiveAsync(CancellationToken.None)).ShouldBeFalse();
         unreadable.Reason.ShouldBe("owner-unverified");
         brokenBody.Calls.ShouldBe(3);
@@ -740,5 +747,17 @@ public sealed class CheckpointTaskOwnershipTests
     private sealed class DeadLiveness : IProcessLiveness
     {
         public bool IsAlive(int pid) => false;
+    }
+
+    private sealed class FastUncertaintyClock
+    {
+        private DateTimeOffset _now = DateTimeOffset.UtcNow;
+        public DateTimeOffset Now() => _now;
+        public Task Delay(TimeSpan span, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            _now += span;
+            return Task.CompletedTask;
+        }
     }
 }
