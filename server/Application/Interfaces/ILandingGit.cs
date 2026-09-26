@@ -54,6 +54,11 @@ public interface ILandingGit
     Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct);
     Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
+    /// <summary>Only reviewed source adoption may replace an owner branch; target publication uses PushOwnedAsync.</summary>
+    Task<LandingGitResult> PushSourceOwnedAsync(string repository, string sourceFullRef, string sha,
+        string? expectedRemoteSha, string expectedFingerprint,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "source_push_unsupported"));
     Task<LandingIndexLockObservation> InspectIndexLockAsync(string checkout, CancellationToken ct);
 }
 

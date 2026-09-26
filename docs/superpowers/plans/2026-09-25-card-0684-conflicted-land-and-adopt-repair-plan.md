@@ -167,7 +167,7 @@ auto-Merge helper shows a fourth defect the card could not see.
   checkpoint baseline, the C467 tests and the notifications key on; a new row keeps every existing invariant.
   *Rejected:* mutating `ExpectedSourceSha` in place.
 - **D-7 — Adoption rewrites the owner's source to the adopted SHA under the land lease, then the ordinary land
-  runs.** `POST /land/v2 { expectedSourceSha: S, adoptFromTaskId: F, reviewEvidenceId?, verify? }`. Request-time (DB
+  runs.** CARD-0753 tightens the shipped recovery admission: `POST /land/v2 { expectedSourceSha: S, adoptFromTaskId: F, reviewEvidenceId, verify? }` requires an explicit Clean Final/Full Review on F's current pushed ref at S; `recoverReviewedSource: true` binds the same evidence to the owner's pushed ref. A Failed or Blocked Code/Worktree owner remains terminal while its persisted reviewed request runs. Request-time (DB
   only): `F != owner`; `F` is a Worktree task with `WorktreeBranch`, same `CardId`, same git common directory (the
   `SameCommonDirectoryAsync` check RepairSource uses), `Status == Succeeded`, no pending land request of its own, not a
   Mutation/SourceLanding row — codes `adopt_source_self`, `adopt_source_not_found`, `adopt_source_invalid`,

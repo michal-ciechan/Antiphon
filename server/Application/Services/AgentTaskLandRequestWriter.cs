@@ -50,6 +50,18 @@ internal sealed record LandSourceCheckpointBaseline(
     int? SourceAdvanceChildProcessId,
     long? SourceAdvanceChildStartTicks,
     string? SourceAdvanceChildOperation,
+    LandRecoveryMode RecoveryMode,
+    AgentTaskStatus? RecoveryOwnerStatus,
+    Guid? RecoverySourceTaskId,
+    string? RecoverySourceFullRef,
+    string? RecoverySourceFingerprint,
+    Guid? SupersedesRequestId,
+    string? RecoveryStartBaseSha,
+    string? RecoveryLocalBeforeSha,
+    string? RecoveryOwnerRemoteBeforeSha,
+    string? RecoveryOwnerRemoteAfterSha,
+    string? RecoveryRelationship,
+    DateTime? RecoveryAdoptedAt,
     Guid? LandingOperationId,
     Guid? ActiveLandingId)
 {
@@ -63,7 +75,12 @@ internal sealed record LandSourceCheckpointBaseline(
         request.SourceRelationship, request.SourceCommonDirectory, request.SourceWorktreePath, request.SourceGitDirectory,
         request.SourceRefusalReason, request.SourceDiagnosticCommand, request.SourceDiagnosticExitCode,
         request.SourceDiagnosticCode, request.SourceDiagnosticExceptionType, request.SourceAdvanceChildProcessId,
-        request.SourceAdvanceChildStartTicks, request.SourceAdvanceChildOperation, request.LandingOperationId,
+        request.SourceAdvanceChildStartTicks, request.SourceAdvanceChildOperation,
+        request.RecoveryMode, request.RecoveryOwnerStatus, request.RecoverySourceTaskId,
+        request.RecoverySourceFullRef, request.RecoverySourceFingerprint, request.SupersedesRequestId,
+        request.RecoveryStartBaseSha, request.RecoveryLocalBeforeSha, request.RecoveryOwnerRemoteBeforeSha,
+        request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship, request.RecoveryAdoptedAt,
+        request.LandingOperationId,
         task.ActiveLandingId);
 }
 
@@ -88,7 +105,13 @@ internal sealed record LandSourceCheckpointPatch(
     string? SourceDiagnosticExceptionType,
     int? SourceAdvanceChildProcessId,
     long? SourceAdvanceChildStartTicks,
-    string? SourceAdvanceChildOperation)
+    string? SourceAdvanceChildOperation,
+    string? RecoverySourceFingerprint,
+    string? RecoveryLocalBeforeSha,
+    string? RecoveryOwnerRemoteBeforeSha,
+    string? RecoveryOwnerRemoteAfterSha,
+    string? RecoveryRelationship,
+    DateTime? RecoveryAdoptedAt)
 {
     public static LandSourceCheckpointPatch From(AgentTaskLandRequest request) => new(
         request.SourceResolutionState, request.LocalBeforeSha, request.RemoteSourceSha, request.RemoteSourceRef,
@@ -97,7 +120,9 @@ internal sealed record LandSourceCheckpointPatch(
         request.SourceCommonDirectory, request.SourceWorktreePath, request.SourceGitDirectory,
         request.SourceRefusalReason, request.SourceDiagnosticCommand, request.SourceDiagnosticExitCode,
         request.SourceDiagnosticCode, request.SourceDiagnosticExceptionType, request.SourceAdvanceChildProcessId,
-        request.SourceAdvanceChildStartTicks, request.SourceAdvanceChildOperation);
+        request.SourceAdvanceChildStartTicks, request.SourceAdvanceChildOperation,
+        request.RecoverySourceFingerprint, request.RecoveryLocalBeforeSha, request.RecoveryOwnerRemoteBeforeSha,
+        request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship, request.RecoveryAdoptedAt);
 }
 
 internal sealed record LandSourceCheckpointResult(
@@ -120,9 +145,31 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         if (!SameSourceProgress(request, task, baseline))
             return new(LandSourceCheckpointDisposition.SourceStateChanged, LandSourceCheckpointBaseline.From(request, task));
 
+        var adoptedNow = request.RecoveryAdoptedAt is null && patch.RecoveryAdoptedAt is not null;
         ApplyPatch(request, patch);
         request.ConcurrencyToken = Guid.NewGuid();
         var now = clock.GetUtcNow().UtcDateTime;
+        if (adoptedNow)
+        {
+            var detail = $"Reviewed source {request.ExpectedSourceSha} from task {request.RecoverySourceTaskId:N} "
+                + $"({request.RecoverySourceFullRef}) adopted for owner {task.Id:N}; "
+                + $"local-before={request.RecoveryLocalBeforeSha}; remote-before={request.RecoveryOwnerRemoteBeforeSha}; "
+                + $"remote-after={request.RecoveryOwnerRemoteAfterSha}; relationship={request.RecoveryRelationship}; "
+                + $"review={request.ReviewEvidenceId:N}.";
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, LandRequestId = request.Id,
+                Type = AgentTaskEventType.SourceAdopted, Detail = detail, At = now,
+            });
+            if (request.RecoverySourceTaskId is Guid sourceId && sourceId != task.Id)
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(), AgentTaskId = sourceId,
+                    Type = AgentTaskEventType.SourceAdopted,
+                    Detail = $"Source {request.ExpectedSourceSha} adopted into owner {task.Id:N} land request {request.Id:N}.",
+                    At = now,
+                });
+        }
         if (now > request.LastProgressAt) request.LastProgressAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
         await db.SaveChangesAsync(ct);
@@ -179,7 +226,7 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         if (request.Id != baseline.RequestId || task.Id != baseline.TaskId) return true;
         if (!request.IsPending || request.TerminalEventId is not null) return true;
         if (task.CurrentLandRequestId != request.Id || task.LandRequestedAt is null) return true;
-        if (task.Status != AgentTaskStatus.Succeeded || task.Workspace != WorkspaceMode.Worktree) return true;
+        if (!LandApproval.RequestStatusEligible(task, request)) return true;
         if (request.Attempt != baseline.Attempt || task.LandAttempt != baseline.TaskLandAttempt) return true;
         if (task.LandRequestedAt != baseline.RequestedAt || request.RequestedAt != baseline.RequestedAt) return true;
         if (request.SchemaVersion != baseline.SchemaVersion
@@ -192,6 +239,13 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
             || request.RepositoryPathSnapshot != baseline.RepositoryPathSnapshot
             || request.WorktreePathSnapshot != baseline.WorktreePathSnapshot
             || request.TargetFullRefSnapshot != baseline.TargetFullRefSnapshot)
+            return true;
+        if (request.RecoveryMode != baseline.RecoveryMode
+            || request.RecoveryOwnerStatus != baseline.RecoveryOwnerStatus
+            || request.RecoverySourceTaskId != baseline.RecoverySourceTaskId
+            || request.RecoverySourceFullRef != baseline.RecoverySourceFullRef
+            || request.SupersedesRequestId != baseline.SupersedesRequestId
+            || request.RecoveryStartBaseSha != baseline.RecoveryStartBaseSha)
             return true;
         return false;
     }
@@ -219,6 +273,12 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         && request.SourceAdvanceChildProcessId == baseline.SourceAdvanceChildProcessId
         && request.SourceAdvanceChildStartTicks == baseline.SourceAdvanceChildStartTicks
         && request.SourceAdvanceChildOperation == baseline.SourceAdvanceChildOperation
+        && request.RecoverySourceFingerprint == baseline.RecoverySourceFingerprint
+        && request.RecoveryLocalBeforeSha == baseline.RecoveryLocalBeforeSha
+        && request.RecoveryOwnerRemoteBeforeSha == baseline.RecoveryOwnerRemoteBeforeSha
+        && request.RecoveryOwnerRemoteAfterSha == baseline.RecoveryOwnerRemoteAfterSha
+        && request.RecoveryRelationship == baseline.RecoveryRelationship
+        && request.RecoveryAdoptedAt == baseline.RecoveryAdoptedAt
         && request.LandingOperationId == baseline.LandingOperationId
         && task.ActiveLandingId == baseline.ActiveLandingId;
 
@@ -245,5 +305,11 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         request.SourceAdvanceChildProcessId = patch.SourceAdvanceChildProcessId;
         request.SourceAdvanceChildStartTicks = patch.SourceAdvanceChildStartTicks;
         request.SourceAdvanceChildOperation = patch.SourceAdvanceChildOperation;
+        request.RecoverySourceFingerprint = patch.RecoverySourceFingerprint;
+        request.RecoveryLocalBeforeSha = patch.RecoveryLocalBeforeSha;
+        request.RecoveryOwnerRemoteBeforeSha = patch.RecoveryOwnerRemoteBeforeSha;
+        request.RecoveryOwnerRemoteAfterSha = patch.RecoveryOwnerRemoteAfterSha;
+        request.RecoveryRelationship = patch.RecoveryRelationship;
+        request.RecoveryAdoptedAt = patch.RecoveryAdoptedAt;
     }
 }

@@ -3189,7 +3189,7 @@ public sealed class AgentTaskService
     /// </summary>
     internal async Task<AgentTask?> CreateMergeTaskAsync(
         AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct,
-        string? landingTarget = null)
+        string? landingTarget = null, string? landingRemoteBeforeSha = null)
     {
         var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == conflicted.RootTaskId, ct);
         if (siblings >= _settings.MaxTasksPerRoot || conflicted.Depth + 1 > _settings.MaxDepth)
@@ -3221,7 +3221,17 @@ public sealed class AgentTaskService
             ParentSessionId = conflicted.ParentSessionId,
             Depth = conflicted.Depth + 1,
             Title = $"Resolve merge conflict: {Clamp(conflicted.Title, 250)}",
-            Goal = $"""
+            Goal = landingTarget is not null ? $"""
+                Task {DelegationReportFormatter.Short(conflicted.Id)} needs its branch {branch} rebased onto
+                {target}. The server's land operation stopped at conflicts in:
+                {files}
+
+                You are in the owner's worktree. Rebase {branch} onto {target}, resolve each conflict
+                as the owner intended, and continue until clean. Push ONLY {branch} with
+                git push --force-with-lease=refs/heads/{branch}:{landingRemoteBeforeSha} origin HEAD:refs/heads/{branch}
+                Report the full pushed SHA and every resolution. Do not push or fast-forward {target};
+                the server will land the newly reviewed branch after an explicit request.
+                """ : $"""
                 Task {DelegationReportFormatter.Short(conflicted.Id)} finished its work on branch
                 {branch}, but rebasing onto {target} hit conflicts in:
                 {files}

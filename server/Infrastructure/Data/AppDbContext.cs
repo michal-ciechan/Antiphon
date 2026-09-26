@@ -1611,6 +1611,13 @@ public class AppDbContext : DbContext
             entity.Property(r => r.HoldNotificationOwnerKey).HasMaxLength(200);
             entity.Property(r => r.SchemaVersion).IsRequired().HasDefaultValue(1);
             entity.Property(r => r.ExpectedSourceSha).HasMaxLength(64);
+            entity.Property(r => r.RecoverySourceFullRef).HasMaxLength(400);
+            entity.Property(r => r.RecoverySourceFingerprint).HasMaxLength(64);
+            entity.Property(r => r.RecoveryStartBaseSha).HasMaxLength(64);
+            entity.Property(r => r.RecoveryLocalBeforeSha).HasMaxLength(64);
+            entity.Property(r => r.RecoveryOwnerRemoteBeforeSha).HasMaxLength(64);
+            entity.Property(r => r.RecoveryOwnerRemoteAfterSha).HasMaxLength(64);
+            entity.Property(r => r.RecoveryRelationship).HasMaxLength(40);
             entity.Property(r => r.ResolvedSourceSha).HasMaxLength(64);
             entity.Property(r => r.LocalBeforeSha).HasMaxLength(64);
             entity.Property(r => r.RemoteSourceSha).HasMaxLength(64);
@@ -1721,6 +1728,12 @@ public class AppDbContext : DbContext
             entity.Property(l => l.LastReason).HasMaxLength(400);
             entity.Property(l => l.VerificationFilter).HasMaxLength(400);
             entity.Property(l => l.ReviewedSourceSha).HasMaxLength(64);
+            entity.Property(l => l.RecoverySourceFullRef).HasMaxLength(400);
+            entity.Property(l => l.RecoveryStartBaseSha).HasMaxLength(64);
+            entity.Property(l => l.RecoveryLocalBeforeSha).HasMaxLength(64);
+            entity.Property(l => l.RecoveryOwnerRemoteBeforeSha).HasMaxLength(64);
+            entity.Property(l => l.RecoveryOwnerRemoteAfterSha).HasMaxLength(64);
+            entity.Property(l => l.RecoveryRelationship).HasMaxLength(40);
             entity.Property(l => l.PreparationInputSha).HasMaxLength(64);
             entity.Property(l => l.SourceRemoteSha).HasMaxLength(64);
             entity.Property(l => l.SourceRemoteFingerprint).HasMaxLength(64);

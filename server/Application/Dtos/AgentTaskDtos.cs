@@ -609,7 +609,9 @@ public sealed record CommitAgentTaskResponse(string Sha, IReadOnlyList<string> F
 public sealed record LandAgentTaskRequest(
     string? Verify = null,
     string? ExpectedSourceSha = null,
-    Guid? ReviewEvidenceId = null);
+    Guid? ReviewEvidenceId = null,
+    Guid? AdoptFromTaskId = null,
+    bool RecoverReviewedSource = false);
 
 public sealed record ReviewEvidenceDto(
     Guid Id,

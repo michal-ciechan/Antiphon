@@ -42,6 +42,18 @@ public sealed class AgentTaskLandRequest
     public int SchemaVersion { get; set; } = 1;
     public string? ExpectedSourceSha { get; set; }
     public Guid? ReviewEvidenceId { get; set; }
+    public LandRecoveryMode RecoveryMode { get; set; }
+    public AgentTaskStatus? RecoveryOwnerStatus { get; set; }
+    public Guid? RecoverySourceTaskId { get; set; }
+    public string? RecoverySourceFullRef { get; set; }
+    public string? RecoverySourceFingerprint { get; set; }
+    public Guid? SupersedesRequestId { get; set; }
+    public string? RecoveryStartBaseSha { get; set; }
+    public string? RecoveryLocalBeforeSha { get; set; }
+    public string? RecoveryOwnerRemoteBeforeSha { get; set; }
+    public string? RecoveryOwnerRemoteAfterSha { get; set; }
+    public string? RecoveryRelationship { get; set; }
+    public DateTime? RecoveryAdoptedAt { get; set; }
     public LandApprovalKind ApprovalKind { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public string? SourceFullRefSnapshot { get; set; }

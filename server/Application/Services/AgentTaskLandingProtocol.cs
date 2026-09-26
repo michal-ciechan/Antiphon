@@ -130,7 +130,24 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 Require(request is not null && GitObjectId.IsFull(request.ExpectedSourceSha),
                     "legacy_review_binding_required");
                 var approval = request!;
-                await RecheckFinalVerificationAsync(task.Id, approval.ReviewEvidenceId, approval.ExpectedSourceSha, ct);
+                if (approval.RecoveryMode == LandRecoveryMode.None)
+                    await RecheckFinalVerificationAsync(task.Id, approval.ReviewEvidenceId, approval.ExpectedSourceSha, ct);
+                else
+                {
+                    var recoverySource = await db.AgentTasks.AsNoTracking()
+                        .SingleOrDefaultAsync(t => t.Id == approval.RecoverySourceTaskId, ct);
+                    Require(recoverySource is not null && approval.ReviewEvidenceId is not null,
+                        "recovery_authority_changed");
+                    try
+                    {
+                        await LandApproval.LoadRecoveryEvidenceAsync(db, approval.ReviewEvidenceId!.Value,
+                            approval.ExpectedSourceSha!, recoverySource!, ct);
+                    }
+                    catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
+                    {
+                        throw new LandingRefusal(ex.Code ?? "recovery_review_invalid");
+                    }
+                }
                 Require(approval.SourceResolutionState == LandSourceResolutionState.Resolved
                     && approval.ResolvedSourceSha == approval.ExpectedSourceSha
                     && GitObjectId.IsFull(approval.RemoteSourceSha) && approval.RemoteSourceFingerprint is { Length: 64 }
@@ -544,8 +561,40 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     /// <summary>CARD-0642 D-6 / CARD-0688 D-8: the DB half (latch, request identity, filter), at every boundary.</summary>
     private async Task RecheckApprovalAsync(AgentTaskLanding op, AgentTaskLandRequest? request, CancellationToken ct)
     {
-        await RecheckFinalVerificationAsync(op.TaskId, request?.ReviewEvidenceId ?? op.ReviewEvidenceId,
-            op.OriginalSourceSha, ct);
+        if (op.RecoveryMode == LandRecoveryMode.None)
+            await RecheckFinalVerificationAsync(op.TaskId, request?.ReviewEvidenceId ?? op.ReviewEvidenceId,
+                op.OriginalSourceSha, ct);
+        else if (!_state.HasPublication(op))
+        {
+            Require(request is not null && request.RecoveryMode == op.RecoveryMode
+                && request.RecoveryOwnerStatus == op.RecoveryOwnerStatus
+                && request.RecoverySourceTaskId == op.RecoverySourceTaskId
+                && request.RecoverySourceFullRef == op.RecoverySourceFullRef
+                && request.ReviewEvidenceId == op.ReviewEvidenceId,
+                "recovery_authority_changed");
+            var source = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.RecoverySourceTaskId, ct);
+            var owner = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
+            Require(source is not null && source.Workspace == WorkspaceMode.Worktree
+                && source.Role == AgentTaskRole.Code && source.RepairSourceTaskId is null
+                && source.SourceLandingOperationId is null && owner is not null
+                && source.CardId == owner.CardId && source.ProjectId == owner.ProjectId,
+                "recovery_source_invalid");
+            try
+            {
+                await LandApproval.LoadRecoveryEvidenceAsync(db, op.ReviewEvidenceId!.Value,
+                    op.OriginalSourceSha, source!, ct);
+            }
+            catch (Antiphon.Server.Application.Exceptions.ConflictException ex)
+            {
+                throw new LandingRefusal(ex.Code ?? "recovery_review_invalid");
+            }
+            Require(op.SourceRemoteFingerprint is { Length: 64 }
+                && op.RecoverySourceFullRef is not null, "recovery_source_unbound");
+            var sourceRemote = await git.RecheckSourceRemoteAsync(op.RepositoryPath,
+                op.RecoverySourceFullRef!, op.OriginalSourceSha, op.SourceRemoteFingerprint!, ct);
+            Require(sourceRemote.Accepted && sourceRemote.Sha == op.OriginalSourceSha,
+                sourceRemote.Reason ?? "recovery_source_changed");
+        }
         if (request is null) return;
         Require(request.TaskId == op.TaskId, "stale_land_request");
         if (op.ApprovalLandRequestId is Guid bound && bound != request.Id)
@@ -590,7 +639,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     {
         var currentTask = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
         Require(currentTask is not null && currentTask.ActiveLandingId == op.Id
-            && currentTask.Status == AgentTaskStatus.Succeeded
+            && (op.RecoveryMode == LandRecoveryMode.None
+                ? currentTask.Status == AgentTaskStatus.Succeeded
+                : currentTask.Role == AgentTaskRole.Code
+                    && LandApproval.RecoveryStatusEligible(currentTask.Status))
             && currentTask.RepoPath is not null && SamePath(currentTask.RepoPath, op.RepositoryPath)
             && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
             && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
