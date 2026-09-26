@@ -24,6 +24,73 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskLandRequestTests
 {
     [Test]
+    [Arguments(AgentTaskStatus.Blocked)]
+    [Arguments(AgentTaskStatus.Failed)]
+    public async Task C753_ExplicitReviewedRecoveryKeepsTerminalOwnerStatus(AgentTaskStatus status)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var task = await SeedSucceededWorktreeAsync(db);
+        task.Status = status;
+        var sha = new string('a', 40);
+        var review = new StageOutcome
+        {
+            Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
+            ReviewedSourceSha = sha, ReviewedSourceRef = "refs/heads/" + task.WorktreeBranch,
+            ReviewedRepositoryPath = task.RepoPath, CommissionedRound = VerificationRound.Final,
+            OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
+        };
+        db.StageOutcomes.Add(review);
+        await db.SaveChangesAsync();
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+
+        await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: sha, ReviewEvidenceId: review.Id), CancellationToken.None));
+        var accepted = await land.RequestAsync(task.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: sha, ReviewEvidenceId: review.Id,
+                RecoverReviewedSource: true), CancellationToken.None);
+
+        accepted.Status.ShouldBe("queued");
+        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId))
+            .RecoveryMode.ShouldBe(LandRecoveryMode.OwnerReviewedSource);
+        (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(status);
+    }
+
+    [Test]
+    public async Task C753_RecoverySupersedesNeedsResolutionWithoutRewritingOldRequest()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var task = await SeedSucceededWorktreeAsync(db);
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var first = await land.RequestAsync(task.Id, Approve(), CancellationToken.None);
+        var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId);
+        old.State = LandRequestState.NeedsResolution;
+        task.Status = AgentTaskStatus.Blocked;
+        await db.SaveChangesAsync();
+        var sha = new string('b', 40);
+        var review = new StageOutcome
+        {
+            Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Delegate, SubjectTaskId = task.Id, StageTaskId = Guid.NewGuid(),
+            ReviewedSourceSha = sha, ReviewedSourceRef = "refs/heads/" + task.WorktreeBranch,
+            ReviewedRepositoryPath = task.RepoPath, CommissionedRound = VerificationRound.Final,
+            OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
+        };
+        db.StageOutcomes.Add(review);
+        await db.SaveChangesAsync();
+
+        var accepted = await land.RequestAsync(task.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: sha, ReviewEvidenceId: review.Id,
+                RecoverReviewedSource: true), CancellationToken.None);
+
+        accepted.RequestId.ShouldNotBe(first.RequestId);
+        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId)).State.ShouldBe(LandRequestState.Superseded);
+        (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId)).SupersedesRequestId.ShouldBe(first.RequestId);
+    }
+
+    [Test]
     public async Task C467_V01_TerminalRetryPreservesSnapshotAndCancellationDebt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
