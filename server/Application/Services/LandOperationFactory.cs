@@ -90,6 +90,8 @@ internal static class LandOperationFactory
             RecoveryOwnerRemoteBeforeSha = request.RecoveryOwnerRemoteBeforeSha,
             RecoveryOwnerRemoteAfterSha = request.RecoveryOwnerRemoteAfterSha,
             RecoveryRelationship = request.RecoveryRelationship,
+            RecoveryPatchesContained = request.RecoveryPatchesContained,
+            RecoveryUncontainedPatches = request.RecoveryUncontainedPatches,
             SupersedesRequestId = request.SupersedesRequestId,
             ApprovalKind = request.ApprovalKind,
             ApprovedAt = request.ApprovedAt ?? request.RequestedAt,

@@ -39,6 +39,8 @@ public sealed record LandRequestStatusDto(
     string? RecoveryOwnerRemoteBeforeSha = null,
     string? RecoveryOwnerRemoteAfterSha = null,
     string? RecoveryRelationship = null,
+    bool? RecoveryPatchesContained = null,
+    string? RecoveryUncontainedPatches = null,
     Guid? SupersedesRequestId = null)
 {
     public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications)
@@ -53,7 +55,8 @@ public sealed record LandRequestStatusDto(
             r.SourceDiagnosticCommand, r.SourceDiagnosticExitCode, r.SourceDiagnosticCode,
             r.SourceDiagnosticExceptionType, r.RecoveryMode, r.RecoveryOwnerStatus,
             r.RecoverySourceTaskId, r.RecoverySourceFullRef, r.RecoveryOwnerRemoteBeforeSha,
-            r.RecoveryOwnerRemoteAfterSha, r.RecoveryRelationship, r.SupersedesRequestId);
+            r.RecoveryOwnerRemoteAfterSha, r.RecoveryRelationship,
+            r.RecoveryPatchesContained, r.RecoveryUncontainedPatches, r.SupersedesRequestId);
 }
 
 public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,

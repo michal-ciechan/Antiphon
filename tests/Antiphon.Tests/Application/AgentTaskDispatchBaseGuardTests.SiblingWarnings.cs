@@ -81,6 +81,14 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var w = await SiblingWorld.CreateAsync();
         var a = await w.AddAsync(); var b = await w.AddAsync(a, alias);
         a.Status = AgentTaskStatus.Blocked; a.LandRequestedAt = DateTime.UtcNow;
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = a.Id, RequestedAt = DateTime.UtcNow,
+            State = LandRequestState.Queued, IsPending = true,
+            ExpectedSourceSha = (await w.Repo.GitReadAsync("rev-parse", a.WorktreeBranch!)).Trim(),
+        };
+        w.Db.AgentTaskLandRequests.Add(request);
+        a.CurrentLandRequestId = request.Id;
         b.CreatedAt = a.CreatedAt.AddMinutes(1); w.Task.Role = AgentTaskRole.TestDesign;
         await w.Db.SaveChangesAsync();
         await using (var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot))
@@ -90,7 +98,48 @@ public partial class AgentTaskDispatchBaseGuardTests
         held.Status.ShouldBe(AgentTaskStatus.Queued); held.WorktreePath.ShouldBeNull();
         (await w.Db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == w.Task.Id)).ShouldBe(0);
         a.LandRequestedAt = null;
+        request.State = LandRequestState.NeedsResolution;
         await w.RunAsync([(b, 1)]);
+    }
+
+    [Test]
+    public async Task C753_NeedsResolutionSiblingWarnsInsteadOfHolding()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var sibling = await w.AddAsync();
+        sibling.Status = AgentTaskStatus.Blocked;
+        sibling.LandRequestedAt = DateTime.UtcNow;
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = sibling.Id, RequestedAt = DateTime.UtcNow,
+            State = LandRequestState.NeedsResolution, IsPending = true,
+            ExpectedSourceSha = (await w.Repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim(),
+        };
+        w.Db.AgentTaskLandRequests.Add(request);
+        sibling.CurrentLandRequestId = request.Id;
+        await w.RunAsync([(sibling, 0)]);
+    }
+
+    [Test]
+    public async Task C753_ExplicitStartRefContainingReviewedSourceBypassesSiblingHold()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var sibling = await w.AddAsync();
+        sibling.Status = AgentTaskStatus.Blocked;
+        sibling.LandRequestedAt = DateTime.UtcNow;
+        var reviewed = (await w.Repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
+        await w.Repo.GitAsync("checkout", sibling.WorktreeBranch!);
+        await w.Repo.CommitFileAsync("later.txt", "a later conflict resolution\n");
+        await w.Repo.GitAsync("checkout", "master");
+        w.Task.WorktreeBaseRequestedRef = reviewed;
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = sibling.Id, RequestedAt = DateTime.UtcNow,
+            State = LandRequestState.Queued, IsPending = true, ExpectedSourceSha = reviewed,
+        };
+        w.Db.AgentTaskLandRequests.Add(request);
+        sibling.CurrentLandRequestId = request.Id;
+        await w.RunAsync([]);
     }
 
     [Test]

@@ -904,6 +904,8 @@ public sealed class AgentTaskReplyService
         // A finished Merge task is what un-blocks the conflicted task it was spawned for.
         if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
             await ResolveConflictedParentAsync(services, db, task, now, ct);
+        else if (task.Role == AgentTaskRole.Merge)
+            await MergeHelperOutcome.RecordUnresolvedAsync(db, task, now, ct);
 
         // What the delegate ACTUALLY touched, against what it said it would (CARD-0063 S4).
         // Before ReleaseDelegateAsync, which retires the ephemeral agent whose working directory
@@ -1896,9 +1898,22 @@ public sealed class AgentTaskReplyService
         conflicted.LandVerifyFilter = null;
         conflicted.LandStartedAt = null;
         conflicted.ConcurrencyToken = Guid.NewGuid();
-        db.AgentTaskEvents.Add(NewEvent(
+        var mergedEvent = NewEvent(
             conflicted.Id, AgentTaskEventType.Merged,
-            $"Conflict resolved by merge task {DelegationReportFormatter.Short(merge.Id)}.", now));
+            $"Conflict resolved by merge task {DelegationReportFormatter.Short(merge.Id)}.", now);
+        if (conflicted.CurrentLandRequestId is Guid requestId)
+        {
+            var request = await db.AgentTaskLandRequests.SingleOrDefaultAsync(r => r.Id == requestId, ct);
+            if (request is { IsPending: true, State: LandRequestState.NeedsResolution })
+            {
+                request.State = LandRequestState.Superseded;
+                request.IsPending = false;
+                request.TerminalEventId = mergedEvent.Id;
+                mergedEvent.LandRequestId = request.Id;
+                mergedEvent.IsLandTerminal = true;
+            }
+        }
+        db.AgentTaskEvents.Add(mergedEvent);
         await StageOutcomeService.AttachMergeResolutionAsync(db, merge, ct);
         await ReleaseDelegateAsync(services, db, conflicted, now, ct);
         await PublishAsync(conflicted, ct);

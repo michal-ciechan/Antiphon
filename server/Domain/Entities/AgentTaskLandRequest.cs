@@ -53,6 +53,8 @@ public sealed class AgentTaskLandRequest
     public string? RecoveryOwnerRemoteBeforeSha { get; set; }
     public string? RecoveryOwnerRemoteAfterSha { get; set; }
     public string? RecoveryRelationship { get; set; }
+    public bool? RecoveryPatchesContained { get; set; }
+    public string? RecoveryUncontainedPatches { get; set; }
     public DateTime? RecoveryAdoptedAt { get; set; }
     public LandApprovalKind ApprovalKind { get; set; }
     public DateTime? ApprovedAt { get; set; }

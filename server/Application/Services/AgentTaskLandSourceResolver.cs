@@ -54,12 +54,14 @@ public sealed class AgentTaskLandSourceResolver(
 
         if (request.SourceAdvanceChildOperation is not null)
         {
+            var resumableReset = request.RecoveryMode != LandRecoveryMode.None
+                && request.SourceAdvanceChildOperation == "source-adopt-reset";
             if (request.SourceAdvanceChildProcessId is null || request.SourceAdvanceChildStartTicks is null)
             {
                 if (request.SourceResolutionState != LandSourceResolutionState.AdvanceStarted)
                     return await RefuseAsync(task, request, baseline, "interrupted_process_requires_inspection",
                         request.LocalBeforeSha, request.RemoteSourceSha, request.ExpectedSourceSha, ct);
-                request.SourceAdvanceChildOperation = null;
+                if (!resumableReset) request.SourceAdvanceChildOperation = null;
             }
             else
             {
@@ -68,7 +70,7 @@ public sealed class AgentTaskLandSourceResolver(
                 if (alive != false)
                     return await RefuseAsync(task, request, baseline, "interrupted_process_requires_inspection",
                         request.LocalBeforeSha, request.RemoteSourceSha, request.ExpectedSourceSha, ct);
-                request.SourceAdvanceChildOperation = null;
+                if (!resumableReset) request.SourceAdvanceChildOperation = null;
                 request.SourceAdvanceChildProcessId = null;
                 request.SourceAdvanceChildStartTicks = null;
             }
@@ -223,8 +225,15 @@ public sealed class AgentTaskLandSourceResolver(
         if (source is null || source.Role != AgentTaskRole.Code || source.Workspace != WorkspaceMode.Worktree
             || source.RepairSourceTaskId is not null || source.SourceLandingOperationId is not null
             || source.WorktreeBranch is null || FullRef(source.WorktreeBranch) != request.RecoverySourceFullRef
+            || !LandApproval.RecoveryStatusEligible(source.Status)
+            || (request.RecoveryMode == LandRecoveryMode.AdoptReviewedSource
+                && (source.CardId is null || source.CardId != task.CardId || source.ProjectId != task.ProjectId))
+            || (request.RecoveryMode == LandRecoveryMode.OwnerReviewedSource && source.Id != task.Id)
             || request.ReviewEvidenceId is null)
             return await RefuseAsync(task, request, baseline, "recovery_source_invalid", null, null, expected, ct);
+        if (source.Id != task.Id && await db.AgentTaskLandRequests.AsNoTracking()
+            .AnyAsync(r => r.TaskId == source.Id && r.IsPending, ct))
+            return await RefuseAsync(task, request, baseline, "adopt_source_landing", null, null, expected, ct);
         try
         {
             await LandApproval.LoadRecoveryEvidenceAsync(db, request.ReviewEvidenceId.Value, expected, source, ct);
@@ -263,7 +272,41 @@ public sealed class AgentTaskLandSourceResolver(
             return await RefuseAsync(task, request, baseline, "adopt_source_remote_changed",
                 null, ownerObserved.Sha, expected, ct);
 
+        async Task StartedAsync(int pid, long ticks, CancellationToken startedCt)
+        {
+            request.SourceAdvanceChildProcessId = pid;
+            request.SourceAdvanceChildStartTicks = ticks;
+            request.ConcurrencyToken = Guid.NewGuid();
+            await db.SaveChangesAsync(startedCt);
+        }
         var inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
+        if (!inspected.Accepted && inspected.Reason == "source_dirty"
+            && request.SourceAdvanceChildOperation == "source-adopt-reset"
+            && GitObjectId.IsFull(request.RecoveryLocalBeforeSha))
+        {
+            // An interrupted update-ref leaves HEAD at S while the index and worktree still show L.
+            // Reset only when the checkout still equals the pinned old L; actual new edits refuse.
+            var identity = await git.InspectAsync(coordinates, LandInspectionScope.IdentityOnly, ct);
+            if (!identity.Accepted || identity.Snapshot!.HeadSha != expected)
+                return await RefuseAsync(task, request, baseline, "adopt_local_changed",
+                    identity.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
+            var unchanged = await git.RunAsync(coordinates.WorktreePath,
+                ["diff", "--quiet", request.RecoveryLocalBeforeSha!], ct);
+            var untracked = await git.RunAsync(coordinates.WorktreePath,
+                ["ls-files", "--others", "--exclude-standard"], ct);
+            if (!unchanged.Succeeded || !untracked.Succeeded || untracked.Output.Length != 0)
+                return await RefuseAsync(task, request, baseline, "source_dirty",
+                    expected, ownerObserved.Sha, expected, ct);
+            var resetResume = await git.RunOwnedAsync(coordinates.WorktreePath,
+                ["reset", "--hard", expected], StartedAsync, ct);
+            baseline = LandSourceCheckpointBaseline.From(request, task);
+            if (!resetResume.Succeeded)
+                return await RefuseAsync(task, request, baseline, "adopt_local_reset_failed",
+                    expected, ownerObserved.Sha, expected, ct);
+            request.SourceAdvanceChildProcessId = null;
+            request.SourceAdvanceChildStartTicks = null;
+            inspected = await git.InspectAsync(coordinates, LandInspectionScope.IdentityAndStatus, ct);
+        }
         if (!inspected.Accepted)
             return await RefuseAsync(task, request, baseline, inspected.Reason ?? "source_identity_unreadable",
                 null, ownerObserved.Sha, expected, ct, inspected.Diagnostic);
@@ -307,6 +350,20 @@ public sealed class AgentTaskLandSourceResolver(
         }
 
         var beforeRemote = request.RecoveryOwnerRemoteBeforeSha ?? ownerObserved.Sha;
+        if (request.RecoveryMode == LandRecoveryMode.AdoptReviewedSource && beforeRemote is not null)
+        {
+            var patches = await git.RunAsync(repository, ["cherry", expected, beforeRemote], ct);
+            if (!patches.Succeeded)
+                return await RefuseAsync(task, request, baseline, "adopt_source_patch_evidence_unreadable",
+                    local, beforeRemote, expected, ct);
+            var uncontained = patches.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => line.StartsWith("+ ", StringComparison.Ordinal))
+                .Select(line => line[2..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[0])
+                .ToArray();
+            request.RecoveryPatchesContained = uncontained.Length == 0;
+            request.RecoveryUncontainedPatches = string.Join(",", uncontained);
+        }
         var pinPrefix = $"refs/antiphon/land/{task.Id:N}/{request.Id:N}/adopt";
         foreach (var (name, sha) in new[] { ("local-before", request.RecoveryLocalBeforeSha ?? local), ("source", expected),
                      ("remote-before", beforeRemote) })
@@ -323,14 +380,6 @@ public sealed class AgentTaskLandSourceResolver(
         request.SourceResolutionState = LandSourceResolutionState.AdvanceStarted;
         if (await CheckpointAsync(task, request, baseline, ct) is { } stale) return stale;
         baseline = LandSourceCheckpointBaseline.From(request, task);
-        async Task StartedAsync(int pid, long ticks, CancellationToken startedCt)
-        {
-            request.SourceAdvanceChildProcessId = pid;
-            request.SourceAdvanceChildStartTicks = ticks;
-            request.ConcurrencyToken = Guid.NewGuid();
-            await db.SaveChangesAsync(startedCt);
-        }
-
         if (local != expected)
         {
             var authority = await RecheckRecoveryAuthorityAsync(request, source, sourceObserved, ct);
@@ -372,6 +421,14 @@ public sealed class AgentTaskLandSourceResolver(
             if (!afterLocal.Accepted || afterLocal.Snapshot!.HeadSha != expected)
                 return await RefuseAsync(task, request, baseline, "adopt_local_changed",
                     afterLocal.Snapshot?.HeadSha, ownerObserved.Sha, expected, ct);
+        }
+        if (request.SourceAdvanceChildOperation == "source-adopt-reset")
+        {
+            request.SourceAdvanceChildOperation = null;
+            request.SourceAdvanceChildProcessId = null;
+            request.SourceAdvanceChildStartTicks = null;
+            if (await CheckpointAsync(task, request, baseline, ct) is { } resetFinalStop) return resetFinalStop;
+            baseline = LandSourceCheckpointBaseline.From(request, task);
         }
 
         if (ownerObserved.Sha != expected)

@@ -61,6 +61,8 @@ internal sealed record LandSourceCheckpointBaseline(
     string? RecoveryOwnerRemoteBeforeSha,
     string? RecoveryOwnerRemoteAfterSha,
     string? RecoveryRelationship,
+    bool? RecoveryPatchesContained,
+    string? RecoveryUncontainedPatches,
     DateTime? RecoveryAdoptedAt,
     Guid? LandingOperationId,
     Guid? ActiveLandingId)
@@ -79,7 +81,8 @@ internal sealed record LandSourceCheckpointBaseline(
         request.RecoveryMode, request.RecoveryOwnerStatus, request.RecoverySourceTaskId,
         request.RecoverySourceFullRef, request.RecoverySourceFingerprint, request.SupersedesRequestId,
         request.RecoveryStartBaseSha, request.RecoveryLocalBeforeSha, request.RecoveryOwnerRemoteBeforeSha,
-        request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship, request.RecoveryAdoptedAt,
+        request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship,
+        request.RecoveryPatchesContained, request.RecoveryUncontainedPatches, request.RecoveryAdoptedAt,
         request.LandingOperationId,
         task.ActiveLandingId);
 }
@@ -111,6 +114,8 @@ internal sealed record LandSourceCheckpointPatch(
     string? RecoveryOwnerRemoteBeforeSha,
     string? RecoveryOwnerRemoteAfterSha,
     string? RecoveryRelationship,
+    bool? RecoveryPatchesContained,
+    string? RecoveryUncontainedPatches,
     DateTime? RecoveryAdoptedAt)
 {
     public static LandSourceCheckpointPatch From(AgentTaskLandRequest request) => new(
@@ -122,7 +127,8 @@ internal sealed record LandSourceCheckpointPatch(
         request.SourceDiagnosticCode, request.SourceDiagnosticExceptionType, request.SourceAdvanceChildProcessId,
         request.SourceAdvanceChildStartTicks, request.SourceAdvanceChildOperation,
         request.RecoverySourceFingerprint, request.RecoveryLocalBeforeSha, request.RecoveryOwnerRemoteBeforeSha,
-        request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship, request.RecoveryAdoptedAt);
+        request.RecoveryOwnerRemoteAfterSha, request.RecoveryRelationship,
+        request.RecoveryPatchesContained, request.RecoveryUncontainedPatches, request.RecoveryAdoptedAt);
 }
 
 internal sealed record LandSourceCheckpointResult(
@@ -155,6 +161,7 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
                 + $"({request.RecoverySourceFullRef}) adopted for owner {task.Id:N}; "
                 + $"local-before={request.RecoveryLocalBeforeSha}; remote-before={request.RecoveryOwnerRemoteBeforeSha}; "
                 + $"remote-after={request.RecoveryOwnerRemoteAfterSha}; relationship={request.RecoveryRelationship}; "
+                + $"patches-contained={request.RecoveryPatchesContained}; uncontained={request.RecoveryUncontainedPatches}; "
                 + $"review={request.ReviewEvidenceId:N}.";
             db.AgentTaskEvents.Add(new AgentTaskEvent
             {
@@ -278,6 +285,8 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         && request.RecoveryOwnerRemoteBeforeSha == baseline.RecoveryOwnerRemoteBeforeSha
         && request.RecoveryOwnerRemoteAfterSha == baseline.RecoveryOwnerRemoteAfterSha
         && request.RecoveryRelationship == baseline.RecoveryRelationship
+        && request.RecoveryPatchesContained == baseline.RecoveryPatchesContained
+        && request.RecoveryUncontainedPatches == baseline.RecoveryUncontainedPatches
         && request.RecoveryAdoptedAt == baseline.RecoveryAdoptedAt
         && request.LandingOperationId == baseline.LandingOperationId
         && task.ActiveLandingId == baseline.ActiveLandingId;
@@ -310,6 +319,8 @@ internal sealed class AgentTaskLandRequestWriter(AppDbContext db, TimeProvider c
         request.RecoveryOwnerRemoteBeforeSha = patch.RecoveryOwnerRemoteBeforeSha;
         request.RecoveryOwnerRemoteAfterSha = patch.RecoveryOwnerRemoteAfterSha;
         request.RecoveryRelationship = patch.RecoveryRelationship;
+        request.RecoveryPatchesContained = patch.RecoveryPatchesContained;
+        request.RecoveryUncontainedPatches = patch.RecoveryUncontainedPatches;
         request.RecoveryAdoptedAt = patch.RecoveryAdoptedAt;
     }
 }
