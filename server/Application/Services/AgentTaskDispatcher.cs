@@ -278,7 +278,7 @@ public sealed class AgentTaskDispatcher
     private enum HoldKind
     {
         Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap, PinnedAgent,
-        RemotePrep, RemotePrepBackoff, RunnerUnavailable, RunnerCapacity,
+        RemotePrep, RemotePrepBackoff, RunnerUnavailable, RunnerCapacity, RunnerDraining,
     }
 
     private sealed class QueuedHoldIndex
@@ -921,11 +921,78 @@ public sealed class AgentTaskDispatcher
         await EscalateHeldAgeAsync(
             heldThisTick, lastHeld, holdIndex, queued, active + dispatchedAgainstCap, occupantShorts, ct);
 
-        var heldOnRunner = heldThisTick.Count(h => h.Kind is HoldKind.RunnerCapacity or HoldKind.RunnerUnavailable);
+        var heldOnRunner = heldThisTick.Count(h =>
+            h.Kind is HoldKind.RunnerCapacity or HoldKind.RunnerUnavailable or HoldKind.RunnerDraining);
         return new TickResult(
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
             skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked, skippedCapacityWait,
             heldOnLease.Count, heldOnRunner);
+    }
+
+    /// <summary>
+    /// CARD-0727 D-8. An unlaunched, non-SourceLanding task on a draining runner with an eligible
+    /// redirect is moved before the ordinary gates. The row is saved before any request to the target.
+    /// </summary>
+    private async Task<string> RebindDrainingAsync(AgentTask task, string runnerId, CancellationToken ct)
+    {
+        if (_runners is null || task.AgentSessionId is not null || task.SourceLandingOperationId is not null)
+            return runnerId;
+        var state = _runners.DrainState(runnerId);
+        if (state is not { Draining: true } || state.RetiredAt is not null || string.IsNullOrWhiteSpace(state.RedirectTo))
+            return runnerId;
+        if (!DrainRedirectEligible(state.RedirectTo))
+            return runnerId;
+
+        var target = state.RedirectTo;
+        var oldPath = task.RemoteWorktreePath;
+        if (_remoteWorkspace is not null && !string.IsNullOrWhiteSpace(oldPath))
+        {
+            var residue = await _remoteWorkspace.RemoveMirrorAsync(task, ct);
+            if (residue is not null)
+            {
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = task.Id,
+                    Type = AgentTaskEventType.Warning,
+                    Detail = $"Remote mirror {oldPath} could not be removed from runner '{runnerId}'; the task still moves.",
+                    At = UtcNow(),
+                });
+            }
+        }
+
+        task.RunnerId = target;
+        task.RemoteWorktreePath = null;
+        task.RemotePrepFailures = 0;
+        task.DispatchNotBeforeAt = null;
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = $"runner drain_redirect from={runnerId} to={target} reason={state.DrainReason}",
+            At = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+        return target;
+    }
+
+    private bool DrainRedirectEligible(string target)
+    {
+        if (_phoneHome?.IsRunnerBound(target) != true || !_phoneHome.AllowsDelegatedTasks(target) || _runners is null)
+            return false;
+        var state = _runners.DrainState(target);
+        if (state is { Draining: true } || state?.RetiredAt is not null)
+            return false;
+        try
+        {
+            _runners.Resolve(target);
+            return true;
+        }
+        catch (Exception ex) when (ex is ServiceUnavailableException or ConflictException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -937,6 +1004,7 @@ public sealed class AgentTaskDispatcher
     {
         if (_runners is null || task.RunnerId is not { Length: > 0 } runnerId)
             return null;
+        runnerId = await RebindDrainingAsync(task, runnerId, ct);
         if (task.DispatchNotBeforeAt is { } notBefore && notBefore > UtcNow())
         {
             return (HoldKind.RemotePrepBackoff,
@@ -947,10 +1015,17 @@ public sealed class AgentTaskDispatcher
             return (HoldKind.RemotePrep, DispatchHoldDetails.RemoteMirrorRequested(runnerId, since));
         try
         {
-            _runners.Resolve(runnerId);
+            _runners.ResolveForNewWork(runnerId);
         }
         catch (Exception ex) when (ex is ServiceUnavailableException or ConflictException)
         {
+            if (ex is HttpException http && http.Code is PhoneHomeProblemTypes.RunnerDraining or PhoneHomeProblemTypes.RunnerRetired)
+            {
+                var state = _runners.DrainState(runnerId);
+                return (HoldKind.RunnerDraining,
+                    DispatchHoldDetails.RunnerDraining(runnerId, state?.DrainReason, state?.RedirectTo));
+            }
+
             return (HoldKind.RunnerUnavailable, DispatchHoldDetails.RunnerUnavailable(runnerId, ex.Message));
         }
 
@@ -4507,8 +4582,12 @@ public sealed class AgentTaskDispatcher
             // transaction (a silent runner held the row lock and the serial tick for the whole
             // mirror budget, CARD-0629). Commit the claim with the task still Queued - the desktop
             // worktree is recorded exactly once - and hand the network work to the preparer.
-            if (claimed.RemoteWorktreePath is null && claimed.SourceLandingOperationId is null
-                && _remotePrep is not null && _remoteWorkspace is not null)
+            // CARD-0727 D-7: the new-work gate runs again here, so a drain that began after the
+            // claim check refuses the mirror.
+            var prepared = await PrepareRemoteWorkspaceAsync(claimed, remoteRunner, now, ct);
+            if (prepared is null && claimed.RemoteWorktreePath is null && claimed.SourceLandingOperationId is null
+                && _remotePrep is not null && _remoteWorkspace is not null
+                && _runners?.DrainState(remoteRunner) is not { Draining: true })
             {
                 claimed.ConcurrencyToken = Guid.NewGuid();
                 await _db.SaveChangesAsync(ct);
@@ -4517,7 +4596,6 @@ public sealed class AgentTaskDispatcher
                 return DispatchOneResult.HeldForRemotePrep;
             }
 
-            var prepared = await PrepareRemoteWorkspaceAsync(claimed, remoteRunner, now, ct);
             if (prepared is null)
             {
                 await transaction.RollbackAsync(ct);
@@ -5655,12 +5733,14 @@ public sealed class AgentTaskDispatcher
 
         try
         {
-            _runners.Resolve(runnerId);
+            _runners.ResolveForNewWork(runnerId);
         }
         catch (Exception ex) when (ex is ServiceUnavailableException or ConflictException)
         {
-            await RemoteWarnAsync(claimed, now,
-                $"RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({ex.Message}); the task stays Queued.", ct);
+            var detail = ex is HttpException http && http.Code is PhoneHomeProblemTypes.RunnerDraining or PhoneHomeProblemTypes.RunnerRetired
+                ? DispatchHoldDetails.RunnerDraining(runnerId, _runners.DrainState(runnerId)?.DrainReason, _runners.DrainState(runnerId)?.RedirectTo)
+                : $"RunnerUnavailable: runner '{runnerId}' is not dispatch-eligible ({ex.Message}); the task stays Queued.";
+            await RemoteWarnAsync(claimed, now, detail, ct);
             return null;
         }
 
