@@ -335,6 +335,10 @@ public sealed class AgentTaskLandService
             LandApprovalKind.InheritedResume);
         request.CleanupOnly = true;
         request.RequiredLandingOperationId = operationId;
+        request.RecoveryMode = op.RecoveryMode;
+        request.RecoveryOwnerStatus = op.RecoveryOwnerStatus;
+        request.RecoverySourceTaskId = op.RecoverySourceTaskId;
+        request.RecoverySourceFullRef = op.RecoverySourceFullRef;
         request.SweepRunId = sweepRunId;
         request.Origin = LandRequestOrigin.ScheduledCleanup;
         request.ReplyTo = AgentTaskReplyTo.None;
