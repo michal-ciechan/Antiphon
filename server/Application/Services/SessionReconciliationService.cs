@@ -105,7 +105,7 @@ public sealed class SessionReconciliationService
             if (runnerSessions is not null)
             {
                 corrections += await ReconcileSessionsAsync(runnerSessions, now, ct, ownerRunnerId: null);
-                await ResumeInterruptedLaunchesAsync(runnerSessions, now, ct);
+                await ResumeInterruptedLaunchesAsync(runnerSessions, now, ct, owner: null);
                 await RaiseHerdrPendingIncidentsAsync(runnerSessions, now, ct);
                 corrections += await ReconcileRunnerAliveSessionsAsync(runnerSessions, now, ct);
                 await RaiseCensusAlertIfDivergedAsync(runnerSessions, now, ct);
@@ -123,9 +123,9 @@ public sealed class SessionReconciliationService
                     continue;
                 var owner = runnerId == PhoneHomeProtocol.LocalRunnerId ? null : runnerId;
                 corrections += await ReconcileSessionsAsync(available.Sessions, now, ct, owner);
+                await ResumeInterruptedLaunchesAsync(available.Sessions, now, ct, owner);
                 if (owner is null)
                 {
-                    await ResumeInterruptedLaunchesAsync(available.Sessions, now, ct);
                     await RaiseHerdrPendingIncidentsAsync(available.Sessions, now, ct);
                     corrections += await ReconcileRunnerAliveSessionsAsync(available.Sessions, now, ct);
                     await RaiseCensusAlertIfDivergedAsync(available.Sessions, now, ct);
@@ -285,14 +285,18 @@ public sealed class SessionReconciliationService
     /// write. No timeout: the liveness argument is exact.
     /// </summary>
     private async Task ResumeInterruptedLaunchesAsync(
-        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct, string? owner)
     {
         if (!_settings.LaunchResumeEnabled || _ownership is null)
             return;
 
-        var starting = await _db.AgentSessions
-            .Where(s => s.Status == SessionStatus.Starting)
-            .ToListAsync(ct);
+        // A null owner is the local runner (RunnerId IS NULL). A captured null compared with ==
+        // becomes "= @p" and matches nothing, so the two arms stay separate.
+        var startingQuery = _db.AgentSessions.Where(s => s.Status == SessionStatus.Starting);
+        startingQuery = owner is null
+            ? startingQuery.Where(s => s.RunnerId == null)
+            : startingQuery.Where(s => s.RunnerId == owner);
+        var starting = await startingQuery.ToListAsync(ct);
         if (starting.Count == 0)
             return;
 
@@ -315,8 +319,8 @@ public sealed class SessionReconciliationService
             var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
             _logger.LogInformation(
                 "Interrupted launch: session {SessionId} has been Starting for {StartingSeconds}s; "
-                + "the runner still serves it and this process does not own the launch",
-                session.Id, startingSeconds);
+                + "the runner still serves it and this process does not own the launch (runner {RunnerId})",
+                session.Id, startingSeconds, owner ?? "local");
 
             var agent = await FindOwningAgentAsync(session.Id, ct);
             _ownership.ResumeInterrupted(session.Id, agent?.Id ?? Guid.Empty);
