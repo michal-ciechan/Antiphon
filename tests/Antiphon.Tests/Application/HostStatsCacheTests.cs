@@ -55,6 +55,19 @@ public sealed class HostStatsCacheTests
     }
 
     [Test]
+    public void Repeated_sample_time_does_not_refresh_observation_or_hide_staleness()
+    {
+        var (cache, clock) = New();
+        cache.Record("server2", Sample());
+        clock.Advance(TimeSpan.FromMilliseconds(15001));
+        cache.Record("server2", Sample());
+
+        var row = cache.Project([Host()]).Single();
+        row.State.ShouldBe("stale");
+        row.ObservedAt.ShouldBe(Now);
+    }
+
+    [Test]
     public void Unrecorded_disconnected_host_projects_offline_with_null_current()
     {
         var (cache, _) = New();
