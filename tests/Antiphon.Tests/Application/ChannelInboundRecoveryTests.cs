@@ -54,10 +54,13 @@ public sealed class ChannelInboundRecoveryTests
     {
         h.Adapter.OnSubmitted = async submitted =>
         {
-            var record = new SessionRunnerTranscriptEvent(h.SessionId, 1, TranscriptKinds.UserPrompt,
+            await using var db = Db(h.ConnectionString);
+            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+            var record = new SessionRunnerTranscriptEvent(h.SessionId, sequence, TranscriptKinds.UserPrompt,
                 Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
                 null, null, null, null, null);
-            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], 1));
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], sequence));
             await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
         };
     }
@@ -134,6 +137,19 @@ public sealed class ChannelInboundRecoveryTests
         await using (var db = Db(schema.ConnectionString))
             await db.AgentSessions.Where(s => s.Id == session)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+        Guid replacementAgentId; Guid replacementSessionId;
+        await using (var replacement = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = false,
+            PreserveDatabaseOnDispose = true,
+        }))
+        {
+            replacementAgentId = replacement.AgentId;
+            replacementSessionId = replacement.SessionId;
+        }
+        await using (var rebound = Db(schema.ConnectionString))
+            await rebound.ChatChannels.Where(c => c.ExternalId == chat)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.AgentId, replacementAgentId));
         await using var recovered = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
@@ -155,6 +171,27 @@ public sealed class ChannelInboundRecoveryTests
         owner.Body.ShouldContain("[antiphon-channel:");
         (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == session &&
             t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(owner.Body))).ShouldBe(1);
+        (await verify.SessionQueuedMessages.CountAsync(q => q.AgentSessionId == replacementSessionId
+            && q.SourceChannelInboundId != null)).ShouldBe(0);
+
+        await verify.ChatChannels.Where(c => c.ExternalId == chat)
+            .ExecuteUpdateAsync(u => u.SetProperty(c => c.AgentId, agent));
+        await recovered.MarkWorkingAsync();
+        var busyNative = $"busy-{Guid.NewGuid():N}";
+        await Bridge(recovered).HandleInboundAsync(Message(chat, busyNative, "wait until turn end"), Ct);
+        var busyInbound = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == busyNative);
+        var busyOwner = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == busyInbound.Id);
+        busyOwner.Status.ShouldBe(QueuedMessageStatus.Pending);
+        recovered.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        await recovered.Queue.OnTurnEndAsync(session, Ct);
+        await WaitForAsync(async () =>
+        {
+            await using var received = Db(schema.ConnectionString);
+            return await received.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(busyOwner.Body));
+        });
+        recovered.Adapter.SubmittedBodies.Count.ShouldBe(2);
 
         await RecoveryTriggerAsync(signal: true);
         await RecoveryTriggerAsync(signal: false);
