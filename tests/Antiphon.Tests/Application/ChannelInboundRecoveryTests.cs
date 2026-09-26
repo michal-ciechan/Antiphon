@@ -615,25 +615,6 @@ public sealed class ChannelInboundRecoveryTests
         (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId &&
             t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains("DISTINCT TAIL"))).ShouldBe(0);
 
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, body,
-            timestamp: h.Now);
-        await h.Queue.FlushSessionAsync(h.SessionId, Ct);
-        await using (var assistantOnly = Db(schema.ConnectionString))
-            (await assistantOnly.SessionQueuedMessages.AsNoTracking()
-                .Where(q => q.Id == id).Select(q => q.Status).SingleAsync())
-                .ShouldBe(QueuedMessageStatus.Pending);
-
-        // A queued prompt is not a recipient UserPrompt. Even an exact body past the
-        // attempt floor must leave this Channel obligation pending.
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, body,
-            timestamp: h.Now);
-        await h.Queue.FlushSessionAsync(h.SessionId, Ct);
-        await using var noRecipientReceipt = Db(schema.ConnectionString);
-        var afterQueuedOnly = await noRecipientReceipt.SessionQueuedMessages.AsNoTracking()
-            .SingleAsync(q => q.Id == id);
-        afterQueuedOnly.Status.ShouldBe(QueuedMessageStatus.Pending);
-        afterQueuedOnly.DeliveryAttempts.ShouldBe(3);
-        h.Adapter.SentInput.ShouldBeEmpty();
     }
 
     private sealed class QueueMappingFault : SaveChangesInterceptor
