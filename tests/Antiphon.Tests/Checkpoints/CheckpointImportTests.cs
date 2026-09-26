@@ -95,7 +95,7 @@ public sealed class CheckpointImportTests
         var imported = PlanTableImporter.ImportFile(path);
         imported.ExitCode.ShouldBe(0, imported.Error);
         var manifest = imported.Manifest!;
-        manifest.Checkpoints.Count.ShouldBe(8);
+        manifest.Checkpoints.Count.ShouldBe(9);
         var first = manifest.Checkpoints.Single(row => row.Id == "CP-1");
         first.Build.ShouldBe("bin-c723a");
         manifest.Builds.Single(build => build.Id == "bin-c723a").Project.ShouldBe("tests/Antiphon.Tests");
@@ -117,7 +117,9 @@ public sealed class CheckpointImportTests
         var root = CheckpointFixtures.TempDir();
         var yaml = ManifestLoader.ToYaml(manifest);
         var roundTrip = ManifestLoader.LoadYaml(yaml, root);
-        roundTrip.Checkpoints.Count.ShouldBe(8);
+        roundTrip.Checkpoints.Count.ShouldBe(9);
+        roundTrip.Checkpoints.Single(row => row.Id == "CP-5b").Filter.ShouldContain("C544_DailyValidity");
+        roundTrip.Checkpoints.Single(row => row.Id == "CP-5b").Expect.ShouldContain("C544_DailyValidity");
         roundTrip.Checkpoints.Single(row => row.Id == "CP-6").Filter.ShouldBe("/*/*/*/*[Category=Unit]");
     }
 }
