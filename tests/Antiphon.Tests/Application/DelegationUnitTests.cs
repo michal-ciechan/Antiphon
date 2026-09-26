@@ -594,6 +594,69 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void reported_repository_paths_keep_a_posix_absolute_path_inside_the_repository()
+    {
+        var root = Directory.CreateTempSubdirectory("antiphon-posix-inside");
+        try
+        {
+            var absolute = Path.Combine(root.FullName, "docs", "superpowers", "uncommitted-plan.md");
+            var paths = AgentTaskReplyService.ExtractReportedRepositoryPaths(
+                $"Wrote {absolute}.",
+                root.FullName);
+
+            paths.ShouldBe(["docs/superpowers/uncommitted-plan.md"]);
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Test]
+    public void reported_repository_paths_reject_a_posix_absolute_path_outside_the_repository()
+    {
+        var root = Directory.CreateTempSubdirectory("antiphon-posix-root");
+        var outside = Directory.CreateTempSubdirectory("antiphon-posix-outside");
+        try
+        {
+            var inside = Path.Combine(root.FullName, "docs", "superpowers", "uncommitted-plan.md");
+            var stolen = Path.Combine(outside.FullName, "docs", "stolen.md");
+            var paths = AgentTaskReplyService.ExtractReportedRepositoryPaths(
+                $"Wrote {inside}. Also touched {stolen}.",
+                root.FullName);
+
+            paths.ShouldBe(["docs/superpowers/uncommitted-plan.md"]);
+        }
+        finally
+        {
+            root.Delete(true);
+            outside.Delete(true);
+        }
+    }
+
+    [Test]
+    public void reported_repository_paths_ignore_a_url_and_a_prose_fragment()
+    {
+        var root = Directory.CreateTempSubdirectory("antiphon-posix-prose");
+        try
+        {
+            // The repository's own absolute path is embedded in the URL. A pattern that treats the
+            // slash after the host as a POSIX path would claim docs/superpowers/plan.md. The prose
+            // fragment has a leading slash and no file extension.
+            var report =
+                $"See https://example.com{root.FullName}/docs/superpowers/plan.md. "
+                + "The fragment /not a path is not a file.";
+            var paths = AgentTaskReplyService.ExtractReportedRepositoryPaths(report, root.FullName);
+
+            paths.ShouldBeEmpty();
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Test]
     public void a_brief_tells_the_delegate_to_spill_past_the_ceiling()
     {
         var brief = DelegationReportFormatter.BuildBrief(NewTask(), Settings);
