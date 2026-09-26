@@ -100,7 +100,10 @@ public sealed class AgentTaskLandAdoptionTests
 
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
-        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(reviewed);
+        op.RecoveryLocalBeforeSha.ShouldBe(oldLocal);
+        op.OriginalSourceSha.ShouldBe(reviewed);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete, op.LastReason);
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
     }
 
     [Test]
