@@ -3,8 +3,10 @@
 - Card: CARD-0718 (`18a35dd7`), Backlog, Normal/Soon.
 - Plan task: `18fd01a3` (Plan, Frontier, worktree `feat/card-task-18fd01a3`), written on the
   server2 Linux runner. Ground truth read at `bafc3366`.
-- Next stage: TestDesign (the `## Verification design` section below is the draft it refines;
-  the `### Checkpoints` table is the closed list a Code dispatch runs).
+- TestDesign: task `609f77b4` (Opus, server2), refined `## Verification design` in place from
+  `fa86dc64`; counts re-read at `bafc3366` (origin/master).
+- Next stage: Code Round 1 (S1–S4). The `### Checkpoints` table is the closed list it runs;
+  `### Positive controls` is the post-land Mutation list.
 - Platform: every checkpoint row runs on either lane. The Windows probe test executes only on
   Windows and is reported as not run with the reason on Linux; the Linux probe test does the
   reverse. No row pins a runner host.
@@ -376,6 +378,107 @@ commit message) before the slice's production change; R = existing classes that 
 green because a slice touches their path. `[Category("Unit")]` / `[Category("Integration")]`
 per `TestLaneCategoryGuardTests`; nothing here spawns a process, so no
 `ParallelLimiter<ProcessSpawnLimit>` is added.
+
+### Inspection
+
+Bodies read by TestDesign at `bafc3366`, and what each changes in the roster:
+
+- `tests/Antiphon.SessionRunner.Tests/BuildSlotTestHost.cs` (whole) | the shape `HostStatsTestHost`
+  copies: `WebApplication.CreateBuilder`, `UseUrls("http://127.0.0.1:0")`, injected
+  `IHostMemoryProbe`/`TimeProvider`, `Add*`/`Map*` pair, refuses ports 17204/8080 -> V-4.
+- `tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs` (head, ctor use) |
+  `[Category("Unit")]`, 34 `[Test]`, `new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings{...})`
+  plus optional seams; an unknown operation `(PhoneHomeOperation)999` answers `Error` -> V-5 reuses
+  `RecordingRuntime` and passes the new `hostStats:` seam by name.
+- `tests/Antiphon.SessionRunner.Tests/RunnerCapabilitiesTests.cs` (4 `[Test]`) and
+  `src/Antiphon.SessionRunner/Program.cs:205-219` | the `features` list is built **inline in the
+  `/capabilities` lambda**, unreachable from a test -> missing setup MS-3 below; the capability
+  guard is tested through the extracted helper, not through `Program`.
+- `tests/Antiphon.SessionRunner.Tests/SessionCpuWatchdogTests.cs` (head, 3 `[Test]`) | it starts a
+  real pty-host session with `Path.Combine(Environment.SystemDirectory, "cmd.exe")` under
+  `ParallelLimiter<ProcessSpawnLimit>`; the plan changes neither `IProcessCpuProbe` nor the
+  watchdog -> **removed from R-1** (see Out of scope).
+- `tests/Antiphon.SessionRunner.Tests/LocalHttpRunner.cs` (ctor) | the isolated-runner argument
+  set (`--urls http://127.0.0.1:0`, `SessionLogPath`, Herdr off, watchdog off, `Serilog:LogPath`)
+  that CP-4's measurement script copies; it launches `Antiphon.SessionRunner.exe`, so CP-4 launches
+  the `.dll` through `dotnet` instead to run on either OS.
+- `src/Antiphon.SessionRunner/HostMemoryProbe.cs` (whole) | `ParseMemAvailable` is internal static
+  over lines, `GlobalMemoryStatusEx` struct already carries `TotalPhys`/`TotalPageFile` -> V-2's
+  memory-floor consistency method.
+- `src/Antiphon.SessionRunner/SessionCpuWatchdogService.cs:23-80` | ctor takes the concrete
+  `SessionRunnerRuntime`; `SweepOnceAsync` is the internal seam; `PeriodicTimer` without a
+  `TimeProvider` -> missing setup MS-2 (the sampler must not take the concrete runtime).
+- `tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs` (whole: `StartAsync`, `RecordingLocalClient`,
+  `PhoneHomeScriptedPeer`) | `StartAsync(clock, connectionString, limits, configureDbContext,
+  shutdownTimeout, configured)` registers **no `IEventBus`** and maps only session-runner, operator
+  and version endpoints; the peer's `DefaultReply` answers any unlisted operation with `{ ok = true }`,
+  which would deserialize into an all-default `RunnerHostStatsDto` of zeros; `SilentFor`,
+  `Speak`, `RequestCount`, `WaitForAsync` exist -> missing setup MS-5, MS-6; every V-8/V-9 method
+  scripts `Reply` for 29/30 explicitly.
+- `server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs:55-80`,
+  `PhoneHomeRunnerDirectory.cs:100-118` | the precedent for an unsupported answer: an `Error` frame with
+  `ErrorCode == PhoneHomeProblemTypes.UnsupportedOperation` becomes a typed exception / 409
+  -> V-8 method 3 drives the real client with that frame.
+- `server/Infrastructure/Realtime/AntiphonHub.cs:26-36`, `EventBus.cs` | `JoinGroup(string)` accepts
+  any group name and `PublishToGroupAsync` is `Clients.Group(group).SendAsync` -> no hub change;
+  `Antiphon.Tests` does not reference `Microsoft.AspNetCore.SignalR.Client` (only `Antiphon.E2E`
+  does), so the hub hop is a declared substitute (Delivery inventory).
+- `tests/Antiphon.Tests/Application/RunnerCatalogueTests.cs:68-110` | `TestDbFixture.CreateIsolatedSchemaAsync()`
+  plus `PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString)` and `db.AgentTasks.Add(TaskRow(...))`
+  is the seeded-task idiom V-9 method 1 uses.
+- `tests/Antiphon.Tests/Application/SessionRunnerEventPumpTests.cs` | 2 `[Test]`, one with four
+  `[Arguments]`: **5 executions**, not 2 (R-2's Min).
+- `client/src/test/mocks/handlers.ts:36`, `client/src/features/board/SessionTerminal.test.tsx:116`
+  (`vi.mock('@microsoft/signalr', ...)`), `scripts/test-client.ps1` header (filter args pass through)
+  -> V-10's hook test mocks `HubConnectionBuilder` the SessionTerminal way.
+- `docs/testing-and-build.md` Checkpoint manifest, Combined class filters, Mutation PC execution.
+
+Boundaries and where each lands:
+
+| Boundary | Covered by | Or excluded because |
+|---|---|---|
+| Rollup window edge: exactly `now − 60 s` vs `now − 60.001 s` | V-1 m5 | |
+| Window holding fewer samples than capacity; empty window | V-1 m4, m1 | |
+| Ring at 359 / 360 / 361 samples | V-1 m2 | |
+| Staleness at exactly `StaleAfterMs` vs +1 ms | V-6 m2 | |
+| First probe read (no CPU delta) vs second | V-2 m7, CP-3 | |
+| `/proc/stat` with 8 vs 10 columns; guest columns nonzero; iowait nonzero | V-2 m1, m2 | |
+| Metric present on one OS only (`load` on Windows) | V-1 m6, CP-3 | |
+| Host combinations: desktop live + remote live / silent / unsupported / disconnected / local fault | V-8 m1–m5 | |
+| Poll disabled (`HostStats:Enabled=false`) vs runner disabled (`SessionRunner:HostStats:Enabled=false`) | V-6 m6, V-4 m4 | |
+| `RunnerId` null vs empty vs named | V-7 m3 | |
+| Old runner x new server (unsupported) | V-8 m3 (phone-home), V-12 m2 (HTTP 404) | |
+| New runner x old server | | nothing polls it; its only cost is its own sampler (CP-4) |
+| Windows live probe on the Linux lane and the reverse | CP-3 (one executes per lane) | the other OS cannot be exercised on this lane; reported not run with the reason |
+| Two browser tabs in group `hosts` | | SignalR fan-out to a group is framework behaviour; one member proves the path |
+
+Missing setup the Code stage adds (test-only or seam, named so no row is a stub):
+
+- **MS-1** `LinuxHostStatsProbe` internal ctor seam `(Func<string, IReadOnlyList<string>> readLines,
+  Func<string, (long Free, long Total)?> statVolume, IReadOnlyList<string> volumes)`; the public ctor
+  passes `File.ReadAllLines` and `DriveInfo`. V-2 m7, m8 feed fixture strings through it.
+- **MS-2** `HostStatsSamplerService` depends on `IHostStatsProbe`, `HostStatsStore`, `IProcessCpuProbe`,
+  a `Func<IReadOnlyList<HostStatsProcessTarget>>` (session id, pid, host pid, started-at; the DI
+  registration adapts `SessionRunnerRuntime.List()`), a `Func<int, long?>` working-set reader
+  (default `Process.GetProcessById(pid).WorkingSet64`, null on `ArgumentException`), `TimeProvider`
+  and options. `ExecuteAsync` takes **one sample immediately**, then `new PeriodicTimer(interval, time)`.
+- **MS-3** `HostStatsRoutes.CapabilityFeatures(IReadOnlyList<string> features, HostStatsSettings s)`
+  (static, appends `hostStatsV1` only when `s.Enabled`); `Program.cs`'s lambda calls it.
+- **MS-4** `HostStatsTestHost` beside `BuildSlotTestHost`: `AddHostStats` + `MapHostStatsRoutes`,
+  injected fake `IHostStatsProbe`, `FakeTimeProvider`, settings dictionary, exposes the registered
+  `HostStatsSamplerService` so a test calls `SampleOnceAsync` twice; refuses 17204/8080 the same way.
+- **MS-5** `PhoneHomeTestHost.StartAsync` gains `Action<IServiceCollection>? configureServices = null`
+  and `Action<WebApplication>? mapEndpoints = null` (applied after the existing registrations and
+  maps). Existing callers are unchanged; V-9 uses them to register `HostStatsCache`,
+  `HostStatsAntiphonCounters`, a `RecordingEventBus` and `MapHostStatsEndpoints`.
+- **MS-6** `RecordingLocalClient` gains `RunnerHostStatsDto? HostStats`, `Exception? HostStatsFault`,
+  `RunnerHostSeriesDto? HostSeries` and overrides `GetHostStatsAsync` / `GetHostSeriesAsync`
+  (throw the fault if set, else return the property); a `RecordingEventBus : IEventBus` test helper
+  in `TestHelpers/` records `(group, eventName, payload)` and can be told to throw once.
+- **MS-7** `HostStatsPollService` takes an `IHostStatsAntiphonCounters` (interface over the grouped
+  query) so V-8 passes a fixed fake; V-9 uses the real one on the isolated schema. The per-host
+  request timeout is `new CancellationTokenSource(RequestTimeout, time)` on the injected
+  `TimeProvider`, so V-8 advances a `FakeTimeProvider` instead of sleeping.
 
 - **V-1 S1 `HostStatsStoreTests`** (Unit, `FakeTimeProvider`, 9 methods): an empty store
   answers null latest and null rollups (never zero); the 361st sample evicts the first and
