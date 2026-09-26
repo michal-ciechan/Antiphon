@@ -631,7 +631,7 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   as `RR_V7`'s base. Rows `[Arguments(row, isRace, automatic, explicitReplace)]`: `race` (T,T,T); `schema2` (F,F,T);
   `published` (Phase Refused + the `RR_V7` `receipt:Landed` publication fields, `HasPublication` asserted true first)
   (F,F,F); `reason:verification_failed` (F,F,T); `reason:push_rejected` (F,F,T); `reason:null` (F,F,T);
-  `phase:PushStarted` with `Publication Unconfirmed` (F,F,F); `publication:Unconfirmed` (Phase Refused) (F,F,T);
+  `phase:PushStarted` with `Publication Refused` kept, so only the phase conjunct differs (F,F,F); `publication:Unconfirmed` (Phase Refused) (F,F,T);
   `no-lease` (T,F,F — both calls with `leaseHeld: false`); `no-approval` (`ApprovalLandRequestId = null`) (T,F,F).
   Asserts: `IsTargetRaceRefusal(op) == isRace`; `CanReplaceRefused(op, explicitRequest: false, leaseHeld) == automatic`;
   `CanReplaceRefused(op, explicitRequest: true, leaseHeld) == explicitReplace` (today's rule, unchanged); the op's JSON
@@ -687,8 +687,8 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   `TerminalEventId = null`, `task.CurrentLandRequestId = request.Id`, `task.LandRequestedAt = request.RequestedAt`,
   `task.LandAttempt = request.Attempt`, `task.Status = Succeeded` (the admission checks at `AgentTaskLandService.cs:359–366`);
   `request.SourceResolutionState` stays `Resolved`. `h.Verifier.Passed = true`; `h.RunAsync()`. Assert operations count 1,
-  A unchanged (`Refused verification_failed`), `h.Verifier.Calls == 1`, no `push`, terminal `LandRefused` contains
-  `verification_failed`. Green before and after — guard row, flagged; its value is PC-5.
+  A unchanged (`Refused verification_failed`), `h.Verifier.Calls == 1`, no `push`, no `Warning` event, terminal
+  `LandRefused` contains `verification_failed`. Green before and after — guard row, flagged; its value is PC-5.
 - **V-15** The operator step on real git | real git | `AgentTaskLandTargetRaceTests.C711_LocalMasterAheadNamesTheOperatorReset`, CP-0, CP-1 |
   The `AgentTaskLandPublicationTests.C688_LocalMasterAheadOfOriginRefuses` setup (`commit --allow-empty` on canonical
   `master`, not pushed), then `RequestAsync(expectedSourceSha: reviewed)` + `RunQueuedAsync()`. Terminal `LandRefused`
@@ -736,3 +736,78 @@ push rejection), S1, S2, S3, S5 → CP-1..CP-4. S0's two members become the real
   unchanged: with the remote unmoved the legacy op still lands (the S3 arm fires only on its two reasons).
 - **R-9** `AgentTaskLandingStateTests.RR_V7_RefusedReplacementEligibilityDependsOnlyOnAdmission` rows `automatic`,
   `automatic-changed` — unchanged: an automatic request never replaces a non-race refusal (schema-1 base row).
+
+### Guard inventory
+
+Every safety-critical guard the fix adds or relies on, split where one conjunct can be bypassed alone. `!HasPublication`
+inside `IsTargetRaceRefusal` is not listed apart from G-3: `Publication == Refused` implies it (`HasPublication` requires
+`Landed`/`AlreadyPresent`), so no mutation of it alone is observable; G-3's PC removes the unpublished check as a whole.
+Likewise the `WarningAt`/`LastProgressAt` resets in D-5 are masked by `TransitionAsync`'s own stamp once
+`HighestProgress` is reset, so G-17 is the one reset guard.
+
+- G-1: D-3 `IsTargetRaceRefusal` — schema 3 only (legacy rows never auto-retry) | PC-1
+- G-2: D-3 — `LastReason == "remote_changed_before_push"` only (no other refusal is auto-replaced) | PC-2
+- G-3: D-3 — unpublished, terminal publication outcome (`Publication == Refused`, with the implied `!HasPublication`) | PC-3
+- G-4: D-3 — `Phase == Refused` only | PC-4
+- G-5: D-4 `CanReplaceRefused` race arm still requires the lease | PC-5
+- G-6: D-4 race arm still requires the schema-2/3 approval binding (`ApprovalLandRequestId`, reviewed == original) | PC-6
+- G-7: D-4 resolver fall-through (`AgentTaskLandSourceResolver.cs:86–93`) only for a race refusal | PC-7
+- G-8: D-2 service loop re-enters only when `IsTargetRaceRefusal(op)` (not on any unpublished result) | PC-8
+- G-9: D-6 a failed push is a race only when the re-observed tip differs from `RemoteBeforeSha ?? TargetBeforeSha` | PC-9
+- G-10: D-6 a **successful** push followed by a non-containing observation stays `push_unconfirmed` (never a race) | PC-10
+- G-11: D-8 retry bound `retries < LandTargetRaceRetries` | PC-11
+- G-12: D-8 the bound is read from settings (0 disables) | PC-12
+- G-13: D-9 the retried candidate is verified again (`base_unchanged` cannot apply to a re-rebase) | PC-13
+- G-14: D-9 the rebase runs only in the land worktree (task branch/worktree untouched by a raced attempt) | PC-14
+- G-15: D-9 canonical `master` advances only from `PublicationConfirmed` (never from a refused attempt) | PC-15
+- G-16: D-5 a retry enqueues no caller notification | PC-16
+- G-17: D-5 the retry resets `HighestProgress` (the monitor does not age a rebuilding retry) | PC-17
+- G-18: D-9 a retry re-reads the branch and refuses `source_changed` when it moved (factory line 25) | PC-18
+- G-19: D-9 a retry rechecks the remote source (`RecheckRemoteSourceAsync`) | PC-19
+- G-20: D-9 a conflicting re-rebase refuses as a conflict with its files (no push) | PC-20
+- G-21: D-4/D-9 the replacement inherits the approval identity (`ApprovalLandRequestId`, factory lines 79–80) | PC-21
+- G-22: D-7 legacy arm — `remote_changed_before_push` at `LocalTargetAdvanced`/`PushStarted` is terminal | PC-22
+- G-23: D-7 legacy arm — `source_changed` at those phases is terminal (independently listed reason) | PC-23
+- G-24: D-7 legacy arm limited to its two reasons (`push_rejected` stays resumable) | PC-24
+- G-25: D-7 the `target_local_ahead` detail names `fetch` + `reset --hard origin/master`, never `pull --rebase` | PC-25
+- G-26: D-7 `SourceRefusalReason` stays the bare code `target_local_ahead` | PC-26
+- G-27: D-8 settings validation rejects < 0 and > 5 | PC-27
+- G-28: D-12 fake push rejects a non-fast-forward of the target (the fake cannot hide an overwrite) | PC-28
+
+guards = 28, mapped = 28, missing = 0, duplicate PC maps = 0.
+
+### Positive controls
+
+Each PC is one compiling edit, run method-scoped (`--treenode-filter "/*/*/<Class>/<Method>"`) red → restore → green.
+Line numbers are the S1–S4 code's; the Mutation stage locates them by the named member.
+
+- PC-1: `IsTargetRaceRefusal` drops `op.SchemaVersion == 3 &&` → `AgentTaskLandingStateTests/C711_TargetRaceRefusalPolicy` red on row `schema2` at `IsTargetRaceRefusal(op).ShouldBe(isRace)`.
+- PC-2: drops the `LastReason == "remote_changed_before_push"` conjunct → same method red on rows `reason:verification_failed`, `reason:push_rejected`, `reason:null` at `IsTargetRaceRefusal(op).ShouldBe(isRace)`.
+- PC-3: drops the unpublished conjuncts (`Publication == Refused` and `!HasPublication`) → same method red on rows `publication:Unconfirmed` and `published` at `IsTargetRaceRefusal(op).ShouldBe(isRace)`.
+- PC-4: drops `Phase == Refused` → same method red on row `phase:PushStarted` at `IsTargetRaceRefusal(op).ShouldBe(isRace)`.
+- PC-5: `CanReplaceRefused` returns `true` for `IsTargetRaceRefusal(previous)` before the `!leaseHeld` test → same method red on row `no-lease` at `CanReplaceRefused(op, false, leaseHeld).ShouldBe(automatic)`.
+- PC-6: the race arm returns `true` before the schema-2/3 approval test → same method red on row `no-approval` at `CanReplaceRefused(op, false, leaseHeld).ShouldBe(automatic)`.
+- PC-7: resolver short-circuit falls through for every `Refused` existing op → `AgentTaskLandTargetRaceFakeTests/C711_NonRaceRefusalIsNotReplacedBySameRequest` red at `operations.Count.ShouldBe(1)`.
+- PC-8: service loop re-enters on any unpublished, conflict-free result → `AgentTaskLandTargetRaceTests/C711_PushRejectedWithoutMovementStaysResumable` red at the first `LandRefused` detail `ShouldContain("push_rejected")` (the re-entered resume pushes again and lands).
+- PC-9: D-6 `moved` forced `true` → `AgentTaskLandTargetRaceTests/C711_PushRejectedWithoutMovementStaysResumable` red at `ShouldContain("push_rejected")` (reason becomes `remote_changed_before_push`, a retry lands).
+- PC-10: D-6 evaluates `moved` before `pushed.Succeeded` → `LandingProtocolGuardTests/C475_PushExitDoesNotConfirmPublication` red at `h.Git.Trace.Count(a => a[0] == "push").ShouldBe(1)`.
+- PC-11: bound `retries < budget` → `<=` → `AgentTaskLandTargetRaceTests/C711_BudgetSpentRefusesAndNewRequestLands` (row 2) red at the operations count `ShouldBe(budget + 1)`.
+- PC-12: the loop uses a literal `2` instead of `LandTargetRaceRetries` → same method row 0 red at the `Warning` count `ShouldBe(budget)`.
+- PC-13: the `base_unchanged` skip condition drops `op.RebasedSourceSha == op.OriginalSourceSha` → `AgentTaskLandTargetRaceTests/C711_PushWindowRaceLandsInOneRequest` red at `h.Verifier.Calls.ShouldBe(2)`.
+- PC-14: the rebase `MutateAsync(op, land, [...rebase...])` runs in `op.WorktreePath` instead of `land` → `…/C711_PushWindowRaceLandsInOneRequest` red at the event sequence `[LandRequested, Warning, Landed]` (A refuses `source_changed`; no retry).
+- PC-15: the schema-3 catch arm calls `await AdvanceCanonicalAsync(op, CancellationToken.None)` before `Transition(op, Refused)` → `…/C711_PushWindowRaceLandsInOneRequest` red at the in-barrier canonical `master == f.SeedSha`.
+- PC-16: `WriteRaceRetryAsync` also calls `AddNotification(task, request, warning, LandNotificationKind.Aged)` → `…/C711_PushWindowRaceLandsInOneRequest` red at notifications `ShouldHaveSingleItem()` / `Kind == Outcome`.
+- PC-17: `WriteRaceRetryAsync` omits `request.HighestProgress = -1` → `AgentTaskLandTargetRaceFakeTests/C711_RetryRestartsTheProgressClock` red at `HighestProgress.ShouldBe((int)LandPhase.Prepared)`.
+- PC-18: delete `if (local.Sha != request.LocalBeforeSha) return new(null, "source_changed");` → `AgentTaskLandTargetRaceTests/C711_SourceMovedBeforeRetryRefuses` row `local` red at `SourceRefusalReason.ShouldBe("source_changed")`.
+- PC-19: `RecheckRemoteSourceAsync` returns immediately → same method row `remote` red at B `LastReason.ShouldBe("source_remote_changed")`.
+- PC-20: the rebase-failure return passes `[]` instead of `files` → `AgentTaskLandTargetRaceTests/C711_ConflictOnRetryRefusesAsConflict` red at request `State.ShouldBe(NeedsResolution)`.
+- PC-21: factory sets `ApprovalLandRequestId = request.Id` unconditionally → `…/C711_BudgetSpentRefusesAndNewRequestLands` (row 2) red at the new op's `ApprovalLandRequestId.ShouldBe(firstRequestId)`.
+- PC-22: the legacy arm omits `"remote_changed_before_push"` → `AgentTaskLandTargetRaceFakeTests/C711_LegacyAdvancedRowsBecomeTerminal` row `remote` red at `Phase.ShouldBe(LandPhase.Refused)`.
+- PC-23: the legacy arm omits `"source_changed"` → same method row `branch` red at `Phase.ShouldBe(LandPhase.Refused)`.
+- PC-24: the legacy arm drops its reason filter → same method row `push-rejected` red at `Phase.ShouldBe(LandPhase.PushStarted)`.
+- PC-25: the detail text says `git pull --rebase` instead of the fetch/reset pair → `AgentTaskLandTargetRaceTests/C711_LocalMasterAheadNamesTheOperatorReset` red at `ShouldNotContain("pull --rebase")`.
+- PC-26: the resolver stores `AppendDetail(reason, detail)` as `SourceRefusalReason` → same method red at `SourceRefusalReason.ShouldBe("target_local_ahead")`.
+- PC-27: remove the `LandTargetRaceRetries` validator clause → `AgentTaskLandTargetRaceTests/C711_RaceRetryBudgetIsValidated` red at `Validate(-1).Failed.ShouldBeTrue()`.
+- PC-28: remove the non-fast-forward check from `ControlledLandingGit`'s `push` arm → `ControlledLandingGitTests/C711_PushRejectsNonFastForward` red at step (3) `ExitCode.ShouldBe(1)`.
+
+All 28 are executable: each names a compiling edit, one method (with the row), and one assertion.
