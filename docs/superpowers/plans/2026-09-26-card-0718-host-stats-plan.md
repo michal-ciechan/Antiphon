@@ -231,7 +231,7 @@ that is deliberately small). Rejected: `mermaid` (already present, not for time 
 
 | Section | Keys | Default |
 |---|---|---|
-| runner `SessionRunner:HostStats` | `Enabled`, `IntervalMs`, `RetentionMinutes`, `ProcessSampling`, `Volumes` (paths; default `[cwd, SessionLogPath]`; server2 compose sets `/work,/state`) | true, 5000, 30, true |
+| runner `SessionRunner:HostStats` | `Enabled`, `IntervalMs`, `RetentionMinutes`, `ProcessSampling`, `Volumes` (indexed paths; default `[cwd, SessionLogPath]`; server2 compose sets `Volumes__0=/work`, `Volumes__1=/state`) | true, 5000, 30, true |
 | server `HostStats` | `Enabled`, `PollIntervalMs`, `StaleAfterMs`, `RequestTimeoutMs`, `SeriesTimeoutMs` | true, 5000, 15000, 3000, 5000 |
 
 `Enabled=false` on the runner answers `/host-stats` 404 and the operation unsupported, which
@@ -302,7 +302,7 @@ Files (all `src/Antiphon.SessionRunner/` unless noted):
   `PhoneHomeHostSeriesRequest(string Metric, string Window)`; `SessionRunnerContracts.cs`
   `RunnerHostStatsDto`, `RunnerHostSeriesDto`, `RunnerHostSeriesPoint(DateTimeOffset T, double V)`,
   `RunnerCapabilityFeatures.HostStatsV1`.
-- `docker-compose.server2-runner.yml`: `SessionRunner__HostStats__Volumes: "/work,/state"`.
+- `docker-compose.server2-runner.yml`: `SessionRunner__HostStats__Volumes__0: /work` and `SessionRunner__HostStats__Volumes__1: /state`.
 
 Tests (`tests/Antiphon.SessionRunner.Tests/`): `HostStatsStoreTests`, `HostStatsProbeParseTests`,
 `HostStatsSamplerTests`, `HostStatsEndpointTests` (+ `HostStatsTestHost` beside

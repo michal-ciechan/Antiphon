@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -19,6 +20,41 @@ public class HostStatsProbeParseTests
         "SwapTotal:         542716 kB",
         "SwapFree:          286400 kB",
     ];
+
+    [Test]
+    public void Server2_compose_indexed_volume_environment_keys_bind_through_AddHostStats()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "docker-compose.server2-runner.yml")))
+            directory = directory.Parent;
+        directory.ShouldNotBeNull();
+
+        var entries = File.ReadAllLines(Path.Combine(directory.FullName, "docker-compose.server2-runner.yml"))
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("SessionRunner__HostStats__Volumes", StringComparison.Ordinal))
+            .Select(line => line.Split(':', 2))
+            .ToDictionary(parts => parts[0], parts => parts[1].Trim().Trim('"'), StringComparer.Ordinal);
+        entries.Count.ShouldBe(2);
+        entries["SessionRunner__HostStats__Volumes__0"].ShouldBe("/work");
+        entries["SessionRunner__HostStats__Volumes__1"].ShouldBe("/state");
+
+        var prefix = $"C718_{Guid.NewGuid():N}_";
+        try
+        {
+            foreach (var (key, value) in entries)
+                Environment.SetEnvironmentVariable(prefix + key, value);
+            var configuration = new ConfigurationBuilder().AddEnvironmentVariables(prefix).Build();
+            var services = new ServiceCollection();
+            services.AddHostStats(configuration, startSampler: false);
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IOptions<HostStatsSettings>>().Value.Volumes.ShouldBe(["/work", "/state"]);
+        }
+        finally
+        {
+            foreach (var key in entries.Keys)
+                Environment.SetEnvironmentVariable(prefix + key, null);
+        }
+    }
 
     [Test]
     public async Task ProcStat_cpu_percent_is_busy_delta_over_total_delta()
