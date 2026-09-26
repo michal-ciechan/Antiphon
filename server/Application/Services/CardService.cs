@@ -101,6 +101,8 @@ public sealed class CardService : IScheduledCardActions
     // that omits it gets no GitHub push on close/reopen.
     private readonly TrackerCardStatePushService? _trackerStatePush;
     private readonly WorkspaceUseAdmission? _workspaceUse;
+    // CARD-0738. Null in harnesses that never close a card; production DI always supplies it.
+    private readonly CardTaskSettlement? _taskSettlement;
 
     public CardService(
         AppDbContext db,
@@ -120,8 +122,10 @@ public sealed class CardService : IScheduledCardActions
         TrackerCardStatePushService? trackerStatePush = null,
         IOptions<GrokRulesSettings>? grokRulesSettings = null,
         CardTaskFileService? cardFiles = null,
-        WorkspaceUseAdmission? workspaceUse = null)
+        WorkspaceUseAdmission? workspaceUse = null,
+        CardTaskSettlement? taskSettlement = null)
     {
+        _taskSettlement = taskSettlement;
         _workspaceUse = workspaceUse;
         _db = db;
         _cardFiles = cardFiles;
