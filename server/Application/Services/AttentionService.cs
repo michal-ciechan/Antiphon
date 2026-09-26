@@ -810,6 +810,25 @@ public sealed partial class AttentionService
             .Select(m => new { m.AgentSessionId, m.Body, m.Status, m.CreatedAt })
             .ToListAsync(ct);
 
+        // CARD-0738. Closed or archived cards among this open set. One query, then a first-match
+        // arm: the close is the cause, and a task created after it is legitimate later work.
+        var openCardIds = open.Where(t => t.CardId is not null).Select(t => t.CardId!.Value).Distinct().ToList();
+        var closedCards = await _db.Cards.AsNoTracking()
+            .Where(c => openCardIds.Contains(c.Id)
+                && (c.Status == CardStatus.Done || c.Status == CardStatus.Canceled || c.ArchivedAt != null))
+            .Select(c => new
+            {
+                c.Id,
+                c.Identifier,
+                c.BoardId,
+                c.Status,
+                c.CompletedAt,
+                c.TerminalReason,
+                c.ArchivedAt,
+                c.ArchivedReason,
+            })
+            .ToDictionaryAsync(c => c.Id, ct);
+
         // CARD-0288: newest TurnEnd + assistant rows that carry a report token, scoped to this
         // open-task session set. Do not table-scan TranscriptEntries.
         var newestTurnEnds = (await _db.TranscriptEntries.AsNoTracking()
@@ -913,6 +932,37 @@ public sealed partial class AttentionService
                     task.DispatchedAt,
                     cost,
                     [AttentionAction.Retry, AttentionAction.Cancel, AttentionAction.Escalate]));
+                continue;
+            }
+
+            // 4b. CardClosedWhileWorking (CARD-0738). After DeadSession and NeverStarted, which
+            // name a task the dispatcher's own sweeps will fail, and before every later arm:
+            // the close is the cause the human should read, not the symptom.
+            if (task.CardId is Guid closedCardId
+                && closedCards.TryGetValue(closedCardId, out var closedCard)
+                && (closedCard.CompletedAt ?? closedCard.ArchivedAt) is { } closeAt
+                && task.CreatedAt < closeAt)
+            {
+                var archivedOnly = closedCard.ArchivedAt != null
+                    && closedCard.Status is not (CardStatus.Done or CardStatus.Canceled);
+                var how = archivedOnly ? "archived" : $"closed ({closedCard.Status})";
+                var reason = closedCard.TerminalReason ?? closedCard.ArchivedReason ?? "(no reason recorded)";
+                items.Add(new AttentionItemDto(
+                    AttentionKind.CardClosedWhileWorking,
+                    AlertSeverity.Warning,
+                    task.Id,
+                    task.AgentSessionId,
+                    task.AgentId,
+                    null,
+                    task.Title,
+                    $"Card {closedCard.Identifier} {how} {Duration(now - closeAt)} ago; this task is still {task.Status} and was not stopped.",
+                    Evidence(reason, digest),
+                    closeAt,
+                    cost,
+                    [AttentionAction.OpenCard, AttentionAction.OpenDrawer, AttentionAction.Cancel],
+                    CardId: closedCard.Id,
+                    BoardId: closedCard.BoardId,
+                    ConditionKey: $"card-closed:{task.Id:N}"));
                 continue;
             }
 

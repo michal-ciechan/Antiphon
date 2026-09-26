@@ -56,6 +56,10 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Census candidates', color: 'warning', icon: TbSearch,
     hint: 'Candidates from the last successful local process census. Check the generation time and evidence.',
   },
+  CardClosedWhileWorking: {
+    label: 'Card closed', color: 'warning', icon: TbAlertTriangle,
+    hint: 'The card closed or was archived while this task was still working. Cancel it, or reopen the card.',
+  },
   LandHeld: { label: 'Land held', color: 'warning', icon: TbClockPause, hint: 'An existing writer or repository lease holds landing.' },
   LandNoProgress: { label: 'Land aged', color: 'warning', icon: TbClockExclamation, hint: 'An accepted land has made no forward progress.' },
   LandOutcomeUnconfirmed: { label: 'Land receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt receipt.' },

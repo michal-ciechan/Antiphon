@@ -19,6 +19,8 @@ export type AttentionKind =
   | 'SessionStopStuck'
   | 'SessionUnowned'
   | 'ZombieCensusReport'
+  /** A task is still open under a card that was closed or archived; it was not stopped (CARD-0738). */
+  | 'CardClosedWhileWorking'
   | 'LandHeld'
   | 'LandNoProgress'
   | 'LandOutcomeUnconfirmed'
