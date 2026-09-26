@@ -24,6 +24,7 @@ public sealed class AgentTaskLandTargetRaceTests
         await h.InitializeAsync();
         var f = h.Fixture;
         var reviewed = await h.AddSourceAsync();
+        await MoveRemoteMasterAsync(f);
         var pushes = 0;
         string? intruder = null;
         int? retryRebase = null;
@@ -262,6 +263,7 @@ public sealed class AgentTaskLandTargetRaceTests
         await h.InitializeAsync();
         var f = h.Fixture;
         var reviewed = await h.AddSourceAsync();
+        await MoveRemoteMasterAsync(f);
         var pushes = 0;
         string? intruder = null;
         f.Git.BeforeCommand = async (_, a) =>
@@ -332,6 +334,7 @@ public sealed class AgentTaskLandTargetRaceTests
         await h.InitializeAsync();
         var f = h.Fixture;
         var reviewed = await h.AddSourceAsync();
+        await MoveRemoteMasterAsync(f);
         h.Fault.Phase = LandPhase.Verified;
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
@@ -416,6 +419,15 @@ public sealed class AgentTaskLandTargetRaceTests
         && (LandingGit.PathsEqual(directory, f.Source) || LandingGit.PathsEqual(directory, f.Repository))
         && (args[0] is "rebase" or "merge" or "push" or "reset"
             || args.Contains("update-ref") && args.Contains(f.TargetRef));
+
+    /// <summary>A rebase onto the seed skips verification. Publish a new tip, then put local master back.</summary>
+    private static async Task MoveRemoteMasterAsync(LandingGitFixture f)
+    {
+        var reader = new LandingGitFixture.FixtureGit(Path.Combine(f.Root, "home"), f.TaskId);
+        (await reader.RunAsync(f.Repository, ["commit", "--allow-empty", "-m", "base moved"], CancellationToken.None)).Succeeded.ShouldBeTrue();
+        (await reader.RunAsync(f.Repository, ["push", "origin", "HEAD:" + f.TargetRef], CancellationToken.None)).Succeeded.ShouldBeTrue();
+        (await reader.RunAsync(f.Repository, ["reset", "--hard", f.SeedSha], CancellationToken.None)).Succeeded.ShouldBeTrue();
+    }
 
     private static async Task<string> Read(LandingGitFixture f, string path, params string[] args)
     {
