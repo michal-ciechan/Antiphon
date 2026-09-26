@@ -108,6 +108,11 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             connectionString is null ? new EmptyScopeFactory() : sp.GetRequiredService<IServiceScopeFactory>(),
             clock ?? TimeProvider.System,
             inventoryLogger: sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>()));
+        if (connectionString is not null)
+            builder.Services.AddScoped<IRunnerStateStore, DbRunnerStateStore>();
+        else
+            builder.Services.AddSingleton<IRunnerStateStore, MemoryRunnerStateStore>();
+        builder.Services.AddScoped<RunnerStateService>();
         host.App = builder.Build();
         host.Directory = host.App.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
         host.App.UseWebSockets();

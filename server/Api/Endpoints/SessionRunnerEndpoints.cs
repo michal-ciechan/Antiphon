@@ -14,6 +14,10 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
 
+public sealed record RunnerDrainRequest(string? Reason, string? RedirectTo = null, bool RetireWhenIdle = false);
+
+public sealed record RunnerDrainClearRequest(string? Reason);
+
 public static class SessionRunnerEndpoints
 {
     public static void MapSessionRunnerEndpoints(this WebApplication app)
@@ -48,6 +52,32 @@ public static class SessionRunnerEndpoints
             string runnerId,
             PhoneHomeRunnerDirectory directory) =>
             Results.Ok(directory.Status(runnerId))).WithTags("SessionRunners");
+
+        app.MapPost("/api/session-runners/{runnerId}/drain", async (
+            HttpContext http,
+            string runnerId,
+            RunnerDrainRequest body,
+            RunnerStateService drains,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Draining a runner requires the operator token.");
+            await drains.DrainAsync(runnerId, body.Reason, body.RedirectTo, body.RetireWhenIdle, ct);
+            return Results.Ok();
+        }).WithTags("SessionRunners");
+
+        app.MapPost("/api/session-runners/{runnerId}/drain/clear", async (
+            HttpContext http,
+            string runnerId,
+            RunnerDrainClearRequest body,
+            RunnerStateService drains,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Clearing a drain requires the operator token.");
+            await drains.ClearAsync(runnerId, body.Reason, ct);
+            return Results.Ok();
+        }).WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/slots", async (
             string runnerId,

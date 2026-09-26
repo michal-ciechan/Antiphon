@@ -83,9 +83,21 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
     }
 
     /// <summary>
-    /// CARD-0727 D-7. The red body is <see cref="Resolve"/>; production refuses a draining or retired slot.
+    /// CARD-0727 D-7. <see cref="Resolve"/>, then a refusal when the slot is draining or retired.
+    /// A desktop id and a missing id keep <see cref="Resolve"/>'s answer.
     /// </summary>
-    public ISessionRunnerClient ResolveForNewWork(string? runnerId) => Resolve(runnerId);
+    public ISessionRunnerClient ResolveForNewWork(string? runnerId)
+    {
+        var client = Resolve(runnerId);
+        var state = DrainState(runnerId);
+        if (state?.RetiredAt is not null)
+            throw new ServiceUnavailableException(
+                $"Phone-home runner '{runnerId}' is retired.", PhoneHomeProblemTypes.RunnerRetired);
+        if (state is { Draining: true })
+            throw new ServiceUnavailableException(
+                $"Phone-home runner '{runnerId}' is draining.", PhoneHomeProblemTypes.RunnerDraining);
+        return client;
+    }
 
     public ISessionRunnerClient Resolve(string? runnerId)
     {
@@ -203,6 +215,10 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             throw new ConflictException("Unsupported phone-home protocol version.", PhoneHomeProblemTypes.ProtocolVersion);
         if (!_slots.TryGetValue(request.RunnerId, out var slot) || !slot.Entry.Enabled)
             throw new ConflictException("Runner id is not allowed.", PhoneHomeProblemTypes.RunnerMismatch);
+        if (DrainState(request.RunnerId)?.RetiredAt is not null)
+            throw new ConflictException(
+                $"Runner '{request.RunnerId}' is retired until its drain is cleared.",
+                PhoneHomeProblemTypes.RunnerRetired);
         // CARD-0604 D-14: the runner is a bounded pool, not a single seat. Capacity is declared by
         // the runner and bounded by that entry, so a misconfigured runner cannot enlarge itself.
         if (request.Capacity < 1 || request.Capacity > slot.Entry.MaxCapacity)
@@ -491,13 +507,18 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
                 ?? (live is not null && !live.SocketOpen ? "socket_closed" : null)
                 ?? last?.Reason
                 ?? "unavailable";
+        var eligible = live is { DispatchEligible: true } && available;
+        var state = DrainState(runnerId);
+        var draining = state is { Draining: true };
+        var retired = state?.RetiredAt is not null;
+        var (sessions, queued) = CountBoundWork(runnerId);
         return new PhoneHomeRunnerStatusDto(
             runnerId,
             live?.RunnerStoreId ?? slot.StoreId,
             live?.ProcessBootId ?? slot.BootId,
             live?.Epoch,
             available,
-            live is { DispatchEligible: true } && available,
+            eligible,
             live?.LastHeartbeatUtc,
             // CARD-0604: registration carries the platform and the capabilities DTO, so the status
             // a deploy or a restart row reads is the runner's own report, not a null placeholder.
@@ -508,7 +529,42 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory
             PendingEventBytes: live?.PendingEventBytes,
             LastDisconnectAtUtc: live?.LastDisconnectAtUtc ?? last?.AtUtc,
             Reconnects: reconnects,
-            LastCatchUpMs: live?.LastCatchUpMs);
+            LastCatchUpMs: live?.LastCatchUpMs,
+            AcceptingNewWork: eligible && !draining && !retired,
+            Draining: draining,
+            DrainedAt: state?.DrainedAt,
+            DrainReason: state?.DrainReason,
+            RedirectTo: state?.RedirectTo,
+            RetireWhenIdle: state?.RetireWhenIdle ?? false,
+            IdleObservedAt: state?.IdleObservedAt,
+            RetiredAt: state?.RetiredAt,
+            RetireReason: state?.RetireReason,
+            Sessions: sessions,
+            QueuedTasks: queued,
+            RunnerSessions: live?.ListedNonExited);
+    }
+
+    /// <summary>Null when this process has no database. Otherwise every non-terminal bound session and every queued unlaunched task.</summary>
+    private (int? Sessions, int? QueuedTasks) CountBoundWork(string runnerId)
+    {
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetService<AppDbContext>();
+            if (db is null)
+                return (null, null);
+            var sessions = db.AgentSessions.Count(s => s.RunnerId == runnerId
+                && s.Status != SessionStatus.Stopped
+                && s.Status != SessionStatus.Failed);
+            var queued = db.AgentTasks.Count(t => t.RunnerId == runnerId
+                && t.Status == AgentTaskStatus.Queued
+                && t.AgentSessionId == null);
+            return (sessions, queued);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (null, null);
+        }
     }
 
     public async Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)

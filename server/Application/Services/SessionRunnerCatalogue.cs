@@ -38,7 +38,7 @@ public static class SessionRunnerCatalogue
             {
                 rows.Add(new SessionRunnerCatalogueEntryDto(
                     id, id, null, null, false, false, "catalogue_read_failed",
-                    null, null, "sessions", null, true, []));
+                    null, null, "sessions", null, true, [], false, false));
             }
         }
 
@@ -61,7 +61,7 @@ public static class SessionRunnerCatalogue
         }
 
         return Row(described, RunnerPlatformWire.DesktopId, "Desktop", "delegatedTasks",
-            delegation.MaxConcurrentTasks, occupied, described is not null);
+            delegation.MaxConcurrentTasks, occupied, described is not null, draining: false, retired: false);
     }
 
     private static async Task<SessionRunnerCatalogueEntryDto> RemoteAsync(
@@ -95,7 +95,9 @@ public static class SessionRunnerCatalogue
         }
 
         var name = described?.DisplayName ?? id;
-        return Row(described, id, name, "sessions", capacity, occupied, observed);
+        var state = directory.DrainState(id);
+        return Row(described, id, name, "sessions", capacity, occupied, observed,
+            state is { Draining: true }, state?.RetiredAt is not null);
     }
 
     private static SessionRunnerCatalogueEntryDto Row(
@@ -105,11 +107,15 @@ public static class SessionRunnerCatalogue
         string capacityKind,
         int? capacity,
         int? occupied,
-        bool current)
+        bool current,
+        bool draining,
+        bool retired)
     {
         var available = described?.Available == true;
         var eligible = described?.DispatchEligible == true;
-        string? reason = eligible ? null : described?.Stale == true ? "stale" : "unavailable";
+        string? reason = eligible && draining
+            ? "draining"
+            : eligible ? null : described?.Stale == true ? "stale" : "unavailable";
         return new SessionRunnerCatalogueEntryDto(
             id,
             name,
@@ -123,6 +129,8 @@ public static class SessionRunnerCatalogue
             capacityKind,
             current ? DateTimeOffset.UtcNow : null,
             !current || described?.Stale == true,
-            described?.Capabilities?.Features ?? []);
+            described?.Capabilities?.Features ?? [],
+            draining,
+            eligible && !draining && !retired);
     }
 }

@@ -621,6 +621,20 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 return previous.Id;
             }
 
+            var drainingRunner = _phoneHome?.BoundRunnerId(agent);
+            if (drainingRunner is not null && _runnerDirectory is not null)
+            {
+                try
+                {
+                    _runnerDirectory.ResolveForNewWork(drainingRunner);
+                }
+                catch (ServiceUnavailableException ex) when (ex.Code is PhoneHomeProblemTypes.RunnerDraining
+                    or PhoneHomeProblemTypes.RunnerRetired)
+                {
+                    throw new ConflictException(ex.Message, ex.Code);
+                }
+            }
+
             var now = UtcNow();
             var session = new AgentSession
             {
