@@ -1,0 +1,159 @@
+diff --git a/tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceProbeTests.cs b/tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceProbeTests.cs
+new file mode 100644
+index 00000000..5fe791e2
+--- /dev/null
++++ b/tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceProbeTests.cs
+@@ -0,0 +1,153 @@
++using Antiphon.Server.Application.Services;
++using Antiphon.Server.Domain.Entities;
++using Antiphon.Server.Domain.Enums;
++using Antiphon.Tests.TestHelpers;
++using Microsoft.EntityFrameworkCore;
++using Shouldly;
++using TUnit.Core;
++
++namespace Antiphon.Tests.Application;
++
++/// <summary>
++/// CARD-0711 Plan-stage probe (not production coverage): reproduce the target race in the real-git land fixture.
++/// An independent clone (the fixture's observer) pushes to origin/master in the window between the land's
++/// pre-push observation and its push, exactly as another party's push did for CARD-0735 on 2026-09-26.
++/// </summary>
++[Category("Integration")]
++[ParallelLimiter<ProcessSpawnLimit>]
++public sealed class AgentTaskLandTargetRaceProbeTests
++{
++    [Test]
++    public async Task Probe_RaceAtPushWindow_TodayNeedsThreeRequests()
++    {
++        await using var h = new LandingSafetyHarness();
++        await h.InitializeAsync();
++        var f = h.Fixture;
++        var source = await h.AddSourceAsync();
++        var raced = false;
++        string? intruder = null;
++        f.Git.BeforeCommand = async (_, a) =>
++        {
++            if (a.Count > 0 && a[0] == "push" && !raced)
++            {
++                raced = true;
++                intruder = await PushIndependentCommitAsync(f, "intruder-1");
++            }
++            return null;
++        };
++
++        // Request 1: the CAS observation matches, the push is rejected non-fast-forward.
++        await h.RequestAsync(expectedSourceSha: source);
++        await h.RunQueuedAsync();
++        var first = (await h.OperationAsync()).ShouldNotBeNull();
++        Console.WriteLine($"PROBE attempt1 op={first.Id:N} phase={first.Phase} publication={first.Publication} reason={first.LastReason} pushExit={first.PushExitCode} targetBefore={first.TargetBeforeSha[..8]} verified={first.VerifiedSourceSha?[..8]}");
++        first.LastReason.ShouldBe("push_rejected");
++        first.Phase.ShouldBe(LandPhase.PushStarted);
++        first.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
++        (await Read(f, f.Source, "rev-parse", "HEAD")).ShouldBe(source, "schema 3 never moves the task branch");
++        (await Read(f, f.Repository, "rev-parse", f.TargetRef)).ShouldBe(f.SeedSha, "the canonical checkout is untouched by a refusal");
++        (await Read(f, f.Remote, "rev-parse", f.TargetRef)).ShouldBe(intruder);
++
++        // Request 2 (same reviewed SHA): resumes the PushStarted op, re-observes, refuses remote_changed_before_push, op terminal.
++        await h.RequestAsync(expectedSourceSha: source);
++        await h.RunQueuedAsync();
++        var second = (await h.OperationAsync()).ShouldNotBeNull();
++        Console.WriteLine($"PROBE attempt2 op={second.Id:N} phase={second.Phase} publication={second.Publication} reason={second.LastReason}");
++        second.Id.ShouldBe(first.Id);
++        second.LastReason.ShouldBe("remote_changed_before_push");
++        second.Phase.ShouldBe(LandPhase.Refused);
++
++        // Request 3 (same reviewed SHA): replaces the refused op, rebases onto the new tip, lands.
++        await h.RequestAsync(expectedSourceSha: source);
++        await h.RunQueuedAsync();
++        var third = (await h.OperationAsync()).ShouldNotBeNull();
++        Console.WriteLine($"PROBE attempt3 op={third.Id:N} phase={third.Phase} publication={third.Publication} reason={third.LastReason} targetBefore={third.TargetBeforeSha[..8]} verified={third.VerifiedSourceSha?[..8]} rebased={third.RebasedSourceSha?[..8]}");
++        third.Id.ShouldNotBe(first.Id);
++        third.Publication.ShouldBe(LandPublicationOutcome.Landed, third.LastReason);
++        third.TargetBeforeSha.ShouldBe(intruder);
++        var remote = await Read(f, f.Remote, "rev-parse", f.TargetRef);
++        remote.ShouldBe(third.VerifiedSourceSha);
++        await DumpEventsAsync(h);
++    }
++
++    [Test]
++    public async Task Probe_RaceAtPushWindow_OneRequestLands_RedToday()
++    {
++        await using var h = new LandingSafetyHarness();
++        await h.InitializeAsync();
++        var f = h.Fixture;
++        var source = await h.AddSourceAsync();
++        var raced = false;
++        f.Git.BeforeCommand = async (_, a) =>
++        {
++            if (a.Count > 0 && a[0] == "push" && !raced) { raced = true; await PushIndependentCommitAsync(f, "intruder-2"); }
++            return null;
++        };
++        await h.RequestAsync(expectedSourceSha: source);
++        await h.RunQueuedAsync();
++        var op = (await h.OperationAsync()).ShouldNotBeNull();
++        await DumpEventsAsync(h);
++        op.Publication.ShouldBe(LandPublicationOutcome.Landed, $"one request should land after a benign race; got {op.LastReason} at {op.Phase}");
++    }
++
++    [Test]
++    public async Task Probe_RaceBeforePrePushObservation_TodayNeedsTwoRequests()
++    {
++        await using var h = new LandingSafetyHarness();
++        await h.InitializeAsync();
++        var f = h.Fixture;
++        var source = await h.AddSourceAsync();
++        var targetReads = 0;
++        string? intruder = null;
++        f.Git.BeforeCommand = async (_, a) =>
++        {
++            // Target ls-remote #1 is the op-creation observation (the rebase base); #2 is the pre-push CAS read.
++            if (a.Count > 0 && a[0] == "ls-remote" && a[^1] == f.TargetRef && ++targetReads == 2)
++                intruder = await PushIndependentCommitAsync(f, "intruder-3");
++            return null;
++        };
++        await h.RequestAsync(expectedSourceSha: source);
++        await h.RunQueuedAsync();
++        var first = (await h.OperationAsync()).ShouldNotBeNull();
++        Console.WriteLine($"PROBE pre-observe attempt1 op={first.Id:N} phase={first.Phase} reason={first.LastReason} pushExit={first.PushExitCode}");
++        first.LastReason.ShouldBe("remote_changed_before_push");
++        first.Phase.ShouldBe(LandPhase.Refused);
++        first.PushStartedAt.ShouldBeNull("no push was attempted");
++        await h.RequestAsync(expectedSourceSha: source);
++        await h.RunQueuedAsync();
++        var second = (await h.OperationAsync()).ShouldNotBeNull();
++        Console.WriteLine($"PROBE pre-observe attempt2 op={second.Id:N} phase={second.Phase} publication={second.Publication} reason={second.LastReason}");
++        second.Id.ShouldNotBe(first.Id);
++        second.Publication.ShouldBe(LandPublicationOutcome.Landed, second.LastReason);
++        second.TargetBeforeSha.ShouldBe(intruder);
++        await DumpEventsAsync(h);
++    }
++
++    private static async Task<string> PushIndependentCommitAsync(LandingGitFixture f, string name)
++    {
++        var reader = new LandingGitFixture.FixtureGit(Path.Combine(f.Root, "home"), f.TaskId);
++        await File.WriteAllTextAsync(Path.Combine(f.Observer, name + ".txt"), name + "\n");
++        (await reader.RunAsync(f.Observer, ["add", name + ".txt"], CancellationToken.None)).Succeeded.ShouldBeTrue();
++        (await reader.RunAsync(f.Observer, ["commit", "-m", name], CancellationToken.None)).Succeeded.ShouldBeTrue();
++        var push = await reader.RunAsync(f.Observer, ["push", "origin", "HEAD:" + f.TargetRef], CancellationToken.None);
++        push.Succeeded.ShouldBeTrue(push.Diagnostic);
++        return (await reader.RunAsync(f.Observer, ["rev-parse", "HEAD"], CancellationToken.None)).Output.Trim();
++    }
++
++    private static async Task<string> Read(LandingGitFixture f, string path, params string[] args)
++    {
++        var reader = new LandingGitFixture.FixtureGit(Path.Combine(f.Root, "home"), f.TaskId);
++        var r = await reader.RunAsync(path, args, CancellationToken.None);
++        r.Succeeded.ShouldBeTrue(r.Diagnostic);
++        return r.Output.Trim();
++    }
++
++    private static async Task DumpEventsAsync(LandingSafetyHarness h)
++    {
++        await using var db = h.CreateContext();
++        var events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == h.Fixture.TaskId).OrderBy(e => e.At).ToListAsync();
++        foreach (var e in events) Console.WriteLine($"PROBE event {e.At:HH:mm:ss.fff} {e.Type} {e.Detail}");
++        var ops = await db.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == h.Fixture.TaskId).OrderBy(o => o.CreatedAt).ToListAsync();
++        foreach (var o in ops) Console.WriteLine($"PROBE op {o.Id:N} active={o.Active} schema={o.SchemaVersion} phase={o.Phase} pub={o.Publication} reason={o.LastReason} base={o.TargetBeforeSha[..8]} verified={o.VerifiedSourceSha?[..8]} pushExit={o.PushExitCode}");
++    }
++}
