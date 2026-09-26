@@ -1,4 +1,11 @@
 #nullable enable
+Antiphon.Messaging.Client.InboundDelivery
+Antiphon.Messaging.Client.InboundDelivery.InboundDelivery(Antiphon.Messaging.ChannelMessage? message, string? diagnostic, System.Func<string!, System.Threading.CancellationToken, System.Threading.Tasks.Task!>! acknowledge) -> void
+Antiphon.Messaging.Client.InboundDelivery.Message.get -> Antiphon.Messaging.ChannelMessage?
+Antiphon.Messaging.Client.InboundDelivery.Diagnostic.get -> string?
+Antiphon.Messaging.Client.InboundDelivery.AcknowledgeAsync(string! disposition, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Client.IAntiphonMessagingConsumer.ConsumeDeliveriesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.Client.InboundDelivery!>!
+Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer.ConsumeDeliveriesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.Client.InboundDelivery!>!
+Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer.KafkaAntiphonMessagingConsumer(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Client.AntiphonMessagingOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer!>! logger, System.Func<Confluent.Kafka.ConsumerConfig!, Confluent.Kafka.IConsumer<string!, string!>!>! buildConsumer) -> void
 Antiphon.Messaging.Client.AntiphonMessagingOptions.InboundUnconsumedTopic.get -> string!
 Antiphon.Messaging.Client.AntiphonMessagingOptions.InboundUnconsumedTopic.set -> void
-

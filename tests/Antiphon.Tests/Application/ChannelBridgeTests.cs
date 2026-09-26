@@ -33,7 +33,7 @@ namespace Antiphon.Tests.Application;
 public class ChannelBridgeTests
 {
     [Test]
-    public async Task Herdr_held_agent_inbound_is_dropped_with_one_incident_and_no_start_notice_or_reroute()
+    public async Task Herdr_held_agent_inbound_is_parked_with_one_incident_and_no_start_notice_or_reroute()
     {
         await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
@@ -57,12 +57,18 @@ public class ChannelBridgeTests
         await db.SaveChangesAsync();
         var cwd = (await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Cwd;
         var rows = await db.AgentSessions.CountAsync(s => s.Cwd == cwd);
-        for (var i = 0; i < 2; i++)
-            await Should.NotThrowAsync(() => bridge.HandleInboundAsync(
-                TelegramText(chatId, "held message " + i, title: "Family"), CancellationToken.None));
+        var heldMessages = Enumerable.Range(0, 2)
+            .Select(i => TelegramText(chatId, "held message " + i, title: "Family")).ToArray();
+        foreach (var heldMessage in heldMessages)
+            await Should.NotThrowAsync(() => bridge.HandleInboundAsync(heldMessage, CancellationToken.None));
         (await db.AgentSessions.CountAsync(s => s.Cwd == cwd)).ShouldBe(rows);
         (await db.Alerts.AnyAsync(a => a.AgentId == h.AgentId && a.Source == "bridge"
-            && a.Title == "Inbound channel message dropped")).ShouldBeTrue();
+            && a.Title == "Inbound channel message pending" && a.Detail.Contains("has not reached"))).ShouldBeTrue();
+        var accepted = await db.ChannelInbounds.AsNoTracking()
+            .Where(i => i.AgentId == h.AgentId && i.ConversationId == chatId).ToListAsync();
+        accepted.Count.ShouldBe(2);
+        accepted.Select(i => i.NativeMessageId).Order().ShouldBe(heldMessages.Select(m => m.ChannelMessageId).Order());
+        accepted.ShouldAllBe(i => i.EnvelopeJson != null && i.QueueMessageId == null);
         h.Adapter.SentInput.ShouldBeEmpty();
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
@@ -492,9 +498,10 @@ public class ChannelBridgeTests
         await using var h = await HarnessAsync(debounceWindowMs: 150);
         await h.BindChannelAsync();
 
-        await h.Bridge.HandleInboundAsync(TelegramText(h.ChatId, "line one", title: "Family", author: "Mike"), CancellationToken.None);
-        await h.Bridge.HandleInboundAsync(TelegramText(h.ChatId, "line two", title: "Family", author: "Mike"), CancellationToken.None);
-        await h.Bridge.HandleInboundAsync(TelegramText(h.ChatId, "line three", title: "Family", author: "Mike"), CancellationToken.None);
+        var messages = new[] { "line one", "line two", "line three" }
+            .Select(line => TelegramText(h.ChatId, line, title: "Family", author: "Mike")).ToArray();
+        foreach (var message in messages)
+            await h.Bridge.HandleInboundAsync(message, CancellationToken.None);
 
         // Real-clock debounce (150ms window): wait for the flush to land.
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -506,6 +513,12 @@ public class ChannelBridgeTests
         body.ShouldContain("] line one\nline two\nline three");
         body.Split("[Telegram").Length.ShouldBe(2, "exactly ONE envelope header for the merged flush");
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "one correlation per flush, not per message");
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var members = await db.ChannelInbounds.AsNoTracking()
+            .Where(i => i.ConversationId == h.ChatId).ToListAsync();
+        members.Count.ShouldBe(3);
+        members.Select(i => i.NativeMessageId).Order().ShouldBe(messages.Select(m => m.ChannelMessageId).Order());
+        members.Select(i => i.QueueMessageId).Distinct().Count().ShouldBe(1);
     }
 
     // PR 8: channel-routed messages carry the batching metadata (origin + conversation key) and
@@ -892,8 +905,12 @@ public class ChannelBridgeTests
             (await verify.AgentIncidents.AnyAsync(i =>
                     i.AgentId == h.AgentId
                     && i.Kind == AgentIncidentKind.ChannelReplyLost
-                    && i.FailureReason == "ProviderCapacity"))
+                    && i.FailureReason == "ProviderCapacity"
+                    && i.Severity == AlertSeverity.Critical))
                 .ShouldBeTrue();
+            (await verify.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId
+                && i.NativeMessageId == msg.ChannelMessageId && i.EnvelopeJson != null
+                && i.QueueMessageId == null)).ShouldBe(1);
         }
         finally
         {
