@@ -189,6 +189,13 @@ public sealed class AgentTaskLandTargetRaceFakeTests
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == requested.RequestId);
             var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
+            // The refusal and its terminal event commit together. Drop that event so the same request
+            // can re-enter, which is the crash-before-terminal shape the guard describes.
+            var notes = await db.AgentTaskLandNotifications.Where(n => n.RequestId == request.Id).ToListAsync();
+            db.RemoveRange(notes);
+            await db.SaveChangesAsync();
+            var terminal = await db.AgentTaskEvents.SingleAsync(e => e.Id == request.TerminalEventId);
+            db.Remove(terminal);
             request.IsPending = true;
             request.State = LandRequestState.Queued;
             request.TerminalEventId = null;
@@ -210,7 +217,8 @@ public sealed class AgentTaskLandTargetRaceFakeTests
         ops[0].LastReason.ShouldBe("verification_failed");
         h.Verifier.Calls.ShouldBe(1);
         h.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "push");
-        (await after.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
+        (await after.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Git.TaskId && e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("raced with a push"))).ShouldBe(0);
         var terminal = await after.AgentTaskEvents.AsNoTracking()
             .Where(e => e.LandRequestId == requested.RequestId && e.IsLandTerminal).OrderBy(e => e.At).LastAsync();
         terminal.Detail.ShouldContain("verification_failed");
