@@ -231,3 +231,231 @@ Total 54 s for the three tests, 140 s slot time including the isolated build (`b
   probe diff is the working seed for V-1/V-2 (rename the class to `AgentTaskLandTargetRaceTests`, move
   the helpers into S4, keep the `PROBE` evidence lines out). Code runs the closed checkpoint table once;
   no second round is planned.
+
+## Design
+
+### One request, end to end, when `master` moves
+
+1. Admission (`RunLeasedAsync` lines 355–398) is unchanged: lease held, `request.Attempt` and
+   `task.LandAttempt` incremented once.
+2. Resolution (lines 422–449) is unchanged for the first run: the resolver observes the remote source,
+   creates operation A through `LandOperationFactory.CreateAsync` (`TargetBeforeSha = RemoteBeforeSha` =
+   the observed `origin/master`).
+3. Protocol run 1: A goes `Inspected → RecoveryPinned → RebaseStarted → Prepared → Verified`. Either the
+   pre-push CAS (line 252) or, under D-6, the post-push re-observation (line 265) finds the tip moved:
+   `remote_changed_before_push`, A becomes `Refused`/`Publication = Refused` (catch block). The task
+   branch, the task worktree and the canonical checkout are as they were.
+4. Service (new, after line 450): `result.Published == false`, `Conflicts.Count == 0`,
+   `_state.IsTargetRaceRefusal(A)`, `raceRetries (0) < LandTargetRaceRetries (2)` → record A's `Rebase`/`Verify`
+   stage outcomes as the refused path does today, write the `Warning` "(retry 1 of 2)" and restart the
+   request's progress clocks in one task-locked transaction (D-5), reload `task`/`request`, and loop to
+   step 2 with `resumeExisting == false` (A is `Refused`).
+5. Resolution, second time: the request is already `Resolved` for the same `ExpectedSourceSha`; the
+   short-circuit (lines 86–93) sees that the existing operation is a race refusal and calls
+   `CreateOperationAsync`, which reads the branch (`show-ref`), compares it to `request.LocalBeforeSha`
+   and the reviewed SHA, observes the **new** `origin/master`, requires local `master` to be its ancestor
+   (`target_local_ahead` otherwise), and attaches operation B (`AttachOperationAsync`: A `Active = false`,
+   `task.ActiveLandingId = B`, `request.LandingOperationId = B`, `LastProgressAt` stamped). B inherits
+   `ApprovalLandRequestId`, `ReviewEvidenceId` and `ApprovalKind` from A because `OriginalSourceSha` is
+   unchanged (factory lines 79–82).
+6. Protocol run 2: B is `Inspected`; entry rechecks (`RecheckApprovalAsync`, `RecheckRemoteSourceAsync`,
+   `RecheckSourceAsync`) run as for any fresh operation; rebase onto the new tip in the land worktree;
+   verification build (never `base_unchanged`: `RebasedSourceSha != OriginalSourceSha`); CAS; push;
+   `PublicationConfirmed`; canonical fast-forward; cleanup. The outcome line is the ordinary `landed
+   operation=B …`; the task's events read `LandRequested`, `Warning (retry 1 of 2)`, `Landed`.
+7. If run 2 races again: step 4 with `retry 2 of 2`; a third race refuses:
+   `LandRefused: remote_changed_before_push; after 2 automatic rebases (Delegation:LandTargetRaceRetries=2);
+   run -Land again`. Three `Refused` rows, two `Warning`s. A new `-Land` for the same SHA replaces the last
+   row through the existing explicit-retry path (V-3).
+
+### What stays exactly as it is
+
+The lease and its yield; the resolver's authoritative source observation and its one-round-trip
+recheck; every `RecheckApprovalAsync`/`RecheckRemoteSourceAsync`/`RecheckSourceAsync` point; the recovery
+pins; the land worktree reset; the verification build and its build slot; the plain push as the CAS; the
+canonical advance and its residue reasons; the cleanup journal; `push_unconfirmed`; the conflict path;
+`LandMaxAttempts` and the sweep; the notification, receipt and stage-outcome machinery; every DTO; the
+schema.
+
+### Slices
+
+- **S1 — Race classification and replacement (D-3, D-4, D-6).**
+  `server/Application/Services/AgentTaskLandingState.cs`: `IsTargetRaceRefusal(AgentTaskLanding)`;
+  `CanReplaceRefused(previous, explicitRequest, leaseHeld)` accepts `!explicitRequest` when
+  `IsTargetRaceRefusal(previous)`.
+  `server/Application/Services/AgentTaskLandingProtocol.cs`: line 265 three-way (D-6).
+  `server/Application/Services/AgentTaskLandSourceResolver.cs`: lines 86–93 fall through to
+  `CreateOperationAsync` for a race refusal.
+- **S2 — The bounded loop, the setting, the evidence (D-2, D-5, D-8, D-11).**
+  `server/Application/Services/AgentTaskLandService.cs`: `RunLeasedAsync` loop around lines 422–489,
+  `WriteRaceRetryAsync(task, request, op, retry, budget, ct)` (Warning event + progress restart, task
+  lock), exhaustion detail on `RefuseAsync`; `server/Application/Settings/DelegationSettings.cs`:
+  `LandTargetRaceRetries` (default 2); `server/appsettings.json`: the key beside `LandMaxAttempts`.
+- **S3 — Legacy rows (D-7).** `AgentTaskLandingProtocol.cs` catch block: the schema ≠ 3 arm for
+  `remote_changed_before_push`/`source_changed` at `LocalTargetAdvanced`/`PushStarted`;
+  `server/Application/Services/LandOperationFactory.cs`: `Outcome.Detail` for `target_local_ahead`;
+  `AgentTaskLandSourceResolver.CreateOperationAsync` passes `created.Detail` to `RefuseAsync`.
+- **S4 — Fixtures (D-12).** `tests/Antiphon.Tests/TestHelpers/ControlledLandingGit.cs`: non-fast-forward
+  push rejection, `AdvanceRemoteTarget()`; `tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs`:
+  `PushIndependentAsync(string name)`; `tests/Antiphon.Tests/TestHelpers/LandingProtocolHarness.cs`:
+  `LandSettings` property used by `CreateLand`.
+- **S5 — Docs (D-10).** `docs/orchestration-loop.md` §5, `docs/ops-http.md` land row,
+  `docs/session-runtime-invariants.md` CARD-0331 bullet (the setting), and the probe diff's role noted in
+  this plan only.
+
+Order for Code: S4 → tests (red, CP-0) → S1 → S2 → S3 → S5 → CP-1..CP-4.
+
+## Verification design
+
+Vocabulary: V-n is a new red-first test; R-n is an existing class kept green. "Red" states what fails at
+`fa86dc64`. Real-git classes carry `[Category("Integration")]` and `[ParallelLimiter<ProcessSpawnLimit>]`
+and use `LandingSafetyHarness` (real canonical repo, bare remote, observer clone, isolated schema,
+`ControlledVerifier`); fake-git classes use `LandingProtocolHarness`/`ControlledLandingGit`. Paths through
+`Path.Combine`; nothing Linux-only. The probe diff beside this plan is the working seed for V-1/V-2
+(TestDesign renames the class to `AgentTaskLandTargetRaceTests`, moves `PushIndependentCommitAsync` into
+S4 and drops the `PROBE` console lines).
+
+- **V-1** `AgentTaskLandTargetRaceTests.C711_PushWindowRaceLandsInOneRequest` (real git). The observer
+  pushes an unrelated commit to `master` from `F.Git.BeforeCommand` immediately before the land's first
+  `push`. One `RequestAsync(expectedSourceSha: reviewed)` + `RunQueuedAsync()`. Assert events, in order:
+  `LandRequested`; `Warning` matching `raced with a push to origin:refs/heads/master (retry 1 of 2)` with
+  `LandRequestId` = the request and `LandingOperationId` = A; `Landed`; no `LandRefused`. Operations by
+  `CreatedAt`: A `SchemaVersion 3`, `Refused`, `Publication Refused`, `LastReason remote_changed_before_push`,
+  `PushExitCode 1`, `Active false`; B `Landed`, `Complete`, `TargetBeforeSha` = the intruder,
+  `VerifiedSourceSha == RebasedSourceSha`, `VerificationPassed`, `VerificationSkipReason null`,
+  `ApprovalLandRequestId == A.ApprovalLandRequestId == request.Id`, `ReviewEvidenceId == A.ReviewEvidenceId`,
+  `OriginalSourceSha == ReviewedSourceSha == reviewed`. Inside the hook, when B's `rebase` starts: source
+  HEAD == reviewed, canonical `refs/heads/master` == seed, no `rebase`/`merge`/`push` command ran in the
+  source worktree or the canonical checkout (trace). After: remote `master` == B.VerifiedSourceSha and
+  contains the intruder (observer fetch + `merge-base --is-ancestor`), canonical `master` ==
+  B.VerifiedSourceSha, outcome line contains `canonical=advanced`, `Verifier.Invocations` last ==
+  `(LandWorktreePath, null)`. Red: `LandRefused push_rejected`, one operation at `PushStarted` (probe).
+- **V-2** `…C711_PreObservationRaceLandsInOneRequest` (real git). The intruder pushes before the second
+  target `ls-remote` (the pre-push CAS read). A: `Refused remote_changed_before_push`, `PushStartedAt null`,
+  `PushExitCode null`; B as in V-1; same event shape. Red: `LandRefused remote_changed_before_push`
+  (probe).
+- **V-3** `…C711_BudgetSpentRefusesAndNewRequestLands` (real git). `H.LandSettings.LandTargetRaceRetries
+  = 2`; the intruder pushes before every `push`. Assert `LandRefused` whose detail contains
+  `remote_changed_before_push; after 2 automatic rebases`; three `Refused` operations, two `Warning`s
+  (`retry 1 of 2`, `retry 2 of 2`); `task.LandAttempt == 1` (one admission); branch and canonical as they
+  were. Then stop the intruder, `RequestAsync(expectedSourceSha: reviewed)` again, `RunQueuedAsync()`:
+  `Landed`, a fourth operation, `LandAttempt == 1` for the new request. `[Arguments(0)]` companion: with
+  the budget 0 the first race refuses with the plain reason and no `Warning` (today's behaviour is the
+  opt-out). Red: one operation, no `Warning`, no "after N".
+- **V-4** `…C711_PushRejectedWithoutMovementStaysResumable` (real git). `BeforeCommand` returns
+  `LandingGitResult(1, "", "! [remote rejected] master -> master (pre-receive hook declined)")` for the
+  first `push` and moves nothing. Assert `LandRefused push_rejected`, no `Warning`, one operation at
+  `PushStarted`, `Active`; then a new request resumes the **same** operation id, pushes, `Landed`;
+  operations count 1. Green before and after; it pins D-6's non-race arm (positive control: force
+  `moved = true` at line 265 → a spurious retry, two operations, the test fails).
+- **V-5** `…C711_ConflictOnRetryRefusesAsConflict` (real git). The intruder's commit rewrites
+  `feature.txt` before the first `push`. Assert A race-refused; B `Refused rebase_conflict`; request
+  `NeedsResolution`; a `Conflicted` event naming `feature.txt`; no second `push` in the trace; remote
+  `master` == the intruder; source branch untouched. Red: `LandRefused push_rejected`, no conflict path.
+- **V-6** `…C711_SourceMovedBeforeRetryRefuses` (real git, `[Arguments("remote")]`/`("local")`). In the
+  same hook as the intruder's push, (remote) the observer pushes one more commit to the task branch's
+  remote ref; (local) a commit is added in the source worktree without a push. Assert exactly two
+  operations: A race-refused, B `Refused` with `source_remote_changed` (remote row, protocol entry) or
+  `source_changed` (local row, factory `LocalBeforeSha` mismatch, reported through the resolver's refusal);
+  one `Warning`; `LandRefused <reason>`; no push of B; the remote `master` still equals the intruder. Red:
+  one operation, `push_rejected`.
+- **V-7** `AgentTaskLandingStateTests.C711_TargetRaceRefusalPolicy` (unit, table). `IsTargetRaceRefusal`:
+  the race row → true; schema 2 → false; `Publication Landed` (published shape) → false;
+  `verification_failed` → false; `push_rejected` → false; `Phase PushStarted` → false.
+  `CanReplaceRefused(previous, explicitRequest: false, leaseHeld: true)` → true only for the race row;
+  `leaseHeld: false` → false for every row; `explicitRequest: true` rows unchanged from today's table
+  (lines 276, 358). Red: member absent.
+- **V-8** `ControlledLandingGitTests.C711_PushRejectsNonFastForward` (unit). Seed a descendant D of the
+  seed; `AdvanceRemoteTarget()`; `PushOwnedAsync(D)` → exit 1, diagnostic contains `rejected`,
+  `RemoteTarget` unchanged; a descendant of the new remote tip pushes with exit 0 and moves it. Red: exit 0
+  and the tip moves.
+- **V-9** `AgentTaskLandSourceFreshnessTests.C711_RaceRetriesInTheFakeHarness` (fake).
+  `Fault.AfterAcknowledged(Verified)` → `RewriteRemoteAwayFromSource()` once (the
+  `C488_TargetCheckpointStillGuarded` shape); default budget → `OwnedTrace` has two `rebase` entries and
+  one `push`, the active operation is `Landed`, a `Warning` with `retry 1 of 2`; `[Arguments(0)]` →
+  exactly today's `C488_TargetCheckpointStillGuarded` assertions. Red: one `rebase`, `Refused`.
+- **V-10** `LandingProtocolGuardTests.C711_LegacyAdvancedRowsBecomeTerminal` (fake, schema-2 tuple from
+  `C475LegacyLandTuples`, `[Arguments("remote")]`/`("branch")`). An unpublished schema-2 operation at
+  `LocalTargetAdvanced` (`VerifiedSourceSha` = the old rebase's tip, local target at that tip): (remote)
+  the remote tip moves → the resume refuses `remote_changed_before_push` and the operation is `Refused`;
+  (branch) the branch is rewound to the reviewed SHA → `source_changed`, `Refused`. A new explicit
+  request then refuses `target_local_ahead` with a detail containing `git reset --hard origin/master` and
+  not `pull --rebase`; after the fixture's local target is reset to the observed remote, the same request
+  re-run creates a schema-3 operation with `PreparationInputSha` = the old tip and
+  `PreviousPreparationOperationId` = the legacy row (remote row) or `PreparationInputSha` = the reviewed
+  SHA (branch row), and lands. Red: the operation stays `LocalTargetAdvanced` and the second request
+  refuses the same reason.
+- **V-11** `AgentTaskLandMonitoringTests.C711_RetryRestartsTheProgressClock` (fake, the class's offset
+  clock). After the retry's `Warning`: `request.HighestProgress == -1`, `LastProgressAt` == the retry
+  instant, `WarningAt`/`ErrorAt` null; a monitor tick at `LandWarningSeconds − 1` seconds after the retry
+  writes no `LandAged`; a tick at `LandWarningSeconds + 1` with no further progress does. Red:
+  `HighestProgress` stays at `PushStarted` and `LastProgressAt` is the first attempt's, so the first tick
+  ages the request.
+- **R-1** Existing classes in the checkpoint table stay green: `AgentTaskLandRefusedRetryTests` (the
+  explicit-retry contract, including `RR_V2`'s "a non-race refusal is not replaced by a re-run"),
+  `AgentTaskLandPublicationTests`, `AgentTaskLandRecoveryTests` (crash-resume), the fake-protocol classes,
+  the monitoring/aging classes, `DelegateScriptLandStatusTests`.
+
+Positive controls for Mutation (each named test must go red): line 265 `moved` forced true → V-4;
+`IsTargetRaceRefusal` returning true for every `Refused` row → V-7 and `RR_V2`; budget comparison off by
+one → V-3; resolver fall-through for every `Refused` row → V-7 (`CanReplaceRefused`) and
+`AgentTaskLandRefusedRetryTests.RR_V2`; progress restart omitted → V-11; legacy arm omitted → V-10;
+fake push rejection removed → V-8.
+
+### Checkpoints
+
+Test project `tests/Antiphon.Tests`; forward-slash isolated outputs; on server2 `run-checkpoint.ps1` adds
+`UseAppHost=false` itself. `Min` is the `[Test]` count of the named classes at `fa86dc64` plus the new
+methods (argument rows counted per argument): `AgentTaskLandRefusedRetryTests` 12,
+`AgentTaskLandPublicationTests` 22, `AgentTaskLandRecoveryTests` 8, `AgentTaskLandSourceFreshnessTests` 46,
+`LandingProtocolGuardTests` 17, `LandingProtocolHarnessTests` 9, `AgentTaskLandingStateTests` 13,
+`ControlledLandingGitTests` 9, `AgentTaskLandMonitoringTests` 8, `AgentTaskLandQueueAgingTests` 7,
+`AgentTaskLandStageOutcomeTests` 13, `DelegateScriptLandStatusTests` 3; new: V-1..V-6 = 8 rows, V-7 1,
+V-8 1, V-9 2, V-10 2, V-11 1.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-0 | S4 + tests | `tests/Antiphon.Tests -> bin-c711r/` | race-red | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)/*` | V-1..V-8 red gate | all listed executed; V-1, V-2, V-3, V-5, V-6, V-7, V-8 **fail**; V-4 passes (exit 1 is the expected result of this row) | 30 | 8 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c711a/` | race-real-git | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandPublicationTests*)\|(AgentTaskLandRecoveryTests*)/*` | V-1..V-6, R-1 | all listed, 0 failed | 48 | 14 |
+| CP-2 | all | CP-1 | race-fake-protocol | `/*/*/(AgentTaskLandSourceFreshnessTests*)\|(LandingProtocolGuardTests*)\|(LandingProtocolHarnessTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)/*` | V-7, V-8, V-9, V-10, R-1 | all listed, 0 failed | 98 | 8 |
+| CP-3 | all | CP-1 | land-service-aging | `/*/*/(AgentTaskLandMonitoringTests*)\|(AgentTaskLandQueueAgingTests*)\|(AgentTaskLandStageOutcomeTests*)\|(DelegateScriptLandStatusTests*)/*` | V-11, R-1 | all listed, 0 failed | 31 | 6 |
+| CP-4 | S5 | n/a | docs-named | `git grep -n -e "LandTargetRaceRetries" -e "raced with a push" -e "never moves the local target" -- docs/orchestration-loop.md docs/ops-http.md docs/session-runtime-invariants.md server/appsettings.json` | S5 | ≥ 4 matching lines across the four files, exit 0 | n/a | 1 |
+
+The pipe characters inside `Filter` are escaped for the table; the command line uses a plain `|`, quoted
+as [docs/testing-and-build.md](../../testing-and-build.md#combined-class-filters-card-0403) shows. Run each
+row with `scripts/run-checkpoint.ps1 -Name CP-n -Project tests/Antiphon.Tests -OutputPath bin-c711x/
+-Filter '<filter>' -MinExecuted <Min> -Expect <classes> -ResultsRoot .antiphon/c711-checkpoints`
+(`-NoBuild` for CP-2/CP-3). CP-0 is the red-first gate and is run once, before S1–S3 exist; its
+expected failures are listed in the report by name. The lane is Linux (server2) or Windows; nothing here
+needs `-Platform Windows`. Delete `bin-c711r/`/`bin-c711a/` before finishing.
+
+### Cost
+
+Ordinary floor = 8 + 14 + 8 + 6 + 1 = **37 minutes** of checkpoint time; the isolated builds of
+`tests/Antiphon.Tests` took ~90 s each on this runner during the probe. Per-retry production cost: one
+rebase plus one verification build (94–215 s on the desktop) per race, at most two per request.
+
+### Reproducing the probe
+
+`git apply docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-probe.diff`, then
+`pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-P1 -Project tests/Antiphon.Tests -OutputPath
+bin-c711p/ -Filter '/*/*/AgentTaskLandTargetRaceProbeTests/*' -MinExecuted 3 -Expect
+AgentTaskLandTargetRaceProbeTests -ResultsRoot .antiphon/c711-probe`. Expected at `fa86dc64`: 2 passed
+(the two "today needs N requests" characterisations), 1 failed (`…OneRequestLands_RedToday`). After
+S1/S2 the characterisations must fail (they assert today's chain) and the red one must pass; the diff is
+not production coverage and is not to be committed to `tests/`.
+
+## Follow-ups (not in this card)
+
+- **Unpublished schema-2 rows still active.** Task `68a64314`'s operation `392e31f4` is `Active` at
+  `LocalTargetAdvanced` although its card was landed by hand. S3 makes such rows replaceable, but nothing
+  lists them. A one-off query (`AgentTaskLandings` where `SchemaVersion < 3`, `Active`, unpublished) and a
+  decision per row (supersede or leave) belongs to an ops card.
+- **Recovery refs of refused operations.** Each operation pins `refs/antiphon/land/<task>/<op>/{source,
+  target-before, prepared, remote-observed/*}`; a race retry adds one more set per attempt and refused
+  sets are not deleted anywhere this plan touched. Small, but worth a card once CARD-0692 settles cleanup.
+- **CARD-0688 R2 (`LandNonBuildableGlobs`) is not landed** (`git grep` finds no reference at `fa86dc64`).
+  Doc-only lands, which are the ones that raced this week, would retry at rebase cost only once it is.
+- **Hand pushes to `master`.** Task `4c670eaa` is the third documented hand push after a refusal. The doc
+  slice repeats the rule; if it recurs after this card, a server-side guard (refuse a task whose goal
+  contains `push … origin/master`) is a separate decision.
