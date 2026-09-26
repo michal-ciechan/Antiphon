@@ -318,6 +318,40 @@ public sealed class ChannelInboundRecoveryTests
             await replayHost.StartAsync(Ct);
             await WaitForAsync(() => Task.FromResult(hostedHarness.Messaging.AcknowledgedCount == 2));
             await replayHost.StopAsync(Ct);
+
+            var selfChat = $"self-{Guid.NewGuid():N}";
+            var unboundChat = $"unbound-{Guid.NewGuid():N}";
+            var disabledChat = await hostedHarness.BindChannelAsync();
+            await using (var disable = Db(ackSchema.ConnectionString))
+                await disable.ChatChannels.Where(c => c.ExternalId == disabledChat)
+                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.Enabled, false));
+            var ignored = new[]
+            {
+                Message(selfChat, $"self-{Guid.NewGuid():N}", "echo") with
+                {
+                    Author = new Participant { Id = "bot", IsSelf = true },
+                },
+                Message(unboundChat, $"unbound-{Guid.NewGuid():N}", "unbound input"),
+                Message(disabledChat, $"disabled-{Guid.NewGuid():N}", "disabled input"),
+                Message(hostedChat, $"empty-{Guid.NewGuid():N}", string.Empty),
+            };
+            var dispositionHost = Bridge(hostedHarness);
+            await dispositionHost.StartAsync(Ct);
+            foreach (var item in ignored)
+                hostedHarness.Messaging.InjectInbound(item);
+            await WaitForAsync(() => Task.FromResult(hostedHarness.Messaging.AcknowledgedCount == 6));
+            await dispositionHost.StopAsync(Ct);
+            await using var policyRead = Db(ackSchema.ConnectionString);
+            (await policyRead.ChatChannels.AnyAsync(c => c.ExternalId == selfChat)).ShouldBeFalse();
+            (await policyRead.ChatChannels.AnyAsync(c => c.ExternalId == unboundChat)).ShouldBeTrue();
+            var ignoredIds = ignored.Select(m => m.ChannelMessageId).ToArray();
+            var dispositionRows = await policyRead.ChannelInbounds.AsNoTracking()
+                .Where(i => ignoredIds.Contains(i.NativeMessageId)).ToListAsync();
+            dispositionRows.Count.ShouldBe(3);
+            dispositionRows.All(i => i.EnvelopeJson == null && i.QueueMessageId == null && i.AgentId == null)
+                .ShouldBeTrue();
+            (await policyRead.SessionQueuedMessages.CountAsync(q => q.Body.Contains("disabled input")
+                || q.Body.Contains("unbound input") || q.Body.Contains("echo"))).ShouldBe(0);
         }
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -548,6 +582,14 @@ public sealed class ChannelInboundRecoveryTests
             i.Severity == AlertSeverity.Critical)).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
         h.Messaging.SentReplies.ShouldBeEmpty();
+        await Task.Delay(20);
+        await using (var reset = Db(schema.ConnectionString))
+            await reset.AgentSupervisionStates.Where(s => s.AgentId == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.HerdrFailureHeldAt, DateTime.UtcNow));
+        await Bridge(h).HandleInboundAsync(Message(chat, Guid.NewGuid().ToString("N"), "new Herdr hold episode"), Ct);
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.FailureReason == "HerdrSupervisionHeld" && i.Severity == AlertSeverity.Critical)).ShouldBe(2);
+        h.Adapter.SentInput.ShouldBeEmpty();
 
         foreach (var hold in new[] { "continuity", "suspended", "liveness" })
         {
@@ -627,6 +669,16 @@ public sealed class ChannelInboundRecoveryTests
         notice.ConversationId.ShouldBe(capacityChat);
         notice.ReplyHandle.ShouldBe(capacityChat);
         notice.Text.ShouldContain("Your message is kept");
+        capacity.Adapter.SentInput.ShouldBeEmpty();
+        await Task.Delay(20);
+        await using (var reset = Db(capacitySchema.ConnectionString))
+            await reset.ModelAvailabilityHolds.Where(m => m.Reason == "capacity unavailable")
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.HitAt, DateTime.UtcNow));
+        await Bridge(capacity).HandleInboundAsync(
+            Message(capacityChat, $"capacity-new-{Guid.NewGuid():N}", "new capacity hold episode"), Ct);
+        (await capacityCheck.AgentIncidents.CountAsync(i => i.AgentId == capacity.AgentId
+            && i.FailureReason == "ProviderCapacity" && i.Severity == AlertSeverity.Critical)).ShouldBe(2);
+        capacity.Messaging.SentReplies.Count.ShouldBe(2);
         capacity.Adapter.SentInput.ShouldBeEmpty();
     }
 
