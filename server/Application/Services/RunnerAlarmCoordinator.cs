@@ -34,6 +34,10 @@ public sealed class RunnerAlarmCoordinator(
         var current = state.Current;
         var episodes = current.Episodes.ToDictionary(episode => episode.RunnerId, StringComparer.Ordinal);
         var resolved = new Dictionary<string, DateTimeOffset>(current.LastResolvedAt, StringComparer.Ordinal);
+        var pending = current.PendingRecoveries.ToList();
+        var recoveryHints = await DrainPendingRecoveriesAsync(pending, ct);
+        Publish(current, episodes, resolved, pending);
+        await RehintAsync(recoveryHints, ct);
         foreach (var snapshot in runners.Snapshots())
         {
             if (!snapshot.Enabled)
@@ -43,10 +47,11 @@ public sealed class RunnerAlarmCoordinator(
             if (excluded is not null)
             {
                 if (episode is { RaisedAt: not null })
-                    await ResolveAsync(episode, now, ct);
+                    await ResolveAsync(episode, now, pending, ct);
                 if (episode is not null)
                     logger.LogDebug("Runner {RunnerId} alarm closed because it is {Reason}", snapshot.RunnerId, excluded);
                 episodes.Remove(snapshot.RunnerId);
+                Publish(current, episodes, resolved, pending);
                 continue;
             }
 
@@ -55,9 +60,10 @@ public sealed class RunnerAlarmCoordinator(
                 if (episode is null)
                     continue;
                 if (episode.RaisedAt is not null)
-                    await ResolveAsync(episode, now, ct);
+                    await ResolveAsync(episode, now, pending, ct);
                 resolved[snapshot.RunnerId] = now;
                 episodes.Remove(snapshot.RunnerId);
+                Publish(current, episodes, resolved, pending);
                 continue;
             }
 
@@ -103,7 +109,7 @@ public sealed class RunnerAlarmCoordinator(
             var stillNotified = episode.NotifiedSessionIds.ToList();
             var stillNoted = episode.NotedRows.ToList();
             await NotifyCallersAsync(snapshot, episode.DownSince, now, refreshed, stillNotified, stillNoted, recovered: false, ct);
-            await RehintAsync(stillNoted, ct);
+            await RehintAsync(stillNoted.Select(row => row.RowId).ToArray(), ct);
             episodes[snapshot.RunnerId] = episode with
             {
                 LastReason = snapshot.DisconnectReason ?? episode.LastReason,
@@ -114,8 +120,17 @@ public sealed class RunnerAlarmCoordinator(
             };
         }
 
-        state.Publish(current with { Episodes = episodes.Values.ToArray(), LastResolvedAt = resolved });
+        Publish(current, episodes, resolved, pending);
     }
+
+    private void Publish(RunnerAlarmSnapshot basis, Dictionary<string, RunnerOutageEpisode> episodes,
+        Dictionary<string, DateTimeOffset> resolved, List<PendingRecoveryNote> pending) =>
+        state.Publish(basis with
+        {
+            Episodes = episodes.Values.ToArray(),
+            LastResolvedAt = resolved,
+            PendingRecoveries = pending.ToArray(),
+        });
 
     public async Task EvaluateJournalsAsync(IReadOnlyList<string>? repositories, DateTimeOffset now, CancellationToken ct)
     {
@@ -190,7 +205,8 @@ public sealed class RunnerAlarmCoordinator(
         return projects.Concat(open).Concat(pending).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private async Task ResolveAsync(RunnerOutageEpisode episode, DateTimeOffset now, CancellationToken ct)
+    private async Task ResolveAsync(RunnerOutageEpisode episode, DateTimeOffset now,
+        List<PendingRecoveryNote> pending, CancellationToken ct)
     {
         var minutes = (now - episode.DownSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
         var header = $"[runner {episode.RunnerId} recovered]";
@@ -200,15 +216,68 @@ public sealed class RunnerAlarmCoordinator(
         {
             try
             {
-                await notifier.NotifyAsync(session, header, body, ct);
+                var rowId = await notifier.NotifyAsync(session, header, body, ct);
+                pending.Add(new PendingRecoveryNote(episode.RunnerId, session, rowId == Guid.Empty ? null : rowId, header, body));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Runner {RunnerId} recovery note failed for {SessionId}", episode.RunnerId, session);
+                pending.Add(new PendingRecoveryNote(episode.RunnerId, session, null, header, body));
             }
         }
 
         logger.LogInformation("Runner {RunnerId} recovered after {Minutes} min", episode.RunnerId, minutes);
+    }
+
+    /// <summary>
+    /// Retry a recovery insert that never returned a row id, and collect still-Pending recovery
+    /// rows for a re-hint. Sent, canceled, and rows the notifier never stored are dropped.
+    /// </summary>
+    private async Task<List<Guid>> DrainPendingRecoveriesAsync(List<PendingRecoveryNote> pending, CancellationToken ct)
+    {
+        if (pending.Count == 0)
+            return [];
+        var kept = new List<PendingRecoveryNote>(pending.Count);
+        var rehint = new List<Guid>();
+        foreach (var note in pending)
+        {
+            if (note.RowId is not Guid rowId)
+            {
+                try
+                {
+                    var created = await notifier.NotifyAsync(note.SessionId, note.Header, note.Body, ct);
+                    if (created == Guid.Empty)
+                    {
+                        kept.Add(note);
+                        continue;
+                    }
+
+                    kept.Add(note with { RowId = created });
+                    rehint.Add(created);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Runner {RunnerId} recovery note failed for {SessionId}", note.RunnerId, note.SessionId);
+                    kept.Add(note);
+                }
+
+                continue;
+            }
+
+            var row = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(message => message.Id == rowId)
+                .Select(message => new { message.Status, message.DeliveryAttempts })
+                .SingleOrDefaultAsync(ct);
+            if (row is null || row.Status != QueuedMessageStatus.Pending)
+                continue;
+            kept.Add(note);
+            if (row.DeliveryAttempts == 0)
+                rehint.Add(rowId);
+        }
+
+        pending.Clear();
+        pending.AddRange(kept);
+        return rehint;
     }
 
     private async Task NotifyCallersAsync(RunnerEligibilitySnapshot snapshot, DateTimeOffset downSince, DateTimeOffset now,
@@ -239,13 +308,12 @@ public sealed class RunnerAlarmCoordinator(
         _ = recovered;
     }
 
-    private async Task RehintAsync(List<NotedAlarmRow> noted, CancellationToken ct)
+    private async Task RehintAsync(IReadOnlyCollection<Guid> rowIds, CancellationToken ct)
     {
-        if (noted.Count == 0)
+        if (rowIds.Count == 0)
             return;
-        var ids = noted.Select(row => row.RowId).ToArray();
         var pending = await db.SessionQueuedMessages.AsNoTracking()
-            .Where(message => ids.Contains(message.Id) && message.Status == QueuedMessageStatus.Pending && message.DeliveryAttempts == 0)
+            .Where(message => rowIds.Contains(message.Id) && message.Status == QueuedMessageStatus.Pending && message.DeliveryAttempts == 0)
             .Select(message => message.AgentSessionId)
             .Distinct()
             .ToListAsync(ct);
