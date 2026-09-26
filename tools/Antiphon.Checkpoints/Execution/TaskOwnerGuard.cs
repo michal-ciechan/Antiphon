@@ -149,7 +149,7 @@ public sealed class TaskOwnerGuard : IDisposable
             };
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested
-            && ex is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException or UriFormatException)
+            && ex is HttpRequestException or IOException or OperationCanceledException or JsonException or InvalidOperationException or UriFormatException)
         {
             return "owner-unverified";
         }

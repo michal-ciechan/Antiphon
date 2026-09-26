@@ -113,11 +113,12 @@ public static class PlanTableImporter
                 {
                     foreach (var entry in environmentText.Split(';'))
                     {
-                        var equals = entry.IndexOf('=');
+                        var trimmedEntry = entry.Trim();
+                        var equals = trimmedEntry.IndexOf('=');
                         if (equals < 0)
                             return Fail($"{id}: Environment entry '{entry.Trim()}' must be NAME=value");
-                        var name = entry[..equals].Trim();
-                        var value = entry[(equals + 1)..];
+                        var name = trimmedEntry[..equals].Trim();
+                        var value = trimmedEntry[(equals + 1)..];
                         if (!Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)
                             || name.IndexOfAny(['\0', '\n', '\r']) >= 0
                             || value.IndexOfAny(['\0', '\n', '\r']) >= 0)

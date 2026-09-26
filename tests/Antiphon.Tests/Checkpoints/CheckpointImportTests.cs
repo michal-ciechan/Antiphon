@@ -178,6 +178,10 @@ public sealed class CheckpointImportTests
         var reload = ManifestLoader.LoadYaml(ManifestLoader.ToYaml(imported.Manifest), CheckpointFixtures.TempDir());
         reload.Checkpoints.Single().Environment.ShouldBe(row.Environment);
         PlanTableImporter.ImportFile(CheckpointFixtures.Fixture("plan-table-0688.md")).Manifest!.Checkpoints[0].Environment.ShouldBeEmpty();
+        var trimmed = PlanTableImporter.ImportMarkdown(Table("| Environment",
+            FilterRow("CP-1", "`tests/Antiphon.Tests -> bin-e/`", suffix: "| A=one  ; B=two")));
+        trimmed.ExitCode.ShouldBe(0, trimmed.Error);
+        trimmed.Manifest!.Checkpoints[0].Environment["A"].ShouldBe("one");
     }
 
     [Test]
