@@ -96,7 +96,7 @@ function Stop-RunnerTree {
 
 function Measure-Runner {
     param([bool]$Enabled, [int]$Slot)
-    $root = Join-Path (Join-Path (Join-Path (Get-Location) '.antiphon/c718-checkpoints/CP-4') ([string]$Slot))
+    $root = Join-Path (Join-Path (Get-Location) '.antiphon/c718-checkpoints/CP-4') ([string]$Slot)
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
     New-Item -ItemType Directory -Path (Join-Path $root 'logs') -Force | Out-Null
     $psi = New-RunnerStartInfo -Enabled $Enabled -Root $root
