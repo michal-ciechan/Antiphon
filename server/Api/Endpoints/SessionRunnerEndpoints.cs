@@ -9,6 +9,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -71,13 +72,26 @@ public static class SessionRunnerEndpoints
             string runnerId,
             RunnerDrainClearRequest body,
             RunnerStateService drains,
-            AgentTaskService tasks,
             IOptions<PhoneHomeRunnerSettings> settings,
             CancellationToken ct) =>
         {
             OperatorCredential.Require(http, settings.Value, "Clearing a drain requires the operator token.");
-            var caller = await AgentTaskEndpoints.ResolvePollingCallerAsync(http, tasks, ct);
-            await drains.ClearAsync(runnerId, body.Reason, caller?.Task?.Id, ct);
+            // Resolved from the request, not a handler parameter: a phone-home host that does not
+            // register the task service still has to build this route, and an unregistered
+            // parameter makes every route on the host fail.
+            Guid? updatedByTaskId = null;
+            var db = http.RequestServices.GetService<AppDbContext>();
+            var token = http.Request.Headers[AgentTaskEndpoints.TokenHeader].FirstOrDefault();
+            if (db is not null && !string.IsNullOrWhiteSpace(token))
+            {
+                var hash = AgentTaskService.HashToken(token);
+                updatedByTaskId = await db.AgentTasks.AsNoTracking()
+                    .Where(t => t.TokenHash == hash)
+                    .Select(t => (Guid?)t.Id)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            await drains.ClearAsync(runnerId, body.Reason, updatedByTaskId, ct);
             return Results.Ok();
         }).WithTags("SessionRunners");
 
