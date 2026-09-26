@@ -459,3 +459,70 @@ not production coverage and is not to be committed to `tests/`.
 - **Hand pushes to `master`.** Task `4c670eaa` is the third documented hand push after a refusal. The doc
   slice repeats the rule; if it recurs after this card, a server-side guard (refuse a task whose goal
   contains `push … origin/master`) is a separate decision.
+
+## Verification design — TestDesign (task `6195a018`, 2026-09-26)
+
+Appended by TestDesign; the fix design above is unchanged. This section supersedes the plan's
+`### Verification design` / `### Checkpoints` / `### Cost` above as the Code stage's closed list where the two
+differ (differences are named in "Plan corrections"). Every row names the test file and method, the decisive
+assertion, the production line whose change turns it red (line numbers at `989abc9f`), and its checkpoint.
+
+### Inspection
+
+- Read: `AgentTaskLandingState.cs` (all), `AgentTaskLandingProtocol.cs` 60–110, 160–300, 619–624, 668–685,
+  `AgentTaskLandSourceResolver.cs` 75–200, `LandOperationFactory.cs` (all), `AgentTaskLandService.cs` 340–500,
+  `DelegationSettings.cs` 582–642, 1160–1196, `AgentTaskLandMonitorService.cs` 35–45; the probe diff (all).
+- Fixtures read: `LandingGitFixture` (paths, `Observer` clone, `FixtureGit.BeforeCommand/AfterCommand/Trace/Commands`),
+  `LandingSafetyHarness` (`LandSettings`, `Verifier.Calls/Invocations/Barrier`, `Fault.AfterAcknowledged/Phase/AfterCommit`,
+  `RequestAsync`, `RunQueuedAsync`, `RestartServicesAsync`), `LandingProtocolHarness` (no `LandSettings`: `CreateLand`
+  line 138 passes `new DelegationSettings()` — **missing setup, S4**; `Fault.TerminalCut/EventKind`, `Clock`),
+  `ControlledLandingGit` (push arm 664–673 unconditional; `IsAncestor` 884; `RewriteRemoteAwayFromSource` 395;
+  `AdvanceRemoteSource` 340 is the model for `AdvanceRemoteTarget`), `C475LegacyLandTuples` (a tuple roster, **not** a
+  schema-2 row builder — the plan's V-10 fixture reference is wrong; the real builder is
+  `AgentTaskLandRecoveryTests.SeedSchemaTwoAsync` 474–530).
+- Test bodies read: `AgentTaskLandingStateTests` (`C448_V17…` 259–280, `RR_V7…` 282–362, `ValidV2` 194),
+  `ControlledLandingGitTests` (all), `AgentTaskLandSourceFreshnessTests.C488_TargetCheckpointStillGuarded` 631–652,
+  `AgentTaskLandPublicationTests.C448_V09_PushAndConfirmationPreserveCompetingRemoteState` 16–74,
+  `…C448_V08_RejectedPushWithIndependentContainmentIsAlreadyPresent` 113–133, `…C448_V09_PushExitCannotReplaceRemoteConfirmation`
+  430–455, `…C448_V06…` 227–260 (`SourceRefusalReason == "target_local_ahead"`), `…C688_LocalMasterAheadOfOriginRefuses` 721–735,
+  `AgentTaskLandPreparationIdentityTests.C448_V15_ChangedVerifiedPreparationCanOpenAFreshExplicitOperation` 74–150,
+  `AgentTaskLandRecoveryTests.C688_SchemaTwoOperationsOnResume` 370–415, `LandingProtocolGuardTests.C475_PushExitDoesNotConfirmPublication`
+  127–145, `AgentTaskLandApprovalRecoveryTests.C488_PublicationNeedsTargetContainment` 751–766 and the schema-2 derivation
+  helpers 462–475, `AgentTaskLandRefusedRetryTests.RR_V2/RR_V3` 42–82, `AgentTaskLandMonitoringTests.C467_V15_ThresholdsUseMeaningfulProgress`
+  152–193, `AgentTaskLandFailureDiagnosticTests.C498_TerminalTransactionFaultMatrix` 198–232,
+  `AgentTaskServiceIntegrationTests.land_sweep_settings_reject_out_of_range_values` 161–173.
+- Boundaries → rows: race window (a) pre-CAS → V-2; window (b) push → V-1; both windows × budget {0, default, spent} →
+  V-1/V-2/V-3/V-9/R-4; push failure × tip {moved, unchanged} × push exit {0, 1} → V-1 (moved,1), V-4 (unchanged,1),
+  R-5 (moved,0 = `push_unconfirmed`), `C448_V08` (contained,1 = AlreadyPresent, unchanged); retry × {conflict, local source
+  moved, remote source moved, clean} → V-5, V-6 local, V-6 remote, V-1; entry {fresh request, crash-resume sweep} → V-1,
+  V-13; refusal kind × same-request re-entry {race, non-race} → V-1, V-14; schema {2, 3} × {race reason, `source_changed`,
+  `push_rejected`} at `LocalTargetAdvanced`/`PushStarted` → V-10 ×3, V-7 schema row; settings {-1, 0, 2, 5, 6} → V-12,
+  V-3. Excluded combinations are in Out of scope.
+
+### Plan corrections found while reading (Code must apply them; they are test-side, not fix-design changes)
+
+1. **Three existing tests assert today's race refusal with the default budget and go red after S2.** Each is amended to
+   pin the opt-out explicitly (`LandTargetRaceRetries = 0`), and the default-budget behaviour moves to a new V row;
+   no assertion is loosened:
+   `AgentTaskLandPublicationTests.C448_V09_PushAndConfirmationPreserveCompetingRemoteState` (row `non-ff-before-push`:
+   with retries the land re-rebases onto `rival`, publishes, and cleanup removes the source — every assertion after
+   `fired` flips) → R-2; `AgentTaskLandPreparationIdentityTests.C448_V15_ChangedVerifiedPreparationCanOpenAFreshExplicitOperation`
+   (row `target`: `refused.Id.ShouldBe(previous.Id, "automatic recovery cannot replace changed preparation")` contradicts
+   D-4's crash-resume sentence) → R-3, with V-13 as the default-budget companion;
+   `AgentTaskLandSourceFreshnessTests.C488_TargetCheckpointStillGuarded` → R-4 (it is the plan's V-9 `[Arguments(0)]` row;
+   V-9 keeps only the default-budget row so the two do not duplicate). The plan's table ran none of the first two classes'
+   affected rows with a filter that would have caught `AgentTaskLandPreparationIdentityTests` at all.
+2. **`RR_V2` does not pin "a non-race refusal is not replaced by a re-run"** (it is an explicit-request test:
+   `land_worktree_foreign` refuses B again). The resolver's same-request fall-through guard gets its own row, V-14.
+3. **V-10's fixture is `AgentTaskLandRecoveryTests.SeedSchemaTwoAsync`**, so V-10 lives in `AgentTaskLandRecoveryTests`,
+   not `LandingProtocolGuardTests`.
+4. **D-8 "clamp 0–5"** is implemented as a `DelegationSettingsValidator` failure, like `LandMaxAttempts` (lines 1192–1195),
+   not a silent clamp; V-12 pins it.
+5. **D-6 leaves `push_unconfirmed` exactly as today** (not terminal; "What stays exactly as it is" wins over D-6's "the
+   first two are terminal"); R-5 pins it.
+6. **`target_local_ahead` stays the bare `SourceRefusalReason` code**; S3's detail goes only into the terminal event
+   detail (via `AppendDetail`). R-6 pins it.
+7. **`LandOperationFactory.Outcome` has `Diagnostic`, not `Detail`**; S3 adds a string `Detail` (or reuses the
+   diagnostic) — naming only, the assertion is on the `LandRefused` event detail.
+8. **Min counts** in the plan's table were method counts; the table below uses TUnit executions (argument rows
+   expanded), counted from source at `989abc9f`.
