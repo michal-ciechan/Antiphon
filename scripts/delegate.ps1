@@ -288,6 +288,12 @@ param(
     [Parameter(ParameterSetName = 'Land')]
     [string]$ReviewEvidenceId,
 
+    [Parameter(ParameterSetName = 'Land')]
+    [string]$FromTask,
+
+    [Parameter(ParameterSetName = 'Land')]
+    [switch]$RecoverReviewedSource,
+
     [Parameter(ParameterSetName = 'Finding')]
     [string]$ReviewedSourceSha,
 
@@ -674,6 +680,11 @@ switch ($PSCmdlet.ParameterSetName) {
             $r = $task.landRequest
             Write-Output ("Land: {0}; request {1}; requested {2}; attempt {3}; no progress for {4}s" -f $r.state, $r.id, $r.requestedAt, $r.attempt, [int]$r.noProgressSeconds)
             if ($r.expectedSourceSha) { Write-Output "Approved original: $($r.expectedSourceSha)" } else { Write-Output 'Approved original: (legacy; not bound)' }
+            if ($r.recoveryMode -and $r.recoveryMode -ne 'None') {
+                Write-Output "Recovery: $($r.recoveryMode); source task $($r.recoverySourceTaskId); ref $($r.recoverySourceFullRef); reviewed $($r.expectedSourceSha); owner status $($r.recoveryOwnerStatus)"
+                if ($r.supersedesRequestId) { Write-Output "Superseded land request: $($r.supersedesRequestId)" }
+                if ($r.recoveryOwnerRemoteAfterSha) { Write-Output "Recovery source now: $($r.recoveryOwnerRemoteAfterSha)" }
+            }
             if ($r.localBeforeSha) { Write-Output "Local before resolution: $($r.localBeforeSha)" }
             if ($r.remoteSourceSha) { Write-Output "Observed remote source: $($r.remoteSourceSha)" }
             if ($r.resolvedSourceSha) { Write-Output "Resolved source: $($r.resolvedSourceSha)" }
@@ -697,6 +708,9 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($task.landing) {
             $l = $task.landing
             Write-Output "Publication: $($l.publication); operation $($l.operationId); approved $($l.reviewedSha); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
+            if ($l.recoveryMode -and $l.recoveryMode -ne 'None') {
+                Write-Output "Recovery receipt: $($l.recoveryMode); source task $($l.recoverySourceTaskId); ref $($l.recoverySourceFullRef); reviewed $($l.reviewedSha); owner remote $($l.recoveryOwnerRemoteBeforeSha) -> $($l.recoveryOwnerRemoteAfterSha)"
+            }
             if ($l.reason) { Write-Output "Landing reason: $($l.reason)" }
         } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }
         if ($task.progressEvidence) {
@@ -727,6 +741,31 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'Land' {
+        if ($FromTask -and $RecoverReviewedSource) {
+            Write-AntiphonLandFailure 'Choose -FromTask or -RecoverReviewedSource, not both.'
+        }
+        if ($FromTask -or $RecoverReviewedSource) {
+            if (-not (Test-AntiphonLandV2Sha -Value $ExpectedSourceSha)) {
+                Write-AntiphonLandFailure 'Reviewed recovery requires -ExpectedSourceSha with a full 40- or 64-character SHA.'
+            }
+            $parsedReview = [guid]::Empty
+            if (-not [guid]::TryParse($ReviewEvidenceId, [ref]$parsedReview) -or $parsedReview -eq [guid]::Empty) {
+                Write-AntiphonLandFailure 'Reviewed recovery requires -ReviewEvidenceId with a full GUID.'
+            }
+        }
+        $resolvedFromTaskId = $null
+        if ($FromTask) {
+            try {
+                $sourceTask = Invoke-RestMethod -Method GET -Uri "$api/api/agent-tasks/$FromTask" -Headers $headers
+                $resolvedFromTaskId = [string]$sourceTask.summary.id
+                $parsedSource = [guid]::Empty
+                if (-not [guid]::TryParse($resolvedFromTaskId, [ref]$parsedSource) -or $parsedSource -eq [guid]::Empty) {
+                    Write-AntiphonLandFailure 'The -FromTask lookup returned no full task GUID.'
+                }
+            } catch {
+                Write-AntiphonLandFailure "The -FromTask lookup failed: $($_.Exception.Message)"
+            }
+        }
         $safeApi = Get-AntiphonSafeApiBase -Api $api
         $probe = Invoke-AntiphonLandVersionProbe -SafeApi $safeApi
         $observed = 'unavailable'
@@ -753,6 +792,8 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($Verify) { $body['verify'] = $Verify }
         if ($ExpectedSourceSha) { $body['expectedSourceSha'] = $ExpectedSourceSha }
         if ($ReviewEvidenceId) { $body['reviewEvidenceId'] = $ReviewEvidenceId }
+        if ($resolvedFromTaskId) { $body['adoptFromTaskId'] = $resolvedFromTaskId }
+        if ($RecoverReviewedSource) { $body['recoverReviewedSource'] = $true }
         $landPath = "/api/agent-tasks/$Land/land/v2"
         $uri = "$api$landPath"
         $json = $body | ConvertTo-Json -Depth 6 -Compress

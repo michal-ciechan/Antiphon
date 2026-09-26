@@ -88,6 +88,25 @@ internal static class LandApproval
         return row;
     }
 
+    public static async Task<StageOutcome> LoadRecoveryEvidenceAsync(AppDbContext db, Guid evidenceId,
+        string expectedSha, AgentTask source, CancellationToken ct)
+    {
+        var row = await LoadUsableEvidenceAsync(db, evidenceId, expectedSha, source, ct);
+        if (row.CommissionedRound != VerificationRound.Final || row.OrdinaryScopeCompleted != VerificationScope.Full)
+            throw new ConflictException("Recovery requires a Clean Final Review that completed Full scope.",
+                ScopeIneligibleCode);
+        return row;
+    }
+
+    public static bool RecoveryStatusEligible(AgentTaskStatus status) =>
+        status is AgentTaskStatus.Succeeded or AgentTaskStatus.Blocked or AgentTaskStatus.Failed;
+
+    public static bool RequestStatusEligible(AgentTask task, AgentTaskLandRequest request) =>
+        task.Workspace == WorkspaceMode.Worktree &&
+        (request.RecoveryMode == LandRecoveryMode.None
+            ? task.Status == AgentTaskStatus.Succeeded
+            : task.Role == AgentTaskRole.Code && RecoveryStatusEligible(task.Status));
+
     private static bool SameRepository(string? left, string? right)
     {
         if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;

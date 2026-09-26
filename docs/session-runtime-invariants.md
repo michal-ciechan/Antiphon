@@ -762,3 +762,7 @@ C650_Operator_release_clears_a_whole_screen_hold_with_an_audit_and_no_input,
 C650_Unreadable_Claude_composer_keeps_holding_until_it_is_proved_empty,
 C650_Ghost_empty_composer_on_one_snapshot_keeps_holding_while_the_next_shows_the_body) and
 ExpectationHoldReleaseEndpointTests.
+
+### Gotcha #92
+
+- **A reviewed source recovery is an explicit landing operation, not a runner settlement retry** (CARD-0753). The runner still compares its dispatch baseline with the pushed task tip before inspecting the desktop mirror; resetting the mirror cannot make a force-pushed baseline descendant. A Code task that only re-verifies its own dispatch tip has no new attributed progress. For landing, `-RecoverReviewedSource` or `-FromTask` binds a Clean Final/Full Review to the source task's exact current pushed ref and SHA. The owner branch may change only under the land lease, with the old local/remote identities pinned and the remote replacement guarded by `--force-with-lease`. The target push remains ordinary and unforced. A Failed or Blocked owner's status is historical; the persisted recovery request and receipt carry authority across restart. Cleanup owns only the original owner worktree and branch, never the adopted source task's worktree.

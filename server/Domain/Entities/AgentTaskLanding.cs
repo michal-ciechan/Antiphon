@@ -64,6 +64,16 @@ public sealed class AgentTaskLanding
     public Guid? ApprovalLandRequestId { get; set; }
     public string? ReviewedSourceSha { get; set; }
     public Guid? ReviewEvidenceId { get; set; }
+    public LandRecoveryMode RecoveryMode { get; set; }
+    public AgentTaskStatus? RecoveryOwnerStatus { get; set; }
+    public Guid? RecoverySourceTaskId { get; set; }
+    public string? RecoverySourceFullRef { get; set; }
+    public string? RecoveryStartBaseSha { get; set; }
+    public string? RecoveryLocalBeforeSha { get; set; }
+    public string? RecoveryOwnerRemoteBeforeSha { get; set; }
+    public string? RecoveryOwnerRemoteAfterSha { get; set; }
+    public string? RecoveryRelationship { get; set; }
+    public Guid? SupersedesRequestId { get; set; }
     public string? PreparationInputSha { get; set; }
     public Guid? PreviousPreparationOperationId { get; set; }
     public string? SourceRemoteSha { get; set; }
