@@ -13,6 +13,52 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandAdoptionTests
 {
     [Test]
+    public async Task C753_SupersededConflictedOperationGetsFreshReviewedPublication()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var reviewed = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var first = await h.RequestAsync(expectedSourceSha: reviewed);
+        var oldOperationId = Guid.NewGuid();
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            var old = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId);
+            old.State = LandRequestState.NeedsResolution;
+            old.LandingOperationId = oldOperationId;
+            owner.Status = AgentTaskStatus.Blocked;
+            owner.ActiveLandingId = oldOperationId;
+            db.AgentTaskLandings.Add(new AgentTaskLanding
+            {
+                Id = oldOperationId, TaskId = owner.Id, SchemaVersion = 3,
+                ApprovalLandRequestId = old.Id, Phase = LandPhase.Conflicted,
+                Publication = LandPublicationOutcome.Unconfirmed,
+                RepositoryPath = h.Fixture.Repository, WorktreePath = h.Fixture.Source,
+                SourceFullRef = h.Fixture.SourceRef, OriginalSourceSha = reviewed,
+                TargetFullRef = h.Fixture.TargetRef, DestinationFullRef = h.Fixture.TargetRef,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+
+        var replacement = await h.RequestAsync(expectedSourceSha: reviewed,
+            reviewEvidenceId: evidence, recoverReviewedSource: true);
+        await h.RunQueuedAsync(); // the old queued wakeup is stale
+        await h.RunQueuedAsync();
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Id.ShouldNotBe(oldOperationId);
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        await using var check = h.CreateContext();
+        (await check.AgentTaskLandings.SingleAsync(o => o.Id == oldOperationId)).Active.ShouldBeFalse();
+        (await check.AgentTaskLandRequests.SingleAsync(r => r.Id == replacement.RequestId))
+            .SupersedesRequestId.ShouldBe(first.RequestId);
+    }
+
+    [Test]
     public async Task C753_InterruptedLocalAdvanceResumesOnlyPinnedOldCheckout()
     {
         await using var h = new LandingSafetyHarness();
@@ -273,6 +319,11 @@ public sealed class AgentTaskLandAdoptionTests
         op.RecoveryOwnerRemoteAfterSha.ShouldBe(reviewed);
         op.RecoveryPatchesContained.ShouldBe(true);
         op.RecoveryUncontainedPatches.ShouldBe("");
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        (await h.Fixture.Git.RunAsync(h.Fixture.Repository,
+            ["show-ref", "--verify", "--quiet", h.Fixture.SourceRef], CancellationToken.None))
+            .Succeeded.ShouldBeFalse();
         Directory.Exists(sourcePath).ShouldBeTrue();
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "show-ref", "--verify", "--hash", sourceRef))
             .Trim().ShouldBe(reviewed);
