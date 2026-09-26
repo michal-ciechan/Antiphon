@@ -125,15 +125,15 @@ public sealed class RunnerAlarmDeliveryTests
         await coordinator.EvaluateRunnersAsync(t1.AddSeconds(180), CancellationToken.None);
         await UntilAsync(async () =>
         {
-            var prompts = await PromptsAsync(rig);
-            var text = string.Join("\n", prompts);
+            await rig.Harness.Queue.FlushIfIdleAsync(rig.Harness.SessionId, CancellationToken.None);
+            var text = string.Join("\n", await PromptsAsync(rig));
             return text.Contains(firstBody, StringComparison.Ordinal)
-                && prompts.Any(prompt => prompt.Contains("[runner server2 unavailable]", StringComparison.Ordinal)
-                    && !prompt.Contains(firstBody, StringComparison.Ordinal) || prompts.Count >= 1 && text.Contains(firstBody, StringComparison.Ordinal));
+                && text.Contains("[runner server2 unavailable]", StringComparison.Ordinal);
         });
+        rig.Db.ChangeTracker.Clear();
         var joined = string.Join("\n", await PromptsAsync(rig));
         joined.ShouldContain(firstBody);
-        (await rig.Db.SessionQueuedMessages.Where(row => row.AgentSessionId == rig.Harness.SessionId).ToListAsync())
+        (await rig.Db.SessionQueuedMessages.AsNoTracking().Where(row => row.AgentSessionId == rig.Harness.SessionId).ToListAsync())
             .ShouldAllBe(row => row.Status == QueuedMessageStatus.Sent);
         await rig.Worker.StopAsync(CancellationToken.None);
     }
@@ -141,13 +141,14 @@ public sealed class RunnerAlarmDeliveryTests
     private static async Task<Rig> StartAsync(CompletionNoteFlushQueue? flush = null, Action<DbContextOptionsBuilder>? configure = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var queue = flush ?? new CompletionNoteFlushQueue();
         var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = schema.ConnectionString,
             PreserveDatabaseOnDispose = true,
             ConfigureDbContext = configure,
+            ConfigureServices = services => services.AddSingleton(queue),
         });
-        var queue = flush ?? harness.Provider.GetRequiredService<CompletionNoteFlushQueue>();
         var worker = new CompletionNoteWorkHostedService(
             harness.Provider.GetRequiredService<IServiceScopeFactory>(), queue, new SpecialistFailureQueue(),
             TimeProvider.System, NullLogger<CompletionNoteWorkHostedService>.Instance);
@@ -209,6 +210,7 @@ public sealed class RunnerAlarmDeliveryTests
         string? found = null;
         await UntilAsync(async () =>
         {
+            await rig.Harness.Queue.FlushIfIdleAsync(rig.Harness.SessionId, CancellationToken.None);
             found = (await PromptsAsync(rig)).FirstOrDefault(text => text.Contains(header, StringComparison.Ordinal));
             return found is not null;
         });
