@@ -678,6 +678,89 @@ public class PhoneHomeConnectionTests
         new(PhoneHomeFrameKind.Event, epoch, Guid.Empty, EventName: SessionRunnerEventNames.SessionOutput,
             Payload: JsonSerializer.SerializeToElement(new { sessionId = Guid.Empty, text = $"chunk-{n}" }, PhoneHomeFraming.Json));
 
+    // CARD-0727 V-1. server2-temp is configured and offline: 200, not eligible, and none of
+    // server2's identity. An id that is not in the map is 404 (CARD-0729).
+    [Test]
+    public async Task Unknown_runner_status_is_404_and_carries_no_live_runner_identity()
+    {
+        var store = Guid.NewGuid();
+        var secret = "status-secret-" + Guid.NewGuid().ToString("N");
+        var configured = RollingRunnerSettings.Pair(secret, secret + "-temp");
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: configured);
+        await using var peer = await host.ConnectPeerAsync(
+            runnerId: RollingRunnerSettings.Server2, storeId: store, secret: secret);
+        var live = await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2);
+        host.Directory.MarkRecovered(live);
+
+        var temp = await host.Http.GetAsync("/api/session-runners/server2-temp/status");
+        temp.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var tempBody = await temp.Content.ReadFromJsonAsync<JsonElement>();
+        tempBody.GetProperty("available").GetBoolean().ShouldBeFalse();
+        tempBody.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse();
+        IdentityIsNull(tempBody);
+
+        var unknown = await host.Http.GetAsync("/api/session-runners/server2-other/status");
+        unknown.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        var unknownText = await unknown.Content.ReadAsStringAsync();
+        unknownText.ShouldNotContain("runnerStoreId");
+        unknownText.ShouldNotContain("processBootId");
+        unknownText.ShouldNotContain("buildVersion");
+
+        var desktop = await host.Http.GetAsync("/api/session-runners/desktop/status");
+        desktop.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var desktopBody = await desktop.Content.ReadFromJsonAsync<JsonElement>();
+        desktopBody.GetProperty("available").GetBoolean().ShouldBeFalse();
+        desktopBody.GetProperty("dispatchEligible").GetBoolean().ShouldBeFalse();
+
+        var server2 = await host.Http.GetAsync("/api/session-runners/server2/status");
+        server2.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var server2Body = await server2.Content.ReadFromJsonAsync<JsonElement>();
+        server2Body.GetProperty("dispatchEligible").GetBoolean().ShouldBeTrue();
+        server2Body.GetProperty("runnerStoreId").GetGuid().ShouldBe(store);
+        peer.ShouldNotBeNull();
+    }
+
+    // CARD-0727 V-34. Equal secrets do not make a ticket portable across runner ids.
+    [Test]
+    public async Task Equal_secrets_do_not_let_a_server2_temp_ticket_connect_as_server2()
+    {
+        var secret = "equal-secret-" + Guid.NewGuid().ToString("N");
+        var configured = RollingRunnerSettings.Pair(secret, secret);
+        await using var host = await PhoneHomeTestHost.StartAsync(configured: configured);
+        var ticket = await host.RegisterAsync(runnerId: RollingRunnerSettings.Server2Temp, secret: secret);
+
+        using var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
+        var server2Connect = new Uri(
+            $"ws://{host.Http.BaseAddress!.Authority}/api/session-runners/server2/connect");
+        var refused = false;
+        try
+        {
+            await socket.ConnectAsync(server2Connect, CancellationToken.None);
+        }
+        catch (WebSocketException)
+        {
+            refused = true;
+        }
+
+        refused.ShouldBeTrue();
+        host.Directory.SnapshotLive(RollingRunnerSettings.Server2).ShouldBeNull();
+        host.Directory.SnapshotLive(RollingRunnerSettings.Server2Temp).ShouldBeNull();
+
+        await using var peer = await host.ConnectPeerAsync(
+            runnerId: RollingRunnerSettings.Server2, storeId: Guid.NewGuid(), secret: secret);
+        (await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2)).ShouldNotBeNull();
+        host.Directory.SnapshotLive(RollingRunnerSettings.Server2Temp).ShouldBeNull();
+        peer.Epoch.ShouldBeGreaterThan(0);
+    }
+
+    private static void IdentityIsNull(JsonElement body)
+    {
+        body.GetProperty("runnerStoreId").ValueKind.ShouldBe(JsonValueKind.Null);
+        body.GetProperty("processBootId").ValueKind.ShouldBe(JsonValueKind.Null);
+        body.GetProperty("buildVersion").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
     private static async Task<IReadOnlyList<CapturedLog>> WaitForLogsAsync(
         PhoneHomeTestHost host, Func<CapturedLog, bool> match, TimeSpan? timeout = null)
     {
