@@ -767,7 +767,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
                     RunnerId: RollingRunnerSettings.Server2,
                     Card: companion.ToString("D"),
                     SourceLandingOperationId: operationId),
-                new AgentTaskService.Caller(null, null, _root),
+                new AgentTaskService.Caller(null, null, _root, ProjectId: projectId),
                 CancellationToken.None);
         }
     }
