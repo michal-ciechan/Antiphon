@@ -62,21 +62,23 @@ public sealed class AgentTaskLandingState
             && CanReplaceRefused(previous, explicitRequest, leaseHeld);
     }
 
-    /// <summary>CARD-0711: a schema-3 operation refused for an unpublished target race. S0 returns false so the
-    /// red gate compiles; S1 is the real predicate.</summary>
-    public bool IsTargetRaceRefusal(AgentTaskLanding operation)
-    {
-        _ = operation;
-        return false;
-    }
+    /// <summary>CARD-0711: schema 3, unpublished, terminal, and the target moved before publication.</summary>
+    public bool IsTargetRaceRefusal(AgentTaskLanding operation) =>
+        operation.SchemaVersion == 3
+        && operation.Phase == LandPhase.Refused
+        && operation.Publication == LandPublicationOutcome.Refused
+        && !HasPublication(operation)
+        && operation.LastReason == "remote_changed_before_push";
 
     /// <summary>CARD-0688: replacing a refused operation needs no worktree inspection; the replacement reads the
-    /// branch ref itself. Only an explicit request under the lease may replace, and never a publication.</summary>
+    /// branch ref itself. Only an explicit request under the lease may replace, and never a publication.
+    /// CARD-0711: the same request may replace its own unpublished target-race refusal.</summary>
     public bool CanReplaceRefused(AgentTaskLanding previous, bool explicitRequest, bool leaseHeld)
     {
-        if (!explicitRequest || !leaseHeld || previous.Phase != LandPhase.Refused || HasPublication(previous))
+        if (!leaseHeld || previous.Phase != LandPhase.Refused || HasPublication(previous))
             return false;
         if (previous.SchemaVersion is not (1 or 2 or 3)) return false;
+        if (!explicitRequest && !IsTargetRaceRefusal(previous)) return false;
         if (previous.SchemaVersion == 1) return true;
         return previous.ApprovalLandRequestId is not null
             && previous.ReviewedSourceSha == previous.OriginalSourceSha;

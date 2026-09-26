@@ -171,7 +171,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     // The observed remote target already carries the reviewed commit.
                     await RecheckRemoteSourceAsync(op, ct);
                     var remote = await ObserveAsync(op, InputSha(op), ct);
-                    Require(remote.ContainsSource, "remote_changed_before_push");
+                    if (!remote.ContainsSource)
+                        throw new LandingRefusal("remote_changed_before_push", remote.Sha);
                     await RecheckSourceAsync(op, ct);
                     op.VerifiedSourceSha = InputSha(op);
                     op.VerifiedAt = Now();
@@ -249,7 +250,9 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 if (!beforePush.ContainsSource)
                 {
                     // The pre-push observation is the CAS: a plain push of a descendant of the observed tip.
-                    Require(beforePush.Sha == (op.RemoteBeforeSha ?? op.TargetBeforeSha), "remote_changed_before_push");
+                    var baseline = op.RemoteBeforeSha ?? op.TargetBeforeSha;
+                    if (beforePush.Sha != baseline)
+                        throw new LandingRefusal("remote_changed_before_push", beforePush.Sha);
                     await RecheckSourceAsync(op, ct);
                     if (op.Phase != LandPhase.PushStarted)
                     {
@@ -262,7 +265,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     op.PushExitCode = pushed.ExitCode;
                     await SaveAsync(op, ct);
                     beforePush = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
-                    Require(beforePush.ContainsSource, pushed.Succeeded ? "push_unconfirmed" : "push_rejected");
+                    if (!beforePush.ContainsSource)
+                    {
+                        // A rejected push is a target race only when this re-observation shows the tip moved.
+                        // A successful push that the remote does not contain stays push_unconfirmed.
+                        if (!pushed.Succeeded && beforePush.Sha != baseline)
+                            throw new LandingRefusal("remote_changed_before_push", beforePush.Sha);
+                        Require(false, pushed.Succeeded ? "push_unconfirmed" : "push_rejected");
+                    }
                 }
                 await ConfirmAsync(op, beforePush,
                     op.PushExitCode == 0 ? LandPublicationOutcome.Landed : LandPublicationOutcome.AlreadyPresent, ct);
@@ -290,7 +300,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     || (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.Prepared && !lockCode)
                     || reason == "landing_schema_superseded"
                     || op.SchemaVersion == 3 && reason == "remote_changed_before_push"
-                        && op.Phase is LandPhase.Verified or LandPhase.PushStarted))
+                        && op.Phase is LandPhase.Verified or LandPhase.PushStarted
+                    || op.SchemaVersion != 3
+                        && (reason is "remote_changed_before_push" or "source_changed")
+                        && op.Phase is LandPhase.LocalTargetAdvanced or LandPhase.PushStarted))
                 {
                     op.Publication = LandPublicationOutcome.Refused;
                     _state.Transition(op, LandPhase.Refused, Now());

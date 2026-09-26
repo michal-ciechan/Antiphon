@@ -419,7 +419,12 @@ public sealed class AgentTaskLandService
                 return LandRunResult.Complete;
             }
         }
-        else if (!published && !resumeExisting)
+        var state = new AgentTaskLandingState();
+        var raceRetries = 0;
+        var budget = _settings.LandTargetRaceRetries;
+        while (true)
+        {
+        if (!request.CleanupOnly && !published && !resumeExisting)
         {
             var canResolve = request.SchemaVersion == 2 && GitObjectId.IsFull(request.ExpectedSourceSha);
             if (!canResolve)
@@ -484,7 +489,23 @@ public sealed class AgentTaskLandService
             if (op?.VerifiedAt is not null)
                 Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
                     DurationSeconds(op, OrchestrationStage.Verify), op.VerificationSkipReason ?? "verification passed");
-            await RefuseAsync(task, AppendDetail(result.Reason ?? "publication_unconfirmed", result.Detail), ct);
+            if (op is not null && state.IsTargetRaceRefusal(op) && raceRetries < budget)
+            {
+                raceRetries++;
+                if (!await WriteRaceRetryAsync(task, request, op, raceRetries, budget, result.Detail, ct))
+                    return LandRunResult.Complete;
+                await _db.Entry(task).ReloadAsync(ct);
+                await _db.Entry(request).ReloadAsync(ct);
+                resumeExisting = false;
+                published = false;
+                continue;
+            }
+            var reason = result.Reason ?? "publication_unconfirmed";
+            var detail = reason == "remote_changed_before_push" && GitObjectId.IsFull(result.Detail) ? null : result.Detail;
+            var line = raceRetries > 0 && op is not null && state.IsTargetRaceRefusal(op)
+                ? $"{reason}; after {raceRetries} automatic rebases (Delegation:LandTargetRaceRetries={budget}); run -Land again"
+                : AppendDetail(reason, detail);
+            await RefuseAsync(task, line, ct);
             return LandRunResult.Complete;
         }
         if (op!.Mode != LandOperationMode.CleanupRetry)
@@ -503,7 +524,37 @@ public sealed class AgentTaskLandService
         await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op, result.Detail), marker),
             warnings, siblings, ct, result.Detail);
         return LandRunResult.Complete;
+        }
     }
+
+    /// <summary>CARD-0711: one warning and a restarted progress clock, in the same transaction as the refused operation.</summary>
+    private async Task<bool> WriteRaceRetryAsync(AgentTask task, AgentTaskLandRequest request, AgentTaskLanding op,
+        int retry, int budget, string? observedTip, CancellationToken ct)
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var warning = Event(task.Id, AgentTaskEventType.Warning,
+            $"Land raced with a push to {op.RemoteName}:{op.DestinationFullRef} (retry {retry} of {budget}): the target moved from "
+            + $"{ShortSha(op.RemoteBeforeSha ?? op.TargetBeforeSha)} to {ShortSha(observedTip)} after the candidate "
+            + $"{ShortSha(op.VerifiedSourceSha ?? op.RebasedSourceSha ?? op.OriginalSourceSha)} was verified; rebasing "
+            + $"{ShortSha(op.ReviewedSourceSha ?? op.OriginalSourceSha)} onto the new tip.", now);
+        warning.LandRequestId = request.Id;
+        warning.LandingOperationId = op.Id;
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await LockTaskAsync(task.Id, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        await _db.Entry(request).ReloadAsync(ct);
+        if (task.CurrentLandRequestId != request.Id || !request.IsPending) return false;
+        request.HighestProgress = -1;
+        request.LastProgressAt = now;
+        request.WarningAt = request.ErrorAt = null;
+        request.ConcurrencyToken = Guid.NewGuid();
+        _db.AgentTaskEvents.Add(warning);
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    private static string ShortSha(string? sha) => sha is { Length: >= 8 } ? sha[..8] : "unknown";
 
     internal static string FormatOutcome(AgentTaskLanding op, string? cleanupDetail = null) =>
         $"{(op.Publication == LandPublicationOutcome.AlreadyPresent ? "already present" : "landed")} operation={op.Id:N} mode={op.Mode} "
