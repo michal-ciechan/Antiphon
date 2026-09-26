@@ -473,6 +473,22 @@ public sealed class CardService : IScheduledCardActions
         if (targetColumn.IsTerminal && !wasTerminal && assignedAgentId is { } checkpointAgentId)
             await _reviewCheckpoints.CaptureAsync(checkpointAgentId, $"Card {card.Identifier} completed", ct);
 
+        // The card write has already committed. A task that cannot be settled stays for the sweep.
+        CardTaskSettlementResult? settlement = null;
+        if (targetColumn.IsTerminal && !wasTerminal && _taskSettlement is not null && card.CompletedAt is { } closedAt)
+        {
+            settlement = await _taskSettlement.SettleClosedCardAsync(
+                new CardClosure(
+                    card.Id,
+                    card.Identifier,
+                    card.BoardId,
+                    CardClosureKind.Closed,
+                    card.Status,
+                    card.TerminalReason ?? string.Empty,
+                    closedAt),
+                ct);
+        }
+
         TrackerCardStatePushResult? push = null;
         if (targetColumn.IsTerminal && !wasTerminal && card.ExternalIssueRef is not null && _trackerStatePush is not null)
             push = await _trackerStatePush.PushForCardAsync(card.Id, ct);
@@ -490,7 +506,8 @@ public sealed class CardService : IScheduledCardActions
         if (queueRemoval is not null)
             await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
-        return new MoveCardResult(await GetByIdAsync(card.Id, ct), spawnedSessionId, spawnSuppressed, push);
+        return new MoveCardResult(
+            await GetByIdAsync(card.Id, ct), spawnedSessionId, spawnSuppressed, push, ToSettlementDto(settlement));
     }
 
     /// <summary>
@@ -945,7 +962,22 @@ public sealed class CardService : IScheduledCardActions
         card.ArchivedReason = request.Reason.Trim();
         card.ArchivedBy = string.IsNullOrWhiteSpace(request.ArchivedBy) ? null : request.ArchivedBy.Trim();
 
-        return await SaveArchiveChangeAsync(card, now, ct);
+        var archived = await SaveArchiveChangeAsync(card, now, ct);
+        if (_taskSettlement is not null && card.ArchivedAt is { } archivedAt)
+        {
+            await _taskSettlement.SettleClosedCardAsync(
+                new CardClosure(
+                    card.Id,
+                    card.Identifier,
+                    card.BoardId,
+                    CardClosureKind.Archived,
+                    card.Status,
+                    card.ArchivedReason ?? string.Empty,
+                    archivedAt),
+                ct);
+        }
+
+        return archived;
     }
 
     /// <summary>Undoes an archive. Mistakes in archiving need correcting too.</summary>
@@ -1429,6 +1461,15 @@ public sealed class CardService : IScheduledCardActions
     /// that. The database's own message is attached rather than paraphrased, so a 409 that turns
     /// out to be a misdiagnosis still has something to debug from.
     /// </remarks>
+    private static CardTaskSettlementDto? ToSettlementDto(CardTaskSettlementResult? settlement)
+    {
+        if (settlement is null || (settlement.Canceled.Count == 0 && settlement.LeftOpen.Count == 0))
+            return null;
+        return new CardTaskSettlementDto(
+            settlement.Canceled.Select(t => t.ShortId).ToArray(),
+            settlement.LeftOpen.Select(t => t.ShortId).ToArray());
+    }
+
     private async Task SaveCardWriteAsync(Card card, CancellationToken ct)
     {
         try
