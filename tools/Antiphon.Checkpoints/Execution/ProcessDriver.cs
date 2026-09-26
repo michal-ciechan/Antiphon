@@ -17,7 +17,8 @@ public interface IProcessHandleFactory
 
 internal sealed class SystemProcessHandleFactory : IProcessHandleFactory
 {
-    public IProcessHandle Create(ProcessStartInfo startInfo) => new SystemProcessHandle(startInfo);
+    public IProcessHandle Create(ProcessStartInfo startInfo) =>
+        OperatingSystem.IsWindows() ? new WindowsJobProcessHandle(startInfo) : new SystemProcessHandle(startInfo);
 
     private sealed class SystemProcessHandle : IProcessHandle
     {
@@ -35,7 +36,16 @@ internal sealed class SystemProcessHandleFactory : IProcessHandleFactory
         public Task WaitForExitAsync(CancellationToken token) => _process.WaitForExitAsync(token);
         public bool HasExited => _process.HasExited;
         public int ExitCode => _process.ExitCode;
-        public void Kill(bool entireProcessTree) => _process.Kill(entireProcessTree);
+        public void Kill(bool entireProcessTree)
+        {
+            try
+            {
+                if (!_process.HasExited)
+                    _process.Kill(entireProcessTree);
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
         public void Dispose() => _process.Dispose();
     }
 }
@@ -126,8 +136,7 @@ public sealed class ProcessDriver : IDriver
     {
         try
         {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree);
+            process.Kill(entireProcessTree);
         }
         catch (InvalidOperationException) { }
         catch (System.ComponentModel.Win32Exception) { }
