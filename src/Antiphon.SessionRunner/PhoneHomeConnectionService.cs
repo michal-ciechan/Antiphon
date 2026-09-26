@@ -211,7 +211,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             _ => "none",
         };
         var close = peerClose is { } status ? $"{status}:{peerCloseDescription}" : "none";
-        var transport = ended is { IsFaulted: true, Exception: { } faulted } ? FindWebSocket(faulted) : null;
+        var transport = ended is { IsFaulted: true, Exception: { } endedFault } ? FindWebSocket(endedFault) : null;
         if (transport is null)
         {
             _logger.LogInformation(
