@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -8,6 +10,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -275,6 +278,65 @@ public sealed class ChannelInboundRecoveryTests
                     && t.Text.Contains("recovered by worker trigger"));
         });
         await worker.StopAsync(Ct);
+    }
+
+    [Test]
+    public async Task C593_CrashAfterQueueOwnership_RecoveryFlushesCompleteRecipientPrompt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Guid agentId; Guid sessionId; Guid ownerId; string body;
+        await using (var original = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(), AlwaysOn = false,
+            PreserveDatabaseOnDispose = true,
+        }))
+        {
+            agentId = original.AgentId;
+            sessionId = original.SessionId;
+            var chat = await original.BindChannelAsync();
+            await original.MarkWorkingAsync();
+            var native = $"owned-before-crash-{Guid.NewGuid():N}";
+            await Bridge(original).HandleInboundAsync(Message(chat, native, "recover complete body DISTINCT TAIL"), Ct);
+            await using var db = Db(schema.ConnectionString);
+            var inbound = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+            inbound.QueueMessageId.ShouldNotBeNull();
+            var owner = await db.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+            ownerId = owner.Id;
+            body = owner.Body;
+            owner.Status.ShouldBe(QueuedMessageStatus.Pending);
+            owner.DeliveryAttempts.ShouldBe(0);
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == body)).ShouldBe(0);
+        }
+
+        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AttachAgentId = agentId,
+            AttachSessionId = sessionId, Bridge = Settings(), AlwaysOn = false,
+            PreserveDatabaseOnDispose = true,
+        });
+        InstallTranscriptReceipt(recovered);
+        await recovered.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var bridge = Bridge(recovered);
+        await bridge.StartAsync(Ct);
+        try
+        {
+            await WaitForAsync(async () =>
+            {
+                await using var db = Db(schema.ConnectionString);
+                return await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == body);
+            });
+            await using var verify = Db(schema.ConnectionString);
+            var owner = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownerId);
+            owner.Body.ShouldBe(body);
+            owner.Status.ShouldBe(QueuedMessageStatus.Sent);
+            recovered.Adapter.SubmittedBodies.ShouldContain(body);
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == body)).ShouldBe(1);
+        }
+        finally { await bridge.StopAsync(Ct); }
     }
 
     [Test]
@@ -765,6 +827,135 @@ public sealed class ChannelInboundRecoveryTests
         verifiedState.LivenessLatchedAt.ShouldNotBeNull();
         (await verify.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId && i.QueueMessageId == null)).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C593_ChannelWake_StartsNonAlwaysOnAutomaticallyThroughExhaustedQuota()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var launchAdapter = new FakeAgentProtocolAdapter();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
+            ClockSpeed = 5, AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
+                    new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+                    {
+                        DefaultDefinition = "fake",
+                        Definitions =
+                        {
+                            ["fake"] = new AgentDefinition
+                            {
+                                Kind = "Raw",
+                                Exe = OperatingSystem.IsWindows()
+                                    ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/sh",
+                            },
+                        },
+                    }));
+                services.AddScoped<SubscriptionUsageReader>();
+                services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+                services.AddScoped<SubscriptionQuotaGate>();
+                services.AddSingleton<IAgentProtocolAdapterFactory>(new FixedAdapterFactory(launchAdapter));
+            },
+        });
+        launchAdapter.RegisterOnStart = h.Runtime;
+        launchAdapter.OnSubmitted = async submitted =>
+        {
+            var sessionId = launchAdapter.StartedSessionId!.Value;
+            await using var db = Db(schema.ConnectionString);
+            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+            var record = new SessionRunnerTranscriptEvent(sessionId, sequence, TranscriptKinds.UserPrompt,
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                null, null, null, null, null);
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(sessionId, [record], sequence));
+            await h.Runtime.SyncTranscriptAsync(sessionId, Ct);
+        };
+        var chat = await h.BindChannelAsync();
+        DateTime nextRestartAt;
+        await using (var db = Db(schema.ConnectionString))
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+            var agent = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+            nextRestartAt = h.Now.AddMinutes(10);
+            nextRestartAt = nextRestartAt.AddTicks(-(nextRestartAt.Ticks % 10));
+            db.AgentSupervisionStates.Add(new AgentSupervisionState
+            {
+                AgentId = h.AgentId, NextRestartAt = nextRestartAt,
+            });
+            db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+            {
+                Id = Guid.NewGuid(), Provider = AgentKind.Raw,
+                SubscriptionKey = SubscriptionUsageKey.For(agent, AgentKind.Raw),
+                PlanLabel = "Exhausted", RemainingPercent = 0,
+                ResetsAt = h.Now.AddDays(2), ObservedAt = h.Now,
+                AgentSessionId = h.SessionId, SourceCommand = "/status",
+                ParseStatus = SubscriptionUsageParseStatus.Parsed, RawExcerpt = "seeded",
+            });
+            await db.SaveChangesAsync();
+        }
+        var native = $"quota-wake-{Guid.NewGuid():N}";
+        await Bridge(h).HandleInboundAsync(Message(chat, native, "quota wake complete body DISTINCT TAIL"), Ct);
+        await using (var db = Db(schema.ConnectionString))
+        {
+            (await db.ChannelInbounds.Where(i => i.NativeMessageId == native)
+                .Select(i => i.QueueMessageId).SingleAsync()).ShouldBeNull();
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+        }
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var refusal = await Should.ThrowAsync<SubscriptionQuotaLowException>(() =>
+                control.StartAsync(h.AgentId, new StartAgentRequest(), Ct, automatic: true));
+            refusal.Code.ShouldBe("subscription_quota_low");
+        }
+        await using (var db = Db(schema.ConnectionString))
+        {
+            (await db.AgentSessions.CountAsync(s => s.Cwd.StartsWith(h.TempRoot))).ShouldBe(1);
+            (await db.AgentSupervisionStates.Where(s => s.AgentId == h.AgentId)
+                .Select(s => s.NextRestartAt).SingleAsync()).ShouldBe(nextRestartAt);
+            (await db.ChannelInbounds.Where(i => i.NativeMessageId == native)
+                .Select(i => i.QueueMessageId).SingleAsync()).ShouldBeNull();
+        }
+        await Bridge(h).DrainPendingAsync(Ct);
+        var launchDeadline = DateTime.UtcNow.AddSeconds(8);
+        while (!launchAdapter.Started && DateTime.UtcNow < launchDeadline)
+            await Task.Delay(25);
+        if (!launchAdapter.Started)
+        {
+            await using var diagnostic = Db(schema.ConnectionString);
+            var sessions = await diagnostic.AgentSessions.AsNoTracking()
+                .Where(s => s.Cwd.StartsWith(h.TempRoot))
+                .Select(s => new { s.Id, s.Status }).ToListAsync();
+            var incidents = await diagnostic.AgentIncidents.AsNoTracking()
+                .Where(i => i.AgentId == h.AgentId).Select(i => i.Message).ToListAsync();
+            throw new InvalidOperationException($"No channel launch: sessions={string.Join(';', sessions.Select(s => $"{s.Id}:{s.Status}"))}; incidents={string.Join(';', incidents)}");
+        }
+        await using var verify = Db(schema.ConnectionString);
+        var inbound = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+        var owner = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+        owner.Body.ShouldContain("quota wake complete body DISTINCT TAIL");
+        var recipientSession = launchAdapter.StartedSessionId!.Value;
+        owner.AgentSessionId.ShouldBe(recipientSession);
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == recipientSession
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        (await verify.AgentSupervisionStates.Where(s => s.AgentId == h.AgentId)
+            .Select(s => s.NextRestartAt).SingleAsync()).ShouldBe(nextRestartAt,
+                "an automatic channel wake must not clear the restart latch");
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.Kind == AgentIncidentKind.SubscriptionQuotaOverridden)).ShouldBe(1);
+    }
+
+    private sealed class FixedAdapterFactory(FakeAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
     }
 
     [Test]
