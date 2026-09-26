@@ -14,4 +14,4 @@ Carry original Code task ID, verification card, C/O/L/R and evidence through tri
 
 next: none only when all PCs/variants and discovery complete cleanly after restoration. Actionable findings use next: decide for caller triage and linked remediation. Incomplete evidence is failed/blocked with remaining IDs, never clean.
 
-OS: inherits its predecessor's platform > inherits the card's platform > unpinned (Any); runtime default places it; pass -Platform Any explicitly; pin only when that piece of work requires it; scope a platform-pinned task to just the OS-specific part; no habit, stage name.
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
