@@ -85,8 +85,10 @@
   envelope remains pending. Startup and periodic drains can hand it to one marked Channel queue
   owner, with durable mapping for every coalesced member. A failed flush retains the source for
   recovery, and a non-AlwaysOn recipient needs a direct flush when Running. The existing queue
-  attempt floor, cap and complete matching recipient `UserPrompt` decide delivery. Offset commit,
-  queue insertion, SentAt, screen redraw and Running status do not decide it.
+  attempt floor, cap and complete matching recipient `UserPrompt` decide delivery. A
+  `QueuedUserPrompt` or assistant row is not that receipt, even with matching bytes; a later
+  complete `UserPrompt` can confirm an earlier uncertain attempt. Offset commit, queue insertion,
+  SentAt, screen redraw and Running status do not decide it.
 
 - **Accepted @mentions are durable queued input (CARD-0696).** The router allocates an occurrence
   ID; acceptance commits one `WhenIdle` row with origin `Mention` and freezes its target and body.

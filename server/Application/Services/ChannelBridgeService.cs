@@ -585,7 +585,7 @@ public sealed class ChannelBridgeService : BackgroundService
                 await channels.SendAsync(
                     channel.Id,
                     notice,
-                    new ChannelSendOptions(ReplyHandle: channel.ReplyHandle ?? message.ReplyHandle),
+                    new ChannelSendOptions(ReplyHandle: message.ReplyHandle ?? channel.ReplyHandle),
                     ct);
             }
             catch (ConflictException cex) when (cex.Code == "channel_disabled")
