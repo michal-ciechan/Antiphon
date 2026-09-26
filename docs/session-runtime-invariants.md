@@ -1,5 +1,20 @@
 # Session runtime invariants
 
+- **A draining runner takes no new work and still serves its sessions (CARD-0727).**
+  `ResolveForNewWork` refuses a draining or retired runner (`phone_home_runner_draining`,
+  `phone_home_runner_retired`). `Resolve` is unchanged, so input, transcript, kill, release
+  and every other call for a session already on that runner keep working. `acceptingNewWork`
+  is false while `dispatchEligible` can stay true. A standing start on a draining runner is
+  refused. Clearing the drain restores new work.
+
+- **A drain redirect moves unlaunched work, never a session (CARD-0727).** A drain with an
+  eligible `redirectTo` rebinds queued tasks that have not launched, including an explicit
+  pin, and leaves a running session on the draining runner. SourceLanding tasks stay on the
+  drained runner and are held. Callers do not edit `-Runner` by hand. An ineligible redirect
+  (unknown, disabled, desktop, self, or itself draining or retired) is
+  `phone_home_redirect_invalid` and moves nothing. Kind-default placement falls through to
+  the global default when the redirect cannot take work.
+
 - **Completion recovery is event driven (CARD-0699).** Committed sourced settlement, completion
   publication and delivery failures wake the completion worker. Its durable backstop runs at
   startup, after failures, and every fifteen minutes. It walks bounded ID pages of unstamped
