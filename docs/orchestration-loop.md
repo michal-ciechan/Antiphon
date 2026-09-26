@@ -439,10 +439,14 @@ flaky test.
 Say this in the brief explicitly; do not assume the role name carries it.
 
 **Runner defaults are not model pins.** Read `GET /api/runner-defaults` and `GET /api/session-runners`
-when a fresh task needs a host. Normally omit `-Runner`. Pass `-Platform Windows` or `-Platform Linux`
-when the plan's checkpoints need that operating system (junctions, file-sharing, ConPTY/Herdr,
-Windows paths or CRLF, Windows-only E2E). `Any` means every required check can run on any admitted
-host. A settings change is GET then PUT with the current revision, a reason, and Human provenance.
+when a fresh task needs a host. Normally omit `-Runner` and `-Platform` (omitting `-Platform` is
+`Any`), letting the runtime default place the task. Use `-Platform` only for the specific work that
+requires one OS: a test, tool, behaviour or OS-specific API; path or line-ending handling; file
+locking; process or terminal behaviour; an OS-only test or probe; or evidence meaningful only on
+that OS. Habit, a stage name, "Review always on X", or preferring the current host are not
+requirements. Reviews, Investigates, TestDesign and ordinary Code default to `Any`. If one part is
+OS-specific, give only that narrow filter or task its own platform pin and budget; leave the rest
+unpinned. A settings change is GET then PUT with the current revision, a reason, and Human provenance.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision.
 
 **Routing pins beat RolePolicy.** A Human pin on a card+role (or a stage-wide pin for that role)
