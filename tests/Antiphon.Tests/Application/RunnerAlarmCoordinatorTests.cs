@@ -327,11 +327,13 @@ public sealed class RunnerAlarmCoordinatorTests
         await File.WriteAllTextAsync(record, System.Text.Json.JsonSerializer.Serialize(
             new RepositoryChildJournal.ChildRecord(1, common1, Environment.ProcessId, ticks)));
         File.SetLastWriteTimeUtc(record, now.AddMinutes(-10).UtcDateTime);
+        var beforeDisabled = inspector.Calls;
         var disabled = Build(db, new FakeEligibilitySource(), state, new RecordingNotifier(),
             settings: new AlarmSettings { JournalEnabled = false }, journals: inspector, logger: logger);
         await disabled.EvaluateJournalsAsync(null, now, CancellationToken.None);
         state.Current.Journals.ShouldBeEmpty();
-        inspector.Calls.ShouldBe(calls + 1);
+        inspector.Calls.ShouldBe(beforeDisabled);
+        _ = calls;
     }
 
     private static RunnerAlarmCoordinator Build(
