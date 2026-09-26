@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260926155328_AddChannelInboundAcceptanceSequence")]
+    partial class AddChannelInboundAcceptanceSequence
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1807,52 +1810,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("ReconciliationError")
                         .HasColumnType("text");
 
-                    b.Property<DateTime?>("RecoveryAdoptedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RecoveryLocalBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("RecoveryMode")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("RecoveryOwnerRemoteAfterSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RecoveryOwnerRemoteBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int?>("RecoveryOwnerStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<bool?>("RecoveryPatchesContained")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("RecoveryRelationship")
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("RecoverySourceFingerprint")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RecoverySourceFullRef")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<Guid?>("RecoverySourceTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RecoveryStartBaseSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RecoveryUncontainedPatches")
-                        .HasColumnType("text");
-
                     b.Property<string>("RemoteSourceFingerprint")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -1953,9 +1910,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int>("State")
                         .HasColumnType("integer");
-
-                    b.Property<Guid?>("SupersedesRequestId")
-                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("SweepRunId")
                         .HasColumnType("uuid");
@@ -2137,47 +2091,8 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("RebasedSourceSha")
                         .HasColumnType("text");
 
-                    b.Property<string>("RecoveryLocalBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int>("RecoveryMode")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("RecoveryOwnerRemoteAfterSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RecoveryOwnerRemoteBeforeSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int?>("RecoveryOwnerStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<bool?>("RecoveryPatchesContained")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("RecoveryRefPrefix")
                         .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("RecoveryRelationship")
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("RecoverySourceFullRef")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<Guid?>("RecoverySourceTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RecoveryStartBaseSha")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RecoveryUncontainedPatches")
                         .HasColumnType("text");
 
                     b.Property<bool>("RegistrationRemoved")
@@ -2236,9 +2151,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("SourceRemoteSha")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
-
-                    b.Property<Guid?>("SupersedesRequestId")
-                        .HasColumnType("uuid");
 
                     b.Property<string>("TargetBeforeSha")
                         .IsRequired()

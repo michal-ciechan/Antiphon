@@ -361,11 +361,13 @@ public sealed partial class SessionMessageQueueService
         Guid? capacityWaitId = null,
         Guid? sourceLandNotificationId = null,
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
-        Guid? sourceChannelInboundId = null)
+        Guid? sourceChannelInboundId = null,
+        IReadOnlyList<Guid>? channelMemberInboundIds = null)
         => EnqueueCoreAsync(sessionId, body, mode, origin, conversationKey, sourceTaskId,
             contentDigest, noteHeader, sourceScheduleId, onCreated, deliverIfIdle, holdUntil,
             executionDeadlineAt, executionTaskId, capacityRecoveryActionKey, capacityWaitId,
-            sourceLandNotificationId, afterLandQueueInsert, sourceChannelInboundId: sourceChannelInboundId, ct: ct);
+            sourceLandNotificationId, afterLandQueueInsert, sourceChannelInboundId: sourceChannelInboundId,
+            channelMemberInboundIds: channelMemberInboundIds, ct: ct);
 
     internal async Task<Guid> EnqueueMentionAsync(Guid sessionId, string body, Guid occurrenceId, CancellationToken ct)
     {
@@ -402,6 +404,7 @@ public sealed partial class SessionMessageQueueService
         Guid? sourceLandNotificationId = null,
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
         Guid? mentionOccurrenceId = null, Guid? sourceChannelInboundId = null,
+        IReadOnlyList<Guid>? channelMemberInboundIds = null,
         CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -683,9 +686,26 @@ public sealed partial class SessionMessageQueueService
             db.SessionQueuedMessages.Add(row);
             var stampCompletion = CompletionNoteStamp.IsCallerCompletionNote(
                 origin, sourceLandNotificationId, sourceTaskId, conversationKey);
-            await using var completionTx = stampCompletion
+            await using var completionTx = stampCompletion || sourceChannelInboundId is not null
                 ? await db.Database.BeginTransactionAsync(ct)
                 : null;
+            if (sourceChannelInboundId is Guid ownerInboundId)
+            {
+                if (origin != QueuedMessageOrigin.Channel || channelMemberInboundIds is not { Count: > 0 }
+                    || channelMemberInboundIds[0] != ownerInboundId
+                    || channelMemberInboundIds.Distinct().Count() != channelMemberInboundIds.Count)
+                    throw new ValidationException(nameof(channelMemberInboundIds), "Invalid channel batch membership.");
+                var members = await db.ChannelInbounds
+                    .Where(i => channelMemberInboundIds.Contains(i.Id)).ToListAsync(ct);
+                if (members.Count != channelMemberInboundIds.Count
+                    || members.Any(i => i.AgentId is null || i.QueueMessageId is not null || i.EnvelopeJson is null))
+                    throw new ConflictException("Channel inbound membership changed during queue handoff.");
+                foreach (var member in members)
+                {
+                    member.QueueMessageId = row.Id;
+                    member.TransferredAt = now;
+                }
+            }
             try { await db.SaveChangesAsync(ct); }
             catch (DbUpdateException ex) when (mentionOccurrenceId is not null
                 && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
@@ -707,6 +727,18 @@ public sealed partial class SessionMessageQueueService
                     throw new ConflictException("Land notification identity has a different destination or payload.");
                 onCreated?.Invoke(existing.Id);
                 return await GetQueueAsync(sessionId, ct);
+            }
+            catch (DbUpdateException ex) when (sourceChannelInboundId is not null
+                && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                await completionTx!.RollbackAsync(ct);
+                db.Entry(row).State = EntityState.Detached;
+                foreach (var member in db.ChangeTracker.Entries<ChannelInbound>().ToList())
+                    member.State = EntityState.Detached;
+                var existing = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.SourceChannelInboundId == sourceChannelInboundId, ct);
+                onCreated?.Invoke(existing.Id);
+                return await GetQueueAsync(existing.AgentSessionId, ct);
             }
             if (stagedBrief is not null)
                 _remoteSpills?.Ack(sessionId, stagedBrief);

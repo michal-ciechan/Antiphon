@@ -42,6 +42,7 @@ public sealed class ChannelBridgeService : BackgroundService
     private readonly ChannelInboundWakeSignal _wakeSignal;
     private readonly ConcurrentDictionary<Guid, byte> _buffered = new();
     private readonly SemaphoreSlim _drainGate = new(1, 1);
+    private long _lastInboundScanSequence;
 
     public ChannelBridgeService(
         IAntiphonMessagingConsumer consumer,
@@ -189,12 +190,22 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var ids = await db.ChannelInbounds.AsNoTracking()
-                .Where(i => i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null)
-                .OrderBy(i => i.AcceptedAt).ThenBy(i => i.Id)
-                .Take(64).Select(i => i.Id).ToListAsync(ct);
-            foreach (var id in ids)
-                await ProcessInboundAsync(id, ct);
+            var page = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.AcceptanceSequence > _lastInboundScanSequence
+                    && i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null)
+                .OrderBy(i => i.AcceptanceSequence)
+                .Take(64).Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+            foreach (var inbound in page)
+            {
+                try { await ProcessInboundAsync(inbound.Id, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Pending channel inbound {InboundId} remains for a later scan", inbound.Id);
+                }
+                _lastInboundScanSequence = inbound.AcceptanceSequence;
+            }
+            if (page.Count == 0)
+                _lastInboundScanSequence = 0; // next pass revisits held and failed rows
 
             // A crash or uncertain terminal write after queue ownership must not strand a
             // Channel row on a non-AlwaysOn agent. The queue keeps its original attempt floor
@@ -391,20 +402,10 @@ public sealed class ChannelBridgeService : BackgroundService
                 conversationKey: $"{channel.Provider}:{newest.Conversation.Id}",
                 deliverIfIdle: false,
                 sourceChannelInboundId: memberIds[0],
+                channelMemberInboundIds: memberIds,
                 onCreated: id => queueId = id);
-            if (queueId is not Guid ownerId)
+            if (queueId is null)
                 throw new InvalidOperationException("Channel queue insert did not identify its owner.");
-            await using (var tx = await db.Database.BeginTransactionAsync())
-            {
-                var members = await db.ChannelInbounds.Where(i => memberIds.Contains(i.Id)).ToListAsync();
-                foreach (var member in members)
-                {
-                    member.QueueMessageId = ownerId;
-                    member.TransferredAt = _timeProvider.GetUtcNow().UtcDateTime;
-                }
-                await db.SaveChangesAsync();
-                await tx.CommitAsync();
-            }
             await _queue.FlushSessionAsync(sessionId, CancellationToken.None);
             _logger.LogInformation(
                 "Routed {Count} {Provider} message(s) on channel {ChannelId} to agent {AgentId} session {SessionId}",
