@@ -341,6 +341,13 @@ public sealed class AgentTaskLandTargetRaceTests
         var intruder = await f.PushIndependentAsync("intruder-crash");
         h.Fault.Phase = null;
         h.Fault.AfterCommit = false;
+        // Publication cleanup removes the task worktree, so the "still reviewed" read has to happen
+        // at B's verification, while that directory still exists.
+        h.Verifier.Barrier = async () =>
+        {
+            if (h.Verifier.Calls < 2) return;
+            (await Read(f, f.Source, "rev-parse", "HEAD")).ShouldBe(reviewed);
+        };
         await h.RestartServicesAsync();
 
         await h.RunAsync();
@@ -359,7 +366,17 @@ public sealed class AgentTaskLandTargetRaceTests
         warnings.Count.ShouldBe(1);
         warnings[0].Detail.ShouldContain("retry 1 of 2");
         (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == requestId)).Attempt.ShouldBe(2);
-        (await Read(f, f.Source, "rev-parse", "HEAD")).ShouldBe(reviewed);
+        // Schema 3 deletes the task branch at the SHA captured when the operation was created.
+        ops[1].Phase.ShouldBe(LandPhase.Complete);
+        ops[1].Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        ops[1].SourceLocalSha.ShouldBe(reviewed);
+        ops[1].ExpectedDeletionSha.ShouldBe(reviewed);
+        ops[1].BranchRemoved.ShouldBeTrue();
+        ops[1].DirectoryRemoved.ShouldBeTrue();
+        Directory.Exists(f.Source).ShouldBeFalse();
+        var sourceRef = await new LandingGitFixture.FixtureGit(Path.Combine(f.Root, "home"), f.TaskId)
+            .RunAsync(f.Repository, ["show-ref", "--verify", f.SourceRef], CancellationToken.None);
+        sourceRef.Succeeded.ShouldBeFalse();
     }
 
     [Test]
