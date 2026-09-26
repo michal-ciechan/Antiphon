@@ -12,14 +12,17 @@ public sealed class BaselineComparer
     private readonly IDriver _driver;
     private readonly IBuildSlotClient _slots;
     private readonly TimeSpan _timeout;
+    private readonly Func<CancellationToken, Task>? _beforeLaunch;
 
     public List<string> ToolRuns { get; } = [];
 
-    public BaselineComparer(IDriver driver, IBuildSlotClient? slots = null, TimeSpan? timeout = null)
+    public BaselineComparer(IDriver driver, IBuildSlotClient? slots = null, TimeSpan? timeout = null,
+        Func<CancellationToken, Task>? beforeLaunch = null)
     {
         _driver = driver;
         _slots = slots ?? new FixedSlotClient("off");
         _timeout = timeout ?? TimeSpan.FromMinutes(15);
+        _beforeLaunch = beforeLaunch;
     }
 
     public async Task<IReadOnlyList<BaselineClassification>> CompareAsync(
@@ -132,7 +135,7 @@ public sealed class BaselineComparer
             }
             finally
             {
-                if (added || Directory.Exists(checkout))
+                if (!cancellationToken.IsCancellationRequested && (added || Directory.Exists(checkout)))
                 {
                     await RunLeased(
                         session,
@@ -149,6 +152,8 @@ public sealed class BaselineComparer
                     {
                     }
                 }
+                else if (added || Directory.Exists(checkout))
+                    ToolRuns.Add("tool-run: baseline retained canceled workspace " + checkout);
             }
         }
 
@@ -192,6 +197,8 @@ public sealed class BaselineComparer
         await using var lease = await _slots.AcquireAsync(session, label, cancellationToken).ConfigureAwait(false);
         if (lease.ExitCode == ExitCodes.SlotTimeout)
             return new DriverResult(ExitCodes.SlotTimeout, "", "slot timeout", TimedOut: true);
+        if (_beforeLaunch is not null)
+            await _beforeLaunch(cancellationToken).ConfigureAwait(false);
         return await RowTimeout.RunWithDeadlineAsync(_driver, request, remaining, cancellationToken).ConfigureAwait(false);
     }
 

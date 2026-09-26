@@ -39,7 +39,7 @@ public static class RowTimeout
 
             return result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             driver.Kill(entireProcessTree: true);
             return new DriverResult(ExitCodes.Timeout, "", "", Killed: true, TimedOut: true);

@@ -18,7 +18,7 @@ public static class Program
         }
     }
 
-    internal static async Task<int> RunAsync(string[] args)
+    public static async Task<int> RunAsync(string[] args, CheckpointApp.Runtime? runtime = null)
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
@@ -46,9 +46,9 @@ public static class Program
             case "import":
                 return Import(options, repo);
             case "run":
-                return await RunAndWait(options, repo).ConfigureAwait(false);
+                return await RunAndWait(options, repo, runtime).ConfigureAwait(false);
             case "start":
-                return Start(options, repo);
+                return await Start(options, repo, runtime).ConfigureAwait(false);
             case "wait":
                 return await Wait(options, repo).ConfigureAwait(false);
             case "status":
@@ -62,7 +62,7 @@ public static class Program
             case "row":
                 return await Row(options, repo).ConfigureAwait(false);
             case "execute":
-                return await CheckpointApp.ExecuteAsync(Required(options, "run"), CancellationToken.None).ConfigureAwait(false);
+                return await CheckpointApp.ExecuteAsync(Required(options, "run"), CancellationToken.None, runtime).ConfigureAwait(false);
             default:
                 Console.Error.WriteLine("unknown verb " + verb);
                 return ExitCodes.Invalid;
@@ -134,18 +134,20 @@ public static class Program
         return ExitCodes.Green;
     }
 
-    private static int Start(ArgSet options, string repo)
+    private static async Task<int> Start(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
         var (manifest, request) = LoadSelection(options, repo);
-        return CheckpointApp.Start(manifest, request, repo, Console.Out).ExitCode;
+        return (await CheckpointApp.StartAsync(manifest, request, repo, Console.Out, runtime).ConfigureAwait(false)).ExitCode;
     }
 
-    private static async Task<int> RunAndWait(ArgSet options, string repo)
+    private static async Task<int> RunAndWait(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
         var (manifest, request) = LoadSelection(options, repo);
-        var started = CheckpointApp.Start(manifest, request, repo, Console.Out);
+        var started = await CheckpointApp.StartAsync(manifest, request, repo, Console.Out, runtime).ConfigureAwait(false);
         if (started.ExitCode != 0)
             return started.ExitCode;
+        if (runtime?.Wait is not null)
+            return await runtime.Wait(started.RunDirectory).ConfigureAwait(false);
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
         return await new WaitCommand().WaitAsync(started.RunDirectory, max, heartbeat, Console.Out, CancellationToken.None).ConfigureAwait(false);

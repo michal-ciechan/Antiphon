@@ -16,6 +16,9 @@ public sealed class SchedulerRequest
     public TimeSpan? RowTimeoutOverride { get; init; }
     public TimeSpan? TotalTimeout { get; init; }
     public Action? Publish { get; init; }
+    public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
+    public Func<string>? CancellationReason { get; init; }
+    public bool OwnerBound { get; init; }
 }
 
 public sealed class SchedulerResult
@@ -63,19 +66,26 @@ public sealed class RunScheduler
         var running = new List<(CheckpointSpec Spec, Task<RowRunResult> Task, RowProgress Progress)>();
         var finished = new List<RowRunResult>();
 
+        try
+        {
         while (pending.Count > 0 || running.Count > 0)
         {
-            var totalTimedOut = total.IsCancellationRequested && !cancellationToken.IsCancellationRequested;
-            if (totalTimedOut)
+            var externallyCanceled = cancellationToken.IsCancellationRequested;
+            var ownerEnded = externallyCanceled && request.OwnerBound;
+            var totalTimedOut = total.IsCancellationRequested && !externallyCanceled;
+            if (totalTimedOut || externallyCanceled)
             {
+                var state = ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended" : "skipped";
+                var code = ownerEnded ? ExitCodes.OwnerEnded : ExitCodes.Timeout;
                 foreach (var row in pending.ToList())
                 {
                     pending.Remove(row);
-                    Mark(request, row.Id, "skipped", ExitCodes.Timeout);
-                    finished.Add(Placeholder(row, "skipped", ExitCodes.Timeout));
+                    Mark(request, row.Id, state, code);
+                    finished.Add(Placeholder(row, state, code));
                 }
 
-                _driver.Kill(entireProcessTree: true);
+                if (totalTimedOut || externallyCanceled && !ownerEnded)
+                    _driver.Kill(entireProcessTree: true);
                 Publish(request);
                 break;
             }
@@ -125,10 +135,14 @@ public sealed class RunScheduler
             try
             {
                 result = await task.ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested && request.OwnerBound)
+                    result = Placeholder(spec, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded);
             }
             catch (OperationCanceledException)
             {
-                result = Placeholder(spec, "timeout", ExitCodes.Timeout);
+                result = cancellationToken.IsCancellationRequested && request.OwnerBound
+                    ? Placeholder(spec, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded)
+                    : Placeholder(spec, "timeout", ExitCodes.Timeout);
             }
 
             progress.State = result.State;
@@ -141,10 +155,23 @@ public sealed class RunScheduler
 
         foreach (var (spec, task, progress) in running)
         {
-            progress.State = "timeout";
-            progress.ExitCode = ExitCodes.Timeout;
-            finished.Add(Placeholder(spec, "timeout", ExitCodes.Timeout));
-            _ = task.ContinueWith(static _ => { }, TaskScheduler.Default);
+            RowRunResult result;
+            try
+            {
+                result = await task.ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested && request.OwnerBound)
+                    result = Placeholder(spec, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded);
+            }
+            catch (OperationCanceledException)
+            {
+                var ownerEnded = cancellationToken.IsCancellationRequested && request.OwnerBound;
+                result = Placeholder(spec, ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended" : "timeout",
+                    ownerEnded ? ExitCodes.OwnerEnded : ExitCodes.Timeout);
+            }
+            progress.State = result.State;
+            progress.ExitCode = result.ExitCode;
+            finished.Add(result);
+            Publish(request);
         }
 
         try
@@ -155,10 +182,28 @@ public sealed class RunScheduler
         {
         }
 
-        var exit = ExitCodes.FromRowStates(finished.Select(row => row.ExitCode));
+        var exit = cancellationToken.IsCancellationRequested
+            ? request.OwnerBound ? ExitCodes.OwnerEnded : ExitCodes.Timeout
+            : ExitCodes.FromRowStates(finished.Select(row => row.ExitCode));
         request.State.ExitCode = exit;
         Publish(request);
         return new SchedulerResult { ExitCode = exit, Rows = finished, State = request.State };
+        }
+        catch
+        {
+            total.Cancel();
+            foreach (var (_, task, _) in running)
+            {
+                try { await task.ConfigureAwait(false); }
+                catch { /* preserve the original scheduler failure after draining */ }
+            }
+            foreach (var task in buildTasks)
+            {
+                try { await task.ConfigureAwait(false); }
+                catch { /* preserve the original scheduler failure after draining */ }
+            }
+            throw;
+        }
     }
 
     internal static bool IsPtyProject(string? project)
@@ -197,6 +242,8 @@ public sealed class RunScheduler
             var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
             var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
             var started = DateTimeOffset.UtcNow;
+            if (request.BeforeLaunch is not null)
+                await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
             var result = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log),
@@ -268,6 +315,8 @@ public sealed class RunScheduler
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
             Deadline = TimeSpan.FromMinutes(minutes),
+            BeforeLaunch = request.BeforeLaunch,
+            Environment = spec.Environment,
         }, TextWriter.Null, cancellationToken).ConfigureAwait(false);
         progress.LastOutputAt = DateTimeOffset.UtcNow;
         result.Id = spec.Id;

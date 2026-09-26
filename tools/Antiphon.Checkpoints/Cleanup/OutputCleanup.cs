@@ -11,14 +11,15 @@ public static class OutputCleanup
     // PC-4 drops "bin" from this list. Descending into bin/ would delete a nested owned name.
     private static readonly string[] PruneNames = ["bin", "obj", "workspace", ".git", "node_modules", ".antiphon"];
 
-    public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun)
+    public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun,
+        Action? beforeDelete = null)
     {
         if (exitCode != 0 && !cleanOnRed)
             return new CleanResult { KeptBecauseRed = true };
 
         var owned = new HashSet<string>(ownedIds, StringComparer.Ordinal);
         var deleted = new List<string>();
-        DeleteMatches(Path.GetFullPath(repoRoot), owned, dryRun, deleted);
+        DeleteMatches(Path.GetFullPath(repoRoot), owned, dryRun, deleted, beforeDelete);
         return new CleanResult { Deleted = deleted };
     }
 
@@ -46,7 +47,7 @@ public static class OutputCleanup
     public static string DeletedLine(bool dryRun, string path) =>
         (dryRun ? "would delete " : "deleted ") + path;
 
-    private static void DeleteMatches(string directory, HashSet<string> owned, bool dryRun, List<string> deleted)
+    private static void DeleteMatches(string directory, HashSet<string> owned, bool dryRun, List<string> deleted, Action? beforeDelete)
     {
         IEnumerable<string> children;
         try
@@ -67,6 +68,7 @@ public static class OutputCleanup
             var name = Path.GetFileName(child);
             if (owned.Contains(name))
             {
+                beforeDelete?.Invoke();
                 deleted.Add(child);
                 if (!dryRun)
                     Directory.Delete(child, recursive: true);
@@ -77,7 +79,8 @@ public static class OutputCleanup
                 continue;
             if (name.StartsWith("bin-", StringComparison.Ordinal) && !owned.Contains(name))
                 continue;
-            DeleteMatches(child, owned, dryRun, deleted);
+            beforeDelete?.Invoke();
+            DeleteMatches(child, owned, dryRun, deleted, beforeDelete);
         }
     }
 }

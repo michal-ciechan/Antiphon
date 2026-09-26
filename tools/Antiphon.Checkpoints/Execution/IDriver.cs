@@ -15,7 +15,8 @@ public sealed record DriverRequest(
     IReadOnlyList<string> Arguments,
     string WorkingDirectory,
     string? LogPath = null,
-    Action<string>? OnOutput = null);
+    Action<string>? OnOutput = null,
+    IReadOnlyDictionary<string, string>? Environment = null);
 
 public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bool Killed = false, bool TimedOut = false);
 

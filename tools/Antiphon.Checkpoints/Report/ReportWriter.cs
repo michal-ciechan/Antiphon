@@ -50,7 +50,7 @@ public static class ReportWriter
         else
             text.AppendLine($"outputs: kept {string.Join(", ", model.OutputNames)} (red run) -> dotnet run --project tools/Antiphon.Checkpoints -- clean --run {model.RunId}");
         text.AppendLine("evidence: " + model.Evidence);
-        text.AppendLine($"verdict: {model.Verdict} exit={model.ExitCode}");
+        text.AppendLine($"verdict: {model.Verdict} exit={model.ExitCode}" + (model.Reason is null ? "" : " reason=" + model.Reason));
         return text.ToString();
     }
 

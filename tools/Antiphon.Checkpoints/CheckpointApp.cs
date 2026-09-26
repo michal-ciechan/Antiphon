@@ -7,17 +7,80 @@ public static class CheckpointApp
 {
     public static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
 
-    public static async Task<int> ExecuteAsync(string runDirectory, CancellationToken cancellationToken)
+    public sealed class Runtime
     {
+        public Func<string, string?> EnvironmentLookup { get; init; } = Environment.GetEnvironmentVariable;
+        public HttpMessageHandler? OwnerHandler { get; init; }
+        public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
+        public Func<TimeSpan, CancellationToken, CancellationTokenSource>? OwnerDeadline { get; init; }
+        public IDriver? Driver { get; init; }
+        public IBuildSlotClient? Slots { get; init; }
+        public IPlatform? Platform { get; init; }
+        public Func<LaunchRequest, int>? Launch { get; init; }
+        public Func<string, IExecutorLogSink>? LogSinkFactory { get; init; }
+        public Func<string, Task<int>>? Wait { get; init; }
+    }
+
+    public static async Task<int> ExecuteAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime = null)
+    {
+        try
+        {
+            return await ExecuteCoreAsync(runDirectory, cancellationToken, runtime).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            var reason = "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message;
+            var statePath = Path.Combine(runDirectory, "state.json");
+            var store = new RunStateStore();
+            var state = store.TryRead(statePath) ?? new RunState { RunId = Path.GetFileName(runDirectory) };
+            state.Phase = "done";
+            state.ExitCode = ExitCodes.ExecutorCrashed;
+            state.Reason = reason;
+            state.EndedAt = DateTimeOffset.UtcNow;
+            var model = new ReportModel
+            {
+                RunId = state.RunId,
+                StartedAt = state.StartedAt,
+                EndedAt = state.EndedAt.Value,
+                ExitCode = ExitCodes.ExecutorCrashed,
+                Reason = reason,
+                Verdict = "RED",
+                Rows = state.Rows.Select(row => new ReportRow { Id = row.Id, State = row.State, ExitCode = row.ExitCode }).ToList(),
+                Evidence = Path.Combine(runDirectory, "report.md"),
+            };
+            try
+            {
+                ReportWriter.WriteFiles(runDirectory, model);
+                store.Write(statePath, state);
+            }
+            catch (Exception persistence)
+            {
+                Console.Error.WriteLine("checkpoint terminal persistence failed: " + persistence.GetType().Name);
+            }
+            Console.Error.WriteLine("checkpoint executor failed: " + ex.GetType().Name);
+            return ExitCodes.ExecutorCrashed;
+        }
+    }
+
+    private static async Task<int> ExecuteCoreAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime)
+    {
+        runtime ??= new Runtime();
         var request = JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(Path.Combine(runDirectory, "request.json")), Json)
             ?? throw new ManifestValidationException("request", "request.json is empty");
         var repo = request.RepoRoot;
         var manifest = ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
-        File.WriteAllText(Path.Combine(runDirectory, "host.txt"), HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
-        File.WriteAllText(Path.Combine(runDirectory, "git.txt"), GitSnapshot.Capture(repo));
+        using var owner = new TaskOwnerGuard(runtime.EnvironmentLookup, runtime.OwnerHandler, runtime.Delay,
+            request.OwnerTaskId, request.OwnerSessionId, runtime.OwnerDeadline);
+        var entryAdmitted = await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+        if (entryAdmitted)
+        {
+            File.WriteAllText(Path.Combine(runDirectory, "host.txt"), HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
+            File.WriteAllText(Path.Combine(runDirectory, "git.txt"), GitSnapshot.Capture(repo));
+        }
         var log = Path.Combine(runDirectory, "executor.log");
-        void Note(string line) => File.AppendAllText(log, DateTimeOffset.UtcNow.ToString("o") + " " + line + "\n");
+        await using var logWriter = new ExecutorLogWriter(runtime.LogSinkFactory?.Invoke(log) ?? new FileExecutorLogSink(log));
+        void Note(string line) => logWriter.Note(line);
 
         var store = new RunStateStore();
         var state = new RunState
@@ -35,10 +98,10 @@ public static class CheckpointApp
         }
 
         Publish();
-        IBuildSlotClient slots = request.Slots == "off"
+        IBuildSlotClient slots = runtime.Slots ?? (request.Slots == "off"
             ? new FixedSlotClient("off")
-            : new BuildSlotClient(new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()), log: Note, holders: new ProcessLeaseHolderSource());
-        var platform = new RuntimePlatform();
+            : new BuildSlotClient(new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()), log: Note, holders: new ProcessLeaseHolderSource()));
+        var platform = runtime.Platform ?? new RuntimePlatform();
         var width = request.Parallel is > 0 ? request.Parallel.Value : manifest.EffectiveMaxRows(platform.IsWindows);
         if (request.Serial)
             width = 1;
@@ -46,11 +109,27 @@ public static class CheckpointApp
             ?? RowTimeout.DeriveTotalMinutes(selected.Select(row => row.EstimatedMinutes ?? 0), null);
         state.TotalTimeoutAt = state.StartedAt.AddMinutes(totalMinutes);
         Note($"execute rows={selected.Count} width={width} total={totalMinutes}m");
-        var scheduler = new RunScheduler(new ProcessDriver(), platform);
+        var driver = runtime.Driver ?? new ProcessDriver();
+        var scheduler = new RunScheduler(driver, platform);
         SchedulerResult result;
+        using var watchCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var workCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, owner.Ended);
+        async Task BeforeLaunch(CancellationToken token)
+        {
+            if (!await owner.EnsureLiveAsync(token).ConfigureAwait(false))
+                throw new OperationCanceledException(owner.Reason, token);
+            token.ThrowIfCancellationRequested();
+        }
+        Task watcher = Task.CompletedTask;
         try
         {
-            result = await scheduler.RunAsync(new SchedulerRequest
+        try
+        {
+            var admitted = entryAdmitted && await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+            if (admitted)
+            {
+                watcher = owner.WatchAsync(watchCancel.Token);
+                result = await scheduler.RunAsync(new SchedulerRequest
             {
                 Manifest = manifest,
                 Rows = selected,
@@ -65,26 +144,52 @@ public static class CheckpointApp
                 RowTimeoutOverride = request.RowTimeoutMinutes is int row ? TimeSpan.FromMinutes(row) : null,
                 TotalTimeout = TimeSpan.FromMinutes(totalMinutes),
                 Publish = Publish,
-            }, cancellationToken).ConfigureAwait(false);
+                BeforeLaunch = BeforeLaunch,
+                CancellationReason = () => owner.Reason ?? "owner-ended",
+                OwnerBound = owner.Bound,
+            }, workCancel.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                state.Rows = selected.Select(row => new RowProgress { Id = row.Id, State = owner.Reason ?? "owner-unverified", ExitCode = ExitCodes.OwnerEnded }).ToList();
+                result = new SchedulerResult
+                {
+                    ExitCode = ExitCodes.OwnerEnded,
+                    Rows = selected.Select(row => new RowRunResult { Id = row.Id, State = owner.Reason ?? "owner-unverified", ExitCode = ExitCodes.OwnerEnded }).ToList(),
+                    State = state,
+                };
+            }
+        }
+        catch (OperationCanceledException) when (owner.Ended.IsCancellationRequested)
+        {
+            state.Rows = selected.Select(row => new RowProgress { Id = row.Id, State = owner.Reason ?? "owner-ended", ExitCode = ExitCodes.OwnerEnded }).ToList();
+            result = new SchedulerResult
+            {
+                ExitCode = ExitCodes.OwnerEnded,
+                Rows = selected.Select(row => new RowRunResult { Id = row.Id, State = owner.Reason ?? "owner-ended", ExitCode = ExitCodes.OwnerEnded }).ToList(),
+                State = state,
+            };
         }
         catch (Exception ex)
         {
-            Note("executor crashed: " + ex);
-            state.Phase = "crashed";
-            state.ExitCode = ExitCodes.ExecutorCrashed;
-            Publish();
-            return ExitCodes.ExecutorCrashed;
+            throw new InvalidOperationException("scheduler crashed", ex);
+        }
+
+        if (owner.Ended.IsCancellationRequested)
+        {
+            state.Reason = owner.Reason;
+            result = new SchedulerResult { ExitCode = ExitCodes.OwnerEnded, Rows = result.Rows, State = state };
         }
 
         var model = BuildReport(runDirectory, repo, request, manifest, state, result);
-        if (!string.IsNullOrWhiteSpace(request.Baseline))
+        if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
             var remaining = state.TotalTimeoutAt is DateTimeOffset deadline
                 ? deadline - DateTimeOffset.UtcNow
                 : TimeSpan.FromMinutes(15);
             if (remaining < TimeSpan.Zero)
                 remaining = TimeSpan.Zero;
-            var comparer = new BaselineComparer(new ProcessDriver(), slots, remaining);
+            var comparer = new BaselineComparer(driver, slots, remaining, BeforeLaunch);
             try
             {
                 await comparer.CompareAsync(
@@ -93,7 +198,7 @@ public static class CheckpointApp
                     request.Baseline,
                     model.Rows.Where(row => row.Failures.Count > 0).ToList(),
                     manifest.Builds,
-                    cancellationToken).ConfigureAwait(false);
+                    workCancel.Token).ConfigureAwait(false);
                 model.Unlisted.AddRange(comparer.ToolRuns);
             }
             catch (Exception ex)
@@ -101,6 +206,16 @@ public static class CheckpointApp
                 Note("baseline failed: " + ex.GetType().Name + ": " + ex.Message);
                 model.Unlisted.Add("tool-run: baseline failed");
             }
+        }
+
+        if (owner.Bound && !owner.Ended.IsCancellationRequested)
+            await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+        if (owner.Ended.IsCancellationRequested)
+        {
+            state.Reason = owner.Reason;
+            model.ExitCode = ExitCodes.OwnerEnded;
+            model.Verdict = "RED";
+            model.Reason = owner.Reason;
         }
 
         model.Evidence = Path.Combine(runDirectory, "report.md");
@@ -115,15 +230,61 @@ public static class CheckpointApp
             Note("evidence failed: " + ex.GetType().Name + ": " + ex.Message);
         }
 
-        Finish(state, model.ExitCode, Publish, () =>
+        try
         {
-            if (green && !request.KeepOutputs)
-                EvidenceFolder.TryRemoveToolCopy(runDirectory);
+            if (owner.Bound && !await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false))
+                throw new OperationCanceledException(owner.Reason);
             if (!request.KeepOutputs)
-                OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode, request.CleanOnRed, dryRun: false);
-        }, Note);
+            {
+                if (green)
+                    EvidenceFolder.TryRemoveToolCopy(runDirectory);
+                OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
+                    request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null);
+            }
+        }
+        catch (OperationCanceledException) when (owner.Ended.IsCancellationRequested)
+        {
+            state.Reason = owner.Reason;
+            model.ExitCode = ExitCodes.OwnerEnded;
+            model.Verdict = "RED";
+            model.Reason = owner.Reason;
+            ReportWriter.WriteFiles(runDirectory, model);
+        }
+        catch (Exception ex)
+        {
+            Note("cleanup failed: " + ex.GetType().Name + ": " + ex.Message);
+        }
+        if (owner.Bound && !owner.Ended.IsCancellationRequested)
+            await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+        if (owner.Ended.IsCancellationRequested && model.ExitCode != ExitCodes.OwnerEnded)
+        {
+            state.Reason = owner.Reason;
+            model.ExitCode = ExitCodes.OwnerEnded;
+            model.Verdict = "RED";
+            model.Reason = owner.Reason;
+            ReportWriter.WriteFiles(runDirectory, model);
+        }
         Note("done exit=" + model.ExitCode);
+        await logWriter.FlushAsync().ConfigureAwait(false);
+        await logWriter.DisposeAsync().ConfigureAwait(false);
+        if (owner.Bound && !owner.Ended.IsCancellationRequested)
+            await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+        if (owner.Ended.IsCancellationRequested && model.ExitCode != ExitCodes.OwnerEnded)
+        {
+            state.Reason = owner.Reason;
+            model.ExitCode = ExitCodes.OwnerEnded;
+            model.Verdict = "RED";
+            model.Reason = owner.Reason;
+            ReportWriter.WriteFiles(runDirectory, model);
+        }
+        Finish(state, model.ExitCode, Publish, () => { }, _ => { });
         return model.ExitCode;
+        }
+        finally
+        {
+            watchCancel.Cancel();
+            await watcher.ConfigureAwait(false);
+        }
     }
 
     public readonly record struct StartResult(int ExitCode, string RunDirectory);
@@ -151,17 +312,31 @@ public static class CheckpointApp
         return runDirectory;
     }
 
-    public static StartResult Start(CheckpointManifest manifest, RunRequest request, string repo, TextWriter output)
+    public static StartResult Start(CheckpointManifest manifest, RunRequest request, string repo, TextWriter output) =>
+        StartAsync(manifest, request, repo, output).GetAwaiter().GetResult();
+
+    public static async Task<StartResult> StartAsync(CheckpointManifest manifest, RunRequest request, string repo, TextWriter output, Runtime? runtime = null)
     {
+        runtime ??= new Runtime();
+        using var owner = new TaskOwnerGuard(runtime.EnvironmentLookup, runtime.OwnerHandler, runtime.Delay,
+            deadline: runtime.OwnerDeadline);
+        if (!await owner.EnsureLiveAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            output.WriteLine("CHECKPOINT owner " + owner.Reason);
+            return new StartResult(ExitCodes.OwnerEnded, "");
+        }
+        request.OwnerTaskId = owner.TaskId;
+        request.OwnerSessionId = owner.SessionId;
         var runDirectory = CreateRun(manifest, request, repo);
         var resultsRoot = Path.GetDirectoryName(runDirectory)!;
         var runId = Path.GetFileName(runDirectory);
         ShadowCopy.CopyToolOutput(AppContext.BaseDirectory, Path.Combine(runDirectory, "tool"));
         var dll = Path.Combine(runDirectory, "tool", "Antiphon.Checkpoints.dll");
-        var pid = new DetachedLauncher(new RuntimePlatform()).Start(new LaunchRequest(
+        var launch = new LaunchRequest(
             "dotnet",
             [dll, "execute", "--run", runDirectory],
-            repo));
+            repo);
+        var pid = runtime.Launch?.Invoke(launch) ?? new DetachedLauncher(new RuntimePlatform()).Start(launch);
         File.WriteAllText(Path.Combine(resultsRoot, "latest"), runId);
         var state = new RunState { RunId = runId, Phase = "starting", ExecutorPid = pid, StartedAt = DateTimeOffset.UtcNow };
         new RunStateStore().Write(Path.Combine(runDirectory, "state.json"), state);
@@ -242,6 +417,7 @@ public static class CheckpointApp
             WallSeconds = (ended - state.StartedAt).TotalSeconds,
             SequentialEquivalentSeconds = rows.Sum(row => row.Seconds),
             ExitCode = result.ExitCode,
+            Reason = state.Reason,
             Verdict = result.ExitCode == 0 ? "GREEN" : "RED",
             Builds = state.Builds.Select(build => new ReportBuild
             {

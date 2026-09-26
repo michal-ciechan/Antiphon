@@ -18,10 +18,10 @@ public static class PlanTableImporter
 
     private const int RowTimeoutCeilingMinutes = 45;
 
-    public static ImportResult ImportFile(string path, string? planProvenance = null) =>
-        ImportMarkdown(File.ReadAllText(path), planProvenance ?? path);
+    public static ImportResult ImportFile(string path, string? planProvenance = null, bool? isWindows = null) =>
+        ImportMarkdown(File.ReadAllText(path), planProvenance ?? path, isWindows);
 
-    public static ImportResult ImportMarkdown(string markdown, string? planProvenance = null)
+    public static ImportResult ImportMarkdown(string markdown, string? planProvenance = null, bool? isWindows = null)
     {
         var warnings = new List<string>();
         var section = ExtractSection(markdown);
@@ -62,14 +62,25 @@ public static class PlanTableImporter
         if (header.Count < 9 || !header.Take(9).SequenceEqual(Header))
             return Fail("checkpoint table header must be CP, After, Build, Group, Filter, Covers, Expect, Min, EstimatedMinutes");
 
+        var optional = new HashSet<string>(["EstimatedMinutesWindows", "Serial", "Environment"], StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in header.Skip(9))
+        {
+            if (!optional.Contains(name))
+                return Fail($"unknown checkpoint column '{name}' (escape a literal filter pipe as \\|)");
+            if (!seen.Add(name))
+                return Fail($"duplicate checkpoint column '{name}'");
+        }
+        var windowsColumn = header.IndexOf("EstimatedMinutesWindows");
+        var serialColumn = header.IndexOf("Serial");
+        var environmentColumn = header.IndexOf("Environment");
+
         var manifest = new CheckpointManifest { Plan = planProvenance };
         var rowBuilds = new Dictionary<string, (string BuildId, string AfterKey)>(StringComparer.Ordinal);
-        var relax = false;
-
         foreach (var cells in data)
         {
-            if (cells.Count < 9)
-                return Fail("checkpoint row has fewer than 9 columns: " + string.Join(" | ", cells));
+            if (cells.Count != header.Count)
+                return Fail($"checkpoint row {cells.FirstOrDefault() ?? "?"} has {cells.Count} columns, expected {header.Count}; escape a literal Filter pipe as \\|");
 
             var id = cells[0].Trim();
             var after = AfterSelector.Expand(cells[1]).ToList();
@@ -87,15 +98,60 @@ public static class PlanTableImporter
                 Group = group,
                 ExpectText = expectText,
             };
-            if (int.TryParse(estimateCell, out var estimate))
+            if (serialColumn >= 0)
             {
-                row.EstimatedMinutes = estimate;
-                row.TimeoutMinutes = RowTimeout.DeriveRowMinutes(estimate, null, 15);
-                if (3 * estimate > RowTimeoutCeilingMinutes)
-                    warnings.Add($"{id}: 3 x EstimatedMinutes ({3 * estimate}) exceeds the {RowTimeoutCeilingMinutes} minute row-timeout ceiling");
+                var serial = cells[serialColumn].Trim();
+                var parsedSerial = false;
+                if (serial.Length > 0 && !bool.TryParse(serial, out parsedSerial))
+                    return Fail($"{id}: Serial must be true, false, or blank");
+                row.Serial = serial.Length > 0 && parsedSerial;
             }
+            if (environmentColumn >= 0)
+            {
+                var environmentText = StripWrappingBackticks(cells[environmentColumn].Trim());
+                if (environmentText.Length > 0 && !environmentText.Equals("n/a", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var entry in environmentText.Split(';'))
+                    {
+                        var equals = entry.IndexOf('=');
+                        if (equals < 0)
+                            return Fail($"{id}: Environment entry '{entry.Trim()}' must be NAME=value");
+                        var name = entry[..equals].Trim();
+                        var value = entry[(equals + 1)..];
+                        if (!Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant)
+                            || name.IndexOfAny(['\0', '\n', '\r']) >= 0
+                            || value.IndexOfAny(['\0', '\n', '\r']) >= 0)
+                            return Fail($"{id}: Environment has invalid NAME=value entry '{entry.Trim()}'");
+                        if (!row.Environment.TryAdd(name, value))
+                            return Fail($"{id}: Environment duplicates '{name}'");
+                    }
+                }
+            }
+            if (!TryPositiveEstimate(estimateCell, out var estimate))
+                return Fail($"{id}: EstimatedMinutes must be a positive integer with safe derived deadlines");
+            row.EstimatedMinutes = estimate;
+            if (windowsColumn >= 0 && windowsColumn < cells.Count)
+            {
+                var windowsCell = cells[windowsColumn].Trim();
+                if (windowsCell.Length > 0 && !windowsCell.Equals("n/a", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!TryPositiveEstimate(windowsCell, out var windows))
+                        return Fail($"{id}: EstimatedMinutesWindows must be a positive integer with safe derived deadlines");
+                    row.EstimatedMinutesWindows = windows;
+                    if (isWindows ?? OperatingSystem.IsWindows())
+                        row.EstimatedMinutes = windows;
+                }
+            }
+            row.TimeoutMinutes = RowTimeout.DeriveRowMinutes(row.EstimatedMinutes, null, 15);
+            if (3L * row.EstimatedMinutes > RowTimeoutCeilingMinutes)
+                warnings.Add($"{id}: 3 x EstimatedMinutes ({3L * row.EstimatedMinutes}) exceeds the {RowTimeoutCeilingMinutes} minute row-timeout ceiling");
 
             var payload = ExtractPayload(filterCell);
+            if (Regex.IsMatch(payload, @"^same\s+as\s+CP-\d+$", RegexOptions.IgnoreCase))
+                return Fail($"{id}: Filter must repeat the exact filter, not 'same as CP-n'");
+            if (filterCell.StartsWith('`') && payload.StartsWith('/')
+                && !filterCell.Equals("`" + payload + "`", StringComparison.Ordinal))
+                return Fail($"{id}: Filter has trailing text; put NAME=value in Environment and keep the exact filter");
             if (payload.StartsWith('/'))
             {
                 row.Filter = payload;
@@ -110,7 +166,7 @@ public static class PlanTableImporter
 
             if (!minCell.Equals("n/a", StringComparison.OrdinalIgnoreCase) && minCell.Length > 0)
             {
-                if (!TryParseMin(minCell, OperatingSystem.IsWindows(), out var min, out var minError))
+                if (!TryParseMin(minCell, isWindows ?? OperatingSystem.IsWindows(), out var min, out var minError))
                     return Fail($"{id}: {minError}");
                 if (row.IsCommand)
                     return Fail($"{id}: command row Min must be n/a");
@@ -128,16 +184,16 @@ public static class PlanTableImporter
                 if (!StartsWithNa(buildCell) && buildCell.Length > 0 && !buildCell.Equals("n/a", StringComparison.OrdinalIgnoreCase))
                     warnings.Add($"{id}: command row build cell '{buildCell}' ignored");
             }
-            else if (Regex.IsMatch(buildCell, @"^CP-\d+$", RegexOptions.IgnoreCase))
+            else if (Regex.IsMatch(buildCell, @"^CP-\d+(?: \(-NoBuild\))?$", RegexOptions.IgnoreCase))
             {
-                if (!rowBuilds.TryGetValue(buildCell, out var prior))
+                var priorId = Regex.Match(buildCell, @"^CP-\d+", RegexOptions.IgnoreCase).Value;
+                if (!rowBuilds.TryGetValue(priorId, out var prior))
                     return Fail($"{id}: reuses {buildCell} which is not an earlier row");
                 row.Build = prior.BuildId;
                 var afterKey = string.Join(",", after);
                 if (!string.Equals(prior.AfterKey, afterKey, StringComparison.Ordinal))
                 {
-                    relax = true;
-                    warnings.Add($"{id}: reuses {buildCell} across a different After; one build is shared and the row runs --no-build");
+                    return Fail($"{id}: After differs from {priorId}; a reused build requires the same After group");
                 }
             }
             else
@@ -148,7 +204,10 @@ public static class PlanTableImporter
                 var output = match.Groups["output"].Value;
                 var buildId = output.TrimEnd('/');
                 var project = match.Groups["project"].Value.Trim().Trim('`');
-                if (manifest.Builds.All(b => b.Id != buildId))
+                var existingBuild = manifest.Builds.FirstOrDefault(b => b.Id == buildId);
+                if (existingBuild is not null && existingBuild.Project != project)
+                    return Fail($"{id}: Build '{buildId}' conflicts with project '{existingBuild.Project}' versus '{project}'");
+                if (existingBuild is null)
                 {
                     manifest.Builds.Add(new BuildSpec { Id = buildId, Project = project, OutputPath = output });
                 }
@@ -157,13 +216,22 @@ public static class PlanTableImporter
             }
 
             if (!row.IsCommand && row.Build is not null)
+            {
+                var priorBuild = rowBuilds.Values.FirstOrDefault(value => value.BuildId == row.Build);
+                if (priorBuild.BuildId is not null && priorBuild.AfterKey != string.Join(",", after))
+                    return Fail($"{id}: After differs for build '{row.Build}'; use a fresh build output");
                 rowBuilds[id] = (row.Build, string.Join(",", after));
+            }
             manifest.Checkpoints.Add(row);
         }
 
-        manifest.RelaxSharedBuildAfter = relax;
+        if (2L * manifest.Checkpoints.Sum(row => (long)(row.EstimatedMinutes ?? 0)) + 10 > int.MaxValue)
+            return Fail("EstimatedMinutes: derived total deadline overflows");
         return new ImportResult { Manifest = manifest, Warnings = warnings, ExitCode = ExitCodes.Green };
     }
+
+    private static bool TryPositiveEstimate(string cell, out int estimate) =>
+        int.TryParse(cell, out estimate) && estimate > 0 && 3L * estimate <= int.MaxValue;
 
     public static bool TryParseMin(string cell, bool isWindows, out int? min, out string? error)
     {

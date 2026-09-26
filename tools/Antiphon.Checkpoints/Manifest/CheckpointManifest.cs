@@ -14,13 +14,6 @@ public sealed class CheckpointManifest
     public List<BuildSpec> Builds { get; set; } = [];
     public List<CheckpointSpec> Checkpoints { get; set; } = [];
 
-    /// <summary>
-    /// A markdown table that explicitly reuses <c>CP-n</c> across different After groups (the
-    /// CARD-0723 table does) sets this so validation allows the shared build. Hand-written YAML
-    /// leaves it false and is rejected.
-    /// </summary>
-    public bool RelaxSharedBuildAfter { get; set; }
-
     public int EffectiveMaxRows(bool isWindows) =>
         Parallel.MaxRows is > 0 ? Parallel.MaxRows.Value : isWindows ? 1 : 2;
 }
@@ -73,8 +66,10 @@ public sealed class CheckpointSpec
     public string? ExpectText { get; set; }
     public int? MinExecuted { get; set; }
     public int? EstimatedMinutes { get; set; }
+    public int? EstimatedMinutesWindows { get; set; }
     public int? TimeoutMinutes { get; set; }
     public bool Serial { get; set; }
+    public Dictionary<string, string> Environment { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsCommand => !string.IsNullOrWhiteSpace(Command);
 }

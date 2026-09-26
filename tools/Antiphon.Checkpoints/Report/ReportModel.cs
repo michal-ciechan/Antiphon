@@ -15,6 +15,7 @@ public sealed class ReportModel
     public double WallSeconds { get; set; }
     public double SequentialEquivalentSeconds { get; set; }
     public int ExitCode { get; set; }
+    public string? Reason { get; set; }
     public string Verdict { get; set; } = "GREEN";
     public List<ReportBuild> Builds { get; set; } = [];
     public List<ReportRow> Rows { get; set; } = [];

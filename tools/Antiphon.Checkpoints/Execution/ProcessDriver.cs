@@ -1,8 +1,51 @@
 namespace Antiphon.Checkpoints;
 
+public interface IProcessHandle : IDisposable
+{
+    bool Start();
+    void BeginRead(Action<string?> stdout, Action<string?> stderr);
+    Task WaitForExitAsync(CancellationToken cancellationToken);
+    bool HasExited { get; }
+    int ExitCode { get; }
+    void Kill(bool entireProcessTree);
+}
+
+public interface IProcessHandleFactory
+{
+    IProcessHandle Create(ProcessStartInfo startInfo);
+}
+
+internal sealed class SystemProcessHandleFactory : IProcessHandleFactory
+{
+    public IProcessHandle Create(ProcessStartInfo startInfo) => new SystemProcessHandle(startInfo);
+
+    private sealed class SystemProcessHandle : IProcessHandle
+    {
+        private readonly Process _process;
+        public SystemProcessHandle(ProcessStartInfo startInfo) =>
+            _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        public bool Start() => _process.Start();
+        public void BeginRead(Action<string?> stdout, Action<string?> stderr)
+        {
+            _process.OutputDataReceived += (_, e) => stdout(e.Data);
+            _process.ErrorDataReceived += (_, e) => stderr(e.Data);
+            _process.BeginOutputReadLine();
+            _process.BeginErrorReadLine();
+        }
+        public Task WaitForExitAsync(CancellationToken token) => _process.WaitForExitAsync(token);
+        public bool HasExited => _process.HasExited;
+        public int ExitCode => _process.ExitCode;
+        public void Kill(bool entireProcessTree) => _process.Kill(entireProcessTree);
+        public void Dispose() => _process.Dispose();
+    }
+}
+
 public sealed class ProcessDriver : IDriver
 {
-    private Process? _current;
+    private readonly IProcessHandleFactory _factory;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<IProcessHandle, byte> _running = new();
+
+    public ProcessDriver(IProcessHandleFactory? factory = null) => _factory = factory ?? new SystemProcessHandleFactory();
 
     public string? DotnetShim { get; init; }
 
@@ -15,8 +58,11 @@ public sealed class ProcessDriver : IDriver
         var psi = CreateStartInfo(fileName, workingDirectory);
         foreach (var argument in arguments)
             psi.ArgumentList.Add(argument);
+        if (request.Environment is not null)
+            foreach (var (name, value) in request.Environment)
+                psi.Environment[name] = value;
 
-        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        using var process = _factory.Create(psi);
         var stdout = new System.Text.StringBuilder();
         var stderr = new System.Text.StringBuilder();
         StreamWriter? log = null;
@@ -26,28 +72,29 @@ public sealed class ProcessDriver : IDriver
             log = new StreamWriter(request.LogPath, append: true) { AutoFlush = true };
         }
 
-        process.OutputDataReceived += (_, e) => Capture(e.Data, stdout, log, request.OnOutput);
-        process.ErrorDataReceived += (_, e) => Capture(e.Data, stderr, log, request.OnOutput);
-
+        var outputGate = new object();
         if (!process.Start())
+        {
+            log?.Dispose();
             return new DriverResult(ExitCodes.Invalid, "", "process did not start");
-
-        _current = process;
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        }
+        _running.TryAdd(process, 0);
+        process.BeginRead(
+            line => { lock (outputGate) Capture(line, stdout, log, request.OnOutput); },
+            line => { lock (outputGate) Capture(line, stderr, log, request.OnOutput); });
         try
         {
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            Kill(entireProcessTree: true);
+            KillProcess(process, entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         finally
         {
-            if (ReferenceEquals(_current, process))
-                _current = null;
+            _running.TryRemove(process, out _);
             log?.Dispose();
         }
 
@@ -56,20 +103,19 @@ public sealed class ProcessDriver : IDriver
 
     public void Kill(bool entireProcessTree)
     {
-        var process = _current;
-        if (process is null)
-            return;
+        foreach (var process in _running.Keys)
+            KillProcess(process, entireProcessTree);
+    }
+
+    private static void KillProcess(IProcessHandle process, bool entireProcessTree)
+    {
         try
         {
             if (!process.HasExited)
                 process.Kill(entireProcessTree);
         }
-        catch (InvalidOperationException)
-        {
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-        }
+        catch (InvalidOperationException) { }
+        catch (System.ComponentModel.Win32Exception) { }
     }
 
     public static ProcessStartInfo CreateStartInfo(string fileName, string workingDirectory) =>
