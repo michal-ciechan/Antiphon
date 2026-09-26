@@ -43,6 +43,9 @@ public sealed class ChannelBridgeService : BackgroundService
     private readonly ConcurrentDictionary<Guid, byte> _buffered = new();
     private readonly SemaphoreSlim _drainGate = new(1, 1);
     private long _lastInboundScanSequence;
+    private int _completedDrainIterations;
+
+    internal int CompletedDrainIterations => Volatile.Read(ref _completedDrainIterations);
 
     public ChannelBridgeService(
         IAntiphonMessagingConsumer consumer,
@@ -167,7 +170,11 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             while (!ct.IsCancellationRequested)
             {
-                try { await DrainPendingAsync(ct); }
+                try
+                {
+                    await DrainPendingAsync(ct);
+                    Interlocked.Increment(ref _completedDrainIterations);
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.LogWarning(ex, "Durable channel inbound drain failed; retrying");
