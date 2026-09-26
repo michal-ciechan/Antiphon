@@ -416,6 +416,8 @@ public sealed class ChannelInboundRecoveryTests
             .Where(i => i.NativeMessageId == leftNative || i.NativeMessageId == rightNative)
             .Select(i => i.QueueMessageId).ToListAsync();
         laneMembers.Distinct().Count().ShouldBe(2);
+        await recovered.Queue.OnTurnEndAsync(session, Ct);
+        await recovered.Queue.OnTurnEndAsync(session, Ct);
         recovered.Adapter.SubmittedBodies.Count.ShouldBe(3);
         recovered.Adapter.SubmittedBodies.Count(b => b.Contains("left lane tail") && b.Contains("right lane tail")).ShouldBe(0);
         await laneBridge.HandleInboundAsync(Message(chat, secondId, "line two tail"), Ct);

@@ -34,7 +34,7 @@ public sealed class ChannelInboundDebouncer
     }
 
     private readonly object _gate = new();
-    private readonly Dictionary<string, Lane> _lanes = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Channel, string Conversation, string Author), Lane> _lanes = new();
     private readonly ChannelBridgeSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ChannelInboundDebouncer> _logger;
@@ -68,7 +68,7 @@ public sealed class ChannelInboundDebouncer
             return;
         }
 
-        var key = $"{message.Channel}:{message.Conversation.Id}:{message.Author.Id}";
+        var key = (message.Channel, message.Conversation.Id, message.Author.Id);
         var now = _timeProvider.GetUtcNow();
         var startTimer = false;
 
@@ -113,7 +113,8 @@ public sealed class ChannelInboundDebouncer
         }
     }
 
-    private async Task RunLaneAsync(string key, Lane lane, CancellationToken ct)
+    private async Task RunLaneAsync(
+        (string Channel, string Conversation, string Author) key, Lane lane, CancellationToken ct)
     {
         var window = TimeSpan.FromMilliseconds(_settings.DebounceWindowMs);
         var cap = TimeSpan.FromMilliseconds(Math.Max(_settings.DebounceMaxMs, _settings.DebounceWindowMs));
