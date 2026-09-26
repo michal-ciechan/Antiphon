@@ -12,9 +12,6 @@ public static class HostStatsEndpoints
 {
     public static void MapHostStatsEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/hosts/stats", () => Results.StatusCode(501));
-        app.MapGet("/api/hosts/{hostId}/stats/series", () => Results.StatusCode(501));
-        return;
         var hosts = app.MapGroup("/api/hosts").WithTags("Hosts");
         hosts.MapGet("/stats", (HostStatsCache cache) => Results.Ok(cache.Project()));
         hosts.MapGet("/{hostId}/stats/series", async (
@@ -24,7 +21,8 @@ public static class HostStatsEndpoints
             if (metric is not ("cpu" or "load" or "memory" or "tasks")
                 || window is not ("1m" or "5m" or "15m" or "30m"))
                 return Results.BadRequest(new { code = "invalid_host_stats_query" });
-            if (!directory.KnownRunnerIds.Contains(hostId, StringComparer.Ordinal))
+            if (hostId != RunnerPlatformWire.DesktopId
+                && !directory.KnownRunnerIds.Contains(hostId, StringComparer.Ordinal))
                 return Results.NotFound();
             using var deadline = new CancellationTokenSource(
                 TimeSpan.FromMilliseconds(settings.Value.SeriesTimeoutMs), time);

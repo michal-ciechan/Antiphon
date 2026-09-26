@@ -18,10 +18,12 @@ public sealed class HostStatsPollService : BackgroundService
     private readonly HostStatsSettings _settings;
     private readonly TimeProvider _time;
     private readonly ILogger<HostStatsPollService> _logger;
+    private readonly int _desktopCapacity;
 
     public HostStatsPollService(ISessionRunnerDirectory directory, HostStatsCache cache,
         IHostStatsAntiphonCounters counters, IEventBus bus, IOptions<HostStatsSettings> settings,
-        TimeProvider time, ILogger<HostStatsPollService> logger)
+        TimeProvider time, ILogger<HostStatsPollService> logger,
+        IOptions<DelegationSettings>? delegation = null)
     {
         _directory = directory;
         _cache = cache;
@@ -30,6 +32,7 @@ public sealed class HostStatsPollService : BackgroundService
         _settings = settings.Value;
         _time = time;
         _logger = logger;
+        _desktopCapacity = delegation?.Value.MaxConcurrentTasks ?? new DelegationSettings().MaxConcurrentTasks;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -44,11 +47,12 @@ public sealed class HostStatsPollService : BackgroundService
 
     public async Task TickOnceAsync(CancellationToken ct = default)
     {
-        throw new NotImplementedException("red-first poll stub");
         if (!_settings.Enabled)
             return;
         _cache.BeginTick();
-        var ids = _directory.KnownRunnerIds.Distinct(StringComparer.Ordinal).ToArray();
+        var ids = _directory.KnownRunnerIds
+            .Select(id => RunnerRequestIntent.IsDesktopAlias(id) ? RunnerPlatformWire.DesktopId : id)
+            .Distinct(StringComparer.Ordinal).ToArray();
         var reads = ids.Select(id => PollHostAsync(id, ct)).ToArray();
         await Task.WhenAll(reads);
         IReadOnlyDictionary<string, HostStatsAntiphonDto> counts;
@@ -59,7 +63,17 @@ public sealed class HostStatsPollService : BackgroundService
             counts = new Dictionary<string, HostStatsAntiphonDto>();
         }
         var rows = await Task.WhenAll(ids.Select(id => DescribeAsync(id, ct)));
-        _cache.SetProjection(rows, counts);
+        var annotated = counts.ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
+        foreach (var id in ids)
+        {
+            annotated.TryGetValue(id, out var count);
+            count ??= new HostStatsAntiphonDto(0, new Dictionary<string, int>(),
+                new Dictionary<string, int>(), 0, 0, 0, null, null, null);
+            int? sessions = id == RunnerPlatformWire.DesktopId ? count.TasksInFlight
+                : (_directory as PhoneHomeRunnerDirectory)?.SnapshotLive(id)?.KnownLiveSessions().Count;
+            annotated[id] = count with { SessionsLive = sessions };
+        }
+        _cache.SetProjection(rows, annotated);
         var projected = _cache.Project();
         if (!_cache.Changed)
             return;
@@ -117,7 +131,8 @@ public sealed class HostStatsPollService : BackgroundService
         return new SessionRunnerCatalogueEntryDto(id, descriptor?.DisplayName ?? id,
             descriptor?.Platform, descriptor?.PlatformObservedAt,
             desktop || descriptor?.Available == true, desktop || descriptor?.DispatchEligible == true,
-            descriptor?.Stale == true ? "stale" : "unavailable", descriptor?.Capacity, null,
+            descriptor?.Stale == true ? "stale" : "unavailable",
+            desktop ? _desktopCapacity : descriptor?.Capacity, null,
             desktop ? "delegatedTasks" : "sessions", null, descriptor?.Stale == true,
             descriptor?.Capabilities?.Features ?? []);
     }
