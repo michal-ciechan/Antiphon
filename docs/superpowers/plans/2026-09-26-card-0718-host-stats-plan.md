@@ -833,6 +833,54 @@ stub is a stub test (CARD-0585 rule 4). V-13 is red against a `SystemHostStatsPr
 returns null. No row in this design is a known stub; the draft's concurrent-loop store method was
 one and was replaced (V-1 m9).
 
+### Guard inventory
+
+Safety-critical here means: a guard whose failure would show the operator a false number or a
+false state (an invented zero, `live` for a silent host, wrong arithmetic), stall or fault the
+poll or the runner, advertise a capability the runner does not have, let a bad request reach a
+runner, or let the CP-4 measurement runner touch production. Each guard is split where two lines
+can be broken independently, and maps 1:1 to a distinct PC.
+
+| G | Plan ref | Guard | PC |
+|---|---|---|---|
+| G-1 | D-2 | an empty window answers null, never `{0,0}` | PC-1 |
+| G-2 | D-2 | ring capacity is exactly `RetentionMinutes*60/IntervalSeconds` (bounded memory) | PC-2 |
+| G-3 | D-2 | `Series` rotates from the oldest slot (time order) | PC-3 |
+| G-4 | D-2 | `avg` is the mean of held samples | PC-4 |
+| G-5 | D-2 | `max` is the maximum of held samples | PC-5 |
+| G-6 | D-2 | a partial window divides by the held count, not its capacity | PC-6 |
+| G-7 | D-2 | the cutoff is inclusive (`At >= now − window`) | PC-7 |
+| G-8 | D-2 | the cutoff is not widened past the window | PC-8 |
+| G-9 | D-2 | a metric absent from samples yields null rollups | PC-9 |
+| G-10 | D-2, D-7 | unknown metric/window is rejected, not defaulted | PC-10 |
+| G-11 | D-2 | reads return copies, not views of the ring | PC-11 |
+| G-12 | D-2 | `Add` takes the store gate | PC-12 |
+| G-13 | D-2 | reads take the store gate | PC-13 |
+| G-14 | D-1 | Linux idle = idle + iowait | PC-14 |
+| G-15 | D-1 | Linux total = first eight columns (guest excluded) | PC-15 |
+| G-16 | D-1 | an 8-column `cpu` line parses | PC-16 |
+| G-17 | D-1 | `/proc/meminfo` kB are multiplied by 1024 | PC-17 |
+| G-18 | D-1 | missing `MemAvailable` is null available | PC-18 |
+| G-19 | D-1 | process count is the loadavg total after the slash | PC-19 |
+| G-20 | D-1 | Windows kernel time includes idle | PC-20 |
+| G-21 | D-1 | the first read has no CPU (no since-boot figure) | PC-21 |
+| G-22 | D-1 | the build-slot memory floor and the sample share one probe instance | PC-22 |
+| G-23 | D-1 | the platform switch selects the Linux arm on Linux and the Windows arm on Windows | PC-23 |
+| G-24 | D-1 | a failed `GetSystemTimes`/`GlobalMemoryStatusEx` is null, not zero | PC-24 |
+| G-25 | D-2, D-9 | samples are stamped from the injected `TimeProvider` | PC-25 |
+| G-26 | D-1 | a faulting probe is caught; the sampler survives | PC-26 |
+| G-27 | D-6 | a null process CPU sample is a null percent (recycled/gone pid never charged) | PC-27 |
+| G-28 | D-6 | process CPU % divides by the measured wall delta | PC-28 |
+| G-29 | D-9 | `Enabled=false` never calls the probe | PC-29 |
+| G-30 | D-7 | `GET /host-stats` answers the newest sample with rollups | PC-30 |
+| G-31 | D-7 | the series route honours `window` | PC-31 |
+| G-32 | D-7 | the runner route answers 400 for a bad metric/window | PC-32 |
+| G-33 | D-9 | a disabled runner answers 404 | PC-33 |
+| G-34 | D-9, D-11 | `hostStatsV1` is advertised only when enabled | PC-34 |
+| G-35 | D-3 | operation 29 answers the store snapshot | PC-35 |
+| G-36 | D-3 | operation 30 with a bad window is a 400 error frame | PC-36 |
+| G-37 | D-3 | no seam answers `phone_home_unsupported_operation` | PC-37 |
+
 ### Checkpoints
 
 Isolated outputs `bin-c718r/` (`Antiphon.SessionRunner.Tests`) and `bin-c718a/`
