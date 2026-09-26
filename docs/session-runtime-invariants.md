@@ -141,6 +141,11 @@
   HTTP/SSE is unchanged; remote sessions persist `RunnerId`/`RunnerStoreId`/`RunnerCwd` and never
   fall back to the local runner.
 
+- **A planned server stop closes the phone-home socket with 1001 `server_stopping` (CARD-0716).**
+  The shutdown drains in-flight launches for a bounded interval, then the host stops. A remote
+  Starting row the runner still holds is re-attached by the restart reconciler. A row the runner
+  never received is failed with the restart reason and carries the shutdown's task event.
+
 - **A runner is dispatch-eligible only after a successful catch-up List (CARD-0633).** A failed or
   timed-out List leaves the runner ineligible and the pump waits `PhoneHomeRunner:CatchUpRetrySeconds`
   (default 5) before asking again. One session's transcript failure is a warning and does not fence
