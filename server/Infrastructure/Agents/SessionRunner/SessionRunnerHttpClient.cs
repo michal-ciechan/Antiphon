@@ -315,10 +315,31 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     }
 
     public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
-        throw new NotImplementedException();
+        HostStatsReadAsync<RunnerHostStatsDto>("host-stats", _hostStats.RequestTimeoutMs, ct);
 
     public Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct) =>
-        throw new NotImplementedException();
+        HostStatsReadAsync<RunnerHostSeriesDto>(
+            $"host-stats/series?metric={Uri.EscapeDataString(metric)}&window={Uri.EscapeDataString(window)}",
+            _hostStats.SeriesTimeoutMs, ct);
+
+    private async Task<T?> HostStatsReadAsync<T>(string relative, int timeoutMs, CancellationToken ct) where T : class
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs), _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try
+        {
+            // Deliberately use the typed client. An admitted resilience read can exceed a poll tick.
+            using var response = await _httpClient.GetAsync(relative, linked.Token);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                throw new HostStatsUnsupportedException();
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<T>(JsonOptions, linked.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("Host stats runner request timed out.");
+        }
+    }
 
     /// <summary>
     /// CARD-0589: <c>POST /build-slots</c>. 200 is a grant, 409 a busy or memory-floor refusal (the
