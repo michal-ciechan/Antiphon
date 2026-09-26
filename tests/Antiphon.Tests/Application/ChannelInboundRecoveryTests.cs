@@ -830,6 +830,47 @@ public sealed class ChannelInboundRecoveryTests
         await using var verify = Db(schema.ConnectionString);
         (await verify.ChannelInbounds.SingleAsync(i => i.NativeMessageId == inbound.ChannelMessageId)).QueueMessageId.ShouldNotBeNull();
 
+        await using var launchSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var launchGate = new LaunchSubmissionGate();
+        await using var launching = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = launchSchema.ConnectionString, Bridge = Settings(),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            AgentExecutable = OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/true",
+            ConfigureServices = services => services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
+                new RecordingLaunchFactory(sp.GetRequiredService<AgentSessionRuntime>(),
+                    (BridgeQueueHarness.EmptyRunnerClient)sp.GetRequiredService<ISessionRunnerClient>(), launchGate)),
+        });
+        await using (var setup = Db(launchSchema.ConnectionString))
+        {
+            await setup.AgentSessions.Where(s => s.Id == launching.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await setup.Agents.Where(a => a.Id == launching.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+        }
+        var wake = launching.Provider.GetRequiredService<ChannelInboundWakeSignal>();
+        while (wake.Reader.TryRead(out _)) { }
+        await using (var scope = launching.Provider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                .StartAsync(launching.AgentId, new StartAgentRequest(Prompt: "blocked initial boot prompt"), Ct,
+                    automatic: true);
+        await launchGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        try
+        {
+            await using var booting = Db(launchSchema.ConnectionString);
+            var bootState = await booting.AgentSessions.AsNoTracking()
+                .Where(s => s.StandingAgentId == launching.AgentId && s.Status == SessionStatus.Running)
+                .OrderByDescending(s => s.StartedAt)
+                .Select(s => new { s.Status, s.InteractiveLaunchCompletedAt }).FirstAsync();
+            bootState.InteractiveLaunchCompletedAt.ShouldBeNull();
+            wake.Reader.TryRead(out _).ShouldBeFalse(
+                "Running is visible before the launch note and initial prompt finish, so recovery must wait for boot completion");
+        }
+        finally { launchGate.Release.TrySetResult(true); }
+        await launching.Provider.GetRequiredService<AgentSessionLaunchQueue>()
+            .WaitForIdleAsync(TimeSpan.FromSeconds(8), Ct);
+        wake.Reader.TryRead(out _).ShouldBeTrue();
+
         await using var failedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var failed = await BridgeQueueHarness.CreateAsync(new()
         {
@@ -1005,8 +1046,15 @@ public sealed class ChannelInboundRecoveryTests
         }
     }
 
+    private sealed class LaunchSubmissionGate
+    {
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private sealed class RecordingLaunchFactory(
-        AgentSessionRuntime runtime, BridgeQueueHarness.EmptyRunnerClient runner) : IAgentProtocolAdapterFactory
+        AgentSessionRuntime runtime, BridgeQueueHarness.EmptyRunnerClient runner,
+        LaunchSubmissionGate? launchGate = null) : IAgentProtocolAdapterFactory
     {
         public List<FakeAgentProtocolAdapter> Created { get; } = [];
 
@@ -1015,6 +1063,11 @@ public sealed class ChannelInboundRecoveryTests
             var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
             adapter.OnSubmitted = async submitted =>
             {
+                if (launchGate is not null && submitted.Contains("blocked initial boot prompt", StringComparison.Ordinal))
+                {
+                    launchGate.Entered.TrySetResult(true);
+                    await launchGate.Release.Task;
+                }
                 var sessionId = adapter.StartedSessionId!.Value;
                 var record = new SessionRunnerTranscriptEvent(sessionId, 1, TranscriptKinds.UserPrompt,
                     Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,

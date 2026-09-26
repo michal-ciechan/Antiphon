@@ -575,8 +575,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
 
-            _channelInboundWake?.Signal(agentId);
-
             // Before anything types into the session: if the reused transcript still reads
             // mid-turn, the old process died before its TurnEnd — state the truth (boundary
             // record) so working/idle, the queue and the cards all read idle, not "Working"
@@ -644,6 +642,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             session.InteractiveLaunchCompletedAt = UtcNow();
             await _db.SaveChangesAsync(ct);
+            // Running is persisted before launch notes and the boot queue finish. Wake
+            // durable channel input only after those writes have settled.
+            _channelInboundWake?.Signal(agentId);
         }
         catch (Exception ex)
         {
@@ -872,8 +873,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
 
-            _channelInboundWake?.Signal(agentId);
-
             await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
             await InitializeGrokRulesAsync(session, ct);
             await _eventBus.PublishToGroupAsync(
@@ -909,6 +908,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 AlertSeverity.Warning,
                 $"Launch resumed after a server restart: the session sat Starting for {startingSeconds}s; ready re-verified.",
                 ct);
+            _channelInboundWake?.Signal(agentId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
