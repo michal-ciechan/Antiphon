@@ -68,6 +68,9 @@ services:
       SessionRunner__BuildSlots__MaxConcurrent: "4"
       SessionRunner__BuildSlots__MaxCpuCount: "6"
       SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"
+      # CARD-0718: indexed keys bind the two volumes the Hosts page stats.
+      SessionRunner__HostStats__Volumes__0: /work
+      SessionRunner__HostStats__Volumes__1: /state
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
       # CARD-0628 D-6: one Claude store in three places. CLAUDE_CONFIG_DIR is the runner process's

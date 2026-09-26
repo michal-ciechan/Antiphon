@@ -315,6 +315,12 @@ public enum AttentionKind
     /// by design: a human cancels it or reopens the card. Appended after shipped 47; do not renumber.
     /// </summary>
     CardClosedWhileWorking = 48,
+
+    /// <summary>A phone-home runner remains ineligible past the outage grace. Error.</summary>
+    RunnerUnavailable = 49,
+
+    /// <summary>A stale child-journal record fences repository mutation. Error.</summary>
+    RepositoryChildJournalStale = 50,
 }
 
 /// <summary>

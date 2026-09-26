@@ -35,6 +35,27 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<RunnerProviderAuthDto>(frame);
     }
 
+    public async Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.HostStats, null, ct);
+        HostStatsError(frame);
+        return Read<RunnerHostStatsDto>(frame);
+    }
+
+    public async Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.HostStatsSeries,
+            new PhoneHomeHostSeriesRequest(metric, window), ct);
+        HostStatsError(frame);
+        return Read<RunnerHostSeriesDto>(frame);
+    }
+
+    private static void HostStatsError(PhoneHomeFrame frame)
+    {
+        if (frame.Kind == PhoneHomeFrameKind.Error && frame.ErrorCode == PhoneHomeProblemTypes.UnsupportedOperation)
+            throw new HostStatsUnsupportedException();
+    }
+
     public async Task<string?> GetHealthAsync(CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Health, null, ct);

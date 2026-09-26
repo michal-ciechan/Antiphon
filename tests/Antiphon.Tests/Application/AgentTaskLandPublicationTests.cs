@@ -22,6 +22,8 @@ public sealed partial class AgentTaskLandPublicationTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
+        // CARD-0711 R-2: this row races before the push. The opt-out keeps today's refusal; the default budget is V-1.
+        h.LandSettings.LandTargetRaceRetries = 0;
         var source = await h.AddSourceAsync();
         var rival = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit-tree", h.Fixture.SeedSha + "^{tree}", "-p", h.Fixture.SeedSha, "-m", "other remote writer")).Trim();
         var other = Path.Combine(h.Fixture.Root, "other-endpoint.git");

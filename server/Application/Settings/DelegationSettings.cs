@@ -645,6 +645,12 @@ public sealed class DelegationSettings
     public int LandMaxAttempts { get; set; } = 3;
 
     /// <summary>
+    /// CARD-0711: how many times one admission may replace its own schema-3 operation after
+    /// <c>remote_changed_before_push</c> and rebase onto the new tip. 0 disables. Floor 0, ceiling 5.
+    /// </summary>
+    public int LandTargetRaceRetries { get; set; } = 2;
+
+    /// <summary>
     /// <see cref="AgentTask.ExpectedDurationMinutes"/> for a caller that declared nothing. Ten
     /// minutes is roughly the median delegated task here, so an undeclared task still gets one
     /// early check instead of silence.
@@ -1195,6 +1201,11 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.LandMaxAttempts is < 1 or > 10)
         {
             failures.Add("Delegation:LandMaxAttempts must be between 1 and 10.");
+        }
+
+        if (options.LandTargetRaceRetries is < 0 or > 5)
+        {
+            failures.Add("Delegation:LandTargetRaceRetries must be between 0 and 5.");
         }
 
         if (options.MaxOpenTasks <= 0)

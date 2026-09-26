@@ -58,6 +58,18 @@ public class RunnerCapabilitiesTests
     }
 
     [Test]
+    public async Task Host_stats_feature_is_advertised_only_when_enabled()
+    {
+        var existing = new[] { "a", "b" };
+        var enabled = HostStatsRoutes.CapabilityFeatures(existing, new HostStatsSettings { Enabled = true });
+        enabled.ShouldBe(["a", "b", RunnerCapabilityFeatures.HostStatsV1]);
+        var disabled = HostStatsRoutes.CapabilityFeatures(existing, new HostStatsSettings { Enabled = false });
+        disabled.ShouldBe(existing);
+        disabled.ShouldNotContain(RunnerCapabilityFeatures.HostStatsV1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task Daemon_build_script_covers_the_runner_project_reference_closure()
     {
         var root = FindRepoRoot();

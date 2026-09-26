@@ -633,6 +633,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
+        // CARD-0711 R-4: the opt-out is today's single refusal. The default budget is C711_RaceRetriesInTheFakeHarness.
+        h.LandSettings.LandTargetRaceRetries = 0;
         await h.AddSourceAsync();
         // CARD-0688 D-4 / I-9: the guarded target is the observed remote (the rebase base), re-observed before the
         // push; a remote that moved refuses and the operation is terminal, so the next request rebases again.

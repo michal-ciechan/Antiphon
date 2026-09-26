@@ -89,7 +89,8 @@ public sealed class AgentTaskLandSourceResolver(
             var existing = task.ActiveLandingId is Guid id
                 ? await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == id && o.TaskId == task.Id, ct)
                 : null;
-            if (existing is not null) return new(existing, null, false);
+            if (existing is not null && !new AgentTaskLandingState().IsTargetRaceRefusal(existing))
+                return new(existing, null, false);
             return await CreateOperationAsync(task, request, coordinates, common, lease, baseline, ct);
         }
 
@@ -197,7 +198,7 @@ public sealed class AgentTaskLandSourceResolver(
             task, request, coordinates, common, previous, ct);
         if (created.Operation is null)
             return await RefuseAsync(task, request, baseline, created.Reason!, request.LocalBeforeSha,
-                request.RemoteSourceSha, request.CandidateSourceSha, ct, created.Diagnostic);
+                request.RemoteSourceSha, request.CandidateSourceSha, ct, created.Diagnostic, created.Detail);
 
         var attached = await _writer.AttachOperationAsync(task, request, baseline, created.Operation, previous, ct);
         _ = lease;

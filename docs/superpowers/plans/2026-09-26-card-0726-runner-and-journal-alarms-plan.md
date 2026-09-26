@@ -1078,7 +1078,7 @@ green for the client file; `tests/Antiphon.Tests/Application/RunnerAlarmAttentio
 - **R-3: the optional `alarms` parameter and two builders change no existing row** |
   `AttentionServiceTests` (partials `AttentionServiceTests.cs` 124, `AttentionServiceTests.C691.cs`
   32, `AttentionServiceCommitRecoveryTests.cs` 9 executions) and `DispatchHeldAttentionTests` (11):
-  176 executions, 0 failed (`CP-12`), run with `TUNIT_MAX_PARALLEL_TESTS=1` as the plan set.
+  174 executions, 0 failed (`CP-12`), run with `TUNIT_MAX_PARALLEL_TESTS=1` as the plan set.
 - **R-4: the client's existing attention visuals stay green** | the 15 existing `it` blocks and
   the four existing `it.each` cases of `attentionVisuals.test.ts` (`CP-11`).
 - **R-5: every new class declares its lane** | `TestLaneCategoryGuardTests` (1, `CP-7`) fails on
@@ -1278,34 +1278,42 @@ Windows-only, none needs a running stack or a provider.
 
 ### Checkpoints
 
-Round 1 is CP-1..CP-7 into `bin-c726-r1/`; Round 2 is CP-8..CP-12 into `bin-c726-r2/` (forward
-slash; both deleted before the Code report). Every TUnit row runs through
+Round 1 is CP-1..CP-7 and Round 2 is CP-8..CP-12. Each source slice has its own
+isolated output (forward slash; all deleted before the Code report). Every TUnit row runs through
 `pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-n -Project tests/Antiphon.Tests
--OutputPath bin-c726-rN/ -Filter '<filter>' -MinExecuted <Min> -Expect <classes>
+-OutputPath <Build output> -Filter '<filter>' -MinExecuted <Min> -Expect <classes>
 -ResultsRoot .antiphon/c726-checkpoints` (it takes the build slot and adds `UseAppHost=false` off
 Windows); `-NoBuild` where Build names a row. Client rows run under
-`pwsh -NoProfile -File scripts/build-slot.ps1 -Label <group> -- <command>`. Class-level OR filters
+`pwsh -NoProfile -File scripts/build-slot.ps1 -Label <group> -- <command>`. For the R2 review rerun,
+use the checked-in [checkpoint manifest](2026-09-26-card-0726-runner-and-journal-alarms-checkpoints.yaml)
+with `TUNIT_MAX_PARALLEL_TESTS=1` set in the checkpoint tool's process environment. Its CP-12 row
+has `serial: true`, so no other checkpoint runs alongside that database query-count selection.
+The CP-8 and CP-10 red expectations below describe their original S4-tests commits; rerunning
+them against the implemented S4 code should be green. Class-level OR filters
 only (CARD-0403 syntax, each operand parenthesised with a trailing `*`); method-level OR is never
 used. `Min` is the source execution count at `4fe3bce9` plus this card's new methods.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-tests | `tests/Antiphon.Tests -> bin-c726-r1/` | seams-red | `/*/*/(AlarmSettingsValidatorTests*)\|(RunnerEligibilityObserverTests*)\|(RepositoryFenceObserverTests*)/*` | V-1..V-4, V-21..V-23 | 7 executed (1 + 5 + 1), 7 failed, each at its named first assertion: V-1 the `Alarms:RunnerGraceSeconds` failure, V-2/V-3/V-4 the first recorder assertion, V-21 the id set, V-22 the Warning log, V-23 the recorded results | 7 | 7 |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c726-r1/` | seams-green | `/*/*/(AlarmSettingsValidatorTests*)\|(RunnerEligibilityObserverTests*)\|(RepositoryFenceObserverTests*)/*` | V-1..V-4, V-21..V-23 | all 7 listed, 0 failed/skipped | 7 | 6 |
-| CP-3 | S2-tests | `tests/Antiphon.Tests -> bin-c726-r1/` | inspector-red | `/*/*/RepositoryChildJournalInspectorTests/*` | V-5..V-7, V-24, V-25 | 5 executed, 5 failed at their finding-count or state assertions (empty-inspection skeleton) | 5 | 6 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c726-r1/` | inspector-green | `/*/*/RepositoryChildJournalInspectorTests/*` | V-5..V-7, V-24, V-25 | all 6 listed, 0 failed/skipped | 6 | 6 |
-| CP-5 | S3-tests | `tests/Antiphon.Tests -> bin-c726-r1/` | alarm-loop-red | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmNotifierTests*)\|(RunnerAlarmDeliveryTests*)\|(RunnerAlarmWiringTests*)/*` | V-8..V-16, V-26..V-36 | 20 executed (8 + 5 + 1 + 5 + 1); V-9 and V-26 pass (controls); the other 18 fail at their raise, note, finding, timer, row or wiring assertion (V-11 at m3's open episode, V-31 at "row is `Pending`") | 20 | 13 |
-| CP-6 | S3 | `tests/Antiphon.Tests -> bin-c726-r1/` | alarm-loop-green | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmNotifierTests*)\|(RunnerAlarmDeliveryTests*)\|(RunnerAlarmWiringTests*)/*` | V-8..V-16, V-26..V-36 | all 27 listed, 0 failed/skipped | 27 | 12 |
+| CP-1 | S1-tests | `tests/Antiphon.Tests -> bin-c726-r1-s1-tests/` | seams-red | `/*/*/(AlarmSettingsValidatorTests*)\|(RunnerEligibilityObserverTests*)\|(RepositoryFenceObserverTests*)/*` | V-1..V-4, V-21..V-23 | 7 executed (1 + 5 + 1), 7 failed, each at its named first assertion: V-1 the `Alarms:RunnerGraceSeconds` failure, V-2/V-3/V-4 the first recorder assertion, V-21 the id set, V-22 the Warning log, V-23 the recorded results | 7 | 7 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c726-r1-s1/` | seams-green | `/*/*/(AlarmSettingsValidatorTests*)\|(RunnerEligibilityObserverTests*)\|(RepositoryFenceObserverTests*)/*` | V-1..V-4, V-21..V-23 | all 7 listed, 0 failed/skipped | 7 | 6 |
+| CP-3 | S2-tests | `tests/Antiphon.Tests -> bin-c726-r1-s2-tests/` | inspector-red | `/*/*/RepositoryChildJournalInspectorTests/*` | V-5..V-7, V-24, V-25 | 5 executed, 5 failed at their finding-count or state assertions (empty-inspection skeleton) | 5 | 6 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c726-r1-s2/` | inspector-green | `/*/*/RepositoryChildJournalInspectorTests/*` | V-5..V-7, V-24, V-25 | all 6 listed, 0 failed/skipped | 6 | 6 |
+| CP-5 | S3-tests | `tests/Antiphon.Tests -> bin-c726-r1-s3-tests/` | alarm-loop-red | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmNotifierTests*)\|(RunnerAlarmDeliveryTests*)\|(RunnerAlarmWiringTests*)/*` | V-8..V-16, V-26..V-36 | 20 executed (8 + 5 + 1 + 5 + 1); V-9 and V-26 pass (controls); the other 18 fail at their raise, note, finding, timer, row or wiring assertion (V-11 at m3's open episode, V-31 at "row is `Pending`") | 20 | 13 |
+| CP-6 | S3 | `tests/Antiphon.Tests -> bin-c726-r1-s3/` | alarm-loop-green | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmNotifierTests*)\|(RunnerAlarmDeliveryTests*)\|(RunnerAlarmWiringTests*)/*` | V-8..V-16, V-26..V-36 | all 27 listed, 0 failed/skipped | 27 | 12 |
 | CP-7 | S3 | CP-6 | r1-regression | `/*/*/(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeDirectoryTests*)\|(DefaultRunnerEligibilityTests*)\|(RepositoryMutationLeaseTests*)\|(RepositoryMutationLeaseDescribeTests*)\|(RepositoryMutationLeaseOwnerTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1, R-2, R-5 | 63 results (25 + 37 + 1): 61 passed, 2 skipped (`C448_V28_...`, `C448_V13_...`, Windows-only), 0 failed | 61 | 8 |
-| CP-8 | S4-tests | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-red | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | 3 executed, 3 failed: V-17 and V-18 at "one item of the kind", V-19 at `Open` base + 2 | 3 | 6 |
+| CP-8 | S4-tests | `tests/Antiphon.Tests -> bin-c726-r2-tests/` | attention-red | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | 3 executed, 3 failed: V-17 and V-18 at "one item of the kind", V-19 at `Open` base + 2 | 3 | 6 |
 | CP-9 | S4 | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-green | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | all 3 listed, 0 failed/skipped | 3 | 5 |
 | CP-10 | S4-tests | n/a | client-visuals-red | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client-red -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20 | `CLIENT TESTS EXIT CODE: 1`; the failures include `maps every kind to a label, a colour, an icon and a hint` and the two new `draws ... in the Error severity bucket` cases at `toBeDefined`, and may include the other every-kind loops (`keeps kinds off the violet tier axis`, `lands every kind in a declared group`, the `unique == visualKeys` lockstep); every failure names `RunnerUnavailable` or `RepositoryChildJournalStale`, and no other case fails | n/a | 3 |
-| CP-11 | S4 | n/a | client-visuals-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20, R-4 | 21 tests (15 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
-| CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` with `TUNIT_MAX_PARALLEL_TESTS=1` in the environment | R-3 | 176 executed (124 + 32 + 9 + 11), 0 failed | 176 | 24 |
+| CP-11 | S4 | n/a | client-visuals-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20, R-4 | 22 tests (16 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
+| CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` | R-3 | 174 executed (163 AttentionServiceTests + 11 DispatchHeldAttentionTests), 0 failed; `serial: true` in the checkpoint manifest and `TUNIT_MAX_PARALLEL_TESTS=1` in its process environment | 174 | 24 |
 
 Union of `Covers` = V-1..V-36 and R-1..R-5: the whole ordinary scope. CP-7 and CP-12 reuse their
 `Build` row's output with `-NoBuild` and share its `After`. A red row is fixed and rerun as the
 same row (reruns counted); an inherited failure is re-run at `4fe3bce9` before it is reported.
+CP-12's floor was corrected from 176 after its fresh TRX at `1e0a3114` showed the full
+selection contains 163 `AttentionServiceTests` and 11 `DispatchHeldAttentionTests` results,
+all passing; no method was omitted by the filter.
 
 ### Cost
 

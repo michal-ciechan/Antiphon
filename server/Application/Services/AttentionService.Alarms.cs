@@ -1,0 +1,67 @@
+using System.Globalization;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+
+namespace Antiphon.Server.Application.Services;
+
+public sealed partial class AttentionService
+{
+    private static List<AttentionItemDto> BuildRunnerUnavailableItems(RunnerAlarmSnapshot? snapshot)
+    {
+        var episodes = snapshot?.Episodes;
+        if (episodes is null) return [];
+
+        return episodes.Where(episode => episode.RaisedAt is not null)
+            .Select(episode => new AttentionItemDto(
+                AttentionKind.RunnerUnavailable, AlertSeverity.Error,
+                null, null, null, null,
+                $"Runner {episode.DisplayName} unavailable",
+                $"{episode.PinnedOpenTasks} open task(s), {episode.LiveSessions} live session(s) pinned to an ineligible runner.",
+                $"runner={episode.RunnerId}; downSince={episode.DownSince:O}; "
+                    + $"lastReason={episode.LastReason ?? "unknown"}; "
+                    + $"notified={episode.NotifiedSessionIds.Count}",
+                episode.DownSince.UtcDateTime, null, [AttentionAction.OpenDrawer],
+                ConditionKey: $"runner-unavailable:{episode.RunnerId}"))
+            .ToList();
+    }
+
+    private static List<AttentionItemDto> BuildJournalStaleItems(RunnerAlarmSnapshot? snapshot)
+    {
+        var findings = snapshot?.Journals;
+        if (findings is null) return [];
+
+        var items = new List<AttentionItemDto>();
+        foreach (var finding in findings.Where(finding => finding.StaleCount >= 1))
+        {
+            var stale = finding.Records.Where(record => record.Stale)
+                .OrderBy(record => record.WrittenAt).ToList();
+            var oldestAge = stale.Count > 0
+                ? stale[0].Age.TotalMinutes.ToString("0.#", CultureInfo.InvariantCulture)
+                : "unknown";
+            var states = string.Join(", ", stale.Select(record => record.State).Distinct());
+            var commonKey = Path.TrimEndingDirectorySeparator(Path.GetFullPath(finding.CommonDirectory));
+            var command = $"pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository {finding.Repository}";
+            var evidence = new List<string>
+            {
+                $"common={commonKey}; records:",
+                $"Recovery: run {command} first (preview), then {command} -Execute -ConfirmDescendantsExited after confirming the descendants exited. Unknown or malformed records are retained by the script and need inspection.",
+            };
+            evidence.AddRange(finding.Records.OrderBy(record => record.WrittenAt).Select(record =>
+                $"file={record.File}; state={record.State}; "
+                    + $"ageSeconds={record.Age.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture)}; "
+                    + $"pid={record.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}; "
+                    + $"writtenAt={record.WrittenAt:O}"));
+            items.Add(new AttentionItemDto(
+                AttentionKind.RepositoryChildJournalStale, AlertSeverity.Error,
+                null, null, null, null,
+                $"Repository fenced: {finding.Repository}",
+                $"{finding.StaleCount} stale child-journal record(s) ({states}) fence every land and dispatch here; oldest {oldestAge} min.",
+                string.Join("\n", evidence),
+                stale.Count > 0 ? stale[0].WrittenAt.UtcDateTime : finding.InspectedAt.UtcDateTime,
+                null, [AttentionAction.OpenDrawer],
+                ConditionKey: $"journal-stale:{commonKey}"));
+        }
+        return items;
+    }
+}

@@ -50,6 +50,7 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly IPhoneHomeRuntimeSurface _runtime;
     private readonly PhoneHomeSettings _settings;
     private readonly IProviderAuthProbe? _authProbe;
+    private readonly IHostStatsSource? _hostStats;
     private readonly object _mutationGate = new();
     private readonly ILogger _logger;
     private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
@@ -57,11 +58,12 @@ public sealed class PhoneHomeCommandDispatcher
 
     public PhoneHomeCommandDispatcher(
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
-        ILogger<PhoneHomeCommandDispatcher>? logger = null)
+        ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null)
     {
         _runtime = runtime;
         _settings = settings;
         _authProbe = authProbe;
+        _hostStats = hostStats;
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _launchGenerations = new PhoneHomeLaunchGenerationStore(settings.LaunchGenerationsPath);
     }
@@ -267,6 +269,8 @@ public sealed class PhoneHomeCommandDispatcher
                 }),
                 PhoneHomeOperation.ObserveCompaction => Result(
                     request, await _runtime.ObserveCompactionAsync(ReadSessionId(request), ct)),
+                PhoneHomeOperation.HostStats => HostStatsResult(request),
+                PhoneHomeOperation.HostStatsSeries => HostStatsSeriesResult(request),
                 _ => Error(request, PhoneHomeProblemTypes.UnsupportedOperation, $"Operation '{request.Operation}' is not supported.", 400),
             };
         }
@@ -619,6 +623,29 @@ public sealed class PhoneHomeCommandDispatcher
             && payload.TryGetProperty("sessionId", out var id))
             return id.GetGuid();
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "sessionId is required.", 400);
+    }
+
+    private PhoneHomeFrame HostStatsResult(PhoneHomeFrame request)
+    {
+        if (_hostStats is null)
+            return Error(request, PhoneHomeProblemTypes.UnsupportedOperation, "Host stats are not supported on this runner.", 400);
+        return Result(request, _hostStats.Snapshot());
+    }
+
+    private PhoneHomeFrame HostStatsSeriesResult(PhoneHomeFrame request)
+    {
+        if (_hostStats is null)
+            return Error(request, PhoneHomeProblemTypes.UnsupportedOperation, "Host stats are not supported on this runner.", 400);
+        var body = request.Payload?.Deserialize<PhoneHomeHostSeriesRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Host stats series body is required.");
+        try
+        {
+            return Result(request, _hostStats.Series(body.Metric, body.Window));
+        }
+        catch (ArgumentException ex)
+        {
+            return Error(request, HostStatsRoutes.InvalidQueryCode, ex.Message, 400);
+        }
     }
 
     private static PhoneHomeFrame Result(PhoneHomeFrame request, object payload) =>

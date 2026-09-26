@@ -79,10 +79,13 @@ broker, so the memory floor and the Hosts page can never show two different numb
   the host's figures (no cgroup caps, `privileged: true`), which is what the operator wants.
 - Windows: `GetSystemTimes` (kernel32; idle/kernel/user 100 ns totals; CPU % from the delta the
   same way, kernel includes idle), `GlobalMemoryStatusEx` (already P/Invoked; now returning the
-  whole struct: `TotalPhys`, `AvailPhys`, page file as swap), `DriveInfo`, process count from
+  whole struct: `TotalPhys`, `AvailPhys`, `TotalPageFile`, `AvailPageFile`), `DriveInfo`, process count from
   `Process.GetProcesses().Length` **only if** CP-4 measures it under 1 ms, else omitted until
   Round 2. No WMI: `System.Management` is not referenced by the runner and one `Win32_Process`
   query is tens of milliseconds.
+  The Windows `TotalPageFile` / `AvailPageFile` pair represents commit limit and available
+  commit, so S4 docs must label the displayed figures as commit limit and charge, not physical
+  swap capacity and use.
 - Per-process (D-6): own process, each live session's `Pid` and `HostPid` from
   `SessionRunnerRuntime.List()`, via `Process.GetProcessById` guarded like
   `SystemProcessCpuProbe` (start-time tolerance so a recycled pid is not charged).
@@ -194,8 +197,8 @@ Postgres container (needs the Docker socket the runner deliberately does not mou
 
 | Route | Answer |
 |---|---|
-| `GET /api/hosts/stats` | `HostStatsDto[]`: `hostId`, `displayName`, `platform`, `state`, `observedAt`, `intervalSeconds`, `cores`, `current` (`cpuPercent`, `load1/5/15` or null, `memoryUsedBytes`, `memoryAvailableBytes`, `memoryTotalBytes`, `swapUsedBytes`, `swapTotalBytes`, `disks[] { path, freeBytes, totalBytes }`, `processCount`, `processes[] { name, sessionId?, cpuPercent, workingSetBytes }`), `rollups` (`{ "1m": {avg,max}, "5m": ..., "15m": ..., "30m": ... }` for `cpuPercent`, `load1`, `memoryUsedBytes`, `tasksInFlight`), `antiphon` (`tasksInFlight`, `byStage`, `byKind`, `queued`, `held`, `landsPending`, `sessionsLive`, `seatsDeclared`, `buildSlots { occupied, budget, waiters }`) |
-| `GET /api/hosts/{hostId}/stats/series?metric=cpu&window=30m` | `{ hostId, metric, window, intervalSeconds, points: [{ t, v }] }`; `metric` ∈ `cpu`, `load`, `memory`, `tasks`; `window` ∈ `1m`, `5m`, `15m`, `30m`; 400 otherwise; 404 unknown host; 409 `phone_home_unavailable` when the runner cannot be asked (the page then keeps what it has) |
+| `GET /api/hosts/stats` | `HostStatsDto[]`: `hostId`, `displayName`, `platform`, `state`, `observedAt`, `intervalSeconds`, `cores`, `current` (`cpuPercent`, `load1/5/15` or null, `memoryUsedBytes`, `memoryAvailableBytes`, `memoryTotalBytes`, `swapUsedBytes`, `swapTotalBytes`, `disks[] { path, freeBytes, totalBytes }`, `processCount`, `processes[] { name, sessionId?, cpuPercent, workingSetBytes }`), `rollups` (`{ "1m": {avg,max}, "5m": ..., "15m": ..., "30m": ... }` for `cpuPercent`, `load1`, `memoryUsedBytes`), `antiphon` (`tasksInFlight`, `byStage`, `byKind`, `queued`, `held`, `landsPending`, `sessionsLive`, `seatsDeclared`, `buildSlots { occupied, budget, waiters }`) |
+| `GET /api/hosts/{hostId}/stats/series?metric=cpu&window=30m` | `{ hostId, metric, window, intervalSeconds, points: [{ t, v }] }`; `metric` ∈ `cpu`, `load`, `memory`; `window` ∈ `1m`, `5m`, `15m`, `30m`; 400 otherwise; 404 unknown host; 409 `phone_home_unavailable` when the runner cannot be asked (the page then keeps what it has) |
 | SignalR `HostStatsUpdated` to group `hosts` | the same `HostStatsDto[]` after every tick; published only when the cache changed |
 
 Not `GET /api/hosts`: CARD-0654 (Review) owns that collection for budgets, and this card's
@@ -203,11 +206,15 @@ routes nest under it so both can land in either order; when both are live the bu
 carry a `stats` link later. Rejected: `PublishToAllAsync` every 5 s (every open tab pays for a
 page nobody has open; a group with no members costs a dictionary lookup).
 
+`tasksInFlight` remains a current Antiphon counter only. Its historical rollups and `metric=tasks`
+series are deferred: the runner does not sample task counts, so accepting that metric would return
+a successful empty series. S3 should display the current count without a tasks sparkline.
+
 ### D-8. Hosts page: a card per host, inline SVG sparklines, no chart dependency
 
 `client/src/features/hosts/`: `HostsPage.tsx` (route `/hosts`, nav item **Hosts** after
 **Agents**), `HostCard.tsx` (name, platform, state badge, current CPU / memory / load / tasks
-and seats, a 1/5/15/30 table of avg and max, four `Sparkline`s), `Sparkline.tsx` (inline
+and seats, a 1/5/15/30 table of avg and max, three `Sparkline`s), `Sparkline.tsx` (inline
 `<svg viewBox="0 0 W H" preserveAspectRatio="none">` with one `<path>` from the points, a
 `<title>` for accessibility, the newest point at the right; width 100 %, so it is the mobile
 layout too), `hosts.ts` API hooks under `client/src/api/` (`useHostStats`,
@@ -224,7 +231,7 @@ that is deliberately small). Rejected: `mermaid` (already present, not for time 
 
 | Section | Keys | Default |
 |---|---|---|
-| runner `SessionRunner:HostStats` | `Enabled`, `IntervalMs`, `RetentionMinutes`, `ProcessSampling`, `Volumes` (paths; default `[cwd, SessionLogPath]`; server2 compose sets `/work,/state`) | true, 5000, 30, true |
+| runner `SessionRunner:HostStats` | `Enabled`, `IntervalMs`, `RetentionMinutes`, `ProcessSampling`, `Volumes` (indexed paths; default `[cwd, SessionLogPath]`; server2 compose sets `Volumes__0=/work`, `Volumes__1=/state`) | true, 5000, 30, true |
 | server `HostStats` | `Enabled`, `PollIntervalMs`, `StaleAfterMs`, `RequestTimeoutMs`, `SeriesTimeoutMs` | true, 5000, 15000, 3000, 5000 |
 
 `Enabled=false` on the runner answers `/host-stats` 404 and the operation unsupported, which
@@ -295,7 +302,7 @@ Files (all `src/Antiphon.SessionRunner/` unless noted):
   `PhoneHomeHostSeriesRequest(string Metric, string Window)`; `SessionRunnerContracts.cs`
   `RunnerHostStatsDto`, `RunnerHostSeriesDto`, `RunnerHostSeriesPoint(DateTimeOffset T, double V)`,
   `RunnerCapabilityFeatures.HostStatsV1`.
-- `docker-compose.server2-runner.yml`: `SessionRunner__HostStats__Volumes: "/work,/state"`.
+- `docker-compose.server2-runner.yml`: `SessionRunner__HostStats__Volumes__0: /work` and `SessionRunner__HostStats__Volumes__1: /state`.
 
 Tests (`tests/Antiphon.SessionRunner.Tests/`): `HostStatsStoreTests`, `HostStatsProbeParseTests`,
 `HostStatsSamplerTests`, `HostStatsEndpointTests` (+ `HostStatsTestHost` beside
@@ -1069,11 +1076,11 @@ every non-TUnit command runs under `pwsh -NoProfile -File scripts/build-slot.ps1
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c718r/` | host-stats-runner | `/*/*/(HostStatsStoreTests*)\|(HostStatsProbeParseTests*)\|(HostStatsSamplerTests*)\|(HostStatsEndpointTests*)/*` | V-1, V-2, V-3, V-4 | all listed (9 + 10 + 4 + 4), 0 failed | 27 | 9 |
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c718r/` | host-stats-runner | `/*/*/(HostStatsStoreTests*)\|(HostStatsProbeParseTests*)\|(HostStatsSamplerTests*)\|(HostStatsEndpointTests*)/*` | V-1, V-2, V-3, V-4 | all listed (9 + 10 + 5 + 4), 0 failed | 28 | 9 |
 | CP-2 | S1 | CP-1 | runner-adjacent | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)\|(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-5, R-1 | all listed (37 + 5 + 11 + 4 + 10), 0 failed | 67 | 5 |
 | CP-3 | S1 | CP-1 | probe-live | `/*/*/HostStatsProbeLiveTests/*` | V-13 | this OS's method passed, the other `Skip.Test` with its reason (skipped 1), 0 failed | 1 | 2 |
 | CP-4 | S1 | `src/Antiphon.SessionRunner -> bin-c718s/` via `build-slot.ps1 -Label c718-overhead-build -- dotnet build src/Antiphon.SessionRunner --property:OutputPath=bin-c718s/` | overhead | step 0: `pwsh -NoProfile -File scripts/measure-host-stats-overhead.ps1 -RunnerDll src/Antiphon.SessionRunner/bin-c718s/Antiphon.SessionRunner.dll -DryRun`; step 1: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-overhead -- pwsh -NoProfile -File scripts/measure-host-stats-overhead.ps1 -RunnerDll src/Antiphon.SessionRunner/bin-c718s/Antiphon.SessionRunner.dll -WarmupSeconds 15 -Seconds 60 -Pairs 2` | V-14 | step 0 exit 0 (no scrubbed key name, isolation args present); step 1 exit 0 with an `OVERHEAD` line, delta < 1.0, sanity lines `on-samples>=12` and `off-status=404` | n/a | 9 |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c718a/` | host-stats-server | `/*/*/(HostStatsCacheTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsPollServiceTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-6, V-7, V-8, V-9, V-12 | all listed (6 + 3 + 6 + 5 + 3), 0 failed | 23 | 12 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c718a/` | host-stats-server | `/*/*/(HostStatsCacheTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsPollServiceTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-6, V-7, V-8, V-9, V-12 | all listed (7 + 3 + 6 + 5 + 3), 0 failed | 24 | 12 |
 | CP-6 | S2 | CP-5 | server-adjacent | `/*/*/(PhoneHomeDirectoryTests*)\|(RunnerCatalogueTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeEventPumpTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerCapabilityGateTests*)\|(HttpResilienceRegistrationTests*)/*` | R-2 | all listed (7 + 4 + 8 + 8 + 5 + 2 + 7), 0 failed | 41 | 8 |
 | CP-7 | S2 | CP-5 | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | >= 2900 executed, 0 failed (last measured 2993 executed at `c18a6c67`, + 12 new); a failure that also fails at `bafc3366` is reported pre-existing | 2900 | 5 |
 | CP-8 | S3 | n/a | client-hosts | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-client -- pwsh -File scripts/test-client.ps1 hosts` | V-10 | `CLIENT TESTS EXIT CODE: 0`, 4 files, 12 tests passed | n/a | 3 |

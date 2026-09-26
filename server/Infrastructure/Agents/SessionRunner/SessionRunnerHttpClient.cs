@@ -34,6 +34,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private readonly GrokRulesSettings _rulesSettings;
     private readonly TimeProvider _time;
     private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
+    private readonly HostStatsSettings _hostStats;
     private readonly object _capabilityGate = new();
     private RunnerCapabilitiesDto? _cachedCapabilities;
     private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
@@ -45,7 +46,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         IOptions<SessionRunnerSettings> settings,
         IOptions<GrokRulesSettings>? rulesSettings = null,
         TimeProvider? time = null,
-        IOptionsMonitor<ResilienceSettings>? resilience = null)
+        IOptionsMonitor<ResilienceSettings>? resilience = null,
+        IOptions<HostStatsSettings>? hostStats = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
@@ -53,6 +55,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         _rulesSettings = rulesSettings?.Value ?? new();
         _time = time ?? TimeProvider.System;
         _resilience = resilience;
+        _hostStats = hostStats?.Value ?? new HostStatsSettings();
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
 
@@ -308,6 +311,33 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                                        or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return null;
+        }
+    }
+
+    public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
+        HostStatsReadAsync<RunnerHostStatsDto>("host-stats", _hostStats.RequestTimeoutMs, ct);
+
+    public Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct) =>
+        HostStatsReadAsync<RunnerHostSeriesDto>(
+            $"host-stats/series?metric={Uri.EscapeDataString(metric)}&window={Uri.EscapeDataString(window)}",
+            _hostStats.SeriesTimeoutMs, ct);
+
+    private async Task<T?> HostStatsReadAsync<T>(string relative, int timeoutMs, CancellationToken ct) where T : class
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs), _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try
+        {
+            // Deliberately use the typed client. An admitted resilience read can exceed a poll tick.
+            using var response = await _httpClient.GetAsync(relative, linked.Token);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                throw new HostStatsUnsupportedException();
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<T>(JsonOptions, linked.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("Host stats runner request timed out.");
         }
     }
 

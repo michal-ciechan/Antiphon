@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Agents;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -124,6 +125,7 @@ public sealed partial class AttentionService
     private readonly ScheduleSettings _schedules;
     private readonly ZombieCensusState? _censusState;
     private readonly ISessionRunnerDirectory? _runnerDirectory;
+    private readonly RunnerAlarmState? _alarms;
 
     public AttentionService(
         AppDbContext db,
@@ -139,7 +141,8 @@ public sealed partial class AttentionService
         IOptions<CardWorkTransitionSettings>? cardTransitions = null,
         IOptions<ScheduleSettings>? schedules = null,
         ZombieCensusState? censusState = null,
-        ISessionRunnerDirectory? runnerDirectory = null)
+        ISessionRunnerDirectory? runnerDirectory = null,
+        RunnerAlarmState? alarms = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -152,6 +155,7 @@ public sealed partial class AttentionService
         _schedules = schedules?.Value ?? new ScheduleSettings();
         _censusState = censusState;
         _runnerDirectory = runnerDirectory;
+        _alarms = alarms;
     }
 
     public async Task<AttentionDto> GetAsync(CancellationToken ct, bool includeProgressProbe = true)
@@ -229,6 +233,9 @@ public sealed partial class AttentionService
         var remoteUnknown = (_runnerDirectory?.UnknownRemoteSessionIds() ?? []).ToHashSet();
         items.AddRange(await BuildSessionLeakItemsAsync(now, runnerSessions, remoteLive, remoteUnknown, ct));
         items.AddRange(await BuildZombieCensusItemsAsync(ct));
+        var alarmSnapshot = _alarms?.Current;
+        items.AddRange(BuildRunnerUnavailableItems(alarmSnapshot));
+        items.AddRange(BuildJournalStaleItems(alarmSnapshot));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
         items.AddRange(await BuildCompactionContinuationItemsAsync(ct));

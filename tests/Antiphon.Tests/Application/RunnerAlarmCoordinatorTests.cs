@@ -417,10 +417,14 @@ public sealed class RunnerAlarmCoordinatorTests
         var children = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(children);
         var record = Path.Combine(children, Guid.NewGuid().ToString("N") + ".json");
+        var aliveRecord = Path.Combine(children, Guid.NewGuid().ToString("N") + ".json");
         var now = DateTimeOffset.UtcNow;
         await File.WriteAllTextAsync(record, System.Text.Json.JsonSerializer.Serialize(
             new RepositoryChildJournal.ChildRecord(1, common, Environment.ProcessId, ticks)));
         File.SetLastWriteTimeUtc(record, now.AddMinutes(-10).UtcDateTime);
+        await File.WriteAllTextAsync(aliveRecord, System.Text.Json.JsonSerializer.Serialize(
+            new RepositoryChildJournal.ChildRecord(1, common, Environment.ProcessId, ticks - 1)));
+        File.SetLastWriteTimeUtc(aliveRecord, now.AddMinutes(-10).UtcDateTime);
         var state = new RunnerAlarmState();
         var coordinator = Build(db, new FakeEligibilitySource(), state, new RecordingNotifier());
 
@@ -428,12 +432,17 @@ public sealed class RunnerAlarmCoordinatorTests
 
         var finding = state.Current.Journals.ShouldHaveSingleItem();
         finding.StaleCount.ShouldBe(1);
-        var published = finding.Records.ShouldHaveSingleItem();
+        finding.Records.Count.ShouldBe(2);
+        var published = finding.Records.Single(item => LandingGit.PathsEqual(item.File, record));
         LandingGit.PathsEqual(published.File, record).ShouldBeTrue();
         published.State.ShouldBe(JournalRecordState.Dead);
+        published.Stale.ShouldBeTrue();
         published.ProcessId.ShouldBe(Environment.ProcessId);
         published.Age.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMinutes(5));
         published.WrittenAt.ShouldBe(new DateTimeOffset(File.GetLastWriteTimeUtc(record), TimeSpan.Zero));
+        var alive = finding.Records.Single(item => LandingGit.PathsEqual(item.File, aliveRecord));
+        alive.State.ShouldBe(JournalRecordState.Alive);
+        alive.Stale.ShouldBeFalse();
     }
 
     private static RunnerAlarmCoordinator Build(

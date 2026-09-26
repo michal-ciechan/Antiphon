@@ -25,6 +25,12 @@
   busy-session delivery trigger. Wakeup overflow requests a sweep, and repeated failures back
   off to sixty seconds. These wakeups are hints, never transcript-confirmed delivery receipts.
 
+- **Runner and child-journal alarms use two clocks (CARD-0726).** A runner outage raises only
+  after `Alarms:RunnerGraceSeconds`; a startup pass, event wakes and the
+  `Alarms:SweepMinutes` backstop inspect runner eligibility and registered journals.
+  The alarm state projects into attention; caller notes still use the ordinary queued
+  `WhenIdle` path and require a complete `UserPrompt` for delivery evidence.
+
 - **Working state is a committed projection (CARD-0701, Round 1).** Production queue gates/DTOs
   and agent list/detail read the DI-owned `SessionStateStore`. Each read, runtime ingest and
   synthetic restart boundary shares a per-session gate. PostgreSQL remains the record: publish
@@ -584,7 +590,7 @@ cleanup authority. The observation remains before the repository lease.
 
 ### Gotcha #87
 
-- **A land request is a row; the channel is a hand-off** (CARD-0331): `AgentTasks.LandRequestedAt` is the durable queue. The in-process channel only hands the id to the drain. A sweep at boot and every `LandSweepSeconds` re-runs anything pending that this process does not hold. Three interrupted attempts (`LandAttempt >= LandMaxAttempts`, default 3) refuse; `-Land` again starts a new request. A 409 means running in this server now. CARD-0448 replaces the old abort/ancestry shortcuts: an interrupted rebase without a durable Prepared checkpoint requires inspection and preserves manual resolution. Local target containment is not publication proof. Restart resumes the recorded operation, and cleanup requires committed publication plus fresh remote containment and current source identity. Pinned by `AgentTaskLandRequestTests`, `AgentTaskLandSweepTests`, `DelegationWorktreeTests`.
+- **A land request is a row; the channel is a hand-off** (CARD-0331): `AgentTasks.LandRequestedAt` is the durable queue. The in-process channel only hands the id to the drain. A sweep at boot and every `LandSweepSeconds` re-runs anything pending that this process does not hold. Three interrupted attempts (`LandAttempt >= LandMaxAttempts`, default 3) refuse; `-Land` again starts a new request. One admission may also rebase again after `remote_changed_before_push`, up to `Delegation:LandTargetRaceRetries` (default 2, 0 disables, valid 0 through 5). A 409 means running in this server now. CARD-0448 replaces the old abort/ancestry shortcuts: an interrupted rebase without a durable Prepared checkpoint requires inspection and preserves manual resolution. Local target containment is not publication proof. Restart resumes the recorded operation, and cleanup requires committed publication plus fresh remote containment and current source identity. Pinned by `AgentTaskLandRequestTests`, `AgentTaskLandSweepTests`, `DelegationWorktreeTests`.
 
 ### Gotcha #83
 

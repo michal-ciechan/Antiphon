@@ -19,6 +19,8 @@ import {
  * in a hurry.
  */
 const ALL_KINDS: AttentionKind[] = [
+  'RunnerUnavailable',
+  'RepositoryChildJournalStale',
   'LandHeld',
   'LandNoProgress',
   'LandOutcomeUnconfirmed',
@@ -89,6 +91,8 @@ function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): A
 
 describe('attentionVisuals', () => {
   it.each([
+    ['RunnerUnavailable', 'Error', 'broken'],
+    ['RepositoryChildJournalStale', 'Error', 'broken'],
     ['PoolDelegateUnreleased', 'Error', 'broken'],
     ['SessionStopStuck', 'Error', 'broken'],
     ['SessionUnowned', 'Warning', 'review'],
@@ -106,6 +110,12 @@ describe('attentionVisuals', () => {
       expect(visual.icon, kind).toBeTypeOf('function')
       expect(visual.hint.length, kind).toBeGreaterThan(0)
     }
+  })
+
+  it('shows the planned recovery hint for a fenced repository', () => {
+    expect(ATTENTION_VISUALS.RepositoryChildJournalStale.hint).toBe(
+      'A dead child-journal record fences every land and dispatch in this repository; run the recovery command in the evidence.',
+    )
   })
 
   it('keeps kinds off the violet tier axis', () => {

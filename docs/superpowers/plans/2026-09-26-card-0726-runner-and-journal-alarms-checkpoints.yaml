@@ -1,0 +1,224 @@
+schemaVersion: 1
+plan: docs/superpowers/plans/2026-09-26-card-0726-runner-and-journal-alarms-plan.md
+resultsRoot: .antiphon/checkpoints
+build:
+  properties: {}
+  maxCpuCount: 0
+  slots: auto
+  slotWaitMinutes: 45
+parallel: {}
+timeouts:
+  rowMinutes: 15
+  totalMinutes: 90
+rerun:
+  knownFlaky: []
+baseline: {}
+builds:
+- id: bin-c726-r1-s1-tests
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r1-s1-tests/
+- id: bin-c726-r1-s1
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r1-s1/
+- id: bin-c726-r1-s2-tests
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r1-s2-tests/
+- id: bin-c726-r1-s2
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r1-s2/
+- id: bin-c726-r1-s3-tests
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r1-s3-tests/
+- id: bin-c726-r1-s3
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r1-s3/
+- id: bin-c726-r2-tests
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r2-tests/
+- id: bin-c726-r2
+  project: tests/Antiphon.Tests
+  outputPath: bin-c726-r2/
+checkpoints:
+- id: CP-1
+  after:
+  - S1-tests
+  build: bin-c726-r1-s1-tests
+  group: seams-red
+  filter: /*/*/(AlarmSettingsValidatorTests*)|(RunnerEligibilityObserverTests*)|(RepositoryFenceObserverTests*)/*
+  expect:
+  - AlarmSettingsValidatorTests
+  - RunnerEligibilityObserverTests
+  - RepositoryFenceObserverTests
+  expectText: '7 executed (1 + 5 + 1), 7 failed, each at its named first assertion: V-1 the `Alarms:RunnerGraceSeconds` failure, V-2/V-3/V-4 the first recorder assertion, V-21 the id set, V-22 the Warning log, V-23 the recorded results'
+  minExecuted: 7
+  estimatedMinutes: 7
+  timeoutMinutes: 21
+  serial: false
+  isCommand: false
+- id: CP-2
+  after:
+  - S1
+  build: bin-c726-r1-s1
+  group: seams-green
+  filter: /*/*/(AlarmSettingsValidatorTests*)|(RunnerEligibilityObserverTests*)|(RepositoryFenceObserverTests*)/*
+  expect:
+  - AlarmSettingsValidatorTests
+  - RunnerEligibilityObserverTests
+  - RepositoryFenceObserverTests
+  expectText: all 7 listed, 0 failed/skipped
+  minExecuted: 7
+  estimatedMinutes: 6
+  timeoutMinutes: 18
+  serial: false
+  isCommand: false
+- id: CP-3
+  after:
+  - S2-tests
+  build: bin-c726-r1-s2-tests
+  group: inspector-red
+  filter: /*/*/RepositoryChildJournalInspectorTests/*
+  expect:
+  - RepositoryChildJournalInspectorTests
+  expectText: 5 executed, 5 failed at their finding-count or state assertions (empty-inspection skeleton)
+  minExecuted: 5
+  estimatedMinutes: 6
+  timeoutMinutes: 18
+  serial: false
+  isCommand: false
+- id: CP-4
+  after:
+  - S2
+  build: bin-c726-r1-s2
+  group: inspector-green
+  filter: /*/*/RepositoryChildJournalInspectorTests/*
+  expect:
+  - RepositoryChildJournalInspectorTests
+  expectText: all 6 listed, 0 failed/skipped
+  minExecuted: 6
+  estimatedMinutes: 6
+  timeoutMinutes: 18
+  serial: false
+  isCommand: false
+- id: CP-5
+  after:
+  - S3-tests
+  build: bin-c726-r1-s3-tests
+  group: alarm-loop-red
+  filter: /*/*/(RunnerAlarmCoordinatorTests*)|(RunnerAlarmHostedServiceTests*)|(RunnerAlarmNotifierTests*)|(RunnerAlarmDeliveryTests*)|(RunnerAlarmWiringTests*)/*
+  expect:
+  - RunnerAlarmCoordinatorTests
+  - RunnerAlarmHostedServiceTests
+  - RunnerAlarmNotifierTests
+  - RunnerAlarmDeliveryTests
+  - RunnerAlarmWiringTests
+  expectText: 20 executed (8 + 5 + 1 + 5 + 1); V-9 and V-26 pass (controls); the other 18 fail at their raise, note, finding, timer, row or wiring assertion (V-11 at m3's open episode, V-31 at "row is `Pending`")
+  minExecuted: 20
+  estimatedMinutes: 13
+  timeoutMinutes: 39
+  serial: false
+  isCommand: false
+- id: CP-6
+  after:
+  - S3
+  build: bin-c726-r1-s3
+  group: alarm-loop-green
+  filter: /*/*/(RunnerAlarmCoordinatorTests*)|(RunnerAlarmHostedServiceTests*)|(RunnerAlarmNotifierTests*)|(RunnerAlarmDeliveryTests*)|(RunnerAlarmWiringTests*)/*
+  expect:
+  - RunnerAlarmCoordinatorTests
+  - RunnerAlarmHostedServiceTests
+  - RunnerAlarmNotifierTests
+  - RunnerAlarmDeliveryTests
+  - RunnerAlarmWiringTests
+  expectText: all 27 listed, 0 failed/skipped
+  minExecuted: 27
+  estimatedMinutes: 12
+  timeoutMinutes: 36
+  serial: false
+  isCommand: false
+- id: CP-7
+  after:
+  - S3
+  build: bin-c726-r1-s3
+  group: r1-regression
+  filter: /*/*/(MultiRunnerDirectoryTests*)|(MultiRunnerRecoveryTests*)|(PhoneHomeDirectoryTests*)|(DefaultRunnerEligibilityTests*)|(RepositoryMutationLeaseTests*)|(RepositoryMutationLeaseDescribeTests*)|(RepositoryMutationLeaseOwnerTests*)|(TestLaneCategoryGuardTests*)/*
+  expect:
+  - MultiRunnerDirectoryTests
+  - MultiRunnerRecoveryTests
+  - PhoneHomeDirectoryTests
+  - DefaultRunnerEligibilityTests
+  - RepositoryMutationLeaseTests
+  - RepositoryMutationLeaseDescribeTests
+  - RepositoryMutationLeaseOwnerTests
+  - TestLaneCategoryGuardTests
+  expectText: '63 results (25 + 37 + 1): 61 passed, 2 skipped (`C448_V28_...`, `C448_V13_...`, Windows-only), 0 failed'
+  minExecuted: 61
+  estimatedMinutes: 8
+  timeoutMinutes: 24
+  serial: false
+  isCommand: false
+- id: CP-8
+  after:
+  - S4-tests
+  build: bin-c726-r2-tests
+  group: attention-red
+  filter: /*/*/RunnerAlarmAttentionTests/*
+  expect:
+  - RunnerAlarmAttentionTests
+  expectText: '3 executed, 3 failed: V-17 and V-18 at "one item of the kind", V-19 at `Open` base + 2'
+  minExecuted: 3
+  estimatedMinutes: 6
+  timeoutMinutes: 18
+  serial: false
+  isCommand: false
+- id: CP-9
+  after:
+  - S4
+  build: bin-c726-r2
+  group: attention-green
+  filter: /*/*/RunnerAlarmAttentionTests/*
+  expect:
+  - RunnerAlarmAttentionTests
+  expectText: all 3 listed, 0 failed/skipped
+  minExecuted: 3
+  estimatedMinutes: 5
+  timeoutMinutes: 15
+  serial: false
+  isCommand: false
+- id: CP-10
+  after:
+  - S4-tests
+  group: client-visuals-red
+  command: pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client-red -- pwsh -File scripts/test-client.ps1 attentionVisuals.test
+  expect: []
+  expectText: '`CLIENT TESTS EXIT CODE: 1`; the failures include `maps every kind to a label, a colour, an icon and a hint` and the two new `draws ... in the Error severity bucket` cases at `toBeDefined`, and may include the other every-kind loops (`keeps kinds off the violet tier axis`, `lands every kind in a declared group`, the `unique == visualKeys` lockstep); every failure names `RunnerUnavailable` or `RepositoryChildJournalStale`, and no other case fails'
+  estimatedMinutes: 3
+  timeoutMinutes: 15
+  serial: false
+  isCommand: true
+- id: CP-11
+  after:
+  - S4
+  group: client-visuals-green
+  command: pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test
+  expect: []
+  expectText: '22 tests (16 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0`'
+  estimatedMinutes: 3
+  timeoutMinutes: 15
+  serial: false
+  isCommand: true
+- id: CP-12
+  after:
+  - S4
+  build: bin-c726-r2
+  group: attention-regression
+  filter: /*/*/(AttentionServiceTests*)|(DispatchHeldAttentionTests*)/*
+  expect:
+  - AttentionServiceTests
+  - DispatchHeldAttentionTests
+  expectText: 174 executed (163 AttentionServiceTests + 11 DispatchHeldAttentionTests), 0 failed
+  minExecuted: 174
+  estimatedMinutes: 24
+  timeoutMinutes: 72
+  serial: true
+  isCommand: false
+relaxSharedBuildAfter: false

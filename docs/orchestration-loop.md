@@ -132,6 +132,10 @@ procedure: [apphost-runbook.md](apphost-runbook.md). A new enum member (a role, 
 server capability exactly like `land-v2`: the script accepting it proves nothing about the served
 build.
 
+After a restart, a phone-home runner still ineligible after `Alarms:RunnerGraceSeconds`
+raises a `RunnerUnavailable` attention row and queues notes to its callers; no separate
+session-scoped watch loop is re-armed.
+
 **Also automatic: what a stage run found.** A land op writes its own `StageOutcome` rows with no
 orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `-Stage`
 (§3) — is asked to end its report with a one-line `[antiphon-finding:<id> found|clean]` self-report
@@ -830,15 +834,25 @@ An explicit retry of an eligible terminal `Refused` operation creates a fresh op
 even when the source is unchanged. It repeats validation and verification as required,
 retains the previous operation and recovery pins, and may refuse again if the target or
 other prerequisites remain unsafe. Target repair or restart alone does not authorize a
-retry. Publication recovery and guarded cleanup retain their existing operation and evidence.
+retry. The one exception is a schema-3 operation refused `remote_changed_before_push`:
+the same request replaces it and rebases onto the new tip, up to
+`Delegation:LandTargetRaceRetries` (default 2, 0 disables), under the same lease and
+attempt. Each retry writes one `Warning` "raced with a push to `<remote>:<ref>` (retry n of N)".
+When the budget is spent the refusal names the count and the answer is `-Land` again with
+the same SHA, never a hand push of `master`. `push_rejected` means the remote did not move;
+`-Land` again resumes that push. Publication recovery and guarded cleanup retain their
+existing operation and evidence.
 
 Read the task's structured `landing` evidence and the outcome's operation ID, original source,
 verified commit, observed remote commit, confirmation time, mode and cleanup status.
 `AlreadyPresent` records independent containment without claiming a successful push.
 `LandedWithResidue` records publication with incomplete cleanup. Re-POST retries guarded cleanup;
 its `LandingCleanup` event updates the same publication rather than counting another one.
-`LandRefused` can follow local target advancement or an unconfirmed push; its evidence names
-the last acknowledged checkpoint. Missing source components alone never prove success.
+A schema-3 `LandRefused` leaves the task branch, the task worktree and the canonical checkout
+as they were: schema 3 never moves the local target before publication. Its evidence names
+the last acknowledged checkpoint. A schema-2 row (pre-2026-09-25) may already have advanced
+local `master`; reset that checkout to `origin/master` with fetch and `reset --hard`, then
+`-Land` again. Missing source components alone never prove success.
 A `Landed` line that also carries
 `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
 not present in the pinned verified SHA by patch id (`git cherry`) — land or drop that sibling; the
@@ -1222,6 +1236,10 @@ malformed or torn evidence. Exit 3 means busy or retained evidence; exit 0 means
 A server restart alone does not establish descendant exit; a machine reboot does. Unknown
 start intents still require investigation. Recovery clears admission, not Git sequencer/lock
 state or publication evidence; retry the original operation through its normal recovery path.
+Antiphon inspects every registered repository's child journal at startup, on a fenced
+land or dispatch, and every `Alarms:SweepMinutes` (15 by default). A stale record raises
+a `RepositoryChildJournalStale` attention row with the recovery command; orchestrators
+watch the attention feed for this condition.
 
 Creation records now distinguish unfinished intent from a completed/reused checkout. An
 owned missing checkout can be reconstructed from its recorded Git admin/index without
