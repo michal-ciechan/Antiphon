@@ -160,7 +160,7 @@ internal static class CheckpointFixtures
             })),
             new XElement(ns + "ResultSummary",
                 new XElement(ns + "Counters",
-                    new XAttribute("total", results.Count(r => r.Outcome != "NotExecuted")),
+                    new XAttribute("total", results.Length),
                     new XAttribute("executed", results.Count(r => r.Outcome != "NotExecuted")),
                     new XAttribute("passed", results.Count(r => r.Outcome == "Passed")),
                     new XAttribute("failed", results.Count(r => r.Outcome is "Failed" or "Error" or "Timeout" or "Aborted"))))));

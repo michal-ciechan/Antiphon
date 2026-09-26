@@ -41,6 +41,24 @@ public sealed class RowRunnerTests
     }
 
     [Test]
+    public async Task skipped_class_still_meets_the_roster()
+    {
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(
+                CheckpointFixtures.TrxFile(request),
+                ("Antiphon.Tests.Sample.alpha", "Passed"),
+                ("Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter", "NotExecuted"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        var result = await Run(driver, passed: true, min: 1, expect: ["Sample", "DetachedLauncherTests"]);
+        result.ExitCode.ShouldBe(0);
+        result.Output.ShouldNotContain("ROSTER MISS");
+    }
+
+    [Test]
     public async Task build_failed_is_exit_2()
     {
         var driver = new FakeDriver();
