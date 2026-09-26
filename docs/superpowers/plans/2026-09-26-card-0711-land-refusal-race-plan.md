@@ -91,3 +91,143 @@ second target `ls-remote` (window a). Output (`PROBE …` lines in the TRX):
 | `Probe_RaceAtPushWindow_OneRequestLands_RedToday` | `LandRefused push_rejected`; op `92ac4bd2` `PushStarted` | — | — | **failed** as expected: the red for S1/S2 |
 
 Total 54 s for the three tests, 140 s slot time including the isolated build (`bin-c711p/`, since deleted).
+
+## Decisions
+
+- **D-1 — Keep the card, narrow it: CARD-0688 fixed the residue, not the race.** The card's first
+  expectation ("a refused land rolls back its local side effects … or records them so the next attempt
+  resumes") is satisfied by schema 3 by construction (nothing local is mutated before publication) and is
+  pinned here by an assertion inside the acceptance test rather than by new code. The card's acceptance
+  ("a push racing the land … then retries the same request or a new request for the same reviewed SHA;
+  the retry lands, with no manual reset") becomes V-1/V-2 (same request, one land) and V-3 (new request
+  after the budget is spent). Rejected: closing the card onto CARD-0688 with only a regression test
+  (the race still costs two or three round trips and, as 2026-09-26 showed, ends in a hand push).
+- **D-2 — The retry lives in `AgentTaskLandService.RunLeasedAsync`, under the same lease, request and
+  attempt.** After `_protocol.RunAsync` returns unpublished with a race refusal (D-3) and the budget is
+  not spent, the service writes the retry evidence (D-5) and loops back to the resolver, which now
+  replaces the refused operation (D-4); the protocol then runs the replacement from `Inspected` exactly
+  as a fresh request would. Rejected: (a) re-queueing the request as a new attempt — it releases the
+  lease, re-enters the CARD-0672 yield to dispatch waiters, consumes `LandMaxAttempts`, adds a sweep
+  latency of `LandSweepSeconds`, and still needs the same two gates; (b) rewinding the operation's phase
+  inside the protocol — `AgentTaskLandingState.Transition` is deliberately monotonic (`Verified →
+  RebaseStarted` would need new arms, the `target-before`/`prepared` pins would have to be re-pinned,
+  and the verification receipts cleared), and the first attempt's evidence would be overwritten; (c) a
+  `--force-with-lease` push — CARD-0688 D-4 already rejected it, and the failure here is not the CAS but
+  what happens after the CAS fails.
+- **D-3 — A benign target race is exactly one refusal: schema 3, unpublished, `Refused`,
+  `LastReason == "remote_changed_before_push"`.** `AgentTaskLandingState.IsTargetRaceRefusal(op)` names
+  it (`SchemaVersion == 3 && Phase == Refused && Publication == Refused && !HasPublication &&
+  LastReason == "remote_changed_before_push"`). Three protocol sites raise that reason and all three are
+  already terminal for schema 3 (catch block, `AgentTaskLandingProtocol.cs:289–297`): the pre-push CAS
+  (line 252), the already-present path whose remote no longer contains the source (line 174, a rewound
+  origin — the retry then does what a fresh `-Land` would: rebase onto the rewound tip and push), and,
+  new under D-6, a rejected push whose re-observation proves the tip moved. Every other refusal
+  (`rebase_conflict`, `verification_failed`, `source_changed`, `source_remote_changed`,
+  `reviewed_source_mismatch`, `resume_approval_changed`, lock codes, I/O) is untouched and terminal or
+  resumable exactly as today. Rejected: keying the retry on `push_rejected` as well (a push that fails
+  while the remote did not move is auth, network or a hook; re-rebasing cannot help, and today's
+  resumable `PushStarted` op is the right shape for it).
+- **D-4 — A race-refused operation may be replaced by its own request; the bound is the service's.**
+  Two gates open, both only for `IsTargetRaceRefusal`: `AgentTaskLandingState.CanReplaceRefused(previous,
+  explicitRequest, leaseHeld)` treats a race refusal as replaceable without `explicitRequest` (still
+  requires the lease, still never a publication, still the schema-2/3 approval rule); and
+  `AgentTaskLandSourceResolver.ResolveAsync`'s Resolved short-circuit (lines 86–93) returns the existing
+  operation only when it is not a race refusal, otherwise it falls through to `CreateOperationAsync`,
+  which already replaces a `Refused` predecessor through `LandOperationFactory.CreateAsync` (source
+  re-read and compared to `LocalBeforeSha` and the reviewed SHA; target re-observed; `ApprovalLandRequestId`,
+  `ReviewEvidenceId` and `ApprovalKind` inherited because `OriginalSourceSha` is unchanged). The
+  protocol's own `Phase == Refused` arm (lines 94–103) needs no change: after the resolver has attached
+  the replacement, `task.ActiveLandingId` names an `Inspected` operation. The crash-resume path (sweep
+  re-run of a still-pending request whose last operation is a race refusal) therefore also replaces,
+  which is correct for this refusal and is bounded by `LandMaxAttempts`. Rejected: a protocol parameter
+  ("this run may replace") — the state policy is where replacement rules already live and are unit-tested
+  (`AgentTaskLandingStateTests`), and a flag would let a caller replace any refusal.
+- **D-5 — One `Warning` event per retry, progress restarted, stage outcomes recorded per run; no new
+  event type.** In one task-locked transaction the service adds
+  `Warning` "Land raced with a push to `<remote>:<destinationRef>` (retry n of N): the target moved from
+  `<old8>` to `<new8>` after the candidate `<verified8>` was verified; rebasing `<reviewed8>` onto the new
+  tip." with `LandRequestId` and `LandingOperationId` set, and resets `request.HighestProgress = -1`,
+  `LastProgressAt = now`, `WarningAt = ErrorAt = null` (as admission does, `RunLeasedAsync` lines
+  379–384) so `AgentTaskLandMonitorService` does not age a retry that is rebuilding. The raced run's
+  `Rebase`/`Verify` stage outcomes are recorded as today's refused path records them (lines 480–486): they
+  were real work and real cost. On exhaustion the request is refused as today with
+  `remote_changed_before_push; after N automatic rebases (Delegation:LandTargetRaceRetries=N); run -Land
+  again`. Rejected: a new `AgentTaskEventType.LandRetried` (client union, DTO, docs and formatter churn for
+  one informational line; `Warning` is the established type for "did not finish (server restarted);
+  re-running" and "yield budget exhausted") and a `LandAged`-style caller note per retry (the caller hears
+  the terminal outcome, which now names the retries).
+- **D-6 — A rejected push is a race only when the re-observation proves the tip moved.** Line 265
+  becomes a three-way: `push_unconfirmed` (push succeeded, remote does not contain the candidate),
+  `remote_changed_before_push` (push failed **and** `beforePush.Sha != (RemoteBeforeSha ??
+  TargetBeforeSha)`), `push_rejected` (push failed, tip unchanged). The first two are terminal for
+  schema 3 (existing catch arm); `push_rejected` keeps today's shape — the operation stays `PushStarted`
+  and a later request resumes it and pushes again — which is the right shape for a transient network or
+  auth failure, and is pinned by V-4. `LandFailureDiagnostic` needs no new template: the reason strings
+  already exist. Rejected: making `push_rejected` terminal too (a resumable op after a transient failure
+  is the cheaper retry: no rebase, no rebuild).
+- **D-7 — Legacy schema-2 rows: `remote_changed_before_push` and `source_changed` at
+  `LocalTargetAdvanced`/`PushStarted` become terminal; nothing is rolled back; `target_local_ahead` names
+  the fix.** The catch block gains `op.SchemaVersion != 3 && reason is "remote_changed_before_push" or
+  "source_changed" && op.Phase is LocalTargetAdvanced or PushStarted`. Neither state can ever publish
+  (the candidate is based on a stale tip; the branch is no longer at the rebased tip), so leaving the op
+  resumable only guarantees the same refusal forever (the 68a64314 shape in today's code). Once terminal,
+  an explicit request with the same reviewed SHA replaces it: `IsLegacyDerivation` accepts a branch still
+  at the old rebase's tip (`PreparationInputSha` = that tip, "from the recorded rebased tip"), and a
+  branch reset to the reviewed SHA lands from there. The schema-2 local-`master` residue is **not**
+  undone by the land: `LandOperationFactory` refuses `target_local_ahead` while local `master` is not an
+  ancestor of the observed remote, and that refusal now carries a detail: "local `refs/heads/master`
+  `<L>` is ahead of `origin` `<R>`; in the main checkout run `git fetch origin && git reset --hard
+  origin/master` (after committing or stashing any operator work), then run `-Land` again; do not `git
+  pull --rebase`, which carries the stray commit forward (CARD-0711 request 524311c6)". Rejected:
+  automatic reset of local `master` (CARD-0688 D-4: unpushed commits on local `master` are the operator's,
+  and a land must never move the canonical checkout backwards), and an automatic race retry for schema-2
+  rows (the residue makes `target_local_ahead` the likely next refusal; the operator step comes first).
+- **D-8 — Budget `Delegation:LandTargetRaceRetries`, default 2, clamp 0–5, 0 disables.** Two retries
+  are three protocol runs per admission; each retry is one rebase plus one verification build (94–215 s
+  on the desktop, CARD-0688 measurements) because a rebase onto a moved tip never qualifies for
+  `base_unchanged`. A `master` that moves faster than three verifications in a row is a queue problem,
+  not a race, and the terminal refusal says how many rebases were spent. `LandMaxAttempts` (3) keeps
+  bounding crash re-runs independently: worst case 3 × 3 protocol runs for one request, all evidenced.
+  Setting added to `DelegationSettings` beside `LandMaxAttempts`, to `server/appsettings.json` (line
+  288 block) and to the settings line in [session-runtime-invariants.md](../../session-runtime-invariants.md)
+  (CARD-0331 bullet).
+- **D-9 — Safety properties are kept by construction, and each is pinned by a test.** Every retry is a
+  fresh operation through the unchanged factory and protocol: source changed → `source_changed`
+  (`LocalBeforeSha` mismatch) or `source_remote_changed` (`RecheckRemoteSourceAsync` at protocol entry)
+  (V-6); candidate not the reviewed one → `reviewed_source_mismatch` at the factory and
+  `RecheckApprovalAsync` at every boundary (`request.ExpectedSourceSha == op.OriginalSourceSha`,
+  `ReviewEvidenceId`, filter) (V-1 asserts the inherited identity, V-7 the policy table); real conflict
+  on the re-rebase → `rebase_conflict`, `NeedsResolution`, merge task, no push (V-5); verification of the
+  re-rebased candidate is never skipped (V-1 asserts `Verifier.Calls`). The retry never touches the task
+  worktree, the task branch or the canonical checkout before publication (V-1 asserts them after every
+  refused attempt), so a retry that is itself refused leaves the same nothing behind.
+- **D-10 — Docs say what a refusal leaves and what to do.** [orchestration-loop.md](../../orchestration-loop.md)
+  §5: replace "`LandRefused` can follow local target advancement or an unconfirmed push" with the schema-3
+  statement (a refusal leaves the task branch, the task worktree and the canonical checkout as they were;
+  the automatic re-rebase and its `Warning` line; after a terminal `remote_changed_before_push` the answer
+  is `-Land` again with the same SHA, never a hand push of `master`; `push_rejected` means the remote did
+  not move and `-Land` again resumes the push); the "explicit retry of an eligible terminal `Refused`
+  operation" paragraph gains the race exception. [ops-http.md](../../ops-http.md) land row: replace
+  "`LandRefused` does not imply the local target stayed unchanged" with "schema 3 never moves the local
+  target before publication; a schema-2 row (pre-2026-09-25) may have". `AGENTS.md` unchanged (its land
+  lines already say `-Land` again and forbid the hand push).
+- **D-11 — No migration, no DTO change.** The retry count is not a column: the durable evidence is the
+  chain of `AgentTaskLandings` rows for the request (each raced one `Refused` with
+  `remote_changed_before_push`, `Active = false`, and the last one the landed or refused operation), the
+  `Warning` events, and the terminal line. Rejected: a `TargetRaceAttempt` column (a migration and its
+  Designer for a number the chain already encodes) and a `landRequest.raceRetries` DTO field (the events
+  are already on the task).
+- **D-12 — Fixtures: the fake push rejects a non-fast-forward; the real-git helper pushes as a
+  stranger.** `ControlledLandingGit`'s `push` arm refuses with exit 1 and `! [rejected] … (fetch first)`
+  when the current `_remoteTarget` is not an ancestor of the pushed SHA (its `merge-base --is-ancestor`
+  model already exists, line 577), leaving `_remoteTarget` unchanged; a new `AdvanceRemoteTarget()`
+  helper mirrors `AdvanceRemoteSource()`. `LandingGitFixture` gains `PushIndependentAsync(string name)`
+  (the probe's helper: commit in `Observer`, push `HEAD:refs/heads/master` to the bare remote, return the
+  SHA), and `LandingProtocolHarness` gains the `LandSettings` property `LandingSafetyHarness` already has
+  so the budget is configurable in both harnesses. Rejected: a second remote or a second canonical clone
+  (the observer clone already is the stranger).
+- **D-13 — One Code round; TestDesign owns the final test shapes.** The verification design below is
+  the plan's input to TestDesign: it names the fixture, the red, and the assertion for each V, and the
+  probe diff is the working seed for V-1/V-2 (rename the class to `AgentTaskLandTargetRaceTests`, move
+  the helpers into S4, keep the `PROBE` evidence lines out). Code runs the closed checkpoint table once;
+  no second round is planned.
