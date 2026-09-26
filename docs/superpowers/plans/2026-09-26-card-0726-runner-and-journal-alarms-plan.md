@@ -547,7 +547,7 @@ the final table.
 
 ### Stated defaults (TestDesign, for Review)
 
-The fix design is unchanged. Three behaviours the plan leaves ambiguous or unrecovered are pinned
+The fix design is unchanged. Five points the plan leaves ambiguous, unrecovered or untestable are pinned
 here as defaults under the caller's standing authority, because a guard cannot be tested until its
 behaviour is fixed:
 
@@ -572,6 +572,11 @@ behaviour is fixed:
   record whose liveness read returns null is `Unknown`; a `.tmp` torn save is `Malformed`. D-8's
   classification governs where ground-truth row 7 differs: a wrong `CommonDirectory` is `Unknown`,
   not `Malformed`.
+- **TD-4 (test seam).** `PhoneHomeRunnerDirectory` exposes `internal IRunnerEligibilityObserver?
+  Observer => _observer;` so V-36 can prove `Program` wired it; nothing else reads it.
+- **TD-5 (state shape).** `RunnerAlarmState` publishes a `JournalFinding` for every inspected
+  repository that has at least one record (any state), with `StaleCount`; the feed projects only
+  findings with `StaleCount >= 1` (V-13, V-18, V-36).
 
 ### Inspection
 
@@ -855,8 +860,9 @@ P3 on the desktop (`RunnerId` null). Sessions on `server2`: one `Running`, one `
   cleared: no episode and no note at any evaluation. (m5) runner `r3` raised at its grace with one
   notified caller P6, then `"retired"` while still ineligible: the episode is gone the same
   evaluation and P6 gets exactly one `[runner r3 recovered]` note (D-3 table row 6). Red: consult
-  the exclusion only when opening an episode -> fails at m5's "episode gone"; never consult it ->
-  fails at m1; do not skip disabled entries -> fails at m2.
+  the exclusion only when opening an episode -> fails at m5's "episode gone"; close an excluded
+  raised episode without its recovery note -> fails at P6's note; never consult it -> fails at
+  m1; do not skip disabled entries -> fails at m2.
 - **V-12: startup opens an episode per enabled remote runner and a normal reconnect closes it
   silently | Integration |
   `RunnerAlarmCoordinatorTests.startup_opens_an_episode_per_enabled_remote_runner_and_a_normal_reconnect_closes_it`
@@ -947,7 +953,7 @@ recording every `CreateTimer` due time and period; `UntilAsync` polls the publis
   header, `Body` containing the body; `h.Adapter.SubmittedBodies` empty when the call returns;
   `recordingFlush.Calls == [session]`. `NotifyAsync` for an unknown session id throws and writes no
   row. Red: `deliverIfIdle: true` -> fails at `SubmittedBodies` empty; omit `TryEnqueue` -> fails
-  at `Calls`; `QueuedMessageOrigin.Delegation` -> fails at `Origin`.
+  at `Calls`; `QueuedMessageOrigin.Ui` -> fails at `Origin`.
 - **V-30: an idle caller receives the outage and the recovery note as complete prompts |
   Integration, producer to recipient |
   `tests/Antiphon.Tests/Application/RunnerAlarmDeliveryTests.cs`
@@ -985,7 +991,7 @@ recording every `CreateTimer` due time and period; `UntilAsync` polls the publis
   `Pending`. Simulated restart: a new `RunnerAlarmState` and coordinator, hints no longer dropped,
   the runner still down: open at `t1`, raise at `t1+180` -> row R2. `UntilAsync`: the session's
   `UserPrompt` text (one prompt or two) contains R1's body and R2's body; R1 and R2 are `Sent`.
-  Evidence row for handoff H4; no guard of its own (G-19 and the queue's existing session flush).
+  Evidence row for handoff H4; no guard of its own (G-38 re-raises after the restart; the queue's existing session flush drains R1).
 
 **S3: wiring** (`CP-5` red, `CP-6` green)
 
@@ -1119,7 +1125,7 @@ note's wording) are named in their V row but carry no PC.
 | G-34 | D-5 | an excluded (draining/retired) runner never opens or raises an episode | PC-34 |
 | G-35 | D-5 | the exclusion is consulted on every wake, closing a raised episode | PC-35 |
 | G-36 | D-3 | disabled entries are never evaluated | PC-36 |
-| G-37 | D-5 | a cleared exclusion re-arms with `DownSince = now` | PC-37 |
+| G-37 | D-3 | a raised episode closed by an exclusion still sends the recovery note to its notified callers | PC-37 |
 | G-38 | D-3 | the first pass opens an episode for a runner already down (the CARD-0716 restart case) | PC-38 |
 | G-39 | D-3 | a disconnect older than the last resolution is not reused as `DownSince` (instant false raise) | PC-39 |
 | G-40 | D-3 | a disconnect later than the last resolution is used as `DownSince` | PC-40 |
