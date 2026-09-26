@@ -82,6 +82,11 @@ public sealed partial class PhoneHomeRollingRunnerTests
             world, RollingRunnerSettings.Server2, new DrainBody("keep sessions", RollingRunnerSettings.Server2Temp), token: true);
         drained.StatusCode.ShouldBe(HttpStatusCode.OK);
 
+        const string message = "queued-while-draining";
+        await world.Queue.EnqueueAsync(world.SessionA, message, MessageSendMode.WhenIdle, CancellationToken.None);
+        world.PeerA.Inputs.ShouldContain(frame => InputText(frame) == message);
+        world.PeerB.Inputs.ShouldNotContain(frame => InputText(frame) == message);
+
         var routing = new RoutingSessionRunnerClient(world.RunnerDirectory);
         await routing.SendInputAsync(world.SessionA, "still-here", CancellationToken.None);
         await routing.GetTranscriptAsync(world.SessionA, CancellationToken.None);
@@ -101,10 +106,6 @@ public sealed partial class PhoneHomeRollingRunnerTests
         inventory.ShouldBeOfType<RunnerInventory.Available>();
         world.PeerA.RequestCount(PhoneHomeOperation.List).ShouldBeGreaterThanOrEqualTo(1);
 
-        const string message = "queued-while-draining";
-        await world.Queue.EnqueueAsync(world.SessionA, message, MessageSendMode.WhenIdle, CancellationToken.None);
-        world.PeerA.Inputs.ShouldContain(frame => InputText(frame) == message);
-        world.PeerB.Inputs.ShouldNotContain(frame => InputText(frame) == message);
         await using var db = world.NewDb();
         var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == world.SessionA);
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
@@ -296,21 +297,24 @@ public sealed partial class PhoneHomeRollingRunnerTests
 
         HttpStatusCode status;
         AgentTaskCreatedDto? created = null;
+        var refusedBecause = "";
         try
         {
             created = await world.CreateSourceLandingAsync();
             status = HttpStatusCode.Created;
         }
-        catch (ServiceUnavailableException)
+        catch (ServiceUnavailableException ex)
         {
             status = HttpStatusCode.ServiceUnavailable;
+            refusedBecause = ex.Code + " " + ex.Message;
         }
         catch (ConflictException ex)
         {
             status = (HttpStatusCode)ex.StatusCode;
+            refusedBecause = ex.Code + " " + ex.Message;
         }
 
-        status.ShouldBe(HttpStatusCode.Created);
+        status.ShouldBe(HttpStatusCode.Created, refusedBecause);
         var saved = await world.ReadTaskAsync(created!.Id);
         await world.TickAsync();
         saved = await world.ReadTaskAsync(created.Id);
@@ -616,6 +620,14 @@ public sealed partial class PhoneHomeRollingRunnerTests
             edit?.Invoke(task);
             await using var db = NewDb();
             db.AgentTasks.Add(task);
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = id,
+                Type = AgentTaskEventType.Created,
+                Detail = "seeded",
+                At = task.CreatedAt,
+            });
             await db.SaveChangesAsync();
             return id;
         }
