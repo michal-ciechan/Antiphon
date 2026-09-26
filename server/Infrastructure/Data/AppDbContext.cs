@@ -280,8 +280,9 @@ public class AppDbContext : DbContext
             entity.Property(i => i.ConversationId).IsRequired().HasMaxLength(200);
             entity.Property(i => i.NativeMessageId).IsRequired().HasMaxLength(200);
             entity.Property(i => i.EnvelopeJson).HasColumnType("text");
+            entity.Property(i => i.AcceptanceSequence).UseIdentityByDefaultColumn();
             entity.HasIndex(i => new { i.Provider, i.ConversationId, i.NativeMessageId }).IsUnique();
-            entity.HasIndex(i => new { i.AgentId, i.QueueMessageId, i.AcceptedAt });
+            entity.HasIndex(i => new { i.AgentId, i.QueueMessageId, i.AcceptanceSequence });
             entity.HasIndex(i => i.QueueMessageId);
         });
 
