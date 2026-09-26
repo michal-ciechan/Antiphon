@@ -270,6 +270,38 @@ public sealed class RunnerAlarmDeliveryTests
         await rig.Worker.StopAsync(CancellationToken.None);
     }
 
+    [Test]
+    [Timeout(90_000)]
+    public async Task a_post_insert_read_failure_delivers_the_saved_note_once()
+    {
+        var fault = new PostInsertReadFault();
+        await using var rig = await StartAsync(configure: options => options.AddInterceptors(
+            new MarkAlarmInsertSaved(fault), new ThrowOnceAfterAlarmSave(fault)));
+        await SeedPinnedAsync(rig, AgentTaskStatus.Working);
+        await rig.Coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+
+        rig.Db.ChangeTracker.Clear();
+        var saved = await rig.Db.SessionQueuedMessages.AsNoTracking()
+            .Where(row => row.AgentSessionId == rig.Harness.SessionId)
+            .ToListAsync();
+        saved.Count.ShouldBe(1);
+        saved[0].Body.ShouldContain("[runner server2 unavailable]");
+        fault.Throws.ShouldBe(1);
+
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(181), CancellationToken.None);
+        await rig.Coordinator.EvaluateRunnersAsync(T0.AddSeconds(182), CancellationToken.None);
+        var prompt = await UntilPromptAsync(rig, "[runner server2 unavailable]");
+        prompt.ShouldContain("transport_abort");
+        (await RowAsync(rig, prompt)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await PromptsAsync(rig)).Count(text => text.Contains("[runner server2 unavailable]", StringComparison.Ordinal)).ShouldBe(1);
+        rig.Db.ChangeTracker.Clear();
+        (await rig.Db.SessionQueuedMessages.AsNoTracking()
+            .CountAsync(row => row.AgentSessionId == rig.Harness.SessionId
+                && (row.Body ?? "").Contains("[runner server2 unavailable]", StringComparison.Ordinal))).ShouldBe(1);
+        await rig.Worker.StopAsync(CancellationToken.None);
+    }
+
     private static async Task<Rig> StartAsync(CompletionNoteFlushQueue? flush = null, Action<DbContextOptionsBuilder>? configure = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -372,6 +404,49 @@ public sealed class RunnerAlarmDeliveryTests
     }
 
     private static string Short(Guid id) => id.ToString("N")[..8];
+
+    private sealed class PostInsertReadFault
+    {
+        public bool Saved;
+        public int Throws;
+    }
+
+    /// <summary>Arms after the alarm row's save commits, so the next read is the post-insert refresh.</summary>
+    private sealed class MarkAlarmInsertSaved(PostInsertReadFault fault) : SaveChangesInterceptor
+    {
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            var context = eventData.Context;
+            if (context is not null && context.ChangeTracker.Entries<SessionQueuedMessage>().Any(entry =>
+                    (entry.Entity.NoteHeader ?? "").Contains("[runner server2 unavailable]", StringComparison.Ordinal)
+                    || (entry.Entity.Body ?? "").Contains("[runner server2 unavailable]", StringComparison.Ordinal)))
+                fault.Saved = true;
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class ThrowOnceAfterAlarmSave(PostInsertReadFault fault) : DbCommandInterceptor
+    {
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            if (fault.Saved && fault.Throws == 0)
+            {
+                fault.Throws = 1;
+                throw new InvalidOperationException("owned post-insert read failure");
+            }
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            ReaderExecuting(command, eventData, result);
+            return ValueTask.FromResult(result);
+        }
+    }
 
     private sealed class DrainFault
     {
