@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Settings;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -93,6 +94,23 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
     {
         PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.ChildClaudeHome = "state/claude"))
             .ShouldContain(m => m.Contains("ChildClaudeHome", StringComparison.Ordinal));
+    }
+
+    // CARD-0727 V-3. D-2: server2-temp repeats server2's values, including the secret.
+    // Id uniqueness belongs to MultiRunnerDirectoryTests; this map cannot express a duplicate key.
+    [Test]
+    public void Two_entries_with_the_same_secret_and_host_root_validate()
+    {
+        const string secret = "same-phone-home-secret";
+        var settings = RollingRunnerSettings.Pair(secret, secret);
+        settings.Runners[RollingRunnerSettings.Server2].SharedSecret.ShouldBe(secret);
+        settings.Runners[RollingRunnerSettings.Server2Temp].SharedSecret.ShouldBe(secret);
+        settings.Runners[RollingRunnerSettings.Server2].HostWorkspaceRoot
+            .ShouldBe(settings.Runners[RollingRunnerSettings.Server2Temp].HostWorkspaceRoot);
+
+        PhoneHomeRunnerSettingsRules.Validate(settings).ShouldBeEmpty();
+        PhoneHomeRunnerCatalog.Configured(settings).Select(runner => runner.Id)
+            .ShouldBe([RollingRunnerSettings.Server2, RollingRunnerSettings.Server2Temp]);
     }
 
     private static PhoneHomeRunnerSettings Settings(Action<PhoneHomeRunnerSettings> mutate)
