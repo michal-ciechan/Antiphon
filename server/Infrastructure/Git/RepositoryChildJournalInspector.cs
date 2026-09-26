@@ -17,7 +17,8 @@ public sealed record JournalRecordFinding(
     JournalRecordState State,
     TimeSpan Age,
     bool Stale,
-    int? ProcessId);
+    int? ProcessId,
+    DateTimeOffset WrittenAt);
 
 public sealed record JournalInspection(string? CommonDirectory, IReadOnlyList<JournalRecordFinding> Findings)
 {
@@ -44,20 +45,23 @@ public class RepositoryChildJournalInspector(ILandingGit git)
         var attributes = File.GetAttributes(children);
         if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
         {
-            return new JournalInspection(common, [ClassifyPath(children, JournalRecordState.Malformed, null, staleAfter, now)]);
+            var malformed = ClassifyPath(children, JournalRecordState.Malformed, null, staleAfter, now);
+            return new JournalInspection(common, malformed is null ? [] : [malformed]);
         }
 
         var findings = new List<JournalRecordFinding>();
         foreach (var path in Directory.EnumerateFiles(children))
         {
             ct.ThrowIfCancellationRequested();
-            findings.Add(await ClassifyFileAsync(path, common, staleAfter, now, ct));
+            var finding = await ClassifyFileAsync(path, common, staleAfter, now, ct);
+            if (finding is not null)
+                findings.Add(finding);
         }
 
         return new JournalInspection(common, findings);
     }
 
-    private async Task<JournalRecordFinding> ClassifyFileAsync(
+    private async Task<JournalRecordFinding?> ClassifyFileAsync(
         string path, string common, TimeSpan staleAfter, DateTimeOffset now, CancellationToken ct)
     {
         var attributes = File.GetAttributes(path);
@@ -101,14 +105,21 @@ public class RepositoryChildJournalInspector(ILandingGit git)
 
     protected virtual DateTime ReadWrittenAtUtc(string path) => File.GetLastWriteTimeUtc(path);
 
-    private JournalRecordFinding ClassifyPath(
+    private JournalRecordFinding? ClassifyPath(
         string path, JournalRecordState state, int? processId, TimeSpan staleAfter, DateTimeOffset now)
     {
-        var age = now.UtcDateTime - ReadWrittenAtUtc(path);
+        var writtenUtc = ReadWrittenAtUtc(path);
+        // GetLastWriteTimeUtc returns 1601-01-01 when the file disappeared between the directory
+        // read and this timestamp. Skip it; the next inspection sees the deletion. Publishing the
+        // sentinel would be a false stale Dead record until then.
+        if (writtenUtc.Year <= 1601)
+            return null;
+        var age = now.UtcDateTime - writtenUtc;
         if (age < TimeSpan.Zero)
             age = TimeSpan.Zero;
         var stale = state != JournalRecordState.Alive && age >= staleAfter;
-        return new JournalRecordFinding(path, state, age, stale, processId);
+        return new JournalRecordFinding(path, state, age, stale, processId,
+            new DateTimeOffset(writtenUtc, TimeSpan.Zero));
     }
 
     private static bool PathExists(string path)

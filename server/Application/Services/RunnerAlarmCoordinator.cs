@@ -174,7 +174,11 @@ public sealed class RunnerAlarmCoordinator(
                 if (inspection.Findings.Count == 0)
                     findings.Remove(key);
                 else
-                    findings[key] = new JournalFinding(path, inspection.CommonDirectory ?? path, inspection.StaleCount, now);
+                    findings[key] = new JournalFinding(path, inspection.CommonDirectory ?? path, inspection.StaleCount, now)
+                    {
+                        Records = inspection.Findings.Select(record => new JournalAlarmRecord(
+                            record.File, record.State, record.Age, record.ProcessId, record.WrittenAt)).ToArray(),
+                    };
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
