@@ -400,6 +400,11 @@ and the new code never goes live. Smoke: `http://localhost:17202/health`,
 client at `http://localhost:17203`, session-runner at `http://localhost:17204`,
 dashboard pinned at `http://localhost:17205`.
 `pwsh -File verify-dev-stack.ps1 -SkipBrowser` is the health check.
+After restart, check `/api/attention`: a phone-home runner still ineligible after
+`Alarms:RunnerGraceSeconds` raises `RunnerUnavailable` and queues caller notes.
+Antiphon also inspects registered child journals at startup and every
+`Alarms:SweepMinutes` (15 by default); a stale record raises
+`RepositoryChildJournalStale` with the manual recovery command.
 
 Simple-mode fallback (no Aspire): `.\dev-start.ps1` / `.\restart.ps1`, ports
 17281 (API) / 17282 (Vite) / 17204 (session-runner, the always-on daemon). Postgres is still 17280.

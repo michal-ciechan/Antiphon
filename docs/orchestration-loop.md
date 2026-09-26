@@ -132,6 +132,10 @@ procedure: [apphost-runbook.md](apphost-runbook.md). A new enum member (a role, 
 server capability exactly like `land-v2`: the script accepting it proves nothing about the served
 build.
 
+After a restart, a phone-home runner still ineligible after `Alarms:RunnerGraceSeconds`
+raises a `RunnerUnavailable` attention row and queues notes to its callers; no separate
+session-scoped watch loop is re-armed.
+
 **Also automatic: what a stage run found.** A land op writes its own `StageOutcome` rows with no
 orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `-Stage`
 (§3) — is asked to end its report with a one-line `[antiphon-finding:<id> found|clean]` self-report
@@ -1232,6 +1236,10 @@ malformed or torn evidence. Exit 3 means busy or retained evidence; exit 0 means
 A server restart alone does not establish descendant exit; a machine reboot does. Unknown
 start intents still require investigation. Recovery clears admission, not Git sequencer/lock
 state or publication evidence; retry the original operation through its normal recovery path.
+Antiphon inspects every registered repository's child journal at startup, on a fenced
+land or dispatch, and every `Alarms:SweepMinutes` (15 by default). A stale record raises
+a `RepositoryChildJournalStale` attention row with the recovery command; orchestrators
+watch the attention feed for this condition.
 
 Creation records now distinguish unfinished intent from a completed/reused checkout. An
 owned missing checkout can be reconstructed from its recorded Git admin/index without
