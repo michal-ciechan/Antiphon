@@ -18,16 +18,19 @@ public sealed class DelegationSettings
     /// <summary>Recent-history window requested by delegations list clients unless they choose Show all.</summary>
     public int DefaultWindowDays { get; set; } = 7;
 
-    /// <summary>How many tasks may be Dispatched/Working at once across all roots.</summary>
-    public int MaxConcurrentTasks { get; set; } = 6;
+    /// <summary>
+    /// Desktop delegated-task cap: Dispatched or Working rows with no runner. Phone-home
+    /// capacity is a separate seat count and is not this number. Default 2.
+    /// </summary>
+    public int MaxConcurrentTasks { get; set; } = 2;
 
     /// <summary>
     /// CARD-0147: absolute create-time cap on non-specialist tasks in Queued, Dispatched, or
     /// Working, per project scope (<c>AgentTask.ProjectId</c>; tasks with no project scope form
-    /// their own bucket). Distinct from <see cref="MaxConcurrentTasks"/> (the dispatcher process
-    /// ceiling). Must be a positive integer; there is always an absolute cap.
+    /// their own bucket). Distinct from <see cref="MaxConcurrentTasks"/> (the desktop
+    /// delegated-task cap). Must be a positive integer; there is always an absolute cap.
     /// </summary>
-    public int MaxOpenTasks { get; set; } = 3;
+    public int MaxOpenTasks { get; set; } = 6;
 
     /// <summary>
     /// CARD-0659 import input only (CARD-0710 D-11). The first missing runtime-defaults row copies
@@ -331,9 +334,9 @@ public sealed class DelegationSettings
         ["Investigate"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Plan"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["TestDesign"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
-        ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 2 },
         ["Mutation"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
-        ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 2 },
         // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately
         // unset — the auto-trigger is disarmed by default (CARD-0158). Same pattern as Test below.
         ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, RecommendedInFlight = 1 },

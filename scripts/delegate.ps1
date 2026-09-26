@@ -193,9 +193,9 @@ param(
     [switch]$IgnoreModelDisabled,
 
     # Bypass the CARD-0147 create-time 409 concurrency_limit. Queues this one task past the
-    # project/role in-flight cap (default 3 absolute, 1 per named role). Counts and occupants
-    # are the calling session's project only. One-shot: it does not raise
-    # Delegation:MaxConcurrentTasks, and the dispatcher still skips past 6.
+    # project/role in-flight cap (default 6 absolute; Code and Review 2, other named roles 1).
+    # Counts and occupants are the calling session's project only. One-shot: it does not raise
+    # Delegation:MaxConcurrentTasks, and the dispatcher still skips past 2.
     # Use only when the user asked for parallel work this turn.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreConcurrencyLimit,

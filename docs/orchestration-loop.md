@@ -223,7 +223,7 @@ noticed.
 Lowest `rank` first — the formula already prefers a card that **changes how everything else gets done** over one more feature.
 Prefer a card whose plan already exists — but check properly, see below.
 
-### Standing pipeline policy: one task per stage, Code fed to two (CARD-0533)
+### Standing pipeline policy: Code and Review at two, Code fed to two (CARD-0533)
 
 **This is the orchestrator's default for working the Antiphon board.** It was the operator's
 standing instruction on every overnight run from 2026-09-13/14 through 2026-09-18/19 and is
@@ -231,12 +231,13 @@ recorded here so a fresh seat starts from it instead of being told again. The us
 session override it for that session; nothing below needs restating to apply. The delivered copy
 is the `orchestrator` bundle; this section carries the reasons.
 
-1. **One task per stage, stages in parallel.** Run at most one task in each stage role
-   (Investigate, Plan, TestDesign, Code, Mutation, Review) at a time, and let different stages
-   run concurrently — each in its own `-Worktree`, so they never serialise on the shared
-   checkout. Never two tasks in the same stage at once. Before dispatching a stage, read that
-   stage's in-flight row on `GET /api/agent-tasks/pipeline` (or `/orchestrator?tab=pipeline`),
-   not your memory of what you dispatched.
+1. **Code and Review at two; every other stage at one.** Run at most two Code tasks and two
+   Review tasks, and at most one task in each other stage role (Investigate, Plan, TestDesign,
+   Mutation) at a time, and let different stages run concurrently — each in its own `-Worktree`,
+   so they never serialise on the shared checkout. Never two tasks in the same stage at once
+   when that role's create-time cap is one. Before dispatching a stage, read that stage's
+   in-flight row on `GET /api/agent-tasks/pipeline` (or `/orchestrator?tab=pipeline`), not your
+   memory of what you dispatched.
 2. **On every completion, dispatch the named next stage.** Read `next=` and `handoff:` off the
    completion header (§1, CARD-0146). `next=unmarked` goes back to the same delegate for the
    missing block (§0's ladder); it is never guessed from the diff.
@@ -405,15 +406,18 @@ axes (`AgentTask.Stage` vs `AgentTask.NextStage`); neither is renamed to disambi
 column, not the word.
 
 **WIP defaults (documented rule, CARD-0146 D7, restated by CARD-0533 — dates are the operator
-instructions that fixed these, 2026-09-01/02 and 2026-09-13/14).** `RecommendedInFlight = 1` for
-every stage role, and that is the per-stage rule: one Investigate, one Plan, one TestDesign, one
-Code, one Mutation and one Review may all be in flight together, never two tasks in the same
-stage. The 2026-09-01 reading that the plan-side stages share one slot is superseded — they run
-concurrently, each in its own worktree. Code is fed to a depth of two (in flight + queued +
-ready); Plan toward Code holds at that depth ("planning should only stop if more than 1 card
-waiting to execute") and resumes below it. Alternate one complex/UI card with one medium/simple
-card, and prefer GitHub-linked cards. All of this is advisory — CARD-0147's create-time
-concurrency gate is the hard stop, this is the judgement call underneath it; the full rule set is
+instructions that fixed these, 2026-09-01/02 and 2026-09-13/14).** `RecommendedInFlight = 2` for
+Code and Review, and `RecommendedInFlight = 1` for every other stage role. That is the per-stage
+rule: two Code, two Review, one Investigate, one Plan, one TestDesign and one Mutation may all be
+in flight together; never two tasks in the same stage for a role still at one. The 2026-09-01
+reading that the plan-side stages share one slot is superseded — they run concurrently, each in
+its own worktree. Code is fed to a depth of two (in flight + queued + ready) and Review's
+create-time cap is two; Plan toward Code holds at that depth ("planning should only stop if more
+than 1 card waiting to execute") and resumes below it. Alternate one complex/UI card with one
+medium/simple card, and prefer GitHub-linked cards. The feed depth and the alternation are
+advisory. CARD-0147's create-time concurrency gate is the hard stop (`MaxOpenTasks` default 6;
+Code and Review 2; other named roles 1). The desktop delegated-task cap
+`MaxConcurrentTasks` defaults to 2 and does not count phone-home seats. The full rule set is
 §1's standing pipeline policy.
 
 **A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
