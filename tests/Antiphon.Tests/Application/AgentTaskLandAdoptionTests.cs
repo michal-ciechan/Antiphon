@@ -76,7 +76,32 @@ public sealed class AgentTaskLandAdoptionTests
         {
             var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
             owner.Status = AgentTaskStatus.Failed;
-            owner.CardId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var columnId = Guid.NewGuid();
+            var cardId = Guid.NewGuid();
+            db.Projects.Add(new Project
+            {
+                Id = projectId, Name = "reviewed recovery fixture",
+                LocalRepositoryPath = h.Fixture.Repository, CreatedAt = now, UpdatedAt = now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId, ProjectId = projectId, Name = "reviewed recovery", CreatedAt = now, UpdatedAt = now,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = columnId, BoardId = boardId, Name = "Ready", StateKey = "ready",
+                CreatedAt = now, UpdatedAt = now,
+            });
+            db.Cards.Add(new Card
+            {
+                Id = cardId, BoardId = boardId, BoardColumnId = columnId,
+                Identifier = "CARD-0753", Title = "reviewed recovery", CreatedAt = now, UpdatedAt = now,
+            });
+            owner.ProjectId = projectId;
+            owner.CardId = cardId;
             db.AgentTasks.Add(new AgentTask
             {
                 Id = sourceId, RootTaskId = sourceId, Title = "reviewed repair", Goal = "repair",
