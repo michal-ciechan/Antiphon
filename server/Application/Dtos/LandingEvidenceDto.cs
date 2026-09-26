@@ -12,7 +12,8 @@ public sealed record LandingEvidenceDto(Guid OperationId, LandPhase Phase, LandO
     LandRecoveryMode RecoveryMode = LandRecoveryMode.None, AgentTaskStatus? RecoveryOwnerStatus = null,
     Guid? RecoverySourceTaskId = null, string? RecoverySourceFullRef = null,
     string? RecoveryOwnerRemoteBeforeSha = null, string? RecoveryOwnerRemoteAfterSha = null,
-    string? RecoveryRelationship = null)
+    string? RecoveryRelationship = null, bool? RecoveryPatchesContained = null,
+    string? RecoveryUncontainedPatches = null)
 {
     public static LandingEvidenceDto From(AgentTaskLanding op) => new(op.Id, op.Phase, op.Mode,
         new Services.AgentTaskLandingState().HasPublication(op) ? op.Publication
@@ -25,5 +26,7 @@ public sealed record LandingEvidenceDto(Guid OperationId, LandPhase Phase, LandO
         RecoverySourceTaskId: op.RecoverySourceTaskId, RecoverySourceFullRef: op.RecoverySourceFullRef,
         RecoveryOwnerRemoteBeforeSha: op.RecoveryOwnerRemoteBeforeSha,
         RecoveryOwnerRemoteAfterSha: op.RecoveryOwnerRemoteAfterSha,
-        RecoveryRelationship: op.RecoveryRelationship);
+        RecoveryRelationship: op.RecoveryRelationship,
+        RecoveryPatchesContained: op.RecoveryPatchesContained,
+        RecoveryUncontainedPatches: op.RecoveryUncontainedPatches);
 }

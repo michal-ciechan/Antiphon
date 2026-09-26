@@ -31,7 +31,9 @@ internal static class BlockedContextBuilder
         var (canAnswer, cannotAnswer) = Answerability(kind, task);
         var mergeTaskId = kind == BlockedKind.MergeConflict
             ? family
-                .Where(t => t.ParentTaskId == task.Id && t.Role == AgentTaskRole.Merge)
+                .Where(t => t.ParentTaskId == task.Id && t.Role == AgentTaskRole.Merge
+                    && (t.Status is AgentTaskStatus.Queued or AgentTaskStatus.Dispatched
+                        or AgentTaskStatus.Working or AgentTaskStatus.Blocked))
                 .OrderByDescending(t => t.CreatedAt)
                 .Select(t => (Guid?)t.Id)
                 .FirstOrDefault()

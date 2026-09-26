@@ -73,6 +73,8 @@ public sealed class AgentTaskLanding
     public string? RecoveryOwnerRemoteBeforeSha { get; set; }
     public string? RecoveryOwnerRemoteAfterSha { get; set; }
     public string? RecoveryRelationship { get; set; }
+    public bool? RecoveryPatchesContained { get; set; }
+    public string? RecoveryUncontainedPatches { get; set; }
     public Guid? SupersedesRequestId { get; set; }
     public string? PreparationInputSha { get; set; }
     public Guid? PreviousPreparationOperationId { get; set; }

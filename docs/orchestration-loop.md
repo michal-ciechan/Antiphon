@@ -83,6 +83,11 @@ through the original owner. The server validates the Review's subject, ref, repo
 then pins and aligns the owner source under the repository lease; adoption pushes the owner ref
 with an exact `--force-with-lease`. A NeedsResolution request may be superseded by a new reviewed
 request; Queued, Held and Running requests cannot. The original task status stays historical.
+The request and landing receipt record the old owner remote tip, source relationship, and whether
+the reviewed replacement contains each old owner patch; uncontained commit IDs remain visible.
+An open land-origin Merge helper with a live session blocks supersession; an inactive helper is
+canceled as the new reviewed request takes custody. If a helper fails or is canceled while its
+request still needs resolution, the owner gets a Warning and a fresh Conflict notification.
 An unconfirmed previous publication needs its own recovery before another source is adopted.
 
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
@@ -230,6 +235,10 @@ dispatch-base obligation (`AgentTaskLandNotifications.Kind = DispatchBase`, null
 captured with the successful claim; its absence from the parent session is a defect, not an
 expected loss. The reduced identities, body and route freeze in the claim transaction; recovery
 delivers those original obligations without regrouping moved refs. Historical intents are unchanged.
+A sibling holds dispatch only while its current request is pending in Queued, Held or Running;
+NeedsResolution emits the ordinary warning. An explicit StartRef that equals or descends from
+the request's reviewed source SHA bypasses that sibling check even if a Merge helper later
+rewrites the sibling's local tip.
 Land a Plan with `delegate.ps1 -Land <id>` before dispatching Execute as a
 convenience so the plan commit is on master — it is not required for a correct base. A `Landed`
 line carrying `unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10

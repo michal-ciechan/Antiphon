@@ -383,6 +383,7 @@ public class LandingGit : ILandingGit
             if (before.Reason is not null) return before;
             var snapshot = before.Snapshot!;
             if (HasSequencerAt(snapshot.GitDirectory)) return new(null, "active_sequencer");
+            if (scope == LandInspectionScope.IdentityOnly) return before;
             var statusArgs = new[] { "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none" };
             var status = await RunAsync(snapshot.RegisteredPath, statusArgs, ct);
             if (!status.Succeeded)

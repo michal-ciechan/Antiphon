@@ -13,6 +13,110 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandAdoptionTests
 {
     [Test]
+    public async Task C753_InterruptedLocalAdvanceResumesOnlyPinnedOldCheckout()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var oldLocal = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var replacement = Path.Combine(h.Fixture.Root, "trees", "resume-reviewed");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", replacement,
+            h.Fixture.SeedSha);
+        await File.WriteAllTextAsync(Path.Combine(replacement, "resume.txt"), "replacement\n");
+        await h.Fixture.RequiredAsync(replacement, "add", ".");
+        await h.Fixture.RequiredAsync(replacement, "commit", "-m", "reviewed replacement");
+        var reviewed = (await h.Fixture.RequiredAsync(replacement, "rev-parse", "HEAD")).Trim();
+        await h.Fixture.RequiredAsync(replacement, "push", "--force-with-lease", "origin",
+            $"HEAD:{h.Fixture.SourceRef}");
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+        var accepted = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await using (var db = h.CreateContext())
+        {
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
+            request.RecoveryLocalBeforeSha = oldLocal;
+            request.RecoveryOwnerRemoteBeforeSha = reviewed;
+            request.SourceResolutionState = LandSourceResolutionState.AdvanceStarted;
+            request.SourceAdvanceChildOperation = "source-adopt-reset";
+            await db.SaveChangesAsync();
+        }
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "--no-deref",
+            h.Fixture.SourceRef, reviewed, oldLocal);
+
+        await h.RunQueuedAsync();
+
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(reviewed);
+    }
+
+    [Test]
+    public async Task C753_DirtyOwnerCheckoutRefusesBeforeReviewedSourceMutation()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var reviewed = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "untracked-recovery.txt"), "unreviewed\n");
+
+        await h.RunQueuedAsync();
+
+        await using var check = h.CreateContext();
+        var row = await check.AgentTaskLandRequests.SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBe("source_dirty");
+        (await check.AgentTaskLandings.CountAsync()).ShouldBe(0);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(reviewed);
+    }
+
+    [Test]
+    public async Task C753_MovedReviewedRemoteTipRefusesWithoutTargetPublication()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var reviewed = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        var other = Path.Combine(h.Fixture.Root, "trees", "moved-source");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", other, reviewed);
+        await File.WriteAllTextAsync(Path.Combine(other, "later.txt"), "different source\n");
+        await h.Fixture.RequiredAsync(other, "add", ".");
+        await h.Fixture.RequiredAsync(other, "commit", "-m", "move reviewed tip");
+        var moved = (await h.Fixture.RequiredAsync(other, "rev-parse", "HEAD")).Trim();
+        await h.Fixture.RequiredAsync(other, "push", "origin", $"HEAD:{h.Fixture.SourceRef}");
+
+        await h.RunQueuedAsync();
+
+        await using var check = h.CreateContext();
+        var row = await check.AgentTaskLandRequests.SingleAsync(r => r.Id == request.RequestId);
+        row.SourceRefusalReason.ShouldBe("recovery_source_not_remote_tip");
+        (await check.AgentTaskLandings.CountAsync()).ShouldBe(0);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(moved);
+    }
+
+    [Test]
     public async Task C753_ReviewedSelfRecoveryAlignsRewrittenOwnerSourceAndPublishes()
     {
         await using var h = new LandingSafetyHarness();
@@ -128,6 +232,8 @@ public sealed class AgentTaskLandAdoptionTests
         op.RecoverySourceTaskId.ShouldBe(sourceId);
         op.RecoveryOwnerRemoteBeforeSha.ShouldBe(ownerBefore);
         op.RecoveryOwnerRemoteAfterSha.ShouldBe(reviewed);
+        op.RecoveryPatchesContained.ShouldBe(true);
+        op.RecoveryUncontainedPatches.ShouldBe("");
         Directory.Exists(sourcePath).ShouldBeTrue();
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "show-ref", "--verify", "--hash", sourceRef))
             .Trim().ShouldBe(reviewed);

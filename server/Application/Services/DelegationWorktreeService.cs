@@ -208,6 +208,14 @@ public sealed class DelegationWorktreeService
         return result.Ok;
     }
 
+    /// <summary>Resolve an explicit dispatch ref to a full commit identity for sibling landing checks.</summary>
+    public async Task<string?> ResolveCommitAsync(string repo, string revision, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(revision) || !Directory.Exists(repo)) return null;
+        var result = await GitAsync(repo, ct, "rev-parse", "--verify", "--quiet", revision + "^{commit}");
+        return result.Ok ? SiblingWarningReducer.NormalizeTip(result.StdOut.Trim()) : null;
+    }
+
     /// <summary>Project, then Git settings, then <c>master</c>, probed as a commit in <paramref name="task"/>'s repo.</summary>
     public async Task<DefaultBranchProbe> ProbeConfiguredDefaultAsync(AgentTask task, CancellationToken ct)
     {

@@ -306,7 +306,9 @@ public sealed partial class AttentionService
             .ToDictionary(g => g.Key, g => g.OrderBy(e => e.At).Last().Type);
         var mergeChildren = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.ParentTaskId != null && ids.Contains(t.ParentTaskId.Value)
-                && t.Role == AgentTaskRole.Merge)
+                && t.Role == AgentTaskRole.Merge
+                && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
+                    || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked))
             .Select(t => new { t.ParentTaskId, t.Id, t.CreatedAt })
             .ToListAsync(ct);
         var mergeByParent = mergeChildren
