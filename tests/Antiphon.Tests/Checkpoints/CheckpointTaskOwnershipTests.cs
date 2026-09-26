@@ -305,8 +305,10 @@ public sealed class CheckpointTaskOwnershipTests
         handler.Next.Enqueue("Working");
         var driver = new FakeDriver();
         var run = NewBoundRun();
+        var delays = 0;
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None,
-            Runtime(handler, driver, delay: (_, _) => Task.CompletedTask))).ShouldBe(0);
+            Runtime(handler, driver, delay: (_, token) =>
+                Interlocked.Increment(ref delays) == 1 ? Task.CompletedTask : HoldDelay(TimeSpan.Zero, token)))).ShouldBe(0);
         driver.Count(_ => true).ShouldBe(1);
         File.ReadAllText(Path.Combine(run, "executor.log")).ShouldContain("owner read failed: http 500");
     }
