@@ -108,10 +108,22 @@ public class AppDbContext : DbContext
     public DbSet<ExpectationWatchState> ExpectationWatchStates => Set<ExpectationWatchState>();
     public DbSet<ExpectationEpisode> ExpectationEpisodes => Set<ExpectationEpisode>();
     public DbSet<ExpectationNudge> ExpectationNudges => Set<ExpectationNudge>();
+    public DbSet<SessionRunnerState> SessionRunnerStates => Set<SessionRunnerState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<SessionRunnerState>(entity =>
+        {
+            entity.ToTable("SessionRunnerStates");
+            entity.HasKey(s => s.RunnerId);
+            entity.Property(s => s.RunnerId).HasMaxLength(64);
+            entity.Property(s => s.DrainReason).HasMaxLength(200);
+            entity.Property(s => s.RedirectTo).HasMaxLength(64);
+            entity.Property(s => s.RetireReason).HasMaxLength(200);
+            entity.Property(s => s.UpdatedAt).IsRequired();
+        });
 
         modelBuilder.Entity<FileReviewState>(entity =>
         {

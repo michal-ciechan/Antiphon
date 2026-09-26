@@ -210,6 +210,21 @@ public static class PhoneHomeProblemTypes
     /// </summary>
     public const string ConnectionClosedInFlight = "phone_home_connection_closed_in_flight";
 
+    /// <summary>CARD-0727 D-7. The runner is connected and still serves its sessions, and takes no new work.</summary>
+    public const string RunnerDraining = "phone_home_runner_draining";
+
+    /// <summary>CARD-0727 D-11. A retired id stays unregistrable until its drain is cleared.</summary>
+    public const string RunnerRetired = "phone_home_runner_retired";
+
+    /// <summary>CARD-0727 D-9. The drain's redirect is unknown, disabled, the desktop, itself, or draining.</summary>
+    public const string RedirectInvalid = "phone_home_redirect_invalid";
+
+    /// <summary>CARD-0727 D-12. A non-forced retire while the runner still owns sessions. R3 sends it.</summary>
+    public const string RunnerBusy = "phone_home_runner_busy";
+
+    /// <summary>CARD-0727 D-14. Forced retire of a runner that is not draining. R3 sends it.</summary>
+    public const string RunnerNotDraining = "phone_home_runner_not_draining";
+
     /// <summary>
     /// CARD-0679 D-9: a Launch for a session id the runner already holds live under a different
     /// generation. The same generation is not refused: it is answered with the existing session.
@@ -328,4 +343,16 @@ public sealed record PhoneHomeRunnerStatusDto(
     int? PendingEventBytes = null,
     DateTimeOffset? LastDisconnectAtUtc = null,
     long Reconnects = 0,
-    long? LastCatchUpMs = null);
+    long? LastCatchUpMs = null,
+    bool AcceptingNewWork = false,
+    bool Draining = false,
+    DateTimeOffset? DrainedAt = null,
+    string? DrainReason = null,
+    string? RedirectTo = null,
+    bool RetireWhenIdle = false,
+    DateTimeOffset? IdleObservedAt = null,
+    DateTimeOffset? RetiredAt = null,
+    string? RetireReason = null,
+    int? Sessions = null,
+    int? QueuedTasks = null,
+    int? RunnerSessions = null);
