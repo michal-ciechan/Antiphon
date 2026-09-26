@@ -1298,3 +1298,37 @@ used. `Min` is the source execution count at `4fe3bce9` plus this card's new met
 Union of `Covers` = V-1..V-36 and R-1..R-5: the whole ordinary scope. CP-7 and CP-12 reuse their
 `Build` row's output with `-NoBuild` and share its `After`. A red row is fixed and rerun as the
 same row (reruns counted); an inherited failure is re-run at `4fe3bce9` before it is reported.
+
+### Cost
+
+All figures are estimated. The measured inputs are CARD-0738's on this host (2026-09-26):
+`tests/Antiphon.Tests` build 4 min 03 s under a slot, about 1 min per small class including the
+Testcontainers Postgres start; nothing was built or run by TestDesign.
+
+- **Ordinary V/R floor (Code)** = sum of `EstimatedMinutes` = 7 + 6 + 6 + 6 + 13 + 12 + 8 + 6 + 5
+  + 3 + 3 + 24 = **99 minutes**, builds included: Round 1 (CP-1..CP-7) **58 min**, Round 2
+  (CP-8..CP-12) **41 min**, plus slot waits. Against the plan's draft 93 min: +6 min for the
+  delivery, wiring and boundary rows (V-21..V-36 and R-4, R-5) and the client red row; CP-12 is
+  the same 24 min. Authoring: Round 1 about 4 h (S1..S3, 33 new methods across 8 classes plus
+  MS-1..MS-5), Round 2 about 2 h (S4, S5). `-ExpectAbout`: Round 1 about 5 h, Round 2 about 2.75 h.
+- **PC floor (Mutation)**, 67 controls, method-scoped red/restore/green, batched only across
+  different production files and different test methods, so the round count is the largest
+  per-file PC count: `RunnerAlarmCoordinator.cs` holds 21 (PC-25..PC-44, PC-57), then
+  `RepositoryChildJournalInspector.cs` 10, `PhoneHomeRunnerDirectory.cs` 8, `RunnerAlarmHostedService.cs`
+  5, `QueueRunnerAlarmNotifier.cs` 5, `Program.cs` 4, three files with 3, `AlarmWakeQueue.cs` 2,
+  `AttentionDtos.cs` 1, client 2.
+  - server (PC-1..PC-65): 21 rounds x 2 incremental `tests/Antiphon.Tests` builds (~4 min each)
+    = **~168 min**, plus 65 red and 65 green single-method runs (~1 min each, one invocation per
+    method) = **~130 min**: **~298 min**;
+  - client (PC-66, PC-67): 2 x (red + green run, ~1.4 min) = **~3 min**;
+  - setup (first build into `bin-c726-pc/`, `client/node_modules` present): **~6 min**.
+  PC total **~307 min**. Unbatched it would be 65 x (8 + 2) + 3 + 6 ≈ 659 min, so file-disjoint
+  batching saves about 352 min. A SourceLanding Mutation may not shard, so no further saving is
+  assumed.
+- **Total** = Code ordinary 99 min + ~6 h authoring; Mutation ~307 min; the post-land activation
+  observation is read-only and under 1 min.
+
+Handoff check: bodies read (15 files and fixtures above); guards = 67, mapped = 67, missing = 0,
+duplicate PC maps = 0; all 67 PCs are compiling single-line defects with a named method and
+assertion; every V/R row names its checkpoint; no placeholder remains. Stubs: none. V-9 and V-26
+are controls that pass on the skeleton and are each made red by their PC (PC-31, PC-49).
