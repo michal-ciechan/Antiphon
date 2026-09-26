@@ -687,7 +687,7 @@ public sealed class ChannelInboundRecoveryTests
             verify.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
                 Id = Guid.NewGuid(), Kind = kind, ModelAlias = ModelAlias.KindWide,
-                Source = ModelAvailabilitySource.Manual, HitAt = DateTime.UtcNow,
+                Source = ModelAvailabilitySource.Manual, HitAt = h.Now,
                 Reason = "second capacity episode",
             });
         await verify.SaveChangesAsync();
@@ -780,7 +780,8 @@ public sealed class ChannelInboundRecoveryTests
         // recipient's complete submitted prompt; a queued or assistant transcript event
         // describes a different state even when it contains identical bytes.
         Guid ownedId = default;
-        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, Ct,
+        var markedInput = $"[antiphon-channel:{Guid.NewGuid():N}]\n{body}";
+        await h.Queue.EnqueueAsync(h.SessionId, markedInput, MessageSendMode.WhenIdle, Ct,
             origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chat}",
             deliverIfIdle: false, onCreated: value => ownedId = value);
         ownedId.ShouldNotBe(Guid.Empty);
@@ -790,6 +791,7 @@ public sealed class ChannelInboundRecoveryTests
             .SetProperty(q => q.LastDeliveryStartedAt, DateTime.UtcNow.AddMinutes(-1)));
         var marked = (await verify.SessionQueuedMessages.AsNoTracking()
             .SingleAsync(q => q.Id == ownedId)).Body;
+        marked.ShouldContain("[antiphon-channel:");
         var events = new List<SessionRunnerTranscriptEvent>();
         async Task IngestAsync(string kind, string text)
         {
@@ -799,6 +801,10 @@ public sealed class ChannelInboundRecoveryTests
                 null, null, null, null, null));
             h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, events.ToArray(), sequence));
             await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+            await using (var evidence = Db(schema.ConnectionString))
+                (await evidence.TranscriptEntries.AnyAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Sequence == sequence && t.Kind == kind && t.Text == text)).ShouldBeTrue(
+                    "runner transcript bytes must be ingested before judging queue delivery");
             await h.Queue.FlushSessionAsync(h.SessionId, Ct);
         }
         await IngestAsync(TranscriptKinds.QueuedUserPrompt, marked);
