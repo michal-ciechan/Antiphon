@@ -158,6 +158,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var runner = new EmptyRunnerClient();
         services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<ChannelInboundDebouncer>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<PolicyRefreshService>();
         services.AddSingleton<ApiErrorRecoveryService>();
@@ -609,6 +610,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             await db.TranscriptEntries
                 .Where(t => sessionIds.Contains(t.AgentSessionId) || t.AgentSessionId == SessionId)
                 .ExecuteDeleteAsync();
+            await db.ChannelInbounds.Where(i => i.AgentId == AgentId).ExecuteDeleteAsync();
             await db.ChatChannels.Where(c => c.AgentId == AgentId).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => i.AgentId == AgentId).ExecuteDeleteAsync();
             await db.Alerts.Where(a => a.AgentId == AgentId).ExecuteDeleteAsync();
@@ -627,7 +629,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         await Provider.DisposeAsync();
         try
         {
-            if (Directory.Exists(TempRoot))
+            if (!PreserveDatabaseOnDispose && Directory.Exists(TempRoot))
                 Directory.Delete(TempRoot, recursive: true);
         }
         catch

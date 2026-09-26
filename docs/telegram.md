@@ -14,6 +14,25 @@ long-poll pattern), normalizes updates onto the `channels.inbound` Kafka topic, 
 `src/Antiphon.Messaging.Telegram/TelegramChannelAdapter.cs` — raw Bot API over `HttpClient`, no
 third-party client.
 
+## Durable inbound handoff (CARD-0593)
+
+The bridge records each non-self native message identity in `ChannelInbounds`. For an enabled,
+bound, nonempty message it commits the complete normalized envelope and the agent/channel binding
+with the catalog update before acknowledging its Kafka record. Kafka uses manual offset commits;
+an acceptance failure leaves the record replayable. A replay of an older native ID uses the
+journal identity even after newer messages have updated the catalog. Unbound, disabled, empty and
+malformed records have explicit dispositions.
+
+The wake worker reads pending envelopes on startup, after acceptance and on its periodic scan.
+It keeps failed wakes pending and records a Critical `ChannelReplyLost` incident for a wake
+timeout. A queue row owns the formatted prompt through its `SourceChannelInboundId`; every
+debounced member records that same queue ID. Inbound attachments use the journal ID in their
+inbox filenames so a retry targets the same path. The journal retains the full envelope after
+handoff. A queue insert, Kafka acknowledgement, live screen or agent Running state is an
+acceptance/attempt signal. Only a complete matching recipient `UserPrompt` beyond the original
+attempt floor confirms delivery. The existing queue attempt cap and decision hold apply to
+uncertain terminal writes.
+
 ## What the chat sees
 
 Channel input is correlated by a persisted `[antiphon-channel:<full-guid>]` marker,

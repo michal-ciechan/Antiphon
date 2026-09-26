@@ -207,7 +207,8 @@ public sealed class ChannelInboundRecoveryTests
         await WaitForAsync(async () =>
         {
             await using var db = Db(schema.ConnectionString);
-            return await db.ChannelInbounds.CountAsync(i => i.ConversationId == chat && i.QueueMessageId != null) == 2;
+            return await db.ChannelInbounds.CountAsync(i => i.ConversationId == chat && i.QueueMessageId != null) == 2
+                && recovered.Adapter.SubmittedBodies.Count == 1;
         });
         await using var db = Db(schema.ConnectionString);
         var members = await db.ChannelInbounds.Where(i => i.ConversationId == chat).OrderBy(i => i.AcceptedAt).ToListAsync();

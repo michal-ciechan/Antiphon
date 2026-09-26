@@ -73,6 +73,15 @@
   pre-feature baseline also needs `runtime` identity/live/unknown/version/pool observations.
   Compare works offline. No reset, settings mutation, restart or synthetic prompt is performed.
 
+- **Bound channel inbound survives a failed wake (CARD-0593).** The complete normalized envelope,
+  native provider/conversation/message identity and recipient binding commit before Kafka offset
+  acknowledgement. The bridge's wake loop may time out or meet a deliberate hold; the accepted
+  envelope remains pending. Startup and periodic drains can hand it to one marked Channel queue
+  owner, with durable mapping for every coalesced member. A failed flush retains the source for
+  recovery, and a non-AlwaysOn recipient needs a direct flush when Running. The existing queue
+  attempt floor, cap and complete matching recipient `UserPrompt` decide delivery. Offset commit,
+  queue insertion, SentAt, screen redraw and Running status do not decide it.
+
 - **Accepted @mentions are durable queued input (CARD-0696).** The router allocates an occurrence
   ID; acceptance commits one `WhenIdle` row with origin `Mention` and freezes its target and body.
   Replaying that ID validates the destination/body and never resets an attempt. Separate identical

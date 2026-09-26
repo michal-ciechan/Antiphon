@@ -31,6 +31,8 @@ public class SessionQueuedMessage
     public int RulesFollowOnCount { get; set; }
     public long? RulesBoundarySequence { get; set; }
     public Guid Id { get; set; }
+    /// <summary>Native inbound that owns this durable Channel prompt, unique across queue rows.</summary>
+    public Guid? SourceChannelInboundId { get; set; }
     public Guid AgentSessionId { get; set; }
 
     /// <summary>The text delivered into the agent's terminal (a carriage return is appended on send).</summary>
