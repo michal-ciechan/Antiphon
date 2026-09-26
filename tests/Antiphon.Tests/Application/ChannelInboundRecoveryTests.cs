@@ -9,6 +9,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -147,12 +148,25 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_AcceptanceAckAndQueueCommitCuts_AreIdempotent()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var mappingFault = new QueueMappingFault();
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = schema.ConnectionString, Bridge = Settings(),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(mappingFault),
         });
         var chat = await h.BindChannelAsync();
+        var faulted = Message(chat, "fault-" + Guid.NewGuid().ToString("N"), "must survive mapping fault");
+        mappingFault.Arm();
+        await Bridge(h).HandleInboundAsync(faulted, Ct);
+        await using (var cut = Db(schema.ConnectionString))
+        {
+            var pending = await cut.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == faulted.ChannelMessageId);
+            pending.QueueMessageId.ShouldBeNull();
+            (await cut.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId == pending.Id)).ShouldBe(0,
+                "queue owner and every journal member must roll back together");
+        }
+        await Bridge(h).DrainPendingAsync(Ct);
         var first = Message(chat, "first-" + Guid.NewGuid().ToString("N"), "first complete body");
         var second = Message(chat, "second-" + Guid.NewGuid().ToString("N"), "second complete body");
         h.Messaging.InjectInbound(first);
@@ -170,13 +184,13 @@ public sealed class ChannelInboundRecoveryTests
         await Bridge(h).HandleInboundAsync(second, Ct);
         await Bridge(h).HandleInboundAsync(first with { Id = Guid.NewGuid().ToString("N") }, Ct);
         await using var db = Db(schema.ConnectionString);
-        (await db.ChatChannels.Where(c => c.ExternalId == chat).Select(c => c.MessageCount).SingleAsync()).ShouldBe(2);
+        (await db.ChatChannels.Where(c => c.ExternalId == chat).Select(c => c.MessageCount).SingleAsync()).ShouldBe(3);
         var inbounds = await db.ChannelInbounds.Where(i => i.ConversationId == chat).ToListAsync();
-        inbounds.Count.ShouldBe(2);
+        inbounds.Count.ShouldBe(3);
         var owners = await db.SessionQueuedMessages.Where(q => q.AgentSessionId == h.SessionId &&
             q.SourceChannelInboundId != null).ToListAsync();
-        owners.Count.ShouldBe(2);
-        owners.Select(o => o.SourceChannelInboundId!.Value).Distinct().Count().ShouldBe(2);
+        owners.Count.ShouldBe(3);
+        owners.Select(o => o.SourceChannelInboundId!.Value).Distinct().Count().ShouldBe(3);
     }
 
     [Test]
@@ -326,5 +340,21 @@ public sealed class ChannelInboundRecoveryTests
         h.Adapter.SentInput.ShouldBeEmpty();
         (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId &&
             t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains("DISTINCT TAIL"))).ShouldBe(0);
+    }
+
+    private sealed class QueueMappingFault : SaveChangesInterceptor
+    {
+        private int _armed;
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 1 && eventData.Context?.ChangeTracker.Entries<ChannelInbound>()
+                .Any(e => e.State == EntityState.Modified && e.Entity.QueueMessageId != null) == true
+                && Interlocked.Exchange(ref _armed, 0) == 1)
+                throw new InvalidOperationException("synthetic journal mapping failure after queue preparation");
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 }
