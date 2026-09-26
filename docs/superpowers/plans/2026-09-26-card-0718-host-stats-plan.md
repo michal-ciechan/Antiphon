@@ -1054,39 +1054,82 @@ no runner.
 
 ### Checkpoints
 
-Isolated outputs `bin-c718r/` (`Antiphon.SessionRunner.Tests`) and `bin-c718a/`
-(`Antiphon.Tests`), forward slash, one build per project per round; `Min` = `[Test]` methods in
-the named classes at `bafc3366` plus the new methods, minus a 5 % floor allowance.
-`Antiphon.Tests` and `Antiphon.Agents.Pty.Tests` are never co-scheduled. Every row runs through
-`scripts/run-checkpoint.ps1` (it takes the build slot itself); the two non-TUnit rows run under
-`scripts/build-slot.ps1` where they build.
+Round 1 only. Isolated outputs `bin-c718r/` (`tests/Antiphon.SessionRunner.Tests`), `bin-c718a/`
+(`tests/Antiphon.Tests`) and `bin-c718s/` (`src/Antiphon.SessionRunner`, CP-4), forward slash, one
+build each. `Min` is the exact executed count at `bafc3366` plus this card's new methods (no
+allowance: every row but CP-7 names whole classes whose roster is known). Class-level OR filters
+only (CARD-0403 syntax); method-level OR is never used. `Antiphon.Tests` and
+`Antiphon.Agents.Pty.Tests` are never co-scheduled. TUnit rows run through
+`scripts/run-checkpoint.ps1` (it takes the build slot and adds `UseAppHost=false` off Windows);
+every non-TUnit command runs under `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <label> -- <command>`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c718r/` | host-stats-runner | `/*/*/(HostStatsStoreTests*)\|(HostStatsProbeParseTests*)\|(HostStatsSamplerTests*)\|(HostStatsEndpointTests*)/*` | V-1, V-2, V-3, V-4 | all listed, 0 failed | 22 | 9 |
-| CP-2 | S1 | CP-1 | runner-adjacent | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)\|(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(SessionCpuWatchdogTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-5, R-1 | all listed, 0 failed | 66 | 6 |
-| CP-3 | S1 | CP-1 | probe-live-lane | `/*/*/HostStatsProbeLiveTests/*` | D-1 live probe on this lane's OS | 1 executed (the other OS's method reports not run with reason), 0 failed; the second sample's `cpuPercent` is in [0,100] | 1 | 2 |
-| CP-4 | S1 | n/a | overhead-measure | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-overhead -- dotnet run --project src/Antiphon.SessionRunner --no-build --property:OutputPath=bin-c718s/ -- --urls http://127.0.0.1:0` twice (sampler on / `SessionRunner__HostStats__Enabled=false`), 60 s each, reading own-process `cpuPercent` from `GET /host-stats` on the on-instance and from `GET /api/diagnostics`-style process CPU delta for the off-instance; the runner is built once into `bin-c718s/` under the same wrapper | D-10 | on − off < 1 % of one core; both numbers, host and date written into `docs/testing-and-build.md` | n/a | 8 |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c718a/` | host-stats-server | `/*/*/(HostStatsCacheTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsPollServiceTests*)\|(HostStatsEndpointTests*)/*` | V-6, V-7, V-8, V-9 | all listed, 0 failed | 15 | 12 |
-| CP-6 | S2 | CP-5 | server-adjacent | `/*/*/(PhoneHomeDirectoryTests*)\|(RunnerCatalogueTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeEventPumpTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerCapabilityGateTests*)\|(HttpResilienceRegistrationTests*)/*` | R-2 | all listed, 0 failed | 36 | 8 |
-| CP-7 | S3 | n/a | client | `pwsh -File scripts/test-client.ps1 hosts Sparkline HostsPage useHostStatsLive` then `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-lint -- npm --prefix client run lint` | V-10, R-4 | `CLIENT TESTS EXIT CODE: 0`, ≥ 10 tests, lint 0 errors 0 warnings | n/a | 5 |
-| CP-8 | S4 | n/a | docs-named | `git grep -n -e "/api/hosts/stats" -e "HostStatsUpdated" -e "hostStatsV1" -e "SessionRunner:HostStats" -e "HostStats:PollIntervalMs" -- docs/ops-http.md docs/antiphon-api.md docs/resilience.md docs/testing-and-build.md` | V-11 | ≥ 8 matching lines across the 4 files, exit 0 | n/a | 1 |
-| CP-9 | all R1, landed and activated | n/a | live-hosts | `curl -sS $ANTIPHON_API/api/hosts/stats` twice 10 s apart after `GET /api/version` shows the landed SHA | acceptance "both hosts appear with live values that update about every 5 s" | two entries, both `live`, `observedAt` advanced by ≥ 5 s, server2 `load1` non-null, desktop `load1` null and `cpuPercent` non-null | n/a | 2 |
-| CP-10 | all R1 | CP-5 | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | ≥ 2990 executed, 0 failed (last measured 3021 total / 2993 passed / 28 skipped at `c18a6c67`) | 2900 | 12 |
-| CP-11 | R2 S5 | `tests/Antiphon.SessionRunner.Tests -> bin-c718p/` | process-census | `/*/*/(HostStatsProcessCensusTests*)\|(HostStatsSamplerTests*)/*` plus the census timing line the test prints | R2 V (named totals, gating, the per-tick census cost on this lane) | all listed, 0 failed; census cost printed and under 2 ms or the sampler's every-fourth-tick mode asserted | 8 | 6 |
-| CP-12 | R2 S5 | `tests/Antiphon.Tests -> bin-c718q/` | ef-rate-lease | `/*/*/(DbCommandRateMetricsTests*)\|(HostStatsAntiphonCountersTests*)\|(RepositoryLeaseWaitersTests*)/*` | R2 V | all listed, 0 failed | 9 | 8 |
-| CP-13 | R2 S6 | n/a | client-r2 | `pwsh -File scripts/test-client.ps1 HostsPage HostCard` | R2 V (process table, tiles) | `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c718r/` | host-stats-runner | `/*/*/(HostStatsStoreTests*)\|(HostStatsProbeParseTests*)\|(HostStatsSamplerTests*)\|(HostStatsEndpointTests*)/*` | V-1, V-2, V-3, V-4 | all listed (9 + 10 + 4 + 4), 0 failed | 27 | 9 |
+| CP-2 | S1 | CP-1 | runner-adjacent | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)\|(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-5, R-1 | all listed (37 + 5 + 11 + 4 + 10), 0 failed | 67 | 5 |
+| CP-3 | S1 | CP-1 | probe-live | `/*/*/HostStatsProbeLiveTests/*` | V-13 | this OS's method passed, the other `Skip.Test` with its reason (skipped 1), 0 failed | 1 | 2 |
+| CP-4 | S1 | `src/Antiphon.SessionRunner -> bin-c718s/` via `build-slot.ps1 -Label c718-overhead-build -- dotnet build src/Antiphon.SessionRunner --property:OutputPath=bin-c718s/` | overhead | step 0: `pwsh -NoProfile -File scripts/measure-host-stats-overhead.ps1 -RunnerDll src/Antiphon.SessionRunner/bin-c718s/Antiphon.SessionRunner.dll -DryRun`; step 1: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-overhead -- pwsh -NoProfile -File scripts/measure-host-stats-overhead.ps1 -RunnerDll src/Antiphon.SessionRunner/bin-c718s/Antiphon.SessionRunner.dll -WarmupSeconds 15 -Seconds 60 -Pairs 2` | V-14 | step 0 exit 0 (no scrubbed key name, isolation args present); step 1 exit 0 with an `OVERHEAD` line, delta < 1.0, sanity lines `on-samples>=12` and `off-status=404` | n/a | 9 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c718a/` | host-stats-server | `/*/*/(HostStatsCacheTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsPollServiceTests*)\|(HostStatsEndpointTests*)\|(SessionRunnerHttpClientHostStatsTests*)/*` | V-6, V-7, V-8, V-9, V-12 | all listed (6 + 3 + 6 + 5 + 3), 0 failed | 23 | 12 |
+| CP-6 | S2 | CP-5 | server-adjacent | `/*/*/(PhoneHomeDirectoryTests*)\|(RunnerCatalogueTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeEventPumpTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerCapabilityGateTests*)\|(HttpResilienceRegistrationTests*)/*` | R-2 | all listed (7 + 4 + 8 + 8 + 5 + 2 + 7), 0 failed | 41 | 8 |
+| CP-7 | S2 | CP-5 | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | >= 2900 executed, 0 failed (last measured 2993 executed at `c18a6c67`, + 12 new); a failure that also fails at `bafc3366` is reported pre-existing | 2900 | 5 |
+| CP-8 | S3 | n/a | client-hosts | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-client -- pwsh -File scripts/test-client.ps1 hosts` | V-10 | `CLIENT TESTS EXIT CODE: 0`, 4 files, 11 tests passed | n/a | 3 |
+| CP-9 | S3 | n/a | client-full-lint | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-client-full -- pwsh -File scripts/test-client.ps1` then `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-lint -- npm --prefix client run lint` | R-4 | `CLIENT TESTS EXIT CODE: 0` over 110 files; lint 0 errors 0 warnings | n/a | 7 |
+| CP-10 | S4 | n/a | docs-named | `git grep -n -e "/api/hosts/stats" -e "HostStatsUpdated" -e "hostStatsV1" -e "SessionRunner:HostStats" -e "HostStats:PollIntervalMs" -e "host-stats" -- docs/ops-http.md docs/antiphon-api.md docs/resilience.md docs/testing-and-build.md` | V-11 | >= 8 matching lines, each of the 4 files at least once, exit 0 | n/a | 1 |
+| CP-11 | landed and activated | n/a | live-hosts | `curl -sS $ANTIPHON_API/api/version`, then `curl -sS $ANTIPHON_API/api/hosts/stats` twice 10 s apart, then `node scripts/host-stats-hub-receipt.mjs --api $ANTIPHON_API --count 2 --timeout-seconds 20` | V-15 | version SHA = landed commit; two entries both `live`, `observedAt` advanced >= 5 s, server2 `load1` non-null, desktop `load1` null and `cpuPercent` non-null; the receipt prints `RECEIPT 2` with both host ids | n/a | 3 |
 
 The pipe characters inside `Filter` cells are table escapes; the command line uses a plain `|`,
 quoted as [docs/testing-and-build.md](../../testing-and-build.md#combined-class-filters-card-0403)
-shows. Run each TUnit row with `scripts/run-checkpoint.ps1 -Name CP-n -Project <project>
--OutputPath bin-c718x/ -Filter '<filter>' -MinExecuted <Min> -Expect <classes> -ResultsRoot
-.antiphon/c718-checkpoints` (`-NoBuild` for reuse rows). CP-4, CP-7, CP-8 and CP-9 are non-TUnit
-rows reported by hand in the CHECKPOINT line shape with their own assertion. CP-3's live probe
-class carries one `[Test]` per OS that returns early with `Skip.Test("<other os>")` on the other
-lane, so its executed count is 1 on either host. CP-9 runs after land and activation
-(`GET /api/version` SHA equal to the landed commit; the local runner and server2 both restarted
-onto the new binary — server2 through its deploy, which is the only way it gets a new runner).
+shows. Run each TUnit row as `pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-n -Project
+<project> -OutputPath <bin-c718x/> -Filter '<filter>' -MinExecuted <Min> -Expect <classes, comma
+separated> -ResultsRoot .antiphon/c718-checkpoints` (`-NoBuild` for the reuse rows CP-2, CP-3,
+CP-6, CP-7). CP-4, CP-8, CP-9, CP-10 and CP-11 are non-TUnit rows reported in the `CHECKPOINT`
+line shape by hand with their own assertion. CP-7 is the only lane row (`>= N executed`).
+
+**CP-3 per-OS idiom.** `HostStatsProbeLiveTests` has one `[Test]` per OS; each opens with the
+`Skip.Test(...)` guard of V-13, so on server2 the Linux method executes and the Windows one is
+reported skipped with "Windows GetSystemTimes/GlobalMemoryStatusEx probe; this lane is Linux", and
+on the desktop the reverse. The same command runs on either lane. The Linux method compares
+`MemoryTotalBytes` with `MemTotal` it reads itself from `/proc/meminfo`; the Windows method
+checks the P/Invoke answers' ranges (no second source exists without WMI).
+
+**CP-4 procedure** (`scripts/measure-host-stats-overhead.ps1`, ASCII, written in S1; parameters
+`-RunnerDll`, `-WarmupSeconds`, `-Seconds`, `-Pairs`, `-DryRun`). For each instance, in the order
+off, on, off, on (`-Pairs 2`), it:
+
+1. creates a fresh temp root under `.antiphon/c718-checkpoints/CP-4/<n>/`;
+2. builds a `ProcessStartInfo("dotnet")` with the dll and `--urls http://127.0.0.1:0
+   --PhoneHome:Enabled false --SessionRunner:SessionLogPath <root> --SessionRunner:Herdr:Enabled
+   false --SessionRunner:CpuWatchdogEnabled false --SessionRunner:HostStats:Enabled <true|false>
+   --SessionRunner:HostStats:Volumes:0 <root> --Serilog:LogPath <root>/logs`, and **removes every
+   inherited environment key starting `PhoneHome__`, `SessionRunner__` or `ASPNETCORE_`** (the
+   server2 container sets `PhoneHome__Enabled`, `PhoneHome__RunnerId`, `PhoneHome__ServerOrigin`,
+   `SessionRunner__SessionLogPath` and `ASPNETCORE_URLS`; a measurement runner inheriting them
+   would phone home as server2). `-DryRun` prints `ARG <arg>` and `ENVKEY <name>` lines (names,
+   never values) and exits; step 0 passes when no `ENVKEY` has a scrubbed prefix and the isolation
+   args are present (G-77);
+3. starts it, reads `Now listening on: http://127.0.0.1:<port>` from stdout, kills it and exits 2
+   if the port is 17204 or 8080;
+4. waits `-WarmupSeconds`, then reads `Process.TotalProcessorTime` (OS accounting on both
+   platforms) and a `Stopwatch`, waits `-Seconds`, reads both again: `cpu% = ΔCPU / Δwall × 100`
+   (of one core);
+5. sanity: the on-instance's `GET /host-stats/series?metric=cpu&window=5m` has >= 12 points
+   (prints `on-samples=<n>`); the off-instance's `GET /host-stats` is 404 (`off-status=404`);
+6. kills the process tree, waits for exit, deletes the temp root.
+
+It prints `OVERHEAD off=<a>,<b> on=<c>,<d> delta=<mean(on) − mean(off)> host=<machine> os=<os>
+cores=<n> utc=<date>` and exits 0 when delta < 1.0 and both sanity lines hold, 1 when delta >= 1.0,
+2 on a setup failure. It measures the process from outside, so it replaces D-10's draft (which
+read the sampler's own `cpuPercent` and a diagnostics-style delta) with one method on both OSes.
+The numbers go into `docs/testing-and-build.md`'s Host stats subsection with host and date (S4).
+
+**CP-11 receipt** (`scripts/host-stats-hub-receipt.mjs`, written in S4, about 30 lines): resolves
+`@microsoft/signalr` through `createRequire` on `client/package.json`, connects to
+`<api>/hubs/antiphon`, invokes `JoinGroup('hosts')`, collects `--count` `HostStatsUpdated`
+payloads within `--timeout-seconds`, prints `RECEIPT <n>` and one `HOST <id> <state> <observedAt>`
+line per entry of the last payload, and exits 0 only when the count is reached. CP-11 runs after
+land and activation (`GET /api/version` SHA equal to the landed commit; the local runner and
+server2 both restarted onto the new binary — server2 through its deploy, which is the only way it
+gets a new runner); it is run by whoever confirms activation, not by the Code stage.
 
 ### Cost
 
