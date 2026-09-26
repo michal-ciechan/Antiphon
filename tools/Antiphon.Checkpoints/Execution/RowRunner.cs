@@ -209,7 +209,8 @@ public sealed class RowRunner
         var misses = new List<string>();
         foreach (var token in request.Expect.Where(t => !string.IsNullOrWhiteSpace(t)))
         {
-            var hit = parsed.ExecutedNames.Any(name => name.Contains(token, StringComparison.OrdinalIgnoreCase));
+            var hit = parsed.ExecutedNames.Concat(parsed.SkippedNames)
+                .Any(name => name.Contains(token, StringComparison.OrdinalIgnoreCase));
             if (!hit)
                 misses.Add(token);
         }

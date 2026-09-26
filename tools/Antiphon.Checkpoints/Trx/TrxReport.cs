@@ -29,6 +29,7 @@ public sealed class TrxParseResult
     public int Failed { get; init; }
     public int Skipped { get; init; }
     public List<string> ExecutedNames { get; init; } = [];
+    public List<string> SkippedNames { get; init; } = [];
     public List<string> FailureNames { get; init; } = [];
     public List<TrxFailure> Failures { get; init; } = [];
     public List<SlowClass> SlowClasses { get; init; } = [];
@@ -71,6 +72,7 @@ public static class TrxReport
         }
 
         var executedNames = new List<string>();
+        var skippedNames = new List<string>();
         var failureNames = new List<string>();
         var failures = new List<TrxFailure>();
         var classSeconds = new Dictionary<string, (double Seconds, int Tests)>(StringComparer.Ordinal);
@@ -78,9 +80,6 @@ public static class TrxReport
         foreach (var result in doc.Descendants(ns + "UnitTestResult"))
         {
             var outcome = (string?)result.Attribute("outcome") ?? "";
-            if (outcome.Equals("NotExecuted", StringComparison.Ordinal))
-                continue;
-
             var id = (string?)result.Attribute("testId");
             string name;
             string className;
@@ -93,6 +92,13 @@ public static class TrxReport
             {
                 name = (string?)result.Attribute("testName") ?? "";
                 className = "";
+            }
+
+            if (outcome.Equals("NotExecuted", StringComparison.Ordinal))
+            {
+                if (name.Length > 0)
+                    skippedNames.Add(name);
+                continue;
             }
 
             var seconds = ParseDuration((string?)result.Attribute("duration"));
@@ -138,6 +144,7 @@ public static class TrxReport
             Failed = failed,
             Skipped = skipped,
             ExecutedNames = executedNames,
+            SkippedNames = skippedNames,
             FailureNames = failureNames,
             Failures = failures,
             SlowClasses = classSeconds
