@@ -75,15 +75,17 @@ public sealed class RunnerAlarmAttentionTests
         var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(commonA));
         var row = rows.Single(item => item.ConditionKey == "journal-stale:" + key);
         row.Severity.ShouldBe(AlertSeverity.Error);
-        row.Headline.ShouldStartWith("2 stale");
-        row.Headline.ShouldContain("oldest 11 min");
-        row.Evidence.ShouldContain("recover-repository-children.ps1 -Repository " + repositoryA);
-        row.Evidence.ShouldContain("-Execute -ConfirmDescendantsExited");
+        row.Title.ShouldBe("Repository fenced: " + repositoryA);
+        row.Headline.ShouldBe("2 stale child-journal record(s) (Dead, Unknown) fence every land and dispatch here; oldest 11 min.");
+        var command = "pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository " + repositoryA;
+        row.Evidence.ShouldContain("Recovery: run " + command + " first (preview), then "
+            + command + " -Execute -ConfirmDescendantsExited after confirming the descendants exited.");
+        row.Evidence.ShouldContain("Unknown or malformed records are retained by the script and need inspection.");
         var recordLines = row.Evidence.Split('\n').Where(line => line.StartsWith("file=", StringComparison.Ordinal)).ToList();
         recordLines.Count.ShouldBe(3);
-        recordLines.ShouldContain(line => line.Contains("file=dead-old; state=Dead;", StringComparison.Ordinal));
-        recordLines.ShouldContain(line => line.Contains("file=unknown-new; state=Unknown;", StringComparison.Ordinal));
-        recordLines.ShouldContain(line => line.Contains("file=alive; state=Alive;", StringComparison.Ordinal));
+        recordLines.ShouldContain($"file=dead-old; state=Dead; ageSeconds=660; pid=42; writtenAt={old:O}");
+        recordLines.ShouldContain($"file=unknown-new; state=Unknown; ageSeconds=360; pid=42; writtenAt={newer:O}");
+        recordLines.ShouldContain($"file=alive; state=Alive; ageSeconds=1200; pid=42; writtenAt={Now.AddMinutes(-20):O}");
         row.SinceUtc.ShouldBe(old.UtcDateTime);
         row.ConditionKey.ShouldNotBe(rows.Single(item => item != row).ConditionKey);
         rows.ShouldNotContain(item => item.ConditionKey == "journal-stale:" + commonB);

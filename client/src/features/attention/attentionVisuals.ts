@@ -46,7 +46,7 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
   },
   RepositoryChildJournalStale: {
     label: 'Repository fenced', color: 'danger', icon: TbGitCommit,
-    hint: 'A stale child-journal record fences land and dispatch; follow the recovery command in the evidence.',
+    hint: 'A dead child-journal record fences every land and dispatch in this repository; run the recovery command in the evidence.',
   },
   PoolDelegateUnreleased: {
     label: 'Pool release overdue', color: 'danger', icon: TbUserOff,

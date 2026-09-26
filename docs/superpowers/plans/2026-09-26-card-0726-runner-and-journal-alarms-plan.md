@@ -1284,7 +1284,12 @@ isolated output (forward slash; all deleted before the Code report). Every TUnit
 -OutputPath <Build output> -Filter '<filter>' -MinExecuted <Min> -Expect <classes>
 -ResultsRoot .antiphon/c726-checkpoints` (it takes the build slot and adds `UseAppHost=false` off
 Windows); `-NoBuild` where Build names a row. Client rows run under
-`pwsh -NoProfile -File scripts/build-slot.ps1 -Label <group> -- <command>`. Class-level OR filters
+`pwsh -NoProfile -File scripts/build-slot.ps1 -Label <group> -- <command>`. For the R2 review rerun,
+use the checked-in [checkpoint manifest](2026-09-26-card-0726-runner-and-journal-alarms-checkpoints.yaml)
+with `TUNIT_MAX_PARALLEL_TESTS=1` set in the checkpoint tool's process environment. Its CP-12 row
+has `serial: true`, so no other checkpoint runs alongside that database query-count selection.
+The CP-8 and CP-10 red expectations below describe their original S4-tests commits; rerunning
+them against the implemented S4 code should be green. Class-level OR filters
 only (CARD-0403 syntax, each operand parenthesised with a trailing `*`); method-level OR is never
 used. `Min` is the source execution count at `4fe3bce9` plus this card's new methods.
 
@@ -1300,8 +1305,8 @@ used. `Min` is the source execution count at `4fe3bce9` plus this card's new met
 | CP-8 | S4-tests | `tests/Antiphon.Tests -> bin-c726-r2-tests/` | attention-red | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | 3 executed, 3 failed: V-17 and V-18 at "one item of the kind", V-19 at `Open` base + 2 | 3 | 6 |
 | CP-9 | S4 | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-green | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | all 3 listed, 0 failed/skipped | 3 | 5 |
 | CP-10 | S4-tests | n/a | client-visuals-red | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client-red -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20 | `CLIENT TESTS EXIT CODE: 1`; the failures include `maps every kind to a label, a colour, an icon and a hint` and the two new `draws ... in the Error severity bucket` cases at `toBeDefined`, and may include the other every-kind loops (`keeps kinds off the violet tier axis`, `lands every kind in a declared group`, the `unique == visualKeys` lockstep); every failure names `RunnerUnavailable` or `RepositoryChildJournalStale`, and no other case fails | n/a | 3 |
-| CP-11 | S4 | n/a | client-visuals-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20, R-4 | 21 tests (15 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
-| CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` with `TUNIT_MAX_PARALLEL_TESTS=1` in the environment | R-3 | 174 executed (163 AttentionServiceTests + 11 DispatchHeldAttentionTests), 0 failed | 174 | 24 |
+| CP-11 | S4 | n/a | client-visuals-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20, R-4 | 22 tests (16 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
+| CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` | R-3 | 174 executed (163 AttentionServiceTests + 11 DispatchHeldAttentionTests), 0 failed; `serial: true` in the checkpoint manifest and `TUNIT_MAX_PARALLEL_TESTS=1` in its process environment | 174 | 24 |
 
 Union of `Covers` = V-1..V-36 and R-1..R-5: the whole ordinary scope. CP-7 and CP-12 reuse their
 `Build` row's output with `-NoBuild` and share its `After`. A red row is fixed and rerun as the

@@ -112,6 +112,12 @@ describe('attentionVisuals', () => {
     }
   })
 
+  it('shows the planned recovery hint for a fenced repository', () => {
+    expect(ATTENTION_VISUALS.RepositoryChildJournalStale.hint).toBe(
+      'A dead child-journal record fences every land and dispatch in this repository; run the recovery command in the evidence.',
+    )
+  })
+
   it('keeps kinds off the violet tier axis', () => {
     // Tier is a ladder, health is a scale, and taskVisuals keeps them on disjoint palettes. A kind
     // badge in violet would read as "this row is a Frontier task".
