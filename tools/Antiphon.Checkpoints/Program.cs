@@ -107,15 +107,18 @@ public static class Program
     private static int Start(ArgSet options, string repo)
     {
         var (manifest, request) = LoadSelection(options, repo);
-        return CheckpointApp.Start(manifest, request, repo, Console.Out);
+        return CheckpointApp.Start(manifest, request, repo, Console.Out).ExitCode;
     }
 
     private static async Task<int> RunAndWait(ArgSet options, string repo)
     {
-        var started = Start(options, repo);
-        if (started != 0)
-            return started;
-        return await Wait(options, repo).ConfigureAwait(false);
+        var (manifest, request) = LoadSelection(options, repo);
+        var started = CheckpointApp.Start(manifest, request, repo, Console.Out);
+        if (started.ExitCode != 0)
+            return started.ExitCode;
+        var max = ParseDuration(options.Get("max-wait"));
+        var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
+        return await new WaitCommand().WaitAsync(started.RunDirectory, max, heartbeat, Console.Out, CancellationToken.None).ConfigureAwait(false);
     }
 
     private static async Task<int> Wait(ArgSet options, string repo)
@@ -210,7 +213,7 @@ public static class Program
         {
             var removed = OutputCleanup.RemoveOlderRuns(ResultsRoot(options, repo), age, options.Has("dry-run"));
             foreach (var path in removed)
-                Console.WriteLine("removed " + path);
+                Console.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
         }
 
         if (options.Get("run") is not null || options.Get("manifest") is not null || options.Positionals.Count > 0)
@@ -220,7 +223,7 @@ public static class Program
                 : ManifestLoader.LoadFile(Path.Combine(ResolveRun(options, repo), "manifest.resolved.yaml"), repo);
             var result = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), exitCode: 0, cleanOnRed: true, options.Has("dry-run"));
             foreach (var path in result.Deleted)
-                Console.WriteLine("deleted " + path);
+                Console.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
         }
 
         return ExitCodes.Green;

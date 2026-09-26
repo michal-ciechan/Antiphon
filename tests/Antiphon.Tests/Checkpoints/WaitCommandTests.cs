@@ -61,6 +61,53 @@ public sealed class WaitCommandTests
         output.ToString().ShouldContain("boom tail");
     }
 
+    [Test]
+    public void running_row_heartbeat_uses_started_at()
+    {
+        var now = DateTimeOffset.Parse("2026-09-26T12:00:00Z");
+        var state = new RunState
+        {
+            RunId = "live",
+            StartedAt = now.AddMinutes(-2),
+            Rows =
+            [
+                new RowProgress
+                {
+                    Id = "CP-1",
+                    State = "running",
+                    StartedAt = now.AddSeconds(-90),
+                    Seconds = 0,
+                },
+            ],
+        };
+        var beat = state.Heartbeat(now);
+        beat.ShouldContain("CP-1 running 1m30s");
+        beat.ShouldNotContain("running 0m00s");
+    }
+
+    [Test]
+    public async Task empty_progress_does_not_print_a_blank_line()
+    {
+        var dir = CheckpointFixtures.TempDir();
+        new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
+        {
+            RunId = "live",
+            Phase = "running",
+            ExecutorPid = 4,
+            StartedAt = DateTimeOffset.UtcNow,
+        });
+        var output = new StringWriter();
+        var code = await new WaitCommand(liveness: new Alive(true), delay: Fast).WaitAsync(
+            dir, TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(5), output, CancellationToken.None);
+        code.ShouldBe(75);
+        var text = output.ToString().Replace("\r\n", "\n");
+        var first = text.Split('\n')[0];
+        first.Length.ShouldBeGreaterThan(0);
+        first.ShouldStartWith("HEARTBEAT");
+        first.ShouldNotEndWith("|");
+        text.ShouldContain("STILL RUNNING");
+    }
+
     private static string Running(int pid)
     {
         var dir = CheckpointFixtures.TempDir();

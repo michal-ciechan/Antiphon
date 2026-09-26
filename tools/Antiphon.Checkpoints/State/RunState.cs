@@ -23,19 +23,30 @@ public sealed class RunState
         {
             if (row.State == "running")
             {
+                var seconds = row.StartedAt is DateTimeOffset started
+                    ? (now - started).TotalSeconds
+                    : row.Seconds;
                 var ago = row.LastOutputAt is DateTimeOffset last
                     ? FormatDuration((now - last).TotalSeconds)
                     : "n/a";
-                parts.Add($"{row.Id} running {FormatDuration(row.Seconds)} last-output {ago} ago");
+                parts.Add($"{row.Id} running {FormatDuration(seconds)} last-output {ago} ago");
             }
             else if (row.State is "green" or "red")
                 parts.Add($"{row.Id} {row.State} {FormatDuration(row.Seconds)}");
-            else
+            else if (!string.IsNullOrWhiteSpace(row.Id) || !string.IsNullOrWhiteSpace(row.State))
                 parts.Add($"{row.Id} {row.State}");
         }
 
         foreach (var build in Builds.Where(b => b.State == "building"))
-            parts.Add($"{build.Id} building {FormatDuration(build.Seconds)}");
+        {
+            var seconds = build.StartedAt is DateTimeOffset started
+                ? (now - started).TotalSeconds
+                : build.Seconds;
+            parts.Add($"{build.Id} building {FormatDuration(seconds)}");
+        }
+
+        if (parts.Count == 0)
+            return "";
         return $"HEARTBEAT run={RunId} elapsed={elapsed} | " + string.Join(" | ", parts);
     }
 

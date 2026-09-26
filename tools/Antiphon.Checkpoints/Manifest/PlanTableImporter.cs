@@ -110,8 +110,8 @@ public static class PlanTableImporter
 
             if (!minCell.Equals("n/a", StringComparison.OrdinalIgnoreCase) && minCell.Length > 0)
             {
-                if (!int.TryParse(minCell, out var min))
-                    return Fail($"{id}: Min '{minCell}' is not an integer or n/a");
+                if (!TryParseMin(minCell, OperatingSystem.IsWindows(), out var min, out var minError))
+                    return Fail($"{id}: {minError}");
                 if (row.IsCommand)
                     return Fail($"{id}: command row Min must be n/a");
                 row.MinExecuted = min;
@@ -163,6 +163,30 @@ public static class PlanTableImporter
 
         manifest.RelaxSharedBuildAfter = relax;
         return new ImportResult { Manifest = manifest, Warnings = warnings, ExitCode = ExitCodes.Green };
+    }
+
+    public static bool TryParseMin(string cell, bool isWindows, out int? min, out string? error)
+    {
+        error = null;
+        min = null;
+        var text = cell.Trim();
+        if (text.Length == 0 || text.Equals("n/a", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (int.TryParse(text, out var single))
+        {
+            min = single;
+            return true;
+        }
+
+        var match = Regex.Match(text, @"^(?<linux>\d+)\s+linux\s*/\s*(?<windows>\d+)\s+windows$", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            error = $"Min '{cell}' is not an integer, n/a, or '<n> linux / <n> windows'";
+            return false;
+        }
+
+        min = int.Parse(isWindows ? match.Groups["windows"].Value : match.Groups["linux"].Value, System.Globalization.CultureInfo.InvariantCulture);
+        return true;
     }
 
     public static IReadOnlyList<string> RosterTokens(string? filter)

@@ -76,13 +76,23 @@ public sealed class WaitCommand
 
             if (now >= nextBeat && state is not null)
             {
-                output.WriteLine(state.Heartbeat(now));
+                WriteHeartbeat(output, state.Heartbeat(now));
                 nextBeat = now + heartbeat;
             }
 
             if (maxWait is TimeSpan limit && now - started >= limit)
             {
-                output.WriteLine(state?.Heartbeat(now) ?? "HEARTBEAT run=? elapsed=0m00s |");
+                var beat = state?.Heartbeat(now);
+                if (string.IsNullOrWhiteSpace(beat))
+                {
+                    var elapsed = state is null
+                        ? "0m00s"
+                        : RunState.FormatDuration((now - state.StartedAt).TotalSeconds);
+                    var runId = string.IsNullOrWhiteSpace(state?.RunId) ? "?" : state!.RunId;
+                    beat = $"HEARTBEAT run={runId} elapsed={elapsed}";
+                }
+
+                WriteHeartbeat(output, beat);
                 output.WriteLine("STILL RUNNING exit=75");
                 return ExitCodes.StillRunning;
             }
@@ -97,6 +107,13 @@ public sealed class WaitCommand
 
             await _delay(slice, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static void WriteHeartbeat(TextWriter output, string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return;
+        output.WriteLine(line.Trim());
     }
 
     private static string Tail(string path)

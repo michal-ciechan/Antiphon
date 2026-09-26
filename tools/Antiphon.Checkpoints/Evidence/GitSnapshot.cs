@@ -34,6 +34,7 @@ public static class GitSnapshot
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                CreateNoWindow = true,
             };
             foreach (var arg in args)
                 psi.ArgumentList.Add(arg);
