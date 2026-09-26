@@ -526,3 +526,103 @@ assertion, the production line whose change turns it red (line numbers at `989ab
    diagnostic) — naming only, the assertion is on the `LandRefused` event detail.
 8. **Min counts** in the plan's table were method counts; the table below uses TUnit executions (argument rows
    expanded), counted from source at `989abc9f`.
+
+### Delivery inventory
+
+No new or changed async delivery path. The only asynchronous paths the change touches are existing and unchanged:
+
+| Path | Producer | Destination | Persistence boundary | Recovery | Observable receipt | Durable identity |
+|---|---|---|---|---|---|---|
+| Land request queue | `AgentTaskLandService.RequestAsync` | `RunLeasedAsync` under the repository lease | `AgentTaskLandRequests` row (`IsPending`) | sweep re-run (`LandMaxAttempts`), V-13 | terminal `LandRequested → … → Landed/LandRefused` events | `LandRequestId` |
+| Land outcome to caller | `RefuseAsync` / publication path `AddNotification(…Outcome)` | caller session via the land notification dispatcher | `AgentTaskLandNotifications` row | existing dispatcher retry | caller receipt (`ConfirmedAt`), transcript `UserPrompt` | notification id / `LandRequestId` |
+
+The retry adds a `Warning` **event row only** (D-5: no notification, no DTO). The safety property is that a retry
+never produces a caller message: V-1 asserts exactly one `LandNotificationKind.Outcome` row for the request and zero
+notifications of any kind created before the terminal event (G-17 / PC-17). The outcome message's text changes
+only on exhaustion (V-3). Recipient evidence (a caller transcript `UserPrompt`) is therefore not required by this
+card; the existing path's recipient proof is `LandOutcomeDeliveryHarness` / `PostLandMutationDelivery*` (out of
+scope, unchanged). Substitute declared: the harness `AgentTaskLandNotifications` row count proves "no extra message
+was enqueued", and cannot prove how an enqueued message renders in a caller session.
+
+### Proves it works now
+
+Shared shapes. **Real git** = new file `tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceTests.cs`,
+`[Category("Integration")] [ParallelLimiter<ProcessSpawnLimit>] public sealed class AgentTaskLandTargetRaceTests`,
+each test `await using var h = new LandingSafetyHarness(); await h.InitializeAsync(); var f = h.Fixture;
+var reviewed = await h.AddSourceAsync();`. The intruder is `LandingGitFixture.PushIndependentAsync(string name)` (S4:
+the probe's `PushIndependentCommitAsync` moved onto the fixture, returning the pushed SHA; no `PROBE` lines). Helpers in
+the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`), `OperationsAsync(h)` (task's
+`AgentTaskLandings` by `CreatedAt`). A **race hook** is
+`f.Git.BeforeCommand = async (dir, a) => { if (a[0] == "push" && pushes++ < N) intruder = await f.PushIndependentAsync($"intruder-{pushes}"); return null; }`.
+"Red at `989abc9f`" is what CP-0 must show. The CP column names the row that runs each test after the fix.
+
+- **V-1** Push-window race lands in one request | real git, service+protocol+resolver | `AgentTaskLandTargetRaceTests.C711_PushWindowRaceLandsInOneRequest`, CP-0 (red), CP-1 |
+  Race hook with N = 1. `h.Verifier.Barrier` on call 2 records, **while B is verifying** (i.e. after B's rebase, before
+  its push): `Read(f, f.Source, "rev-parse", "HEAD") == reviewed`, `Read(f, f.Repository, "rev-parse", f.TargetRef) == f.SeedSha`,
+  and `f.Git.Commands` has no entry whose `Directory` path-equals `f.Source` or `f.Repository` with `Arguments[0]` in
+  {`rebase`, `merge`, `push`, `reset`} and no `update-ref … refs/heads/master`. One `RequestAsync(expectedSourceSha: reviewed)`
+  + `RunQueuedAsync()`. Decisive assertions: events filtered to the request are exactly `[LandRequested, Warning, Landed]`
+  in order; the `Warning` detail contains `raced with a push to origin:refs/heads/master (retry 1 of 2)`, its
+  `LandRequestId == request.Id`, `LandingOperationId == A.Id`; no `LandRefused`. Operations `[A, B]`: A
+  `SchemaVersion 3, Phase Refused, Publication Refused, LastReason "remote_changed_before_push", PushExitCode 1, Active false`;
+  B `Publication Landed, Phase Complete, Active true, TargetBeforeSha == intruder, VerifiedSourceSha == RebasedSourceSha,
+  VerificationPassed, VerificationSkipReason null, OriginalSourceSha == ReviewedSourceSha == reviewed,
+  ApprovalLandRequestId == A.ApprovalLandRequestId == request.Id, ReviewEvidenceId == A.ReviewEvidenceId`.
+  `h.Verifier.Calls == 2`, `Invocations[^1] == (B.LandWorktreePath, null)`. After: remote `master == B.VerifiedSourceSha`,
+  `merge-base --is-ancestor intruder B.VerifiedSourceSha` exit 0 (in `f.Remote`), canonical `master == B.VerifiedSourceSha`,
+  terminal detail contains `canonical=advanced`; `AgentTaskLandNotifications` for the request: exactly one, `Kind Outcome`.
+  Red at `989abc9f`: one operation, `LastReason push_rejected`, `Phase PushStarted`, `LandRefused` (probe).
+  Turned red by: `AgentTaskLandingProtocol.cs:265` (D-6) and the S2 loop after `AgentTaskLandService.cs:450`.
+- **V-2** Pre-CAS race lands in one request | real git | `…C711_PreObservationRaceLandsInOneRequest`, CP-0, CP-1 |
+  Hook: on the second target `ls-remote` (`a[0] == "ls-remote" && a[^1] == f.TargetRef && ++reads == 2`) push the
+  intruder (probe shape). Assert A `Refused remote_changed_before_push, PushStartedAt null, PushExitCode null`; no `push`
+  in `f.Git.Trace` before A's refusal (index of first `push` > index of A's refusal is not observable, so assert
+  `f.Git.Trace.Count(a => a[0] == "push") == 1`); B as in V-1 (Landed, `TargetBeforeSha == intruder`, verified,
+  inherited identity); events `[LandRequested, Warning(retry 1 of 2), Landed]`. Red: `LandRefused remote_changed_before_push`,
+  one operation. Turned red by: the S2 loop (`AgentTaskLandService.cs:450–489`) + the resolver fall-through
+  (`AgentTaskLandSourceResolver.cs:86–93`).
+- **V-3** Budget spent refuses; a new request lands; budget 0 is the opt-out | real git | `…C711_BudgetSpentRefusesAndNewRequestLands(int budget)`
+  `[Arguments(2)] [Arguments(0)]`, CP-0, CP-1 | `h.LandSettings.LandTargetRaceRetries = budget`; race hook with N = budget + 1.
+  Assert terminal `LandRefused` detail: budget 2 → contains `remote_changed_before_push; after 2 automatic rebases
+  (Delegation:LandTargetRaceRetries=2)`; budget 0 → contains `remote_changed_before_push` and **not** `automatic rebases`.
+  Operations: `budget + 1` rows, all `Refused remote_changed_before_push`, exactly one `Active` (the last). `Warning`
+  events: `budget` of them, details `retry 1 of 2`, `retry 2 of 2` in order (none for 0). `task.LandAttempt == 1`,
+  `request.Attempt == 1`. Source HEAD `== reviewed`, canonical `master == f.SeedSha`. Then `f.Git.BeforeCommand = null`,
+  second `RequestAsync(expectedSourceSha: reviewed)` + `RunQueuedAsync()`: `Landed`, operations `budget + 2`, the new one's
+  `ApprovalLandRequestId == first request id` (inherited, factory line 79–80), `task.LandAttempt == 2`, second request
+  `Attempt == 1`. Red (budget 2): one operation, `push_rejected`, no `Warning`, no "after 2". Budget 0 is red only on the
+  reason (`push_rejected` today) — D-6. Turned red by: S2's budget comparison and exhaustion detail.
+- **V-4** A rejected push with an unchanged tip stays resumable | real git | `…C711_PushRejectedWithoutMovementStaysResumable`,
+  CP-0 (passes; not a red row), CP-1 | Hook returns `new LandingGitResult(1, "", "! [remote rejected] master -> master (pre-receive hook declined)")`
+  for the **first** `push` only and moves nothing. Assert `LandRefused` detail contains `push_rejected`; no `Warning`;
+  operations: one, `Phase PushStarted, Active true, PushExitCode 1, Publication Unconfirmed`; `h.Verifier.Calls == 1`.
+  Second request (`expectedSourceSha: reviewed`): `Landed`, the **same** operation id, operations count 1,
+  `h.Verifier.Calls == 1` (no re-verification), remote `master == op.VerifiedSourceSha`. Green before and after — a
+  guard, flagged: its value is PC-7. Guards: D-6's unchanged-tip arm.
+- **V-5** A conflicting intruder on the retry refuses as a conflict | real git | `…C711_ConflictOnRetryRefusesAsConflict`, CP-0, CP-1 |
+  The intruder commit (written by S4's helper with a `(name, path, content)` overload) rewrites the file
+  `AddSourceAsync` changed, with different content. Assert A race-refused; B `Refused, LastReason rebase_conflict`;
+  request `State NeedsResolution`; a `Conflicted` event whose detail contains that file name; `f.Git.Trace.Count(push) == 1`
+  (A's only); remote `master == intruder`; source HEAD `== reviewed`; one `Warning`. Red: `push_rejected`, no `Conflicted`.
+  Turned red by: the S2 loop (the conflict path itself is unchanged).
+- **V-6** Source moved before the retry refuses without a push | real git | `…C711_SourceMovedBeforeRetryRefuses(string where)`
+  `[Arguments("remote")] [Arguments("local")]`, CP-0, CP-1 | In the same hook call as the intruder: `remote` — the
+  observer pushes a new commit to `f.SourceRef` (`checkout -B` from the fetched source, commit, `push origin HEAD:<SourceRef>`);
+  `local` — `commit --allow-empty` in `f.Source` (no push). Assert operations exactly two; B `Refused` with
+  `LastReason source_remote_changed` (remote) — or, for `local`, the request's `SourceRefusalReason == "source_changed"`
+  with **no** B row if the factory refuses before creating it (the refusal is the resolver's) — the test asserts the
+  observed shape: `local` → operations count 1 + `LandRefused` detail contains `source_changed`; `remote` → count 2 +
+  B `source_remote_changed`. Both: one `Warning`, `f.Git.Trace.Count(push) == 1`, remote `master == intruder`,
+  `h.Verifier.Calls == 1`. Red: `push_rejected`, no `Warning`. Turned red by: S2 loop; guarded by factory line 25
+  (local) and `RecheckRemoteSourceAsync` (remote).
+- **V-12** The budget is validated 0..5 | unit (in the race class, no harness) | `…C711_RaceRetryBudgetIsValidated`, CP-0, CP-1 |
+  `new DelegationSettings().LandTargetRaceRetries == 2`; `DelegationSettingsValidator.Validate` fails with a message
+  containing `LandTargetRaceRetries` for -1 and 6, and succeeds for 0 and 5. Red: compile error (member absent) — CP-0
+  records it as the build failure of that row; see CP-0 note. Turned red by: S2 `DelegationSettings`.
+- **V-13** A crash-resumed request whose target raced retries with fresh verification | real git |
+  `…C711_CrashResumeAfterRaceRetries`, CP-0, CP-1 | `h.Fault.Phase = LandPhase.Verified; h.Fault.AfterCommit = true;`
+  `await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync())` (the `C448_V15` shape); then
+  `f.PushIndependentAsync("intruder-crash")`, `h.Fault.Phase = null`, `RestartServicesAsync()`, `RunAsync()`. Assert
+  A `Refused remote_changed_before_push`, B `Landed`, `TargetBeforeSha == intruder`, `Verifier.Calls == 2`, one `Warning`
+  (retry 1 of 2), `request.Attempt == 2` (crash re-run is a second admission), source HEAD `== reviewed`. Red: A
+  `Refused`, no B. Turned red by: S1 resolver fall-through + S2 loop (D-4 crash-resume sentence).
