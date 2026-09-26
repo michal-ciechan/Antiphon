@@ -192,7 +192,9 @@ public sealed class AgentTaskLandTargetRaceTests
         await using var db = h.CreateContext();
         var refused = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.LandRequestId == first.RequestId && e.IsLandTerminal);
         refused.Detail.ShouldContain("push_rejected");
-        (await db.AgentTaskEvents.CountAsync(e => e.Type == AgentTaskEventType.Warning && e.AgentTaskId == f.TaskId)).ShouldBe(0);
+        // Every refusal already writes "Landing not confirmed". The race retry is the warning that must be absent.
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("raced with a push"))).ShouldBe(0);
         var op = (await OperationsAsync(db, f.TaskId)).ShouldHaveSingleItem();
         op.Phase.ShouldBe(LandPhase.PushStarted);
         op.Active.ShouldBeTrue();
