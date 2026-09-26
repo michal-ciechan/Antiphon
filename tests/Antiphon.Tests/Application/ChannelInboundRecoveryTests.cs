@@ -437,6 +437,36 @@ public sealed class ChannelInboundRecoveryTests
             });
             await Should.ThrowAsync<DbUpdateException>(() => duplicateOwner.SaveChangesAsync());
         }
+
+        await using var raceSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var materializationGate = new MaterializationGate();
+        await using var competing = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = raceSchema.ConnectionString, Bridge = Settings(),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(materializationGate),
+        });
+        var competingChat = await competing.BindChannelAsync();
+        var competingMessage = Message(competingChat, $"compete-{Guid.NewGuid():N}", "one claimed materialization");
+        materializationGate.Arm();
+        var firstDrain = Bridge(competing).HandleInboundAsync(competingMessage, Ct);
+        await materializationGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        var secondDrain = Bridge(competing).HandleInboundAsync(
+            competingMessage with { Id = Guid.NewGuid().ToString("N") }, Ct);
+        try
+        {
+            await secondDrain.WaitAsync(TimeSpan.FromSeconds(8));
+            materializationGate.EnteredCount.ShouldBe(1,
+                "the second bridge must not prepare a competing queue owner while the first holds the agent claim");
+        }
+        finally { materializationGate.Release.TrySetResult(true); }
+        await firstDrain.WaitAsync(TimeSpan.FromSeconds(8));
+        await using var raceRead = Db(raceSchema.ConnectionString);
+        var claimed = await raceRead.ChannelInbounds.AsNoTracking()
+            .SingleAsync(i => i.NativeMessageId == competingMessage.ChannelMessageId);
+        claimed.QueueMessageId.ShouldNotBeNull();
+        (await raceRead.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId == claimed.Id)).ShouldBe(1);
+        competing.Adapter.SubmittedBodies.Count.ShouldBe(1);
     }
 
     [Test]
@@ -930,6 +960,30 @@ public sealed class ChannelInboundRecoveryTests
                         Failed.TrySetResult(true);
                         throw new InvalidOperationException("synthetic acceptance transaction failure");
                 }
+            }
+            return await base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed class MaterializationGate : SaveChangesInterceptor
+    {
+        private int _armed;
+        private int _enteredCount;
+        public int EnteredCount => Volatile.Read(ref _enteredCount);
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 1
+                && eventData.Context?.ChangeTracker.Entries<SessionQueuedMessage>()
+                    .Any(e => e.State == EntityState.Added && e.Entity.SourceChannelInboundId != null) == true)
+            {
+                Interlocked.Increment(ref _enteredCount);
+                Entered.TrySetResult(true);
+                await Release.Task.WaitAsync(cancellationToken);
             }
             return await base.SavingChangesAsync(eventData, result, cancellationToken);
         }
