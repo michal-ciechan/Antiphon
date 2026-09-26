@@ -19,6 +19,6 @@ ordinaryScopeCompleted: <Full|Interim|None>
 
 Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
 
-Platform: read GET /api/runner-defaults and /api/session-runners; embed no fleet location. -Platform Windows for junction, file-sharing, ConPTY, or Windows path/CRLF/E2E.
+Platform: Default Any; omit -Platform. Read defaults/runners; no fleet. Pin OS-specific tests/tools/behaviour/evidence (API, paths, locks, process/terminal, probe), filter/budget; not habit/stage/host.
 
 next: land when there are no defects and this was a Final Review; review (Final) when a clean Interim; code when there are defects (name them in `handoff:`); decide when a human choice blocks.

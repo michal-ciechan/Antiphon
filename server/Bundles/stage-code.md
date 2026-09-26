@@ -14,4 +14,4 @@ next: review when implementation and ordinary V/R are complete, even with zero P
 
 next: code when implementation or ordinary verification remains; decide when a human choice blocks. Do not settle next: land; never land or deploy. After Review the caller lands the original Code task and commissions SourceLanding Mutation.
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. -Platform Windows for junction, file-sharing, ConPTY, or Windows path/CRLF/E2E.
+Platform: read runner defaults/runners; no fleet location. Default Any: omit -Runner/-Platform. Pin only OS-specific test/tool/behaviour/evidence (API, paths/line endings, locks, process/terminal, probe): narrow filter/budget; never habit, stage, host preference.

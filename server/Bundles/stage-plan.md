@@ -8,4 +8,4 @@ A `## Verification design` section is required when the brief says the test-desi
 
 next: test-design when verification is a separate stage; code only when the verification section is already in the plan so Build can execute it; decide when the plan is written under stated defaults (enumerate them as D-n in a ## Decisions section); investigate when the card's premise is wrong (say what to measure).
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. -Platform Windows for junction, file-sharing, ConPTY, or Windows path/CRLF/E2E. A plan's checkpoints name the lane.
+Platform: read runner defaults/runners; no fleet location. Default Any: omit -Runner/-Platform. Pin only OS-specific test/tool/behaviour/evidence (API, paths/line endings, locks, process/terminal, probe): narrow filter/budget; never habit, stage, host preference. Plan checkpoints name required lanes.
