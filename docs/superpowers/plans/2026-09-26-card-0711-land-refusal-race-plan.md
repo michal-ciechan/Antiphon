@@ -510,8 +510,8 @@ assertion, the production line whose change turns it red (line numbers at `989ab
    (row `target`: `refused.Id.ShouldBe(previous.Id, "automatic recovery cannot replace changed preparation")` contradicts
    D-4's crash-resume sentence) → R-3, with V-13 as the default-budget companion;
    `AgentTaskLandSourceFreshnessTests.C488_TargetCheckpointStillGuarded` → R-4 (it is the plan's V-9 `[Arguments(0)]` row;
-   V-9 keeps only the default-budget row so the two do not duplicate). The plan's table ran none of the first two classes'
-   affected rows with a filter that would have caught `AgentTaskLandPreparationIdentityTests` at all.
+   V-9 keeps only the default-budget row so the two do not duplicate). The plan's table did not run
+   `AgentTaskLandPreparationIdentityTests` at all, so R-3 would have gone red unseen.
 2. **`RR_V2` does not pin "a non-race refusal is not replaced by a re-run"** (it is an explicit-request test:
    `land_worktree_foreign` refuses B again). The resolver's same-request fall-through guard gets its own row, V-14.
 3. **V-10's fixture is `AgentTaskLandRecoveryTests.SeedSchemaTwoAsync`**, so V-10 lives in `AgentTaskLandRecoveryTests`,
@@ -608,11 +608,10 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
 - **V-6** Source moved before the retry refuses without a push | real git | `…C711_SourceMovedBeforeRetryRefuses(string where)`
   `[Arguments("remote")] [Arguments("local")]`, CP-0, CP-1 | In the same hook call as the intruder: `remote` — the
   observer pushes a new commit to `f.SourceRef` (`checkout -B` from the fetched source, commit, `push origin HEAD:<SourceRef>`);
-  `local` — `commit --allow-empty` in `f.Source` (no push). Assert operations exactly two; B `Refused` with
-  `LastReason source_remote_changed` (remote) — or, for `local`, the request's `SourceRefusalReason == "source_changed"`
-  with **no** B row if the factory refuses before creating it (the refusal is the resolver's) — the test asserts the
-  observed shape: `local` → operations count 1 + `LandRefused` detail contains `source_changed`; `remote` → count 2 +
-  B `source_remote_changed`. Both: one `Warning`, `f.Git.Trace.Count(push) == 1`, remote `master == intruder`,
+  `local` — `commit --allow-empty` in `f.Source` (no push). `remote`: operations exactly two, B `Refused` with
+  `LastReason source_remote_changed` (protocol entry recheck). `local`: operations exactly one — the factory refuses
+  `source_changed` at `LandOperationFactory.cs:25` before creating B, so the refusal is the resolver's — and the
+  request's `SourceRefusalReason == "source_changed"`, `LandRefused` detail contains `source_changed`. Both: one `Warning`, `f.Git.Trace.Count(push) == 1`, remote `master == intruder`,
   `h.Verifier.Calls == 1`. Red: `push_rejected`, no `Warning`. Turned red by: S2 loop; guarded by factory line 25
   (local) and `RecheckRemoteSourceAsync` (remote).
 - **V-12** The budget is validated 0..5 | unit (in the race class, no harness) | `…C711_RaceRetryBudgetIsValidated`, CP-0, CP-1 |
@@ -626,3 +625,100 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   A `Refused remote_changed_before_push`, B `Landed`, `TargetBeforeSha == intruder`, `Verifier.Calls == 2`, one `Warning`
   (retry 1 of 2), `request.Attempt == 2` (crash re-run is a second admission), source HEAD `== reviewed`. Red: A
   `Refused`, no B. Turned red by: S1 resolver fall-through + S2 loop (D-4 crash-resume sentence).
+- **V-7** Race-refusal policy table | unit, state policy | `AgentTaskLandingStateTests.C711_TargetRaceRefusalPolicy(string row, bool isRace, bool automatic, bool explicitReplace)`,
+  CP-0, CP-3 | Base op: `SchemaVersion 3, Phase Refused, Publication Refused, LastReason "remote_changed_before_push",
+  PushExitCode 1, ApprovalLandRequestId = Guid.NewGuid(), OriginalSourceSha = ReviewedSourceSha = 'a'×40`, identity fields
+  as `RR_V7`'s base. Rows `[Arguments(row, isRace, automatic, explicitReplace)]`: `race` (T,T,T); `schema2` (F,F,T);
+  `published` (Phase Refused + the `RR_V7` `receipt:Landed` publication fields, `HasPublication` asserted true first)
+  (F,F,F); `reason:verification_failed` (F,F,T); `reason:push_rejected` (F,F,T); `reason:null` (F,F,T);
+  `phase:PushStarted` with `Publication Unconfirmed` (F,F,F); `publication:Unconfirmed` (Phase Refused) (F,F,T);
+  `no-lease` (T,F,F — both calls with `leaseHeld: false`); `no-approval` (`ApprovalLandRequestId = null`) (T,F,F).
+  Asserts: `IsTargetRaceRefusal(op) == isRace`; `CanReplaceRefused(op, explicitRequest: false, leaseHeld) == automatic`;
+  `CanReplaceRefused(op, explicitRequest: true, leaseHeld) == explicitReplace` (today's rule, unchanged); the op's JSON
+  is byte-identical before and after (the `RR_V7` no-mutation check). 10 executions. Red at CP-0: `race`, `no-lease`,
+  `no-approval` fail on `isRace` (S0 stub returns false) and `race` on `automatic`. Turned red by:
+  `AgentTaskLandingState.cs:67–75` (S1).
+- **V-8** Fake push rejects a non-fast-forward | unit, fixture | `ControlledLandingGitTests.C711_PushRejectsNonFastForward`, CP-0, CP-3 |
+  `using var git = new ControlledLandingGit(); var dest = await git.DestinationAsync(git.Repository, git.TargetRef, ct);`
+  `await git.RequiredAsync(git.Source, "commit", "--allow-empty", "-m", "d"); var d = git.SourceHead;` (1) `PushOwnedAsync(…, d, …)`
+  → exit 0, `RemoteTarget == d`. (2) `var moved = git.AdvanceRemoteTarget();` (child of `d`). (3) push `d` again → exit 1,
+  `Diagnostic` contains `rejected`, `RemoteTarget == moved`. (4) push `git.SeedSha` → exit 1, `RemoteTarget == moved`.
+  (5) `PushAsync` of `git.SeedSha` to `SourceRef` destination → exit 0 (the source ref keeps today's unconditional model).
+  Red at CP-0 (S4b not yet applied): step (3) exits 0 and moves the tip. Turned red by: `ControlledLandingGit.cs:664–673` (S4b).
+- **V-9** The retry in the fake harness | fake protocol | `AgentTaskLandSourceFreshnessTests.C711_RaceRetriesInTheFakeHarness`, CP-0 n/a
+  (CP-0 does not run this class), CP-3 | The `C488_TargetCheckpointStillGuarded` shape with a one-shot guard
+  (`if (phase == LandPhase.Verified && !raced) { raced = true; h.Git.RewriteRemoteAwayFromSource(); }`), default budget.
+  Assert `h.Git.OwnedTrace.Count(a => a.Contains("rebase") && !a.Contains("--abort")) == 2`,
+  `h.Git.Trace.Count(a => a[0] == "push") == 1`, `h.Verifier.Calls == 2`, operations 2 (A `Refused remote_changed_before_push`,
+  B `Landed`), `h.Git.RemoteTarget == B.VerifiedSourceSha`, one `Warning` containing `retry 1 of 2`. Red at `989abc9f`: one
+  rebase, A `Refused`, no B (shown by CP-3's first run only if Code chooses; CP-0 carries the real-git equivalent V-2).
+- **V-10** Legacy schema-2 rows become terminal and the operator step is named | fake protocol |
+  `AgentTaskLandRecoveryTests.C711_LegacyAdvancedRowsBecomeTerminal(string change)` `[Arguments("remote")] [Arguments("branch")]
+  [Arguments("push-rejected")]`, CP-1 | The `C688_SchemaTwoOperationsOnResume` preamble (`original = AddSourceAsync()`,
+  empty commit, `rebased = h.Git.SourceHead`, `SeedSchemaTwoAsync(h, "local-target-advanced", original, rebased)` — the
+  seed advances local `master` to `rebased`: the residue). `remote`: `h.Git.RewriteRemoteAwayFromSource()`; `RunQueuedAsync()`
+  → the seeded op `Phase Refused, Publication Refused, LastReason remote_changed_before_push`, no `push` in `h.Git.Commands`.
+  `branch`: `h.Git.RewindSource(original)`; `RunQueuedAsync()` → `Refused`, `LastReason source_changed`, no `push`. Then (both):
+  `RequestAsync(expectedSourceSha: original)` + `RunQueuedAsync()` → terminal `LandRefused` detail contains `target_local_ahead`
+  and `git reset --hard origin/master` and does **not** contain `pull --rebase`; request `SourceRefusalReason == "target_local_ahead"`;
+  operations count 1. Then `update-ref <TargetRef> <remote tip> <rebased>` in `h.Git.Repository` (the operator's reset),
+  `RequestAsync` + `RunQueuedAsync()` → a second op, `SchemaVersion 3`, `Landed`; `remote`: `PreparationInputSha == rebased`,
+  `PreviousPreparationOperationId == seeded.Id`; `branch`: `PreparationInputSha == original`, `PreviousPreparationOperationId null`.
+  `push-rejected`: `BeforeCommand` returns `(1, "", "! [remote rejected] master -> master (pre-receive hook declined)")` for the
+  first `push`; `RunQueuedAsync()` → the seeded op stays `Phase PushStarted`, `Active`, `LastReason push_rejected` (the legacy
+  arm is limited to its two reasons) — a guard row, green before and after. Red at `989abc9f` (`remote`, `branch`): the op
+  stays `LocalTargetAdvanced` (catch arm `AgentTaskLandingProtocol.cs:292` is schema-3 only), and the detail lacks the reset
+  text. Turned red by: S3 (protocol catch arm, factory detail, resolver pass-through).
+- **V-11** A retry restarts the progress clock | fake protocol + monitor | `AgentTaskLandMonitoringTests.C711_RetryRestartsTheProgressClock`, CP-3 |
+  `LandingProtocolHarness` with `var clock = new FakeTimeProvider(start); h.Clock = clock;`. One-shot at
+  `Fault.AfterAcknowledged(Verified)`: `clock.Advance(LandWarningSeconds + 5 s)`; run one
+  `AgentTaskLandMonitorService(h.CreateContext(), clock, Options.Create(h.LandSettings), new MockEventBus()).SweepAsync`
+  and assert the request's `WarningAt != null` (precondition: the first run aged, so the reset is observable); then
+  `RewriteRemoteAwayFromSource()`; `raceAt = clock.GetUtcNow()`. `h.Verifier.Barrier` on call 2 (B verifying): request
+  `HighestProgress == (int)LandPhase.Prepared`, `LastProgressAt == raceAt`, `WarningAt == null`, `ErrorAt == null`; Aged
+  notifications for the request == 1; `clock.Advance(LandWarningSeconds − 1 s)`, sweep → still 1; `clock.Advance(2 s)`,
+  sweep → 2; `barrierHit = true`. After: `barrierHit.ShouldBeTrue()`, B `Landed`. Red at `989abc9f`: no retry, barrier call 2
+  never happens (`barrierHit` false). Turned red by: S2 `WriteRaceRetryAsync` progress reset (D-5). Seam: if an in-flight
+  sweep collides with the service's request token, Code moves the two sweeps after a second `Fault.AfterAcknowledged(Prepared)`
+  hook for B; the decisive assertions do not change.
+- **V-14** A non-race refusal is not replaced by the same request's re-entry | fake protocol |
+  `AgentTaskLandSourceFreshnessTests.C711_NonRaceRefusalIsNotReplacedBySameRequest`, CP-3 | `h.Verifier.Passed = false`;
+  `RequestAsync(expectedSourceSha: source)` + `RunQueuedAsync()` → A `Refused verification_failed`. Re-open the same request
+  in the DB exactly as a crash before the terminal commit would leave it: `request.IsPending = true`, `State = Queued`,
+  `TerminalEventId = null`, `task.CurrentLandRequestId = request.Id`, `task.LandRequestedAt = request.RequestedAt`,
+  `task.LandAttempt = request.Attempt`, `task.Status = Succeeded` (the admission checks at `AgentTaskLandService.cs:359–366`);
+  `request.SourceResolutionState` stays `Resolved`. `h.Verifier.Passed = true`; `h.RunAsync()`. Assert operations count 1,
+  A unchanged (`Refused verification_failed`), `h.Verifier.Calls == 1`, no `push`, terminal `LandRefused` contains
+  `verification_failed`. Green before and after — guard row, flagged; its value is PC-5.
+- **V-15** The operator step on real git | real git | amended `AgentTaskLandPublicationTests.C688_LocalMasterAheadOfOriginRefuses`, CP-2 |
+  Add to the existing `(await TerminalAsync(h)).Detail.ShouldContain("target_local_ahead")` (line 733):
+  `.ShouldContain("git fetch origin && git reset --hard origin/master")` and `.ShouldNotContain("pull --rebase")`. Red at
+  `989abc9f`: no detail. Turned red by: S3 factory detail.
+
+### Guards the regression
+
+- **R-1** Unchanged classes stay green: every class in CP-1..CP-3 not named below (the explicit-retry contract
+  `AgentTaskLandRefusedRetryTests`, crash-resume `AgentTaskLandRecoveryTests`, publication, fake protocol, approval
+  recovery incl. schema-2 derivation `C488_DerivationAlwaysReverifies`, diagnostics, monitoring/aging, stage outcomes,
+  the script status reader). Decisive: 0 failed per CP row.
+- **R-2** `AgentTaskLandPublicationTests.C448_V09_PushAndConfirmationPreserveCompetingRemoteState` — amended: add
+  `h.LandSettings.LandTargetRaceRetries = 0;` after `InitializeAsync` (all four rows; only `non-ff-before-push` races).
+  Decisive (unchanged lines): remote `master == rival`, `Directory.Exists(h.Fixture.Source)`, `RemoteConfirmedAt null`.
+- **R-3** `AgentTaskLandPreparationIdentityTests.C448_V15_ChangedVerifiedPreparationCanOpenAFreshExplicitOperation` — amended:
+  `h.LandSettings.LandTargetRaceRetries = 0;` after `InitializeAsync`. Decisive: `refused.Id.ShouldBe(previous.Id, …)`
+  (automatic recovery with the retry disabled still never replaces). Default-budget counterpart: V-13.
+- **R-4** `AgentTaskLandSourceFreshnessTests.C488_TargetCheckpointStillGuarded` — amended: `h.LandSettings.LandTargetRaceRetries = 0;`
+  (S4a property). Decisive: `Phase Refused`, no `push`.
+- **R-5** `LandingProtocolGuardTests.C475_PushExitDoesNotConfirmPublication` and
+  `AgentTaskLandApprovalRecoveryTests.C488_PublicationNeedsTargetContainment` — unchanged, **default budget**: a successful
+  push followed by a rewrite is `push_unconfirmed`, not a race. Decisive: `h.Git.Trace.Count(a => a[0] == "push") == 1`
+  and `Publication != Landed`.
+- **R-6** `AgentTaskLandPublicationTests.C448_V06_RemoteAheadRefusesOnlyWhenSourceIsNotContained` — unchanged:
+  `SourceRefusalReason.ShouldBe("target_local_ahead")` exactly (the S3 detail must not leak into the reason code).
+- **R-7** `AgentTaskLandPublicationTests.C448_V08_RejectedPushWithIndependentContainmentIsAlreadyPresent` — unchanged:
+  a rejected push whose re-observation contains the source is `AlreadyPresent` (D-6's three-way runs only when
+  `!ContainsSource`).
+- **R-8** `AgentTaskLandRecoveryTests.C688_SchemaTwoOperationsOnResume` rows `local-target-advanced`/`push-started` —
+  unchanged: with the remote unmoved the legacy op still lands (the S3 arm fires only on its two reasons).
+- **R-9** `AgentTaskLandingStateTests.RR_V7_RefusedReplacementEligibilityDependsOnlyOnAdmission` rows `automatic`,
+  `automatic-changed` — unchanged: an automatic request never replaces a non-race refusal (schema-1 base row).
