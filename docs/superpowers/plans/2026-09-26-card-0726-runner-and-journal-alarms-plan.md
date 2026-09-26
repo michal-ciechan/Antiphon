@@ -344,3 +344,187 @@ together rather than shipping a dormant switch.
   alarm loop's timers (grace and sweep only).
 - `AGENTS.md` is unchanged: the safety core already says decisions and alarms belong on the
   attention feed.
+
+## Slices
+
+Two Code rounds. R1 (S1 to S3) is the server mechanism and is complete on its own: the alarm
+loop runs, notes go out, the state is published, and the feed ignores it until S4. R2 (S4, S5)
+is the surface and the docs. Each `Sn-tests` commit lands the compiling red tests first; each
+`Sn` commit makes them green.
+
+### S1. Settings and the three seams (R1)
+
+- `server/Application/Settings/AlarmSettings.cs`, `AlarmSettingsValidator.cs`; `Program.cs`
+  registration next to `ZombieCensus` (`:179-186`); `server/appsettings.json` gains
+  `"Alarms": { "Enabled": true }` (strict JSON, defaults in the class).
+- `server/Application/Interfaces/IRunnerEligibilityObserver.cs`,
+  `IRepositoryFenceObserver.cs`, `IRunnerAlarmExclusion.cs` (+ `NeverExcluded` in
+  `server/Application/Services/NeverExcluded.cs`).
+- `PhoneHomeRunnerDirectory`: trailing optional `IRunnerEligibilityObserver? observer = null`;
+  `Notify(runnerId)` helper called outside `_gate` at the four transitions (D-2);
+  `bool IsEnabled(string runnerId)` (slot exists and `Entry.Enabled`); `RunnerEligibilitySnapshot
+  Snapshot(string runnerId)` (`RunnerId, DisplayName, Enabled, Eligible, DisconnectReason,
+  LastDisconnectAtUtc, Reconnects`, derived from `Status` and `DescribeAsync`'s predicate) so the
+  coordinator has one read. `Program.cs:295-301` passes the observer.
+- `RepositoryMutationLease`: trailing optional `IRepositoryFenceObserver? fences = null`; calls at
+  `:33-37` and `:75-79`. `Program.cs:393` stays a plain registration (the observer resolves from
+  DI through a factory lambda).
+- `tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs`: `StartAsync(..., IRunnerEligibilityObserver? observer = null)`.
+- Tests: `AlarmSettingsValidatorTests`, `RunnerEligibilityObserverTests`, `RepositoryFenceObserverTests`.
+
+### S2. The journal inspector (R1)
+
+- `server/Infrastructure/Git/RepositoryChildJournalInspector.cs` with `JournalInspection`,
+  `JournalRecordFinding`, `JournalRecordState { Alive, Dead, Completed, Unknown, Malformed }`
+  (D-8). Registered singleton in `Program.cs` beside `ILandingGit` (`:372`).
+- Tests: `RepositoryChildJournalInspectorTests`.
+
+### S3. State, wake queue, coordinator, hosted service (R1)
+
+- `server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs` (singleton, D-3 records).
+- `server/Application/Services/AlarmWakeQueue.cs` (singleton; implements both observers).
+- `server/Application/Interfaces/IRunnerAlarmNotifier.cs` (`Task NotifyAsync(Guid sessionId,
+  string header, string body, CancellationToken ct)`) and
+  `server/Application/Services/QueueRunnerAlarmNotifier.cs` (D-7: queue + flush queue).
+- `server/Application/Services/RunnerAlarmCoordinator.cs` (scoped, D-3 table, D-4 texts, D-8
+  repository set): `EvaluateRunnersAsync(now, ct)`, `EvaluateJournalsAsync(repositories?, now, ct)`
+  (null = every repository of row 9), `IReadOnlyList<string> RegisteredRepositoriesAsync(ct)`.
+- `server/Infrastructure/Orchestration/RunnerAlarmHostedService.cs` (D-3 loop).
+- `Program.cs`: singletons (`RunnerAlarmState`, `AlarmWakeQueue`, `NeverExcluded` as
+  `IRunnerAlarmExclusion`), scoped (`RunnerAlarmCoordinator`, `QueueRunnerAlarmNotifier` as
+  `IRunnerAlarmNotifier`), hosted service after `PhoneHomeRecoveryPump` (`:789`), and the two
+  observer registrations resolving `AlarmWakeQueue`.
+- Tests: `RunnerAlarmCoordinatorTests`, `RunnerAlarmHostedServiceTests`, `RunnerAlarmNotifierTests`.
+
+### S4. Attention projection and client visuals (R2)
+
+- `AttentionDtos.cs`: the two members (D-6). `AttentionService`: `RunnerAlarmState? alarms = null`
+  parameter; `BuildRunnerUnavailableItemsAsync` and `BuildJournalStaleItemsAsync` after `:231`.
+- `client/src/api/attention.ts`, `client/src/features/attention/attentionVisuals.ts`,
+  `attentionVisuals.test.ts` (D-6).
+- Tests: `RunnerAlarmAttentionTests`; the vitest file.
+
+### S5. Docs (R2)
+
+`docs/orchestration-loop.md`, `docs/bootstrap.md`, `docs/ops-http.md`,
+`docs/session-runtime-invariants.md` (D-10). No test; Review reads them.
+
+## Verification design
+
+### Harness and red-first discipline
+
+- Every backend class takes its own migrated schema (`TestDbFixture.CreateIsolatedSchemaAsync()`,
+  the `DispatchHeldAttentionTests` shape) where it needs rows, seeds `AgentTask`, `AgentSession`
+  and `Project` rows directly, and never calls `AgentTaskService.CreateAsync` (row 14's inherited
+  red). `[Category("Integration")]`; process-spawning classes carry
+  `[ParallelLimiter<ProcessSpawnLimit>]`.
+- Directory-level tests use `PhoneHomeTestHost.StartAsync(clock: fake, configured: <two enabled
+  runners>, observer: recorder)` and scripted peers (`ConnectPeerAsync`, `Socket.Abort()`,
+  `MarkRecovered` by hand, `NoteHeartbeat` withheld while the `FakeTimeProvider` advances past
+  `LeaseSeconds = 90`, then `SnapshotLive` to evaluate the lease). Nothing hosts the recovery pump.
+- Journal tests use `ScratchGitRepo` plus the real `LandingGit`, plant `ChildRecord` JSON as
+  `RepositoryMutationLeaseTests.cs:515-523` does (a dead record uses the PID and start ticks of a
+  `pwsh -NoProfile -c exit` child after it exited; the alive record uses the test process's own
+  PID and start ticks), and set file write times with `File.SetLastWriteTimeUtc` to control age.
+- Coordinator tests use a `FakeEligibilitySource : IRunnerEligibilitySnapshotSource` (S1's
+  `Snapshot` behind a small interface the directory implements), a `RecordingNotifier`, a
+  `FakeExclusion`, `FakeTimeProvider`, and the isolated schema for tasks and sessions.
+- The hosted-service test runs the real `RunnerAlarmHostedService` over the fake source with a
+  `FakeTimeProvider`, `StartAsync`, then `clock.Advance(...)` and `UntilAsync` polls on the
+  published state (the `C699_*` tests' `RecoveryWorker` / `RecoveryClock` shape in
+  `PostLandMutationDeliveryTests.CompletionRecovery.cs:46-80`).
+- The notifier test builds the real `SessionMessageQueueService` the way
+  `PhoneHomeOutageMentionTests` or `LandingSafetyHarness` does (TestDesign picks one) with one
+  live `AgentSession` row and asserts the queue row, not delivery.
+- The attention test builds `AttentionService` with the six positional arguments plus
+  `alarms: state` and asserts only rows of the two new kinds.
+- Red first: `S1-tests` compiles against the interfaces and the optional parameters with the
+  directory and lease not yet calling them; `S2-tests` against an inspector that returns an empty
+  inspection; `S3-tests` against a coordinator whose methods return without evaluating and a
+  hosted service that waits forever; `S4-tests` against the enum members with builders that
+  return `[]`. A red row must fail at the roster's assertion (a missing observer call, a missing
+  finding, an unraised episode, no row of the kind), never at compile or fixture time. Nothing
+  contacts server2's production runner, 17202 to 17205, a provider, or the desktop.
+
+### Coverage roster and decisive assertions
+
+| ID | Slice | Class.method | Decisive assertion (red on the skeleton, green after the slice) |
+|---|---|---|---|
+| V-1 | S1 | `AlarmSettingsValidatorTests.defaults_validate_and_nonpositive_values_are_named` | Defaults pass; `RunnerGraceSeconds = 0`, `SweepMinutes = 0`, `JournalStaleMinutes = -1` each produce one failure naming `Alarms:<Key>`. Red: the validator returns Success for everything. |
+| V-2 | S1 | `RunnerEligibilityObserverTests.disconnect_recovery_and_supersede_notify_the_observer_with_the_runner_id` | Two runners `a`, `b`. `ConnectPeerAsync(a)` then `MarkRecovered(liveA)`: recorder has `[a]`. `peerA.Socket.Abort()` and wait for `Status(a).Available == false`: recorder ends with `a` again and never contains `b`. Reconnect `a` while the first is still live (supersede): one more `a`. Red: recorder empty. |
+| V-3 | S1 | `RunnerEligibilityObserverTests.lease_expiry_seen_by_a_snapshot_notifies_once` | Recovered `a`; advance the fake clock 91 s with no heartbeat; `SnapshotLive(a)` twice: recorder has exactly one new `a` and `Status(a).DispatchEligible == false`. Red: no notification. |
+| V-4 | S1 | `RepositoryFenceObserverTests.a_fenced_acquire_and_a_describe_name_the_common_directory_once_each` | Plant one dead record; `TryAcquireAsync` returns null and the recorder has `[common]`; `DescribeUnavailableAsync` returns the script text and the recorder has `[common, common]`; delete the record: `TryAcquireAsync` succeeds and the recorder is unchanged. Red: recorder empty. |
+| V-5 | S2 | `RepositoryChildJournalInspectorTests.a_live_record_is_alive_and_never_stale` | Record with the test process's PID and start ticks, write time 1 h ago, threshold 5 min: one finding, `State == Alive`, `Stale == false`. Green throughout (control). |
+| V-6 | S2 | `RepositoryChildJournalInspectorTests.dead_completed_and_malformed_records_past_the_threshold_are_stale` | Three files: exited child's record, `Completed` record, `not-a-journal.txt`; all written 10 min ago; threshold 5 min: three findings with `Dead`, `Completed`, `Malformed`, all `Stale`; `StaleCount == 3`. Red: empty inspection. |
+| V-7 | S2 | `RepositoryChildJournalInspectorTests.a_young_dead_record_and_an_empty_directory_raise_nothing` | Exited child's record written now: `Dead` and `Stale == false`; no `children` directory: zero findings; `landing.lock` is not created by the inspection. |
+| V-8 | S3 | `RunnerAlarmCoordinatorTests.a_runner_down_past_the_grace_raises_once_with_counts_and_one_note_per_caller` | Runner `server2` ineligible (reason `transport_abort`); two open tasks pinned to it with parents P1 and P2, a third open task with parent P1, a Succeeded task pinned to it, an open task on the desktop; one live session on the runner. `EvaluateRunnersAsync` at t0: episode open, unraised, notifier empty. At t0+179 s: still unraised. At t0+180 s: `RaisedAt == now`, `PinnedOpenTasks == 3`, `LiveSessions == 1`, notifier has exactly two notes (P1, P2) with header `[runner server2 unavailable]` and bodies naming `transport_abort` and the pinned short ids; `NotifiedSessionIds == {P1, P2}`. A fourth evaluation at t0+240 s adds no note. Red: never raised, no note. |
+| V-9 | S3 | `RunnerAlarmCoordinatorTests.a_flap_inside_the_grace_leaves_no_trace` | Ineligible at t0, eligible at t0+60 s: no episode, no note, no log entry above Debug for that runner (captured logger). Green throughout (control). |
+| V-10 | S3 | `RunnerAlarmCoordinatorTests.recovery_resolves_and_tells_only_the_notified_callers` | After V-8's raise, a new open task with parent P3 is added; the runner becomes eligible: episode gone from the snapshot, notifier has recovery notes for P1 and P2 only, header `[runner server2 recovered]`, body naming the downtime. Red: episode still present, no recovery note. |
+| V-11 | S3 | `RunnerAlarmCoordinatorTests.a_draining_or_retired_runner_never_raises_and_a_disabled_entry_is_skipped` | `FakeExclusion` returns `"draining"` for `server2`: at t0+600 s still no episode and no note; a runner whose snapshot has `Enabled == false` is never evaluated. Then the exclusion returns null while still ineligible: an episode opens with `DownSince == now`. Red: raised despite the exclusion. |
+| V-12 | S3 | `RunnerAlarmCoordinatorTests.startup_opens_an_episode_per_enabled_remote_runner_and_a_normal_reconnect_closes_it` | Two remote runners ineligible at start: two open episodes; runner `a` eligible at +40 s: `a` closed silently; `b` raised at +180 s with its own note set. |
+| V-13 | S3 | `RunnerAlarmCoordinatorTests.journal_findings_are_published_per_repository_and_cleared_when_recovered` | Two `ScratchGitRepo`s registered as projects; one stale dead record in the first: `EvaluateJournalsAsync(null)` publishes one `JournalFinding` keyed on the first repository's common directory with `StaleCount == 1`; delete the record and evaluate again: no finding. A `Project` path that does not exist is skipped without throwing. Red: no finding. |
+| V-14 | S3 | `RunnerAlarmHostedServiceTests.the_loop_raises_on_the_grace_timer_and_wakes_on_a_fence_signal` | Real hosted service, fake source (ineligible), `FakeTimeProvider`: start; `Advance(179 s)`: state has no raised episode; `Advance(1 s)`: `UntilAsync` sees `RaisedAt` set without any further advance. Then `AlarmWakeQueue.Fenced(common)` for a repository with a stale record: `UntilAsync` sees the finding without advancing the clock. Stop cleanly. Red: nothing raised. |
+| V-15 | S3 | `RunnerAlarmHostedServiceTests.the_sweep_runs_at_the_period_and_no_other_timer_exists` | Fake source eligible, no fences: after `Advance(14 min)` the source's `Snapshot` call count equals the startup pass; after `Advance(1 min)` it increments by one runner pass and one journal sweep; between, the fake clock has at most one pending timer (the `RecoveryClock.TimerCreated` shape). |
+| V-16 | S3 | `RunnerAlarmNotifierTests.a_note_is_a_pending_whenidle_system_row_with_the_header` | One live session; `NotifyAsync(session, header, body)`: exactly one `SessionQueuedMessage` for the session, `Origin == System`, `Status == Pending`, body starts with the header line, and `CompletionNoteFlushQueue` received the session id. |
+| V-17 | S4 | `RunnerAlarmAttentionTests.a_raised_episode_is_one_error_row_and_an_unraised_one_is_none` | State with a raised episode for `server2` (`PinnedOpenTasks 3`, `LiveSessions 1`, reason `transport_abort`): exactly one item of `Kind == RunnerUnavailable`, `Severity == Error`, `ConditionKey == "runner-unavailable:server2"`, headline containing `3 open task(s)`, evidence containing `transport_abort`, `SinceUtc == DownSince`, `Actions == [OpenDrawer]`. State with only an unraised episode: no item of the kind. Red: no row. |
+| V-18 | S4 | `RunnerAlarmAttentionTests.a_journal_finding_is_one_error_row_naming_the_recovery_command` | One finding with two stale records: one item, `Kind == RepositoryChildJournalStale`, `Severity == Error`, `ConditionKey == "journal-stale:" + key`, evidence containing `recover-repository-children.ps1 -Repository ` + the repository path and `-Execute -ConfirmDescendantsExited`, `SinceUtc` the oldest record's write time. Red: no row. |
+| V-19 | S4 | `RunnerAlarmAttentionTests.no_state_means_no_rows_and_the_summary_counts_both_kinds_open` | Service built without `alarms`: no rows of either kind. With one of each: `AttentionSummaryDto.From(dto).Open` counts both. |
+| V-20 | S4 | `client/src/features/attention/attentionVisuals.test.ts` (`maps every kind`, `lands every kind in a declared group`, key-list lockstep) | The union, the visuals map and the lockstep list all carry `RunnerUnavailable` and `RepositoryChildJournalStale`; `tsc` in the vitest run rejects a union member without a visuals entry. |
+| R-1 | all | `MultiRunnerDirectoryTests`, `MultiRunnerRecoveryTests` | The observer seam changes no directory behaviour (15 source methods). |
+| R-2 | all | `RepositoryMutationLeaseTests`, `RepositoryMutationLeaseDescribeTests` | The fence observer changes no lease behaviour and the inspector shares its classification (15 source methods, argument-expanded). |
+| R-3 | all | `AttentionServiceTests` (all partials), `DispatchHeldAttentionTests` | The optional `alarms` parameter and two extra builders change no existing row (138 source methods plus 10, argument expansion may raise the count). |
+
+### Execution and evidence
+
+Builds go to `bin-c726-r1/` and `bin-c726-r2/` (forward slash); every row runs through
+`scripts/run-checkpoint.ps1` on server2, which takes its own build slot and adds
+`UseAppHost=false`; results under `.antiphon/c726-checkpoints`. Both `bin-c726-*` directories
+are deleted before the Code report. Every row is reported as its `CHECKPOINT` line. Unlisted
+runs need a stated reason.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-tests | `tests/Antiphon.Tests -> bin-c726-r1/` | seams-red | `/*/*/(AlarmSettingsValidatorTests*)\|(RunnerEligibilityObserverTests*)\|(RepositoryFenceObserverTests*)/*` | V-1 to V-4 | 4 executed; V-1 fails at its failure-name assertion; V-2, V-3, V-4 fail at their recorder assertions | 4 | 7 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c726-r1/` | seams-green | `/*/*/(AlarmSettingsValidatorTests*)\|(RunnerEligibilityObserverTests*)\|(RepositoryFenceObserverTests*)/*` | V-1 to V-4 | all listed, 0 failed/skipped | 4 | 7 |
+| CP-3 | S2-tests | `tests/Antiphon.Tests -> bin-c726-r1/` | inspector-red | `/*/*/RepositoryChildJournalInspectorTests/*` | V-5 to V-7 | 3 executed; V-6 fails at `StaleCount`; V-5 fails at the `Alive` finding; V-7 passes | 3 | 6 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c726-r1/` | inspector-green | `/*/*/RepositoryChildJournalInspectorTests/*` | V-5 to V-7 | all listed, 0 failed/skipped | 3 | 6 |
+| CP-5 | S3-tests | `tests/Antiphon.Tests -> bin-c726-r1/` | coordinator-red | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmNotifierTests*)/*` | V-8 to V-16 | 9 executed; V-8, V-10, V-11 (second half), V-12, V-13, V-14, V-16 fail at their raise/note/finding/row assertions; V-9 and V-15 pass | 9 | 9 |
+| CP-6 | S3 | `tests/Antiphon.Tests -> bin-c726-r1/` | coordinator-green | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmNotifierTests*)/*` | V-8 to V-16 | all listed, 0 failed/skipped | 9 | 9 |
+| CP-7 | S1-S3 | CP-6 | r1-regression | `/*/*/(MultiRunnerDirectoryTests*)\|(MultiRunnerRecoveryTests*)\|(RepositoryMutationLeaseTests*)\|(RepositoryMutationLeaseDescribeTests*)/*` | R-1, R-2 | >= 30 executed, 0 failed (7 + 8 + 14 + 1 source methods; `[Arguments]` expansion raises the count) | 30 | 10 |
+| CP-8 | S4-tests | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-red | `/*/*/RunnerAlarmAttentionTests/*` | V-17 to V-19 | 3 executed; V-17, V-18 fail (no row of the kind); V-19 passes | 3 | 6 |
+| CP-9 | S4 | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-green | `/*/*/RunnerAlarmAttentionTests/*` | V-17 to V-19 | all listed, 0 failed/skipped | 3 | 6 |
+| CP-10 | S4 | n/a | client-visuals | `pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20 | attentionVisuals.test.ts: all tests pass, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
+| CP-11 | all | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` with `TUNIT_MAX_PARALLEL_TESTS=1` | R-3 | >= 148 executed, 0 failed (122 + 10 + 6 + 10 source methods; argument expansion may raise the count) | 148 | 24 |
+
+CP-7 reuses CP-6's output with `--no-build` (same `After`); CP-11 reuses CP-9's. Round 1 is
+CP-1 to CP-7; Round 2 is CP-8 to CP-11 and the S5 docs.
+
+### Cost
+
+Ordinary Code floor: the sum of `EstimatedMinutes`, 93 minutes across the two rounds (R1 54,
+R2 39), plus authoring. `-ExpectAbout` for the R1 Code dispatch: about 3 h; for R2: about 2 h.
+The Code briefs point at this table with
+`checkpoints: docs/superpowers/plans/2026-09-26-card-0726-runner-and-journal-alarms-plan.md@<sha> section "### Checkpoints"`.
+
+## Risks and open points
+
+- **CARD-0738 and this card both append to `AttentionKind`.** Whichever lands second renumbers
+  its plan's placeholder; the tests assert names, not integers (D-6). A Review checks the client
+  lockstep list carries every shipped member.
+- **CARD-0727 R2 supplies the real `IRunnerAlarmExclusion`.** Until it lands, a rolling upgrade's
+  redeploy of a runner raises an outage after 180 s if the runner is down that long; the operator
+  running the upgrade sees a row they expect. V-11 pins the contract so 0727's implementation
+  inherits it.
+- **In-memory episodes across a desktop restart** (D-3): a runner still down 180 s after a restart
+  is raised again and its callers told again. Accepted as correct; noted in `docs/ops-http.md`.
+- **Journal age is file time.** A clock skew between the file system and the server clock moves
+  the threshold by the skew; 5 minutes is far above any observed skew on the desktop, and the
+  record's own JSON carries no timestamp to prefer.
+- **`IsProcessAliveAsync` returns null for a process the server cannot read** (Windows access
+  denied). Such a record classifies `Unknown` and raises past the threshold (D-8); the row says
+  the script will retain it, which is the truthful state.
+- **Nothing here retires `watch-server2.sh`.** It is the orchestrator's local file; the
+  orchestration-loop doc's new sentence is the instruction not to re-arm it once the runner row
+  exists, and the caller's standing authority covers that.
