@@ -615,6 +615,14 @@ public sealed class ChannelInboundRecoveryTests
         (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId &&
             t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains("DISTINCT TAIL"))).ShouldBe(0);
 
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, body,
+            timestamp: h.Now);
+        await h.Queue.FlushSessionAsync(h.SessionId, Ct);
+        await using (var assistantOnly = Db(schema.ConnectionString))
+            (await assistantOnly.SessionQueuedMessages.AsNoTracking()
+                .Where(q => q.Id == id).Select(q => q.Status).SingleAsync())
+                .ShouldBe(QueuedMessageStatus.Pending);
+
         // A queued prompt is not a recipient UserPrompt. Even an exact body past the
         // attempt floor must leave this Channel obligation pending.
         await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, body,
