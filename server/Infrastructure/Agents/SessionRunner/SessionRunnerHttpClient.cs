@@ -34,6 +34,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private readonly GrokRulesSettings _rulesSettings;
     private readonly TimeProvider _time;
     private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
+    private readonly HostStatsSettings _hostStats;
     private readonly object _capabilityGate = new();
     private RunnerCapabilitiesDto? _cachedCapabilities;
     private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
@@ -45,7 +46,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         IOptions<SessionRunnerSettings> settings,
         IOptions<GrokRulesSettings>? rulesSettings = null,
         TimeProvider? time = null,
-        IOptionsMonitor<ResilienceSettings>? resilience = null)
+        IOptionsMonitor<ResilienceSettings>? resilience = null,
+        IOptions<HostStatsSettings>? hostStats = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
@@ -53,6 +55,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         _rulesSettings = rulesSettings?.Value ?? new();
         _time = time ?? TimeProvider.System;
         _resilience = resilience;
+        _hostStats = hostStats?.Value ?? new HostStatsSettings();
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
 
@@ -310,6 +313,12 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             return null;
         }
     }
+
+    public Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct) =>
+        throw new NotImplementedException();
+
+    public Task<RunnerHostSeriesDto?> GetHostSeriesAsync(string metric, string window, CancellationToken ct) =>
+        throw new NotImplementedException();
 
     /// <summary>
     /// CARD-0589: <c>POST /build-slots</c>. 200 is a grant, 409 a busy or memory-floor refusal (the
