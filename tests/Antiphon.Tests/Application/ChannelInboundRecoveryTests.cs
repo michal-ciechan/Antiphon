@@ -240,6 +240,41 @@ public sealed class ChannelInboundRecoveryTests
         var owner = await db.SessionQueuedMessages.SingleAsync(q => q.Id == members[0].QueueMessageId);
         owner.Body.IndexOf("line one tail", StringComparison.Ordinal).ShouldBeLessThan(owner.Body.IndexOf("line two tail", StringComparison.Ordinal));
         recovered.Adapter.SubmittedBodies.Count.ShouldBe(1);
+
+        // A held first page must not starve the next accepted message forever.
+        await using var pageSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var held = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = pageSchema.ConnectionString, ClockSpeed = 100,
+            Bridge = Settings(timeout: 1), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        var heldChat = await held.BindChannelAsync();
+        var nativeIds = Enumerable.Range(0, 65).Select(i => $"page-{i:D2}-{Guid.NewGuid():N}").ToArray();
+        await using (var seed = Db(pageSchema.ConnectionString))
+        {
+            await seed.AgentSessions.Where(s => s.Id == held.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+            var channelId = await seed.ChatChannels.Where(c => c.ExternalId == heldChat).Select(c => c.Id).SingleAsync();
+            foreach (var nativeId in nativeIds)
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = heldChat,
+                    NativeMessageId = nativeId, AgentId = held.AgentId, ChatChannelId = channelId,
+                    EnvelopeJson = JsonSerializer.Serialize(Message(heldChat, nativeId, nativeId), Antiphon.Messaging.MessagingJson.Options),
+                    AcceptedAt = DateTime.UtcNow,
+                });
+            await seed.SaveChangesAsync();
+        }
+        var pageBridge = Bridge(held);
+        string lastNativeId;
+        await using (var pageOrder = Db(pageSchema.ConnectionString))
+            lastNativeId = await pageOrder.ChannelInbounds.OrderByDescending(i => i.AcceptanceSequence)
+                .Select(i => i.NativeMessageId).FirstAsync();
+        await pageBridge.DrainPendingAsync(Ct);
+        await pageBridge.DrainPendingAsync(Ct);
+        await using var pageVerify = Db(pageSchema.ConnectionString);
+        (await pageVerify.ChannelInbounds.Where(i => i.NativeMessageId == lastNativeId)
+            .Select(i => i.WakeTimeoutIncidentAt).SingleAsync()).ShouldNotBeNull();
     }
 
     [Test]
