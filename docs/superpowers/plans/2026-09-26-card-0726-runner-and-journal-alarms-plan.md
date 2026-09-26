@@ -1078,7 +1078,7 @@ green for the client file; `tests/Antiphon.Tests/Application/RunnerAlarmAttentio
 - **R-3: the optional `alarms` parameter and two builders change no existing row** |
   `AttentionServiceTests` (partials `AttentionServiceTests.cs` 124, `AttentionServiceTests.C691.cs`
   32, `AttentionServiceCommitRecoveryTests.cs` 9 executions) and `DispatchHeldAttentionTests` (11):
-  176 executions, 0 failed (`CP-12`), run with `TUNIT_MAX_PARALLEL_TESTS=1` as the plan set.
+  174 executions, 0 failed (`CP-12`), run with `TUNIT_MAX_PARALLEL_TESTS=1` as the plan set.
 - **R-4: the client's existing attention visuals stay green** | the 15 existing `it` blocks and
   the four existing `it.each` cases of `attentionVisuals.test.ts` (`CP-11`).
 - **R-5: every new class declares its lane** | `TestLaneCategoryGuardTests` (1, `CP-7`) fails on
@@ -1301,11 +1301,14 @@ used. `Min` is the source execution count at `4fe3bce9` plus this card's new met
 | CP-9 | S4 | `tests/Antiphon.Tests -> bin-c726-r2/` | attention-green | `/*/*/RunnerAlarmAttentionTests/*` | V-17..V-19 | all 3 listed, 0 failed/skipped | 3 | 5 |
 | CP-10 | S4-tests | n/a | client-visuals-red | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client-red -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20 | `CLIENT TESTS EXIT CODE: 1`; the failures include `maps every kind to a label, a colour, an icon and a hint` and the two new `draws ... in the Error severity bucket` cases at `toBeDefined`, and may include the other every-kind loops (`keeps kinds off the violet tier axis`, `lands every kind in a declared group`, the `unique == visualKeys` lockstep); every failure names `RunnerUnavailable` or `RepositoryChildJournalStale`, and no other case fails | n/a | 3 |
 | CP-11 | S4 | n/a | client-visuals-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c726-client -- pwsh -File scripts/test-client.ps1 attentionVisuals.test` | V-20, R-4 | 21 tests (15 `it` + 6 `it.each` cases), 0 failed, `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
-| CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` with `TUNIT_MAX_PARALLEL_TESTS=1` in the environment | R-3 | 176 executed (124 + 32 + 9 + 11), 0 failed | 176 | 24 |
+| CP-12 | S4 | CP-9 | attention-regression | `/*/*/(AttentionServiceTests*)\|(DispatchHeldAttentionTests*)/*` with `TUNIT_MAX_PARALLEL_TESTS=1` in the environment | R-3 | 174 executed (163 AttentionServiceTests + 11 DispatchHeldAttentionTests), 0 failed | 174 | 24 |
 
 Union of `Covers` = V-1..V-36 and R-1..R-5: the whole ordinary scope. CP-7 and CP-12 reuse their
 `Build` row's output with `-NoBuild` and share its `After`. A red row is fixed and rerun as the
 same row (reruns counted); an inherited failure is re-run at `4fe3bce9` before it is reported.
+CP-12's floor was corrected from 176 after its fresh TRX at `1e0a3114` showed the full
+selection contains 163 `AttentionServiceTests` and 11 `DispatchHeldAttentionTests` results,
+all passing; no method was omitted by the filter.
 
 ### Cost
 
