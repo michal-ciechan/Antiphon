@@ -1887,7 +1887,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task A_WritesUserPrompt_true_command_keeps_the_confirm_loop_and_represses_Enter()
     {
-        await using var h = await ObservableHarnessAsync();
+        await using var h = await ObservableHarnessAsync(rePressMargin: true);
         h.Adapter.SwallowSubmits = 1;
 
         await h.Queue.EnqueueAsync(
