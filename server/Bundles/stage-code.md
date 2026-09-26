@@ -1,6 +1,6 @@
 Implement the landed plan and its verification design, including its tests.
 
-SCOPE: Unit plus named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
+SCOPE: Ordinary verification is Unit plus the named affected integration classes. Unit-only misses native delivery, landing, leases and persistence. Name the invariant, unbounded classes and cost before a full-assembly run.
 
 CHECKPOINTS: the plan's ### Checkpoints table is the closed list of builds and test runs. Run it through the checkpoint tool (docs/testing-and-build.md, Checkpoint runner tool): one run per committed slice group, wait for its report, paste its CP-n lines unedited; inspect fresh TRX for each intended class/method and nonzero counts. Fix a red CP-n, then rerun that CP-n. Any other build/test command is unlisted: report it with a reason. Report slot= and waited= from those lines. A new test that cannot go red against the production line it guards (self-compare, constant, no outcome assertion) is a stub, not done.
 
