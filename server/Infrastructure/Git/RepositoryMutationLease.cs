@@ -2,8 +2,12 @@ using Antiphon.Server.Application.Interfaces;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
-public sealed class RepositoryMutationLease(ILandingGit git) : IRepositoryMutationLease
+public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObserver? fences = null)
+    : IRepositoryMutationLease
 {
+    private readonly IRepositoryFenceObserver? _fences = fences;
+
+    private void NotifyFenced(string common) => _fences?.Fenced(common);
     private static readonly StringComparer PathKeyComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
