@@ -8,15 +8,21 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskPlatformGuidanceTests
 {
     [Test]
-    public void Stage_guidance_names_windows_and_bootstrap_contract()
+    public void Stage_guidance_defaults_to_any_and_names_the_platform_contract()
     {
-        foreach (var name in new[] { "stage-code.md", "stage-review.md", "stage-mutation.md", "stage-plan.md", "orchestrator.md" })
+        foreach (var name in new[] { "stage-code.md", "stage-review.md", "stage-mutation.md", "stage-plan.md" })
         {
             var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", name));
-            text.ShouldContain("-Platform Windows");
-            text.ShouldContain("ConPTY");
-            text.ShouldContain("junction");
+            text.ShouldContain("Default Any");
+            text.ShouldContain("OS-specific");
+            text.ShouldContain("defaults/runners");
+            text.ShouldNotContain("-Platform Windows for");
         }
+
+        var orchestrator = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "orchestrator.md"));
+        orchestrator.ShouldContain("omitting -Platform is Any");
+        orchestrator.ShouldContain("Pass -Platform only");
+        orchestrator.ShouldNotContain("-Platform Windows for");
     }
 
     private static string RepoRoot()
@@ -41,20 +47,24 @@ public sealed class RunnerDefaultGuidanceTests
     }
 
     [Test]
-    public void Windows_rows_are_explicit_and_other_rows_use_server2()
+    public void Platform_pins_are_explicit_and_bundles_default_to_any()
     {
         var plan = File.ReadAllText(Path.Combine(Root(), "docs", "superpowers", "plans", "2026-09-25-card-0710-task-platform-placement-plan.md"));
         plan.ShouldContain("CP-13");
         plan.ShouldContain("desktop / Windows");
         plan.ShouldContain("| CP-2 |");
         plan.ShouldContain("server2");
-        foreach (var name in new[] { "orchestrator.md", "stage-plan.md", "stage-code.md", "stage-review.md", "stage-mutation.md" })
+        foreach (var name in new[] { "stage-plan.md", "stage-code.md", "stage-review.md", "stage-mutation.md" })
         {
             var text = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", name));
-            text.ShouldContain("-Platform Windows");
+            text.ShouldContain("Default Any");
+            text.ShouldContain("OS-specific");
             text.Contains("CP-13", StringComparison.Ordinal).ShouldBeFalse(name + " names CP-13");
             text.Contains("server2", StringComparison.Ordinal).ShouldBeFalse(name + " names server2");
         }
+        var orchestrator = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", "orchestrator.md"));
+        orchestrator.ShouldContain("omitting -Platform is Any");
+        orchestrator.ShouldContain("OS-only probe");
     }
 
     [Test]
