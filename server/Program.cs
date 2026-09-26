@@ -686,6 +686,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // Same-sender inbound debounce for the channel bridge (host-constructed service — an
     // unregistered dependency here fails at startup, not at first message).
     builder.Services.AddSingleton<ChannelInboundDebouncer>();
+    builder.Services.AddSingleton<ChannelInboundWakeSignal>();
 
     // Channel bridge: external chats (Telegram via the messaging gateway; more providers later) mapped
     // to agents. The Kafka client + reply dispatcher are always registered (construction is lazy and

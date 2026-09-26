@@ -16,6 +16,9 @@ public sealed class FakeAntiphonMessagingClient : IAntiphonMessagingProducer, IA
     private readonly object _gate = new();
     private readonly List<ChannelReply> _sent = [];
     private readonly Channel<ChannelMessage> _inbound = Channel.CreateUnbounded<ChannelMessage>();
+    private readonly List<(ChannelMessage Message, bool Acknowledged)> _records = [];
+    private readonly Channel<bool> _recordSignal = Channel.CreateUnbounded<bool>();
+    private bool _completed;
     private long _messageId = 1000;
 
     /// <summary>Replies the app produced via <see cref="SendAsync"/>, in order.</summary>
@@ -36,8 +39,55 @@ public sealed class FakeAntiphonMessagingClient : IAntiphonMessagingProducer, IA
             yield return message;
     }
 
+    public async IAsyncEnumerable<InboundDelivery> ConsumeDeliveriesAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var index = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            ChannelMessage? message = null;
+            bool completed;
+            lock (_gate)
+            {
+                while (index < _records.Count && _records[index].Acknowledged)
+                    index++;
+                if (index < _records.Count)
+                    message = _records[index].Message;
+                completed = _completed;
+            }
+            if (message is not null)
+            {
+                var recordIndex = index++;
+                yield return new InboundDelivery(message, null, (_, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    lock (_gate)
+                    {
+                        var record = _records[recordIndex];
+                        _records[recordIndex] = (record.Message, true);
+                    }
+                    return Task.CompletedTask;
+                });
+                continue;
+            }
+            if (completed)
+                yield break;
+            await _recordSignal.Reader.ReadAsync(cancellationToken);
+        }
+    }
+
+    public int AcknowledgedCount
+    {
+        get { lock (_gate) return _records.Count(r => r.Acknowledged); }
+    }
+
     /// <summary>Push an arbitrary inbound message.</summary>
-    public void InjectInbound(ChannelMessage message) => _inbound.Writer.TryWrite(message);
+    public void InjectInbound(ChannelMessage message)
+    {
+        lock (_gate) _records.Add((message, false));
+        _inbound.Writer.TryWrite(message);
+        _recordSignal.Writer.TryWrite(true);
+    }
 
     /// <summary>Build and push a contract-accurate Telegram text message (the common test case).</summary>
     public ChannelMessage InjectTelegramText(
@@ -65,5 +115,10 @@ public sealed class FakeAntiphonMessagingClient : IAntiphonMessagingProducer, IA
     }
 
     /// <summary>Complete the inbound stream so an in-flight <see cref="ConsumeAsync"/> ends gracefully.</summary>
-    public void Complete() => _inbound.Writer.TryComplete();
+    public void Complete()
+    {
+        lock (_gate) _completed = true;
+        _inbound.Writer.TryComplete();
+        _recordSignal.Writer.TryWrite(true);
+    }
 }
