@@ -147,7 +147,7 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Runner,
 
-    # CARD-0710. Create-only. Omitted inherits the card. Explicit Any is sent and resets the card default.
+    # CARD-0710. Create-only. Omitted inherits the task/card platform; explicit Any unpins this task only.
     [Parameter(ParameterSetName = 'Create')]
     [ValidateSet('Any', 'Windows', 'Linux')]
     [string]$Platform,

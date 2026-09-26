@@ -36,6 +36,28 @@ public sealed class TaskPlatformGuidanceTests
         orchestrator.ShouldNotContain("-Platform Windows for");
     }
 
+    [Test]
+    public void Orchestration_guidance_keeps_inheritance_and_task_scoped_unpinning()
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot(), "docs", "orchestration-loop.md"));
+        text.ShouldContain("a follow-up inherits its predecessor's platform");
+        text.ShouldContain("a stage inherits the card's platform");
+        text.ShouldContain("else the task is unpinned (`Any`)");
+        text.ShouldContain("pass `-Platform Any` explicitly");
+        text.ShouldContain("Pass a specific platform only");
+    }
+
+    [Test]
+    public void Review_guidance_keeps_scope_examples_landing_evidence_and_runner_routes()
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
+        text.ShouldContain("self-compare, constant, no outcome assertion");
+        text.ShouldContain("Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.");
+        text.ShouldContain("GET /api/runner-defaults");
+        text.ShouldContain("GET /api/session-runners");
+        text.ShouldContain("embed no fleet location");
+    }
+
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
