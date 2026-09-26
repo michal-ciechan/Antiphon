@@ -25,6 +25,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// live adapter. Extracted from <c>SessionMessageQueueDeliveryVerificationTests</c> so every suite
 /// in this family (delivery verification, launch notes, compaction recovery, batching) builds on
 /// one setup instead of five drifting copies.
+/// <see cref="HarnessOptions.ClockSpeed"/> opts one class into a <see cref="ScaledTimeProvider"/>
+/// (real timers at a fixed multiple). The default remains <see cref="TimeProvider.System"/>.
 /// </summary>
 internal sealed class BridgeQueueHarness : IAsyncDisposable
 {
@@ -41,6 +43,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public required SessionMessageQueueService Queue { get; init; }
     public required EmptyRunnerClient Runner { get; init; }
     public required string ConnectionString { get; init; }
+    public required TimeProvider Clock { get; init; }
+    public DateTime Now => Clock.GetUtcNow().UtcDateTime;
     public required DelegationSettings Delegation { get; init; }
     public ChannelReplyDispatcher Dispatcher => Provider.GetRequiredService<ChannelReplyDispatcher>();
 
@@ -49,6 +53,13 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public bool AlwaysOn { get; init; } = true;
         public bool PreserveDatabaseOnDispose { get; init; }
         public TimeProvider? TimeProvider { get; init; }
+
+        /// <summary>
+        /// Opt-in scaled clock (CARD-0735). Registers a <see cref="ScaledTimeProvider"/> at this
+        /// multiple of real time. Mutually exclusive with <see cref="TimeProvider"/>. Null keeps
+        /// <see cref="TimeProvider.System"/>.
+        /// </summary>
+        public double? ClockSpeed { get; init; }
         public SupervisionSettings? Supervision { get; init; }
         public ChannelBridgeSettings? Bridge { get; init; }
         public DelegationSettings? Delegation { get; init; }
@@ -82,6 +93,12 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public static async Task<BridgeQueueHarness> CreateAsync(HarnessOptions? options = null)
     {
         options ??= new HarnessOptions();
+        if (options.ClockSpeed is not null && options.TimeProvider is not null)
+            throw new InvalidOperationException(
+                "HarnessOptions.ClockSpeed and TimeProvider are mutually exclusive.");
+        var clock = options.ClockSpeed is double speed
+            ? new ScaledTimeProvider(speed)
+            : options.TimeProvider ?? TimeProvider.System;
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-bridge-queue-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
 
@@ -102,7 +119,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton(messaging);
         services.AddSingleton<IAntiphonMessagingProducer>(messaging);
         services.AddSingleton<IAntiphonMessagingConsumer>(messaging);
-        services.AddSingleton(options.TimeProvider ?? TimeProvider.System);
+        services.AddSingleton(clock);
         var verification = new DeliveryVerificationSettings
         {
             Enabled = true,
@@ -212,9 +229,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             attachedAdapter.OnSubmitted = async submitted =>
             {
                 await InsertEntryAsync(attachedSession, TranscriptKinds.UserPrompt, submitted,
-                    timestamp: DateTime.UtcNow, connectionString: attachedStore);
+                    timestamp: clock.GetUtcNow().UtcDateTime, connectionString: attachedStore,
+                    createdAtUtc: clock.GetUtcNow().UtcDateTime);
                 await InsertEntryAsync(attachedSession, TranscriptKinds.TurnEnd, stopReason: "end_turn",
-                    connectionString: attachedStore);
+                    connectionString: attachedStore, createdAtUtc: clock.GetUtcNow().UtcDateTime);
             };
             attachedRuntime.Register(attachedSession, attachedAdapter);
             return new BridgeQueueHarness
@@ -232,6 +250,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 Queue = provider.GetRequiredService<SessionMessageQueueService>(),
                 Runner = runner,
                 ConnectionString = attachedStore ?? TestDbFixture.ConnectionString,
+                Clock = clock,
                 Delegation = options.Delegation ?? new DelegationSettings(),
             };
         }
@@ -246,7 +265,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         await using (var db = scope.ServiceProvider.GetRequiredService<AppDbContext>())
         {
-            var now = DateTime.UtcNow;
+            var now = clock.GetUtcNow().UtcDateTime;
             db.AgentSessions.Add(new AgentSession
             {
                 Id = sessionId,
@@ -292,10 +311,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             // BOTH sides stamped to fire, and the other insert helpers here stamp nothing, so a
             // stamped end could outrank a later unstamped MarkWorkingAsync and read a busy session
             // idle. Sequence alone already puts this end above its prompt.
-            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
-                connectionString: store);
+            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted,
+                timestamp: clock.GetUtcNow().UtcDateTime, connectionString: store,
+                createdAtUtc: clock.GetUtcNow().UtcDateTime);
             await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
-                connectionString: store);
+                connectionString: store, createdAtUtc: clock.GetUtcNow().UtcDateTime);
         };
         runtime.Register(sessionId, adapter);
 
@@ -314,6 +334,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Queue = provider.GetRequiredService<SessionMessageQueueService>(),
             Runner = runner,
             ConnectionString = store ?? TestDbFixture.ConnectionString,
+            Clock = clock,
             Delegation = options.Delegation ?? new DelegationSettings(),
         };
     }
@@ -337,13 +358,13 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         string? toolUseId = null) =>
         InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp,
             isApiError, apiErrorClass, apiErrorStatus, toolName, toolUseId,
-            connectionString: ConnectionString);
+            connectionString: ConnectionString, createdAtUtc: Now);
 
     internal static async Task<long> InsertEntryAsync(
         Guid sessionId, string kind, string? text = null, string? stopReason = null,
         DateTime? timestamp = null, bool? isApiError = null, string? apiErrorClass = null,
         int? apiErrorStatus = null, string? toolName = null, string? toolUseId = null,
-        string? connectionString = null)
+        string? connectionString = null, DateTime? createdAtUtc = null)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
         var seq = ((await db.TranscriptEntries
@@ -363,7 +384,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             ApiErrorStatus = apiErrorStatus,
             ToolName = toolName,
             ToolUseId = toolUseId,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = createdAtUtc ?? TimeProvider.System.GetUtcNow().UtcDateTime,
         });
         await db.SaveChangesAsync();
         return seq;
@@ -385,7 +406,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var baseSeq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0);
-        var now = DateTime.UtcNow;
+        var now = Now;
         for (var i = 0; i < entries.Length; i++)
         {
             var (kind, text, stopReason) = entries[i];
@@ -463,9 +484,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             .Where(m => m.AgentSessionId == sid)
             .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
         var id = Guid.NewGuid();
-        var created = createdAtUtc ?? DateTime.UtcNow - TimeSpan.FromMinutes(5);
+        var created = createdAtUtc ?? Now - TimeSpan.FromMinutes(5);
         var started = lastDeliveryStartedAt
-            ?? (deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null);
+            ?? (deliveryAttempts > 0 ? Now - TimeSpan.FromMinutes(4) : null);
         var generation = legacyNullGeneration ? null : lastDeliveryGeneration
             ?? (deliveryAttempts > 0
                 ? SessionGeneration.Normalize(await db.AgentSessions.Where(s => s.Id == sid)
@@ -509,7 +530,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var seq = ((await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sid)
             .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
-        var sent = sentAtUtc ?? DateTime.UtcNow;
+        var sent = sentAtUtc ?? Now;
         var id = Guid.NewGuid();
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
@@ -559,8 +580,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Title = "Bound channel (test)",
             AgentId = AgentId,
             Enabled = true,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            CreatedAt = Now,
+            UpdatedAt = Now,
         });
         await db.SaveChangesAsync();
         return externalId;
