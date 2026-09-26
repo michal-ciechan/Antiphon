@@ -1205,3 +1205,40 @@ Code runs the V/R rows; Review judges this list before land. Server PCs use
 | PC-31 | same file: close an unraised episode through the resolve branch | `RunnerAlarmCoordinatorTests.a_flap_inside_the_grace_leaves_no_trace` | notifier empty |
 | PC-32 | same file: send recovery notes to the current callers query instead of `NotifiedSessionIds` | `RunnerAlarmCoordinatorTests.recovery_resolves_and_tells_only_the_notified_callers` | recovery set `{P1, P2}` (P3 added) |
 | PC-33 | same file: keep the episode after resolving | same method | no episode |
+| PC-34 | `RunnerAlarmCoordinator.cs`: never call `IRunnerAlarmExclusion.Excluded` | `RunnerAlarmCoordinatorTests.a_draining_or_retired_runner_never_raises_and_a_disabled_entry_is_skipped` | m1 no episode at `t0` |
+| PC-35 | same file: consult the exclusion only when opening an episode | same method | m5 episode gone after `"retired"` |
+| PC-36 | same file: evaluate snapshots with `Enabled == false` | same method | m2 no episode for `off` |
+| PC-37 | same file: close an excluded raised episode without the recovery note | same method | m5 P6's one `[runner r3 recovered]` note |
+| PC-38 | same file: open an episode only when this process saw the runner eligible first | `RunnerAlarmCoordinatorTests.startup_opens_an_episode_per_enabled_remote_runner_and_a_normal_reconnect_closes_it` | two episodes at `t0` |
+| PC-39 | same file: `DownSince = LastDisconnectAtUtc ?? now` unconditionally | `RunnerAlarmCoordinatorTests.down_since_uses_the_last_disconnect_after_the_last_resolution` | `DownSince == t0+400` |
+| PC-40 | same file: `DownSince = now` unconditionally | same method | `DownSince == t0+10` |
+| PC-41 | same file: add the session to `NotifiedSessionIds` before `NotifyAsync` | `RunnerAlarmCoordinatorTests.a_failed_note_is_retried_on_the_next_wake_and_never_sent_twice` | `NotifiedSessionIds == {P1}` |
+| PC-42 | same file: key repositories on the checkout path instead of `CommonDirectoryAsync` | `RunnerAlarmCoordinatorTests.journal_findings_are_published_per_repository_and_cleared_when_recovered` | exactly one finding |
+| PC-43 | same file: remove the skip for a missing or non-git path | same method | the evaluation completes without throwing |
+| PC-44 | same file: ignore `JournalEnabled` | same method | no finding with `JournalEnabled = false` |
+| PC-45 | `RunnerAlarmHostedService.cs`: wait until `nextSweep` only | `RunnerAlarmHostedServiceTests.the_loop_raises_on_the_grace_timer_and_wakes_on_a_fence_signal` | first `UntilAsync` (`RaisedAt` set) |
+| PC-46 | `AlarmWakeQueue.cs`: `Fenced` records the repository without writing the wake channel | same method | second `UntilAsync` (finding) |
+| PC-47 | `RunnerAlarmHostedService.cs`: add `await Task.Delay(TimeSpan.FromSeconds(1), clock, ct)` in the loop | `RunnerAlarmHostedServiceTests.the_sweep_runs_at_the_period_and_no_other_timer_exists` | every due time >= 1 min |
+| PC-48 | same file: `nextSweep = now + 2 * SweepMinutes` | same method | 15-minute `UntilAsync` |
+| PC-49 | same file: ignore `Enabled` | `RunnerAlarmHostedServiceTests.disabled_alarms_start_no_loop_and_publish_nothing` | source calls `0` |
+| PC-50 | same file: remove the loop's `catch` | `RunnerAlarmHostedServiceTests.a_failing_pass_is_logged_and_retried_without_waiting_for_the_sweep` | `UntilAsync` open episode |
+| PC-51 | `AlarmWakeQueue.cs`: `Signal` records the id without writing the wake channel | `RunnerAlarmHostedServiceTests.the_real_directory_drives_the_loop_and_a_drained_runner_never_raises` | first `UntilAsync` (episode for `a`) |
+| PC-52 | `QueueRunnerAlarmNotifier.cs`: `deliverIfIdle: true` | `RunnerAlarmNotifierTests.a_note_is_a_pending_whenidle_system_row_hinted_and_never_typed_inline` | `SubmittedBodies` empty |
+| PC-53 | same file: delete `TryEnqueue(session)` | same method | `Calls == [session]` |
+| PC-54 | same file: `QueuedMessageOrigin.Ui` | same method | `Origin == System` |
+| PC-55 | same file: pass the header as the body (drop the body) | `RunnerAlarmDeliveryTests.an_idle_caller_receives_the_outage_and_recovery_notes_as_complete_user_prompts` | short-id assertion on the `UserPrompt` |
+| PC-56 | same file: `MessageSendMode.Now` | `RunnerAlarmDeliveryTests.a_busy_caller_gets_the_note_only_after_its_turn_ends` | `Adapter.Inputs` holds nothing of the note |
+| PC-57 | `RunnerAlarmCoordinator.cs`: delete the re-hint of `Pending` alarm rows | `RunnerAlarmDeliveryTests.a_dropped_flush_hint_is_re_hinted_from_the_durable_row` | `UntilAsync` one `UserPrompt` |
+| PC-58 | `Program.cs`: construct the directory without `observer:` | `RunnerAlarmWiringTests.program_wires_the_loop_the_observers_and_the_default_exclusion` | `Observer` is the `AlarmWakeQueue` |
+| PC-59 | same file: register the lease without its fence observer | same method | `UntilAsync` finding |
+| PC-60 | same file: delete the `AddHostedService<RunnerAlarmHostedService>()` line | same method | one hosted service |
+| PC-61 | same file: delete the `NeverExcluded` registration | same method | `IRunnerAlarmExclusion` is `NeverExcluded` (resolve throws) |
+| PC-62 | `AttentionService.cs`: project every episode, raised or not | `RunnerAlarmAttentionTests.a_raised_episode_is_one_error_row_and_an_unraised_one_is_none` | unraised "no item" |
+| PC-63 | same file: headline count = all records | `RunnerAlarmAttentionTests.a_journal_finding_is_one_error_row_naming_the_recovery_command` | headline starts `2 stale` |
+| PC-64 | same file: project findings with `StaleCount == 0` | same method | no item for B |
+| PC-65 | `AttentionDtos.cs` (`AttentionSummaryDto.From`): count both kinds outside `Open` | `RunnerAlarmAttentionTests.no_state_means_no_rows_and_the_summary_counts_both_kinds_open` | `Open` is base + 2 |
+| PC-66 | `client/src/features/attention/attentionVisuals.ts`: `RunnerUnavailable.hint = ''` | `attentionVisuals` `maps every kind to a label, a colour, an icon and a hint` | `visual.hint.length > 0` for `RunnerUnavailable` |
+| PC-67 | same file: `homeBucketOf` sends `RepositoryChildJournalStale` to `review` | `attentionVisuals` `draws RepositoryChildJournalStale in the Error severity bucket` | `toBe('broken')` |
+
+PCs = 67, each executable against a compiling mutation of one named production line; none is
+Windows-only, none needs a running stack or a provider.
