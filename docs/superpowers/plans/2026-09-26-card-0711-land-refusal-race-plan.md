@@ -560,7 +560,7 @@ the class: `Read(f, path, args)` (probe), `EventsAsync(h)` (task events by `At`)
   Race hook with N = 1. `h.Verifier.Barrier` on call 2 records, **while B is verifying** (i.e. after B's rebase, before
   its push): `Read(f, f.Source, "rev-parse", "HEAD") == reviewed`, `Read(f, f.Repository, "rev-parse", f.TargetRef) == f.SeedSha`,
   and `f.Git.Commands` has no entry whose `Directory` path-equals `f.Source` or `f.Repository` with `Arguments[0]` in
-  {`rebase`, `merge`, `push`, `reset`} and no `update-ref … refs/heads/master`. One `RequestAsync(expectedSourceSha: reviewed)`
+  {`rebase`, `merge`, `push`, `reset`} and no `update-ref … refs/heads/master`; sets `barrierHit = true` (asserted after the run). One `RequestAsync(expectedSourceSha: reviewed)`
   + `RunQueuedAsync()`. Decisive assertions: events filtered to the request are exactly `[LandRequested, Warning, Landed]`
   in order; the `Warning` detail contains `raced with a push to origin:refs/heads/master (retry 1 of 2)`, its
   `LandRequestId == request.Id`, `LandingOperationId == A.Id`; no `LandRefused`. Operations `[A, B]`: A
@@ -795,7 +795,7 @@ Line numbers are the S1–S4 code's; the Mutation stage locates them by the name
 - PC-12: the loop uses a literal `2` instead of `LandTargetRaceRetries` → same method row 0 red at the `Warning` count `ShouldBe(budget)`.
 - PC-13: the `base_unchanged` skip condition drops `op.RebasedSourceSha == op.OriginalSourceSha` → `AgentTaskLandTargetRaceTests/C711_PushWindowRaceLandsInOneRequest` red at `h.Verifier.Calls.ShouldBe(2)`.
 - PC-14: the rebase `MutateAsync(op, land, [...rebase...])` runs in `op.WorktreePath` instead of `land` → `…/C711_PushWindowRaceLandsInOneRequest` red at the event sequence `[LandRequested, Warning, Landed]` (A refuses `source_changed`; no retry).
-- PC-15: the schema-3 catch arm calls `await AdvanceCanonicalAsync(op, CancellationToken.None)` before `Transition(op, Refused)` → `…/C711_PushWindowRaceLandsInOneRequest` red at the in-barrier canonical `master == f.SeedSha`.
+- PC-15: the schema-3 catch arm calls `await AdvanceCanonicalAsync(op, CancellationToken.None)` before `Transition(op, Refused)` → `…/C711_PushWindowRaceLandsInOneRequest` red at the in-barrier canonical `master == f.SeedSha` (or at `barrierHit.ShouldBeTrue()` if the premature advance throws and no retry runs).
 - PC-16: `WriteRaceRetryAsync` also calls `AddNotification(task, request, warning, LandNotificationKind.Aged)` → `…/C711_PushWindowRaceLandsInOneRequest` red at notifications `ShouldHaveSingleItem()` / `Kind == Outcome`.
 - PC-17: `WriteRaceRetryAsync` omits `request.HighestProgress = -1` → `AgentTaskLandTargetRaceFakeTests/C711_RetryRestartsTheProgressClock` red at `HighestProgress.ShouldBe((int)LandPhase.Prepared)`.
 - PC-18: delete `if (local.Sha != request.LocalBeforeSha) return new(null, "source_changed");` → `AgentTaskLandTargetRaceTests/C711_SourceMovedBeforeRetryRefuses` row `local` red at `SourceRefusalReason.ShouldBe("source_changed")`.
@@ -811,3 +811,63 @@ Line numbers are the S1–S4 code's; the Mutation stage locates them by the name
 - PC-28: remove the non-fast-forward check from `ControlledLandingGit`'s `push` arm → `ControlledLandingGitTests/C711_PushRejectsNonFastForward` red at step (3) `ExitCode.ShouldBe(1)`.
 
 All 28 are executable: each names a compiling edit, one method (with the row), and one assertion.
+
+### Out of scope
+
+- Caller-side rendering of the outcome message (`LandOutcomeDeliveryHarness`, `PostLandMutationDelivery*`): the path and
+  payload shape are unchanged (D-11); only the exhaustion detail string differs, asserted at the event (V-3).
+- Schema-3 `source_changed` at `PushStarted` becoming terminal if the legacy arm lost its schema filter: terminal vs
+  resumable is not a safety property (either way nothing publishes; an explicit request replaces), so no guard/PC.
+- Multi-server concurrent lands on one repository (the intruder here is an independent clone, which is the same remote
+  state a second server produces; the lease is per server and unchanged).
+- A remote that moves faster than three verifications (D-8 says it is a queue problem; V-3 pins the exhaustion refusal).
+- `LandMaxAttempts` × race budget interaction beyond V-13 (one crash + one retry): the product bound 3 × 3 is arithmetic
+  over two independently tested bounds.
+- Recovery-ref accumulation per retry (plan Follow-ups) and listing active schema-2 rows (ops follow-up).
+- The other fake-git consumers (`AgentTaskLandAdmissionControlledTests`, `…BoundaryControlledTests`,
+  `…ConcurrencyControlledTests`, `…SourcePersistenceTests`, `LandingSourceFreshnessTests`, `InterimVerificationLandGuardTests`,
+  `VerificationRoundDeliveryTests`): none moves the remote target mid-land, injects a push failure, or pushes a
+  non-descendant (grep of `RewriteRemoteAwayFromSource`/`SetRemoteContainsSource`/`"push"` at `989abc9f`), so S4b and
+  S1–S3 cannot change their outcome; the nightly full run covers them.
+
+### Checkpoints
+
+Test project `tests/Antiphon.Tests`; each row is `pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-n -Project
+tests/Antiphon.Tests -OutputPath bin-c711x/ -Filter '<filter>' -MinExecuted <Min> -Expect <classes> -ResultsRoot
+.antiphon/c711-checkpoints` (`-NoBuild` on CP-2/CP-3, which reuse CP-1's `bin-c711a/`). Filters use a plain `|` on the
+command line (escaped `\|` in the table). `Min` = TUnit executions at `989abc9f` with argument rows expanded, plus the new
+rows: race 11 (V-1, V-2, V-3×2, V-4, V-5, V-6×2, V-12, V-13, V-15), race-fake 6 (V-9, V-10×3, V-11, V-14), state 66 + 10,
+fake git 50 + 1. Run CP-0 once, before S4b/S1–S3, and commit before it; its expected failures are listed by name in the
+Code report. Delete `bin-c711r/` and `bin-c711a/` before finishing.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-0 | S0 + S4a + all tests + R-2/R-3/R-4 amendments | `tests/Antiphon.Tests -> bin-c711r/` | race-red | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandTargetRaceFakeTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)/*` | red gate for V-1..V-15 | exit 1 with **exactly** these failing: V-1, V-2, V-3 (2), V-5, V-6 (2), V-9, V-10 `remote`/`branch`, V-11, V-12, V-13, V-15, V-7 rows `race`/`no-lease`/`no-approval`, V-8 = 19 executions; passing: V-4, V-10 `push-rejected`, V-14, the other 7 V-7 rows, the 116 existing rows | 144 | 7 |
+| CP-1 | S5 (all slices) | `tests/Antiphon.Tests -> bin-c711a/` | race-real-git | `/*/*/(AgentTaskLandTargetRaceTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandRecoveryTests*)/*` | V-1..V-6, V-12, V-13, V-15, R-1, R-8 | exit 0, 0 failed | 48 | 9 |
+| CP-2 | CP-1 | CP-1 (`-NoBuild`) | publication-real-git | `/*/*/(AgentTaskLandPublicationTests*)\|(AgentTaskLandPreparationIdentityTests*)\|(AgentTaskLandStageOutcomeTests*)/*` | R-1, R-2, R-3, R-6, R-7 | exit 0, 0 failed | 91 | 9 |
+| CP-3 | CP-1 | CP-1 (`-NoBuild`) | fake-protocol-aging | `/*/*/(AgentTaskLandTargetRaceFakeTests*)\|(AgentTaskLandSourceFreshnessTests*)\|(LandingProtocolGuardTests*)\|(LandingProtocolHarnessTests*)\|(AgentTaskLandApprovalRecoveryTests*)\|(AgentTaskLandFailureDiagnosticTests*)\|(AgentTaskLandMonitoringTests*)\|(AgentTaskLandQueueAgingTests*)\|(AgentTaskLandingStateTests*)\|(ControlledLandingGitTests*)\|(DelegateScriptLandStatusTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(DelegationHarnessCensusTests*)/*` | V-7..V-11, V-14, R-1, R-4, R-5, R-9, census of the two new classes | exit 0, 0 failed | 377 | 9 |
+| CP-4 | S5 | n/a | docs-named | `git grep -n -e "LandTargetRaceRetries" -e "raced with a push" -e "never moves the local target" -- docs/orchestration-loop.md docs/ops-http.md docs/session-runtime-invariants.md server/appsettings.json` | S5 | ≥ 4 matching lines across the four files, exit 0 | n/a | 1 |
+
+CP-3 `Min` = 6 + 58 + 23 + 18 + 56 + 25 + 25 + 9 + 76 + 51 + 19 + 3 + 1 + 7 = 377. The union of CP-1..CP-4 is the whole
+ordinary scope: every class that drives the changed service/protocol/resolver/factory/fake-git through a race, a push
+failure, a refused replacement, a schema-2 row, or the aging monitor, plus the census guards for the new files.
+
+### Cost
+
+- **Ordinary V/R floor (Code)** = CP-0 7 + CP-1 9 + CP-2 9 + CP-3 9 + CP-4 1 = **35 minutes** (estimated). Basis: the
+  plan-stage probe measured 3 real-git race tests in 54 s (≈ 18 s each) and a ~90 s isolated build on this runner;
+  CARD-0498 measured ~11 min for six land classes serialised by `ProcessSpawnLimit` (≈ 4–5 s per real/fake harness row).
+  CP-1: 11 × 18 s + 37 × 5 s + 1.5 min build ≈ 8.9 min; CP-2: 91 × 5 s ≈ 7.6 min (no build); CP-3: 131 unit rows < 0.5 min,
+  ~227 harness rows (limiter-serial for two classes, parallel for the rest) + 19 pwsh rows ≈ 8 min; CP-0: 11 real-git red
+  rows fail faster than they pass (≈ 3 min) + build + units ≈ 6 min. Every row is sized under one 10-minute foreground
+  window; if a measured row exceeds it, Code reports the measurement rather than splitting silently.
+- Savings vs the plan's table: the plan's CP-0 would not have compiled (V-7/V-12 reference absent members) and its CP-1
+  (14 min estimated) exceeded a foreground window; this table adds `AgentTaskLandPreparationIdentityTests`,
+  `AgentTaskLandApprovalRecoveryTests`, `AgentTaskLandFailureDiagnosticTests` and the census guards for +~2 min net, and
+  catches R-3's red that the plan's scope missed.
+- **PC floor (Mutation)** = 28 PCs, each red build (~1.5 min incremental) + method-scoped red run + restore build (~1.5 min)
+  + green run. Real-git methods (PC-8, -9, -11..-16, -18..-21, -25..-27: 15 PCs) ≈ 4 min each = 60 min; fake/unit methods
+  (PC-1..-7, -10, -17, -22..-24, -28: 13 PCs) ≈ 3.3 min each = 43 min. Unbatched **≈ 103 minutes** (estimated). PC-1..PC-6
+  share one method and cannot batch; batching independent files (e.g. PC-28 with PC-27, PC-25/26 with PC-22..24, PC-17 with
+  PC-10) saves ≈ 25 min → **≈ 78 minutes** batched (estimated).
+- **Total** = setup/build 1.5 + V/R 35 + PC 78 ≈ **115 minutes** (estimated; no row measured in this stage).
