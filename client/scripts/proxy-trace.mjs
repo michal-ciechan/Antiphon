@@ -9,14 +9,18 @@ const LOG_PATH = join(dirname(dirname(fileURLToPath(import.meta.url))), '..', 'l
 const MAX_BYTES = 1024 * 1024
 
 function defaultAppend(line) {
-  mkdirSync(dirname(LOG_PATH), { recursive: true })
   try {
-    if (statSync(LOG_PATH).size > MAX_BYTES)
-      writeFileSync(LOG_PATH, '')
+    mkdirSync(dirname(LOG_PATH), { recursive: true })
+    try {
+      if (statSync(LOG_PATH).size > MAX_BYTES)
+        writeFileSync(LOG_PATH, '')
+    } catch {
+      // the file is created by the append below
+    }
+    appendFileSync(LOG_PATH, line.endsWith('\n') ? line : `${line}\n`)
   } catch {
-    // the file is created by the append below
+    // the console line already went out; the file trace is best effort
   }
-  appendFileSync(LOG_PATH, line.endsWith('\n') ? line : `${line}\n`)
 }
 
 function pathOf(url) {
@@ -42,7 +46,11 @@ export function createWsProxyTrace(options = {}) {
   const write = (text) => {
     const line = `${now().toISOString()} [proxy] ${text}`
     log(line)
-    appendLine(line)
+    try {
+      appendLine(line)
+    } catch {
+      // a locked file or full disk must not take down vite preview
+    }
   }
 
   return function configure(proxy) {
@@ -71,12 +79,6 @@ export function createWsProxyTrace(options = {}) {
       if (!isConnect(req?.url))
         return
       write(`ws error ${err?.code ?? 'unknown'}`)
-    })
-
-    proxy.on('close', (req) => {
-      if (!isConnect(req?.url))
-        return
-      write(`ws close runner=${runnerId(req?.url)}`)
     })
   }
 }

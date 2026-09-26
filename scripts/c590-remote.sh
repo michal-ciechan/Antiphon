@@ -1319,13 +1319,13 @@ EOF
     fi
 
     # (c) the connection loop itself. The window opens AFTER the compose start_period, so one cold
-    # reconnect is not a verdict; the backoff is 15s, so a loop that can only fail leaves several
+    # reconnect is not a verdict; the backoff is capped at 5s, so a loop that can only fail leaves several
     # marks in 45 seconds while a registered runner leaves none.
     phone_home_since="$(date -u +%Y-%m-%dT%H:%M:%S)"
     sleep 45
     docker logs --since "$phone_home_since" "$container" > "$CASE_DIR/phone-home-window.log" 2>&1 || true
     scrub_file "$CASE_DIR/phone-home-window.log" || true
-    phone_home_failures="$(grep -cE 'Phone-home connection ended; reconnecting|UnauthorizedAccessException|PhoneHomeSecretUnreadable' \
+    phone_home_failures="$(grep -cE 'Phone-home registration failed|Phone-home connection ended; reconnecting|UnauthorizedAccessException|PhoneHomeSecretUnreadable' \
         "$CASE_DIR/phone-home-window.log" || true)"
     printf '%s\n' "${phone_home_failures:-0}" > "$CASE_DIR/phone-home-failures.txt"
     # A server that has not been switched on yet is the ONLY excused cause. A permission fault, a
