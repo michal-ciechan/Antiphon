@@ -95,6 +95,7 @@ readiness or qualification alone cannot resolve a real-service outage.
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
 | What needs a human (fleet-global) | GET | `/api/attention` — fleet-global across every board; there is no board filter. `DispatchHeld` (CARD-0535) is a queued dispatcher hold past `Delegation:DispatchHeldWarningSeconds`; `ConditionKey` `dispatch-held:{id:N}`. Its `evidence` ends with the per-class wait ledger for the current queue stint, summed from the task's `Held` rows (CARD-0672 D-3): `leaseWait=Ns; prepWait=Ns; runnerWait=Ns; capWait=Ns; otherWait=Ns; class=<dominant>`, and `holdClass` is that dominant class (`lease`, `remoteprep`, `runner`, `cap`, `scope`, `agent`, `landing`, `routing`, `other`), so land-lease starvation reads apart from runner capacity. The dispatcher's `HeldAged` rows carry the same fields after `occupants=`. `CompactionContinuationStalled` (CARD-0079) is one open Check compaction episode; `ConditionKey` `compaction-continuation:{id:N}`. |
 | Delegated work | GET | `/api/agent-tasks?projectId=` — always `{ scope, items, excluded }`. An omitted `projectId`/`boardId` is the whole fleet (`scope` null). `unscoped=exclude|include|only` (default exclude when a scope id is present). Unknown list keys are `400 unknown_query_parameter`. `/summary` takes the same scope. `/pipeline` stays fleet-wide. |
+| Closed-card sweep (CARD-0738) | POST | `/api/agent-tasks/closed-card-sweep` `{ apply?: bool }` — `apply` defaults to false. A preview lists open non-specialist tasks whose card is Done, Canceled, or archived and writes nothing. `apply: true` cancels only unstarted rows created before the close, prefixing the reason `Closed-card sweep: `; started rows and rows created after the close are left open and say why. |
 | Issue / list / rotate / revoke a Delegation Capability (CARD-0398) | POST / GET / POST rotate / POST revoke | `/api/delegation-capabilities`, `/api/delegation-capabilities/{id}`, `…/rotate`, `…/revoke` — `scripts/capability.ps1`. GET never returns the token. |
 | A session's screen | GET | `/api/sessions/{id}/buffer` |
 | A session's transcript | GET | `/api/sessions/{id}/transcript?since={sequence}` |
@@ -140,6 +141,8 @@ $board = (Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -
 # the purpose-built occupancy read: in-flight / queued / blocked / ready rows per stage (CARD-0304);
 # GET /api/agent-tasks/summary `byStatus` is the fleet-wide cross-check on the same column
 Invoke-RestMethod "$api/api/agent-tasks/pipeline" -Headers $h
+# CARD-0738: preview open tasks whose card is already closed. apply defaults to false.
+Invoke-RestMethod -Method POST "$api/api/agent-tasks/closed-card-sweep" -ContentType application/json -Body '{"apply":false}'
 
 # column name -> column id, without pulling the whole board
 Invoke-RestMethod "$api/api/boards/$($board.id)/columns" -Headers $h
