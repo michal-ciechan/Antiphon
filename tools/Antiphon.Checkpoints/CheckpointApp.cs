@@ -115,7 +115,7 @@ public static class CheckpointApp
         var scheduler = new RunScheduler(driver, platform);
         SchedulerResult result;
         using var watchCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        using var workCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, owner.Ended);
+        using var workCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, owner.Settled);
         async Task BeforeLaunch(CancellationToken token)
         {
             if (!await owner.EnsureLiveAsync(token).ConfigureAwait(false))
@@ -148,6 +148,7 @@ public static class CheckpointApp
                 Publish = Publish,
                 BeforeLaunch = BeforeLaunch,
                 CancellationReason = () => owner.Reason ?? "owner-ended",
+                AdmissionBlock = () => owner.Reason == "owner-unverified" ? owner.Reason : null,
                 OwnerBound = owner.Bound,
             }, workCancel.Token).ConfigureAwait(false);
             }

@@ -18,6 +18,7 @@ public sealed class SchedulerRequest
     public Action? Publish { get; init; }
     public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
     public Func<string>? CancellationReason { get; init; }
+    public Func<string?>? AdmissionBlock { get; init; }
     public bool OwnerBound { get; init; }
 }
 
@@ -90,31 +91,45 @@ public sealed class RunScheduler
                 break;
             }
 
-            foreach (var row in pending.Where(row => BuildFailed(row, buildStates)).ToList())
+            var admissionBlock = request.AdmissionBlock?.Invoke();
+            if (admissionBlock is not null)
             {
-                pending.Remove(row);
-                Mark(request, row.Id, "build-failed", ExitCodes.Invalid);
-                finished.Add(Placeholder(row, "build-failed", ExitCodes.Invalid));
-            }
-
-            while (true)
-            {
-                var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
-                if (Pick(pending, running.Count, request, buildStates, exclusiveRunning) is not CheckpointSpec next)
-                    break;
-                pending.Remove(next);
-                var rowProgress = request.State.Rows.First(row => row.Id == next.Id);
-                rowProgress.State = "running";
-                rowProgress.StartedAt = DateTimeOffset.UtcNow;
-                rowProgress.LastOutputAt = rowProgress.StartedAt;
-                var concurrent = running.Count + 1;
-                if (concurrent > request.State.MaxConcurrentRows)
-                    request.State.MaxConcurrentRows = concurrent;
+                foreach (var row in pending.ToList())
+                {
+                    pending.Remove(row);
+                    Mark(request, row.Id, admissionBlock, ExitCodes.OwnerEnded);
+                    finished.Add(Placeholder(row, admissionBlock, ExitCodes.OwnerEnded));
+                }
                 Publish(request);
-                var buildState = next.IsCommand
-                    ? "n/a"
-                    : reportedBuilds.Add(next.Build ?? "") ? "ok" : "reused";
-                running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, total.Token), rowProgress));
+            }
+            else
+            {
+                foreach (var row in pending.Where(row => BuildFailed(row, buildStates)).ToList())
+                {
+                    pending.Remove(row);
+                    Mark(request, row.Id, "build-failed", ExitCodes.Invalid);
+                    finished.Add(Placeholder(row, "build-failed", ExitCodes.Invalid));
+                }
+
+                while (true)
+                {
+                    var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
+                    if (Pick(pending, running.Count, request, buildStates, exclusiveRunning) is not CheckpointSpec next)
+                        break;
+                    pending.Remove(next);
+                    var rowProgress = request.State.Rows.First(row => row.Id == next.Id);
+                    rowProgress.State = "running";
+                    rowProgress.StartedAt = DateTimeOffset.UtcNow;
+                    rowProgress.LastOutputAt = rowProgress.StartedAt;
+                    var concurrent = running.Count + 1;
+                    if (concurrent > request.State.MaxConcurrentRows)
+                        request.State.MaxConcurrentRows = concurrent;
+                    Publish(request);
+                    var buildState = next.IsCommand
+                        ? "n/a"
+                        : reportedBuilds.Add(next.Build ?? "") ? "ok" : "reused";
+                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, total.Token), rowProgress));
+                }
             }
 
             if (running.Count == 0)
@@ -140,9 +155,7 @@ public sealed class RunScheduler
             }
             catch (OperationCanceledException)
             {
-                result = cancellationToken.IsCancellationRequested && request.OwnerBound
-                    ? Placeholder(spec, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded)
-                    : Placeholder(spec, "timeout", ExitCodes.Timeout);
+                result = ClosedRow(request, spec, cancellationToken);
             }
 
             progress.State = result.State;
@@ -164,9 +177,7 @@ public sealed class RunScheduler
             }
             catch (OperationCanceledException)
             {
-                var ownerEnded = cancellationToken.IsCancellationRequested && request.OwnerBound;
-                result = Placeholder(spec, ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended" : "timeout",
-                    ownerEnded ? ExitCodes.OwnerEnded : ExitCodes.Timeout);
+                result = ClosedRow(request, spec, cancellationToken);
             }
             progress.State = result.State;
             progress.ExitCode = result.ExitCode;
@@ -182,9 +193,11 @@ public sealed class RunScheduler
         {
         }
 
+        var codes = finished.Select(row => row.ExitCode).ToArray();
         var exit = cancellationToken.IsCancellationRequested
             ? request.OwnerBound ? ExitCodes.OwnerEnded : ExitCodes.Timeout
-            : ExitCodes.FromRowStates(finished.Select(row => row.ExitCode));
+            : codes.Contains(ExitCodes.OwnerEnded) ? ExitCodes.OwnerEnded
+            : ExitCodes.FromRowStates(codes);
         request.State.ExitCode = exit;
         Publish(request);
         return new SchedulerResult { ExitCode = exit, Rows = finished, State = request.State };
@@ -322,6 +335,16 @@ public sealed class RunScheduler
         result.Id = spec.Id;
         result.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
         return result;
+    }
+
+    private static RowRunResult ClosedRow(SchedulerRequest request, CheckpointSpec spec, CancellationToken cancellationToken)
+    {
+        var block = request.AdmissionBlock?.Invoke();
+        if (block is not null && !(cancellationToken.IsCancellationRequested && request.OwnerBound))
+            return Placeholder(spec, block, ExitCodes.OwnerEnded);
+        var ownerEnded = cancellationToken.IsCancellationRequested && request.OwnerBound;
+        return Placeholder(spec, ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended" : "timeout",
+            ownerEnded ? ExitCodes.OwnerEnded : ExitCodes.Timeout);
     }
 
     private static bool IsExclusive(CheckpointSpec row, SchedulerRequest request)
