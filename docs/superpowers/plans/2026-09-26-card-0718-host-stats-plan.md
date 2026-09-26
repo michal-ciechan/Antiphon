@@ -255,3 +255,279 @@ Placement and backpressure on load (CARD-0674 owns load-aware admission; it will
 have a week of data), 1-minute rollup persistence, Postgres CPU from `pg_stat_statements`
 (CARD-0705, in progress), Windows processor queue length (PDH; Round 2 only if one counter read
 is under 1 ms), Docker/WSL and Postgres container CPU beyond the `vmmem` process total (Round 2).
+
+## Slices
+
+Round 1 is one Code dispatch (S1–S4, in order; each slice is committed with its red tests
+first). Round 2 (S5–S6) is a second Code dispatch after Round 1 has landed and CP-9 has been
+observed live.
+
+### S1 — runner: probes, store, sampler, routes, phone-home operation, capability
+
+Files (all `src/Antiphon.SessionRunner/` unless noted):
+
+- `HostStatsProbe.cs` (new): `IHostStatsProbe`, `HostSample` (readonly record struct:
+  `At`, `CpuPercent?`, `Cores`, `Load1/5/15?`, `MemoryTotalBytes`, `MemoryAvailableBytes`,
+  `SwapTotalBytes`, `SwapFreeBytes`, `Disks` (path/free/total), `ProcessCount?`, `Processes`
+  (name, sessionId?, cpuPercent?, workingSetBytes)), `SystemHostStatsProbe` (platform switch,
+  also implements `IHostMemoryProbe`), `LinuxHostStatsProbe` with static `ParseProcStat`,
+  `ParseMemInfo`, `ParseLoadAvg`, `WindowsHostStatsProbe` with `GetSystemTimes` P/Invoke.
+  `HostMemoryProbe.cs` keeps `IHostMemoryProbe`; `SystemHostMemoryProbe` becomes a thin
+  forwarder to keep `BuildSlotRoutes` registration unchanged.
+- `HostStatsStore.cs` (new): ring, `Add`, `Latest`, `Rollups(now)`, `Series(metric, window, now)`,
+  `Snapshot(now)` (latest + rollups + `buildSlots` from `BuildSlotBroker.List()` when present).
+- `HostStatsSettings.cs` (new): `SessionRunner:HostStats` (D-9) with `Validate()`.
+- `HostStatsSamplerService.cs` (new): `BackgroundService`, `PeriodicTimer(IntervalMs)`,
+  internal `SampleOnceAsync()` that reads the probe, adds process figures for
+  `runtime.List()`'s live pids through `IProcessCpuProbe` and `Process.GetProcessById`
+  (working set), and `store.Add`; a faulting probe logs once per minute and skips the tick.
+- `HostStatsRoutes.cs` (new, the `BuildSlotRoutes` shape): `AddHostStats(configuration)`
+  (options, `TryAddSingleton<IHostStatsProbe>`, store, sampler) and `MapHostStatsRoutes()`:
+  `GET /host-stats` → `RunnerHostStatsDto`, `GET /host-stats/series?metric=&window=` →
+  `RunnerHostSeriesDto`, 400 on a bad metric/window, 404 when disabled.
+- `PhoneHomeCommandDispatcher.cs`: ctor seam `IHostStatsSource? hostStats = null`; cases
+  `HostStats` and `HostStatsSeries` (D-3); `Program.cs:47` passes the store.
+- `Program.cs`: `AddHostStats`, `MapHostStatsRoutes`, `RunnerCapabilityFeatures.HostStatsV1`
+  appended to `features` at `:213-216` when enabled.
+- `src/Antiphon.SessionRunner.Contracts/`: `PhoneHomeContracts.cs` operations 29/30 and
+  `PhoneHomeHostSeriesRequest(string Metric, string Window)`; `SessionRunnerContracts.cs`
+  `RunnerHostStatsDto`, `RunnerHostSeriesDto`, `RunnerHostSeriesPoint(DateTimeOffset T, double V)`,
+  `RunnerCapabilityFeatures.HostStatsV1`.
+- `docker-compose.server2-runner.yml`: `SessionRunner__HostStats__Volumes: "/work,/state"`.
+
+Tests (`tests/Antiphon.SessionRunner.Tests/`): `HostStatsStoreTests`, `HostStatsProbeParseTests`,
+`HostStatsSamplerTests`, `HostStatsEndpointTests` (+ `HostStatsTestHost` beside
+`BuildSlotTestHost`), `PhoneHomeCommandDispatcherTests` (+3), `RunnerCapabilitiesTests` (+1).
+
+### S2 — server: client members, poll service, cache, API, SignalR
+
+- `server/Application/Interfaces/ISessionRunnerClient.cs`: `GetHostStatsAsync`,
+  `GetHostSeriesAsync(metric, window, ct)` default null.
+- `server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs`: both, one attempt,
+  `HostStats:RequestTimeoutMs` / `SeriesTimeoutMs` via `CancelAfter` on the typed client.
+- `PhoneHomeRunnerClient.cs`: both through `RequestAsync` (29/30); unsupported → a typed
+  `HostStatsUnsupportedException` the cache maps to `unsupported`.
+- `server/Application/Settings/HostStatsSettings.cs` (+ validator) — D-9.
+- `server/Application/Services/HostStatsCache.cs`: `Record(hostId, dto)`, `RecordFailure(hostId, kind)`,
+  `Project(now, catalogueRows)` → `IReadOnlyList<HostStatsDto>`, `Changed` flag per tick.
+- `server/Application/Services/HostStatsAntiphonCounters.cs`: the one grouped query (D-5)
+  plus directory seats; pure grouping in a static `Group(rows)` for the unit test.
+- `server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs`: the tick (D-3),
+  `TickOnceAsync` internal seam, publishes `HostStatsUpdated` to group `hosts` through
+  `IEventBus` when `Changed`.
+- `server/Application/Dtos/HostStatsDtos.cs`: `HostStatsDto`, `HostStatsRollupDto`,
+  `HostStatsAntiphonDto`, `HostSeriesDto` (D-7).
+- `server/Api/Endpoints/HostStatsEndpoints.cs`: `MapHostStatsEndpoints` on
+  `app.MapGroup("/api/hosts").WithTags("Hosts")` with `/stats` and `/{hostId}/stats/series`;
+  `Program.cs` registration next to `MapSessionRunnerEndpoints` (`:991`).
+- `server/appsettings.json`: `HostStats` block.
+
+Tests (`tests/Antiphon.Tests/Application/`): `HostStatsCacheTests` (Unit),
+`HostStatsAntiphonCountersTests` (Unit), `HostStatsPollServiceTests` (Integration,
+`PhoneHomeTestHost` + `PhoneHomeScriptedPeer.Reply` for 29/30, `RecordingLocalClient` extended
+with a scripted host-stats answer, a recording `IEventBus`), `HostStatsEndpointTests`
+(Integration, same host, `Http.GetAsync`).
+
+### S3 — client: Hosts page
+
+- `client/src/api/hosts.ts` (+ `hosts.test.tsx`), `client/src/features/hosts/HostsPage.tsx`,
+  `HostCard.tsx`, `Sparkline.tsx`, `RollupTable.tsx`, `useHostStatsLive.ts`, `HostsPage.stories.tsx`
+  (two hosts, one stale, one offline), `App.tsx` lazy route `hosts`, `Layout.tsx` nav item,
+  `client/src/test/mocks/handlers.ts` stubs for `/api/hosts/stats` and the series route.
+
+Tests: `hosts.test.tsx`, `HostsPage.test.tsx`, `Sparkline.test.tsx`, `useHostStatsLive.test.ts`.
+
+### S4 — docs
+
+`docs/ops-http.md` (two rows in the routes table: Hosts list, Hosts series; states and
+"never zero"), `docs/antiphon-api.md` (the two routes under the runner block at `:479-483`),
+`docs/resilience.md` ("What stays a single attempt": the host-stats poll and series),
+`docs/testing-and-build.md` (a short "Host stats (CARD-0718)" subsection with the measured
+overhead and the `HostStats` settings table), `docs/session-runtime-invariants.md` only if
+TestDesign finds an invariant worth pinning (none expected: the sampler decides nothing).
+
+### S5 — Round 2: named-process totals, EF command rate, lease waits
+
+- Runner: `HostStatsProcessCensus` (one `Process.GetProcesses()` / `/proc` sweep per tick,
+  summing `vmmem*`, `Antiphon.*`, `dotnet`/`testhost` by name), gated by `ProcessSampling`
+  and by CP-11's measurement (D-6).
+- Server: `DbCommandRateMetrics` interceptor (all commands, a counter the poll service
+  differences into `efCommandsPerSecond`), `RepositoryLeaseWaiters.SnapshotAll()` → oldest
+  wait seconds and waiter count into `antiphon.leaseWaiters` / `leaseWaitSeconds`.
+- Windows processor queue length via one PDH counter (`\System\Processor Queue Length`) if a
+  read is under 1 ms (measured in CP-11's Windows arm), else dropped with the reason in docs.
+
+### S6 — Round 2: page additions
+
+Process breakdown table per host, EF rate and lease wait tiles; no new routes.
+
+### Migration and rollback
+
+No migration. Rollback is `HostStats:Enabled=false` on the server (page shows `offline`
+`disabled`) or `SessionRunner:HostStats:Enabled=false` on a runner (that host shows
+`unsupported`); an old runner binary against a new server is `unsupported`, a new runner
+against an old server is unpolled and costs nothing but its own sampler. The phone-home
+protocol version does not change: an unknown operation was already a typed refusal.
+
+## Verification design
+
+Coverage classes: V = new tests committed red at `bafc3366` (the failing assertion quoted in the
+commit message) before the slice's production change; R = existing classes that must stay
+green because a slice touches their path. `[Category("Unit")]` / `[Category("Integration")]`
+per `TestLaneCategoryGuardTests`; nothing here spawns a process, so no
+`ParallelLimiter<ProcessSpawnLimit>` is added.
+
+- **V-1 S1 `HostStatsStoreTests`** (Unit, `FakeTimeProvider`, 9 methods): an empty store
+  answers null latest and null rollups (never zero); the 361st sample evicts the first and
+  `Series(30m)` has exactly 360 points in time order; rollup `avg` and `max` over 1/5/15/30
+  minutes match hand-computed values for a synthetic saw-tooth (`cpu = i % 20`, one sample per
+  5 s, 30 minutes), including a window that holds fewer samples than its capacity (2 minutes of
+  data: `5m` equals `1m`... no — `5m` covers all 24 samples, `1m` the last 12; both asserted
+  against the arithmetic); a sample older than the window is excluded at the boundary
+  (`now - 60 s` is in `1m`, `now - 60.001 s` is not); a metric absent from a sample (`load` on
+  Windows) yields null rollups, not zero; `Series` for an unknown metric throws
+  `ArgumentException`; `Snapshot` carries `intervalSeconds` and `retentionMinutes`; the store is
+  safe under a concurrent `Add` / `Rollups` loop (no exception, counts monotone). Red: the type
+  does not exist.
+- **V-2 S1 `HostStatsProbeParseTests`** (Unit, 6 methods): `ParseProcStat` yields idle/total
+  jiffies from the measured line above and CPU % from two readings (busy delta over total delta,
+  e.g. `(2000-1000)-(1500-800) / (2000-1000) = 30 %`); a shorter first line (8 columns) still
+  parses; `ParseMemInfo` yields total/available/swap from the four lines; `ParseLoadAvg` yields
+  three loads and the total process count 3789 from `13/3789`; a missing `MemAvailable` gives
+  null available, not zero; `WindowsHostStatsProbe.CpuPercent(idle0, kernel0, user0, idle1, kernel1, user1)`
+  (pure, the P/Invoke is behind it) yields `1 - Δidle / (Δkernel + Δuser)`. Red: the parsers do not
+  exist.
+- **V-3 S1 `HostStatsSamplerTests`** (Unit, 4 methods): `SampleOnceAsync` with a fake probe
+  adds one sample with the fake clock's time; a probe that throws leaves the store unchanged and
+  the sampler alive (a second call adds); process figures for a fake runtime's live session pid
+  come from a fake `IProcessCpuProbe` (CPU % from two consecutive `TotalProcessorTime` deltas over
+  the wall interval) and a null CPU sample yields a null percent, not zero; `Enabled=false`
+  never calls the probe.
+- **V-4 S1 `HostStatsEndpointTests`** (Integration, loopback `HostStatsTestHost`, 4 methods):
+  `GET /host-stats` after two `SampleOnceAsync` answers the newest sample and non-null `1m`
+  rollups; `GET /host-stats/series?metric=cpu&window=5m` answers the points; `metric=bogus` is
+  400 with a problem body; `SessionRunner:HostStats:Enabled=false` answers 404 and the
+  `/capabilities` features list lacks `hostStatsV1` (the capability check is a fifth assertion
+  inside a `RunnerCapabilitiesTests` addition, R-1).
+- **V-5 S1 `PhoneHomeCommandDispatcherTests` +3**: `HostStats` answers a `Result` frame whose
+  payload round-trips to `RunnerHostStatsDto`; `HostStatsSeries` with `{ metric: "cpu", window: "1m" }`
+  answers points and with `window: "2h"` answers a 400 error frame; a dispatcher constructed
+  without the seam answers `phone_home_unsupported_operation` for 29. Red: the enum members do
+  not exist (compile), then the switch has no case.
+- **V-6 S2 `HostStatsCacheTests`** (Unit, `FakeTimeProvider`, 5 methods): a recorded sample
+  projects `live`; advancing past `StaleAfterMs` projects `stale` with the same values (never
+  zero); a host with no record and a directory saying not connected projects `offline` with
+  `current` null; an `unsupported` failure projects `unsupported`; `Changed` is true after a new
+  sample and false after a tick that recorded nothing new.
+- **V-7 S2 `HostStatsAntiphonCountersTests`** (Unit, 3 methods): `Group(rows)` over a
+  synthetic row set yields per-host `byStage` (Code 2, Review 1), `byKind`, `queued`, `held`
+  (only `CapacityWaitRetained`), `landsPending` (only `HasLand`), and a null/empty `RunnerId` is
+  the desktop; a Blocked task counts as open but not in flight.
+- **V-8 S2 `HostStatsPollServiceTests`** (Integration, `PhoneHomeTestHost`, 4 methods): one
+  `TickOnceAsync` with the local recording client answering a sample and the scripted peer
+  replying to operation 29 fills both hosts `live` and publishes one `HostStatsUpdated` to group
+  `hosts` with two entries; a peer `SilentFor(HostStats)` leaves that host on its last values and,
+  after `StaleAfterMs` on the fake clock, `stale`, while the desktop stays `live`; a peer whose
+  `Reply` answers `phone_home_unsupported_operation` projects `unsupported`; a tick whose local
+  client throws `HttpRequestException` does not fault the service and marks the desktop `stale`
+  on the next projection. The local answer is the `RecordingLocalClient`'s new
+  `HostStats` property.
+- **V-9 S2 `HostStatsEndpointTests`** (server, Integration, same host, 4 methods):
+  `GET /api/hosts/stats` answers the cache's projection (state, current, rollups, antiphon
+  counters from a seeded task row); `GET /api/hosts/server2/stats/series?metric=cpu&window=30m`
+  proxies the scripted peer's operation 30 answer; unknown host is 404; `window=2h` is 400
+  before any runner call (`RequestCount(HostStatsSeries)` stays 0).
+- **V-10 S3 client** (vitest, `pwsh -File scripts/test-client.ps1 hosts Sparkline HostsPage`):
+  `hosts.test.tsx` reads the list and the series hooks against msw; `HostsPage.test.tsx` renders
+  one card per host, a `stale` badge with the old values still visible, an `offline` card with
+  "no data" and no `0 %`, and the nav item; `Sparkline.test.tsx` builds a path with one `M` and
+  359 `L` segments from 360 points and renders a placeholder for an empty series;
+  `useHostStatsLive.test.ts` joins group `hosts`, writes a pushed list into the query cache and
+  appends the pushed current point to a mounted series key.
+- **V-11 S4 docs**: a non-TUnit grep row (CP-8) proving the four docs name the routes, the
+  states and the settings.
+- **R-1** runner classes adjacent to S1: `PhoneHomeCommandDispatcherTests` (34 → 37),
+  `RunnerCapabilitiesTests` (4 → 5), `BuildSlotBrokerTests` (11) and `BuildSlotEndpointTests`
+  (4) because `SystemHostMemoryProbe` changes shape, `SessionCpuWatchdogTests` (3) because the
+  sampler shares `IProcessCpuProbe`, `PhoneHomeConnectionServiceTests` (10).
+- **R-2** server classes adjacent to S2: `PhoneHomeDirectoryTests` (7), `RunnerCatalogueTests`
+  (4), `RunnerSlotEndpointTests` (8), `PhoneHomeEventPumpTests` (8), `SessionRunnerEventPumpTests`
+  (2), `SessionRunnerCapabilityGateTests` (2), `HttpResilienceRegistrationTests` (7, the typed
+  client gained two non-admitted reads).
+- **R-3** the whole `Antiphon.Tests` Unit lane.
+- **R-4** client lint (`npm run lint`, zero warnings) and the whole vitest suite once (S3 adds a
+  route and a nav item that `App.test.tsx` and `Layout` tests observe).
+
+Red-first rule: V-1..V-9 are committed red before their production change; a test that passes
+before the change is a stub (CARD-0585 rule 4). V-10's page tests are red because the route
+and components do not exist; the msw handlers are added with the tests.
+
+Platform notes: V-2's Linux parsers and Windows `CpuPercent` are pure and run on both lanes.
+The live probes are exercised by CP-4 (a real `SampleOnceAsync` on the lane's OS asserting
+non-null total memory, cores ≥ 1, and CPU % between 0 and 100 on the second sample) and the
+other OS is reported as not run with the reason.
+
+### Checkpoints
+
+Isolated outputs `bin-c718r/` (`Antiphon.SessionRunner.Tests`) and `bin-c718a/`
+(`Antiphon.Tests`), forward slash, one build per project per round; `Min` = `[Test]` methods in
+the named classes at `bafc3366` plus the new methods, minus a 5 % floor allowance.
+`Antiphon.Tests` and `Antiphon.Agents.Pty.Tests` are never co-scheduled. Every row runs through
+`scripts/run-checkpoint.ps1` (it takes the build slot itself); the two non-TUnit rows run under
+`scripts/build-slot.ps1` where they build.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c718r/` | host-stats-runner | `/*/*/(HostStatsStoreTests*)\|(HostStatsProbeParseTests*)\|(HostStatsSamplerTests*)\|(HostStatsEndpointTests*)/*` | V-1, V-2, V-3, V-4 | all listed, 0 failed | 22 | 9 |
+| CP-2 | S1 | CP-1 | runner-adjacent | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)\|(BuildSlotBrokerTests*)\|(BuildSlotEndpointTests*)\|(SessionCpuWatchdogTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-5, R-1 | all listed, 0 failed | 66 | 6 |
+| CP-3 | S1 | CP-1 | probe-live-lane | `/*/*/HostStatsProbeLiveTests/*` | D-1 live probe on this lane's OS | 1 executed (the other OS's method reports not run with reason), 0 failed; the second sample's `cpuPercent` is in [0,100] | 1 | 2 |
+| CP-4 | S1 | n/a | overhead-measure | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-overhead -- dotnet run --project src/Antiphon.SessionRunner --no-build --property:OutputPath=bin-c718s/ -- --urls http://127.0.0.1:0` twice (sampler on / `SessionRunner__HostStats__Enabled=false`), 60 s each, reading own-process `cpuPercent` from `GET /host-stats` on the on-instance and from `GET /api/diagnostics`-style process CPU delta for the off-instance; the runner is built once into `bin-c718s/` under the same wrapper | D-10 | on − off < 1 % of one core; both numbers, host and date written into `docs/testing-and-build.md` | n/a | 8 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c718a/` | host-stats-server | `/*/*/(HostStatsCacheTests*)\|(HostStatsAntiphonCountersTests*)\|(HostStatsPollServiceTests*)\|(HostStatsEndpointTests*)/*` | V-6, V-7, V-8, V-9 | all listed, 0 failed | 15 | 12 |
+| CP-6 | S2 | CP-5 | server-adjacent | `/*/*/(PhoneHomeDirectoryTests*)\|(RunnerCatalogueTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeEventPumpTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerCapabilityGateTests*)\|(HttpResilienceRegistrationTests*)/*` | R-2 | all listed, 0 failed | 36 | 8 |
+| CP-7 | S3 | n/a | client | `pwsh -File scripts/test-client.ps1 hosts Sparkline HostsPage useHostStatsLive` then `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c718-lint -- npm --prefix client run lint` | V-10, R-4 | `CLIENT TESTS EXIT CODE: 0`, ≥ 10 tests, lint 0 errors 0 warnings | n/a | 5 |
+| CP-8 | S4 | n/a | docs-named | `git grep -n -e "/api/hosts/stats" -e "HostStatsUpdated" -e "hostStatsV1" -e "SessionRunner:HostStats" -e "HostStats:PollIntervalMs" -- docs/ops-http.md docs/antiphon-api.md docs/resilience.md docs/testing-and-build.md` | V-11 | ≥ 8 matching lines across the 4 files, exit 0 | n/a | 1 |
+| CP-9 | all R1, landed and activated | n/a | live-hosts | `curl -sS $ANTIPHON_API/api/hosts/stats` twice 10 s apart after `GET /api/version` shows the landed SHA | acceptance "both hosts appear with live values that update about every 5 s" | two entries, both `live`, `observedAt` advanced by ≥ 5 s, server2 `load1` non-null, desktop `load1` null and `cpuPercent` non-null | n/a | 2 |
+| CP-10 | all R1 | CP-5 | unit-lane | `/*/*/*/*[Category=Unit]` | R-3 | ≥ 2990 executed, 0 failed (last measured 3021 total / 2993 passed / 28 skipped at `c18a6c67`) | 2900 | 12 |
+| CP-11 | R2 S5 | `tests/Antiphon.SessionRunner.Tests -> bin-c718p/` | process-census | `/*/*/(HostStatsProcessCensusTests*)\|(HostStatsSamplerTests*)/*` plus the census timing line the test prints | R2 V (named totals, gating, the per-tick census cost on this lane) | all listed, 0 failed; census cost printed and under 2 ms or the sampler's every-fourth-tick mode asserted | 8 | 6 |
+| CP-12 | R2 S5 | `tests/Antiphon.Tests -> bin-c718q/` | ef-rate-lease | `/*/*/(DbCommandRateMetricsTests*)\|(HostStatsAntiphonCountersTests*)\|(RepositoryLeaseWaitersTests*)/*` | R2 V | all listed, 0 failed | 9 | 8 |
+| CP-13 | R2 S6 | n/a | client-r2 | `pwsh -File scripts/test-client.ps1 HostsPage HostCard` | R2 V (process table, tiles) | `CLIENT TESTS EXIT CODE: 0` | n/a | 3 |
+
+The pipe characters inside `Filter` cells are table escapes; the command line uses a plain `|`,
+quoted as [docs/testing-and-build.md](../../testing-and-build.md#combined-class-filters-card-0403)
+shows. Run each TUnit row with `scripts/run-checkpoint.ps1 -Name CP-n -Project <project>
+-OutputPath bin-c718x/ -Filter '<filter>' -MinExecuted <Min> -Expect <classes> -ResultsRoot
+.antiphon/c718-checkpoints` (`-NoBuild` for reuse rows). CP-4, CP-7, CP-8 and CP-9 are non-TUnit
+rows reported by hand in the CHECKPOINT line shape with their own assertion. CP-3's live probe
+class carries one `[Test]` per OS that returns early with `Skip.Test("<other os>")` on the other
+lane, so its executed count is 1 on either host. CP-9 runs after land and activation
+(`GET /api/version` SHA equal to the landed commit; the local runner and server2 both restarted
+onto the new binary — server2 through its deploy, which is the only way it gets a new runner).
+
+### Cost
+
+Round 1 checkpoints: 9 + 6 + 2 + 8 + 12 + 8 + 5 + 1 + 2 + 12 = **65** minutes plus slot waits.
+Authoring Round 1: S1 ~4 h (two probes, store, sampler, routes, dispatcher cases, 22 tests),
+S2 ~3.5 h (cache, counters, poll service, endpoints, 16 tests), S3 ~3 h (page, sparkline, live
+hook, stories, 10 tests), S4 ~0.5 h; about 11 h. Round 2 checkpoints 6 + 8 + 3 = **17** minutes;
+authoring about 5 h.
+
+## Follow-ups (not in this card)
+
+- An Attention item when a host stays above a load or memory threshold for N minutes: needs a
+  week of `HostStatsUpdated` history to pick thresholds; CARD-0674's admission will want the
+  same numbers.
+- Fold `GET /api/session-runners`' capacity/occupancy and CARD-0654's budgets and CARD-0589's
+  `buildSlots` into one `/api/hosts` family once all three exist.
+- Runner-restart continuity: a 1-minute rollup file under `SessionLogPath` that the store reloads
+  at start, if a 30-minute gap after a deploy turns out to matter.
+
+## Open defaults (stated, not asked)
+
+- The 30-minute retention and 5 s interval are settings; the ring size follows them.
+- `cpu` on the graph is total host CPU %, not per-core; `cores` is shown next to it.
+- Rollups are plain averages of the raw samples in the window (no time weighting; the
+  interval is fixed, so weights would be equal anyway).
+- Memory "used" is `total − available` (Linux `MemAvailable`, Windows `AvailPhys`), which is
+  what the build-slot floor already reasons about.
+- Series points carry the runner's clock (`At` from `TimeProvider`); the page does not adjust
+  for skew between hosts, it just labels the axis in the viewer's local time.
