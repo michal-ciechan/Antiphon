@@ -480,6 +480,44 @@ Missing setup the Code stage adds (test-only or seam, named so no row is a stub)
   request timeout is `new CancellationTokenSource(RequestTimeout, time)` on the injected
   `TimeProvider`, so V-8 advances a `FakeTimeProvider` instead of sleeping.
 
+### Delivery inventory
+
+Host stats are a best-effort, last-value-wins telemetry stream: nothing is durable by design
+(D-4), so "recovery" here means the next tick restores the value and the gap is shown as
+`stale`/`offline`, never as zero. The durable identity joining every hop is
+**`(hostId, sample.At)`** (runner id from the catalogue; `At` from the runner's `TimeProvider`).
+No path carries session input, so no UserPrompt transcript applies.
+
+| Path | Producer | Destination | Persistence boundary | Recovery | Observable receipt |
+|---|---|---|---|---|---|
+| DP-1 sample | `HostStatsSamplerService.SampleOnceAsync` | `HostStatsStore` ring | none (runner memory; a runner restart empties the ring, accepted in D-4) | next tick; a faulting probe skips one tick (G-21) | `Latest().At` equals the fake clock (V-3 m1); `GET /host-stats` newest `At` (V-4 m1) |
+| DP-2 local pull | runner `GET /host-stats` | server `HostStatsCache.Record("desktop", dto)` | none | next 5 s tick; a fault or 3 s timeout marks the host for `stale` (G-43, G-44) | projection `live` with the answered `At` (V-8 m1, m4) |
+| DP-3 remote pull | runner dispatcher case 29 over the phone-home socket | `HostStatsCache.Record("server2", dto)` | none | silent peer: request cancelled at `RequestTimeoutMs`, host goes `stale`; disconnect: `offline`, then `live` on reconnect; old runner: `unsupported` | V-8 m2, m3, m5 against the real `PhoneHomeLiveConnection` |
+| DP-4 push | `HostStatsPollService` after a tick with `Changed` | browser query cache `['hosts','stats']` and mounted series keys, via `IEventBus.PublishToGroupAsync("hosts", "HostStatsUpdated", list)` | none; the page's `GET /api/hosts/stats` on mount and on reconnect is the resync | publish fault: the tick survives and `Changed` stays set so the next tick republishes (G-47); client reconnect: rejoin + refetch (G-60) | server: `RecordingEventBus` holds one `("hosts","HostStatsUpdated", list)` whose entries carry the answered `At` (V-8 m1, m6); client: `queryClient.getQueryData(['hosts','stats'])` equals the pushed list (V-10 live m2); live: CP-9 hub receipt |
+| DP-5 series read | runner `Series(...)` via `GET host-stats/series` / operation 30 | page series key | none | synchronous request; a failure is 409 and the page keeps its points | V-9 m2 (proxied points), V-4 m2, V-5 m2 |
+
+Producer-to-recipient through the real queue: V-8 drives the real `PhoneHomeLiveConnection` (the
+WebSocket frame queue, `RequestAsync`, the scripted peer) and the real `PhoneHomeRunnerClient` into
+the real cache, with the two hosts in one tick covering **busy recipient** (peer `SilentFor(HostStats)`)
+alongside **one already eligible** (desktop answering), and a failure at each handoff: probe fault
+(V-3 m2, runner side), local HTTP fault (V-8 m4), remote silence (V-8 m2), remote disconnect and
+recovery (V-8 m5), publish fault and republish (V-8 m6), client reconnect (V-10 live m4).
+
+Declared substitutes and what each cannot prove:
+
+- `RecordingEventBus` for `EventBus` + `AntiphonHub`: proves the group name, event name and payload
+  the service hands over; cannot prove SignalR routes a group message to a connection that called
+  `JoinGroup("hosts")`. Closed by CP-9's live hub receipt (a node `@microsoft/signalr` client joins
+  `hosts` on the activated server and must receive two `HostStatsUpdated` lists with advancing
+  `observedAt`) — this is the recipient evidence for DP-4.
+- Mocked `HubConnectionBuilder` in vitest: proves the hook's `JoinGroup` call, `on('HostStatsUpdated')`
+  handler and cache writes; cannot prove wire compatibility of the payload casing. Closed by CP-9
+  (same payload read by the real client library) and V-9 m1 (the JSON the API serializes is the
+  shape the page reads; both use the one `HostStatsDto`).
+- `RecordingLocalClient` for `SessionRunnerHttpClient`: V-8 cannot prove the HTTP single-attempt and
+  timeout; V-12 covers `SessionRunnerHttpClient` itself with a stub `HttpMessageHandler`.
+- Fake `IHostStatsProbe`: cannot prove the OS reads; CP-3 runs the real probe on the lane's OS.
+
 - **V-1 S1 `HostStatsStoreTests`** (Unit, `FakeTimeProvider`, 9 methods): an empty store
   answers null latest and null rollups (never zero); the 361st sample evicts the first and
   `Series(30m)` has exactly 360 points in time order; rollup `avg` and `max` over 1/5/15/30
