@@ -76,7 +76,7 @@ public class HostStatsSamplerTests
         targets[0] = new HostStatsProcessTarget("second", 4242, null, secondStart);
         time.Advance(TimeSpan.FromSeconds(5));
         await sampler.SampleOnceAsync();
-        store.Latest()!.Processes.Single().CpuPercent.ShouldBeNull();
+        store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBeNull();
 
         targets.Clear();
         time.Advance(TimeSpan.FromSeconds(5));
@@ -84,7 +84,7 @@ public class HostStatsSamplerTests
         targets.Add(new HostStatsProcessTarget("second", 4242, null, secondStart));
         time.Advance(TimeSpan.FromSeconds(5));
         await sampler.SampleOnceAsync();
-        store.Latest()!.Processes.Single().CpuPercent.ShouldBeNull();
+        store.Latest().ShouldNotBeNull().Processes.Single().CpuPercent.ShouldBeNull();
     }
 
     private static async Task<double> PercentAfter(TimeSpan gap)
