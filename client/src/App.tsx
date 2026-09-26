@@ -39,6 +39,9 @@ const AttentionPage = lazy(() =>
 const AgentsPage = lazy(() =>
   import('./features/agents/AgentsPage').then((m) => ({ default: m.AgentsPage })),
 )
+const HostsPage = lazy(() =>
+  import('./features/hosts/HostsPage').then((m) => ({ default: m.HostsPage })),
+)
 const AgentFilesPage = lazy(() =>
   import('./features/agents/AgentFilesPage').then((m) => ({ default: m.AgentFilesPage })),
 )
@@ -139,6 +142,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Agents error">
                       <SuspenseBoundary variant="page">
                         <AgentsPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="hosts"
+                  element={
+                    <ErrorBoundary fallbackTitle="Hosts error">
+                      <SuspenseBoundary variant="page">
+                        <HostsPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

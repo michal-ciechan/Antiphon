@@ -65,6 +65,11 @@ export const handlers: HttpHandler[] = [
       features: ['required-platform-v1'],
     },
   ])),
+  http.get('/api/hosts/stats', () => HttpResponse.json([])),
+  http.get('/api/hosts/:hostId/stats/series', ({ params, request }) => {
+    const query = new URL(request.url).searchParams
+    return HttpResponse.json({ hostId: params.hostId, metric: query.get('metric'), window: query.get('window'), intervalSeconds: 5, points: [] })
+  }),
   http.get('/api/runner-defaults', () => HttpResponse.json({
     revision: 1,
     globalRunnerId: 'server2',
