@@ -2487,8 +2487,9 @@ public sealed class AgentTaskService
         return ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
     }
 
-    public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct)
+    public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct, string? reason = null)
     {
+        _ = reason;
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
 
