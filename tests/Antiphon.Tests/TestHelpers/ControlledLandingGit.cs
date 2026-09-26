@@ -345,6 +345,15 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         return sha;
     }
 
+    /// <summary>CARD-0711: move the observed target tip to a child of itself. The push arm still accepts any SHA until S4b.</summary>
+    public string AdvanceRemoteTarget()
+    {
+        var sha = NextOid();
+        _objects[sha] = new Commit(sha, [_remoteTarget]);
+        _remoteTarget = sha;
+        return sha;
+    }
+
     public string DivergeRemoteSource()
     {
         var sha = NextOid();

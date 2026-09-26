@@ -34,6 +34,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     public SessionMessageQueueService? Messages { get; set; }
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } =
         NullLogger<AgentTaskLandService>.Instance;
+    /// <summary>CARD-0711: the land service's delegation settings. <see cref="CreateLand"/> reads this instance.</summary>
+    public DelegationSettings LandSettings { get; set; } = new();
     public ControlledWorktreeManager Worktrees { get; }
 
     public LandingProtocolHarness(string? root = null, Guid? taskId = null)
@@ -135,7 +137,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         var git = services.GetRequiredService<ILandingGit>();
         return new AgentTaskLandService(db, services.GetRequiredService<DelegationWorktreeService>(),
             tasks, Queue, Messages!, Events, Clock,
-            Options.Create(new DelegationSettings()), Logger,
+            Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), git);
     }

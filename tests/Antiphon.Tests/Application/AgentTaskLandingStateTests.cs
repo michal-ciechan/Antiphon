@@ -359,4 +359,55 @@ public sealed class AgentTaskLandingStateTests
         System.Text.Json.JsonSerializer.Serialize(previous).ShouldBe(oldEvidence);
         System.Text.Json.JsonSerializer.Serialize(inspection).ShouldBe(oldInspection);
     }
+
+    [Test]
+    [Arguments("race", true, true, true)]
+    [Arguments("schema2", false, false, true)]
+    [Arguments("published", false, false, false)]
+    [Arguments("reason:verification_failed", false, false, true)]
+    [Arguments("reason:push_rejected", false, false, true)]
+    [Arguments("reason:null", false, false, true)]
+    [Arguments("phase:PushStarted", false, false, false)]
+    [Arguments("publication:Unconfirmed", false, false, true)]
+    [Arguments("no-lease", true, false, false)]
+    [Arguments("no-approval", true, false, false)]
+    public void C711_TargetRaceRefusalPolicy(string row, bool isRace, bool automatic, bool explicitReplace)
+    {
+        var op = new AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = Guid.NewGuid(), SchemaVersion = 3, Phase = LandPhase.Refused,
+            Publication = LandPublicationOutcome.Refused, LastReason = "remote_changed_before_push", PushExitCode = 1,
+            ApprovalLandRequestId = Guid.NewGuid(),
+            OriginalSourceSha = new string('a', 40), ReviewedSourceSha = new string('a', 40),
+            SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+            RepositoryPath = "repo", CommonDirectory = "common", GitDirectory = "git", WorktreePath = "tree",
+            TargetBeforeSha = new string('b', 40), RemoteFingerprint = new string('c', 64),
+            SourceLocalSha = new string('a', 40), LocalTargetBeforeSha = new string('b', 40), LandWorktreePath = "land",
+            RemoteName = "origin",
+        };
+        op.RecoveryRefPrefix = $"refs/antiphon/land/{op.TaskId:N}/{op.Id:N}";
+        if (row == "schema2") op.SchemaVersion = 2;
+        if (row.StartsWith("reason:", StringComparison.Ordinal))
+            op.LastReason = row == "reason:null" ? null : row["reason:".Length..];
+        if (row == "phase:PushStarted") op.Phase = LandPhase.PushStarted;
+        if (row == "publication:Unconfirmed") op.Publication = LandPublicationOutcome.Unconfirmed;
+        if (row == "no-approval") op.ApprovalLandRequestId = null;
+        if (row == "published")
+        {
+            op.Publication = LandPublicationOutcome.Landed;
+            op.VerifiedSourceSha = op.OriginalSourceSha;
+            op.VerifiedAt = op.RemoteConfirmedAt = DateTime.UtcNow;
+            op.SourcePinned = op.TargetPinned = op.VerificationPassed = true;
+            op.ObservedRemoteTargetSha = op.OriginalSourceSha;
+            op.ConfirmationMethod = "push-endpoint-read-fetch-ancestry";
+        }
+        var policy = new AgentTaskLandingState();
+        if (row == "published") policy.HasPublication(op).ShouldBeTrue();
+        var leaseHeld = row != "no-lease";
+        var before = System.Text.Json.JsonSerializer.Serialize(op);
+        policy.IsTargetRaceRefusal(op).ShouldBe(isRace, row);
+        policy.CanReplaceRefused(op, explicitRequest: false, leaseHeld).ShouldBe(automatic, row);
+        policy.CanReplaceRefused(op, explicitRequest: true, leaseHeld).ShouldBe(explicitReplace, row);
+        System.Text.Json.JsonSerializer.Serialize(op).ShouldBe(before);
+    }
 }

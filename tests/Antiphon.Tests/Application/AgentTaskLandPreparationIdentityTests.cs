@@ -80,6 +80,8 @@ public sealed class AgentTaskLandPreparationIdentityTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
+        // CARD-0711 R-3: automatic recovery must not replace a changed preparation. The default budget is V-13.
+        h.LandSettings.LandTargetRaceRetries = 0;
         var original = await h.AddSourceAsync();
         await using (var db = h.CreateContext())
         {

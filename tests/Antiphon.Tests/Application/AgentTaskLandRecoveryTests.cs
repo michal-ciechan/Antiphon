@@ -471,7 +471,7 @@ public sealed class AgentTaskLandRecoveryTests
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
-    private static async Task<(Antiphon.Server.Domain.Entities.AgentTaskLanding Op, Guid RequestId)> SeedSchemaTwoAsync(
+    internal static async Task<(Antiphon.Server.Domain.Entities.AgentTaskLanding Op, Guid RequestId)> SeedSchemaTwoAsync(
         LandingProtocolHarness h, string phase, string original, string rebased)
     {
         var queued = await h.RequestAsync(expectedSourceSha: original);

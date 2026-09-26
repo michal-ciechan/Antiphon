@@ -194,4 +194,29 @@ public sealed class ControlledLandingGitTests
         gate.SetResult();
         (await running).Succeeded.ShouldBeTrue();
     }
+
+    [Test]
+    public async Task C711_PushRejectsNonFastForward()
+    {
+        using var git = new ControlledLandingGit();
+        var dest = await git.DestinationAsync(git.Repository, git.TargetRef, CancellationToken.None);
+        await git.RequiredAsync(git.Source, "commit", "--allow-empty", "-m", "d");
+        var d = git.SourceHead;
+        var pushed = await git.PushOwnedAsync(git.Repository, dest, d, static (_, _, _) => Task.CompletedTask, CancellationToken.None);
+        pushed.ExitCode.ShouldBe(0);
+        git.RemoteTarget.ShouldBe(d);
+
+        var moved = git.AdvanceRemoteTarget();
+        var rejected = await git.PushOwnedAsync(git.Repository, dest, d, static (_, _, _) => Task.CompletedTask, CancellationToken.None);
+        rejected.ExitCode.ShouldBe(1);
+        rejected.Diagnostic.ShouldContain("rejected");
+        git.RemoteTarget.ShouldBe(moved);
+
+        var older = await git.PushOwnedAsync(git.Repository, dest, git.SeedSha, static (_, _, _) => Task.CompletedTask, CancellationToken.None);
+        older.ExitCode.ShouldBe(1);
+        git.RemoteTarget.ShouldBe(moved);
+
+        var source = await git.PushAsync(git.Repository, dest with { FullRef = git.SourceRef }, git.SeedSha, CancellationToken.None);
+        source.ExitCode.ShouldBe(0);
+    }
 }

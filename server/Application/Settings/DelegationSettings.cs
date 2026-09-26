@@ -642,6 +642,13 @@ public sealed class DelegationSettings
     public int LandMaxAttempts { get; set; } = 3;
 
     /// <summary>
+    /// CARD-0711: how many times one admission may replace its own schema-3 operation after
+    /// <c>remote_changed_before_push</c> and rebase onto the new tip. 0 disables. Floor 0, ceiling 5.
+    /// S0 declares the setting; nothing reads it until the service loop.
+    /// </summary>
+    public int LandTargetRaceRetries { get; set; } = 2;
+
+    /// <summary>
     /// <see cref="AgentTask.ExpectedDurationMinutes"/> for a caller that declared nothing. Ten
     /// minutes is roughly the median delegated task here, so an undeclared task still gets one
     /// early check instead of silence.
