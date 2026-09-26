@@ -4131,6 +4131,7 @@ public sealed class AgentTaskDispatcher
         string Subject,
         DateTime CreatedAt,
         string? FullTipSha,
+        LandRequestState? RequestState = null,
         int CoveredCount = 0)
     {
         public string ShortId => DelegationReportFormatter.Short(TaskId);
@@ -4146,6 +4147,9 @@ public sealed class AgentTaskDispatcher
             return $"task {DelegationReportFormatter.Short(newTaskId)} branched from {BaseRef} without "
                 + $"{CardIdentifier}'s kept branch {Branch} ({FullTipSha ?? Tip}, {commits}). "
                 + $"Land {ShortId} first, or expect its commits to be absent from this branch."
+                + (RequestState == LandRequestState.NeedsResolution
+                    ? $" Land request {ShortId} needs conflict resolution."
+                    : "")
                 + (CoveredCount == 0 ? "" : $" At the observed tips, this warning also covers {CoveredCount} other kept sibling branches.");
         }
     }
@@ -4196,6 +4200,10 @@ public sealed class AgentTaskDispatcher
         var requests = await _db.AgentTaskLandRequests.AsNoTracking()
             .Where(r => requestIds.Contains(r.Id))
             .ToDictionaryAsync(r => r.Id, ct);
+        var operationIds = requests.Values.Select(r => r.LandingOperationId).OfType<Guid>().ToList();
+        var originalSources = await _db.AgentTaskLandings.AsNoTracking()
+            .Where(o => operationIds.Contains(o.Id))
+            .ToDictionaryAsync(o => o.Id, o => o.OriginalSourceSha, ct);
 
         var cardIdentifier = await _db.Cards.AsNoTracking()
             .Where(c => c.Id == task.CardId)
@@ -4208,7 +4216,9 @@ public sealed class AgentTaskDispatcher
         {
             var request = sibling.CurrentLandRequestId is Guid id && requests.TryGetValue(id, out var current)
                 ? current : null;
-            var reviewedSource = request?.ExpectedSourceSha;
+            var reviewedSource = request?.ExpectedSourceSha ??
+                (request?.LandingOperationId is Guid operationId
+                    ? originalSources.GetValueOrDefault(operationId) : null);
             if (requestedSha is not null && reviewedSource is not null
                 && (string.Equals(requestedSha, reviewedSource, StringComparison.OrdinalIgnoreCase)
                     || await _worktrees.IsCommitAncestorAsync(task.RepoPath, reviewedSource, requestedSha, ct)))
@@ -4231,7 +4241,8 @@ public sealed class AgentTaskDispatcher
                 described?.CommitsAbove ?? 0,
                 described?.Subject ?? "",
                 sibling.CreatedAt,
-                fullTip);
+                fullTip,
+                request?.State);
 
             if (request is { IsPending: true, State: LandRequestState.Queued or LandRequestState.Held or LandRequestState.Running })
             {
