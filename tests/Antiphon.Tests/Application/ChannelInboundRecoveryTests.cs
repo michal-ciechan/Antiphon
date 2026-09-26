@@ -295,7 +295,14 @@ public sealed class ChannelInboundRecoveryTests
             ConfigureDbContext = options => options.AddInterceptors(mappingFault),
         });
         var chat = await h.BindChannelAsync();
-        var faulted = Message(chat, "fault-" + Guid.NewGuid().ToString("N"), "must survive mapping fault");
+        var faulted = Message(chat, "fault-" + Guid.NewGuid().ToString("N"), "must survive mapping fault") with
+        {
+            Attachments = [new Attachment
+            {
+                Kind = AttachmentKind.File, ChannelRef = "stable-file", Name = "retry-proof.bin",
+                Content = [31, 32, 33, 34],
+            }],
+        };
         mappingFault.Arm();
         await Bridge(h).HandleInboundAsync(faulted, Ct);
         await using (var cut = Db(schema.ConnectionString))
@@ -305,7 +312,15 @@ public sealed class ChannelInboundRecoveryTests
             (await cut.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId == pending.Id)).ShouldBe(0,
                 "queue owner and every journal member must roll back together");
         }
+        var inbox = Path.Combine(h.TempRoot, "workspace", ".antiphon", "inbox");
+        var firstSavedPath = Directory.GetFiles(inbox).Single();
+        File.ReadAllBytes(firstSavedPath).ShouldBe(faulted.Attachments.Single().Content);
         await Bridge(h).DrainPendingAsync(Ct);
+        Directory.GetFiles(inbox).ShouldBe([firstSavedPath]);
+        await using (var recoveredOwner = Db(schema.ConnectionString))
+            (await recoveredOwner.SessionQueuedMessages.Where(q => q.SourceChannelInboundId != null
+                && q.Body.Contains("must survive mapping fault")).Select(q => q.Body).SingleAsync())
+                .ShouldContain(firstSavedPath);
         var first = Message(chat, "first-" + Guid.NewGuid().ToString("N"), "first complete body");
         var second = Message(chat, "second-" + Guid.NewGuid().ToString("N"), "second complete body");
         h.Messaging.InjectInbound(first);
