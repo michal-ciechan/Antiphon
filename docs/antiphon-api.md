@@ -480,7 +480,22 @@ GET    /api/runner-defaults
 PUT    /api/runner-defaults                           expectedRevision, globalRunnerId, kindDefaults, reason, provenance
 GET    /api/runner-defaults/revisions?beforeRevision=&limit=
 GET    /api/session-runners                           desktop plus every configured runner
+GET    /api/hosts/stats                               latest per-host sample, rollups, state, Antiphon counts
+GET    /api/hosts/{hostId}/stats/series?metric=cpu&window=30m
 ```
+
+Host stats are sampled by each session runner every five seconds and held in a 30-minute memory
+ring. `GET /api/hosts/stats` gives `HostStatsDto[]` for desktop and configured runners. `state`
+is `live`, `stale`, `offline`, or `unsupported`; stale retains the last known values, while a
+missing value is null and must never be interpreted as zero. `current` includes CPU, load where
+available, memory, swap, disks and process count; `rollups` carry average and maximum over
+1/5/15/30 minutes. `antiphon` carries current tasks by stage and agent kind, queued/held tasks,
+lands, sessions, seats, and build slots. `metric=cpu|load|memory` and
+`window=1m|5m|15m|30m` are the only series queries; there is no tasks series. Windows
+`swapUsedBytes`/`swapTotalBytes` describe page-file **commit charge / commit limit**, not
+physical swap use/capacity. `HostStatsUpdated` publishes the same list to SignalR group `hosts`.
+The server settings are `HostStats:PollIntervalMs`, `StaleAfterMs`, `RequestTimeoutMs`, and
+`SeriesTimeoutMs`; runner settings are under `SessionRunner:HostStats`.
 
 `PUT /api/runner-defaults` is one complete snapshot. `409 runner_defaults_revision_conflict` and
 `409 runner_defaults_human` write nothing. `Delegation:DefaultRunnerId` is imported once into

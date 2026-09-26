@@ -26,6 +26,12 @@ Admission is a code registry stamped on `HttpRequestMessage.Options`. An unknown
 
 ## What stays a single attempt
 
+The `host-stats` poll (`GET /host-stats` locally or phone-home operation 29) and
+`host-stats/series` read (operation 30) each make one attempt. `HostStats:RequestTimeoutMs`
+defaults to 3000 ms and `HostStats:SeriesTimeoutMs` to 5000 ms; a missed five-second poll is
+replaced by the next tick, and the Hosts page retains prior samples on a series failure.
+Neither read enters the admitted 120-second retry budget.
+
 Runner commands stay on the typed client with no standard handler: start, input, conditional input, kill, kill-generation, stop-compaction, attach, clear, resize, placement check, disposal preview POST, dispose, and verification-custody seal. Disposal still asks the read client whether the runner advertises the capability; an open read circuit is "no evidence" and does not become a command POST.
 
 Also unchanged: GitHub pull-request creation and git push, GitHub issue and Jira mutations, the Anthropic probe POST, the tracker card-push 15-second bound, phone-home and SSE, Linear, and messaging. `SessionRunnerHttpClient.EventStreamClientName` keeps its infinite timeout and idle watchdog. EF Core `EnableRetryOnFailure` stays off. `SaveChanges` is not wrapped.
