@@ -4,7 +4,7 @@ SCOPE: Re-run the claimed checks (Unit plus named affected integration classes) 
 
 ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks.
 
-INVARIANTS: Read-only; fix nothing. Read the diff against the plan and its verification; re-run claimed ordinary tests; judge ordinary and PC evidence read-only (PCs stay pending). Reject missing regression tests or ordinary evidence. Carry the Code landing owner through handoffs. Defects: Where/Failure/Why/Fix.
+INVARIANTS: Read-only. Do not fix anything. Read the diff against the plan and its verification; re-run claimed ordinary tests; judge ordinary and PC evidence read-only (PCs stay pending). Reject missing regression tests or ordinary evidence. Carry the Code landing owner through handoffs. Defects: Where/Failure/Why/Fix.
 
 Audit each async delivery inventory: producer, destination, persistence boundary, recovery, observable receipt, durable identity. Trace ordinary V/R evidence through the real queue to busy and eligible recipients with crash/enqueue failures at each handoff. Acceptance needs matching complete UserPrompt transcript evidence, not a queue insert, event, Sent flag or transport ack. Reject a missing producer-to-recipient test or a design stopping before recipient evidence.
 
@@ -17,7 +17,7 @@ reviewedSourceSha: <full SHA actually reviewed>
 ordinaryScopeCompleted: <Full|Interim|None>
 ```
 
-Full only when the complete required selection executed. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
+Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.
 
 Platform: read GET /api/runner-defaults and /api/session-runners; embed no fleet location. -Platform Windows for junction, file-sharing, ConPTY, or Windows path/CRLF/E2E.
 
