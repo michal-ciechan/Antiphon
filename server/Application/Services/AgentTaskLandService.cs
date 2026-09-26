@@ -90,7 +90,14 @@ public sealed class AgentTaskLandService
             throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         if (task.Workspace != WorkspaceMode.Worktree)
             throw new ConflictException("Only a Worktree task can be landed.");
-        if (task.Status != AgentTaskStatus.Succeeded)
+        if (body.RecoverReviewedSource && body.AdoptFromTaskId is not null)
+            throw new ConflictException("Choose one reviewed recovery source.", "recovery_source_ambiguous");
+        var recoveryMode = body.RecoverReviewedSource ? LandRecoveryMode.OwnerReviewedSource
+            : body.AdoptFromTaskId is not null ? LandRecoveryMode.AdoptReviewedSource : LandRecoveryMode.None;
+        if (recoveryMode != LandRecoveryMode.None && task.Role != AgentTaskRole.Code)
+            throw new ConflictException("Reviewed recovery requires a Code landing owner.", "recovery_owner_invalid");
+        if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded
+            || recoveryMode != LandRecoveryMode.None && !LandApproval.RecoveryStatusEligible(task.Status))
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
         WorkspaceReservationSnapshot? admitted = null;
         var committed = false;
@@ -104,7 +111,9 @@ public sealed class AgentTaskLandService
         try
         {
             var shortId = DelegationReportFormatter.Short(task.Id);
-            if (_queue.IsActive(taskId) && task.LandRequestedAt is null)
+            var existing = task.LandRequestedAt is not null ? await EnsureRequestAsync(task, ct) : await GetRequestAsync(task, ct);
+            if (_queue.IsActive(taskId) && (task.LandRequestedAt is null
+                || existing?.State == LandRequestState.NeedsResolution))
                 _queue.Release(taskId);
             if (_queue.IsActive(taskId))
             {
@@ -122,8 +131,13 @@ public sealed class AgentTaskLandService
             await _db.Entry(task).ReloadAsync(ct);
             var request = task.LandRequestedAt is not null ? await EnsureRequestAsync(task, ct) : await GetRequestAsync(task, ct);
             var pending = request is { IsPending: true } && task.LandRequestedAt is not null;
-            if (pending)
+            var supersede = pending && request!.State == LandRequestState.NeedsResolution
+                && recoveryMode != LandRecoveryMode.None;
+            if (pending && !supersede)
             {
+                if (recoveryMode != LandRecoveryMode.None || body.AdoptFromTaskId is not null)
+                    throw new ConflictException("A live land request cannot change recovery authority.",
+                        "land_request_identity_conflict");
                 var suppliedSha = LandApproval.NormalizeExpectedSha(body.ExpectedSourceSha, required: false);
                 var suppliedEvidence = body.ReviewEvidenceId;
                 if (suppliedSha is not null && request!.ExpectedSourceSha is not null && suppliedSha != request.ExpectedSourceSha
@@ -141,13 +155,59 @@ public sealed class AgentTaskLandService
                     ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == opId, ct)
                     : null;
                 var inherit = published is not null && new AgentTaskLandingState().HasPublication(published);
-                var expected = LandApproval.NormalizeExpectedSha(body.ExpectedSourceSha, required: !inherit);
+                if (recoveryMode != LandRecoveryMode.None && published is not null
+                    && published.Phase != LandPhase.Refused && !inherit)
+                    throw new ConflictException("Resolve the previous unconfirmed publication first.",
+                        "publication_unconfirmed");
+                var expected = LandApproval.NormalizeExpectedSha(body.ExpectedSourceSha,
+                    required: recoveryMode != LandRecoveryMode.None || !inherit);
                 if (expected is null && inherit)
                     expected = published!.OriginalSourceSha;
                 if (expected is not null && inherit && expected != published!.OriginalSourceSha)
                     throw new ConflictException("Cleanup retry expectedSourceSha does not match the published original.",
                         "land_request_identity_conflict");
                 Guid? evidenceId = body.ReviewEvidenceId;
+                AgentTask? source = null;
+                if (recoveryMode != LandRecoveryMode.None)
+                {
+                    if (evidenceId is null)
+                        throw new ConflictException("Reviewed recovery requires reviewEvidenceId.",
+                            "recovery_review_required");
+                    if (body.AdoptFromTaskId is Guid sourceId)
+                    {
+                        if (sourceId == task.Id)
+                            throw new ConflictException("A task cannot adopt itself.", "adopt_source_self");
+                        source = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == sourceId, ct)
+                            ?? throw new ConflictException("Adoption source task was not found.", "adopt_source_not_found");
+                        if (source.Workspace != WorkspaceMode.Worktree || source.Role != AgentTaskRole.Code
+                            || source.RepairSourceTaskId is not null || source.SourceLandingOperationId is not null
+                            || source.WorktreeBranch is null || source.RepoPath is null || task.RepoPath is null
+                            || source.CardId is null || source.CardId != task.CardId
+                            || source.ProjectId != task.ProjectId)
+                            throw new ConflictException("Adoption requires a same-card Code worktree source.",
+                                "adopt_source_invalid");
+                        if (!LandApproval.RecoveryStatusEligible(source.Status))
+                            throw new ConflictException("Adoption source has no settled status.",
+                                "adopt_source_not_settled");
+                        if (await _db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == source.Id && r.IsPending, ct))
+                            throw new ConflictException("Adoption source is landing.", "adopt_source_landing");
+                        if (_landingGit is not null)
+                        {
+                            var ownerCommon = await _landingGit.CommonDirectoryAsync(task.RepoPath, ct);
+                            var sourceCommon = await _landingGit.CommonDirectoryAsync(source.RepoPath, ct);
+                            if (!string.Equals(ownerCommon, sourceCommon,
+                                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                                throw new ConflictException("Adoption source is in a different repository.",
+                                    "adopt_source_foreign_repository");
+                        }
+                        else if (!string.Equals(task.RepoPath, source.RepoPath,
+                            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                            throw new ConflictException("Adoption source is in a different repository.",
+                                "adopt_source_foreign_repository");
+                    }
+                    source ??= task;
+                    await LandApproval.LoadRecoveryEvidenceAsync(_db, evidenceId.Value, expected!, source, ct);
+                }
                 // CARD-0544 D-5: once any Interim work was admitted for this owner, no explicit-caller
                 // fallback remains. A cleanup-only retry after confirmed publication needs no new sweep.
                 if (!inherit && evidenceId is null && task.RequiresFinalVerificationReview)
@@ -155,13 +215,36 @@ public sealed class AgentTaskLandService
                         "This owner had Interim verification; land requires reviewEvidenceId for a Clean Final Review that completed Full scope.",
                         LandApproval.FinalReviewRequiredCode);
                 var kind = LandApprovalKind.ExplicitCaller;
-                if (evidenceId is { } eid)
+                if (evidenceId is { } eid && recoveryMode == LandRecoveryMode.None)
                 {
                     var evidence = await LandApproval.LoadUsableEvidenceAsync(_db, eid, expected!, task, ct);
                     evidenceId = evidence.Id;
                     kind = LandApprovalKind.ReviewEvidence;
                 }
                 request = NewRequest(task, now, filter, expected, evidenceId, kind);
+                request.RecoveryMode = recoveryMode;
+                request.RecoveryOwnerStatus = recoveryMode == LandRecoveryMode.None ? null : task.Status;
+                request.RecoverySourceTaskId = recoveryMode == LandRecoveryMode.AdoptReviewedSource ? source!.Id : task.Id;
+                request.RecoverySourceFullRef = recoveryMode == LandRecoveryMode.None ? null
+                    : source!.WorktreeBranch!.StartsWith("refs/", StringComparison.Ordinal)
+                        ? source.WorktreeBranch : "refs/heads/" + source.WorktreeBranch;
+                request.RecoveryStartBaseSha = recoveryMode == LandRecoveryMode.AdoptReviewedSource
+                    ? source!.WorktreeBaseSha : null;
+                request.SupersedesRequestId = supersede ? existing!.Id : null;
+                if (recoveryMode != LandRecoveryMode.None) request.ApprovalKind = LandApprovalKind.ReviewEvidence;
+                if (supersede)
+                {
+                    existing!.State = LandRequestState.Superseded;
+                    existing.IsPending = false;
+                    var supersededEvent = Event(task.Id, AgentTaskEventType.LandSuperseded,
+                        $"Land request {existing.Id:N} superseded by {request.Id:N}; reviewed={expected}.", now);
+                    supersededEvent.LandRequestId = existing.Id;
+                    supersededEvent.IsLandTerminal = true;
+                    existing.TerminalEventId = supersededEvent.Id;
+                    _db.AgentTaskEvents.Add(supersededEvent);
+                    // The partial unique pending index must see the old row closed before the new insert.
+                    await _db.SaveChangesAsync(ct);
+                }
                 _db.AgentTaskLandRequests.Add(request);
                 task.CurrentLandRequestId = request.Id;
                 task.LandRequestedAt = now;
@@ -179,7 +262,7 @@ public sealed class AgentTaskLandService
             committed = true;
             if (!_boundary.DropWakeup("land-request", request.Id)) _queue.TryEnqueue(taskId, request.VerifyFilter, request.Id);
             await PublishAsync(task, ct);
-            return new LandRequestResult(task.Id, pending ? "requeued" : "queued", request.Id,
+            return new LandRequestResult(task.Id, pending && !supersede ? "requeued" : "queued", request.Id,
                 request.ReplyTo == AgentTaskReplyTo.None ? "not-required" : "tracked");
         }
         catch when (!committed)
@@ -264,16 +347,17 @@ public sealed class AgentTaskLandService
         if (!request.IsPending) return LandRunResult.Complete;
         await _boundary.ReachedAsync("before-execution", task.Id, request.Id, ct);
         request.LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime;
-        if (task.Status == AgentTaskStatus.Blocked)
+        if (task.Status == AgentTaskStatus.Blocked && request.RecoveryMode == LandRecoveryMode.None)
             return LandRunResult.Complete;
-        if (task.Status != AgentTaskStatus.Succeeded || task.Workspace != WorkspaceMode.Worktree)
+        if (!LandApproval.RequestStatusEligible(task, request))
         {
             await using var canceled = await _db.Database.BeginTransactionAsync(ct);
             await LockTaskAsync(task.Id, ct);
             await _db.Entry(task).ReloadAsync(ct);
             await _db.Entry(request).ReloadAsync(ct);
             if (task.CurrentLandRequestId != request.Id || !request.IsPending || task.LandRequestedAt is null
-                || task.Status == AgentTaskStatus.Blocked || task.Status == AgentTaskStatus.Succeeded && task.Workspace == WorkspaceMode.Worktree)
+                || task.Status == AgentTaskStatus.Blocked && request.RecoveryMode == LandRecoveryMode.None
+                || LandApproval.RequestStatusEligible(task, request))
                 return LandRunResult.Complete;
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
@@ -336,7 +420,8 @@ public sealed class AgentTaskLandService
         CancellationToken ct)
     {
         await _db.Entry(task).ReloadAsync(ct);
-        if (task.LandRequestedAt is null || task.Status != AgentTaskStatus.Succeeded || task.CurrentLandRequestId != request.Id)
+        if (task.LandRequestedAt is null || !LandApproval.RequestStatusEligible(task, request)
+            || task.CurrentLandRequestId != request.Id)
             return LandRunResult.Complete;
         await _db.Entry(request).ReloadAsync(ct);
         var holder = await FindWriterAsync(task, lease.CommonDirectory, ct);
@@ -357,7 +442,8 @@ public sealed class AgentTaskLandService
         await LockTaskAsync(task.Id, ct);
         await _db.Entry(task).ReloadAsync(ct);
         await _db.Entry(request).ReloadAsync(ct);
-        if (!request.IsPending || task.CurrentLandRequestId != request.Id || task.Status != AgentTaskStatus.Succeeded
+        if (!request.IsPending || task.CurrentLandRequestId != request.Id
+            || !LandApproval.RequestStatusEligible(task, request)
             || task.LandRequestedAt is null || request.State == LandRequestState.NeedsResolution) return LandRunResult.Complete;
         if (task.LandRequestedAt != request.RequestedAt || task.LandAttempt != request.Attempt)
         {
@@ -463,7 +549,8 @@ public sealed class AgentTaskLandService
                 return LandRunResult.Complete;
             task.Status = AgentTaskStatus.Blocked;
             task.FailureReason = "Landing rebase conflicted.";
-            var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct, task.MergeTargetRef ?? "master");
+            var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct,
+                task.MergeTargetRef ?? "master", result.Operation?.SourceRemoteSha);
             Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, DurationSeconds(result.Operation, OrchestrationStage.Rebase),
                 string.Join(", ", result.Conflicts), helper is null ? "merge task cap reached" : DelegationReportFormatter.Short(helper.Id));
             var conflictEvent = Event(task.Id, AgentTaskEventType.Conflicted,
@@ -562,6 +649,12 @@ public sealed class AgentTaskLandService
         + $"remote={op.ObservedRemoteTargetSha} confirmed at {op.RemoteConfirmedAt:O}; "
         + (op.PushStartedAt is null ? "no push attempted; " : $"push exit={op.PushExitCode?.ToString() ?? "unknown"}; ")
         + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}")
+        + (op.RecoveryMode == LandRecoveryMode.None ? "" : $"; recovery={op.RecoveryMode} "
+            + $"source-task={op.RecoverySourceTaskId:N} source-ref={op.RecoverySourceFullRef} "
+            + $"owner-status={op.RecoveryOwnerStatus} local-before={op.RecoveryLocalBeforeSha} "
+            + $"remote-before={op.RecoveryOwnerRemoteBeforeSha} remote-after={op.RecoveryOwnerRemoteAfterSha} "
+            + $"relationship={op.RecoveryRelationship} review={op.ReviewEvidenceId:N} "
+            + $"supersedes={op.SupersedesRequestId:N}")
         + (string.IsNullOrEmpty(cleanupDetail) ? "" : $"; {cleanupDetail}")
         + (CanonicalOutcome(op) is { } canonical ? $"; canonical={canonical}" : "");
 
@@ -783,6 +876,7 @@ public sealed class AgentTaskLandService
             if (row.LandRequestedAt is null || row.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Blocked) continue;
             var request = await EnsureRequestAsync(row, ct);
             await _db.Entry(request).ReloadAsync(ct);
+            if (LandApproval.RequestStatusEligible(row, request)) continue;
             if (!request.IsPending) continue;
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
@@ -795,7 +889,8 @@ public sealed class AgentTaskLandService
 
         var pending = await _db.AgentTasks
             .Where(t => t.LandRequestedAt != null
-                && t.Status == AgentTaskStatus.Succeeded
+                && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked
+                    || t.Status == AgentTaskStatus.Failed)
                 && t.Workspace == WorkspaceMode.Worktree)
             .ToListAsync(ct);
         var maxAttempts = Math.Clamp(_settings.LandMaxAttempts, 1, 10);
@@ -804,7 +899,8 @@ public sealed class AgentTaskLandService
             if (_queue.IsActive(row.Id))
                 continue;
             var request = await EnsureRequestAsync(row, ct);
-            if (!request.IsPending || request.State == LandRequestState.NeedsResolution) continue;
+            if (!request.IsPending || request.State == LandRequestState.NeedsResolution
+                || !LandApproval.RequestStatusEligible(row, request)) continue;
             if (row.LandAttempt >= maxAttempts)
             {
                 var last = row.LandStartedAt?.ToString("u") ?? "unknown";
@@ -822,7 +918,7 @@ public sealed class AgentTaskLandService
                     await LockTaskAsync(row.Id, ct);
                     await _db.Entry(row).ReloadAsync(ct);
                     if (row.CurrentLandRequestId == expectedRequestId && row.LandStartedAt is not null
-                        && row.Status == AgentTaskStatus.Succeeded)
+                        && LandApproval.RequestStatusEligible(row, request))
                     {
                         request = await GetRequestAsync(row, ct);
                         if (request is { IsPending: true })
@@ -844,9 +940,10 @@ public sealed class AgentTaskLandService
             }
 
             await _db.Entry(row).ReloadAsync(ct);
-            if (row.LandRequestedAt is null || row.Status != AgentTaskStatus.Succeeded) continue;
+            if (row.LandRequestedAt is null) continue;
             request = await GetRequestAsync(row, ct);
-            if (request is null || !request.IsPending || request.State == LandRequestState.NeedsResolution) continue;
+            if (request is null || !request.IsPending || request.State == LandRequestState.NeedsResolution
+                || !LandApproval.RequestStatusEligible(row, request)) continue;
             _queue.TryEnqueue(row.Id, request.VerifyFilter, request.Id);
         }
     }

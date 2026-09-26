@@ -31,7 +31,15 @@ public sealed record LandRequestStatusDto(
     string? SourceDiagnosticCommand = null,
     int? SourceDiagnosticExitCode = null,
     string? SourceDiagnosticCode = null,
-    string? SourceDiagnosticExceptionType = null)
+    string? SourceDiagnosticExceptionType = null,
+    LandRecoveryMode RecoveryMode = LandRecoveryMode.None,
+    AgentTaskStatus? RecoveryOwnerStatus = null,
+    Guid? RecoverySourceTaskId = null,
+    string? RecoverySourceFullRef = null,
+    string? RecoveryOwnerRemoteBeforeSha = null,
+    string? RecoveryOwnerRemoteAfterSha = null,
+    string? RecoveryRelationship = null,
+    Guid? SupersedesRequestId = null)
 {
     public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications)
         => new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
@@ -43,7 +51,9 @@ public sealed record LandRequestStatusDto(
             r.SourceRelationship, r.SourceRefusalReason,
             r.TerminalFailureCode, r.FailureDiagnosticId, r.FailureExceptionType,
             r.SourceDiagnosticCommand, r.SourceDiagnosticExitCode, r.SourceDiagnosticCode,
-            r.SourceDiagnosticExceptionType);
+            r.SourceDiagnosticExceptionType, r.RecoveryMode, r.RecoveryOwnerStatus,
+            r.RecoverySourceTaskId, r.RecoverySourceFullRef, r.RecoveryOwnerRemoteBeforeSha,
+            r.RecoveryOwnerRemoteAfterSha, r.RecoveryRelationship, r.SupersedesRequestId);
 }
 
 public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,

@@ -78,9 +78,21 @@ internal static class LandOperationFactory
             OriginalSourceSha = expected, ReviewedSourceSha = expected,
             PreparationInputSha = derivation ? previous!.RebasedSourceSha : expected,
             PreviousPreparationOperationId = derivation ? previous!.Id : null,
-            ApprovalLandRequestId = previous is { OriginalSourceSha: { } prev } && prev == expected
+            ApprovalLandRequestId = request.RecoveryMode == LandRecoveryMode.None
+                && previous is { OriginalSourceSha: { } prev } && prev == expected
                 ? previous.ApprovalLandRequestId ?? request.Id : request.Id,
-            ReviewEvidenceId = previous?.ReviewEvidenceId ?? request.ReviewEvidenceId,
+            ReviewEvidenceId = request.RecoveryMode == LandRecoveryMode.None
+                ? previous?.ReviewEvidenceId ?? request.ReviewEvidenceId : request.ReviewEvidenceId,
+            RecoveryMode = request.RecoveryMode,
+            RecoveryOwnerStatus = request.RecoveryOwnerStatus,
+            RecoverySourceTaskId = request.RecoverySourceTaskId,
+            RecoverySourceFullRef = request.RecoverySourceFullRef,
+            RecoveryStartBaseSha = request.RecoveryStartBaseSha,
+            RecoveryLocalBeforeSha = request.RecoveryLocalBeforeSha,
+            RecoveryOwnerRemoteBeforeSha = request.RecoveryOwnerRemoteBeforeSha,
+            RecoveryOwnerRemoteAfterSha = request.RecoveryOwnerRemoteAfterSha,
+            RecoveryRelationship = request.RecoveryRelationship,
+            SupersedesRequestId = request.SupersedesRequestId,
             ApprovalKind = request.ApprovalKind,
             ApprovedAt = request.ApprovedAt ?? request.RequestedAt,
             SourceRemoteSha = request.RemoteSourceSha, SourceRemoteRef = request.RemoteSourceRef,

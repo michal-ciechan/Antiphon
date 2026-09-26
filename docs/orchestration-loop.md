@@ -74,14 +74,26 @@ this server now — wait for its outcome event. A `Warning` "did not finish (ser
 re-running" is informational. The orchestrator decides the order and what a refusal means, but
 does none of those git operations itself.
 
+**Reviewed owner recovery (CARD-0753).** A Code/Worktree owner that settled Failed or Blocked can
+land only through an explicit Clean Final/Full Review of the exact current pushed source tip.
+Use `-Land <owner> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <guid>
+-RecoverReviewedSource` when the reviewed tip is on the owner's branch, or `-FromTask <repair-id>`
+when a `-StartRef` repair pushed its own branch. The latter retains the repair branch and lands
+through the original owner. The server validates the Review's subject, ref, repository and SHA,
+then pins and aligns the owner source under the repository lease; adoption pushes the owner ref
+with an exact `--force-with-lease`. A NeedsResolution request may be superseded by a new reviewed
+request; Queued, Held and Running requests cannot. The original task status stays historical.
+An unconfirmed previous publication needs its own recovery before another source is adopted.
+
 **Repair source (CARD-0499).** When a Code Worktree task must work on a branch that is already
 checked out elsewhere, pass `delegate.ps1 -RepairSource <owner-guid>` (full GUID of the original
 Code/Worktree landing owner). Antiphon records that owner, routes the repair onto its own unique
 branch at the owner's recorded SHA, and attributes a claimed post-dispatch commit on the owner's
 ref. `-RepairSource` alone sets no merge target and grants no Land: a repair task's
 `-Land` is refused `repair_source_landing_owner_required`. Integrate through the original owner
-(or an explicit merge target equal to the owner's branch). Historical Failed tasks are not
-backfilled; prose-only "work in that other worktree" is still unsupported.
+(or an explicit merge target equal to the owner's branch). A reviewed repair that pushed its
+own branch is adopted with `-Land <owner> -FromTask <repair-id>` and the exact SHA and Review ID;
+the repair task never becomes the landing owner. Historical Failed status is preserved.
 
 **Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
 default base - continuing an interrupted stage, or picking up where another task's branch got to -
@@ -103,6 +115,8 @@ chooses where this task's own branch starts, sets no merge target, and changes n
 landing. Before relying on it, confirm the running build has it (`GET /api/version`) and that the
 task detail shows both the requested ref and the recorded base - an older server silently ignores
 an unknown optional JSON property.
+After a Clean Final/Full Review of a `-StartRef` repair's pushed tip, `-FromTask` can adopt that
+branch into the original Code owner's source under the reviewed recovery contract above.
 
 A delegate that nonetheless ends up off its own branch is no longer settled as a false failure.
 Antiphon reads the registered checkout's actual HEAD and accepts a task-scoped claim line

@@ -673,6 +673,22 @@ public class LandingGit : ILandingGit
         return await RunOwnedAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], started, ct);
     }
 
+    public virtual async Task<LandingGitResult> PushSourceOwnedAsync(string repository, string sourceFullRef,
+        string sha, string? expectedRemoteSha, string expectedFingerprint,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+    {
+        if (!sourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !IsOid(sha)
+            || expectedRemoteSha is not null && !IsOid(expectedRemoteSha))
+            return new(1, "", "invalid_source_push_identity");
+        var destination = await DestinationAsync(repository, sourceFullRef, ct);
+        if (destination.Fingerprint != expectedFingerprint)
+            return new(1, "", "source_remote_endpoint_changed");
+        var endpoint = await EndpointAsync(repository, ct);
+        return await RunOwnedAsync(repository,
+            ["push", endpoint, $"--force-with-lease={sourceFullRef}:{expectedRemoteSha ?? ""}",
+                $"{sha}:{sourceFullRef}"], started, ct);
+    }
+
     internal async Task<string> CommitAsync(string repository, string revision, CancellationToken ct)
     {
         var sha = (await RequiredAsync(repository, ["rev-parse", "--verify", $"{revision}^{{commit}}"], ct)).Trim();

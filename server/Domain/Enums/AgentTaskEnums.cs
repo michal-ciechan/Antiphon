@@ -264,6 +264,10 @@ public enum AgentTaskEventType
     /// Detail starts with <c>Warning:</c> or <c>Error:</c>. Appended; never renumber.
     /// </summary>
     HeldAged = 37,
+    /// <summary>A NeedsResolution request was replaced by a new reviewed landing request.</summary>
+    LandSuperseded = 38,
+    /// <summary>The owner source branch was explicitly aligned with the reviewed source.</summary>
+    SourceAdopted = 39,
 }
 
 /// <summary>
