@@ -297,8 +297,10 @@ public sealed class RunnerAlarmDeliveryTests
         (await PromptsAsync(rig)).Count(text => text.Contains("[runner server2 unavailable]", StringComparison.Ordinal)).ShouldBe(1);
         rig.Db.ChangeTracker.Clear();
         (await rig.Db.SessionQueuedMessages.AsNoTracking()
-            .CountAsync(row => row.AgentSessionId == rig.Harness.SessionId
-                && (row.Body ?? "").Contains("[runner server2 unavailable]", StringComparison.Ordinal))).ShouldBe(1);
+            .Where(row => row.AgentSessionId == rig.Harness.SessionId)
+            .ToListAsync())
+            .Count(row => (row.Body ?? "").Contains("[runner server2 unavailable]", StringComparison.Ordinal))
+            .ShouldBe(1);
         await rig.Worker.StopAsync(CancellationToken.None);
     }
 

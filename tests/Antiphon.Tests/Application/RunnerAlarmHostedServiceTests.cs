@@ -82,7 +82,8 @@ public sealed class RunnerAlarmHostedServiceTests
         source.Calls.ShouldBe(snapshots);
         inspector.Calls.ShouldBe(inspections);
         clock.Inner.Advance(TimeSpan.FromMinutes(1));
-        await UntilAsync(() => source.Calls == snapshots + 1 && inspector.Calls == inspections + 1, "sweep did not run at 15 minutes");
+        await UntilAsync(() => source.Calls == snapshots + 1 && inspector.Calls == inspections + 1,
+            $"sweep did not run at 15 minutes (snapshots {snapshots}->{source.Calls}, inspections {inspections}->{inspector.Calls})");
         clock.Timers.ShouldAllBe(timer => timer.Period == Timeout.InfiniteTimeSpan && timer.Due >= TimeSpan.FromMinutes(1));
         await service.StopAsync(CancellationToken.None);
     }
