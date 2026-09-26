@@ -806,3 +806,87 @@ records planted as `RepositoryMutationLeaseTests.cs:515-523`, ages set with
   `DescribeUnavailableAsync` is non-null (control: it fences), and the inspection has exactly one
   finding, `Malformed`, `Stale`, whose `File` is that path. Red: return an empty inspection when
   `children` is not a directory -> fails at the finding count.
+
+**S3: coordinator** (`CP-5` red, `CP-6` green;
+`tests/Antiphon.Tests/Application/RunnerAlarmCoordinatorTests.cs`, `[Category("Integration")]`,
+`[ParallelLimiter<ProcessSpawnLimit>]` because V-13 runs git; each method takes its own
+`TestDbFixture.CreateIsolatedSchemaAsync()` and seeds rows directly; MS-4 fakes; one
+`FakeTimeProvider` whose `t0` is the first evaluation; the coordinator is built per evaluation in
+a fresh scope over one shared `RunnerAlarmState`, as the hosted service does)
+
+Shared seed for V-8, V-10, V-28 (`SeedServer2Async`): runner `server2` ineligible, reason
+`transport_abort`. Tasks pinned to `server2`: T1 `Working` parent P1, T2 `Queued` parent P2, T3
+`Blocked` parent P1, T7 `Dispatched` parent P5 with `ReplyTo = None` (all `ReplyTo = Session`
+unless named); T4 `Succeeded` parent P3; T6 `Working`, role `Check`, parent P4. T5 `Working` parent
+P3 on the desktop (`RunnerId` null). Sessions on `server2`: one `Running`, one `Stopped`.
+
+- **V-8: an outage past the grace raises once, with counts, and one note per caller | Integration
+  | `RunnerAlarmCoordinatorTests.a_runner_down_past_the_grace_raises_once_with_counts_and_one_note_per_caller`
+  | as below.** `t0`: one episode, `RaisedAt == null`, notifier empty. `t0+179 s`: still unraised.
+  `t0+180 s`: `RaisedAt == t0+180`, `PinnedOpenTasks == 4` (T1, T2, T3, T7), `LiveSessions == 1`,
+  `LastReason == "transport_abort"`; notifier has exactly two notes, sessions `{P1, P2}`, header
+  `[runner server2 unavailable]`; P1's body names T1's and T3's short ids and not T2's; P2's names
+  T2's; `NotifiedSessionIds == {P1, P2}`; one Warning log naming `server2`. Add T8 (`Working`,
+  pinned, parent P1) and evaluate at `t0+240 s`: `PinnedOpenTasks == 5`, notifier still two notes.
+  Red: `>` for `>=` against the grace -> fails at `RaisedAt` at `t0+180`; drop `Blocked` from the
+  open set -> `PinnedOpenTasks`; drop the `NotSpecialist` filter -> P4 in the session set; drop the
+  `ReplyTo == Session` caller filter -> P5 in the session set; drop the once-per-episode check ->
+  note count at `t0+240`.
+- **V-9: a flap inside the grace leaves no trace | Integration |
+  `RunnerAlarmCoordinatorTests.a_flap_inside_the_grace_leaves_no_trace` | nothing.** Ineligible at
+  `t0`, eligible at `t0+60 s`: no episode, notifier empty, no log entry above Debug naming the
+  runner. Green on the skeleton (control). Red: route the unraised close through the resolve branch
+  -> fails at notifier empty.
+- **V-10: recovery resolves and tells only the notified callers | Integration |
+  `RunnerAlarmCoordinatorTests.recovery_resolves_and_tells_only_the_notified_callers` | two
+  recovery notes.** V-8's seed raised at `t0+180`; add T9 (`Queued`, pinned, parent P3); eligible at
+  `t0+444 s`: no episode; notifier's new notes go to exactly `{P1, P2}` with header
+  `[runner server2 recovered]` and bodies containing `after 7.4 min`; one Information log line.
+  Red: send recovery notes to the current callers instead of `NotifiedSessionIds` -> P3 in the
+  set; keep the episode after resolve -> fails at no episode.
+- **V-11: a draining, retired or disabled runner never alarms (CARD-0727 contract) | Integration |
+  `RunnerAlarmCoordinatorTests.a_draining_or_retired_runner_never_raises_and_a_disabled_entry_is_skipped`
+  | as below.** (m1) `FakeExclusion` returns `"draining"` for `server2`, ineligible from `t0`:
+  evaluations at `t0`, `t0+180`, `t0+600`: no episode, no note. (m2) runner `off` with
+  `Enabled == false`, ineligible: never an episode. (m3) the exclusion clears at `t0+700` while
+  still ineligible: an episode opens with `DownSince == t0+700`, unraised at `t0+879`, raised at
+  `t0+880`. (m4) the CARD-0727 rolling-upgrade sequence on runner `r2`: eligible and `"draining"`,
+  then ineligible and `"draining"` for 10 min, then eligible and `"draining"`, then eligible and
+  cleared: no episode and no note at any evaluation. (m5) runner `r3` raised at its grace with one
+  notified caller P6, then `"retired"` while still ineligible: the episode is gone the same
+  evaluation and P6 gets exactly one `[runner r3 recovered]` note (D-3 table row 6). Red: consult
+  the exclusion only when opening an episode -> fails at m5's "episode gone"; never consult it ->
+  fails at m1; do not skip disabled entries -> fails at m2.
+- **V-12: startup opens an episode per enabled remote runner and a normal reconnect closes it
+  silently | Integration |
+  `RunnerAlarmCoordinatorTests.startup_opens_an_episode_per_enabled_remote_runner_and_a_normal_reconnect_closes_it`
+  | as below.** A fresh state; runners `a` and `b` ineligible at the first evaluation `t0`: two
+  episodes with `DownSince == t0`. `a` eligible at `t0+40`: `a`'s episode gone, no note, no log
+  above Debug. `b` raised at `t0+180`, notes only to `b`'s callers (a task pinned to `a` with
+  parent Pa: Pa gets nothing). Red: open episodes only on an eligible-to-ineligible transition
+  seen by this process -> fails at two episodes.
+- **V-27: `DownSince` honours a disconnect later than the last resolution | Integration |
+  `RunnerAlarmCoordinatorTests.down_since_uses_the_last_disconnect_after_the_last_resolution` |
+  as below.** Eligible at `t0` (no episode); then ineligible with `LastDisconnectAtUtc == t0+10`,
+  evaluated at `t0+100`: `DownSince == t0+10`, unraised at `t0+189`, raised at `t0+190`. Resolve at
+  `t0+300`; the source keeps reporting `LastDisconnectAtUtc == t0+10` and goes ineligible again,
+  evaluated at `t0+400`: `DownSince == t0+400`. Red: always `now` -> fails at `DownSince == t0+10`;
+  always `LastDisconnectAtUtc` -> fails at `DownSince == t0+400`.
+- **V-28: a failed note is retried on the next wake and never sent twice (TD-1) | Integration |
+  `RunnerAlarmCoordinatorTests.a_failed_note_is_retried_on_the_next_wake_and_never_sent_twice` |
+  as below.** V-8's seed; `RecordingNotifier` throws once for P2. At `t0+180`: attempts to P1 and
+  P2, `NotifiedSessionIds == {P1}`, one Warning naming P2. At `t0+181`: one more note, to P2;
+  `NotifiedSessionIds == {P1, P2}`. At `t0+182`: no attempt. P1 has exactly one note throughout.
+  Red: record the session before `NotifyAsync` returns (the plan's literal D-7 wording) -> fails
+  at `NotifiedSessionIds == {P1}`.
+- **V-13: journal findings are keyed on the common directory and cleared on recovery |
+  Integration, `ScratchGitRepo` x2 |
+  `RunnerAlarmCoordinatorTests.journal_findings_are_published_per_repository_and_cleared_when_recovered`
+  | as below.** Projects over repo1 and repo2 plus one whose path does not exist; an open task whose
+  `RepoPath` is a linked worktree of repo1. One dead record 10 min old in repo1:
+  `EvaluateJournalsAsync(null)` publishes exactly one `JournalFinding`, `CommonDirectory` equal to
+  repo1's (`LandingGit.PathsEqual`), `StaleCount == 1`; the missing path raises no exception and
+  logs one Debug line. Delete the record and evaluate: no finding. Replant it and evaluate with
+  `JournalEnabled = false`: no finding and no inspection (inspector call count unchanged). Red:
+  key repositories on their checkout path instead of `CommonDirectoryAsync` -> two findings; let
+  the missing path throw -> the evaluation throws; ignore `JournalEnabled` -> finding present.
