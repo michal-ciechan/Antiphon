@@ -382,8 +382,7 @@ per `TestLaneCategoryGuardTests`; nothing here spawns a process, so no
   `Series(30m)` has exactly 360 points in time order; rollup `avg` and `max` over 1/5/15/30
   minutes match hand-computed values for a synthetic saw-tooth (`cpu = i % 20`, one sample per
   5 s, 30 minutes), including a window that holds fewer samples than its capacity (2 minutes of
-  data: `5m` equals `1m`... no — `5m` covers all 24 samples, `1m` the last 12; both asserted
-  against the arithmetic); a sample older than the window is excluded at the boundary
+  data: `5m` covers all 24 samples, `1m` the last 12; both asserted against the arithmetic); a sample older than the window is excluded at the boundary
   (`now - 60 s` is in `1m`, `now - 60.001 s` is not); a metric absent from a sample (`load` on
   Windows) yields null rollups, not zero; `Series` for an unknown metric throws
   `ArgumentException`; `Snapshot` carries `intervalSeconds` and `retentionMinutes`; the store is
