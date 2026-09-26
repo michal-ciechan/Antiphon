@@ -209,6 +209,46 @@ public sealed class AgentTaskLandAdoptionTests
     }
 
     [Test]
+    public async Task C753_PublishedRecoveryCleanupRetryUsesPersistedOwnerAuthority()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var reviewed = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        await File.WriteAllTextAsync(sentinel, "fixture report");
+        Guid evidence;
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Failed;
+            evidence = await AddReviewAsync(db, owner, reviewed);
+        }
+        await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        await h.RunQueuedAsync();
+        var first = (await h.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(first).ShouldBeTrue();
+        first.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+
+        await using (var db = h.CreateContext())
+        {
+            var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            owner.Status = AgentTaskStatus.Canceled;
+            await db.SaveChangesAsync();
+        }
+        File.Delete(sentinel);
+        await h.RequestCleanupRetryAsync(first.Id);
+        await h.RunQueuedAsync();
+
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(first.Id);
+        after.Cleanup.ShouldBe(LandCleanupStatus.Complete, after.LastReason);
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+    }
+
+    [Test]
     [Arguments("success")]
     [Arguments("local-cas")]
     [Arguments("remote-lease")]
