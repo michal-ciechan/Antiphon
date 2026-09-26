@@ -1309,7 +1309,7 @@ Testcontainers Postgres start; nothing was built or run by TestDesign.
   + 3 + 3 + 24 = **99 minutes**, builds included: Round 1 (CP-1..CP-7) **58 min**, Round 2
   (CP-8..CP-12) **41 min**, plus slot waits. Against the plan's draft 93 min: +6 min for the
   delivery, wiring and boundary rows (V-21..V-36 and R-4, R-5) and the client red row; CP-12 is
-  the same 24 min. Authoring: Round 1 about 4 h (S1..S3, 33 new methods across 8 classes plus
+  the same 24 min. Authoring: Round 1 about 4 h (S1..S3, 32 new methods across 9 classes plus
   MS-1..MS-5), Round 2 about 2 h (S4, S5). `-ExpectAbout`: Round 1 about 5 h, Round 2 about 2.75 h.
 - **PC floor (Mutation)**, 67 controls, method-scoped red/restore/green, batched only across
   different production files and different test methods, so the round count is the largest
