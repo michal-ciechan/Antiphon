@@ -597,6 +597,12 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (request.ReviewEvidenceId is not null && op.ReviewEvidenceId is not null)
             Require(request.ReviewEvidenceId == op.ReviewEvidenceId, "resume_approval_changed");
         Require(request.VerifyFilter == op.VerificationFilter, "verification_filter_changed");
+        if (!_state.HasPublication(op))
+        {
+            var ownerFilter = await db.AgentTasks.AsNoTracking()
+                .Where(t => t.Id == op.TaskId).Select(t => t.LandVerifyFilter).SingleOrDefaultAsync(ct);
+            Require(ownerFilter == op.VerificationFilter, "verification_filter_changed");
+        }
     }
 
     /// <summary>The network half: one <c>ls-remote</c> (no fetch, no pin) before each mutation (D-8).</summary>
