@@ -290,22 +290,6 @@ public class AgentTaskServiceIntegrationTests
     // ---- workspace defaults and cross-repo targeting ---------------------------------------
 
     [Test]
-    public async Task workspace_defaults_to_shared()
-    {
-        // Isolation is opt-in: most delegated work either must see live state or is small enough
-        // that a branch + merge-back + conflict path is pure overhead.
-        await using var db = CreateContext();
-        var service = CreateService(db);
-        using var workspace = new TempWorkspace(gitRepository: false);
-
-        var created = await service.CreateAsync(
-            NewRequest("run the tests"), ManualCaller(workspace.Path), CancellationToken.None);
-
-        await using var verify = CreateContext();
-        (await verify.AgentTasks.SingleAsync(t => t.Id == created.Id)).Workspace.ShouldBe(WorkspaceMode.Shared);
-    }
-
-    [Test]
     public async Task a_task_inherits_the_callers_directory_when_none_is_given()
     {
         await using var db = CreateContext();
@@ -1338,41 +1322,6 @@ public class AgentTaskServiceIntegrationTests
     }
 
     [Test]
-    public async Task an_orchestrator_with_its_own_location_stays_shared()
-    {
-        // Its own -Dir IS the isolation — a worktree on top would be pure overhead.
-        using var callerDir = new TempWorkspace(gitRepository: false);
-        using var ownDir = new TempWorkspace(gitRepository: false);
-
-        await using var db = CreateContext();
-        var created = await CreateService(db, allowedRoots: [ownDir.Path]).CreateAsync(
-            NewRequest("own the other repo", kind: AgentTaskKind.Orchestrator) with
-            {
-                WorkingDirectory = ownDir.Path,
-            },
-            ManualCaller(callerDir.Path),
-            CancellationToken.None);
-
-        created.Warning.ShouldBeNull();
-        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
-            .Workspace.ShouldBe(WorkspaceMode.Shared);
-    }
-
-    [Test]
-    public async Task a_worker_still_defaults_to_shared()
-    {
-        using var repo = new ScratchGitRepo("antiphon-task-ws-worker");
-        await repo.CommitFileAsync("README.md", "base\n");
-
-        await using var db = CreateContext();
-        var created = await CreateService(db).CreateAsync(
-            NewRequest("fix the typo"), ManualCaller(repo.Path), CancellationToken.None);
-
-        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
-            .Workspace.ShouldBe(WorkspaceMode.Shared, "workers run where the work is — that default stands");
-    }
-
-    [Test]
     public async Task forcing_an_orchestrator_into_its_callers_directory_is_honoured_but_warned()
     {
         // Explicit choices win — but the caller hears about the risk AT CREATION, when it can
@@ -1393,24 +1342,6 @@ public class AgentTaskServiceIntegrationTests
         (await db.AgentTaskEvents.AsNoTracking()
                 .AnyAsync(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Warning))
             .ShouldBeTrue("the timeline records what the caller was told");
-    }
-
-    [Test]
-    public async Task an_orchestrator_in_a_non_git_directory_falls_back_to_shared_with_a_warning()
-    {
-        // Nothing to branch, so isolation is impossible — say so instead of failing the creation.
-        using var workspace = new TempWorkspace(gitRepository: false);
-
-        await using var db = CreateContext();
-        var created = await CreateService(db).CreateAsync(
-            NewRequest("orchestrate the notes", kind: AgentTaskKind.Orchestrator),
-            ManualCaller(workspace.Path),
-            CancellationToken.None);
-
-        created.Warning.ShouldNotBeNull();
-        created.Warning!.ShouldContain("not a git repository");
-        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
-            .Workspace.ShouldBe(WorkspaceMode.Shared);
     }
 
     [Test]
