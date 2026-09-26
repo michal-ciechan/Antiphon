@@ -168,19 +168,11 @@ public sealed class AgentTaskLandService
             else
             {
                 var published = task.ActiveLandingId is Guid opId
-                    ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == opId, ct)
+                    ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == opId, ct)
                     : null;
                 var inherit = published is not null && new AgentTaskLandingState().HasPublication(published);
-                var supersededConflict = supersede && published is
-                {
-                    Phase: LandPhase.Conflicted,
-                    Publication: LandPublicationOutcome.Unconfirmed,
-                    PushStartedAt: null,
-                    RemoteConfirmedAt: null,
-                    ChildOperation: null,
-                } && existing!.LandingOperationId == published.Id;
                 if (recoveryMode != LandRecoveryMode.None && published is not null
-                    && published.Phase != LandPhase.Refused && !inherit && !supersededConflict)
+                    && published.Phase != LandPhase.Refused && !inherit)
                     throw new ConflictException("Resolve the previous unconfirmed publication first.",
                         "publication_unconfirmed");
                 var expected = LandApproval.NormalizeExpectedSha(body.ExpectedSourceSha,
@@ -258,12 +250,6 @@ public sealed class AgentTaskLandService
                 if (recoveryMode != LandRecoveryMode.None) request.ApprovalKind = LandApprovalKind.ReviewEvidence;
                 if (supersede)
                 {
-                    if (supersededConflict)
-                    {
-                        published!.Active = false;
-                        published.UpdatedAt = now;
-                        published.LastReason = $"superseded by reviewed land request {request.Id:N}";
-                    }
                     var helpers = await _db.AgentTasks
                         .Where(t => t.ParentTaskId == task.Id && t.Role == AgentTaskRole.Merge
                             && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched

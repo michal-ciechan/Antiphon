@@ -33,7 +33,8 @@ public sealed class AgentTaskLandAdoptionTests
             db.AgentTaskLandings.Add(new AgentTaskLanding
             {
                 Id = oldOperationId, TaskId = owner.Id, SchemaVersion = 3,
-                ApprovalLandRequestId = old.Id, Phase = LandPhase.Conflicted,
+                ApprovalLandRequestId = old.Id, Phase = LandPhase.Refused,
+                LastReason = "rebase_conflict",
                 Publication = LandPublicationOutcome.Unconfirmed,
                 RepositoryPath = h.Fixture.Repository, WorktreePath = h.Fixture.Source,
                 SourceFullRef = h.Fixture.SourceRef, OriginalSourceSha = reviewed,
