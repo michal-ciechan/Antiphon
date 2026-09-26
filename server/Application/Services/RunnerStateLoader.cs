@@ -1,8 +1,11 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -14,11 +17,16 @@ public sealed class RunnerStateLoader : IHostedService
 {
     private readonly IServiceScopeFactory _scopes;
     private readonly PhoneHomeRunnerDirectory _directory;
+    private readonly ILogger<RunnerStateLoader> _logger;
 
-    public RunnerStateLoader(IServiceScopeFactory scopes, PhoneHomeRunnerDirectory directory)
+    public RunnerStateLoader(
+        IServiceScopeFactory scopes,
+        PhoneHomeRunnerDirectory directory,
+        ILogger<RunnerStateLoader>? logger = null)
     {
         _scopes = scopes;
         _directory = directory;
+        _logger = logger ?? NullLogger<RunnerStateLoader>.Instance;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -29,7 +37,18 @@ public sealed class RunnerStateLoader : IHostedService
             return;
         var rows = await db.SessionRunnerStates.AsNoTracking().ToListAsync(cancellationToken);
         foreach (var row in rows)
-            _directory.ApplyState(row.RunnerId, RunnerStateService.ToState(row));
+        {
+            try
+            {
+                _directory.ApplyState(row.RunnerId, RunnerStateService.ToState(row));
+            }
+            catch (NotFoundException)
+            {
+                _logger.LogWarning(
+                    "Skipping SessionRunnerStates row {RunnerId}: that id is not configured.",
+                    row.RunnerId);
+            }
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

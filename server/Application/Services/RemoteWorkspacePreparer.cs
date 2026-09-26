@@ -134,11 +134,23 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                     var path = await remote.MirrorAsync(task, push.Sha, ct);
                     // D-8: keyed by id, not by status, so a mirror that succeeds after a cancel is
                     // still known to retirement and removed rather than left as runner residue.
-                    await db.AgentTasks.Where(t => t.Id == taskId)
+                    // The runner id is part of the key: a drain that moved the task while this
+                    // mirror was in flight must not record a path that exists only on the old runner.
+                    var runnerId = entry.RunnerId;
+                    var recorded = await db.AgentTasks
+                        .Where(t => t.Id == taskId && t.RunnerId == runnerId)
                         .ExecuteUpdateAsync(s => s
                             .SetProperty(t => t.RemoteWorktreePath, path)
                             .SetProperty(t => t.RemotePrepFailures, 0)
                             .SetProperty(t => t.DispatchNotBeforeAt, (DateTime?)null), CancellationToken.None);
+                    if (recorded == 0)
+                    {
+                        _logger.LogWarning(
+                            "Remote workspace for task {ShortId} was mirrored on runner {RunnerId} after the task left that runner; the path was not recorded",
+                            DelegationReportFormatter.Short(taskId), entry.RunnerId);
+                        return;
+                    }
+
                     _logger.LogInformation(
                         "Remote workspace for task {ShortId} is ready at {Path}",
                         DelegationReportFormatter.Short(taskId), path);

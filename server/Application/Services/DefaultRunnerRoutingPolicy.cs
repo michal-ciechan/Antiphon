@@ -130,6 +130,7 @@ public sealed class DefaultRunnerRoutingPolicy
     public const string ReasonDirectoryUnavailable = "runner_directory_unavailable";
     public const string ReasonNotDispatchEligible = "runner_not_dispatch_eligible";
     public const string ReasonRunnerDraining = "runner_draining";
+    public const string ReasonRunnerRetired = "runner_retired";
     public const string ReasonRunnerKindUnsupported = "runner_kind_unsupported";
 
     /// <summary>
@@ -290,13 +291,16 @@ public sealed class DefaultRunnerRoutingPolicy
         {
             _runners.ResolveForNewWork(configured);
         }
-        catch (HttpException ex) when (ex.Code == PhoneHomeProblemTypes.RunnerDraining)
+        catch (HttpException ex) when (ex.Code is PhoneHomeProblemTypes.RunnerDraining or PhoneHomeProblemTypes.RunnerRetired)
         {
             var redirect = _runners.DrainState(configured)?.RedirectTo;
             if (redirect is not null && RedirectEligible(redirect))
                 return new DefaultRunnerDecision(
                     redirect, source, "unset", configured, "drain_redirect:" + configured, Warn: false);
-            return global ? Local(configured, ReasonRunnerDraining, warn: true) : null;
+            var reason = ex.Code == PhoneHomeProblemTypes.RunnerRetired
+                ? ReasonRunnerRetired
+                : ReasonRunnerDraining;
+            return global ? Local(configured, reason, warn: true) : null;
         }
         // Only the directory's own typed "not ready" refusal is a fallback. Cancellation and any
         // other fault propagate: they are not permission to run the work on the desktop.
