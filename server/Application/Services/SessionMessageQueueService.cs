@@ -360,11 +360,12 @@ public sealed partial class SessionMessageQueueService
         string? capacityRecoveryActionKey = null,
         Guid? capacityWaitId = null,
         Guid? sourceLandNotificationId = null,
-        Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null)
+        Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
+        Guid? sourceChannelInboundId = null)
         => EnqueueCoreAsync(sessionId, body, mode, origin, conversationKey, sourceTaskId,
             contentDigest, noteHeader, sourceScheduleId, onCreated, deliverIfIdle, holdUntil,
             executionDeadlineAt, executionTaskId, capacityRecoveryActionKey, capacityWaitId,
-            sourceLandNotificationId, afterLandQueueInsert, ct: ct);
+            sourceLandNotificationId, afterLandQueueInsert, sourceChannelInboundId: sourceChannelInboundId, ct: ct);
 
     internal async Task<Guid> EnqueueMentionAsync(Guid sessionId, string body, Guid occurrenceId, CancellationToken ct)
     {
@@ -400,7 +401,8 @@ public sealed partial class SessionMessageQueueService
         Guid? capacityWaitId = null,
         Guid? sourceLandNotificationId = null,
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
-        Guid? mentionOccurrenceId = null, CancellationToken ct = default)
+        Guid? mentionOccurrenceId = null, Guid? sourceChannelInboundId = null,
+        CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -634,6 +636,17 @@ public sealed partial class SessionMessageQueueService
                     return await GetQueueAsync(sessionId, ct);
             }
 
+            if (sourceChannelInboundId is Guid inboundId)
+            {
+                var existingInbound = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(m => m.SourceChannelInboundId == inboundId, ct);
+                if (existingInbound is not null)
+                {
+                    onCreated?.Invoke(existingInbound.Id);
+                    return await GetQueueAsync(existingInbound.AgentSessionId, ct);
+                }
+            }
+
             var nextSequence = (await db.SessionQueuedMessages
                 .Where(m => m.AgentSessionId == sessionId)
                 .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
@@ -641,6 +654,7 @@ public sealed partial class SessionMessageQueueService
             var row = new SessionQueuedMessage
             {
                 Id = mentionOccurrenceId ?? Guid.NewGuid(),
+                SourceChannelInboundId = sourceChannelInboundId,
                 AgentSessionId = sessionId,
                 Body = trimmed,
                 Status = QueuedMessageStatus.Pending,

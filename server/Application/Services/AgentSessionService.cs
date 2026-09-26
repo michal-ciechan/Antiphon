@@ -54,6 +54,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     private readonly PhoneHomeRunnerSettings _phoneHome;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
+    private readonly ChannelInboundWakeSignal? _channelInboundWake;
 
     public AgentSessionService(
         AppDbContext db,
@@ -76,7 +77,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         // fullness that explains it. Optional; absent, the message is exactly today's.
         IOptions<ContextWindowSettings>? contextWindow = null,
         ISessionRunnerDirectory? directory = null,
-        IOptions<PhoneHomeRunnerSettings>? phoneHome = null)
+        IOptions<PhoneHomeRunnerSettings>? phoneHome = null,
+        ChannelInboundWakeSignal? channelInboundWake = null)
     {
         _db = db;
         _worktreeManager = worktreeManager;
@@ -85,6 +87,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _runtime = runtime;
         _eventBus = eventBus;
         _messageQueue = messageQueue;
+        _channelInboundWake = channelInboundWake;
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _verification = supervision.Value.DeliveryVerification;
@@ -572,6 +575,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
 
+            _channelInboundWake?.Signal(agentId);
+
             // Before anything types into the session: if the reused transcript still reads
             // mid-turn, the old process died before its TurnEnd — state the truth (boundary
             // record) so working/idle, the queue and the cards all read idle, not "Working"
@@ -866,6 +871,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
+
+            _channelInboundWake?.Signal(agentId);
 
             await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
             await InitializeGrokRulesAsync(session, ct);

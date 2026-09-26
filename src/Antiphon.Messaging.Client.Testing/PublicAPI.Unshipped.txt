@@ -1,1 +1,3 @@
 #nullable enable
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.AcknowledgedCount.get -> int
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.ConsumeDeliveriesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.Client.InboundDelivery!>!

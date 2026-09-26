@@ -1,5 +1,7 @@
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
+using System.Collections.Concurrent;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -37,6 +39,9 @@ public sealed class ChannelBridgeService : BackgroundService
     private readonly Settings.ChannelBridgeSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ChannelBridgeService> _logger;
+    private readonly ChannelInboundWakeSignal _wakeSignal;
+    private readonly ConcurrentDictionary<Guid, byte> _buffered = new();
+    private readonly SemaphoreSlim _drainGate = new(1, 1);
 
     public ChannelBridgeService(
         IAntiphonMessagingConsumer consumer,
@@ -46,7 +51,8 @@ public sealed class ChannelBridgeService : BackgroundService
         IServiceScopeFactory scopeFactory,
         IOptions<Settings.ChannelBridgeSettings> settings,
         TimeProvider timeProvider,
-        ILogger<ChannelBridgeService> logger)
+        ILogger<ChannelBridgeService> logger,
+        ChannelInboundWakeSignal? wakeSignal = null)
     {
         _consumer = consumer;
         _queue = queue;
@@ -56,31 +62,53 @@ public sealed class ChannelBridgeService : BackgroundService
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _wakeSignal = wakeSignal ?? new ChannelInboundWakeSignal();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Channel bridge started; consuming inbound channel messages");
-        while (!stoppingToken.IsCancellationRequested)
+        using var workerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var worker = RunWakeWorkerAsync(workerCts.Token);
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await foreach (var message in _consumer.ConsumeAsync(stoppingToken))
-                    await HandleInboundAsync(message, stoppingToken);
+                try
+                {
+                    await foreach (var delivery in _consumer.ConsumeDeliveriesAsync(stoppingToken))
+                    {
+                        if (delivery.Message is not { } message)
+                        {
+                            _logger.LogWarning("Discarding malformed inbound broker record: {Diagnostic}", delivery.Diagnostic);
+                            await delivery.AcknowledgeAsync($"malformed:{delivery.Diagnostic}", stoppingToken);
+                            continue;
+                        }
+                        var accepted = await AcceptInboundAsync(message, stoppingToken);
+                        await delivery.AcknowledgeAsync(accepted is null ? "ignored" : "accepted", stoppingToken);
+                        if (accepted is Guid id)
+                            _wakeSignal.Signal(id);
+                    }
 
-                return; // stream completed (only fakes do this) — done.
+                    return; // stream completed (only fakes do this).
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Channel bridge consume loop failed; retrying in {Backoff}s",
+                        ConsumeRetryBackoff.TotalSeconds);
+                    try { await Task.Delay(ConsumeRetryBackoff, _timeProvider, stoppingToken); }
+                    catch (OperationCanceledException) { return; }
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Channel bridge consume loop failed; retrying in {Backoff}s",
-                    ConsumeRetryBackoff.TotalSeconds);
-                try { await Task.Delay(ConsumeRetryBackoff, _timeProvider, stoppingToken); }
-                catch (OperationCanceledException) { return; }
-            }
+        }
+        finally
+        {
+            await workerCts.CancelAsync();
+            await worker;
         }
     }
 
@@ -91,102 +119,222 @@ public sealed class ChannelBridgeService : BackgroundService
         await _debouncer.FlushAllAsync();
     }
 
-    /// <summary>One inbound message: catalog it, then route it if its channel is bound. Internal for tests.</summary>
+    /// <summary>Direct entry point used by callers and tests; completes this input's first drain.</summary>
     internal async Task HandleInboundAsync(ChannelMessage message, CancellationToken ct)
     {
-        // Our own bot's outbound messages echo back through getUpdates in group chats — never route those.
+        if (await AcceptInboundAsync(message, ct) is Guid id)
+            await ProcessInboundAsync(id, ct);
+    }
+
+    private async Task<Guid?> AcceptInboundAsync(ChannelMessage message, CancellationToken ct)
+    {
         if (message.Author.IsSelf)
-            return;
+            return null;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var existing = await db.ChannelInbounds.AsNoTracking().FirstOrDefaultAsync(i =>
+            i.Provider == message.Channel && i.ConversationId == message.Conversation.Id
+            && i.NativeMessageId == message.ChannelMessageId, ct);
+        if (existing is not null)
+            return existing.QueueMessageId is null && existing.EnvelopeJson is not null ? existing.Id : null;
 
-        ChatChannel channel;
-        bool duplicate;
-        await using (var scope = _scopeFactory.CreateAsyncScope())
+        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+        var (channel, legacyDuplicate) = await channels.UpsertFromInboundAsync(message, ct);
+        var deliverable = !legacyDuplicate && channel.Enabled && channel.AgentId is not null
+            && (!string.IsNullOrWhiteSpace(message.Text) || message.Attachments.Count > 0);
+        var inbound = new ChannelInbound
         {
-            var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
-            (channel, duplicate) = await channels.UpsertFromInboundAsync(message, ct);
-        }
-
+            Id = Guid.NewGuid(), Provider = message.Channel,
+            ConversationId = message.Conversation.Id,
+            NativeMessageId = message.ChannelMessageId,
+            EnvelopeJson = deliverable ? JsonSerializer.Serialize(message, Antiphon.Messaging.MessagingJson.Options) : null,
+            AgentId = deliverable ? channel.AgentId : null,
+            ChatChannelId = deliverable ? channel.Id : null,
+            AcceptedAt = _timeProvider.GetUtcNow().UtcDateTime,
+        };
+        db.ChannelInbounds.Add(inbound);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         await PublishChannelChangedAsync(channel.Id, ct);
+        return deliverable ? inbound.Id : null;
+    }
 
-        if (duplicate)
-        {
-            _logger.LogDebug("Skipping duplicate message {MessageId} on channel {ChannelId}",
-                message.ChannelMessageId, channel.Id);
-            return;
-        }
-
-        if (!channel.Enabled || channel.AgentId is not Guid agentId)
-            return;
-        // Attachment-only messages (a bare photo/document) are deliverable — the file IS the
-        // message (live miss 2026-07-29: Ola's UTR photo was dropped here and the agent asked her
-        // for what she'd just sent). Only a message with neither text nor attachments is noise.
-        if (string.IsNullOrWhiteSpace(message.Text) && message.Attachments.Count == 0)
-        {
-            _logger.LogInformation(
-                "Channel {ChannelId} message {MessageId} has no text and no attachments; not routed",
-                channel.Id, message.ChannelMessageId);
-            return;
-        }
-
-        Guid? sessionId;
+    private async Task RunWakeWorkerAsync(CancellationToken ct)
+    {
         try
         {
-            sessionId = await EnsureAgentSessionAsync(agentId, ct);
+            while (!ct.IsCancellationRequested)
+            {
+                try { await DrainPendingAsync(ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Durable channel inbound drain failed; retrying");
+                }
+                using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var signal = _wakeSignal.Reader.WaitToReadAsync(waitCts.Token).AsTask();
+                var tick = Task.Delay(TimeSpan.FromSeconds(10), _timeProvider, waitCts.Token);
+                await Task.WhenAny(signal, tick);
+                await waitCts.CancelAsync();
+                while (_wakeSignal.Reader.TryRead(out _)) { }
+            }
         }
-        catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    internal async Task DrainPendingAsync(CancellationToken ct)
+    {
+        await _drainGate.WaitAsync(ct);
+        try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            await db.Agents.FromSqlInterpolated(
-                $"""SELECT * FROM "Agents" WHERE "Id" = {agentId} FOR UPDATE""").AsNoTracking().SingleAsync(ct);
-            var state = await db.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == agentId, ct);
-            if (!await db.AgentIncidents.AnyAsync(i => i.AgentId == agentId
-                && i.Kind == AgentIncidentKind.ChannelReplyLost && i.FailureReason == "HerdrSupervisionHeld"
-                && i.CreatedAt >= state.HerdrFailureHeldAt, ct))
-            {
-                db.AgentIncidents.Add(new AgentIncident
-                {
-                    Id = Guid.NewGuid(), AgentId = agentId, SessionId = state.LastHerdrObservedSessionId,
-                    Kind = AgentIncidentKind.ChannelReplyLost, Severity = AlertSeverity.Critical,
-                    Message = ColumnText.Clip($"Inbound on {channel.Provider}:{message.Conversation.Id} was not delivered: {ex.Message}", AgentIncident.MessageMaxLength),
-                    FailureReason = "HerdrSupervisionHeld", CreatedAt = _timeProvider.GetUtcNow().UtcDateTime,
-                });
-                await db.SaveChangesAsync(ct);
-            }
-            await transaction.CommitAsync(ct);
+            var ids = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null)
+                .OrderBy(i => i.AcceptedAt).ThenBy(i => i.Id)
+                .Take(64).Select(i => i.Id).ToListAsync(ct);
+            foreach (var id in ids)
+                await ProcessInboundAsync(id, ct);
+
+            // A crash or uncertain terminal write after queue ownership must not strand a
+            // Channel row on a non-AlwaysOn agent. The queue keeps its original attempt floor
+            // and performs receipt/cap checks before any new input.
+            var ownedSessions = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(q => q.SourceChannelInboundId != null
+                    && q.Status == QueuedMessageStatus.Pending
+                    && q.AgentSession.Status == SessionStatus.Running)
+                .OrderBy(q => q.CreatedAt).Take(64)
+                .Select(q => q.AgentSessionId).Distinct().ToListAsync(ct);
+            foreach (var sessionId in ownedSessions)
+                await _queue.FlushSessionAsync(sessionId, ct);
+        }
+        finally { _drainGate.Release(); }
+    }
+
+    private async Task ProcessInboundAsync(Guid inboundId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var inbound = await db.ChannelInbounds.AsNoTracking().SingleOrDefaultAsync(i => i.Id == inboundId, ct);
+        if (inbound?.EnvelopeJson is null || inbound.QueueMessageId is not null
+            || inbound.AgentId is not Guid agentId || inbound.ChatChannelId is not Guid channelId)
+            return;
+        await using var claim = await AgentWakeClaim.TryAcquireAsync(db, agentId, ct);
+        if (claim is null)
+            return; // another bridge instance owns this agent; its lease ends with its DB connection
+        inbound = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inboundId, ct);
+        if (inbound.QueueMessageId is not null)
+            return;
+        var message = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson, Antiphon.Messaging.MessagingJson.Options)!;
+        var channel = await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId, ct);
+        Guid? sessionId;
+        try { sessionId = await EnsureAgentSessionAsync(agentId, ct); }
+        catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
+        {
+            await RecordWakeIncidentAsync(inboundId, agentId, "HerdrSupervisionHeld", ex.Message, ct);
             await RaiseBridgeDropAlertAsync(channel, agentId, ct);
             return;
         }
         catch (ModelDisabledException ex)
         {
-            _logger.LogWarning(
-                "Channel {ChannelId} is bound to agent {AgentId} whose model is held; message {MessageId} not routed",
-                channel.Id, agentId, message.ChannelMessageId);
             await NotifyHeldAgentInboundAsync(channel, message, agentId, ex, ct);
             await RaiseBridgeDropAlertAsync(channel, agentId, ct);
             return;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Channel inbound {InboundId} remains pending after wake refusal", inboundId);
+            return;
+        }
         if (sessionId is not Guid liveSessionId)
         {
-            _logger.LogWarning(
-                "Channel {ChannelId} is bound to agent {AgentId} but no session became ready; message {MessageId} not routed",
-                channel.Id, agentId, message.ChannelMessageId);
+            await RecordWakeIncidentAsync(inboundId, agentId, "ChannelWakeTimeout",
+                "Agent session did not reach Running before the wake deadline", ct);
             await RaiseBridgeDropAlertAsync(channel, agentId, ct);
             return;
         }
+        if (!_buffered.TryAdd(inboundId, 0))
+            return;
+        try
+        {
+            await _debouncer.AddAsync(message,
+                batch => FlushLaneAsync(channel, agentId, liveSessionId, batch), ct);
+        }
+        catch
+        {
+            _buffered.TryRemove(inboundId, out _);
+            throw;
+        }
+    }
 
-        // Hand off to the same-sender debouncer: rapid-fire messages merge into one prompt after a
-        // quiet window (0 = flush synchronously right here). The flush callback runs OUTSIDE this
-        // awaited consume loop, so it owns its own failure alerting — degradation on a broken flush
-        // is dropped-with-alert, never a silent unobserved-task fault.
-        await _debouncer.AddAsync(
-            message,
-            batch => FlushLaneAsync(channel, agentId, liveSessionId, batch),
-            ct);
-        _logger.LogDebug(
-            "Buffered {Provider} message {MessageId} on channel {ChannelId} for session {SessionId}",
-            channel.Provider, message.ChannelMessageId, channel.Id, liveSessionId);
+    private async Task RecordWakeIncidentAsync(Guid inboundId, Guid agentId,
+        string reason, string detail, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var inbound = await db.ChannelInbounds.FromSqlInterpolated(
+            $"SELECT * FROM \"ChannelInbounds\" WHERE \"Id\" = {inboundId} FOR UPDATE").SingleAsync(ct);
+        if (reason == "ChannelWakeTimeout" && inbound.WakeTimeoutIncidentAt is not null)
+            return;
+        if (reason == "HerdrSupervisionHeld")
+        {
+            var heldAt = await db.AgentSupervisionStates.AsNoTracking()
+                .Where(s => s.AgentId == agentId).Select(s => s.HerdrFailureHeldAt).FirstOrDefaultAsync(ct);
+            if (heldAt is not null && await db.AgentIncidents.AnyAsync(i => i.AgentId == agentId
+                && i.Kind == AgentIncidentKind.ChannelReplyLost && i.FailureReason == reason
+                && i.CreatedAt >= heldAt, ct))
+                return;
+        }
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(), AgentId = agentId, Kind = AgentIncidentKind.ChannelReplyLost,
+            Severity = AlertSeverity.Critical, FailureReason = reason, CreatedAt = now,
+            Message = ColumnText.Clip($"Inbound message {inbound.Provider}:{inbound.ConversationId}/{inbound.NativeMessageId} is pending and has not reached the agent: {detail}", AgentIncident.MessageMaxLength),
+        });
+        if (reason == "ChannelWakeTimeout") inbound.WakeTimeoutIncidentAt = now;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+    }
+
+    private sealed class AgentWakeClaim(AppDbContext db, long key) : IAsyncDisposable
+    {
+        public static async Task<AgentWakeClaim?> TryAcquireAsync(AppDbContext db, Guid agentId, CancellationToken ct)
+        {
+            var key = BitConverter.ToInt64(agentId.ToByteArray(), 0);
+            await db.Database.OpenConnectionAsync(ct);
+            try
+            {
+                await using var command = db.Database.GetDbConnection().CreateCommand();
+                command.CommandText = "SELECT pg_try_advisory_lock(@key)";
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = "key";
+                parameter.Value = key;
+                command.Parameters.Add(parameter);
+                if (await command.ExecuteScalarAsync(ct) is true)
+                    return new AgentWakeClaim(db, key);
+                await db.Database.CloseConnectionAsync();
+                return null;
+            }
+            catch
+            {
+                await db.Database.CloseConnectionAsync();
+                throw;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "SELECT pg_advisory_unlock(@key)";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "key";
+            parameter.Value = key;
+            command.Parameters.Add(parameter);
+            try { await command.ExecuteScalarAsync(); }
+            finally { await db.Database.CloseConnectionAsync(); }
+        }
     }
 
     // Routes one debounced batch (1..n same-sender messages) into the session: single truthful
@@ -195,12 +343,29 @@ public sealed class ChannelBridgeService : BackgroundService
     private async Task FlushLaneAsync(
         ChatChannel channel, Guid agentId, Guid sessionId, IReadOnlyList<ChannelInboundDebouncer.Buffered> batch)
     {
+        var memberIds = new List<Guid>();
         try
         {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            foreach (var item in batch)
+            {
+                var id = await db.ChannelInbounds.AsNoTracking()
+                    .Where(i => i.Provider == item.Message.Channel
+                        && i.ConversationId == item.Message.Conversation.Id
+                        && i.NativeMessageId == item.Message.ChannelMessageId)
+                    .Select(i => i.Id).SingleAsync();
+                memberIds.Add(id);
+            }
+            var existingOwner = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.Id == memberIds[0]).Select(i => i.QueueMessageId).SingleAsync();
+            if (existingOwner is not null)
+                return;
             var first = batch[0].Message;
             var newest = batch[^1].Message;
             var inboxDir = await ResolveInboxDirAsync(agentId);
-            var text = string.Join("\n", batch.Select(b => RenderMessageBody(b.Message, inboxDir)));
+            var text = string.Join("\n", batch.Select((b, index) =>
+                RenderMessageBody(b.Message, inboxDir, memberIds[index])));
             var prompt = ChannelPromptFormat.Format(
                 channel,
                 first.Author.DisplayName ?? first.Author.Username ?? first.Author.Id,
@@ -219,10 +384,28 @@ public sealed class ChannelBridgeService : BackgroundService
             // ordering hazard rather than working around one — the row exists before the queue types a
             // single keystroke, so an idle agent that answers inside EnqueueAsync can no longer finish
             // its turn before the correlation is recorded.
+            Guid? queueId = null;
             await _queue.EnqueueAsync(
                 sessionId, prompt, MessageSendMode.WhenIdle, CancellationToken.None,
                 origin: QueuedMessageOrigin.Channel,
-                conversationKey: $"{channel.Provider}:{newest.Conversation.Id}");
+                conversationKey: $"{channel.Provider}:{newest.Conversation.Id}",
+                deliverIfIdle: false,
+                sourceChannelInboundId: memberIds[0],
+                onCreated: id => queueId = id);
+            if (queueId is not Guid ownerId)
+                throw new InvalidOperationException("Channel queue insert did not identify its owner.");
+            await using (var tx = await db.Database.BeginTransactionAsync())
+            {
+                var members = await db.ChannelInbounds.Where(i => memberIds.Contains(i.Id)).ToListAsync();
+                foreach (var member in members)
+                {
+                    member.QueueMessageId = ownerId;
+                    member.TransferredAt = _timeProvider.GetUtcNow().UtcDateTime;
+                }
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            await _queue.FlushSessionAsync(sessionId, CancellationToken.None);
             _logger.LogInformation(
                 "Routed {Count} {Provider} message(s) on channel {ChannelId} to agent {AgentId} session {SessionId}",
                 batch.Count, channel.Provider, channel.Id, agentId, sessionId);
@@ -230,9 +413,14 @@ public sealed class ChannelBridgeService : BackgroundService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex,
-                "Debounced flush failed to route {Count} message(s) on channel {ChannelId}",
+                "Debounced flush left {Count} durable message(s) pending on channel {ChannelId}",
                 batch.Count, channel.Id);
             await RaiseBridgeDropAlertAsync(channel, agentId, CancellationToken.None);
+        }
+        finally
+        {
+            foreach (var id in memberIds)
+                _buffered.TryRemove(id, out _);
         }
     }
 
@@ -264,7 +452,7 @@ public sealed class ChannelBridgeService : BackgroundService
     /// Reads them — photos included, it has vision); metadata-only attachments (download failed or
     /// over the inline cap) become a visible note so the sender's file is never silently ignored.
     /// </summary>
-    private string RenderMessageBody(ChannelMessage message, string? inboxDir)
+    private string RenderMessageBody(ChannelMessage message, string? inboxDir, Guid inboundId)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(message.Text))
@@ -288,7 +476,7 @@ public sealed class ChannelBridgeService : BackgroundService
             try
             {
                 Directory.CreateDirectory(inboxDir);
-                var fileName = SafeFileName(message, attachment, i);
+                var fileName = SafeFileName(message, attachment, i, inboundId);
                 var path = Path.Combine(inboxDir, fileName);
                 File.WriteAllBytes(path, bytes);
                 parts.Add($"[{word} attached: {path}]");
@@ -313,7 +501,7 @@ public sealed class ChannelBridgeService : BackgroundService
 
     // <utc-stamp>-<msgid>-<n>-<original name> keeps inbox files unique, ordered, and traceable to
     // their message. Original names are untrusted channel data — strip anything path-flavoured.
-    private string SafeFileName(ChannelMessage message, Attachment attachment, int index)
+    private string SafeFileName(ChannelMessage message, Attachment attachment, int index, Guid inboundId)
     {
         // Attachment names come from another machine: both path separators must be removed
         // even when this server runs on a platform where backslash is a legal filename byte.
@@ -322,8 +510,7 @@ public sealed class ChannelBridgeService : BackgroundService
             original = original.Replace(c, '_');
         if (string.IsNullOrWhiteSpace(original))
             original = "attachment" + (attachment.Kind == AttachmentKind.Image ? ".jpg" : ".bin");
-        var stamp = _timeProvider.GetUtcNow().UtcDateTime.ToString("yyyyMMdd-HHmmss");
-        return $"{stamp}-{message.ChannelMessageId}-{index}-{original}";
+        return $"{inboundId:N}-{index}-{original}";
     }
 
     /// <summary>
@@ -344,6 +531,8 @@ public sealed class ChannelBridgeService : BackgroundService
                     && i.Kind == AgentIncidentKind.ChannelReplyLost
                     && i.FailureReason == "ProviderCapacity"
                     && i.CreatedAt >= ex.Hold.HitAt, ct);
+            if (already)
+                return;
             if (!already)
             {
                 var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
@@ -357,8 +546,8 @@ public sealed class ChannelBridgeService : BackgroundService
                         AgentIncidentKind.ChannelReplyLost,
                         AlertSeverity.Critical,
                         ColumnText.Clip(
-                            $"A reply this agent owed {channel.Provider}:{message.Conversation.Id} was never sent "
-                            + $"because {noticeWhy}. Someone in that chat asked a question and got silence.",
+                            $"Inbound on {channel.Provider}:{message.Conversation.Id} is pending and has not reached the agent "
+                            + $"because {noticeWhy}.",
                             AgentIncident.MessageMaxLength),
                         failureReason: "ProviderCapacity",
                         ct: ct);
@@ -405,10 +594,10 @@ public sealed class ChannelBridgeService : BackgroundService
                 new AlertRaise(
                     AlertSeverity.Warning,
                     Source: "bridge",
-                    Title: "Inbound channel message dropped",
+                    Title: "Inbound channel message pending",
                     Detail: $"Channel '{channel.Title ?? channel.ExternalId}' ({channel.Provider}) is bound to an "
-                        + "agent whose session never became ready; the message was not routed.",
-                    DedupKey: $"bridge:drop:{channel.Id}",
+                        + "agent whose session has not become ready; the message is pending and has not reached the agent.",
+                    DedupKey: $"bridge:pending:{channel.Id}",
                     AgentId: agentId),
                 ct);
         }
@@ -437,6 +626,17 @@ public sealed class ChannelBridgeService : BackgroundService
                 if (agent is null)
                     return null;
 
+                // A Running pointer is not permission to bypass operator/supervisor intent.
+                // Check before the fast path as well as relying on StartAsync's reservation gate.
+                var supervision = await db.AgentSupervisionStates.AsNoTracking()
+                    .SingleOrDefaultAsync(s => s.AgentId == agentId, ct);
+                if (supervision?.Suspended == true || supervision?.LivenessLatchedAt is not null)
+                    throw new ConflictException("Channel wake is held by operator intent.", "standing_start_intent_revoked");
+                if (supervision?.HerdrFailureHeldAt is not null)
+                    throw new ConflictException("Channel wake is held by Herdr supervision.", HerdrSupervisionStateService.HeldCode);
+                if (supervision?.ContinuityHeldAt is not null)
+                    throw new ConflictException("Channel wake requires a continuity decision.", StandingContinuityState.HeldCode);
+
                 if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
                 {
                     var status = await db.AgentSessions
@@ -451,6 +651,8 @@ public sealed class ChannelBridgeService : BackgroundService
                                 TimeSpan.FromSeconds(_settings.AgentReadyDelaySeconds), _timeProvider, ct);
                         return sessionId;
                     }
+                    if (status == SessionStatus.Failed && startAttempted)
+                        return null;
                     if (status is SessionStatus.Starting)
                     {
                         await Task.Delay(SessionPollInterval, _timeProvider, ct);
@@ -465,7 +667,8 @@ public sealed class ChannelBridgeService : BackgroundService
                     var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
                     // IgnoreSubscriptionQuota: a channel inbound cannot pick another provider.
                     await control.StartAsync(
-                        agentId, new StartAgentRequest(IgnoreSubscriptionQuota: true), ct);
+                        agentId, new StartAgentRequest(IgnoreSubscriptionQuota: true), ct,
+                        automatic: true);
                     _logger.LogInformation("Started agent {AgentId} to receive a channel message", agentId);
                 }
             }

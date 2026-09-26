@@ -45,6 +45,7 @@ public class AppDbContext : DbContext
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
+    public DbSet<ChannelInbound> ChannelInbounds => Set<ChannelInbound>();
     public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<CheckCompactionRecovery> CheckCompactionRecoveries => Set<CheckCompactionRecovery>();
@@ -269,6 +270,19 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ChannelInbound>(entity =>
+        {
+            entity.ToTable("ChannelInbounds");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Provider).IsRequired().HasMaxLength(50);
+            entity.Property(i => i.ConversationId).IsRequired().HasMaxLength(200);
+            entity.Property(i => i.NativeMessageId).IsRequired().HasMaxLength(200);
+            entity.Property(i => i.EnvelopeJson).HasColumnType("text");
+            entity.HasIndex(i => new { i.Provider, i.ConversationId, i.NativeMessageId }).IsUnique();
+            entity.HasIndex(i => new { i.AgentId, i.QueueMessageId, i.AcceptedAt });
+            entity.HasIndex(i => i.QueueMessageId);
         });
 
         modelBuilder.Entity<ChannelIngressIncident>(entity =>
@@ -1305,6 +1319,8 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<SessionQueuedMessage>(entity =>
         {
+            entity.HasIndex(m => m.SourceChannelInboundId).IsUnique()
+                .HasFilter("\"SourceChannelInboundId\" IS NOT NULL");
             entity.Property(m => m.PinRefreshKey).HasMaxLength(80);
             entity.Property(m => m.PinRequestedHash).HasMaxLength(64);
             entity.HasIndex(m => new { m.AgentSessionId, m.PinRefreshKey })
