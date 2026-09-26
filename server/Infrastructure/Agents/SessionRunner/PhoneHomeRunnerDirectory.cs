@@ -62,7 +62,37 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     /// <summary>CARD-0726 TD-4: the observer <c>Program</c> passed. Tests prove the wire; nothing else reads it.</summary>
     internal IRunnerEligibilityObserver? Observer => _observer;
 
-    public IReadOnlyList<RunnerEligibilitySnapshot> Snapshots() => [];
+    public IReadOnlyList<RunnerEligibilitySnapshot> Snapshots()
+    {
+        (string Id, PhoneHomeRunnerEntry Entry)[] configured;
+        lock (_gate)
+            configured = _slots.Values.Select(slot => (slot.Id, slot.Entry)).ToArray();
+        var rows = new List<RunnerEligibilitySnapshot>(configured.Length);
+        foreach (var (id, entry) in configured)
+        {
+            var status = Status(id);
+            var display = string.IsNullOrWhiteSpace(entry.DisplayName) ? id : entry.DisplayName;
+            rows.Add(new RunnerEligibilitySnapshot(
+                id, display, entry.Enabled, status.DispatchEligible,
+                status.DisconnectReason, status.LastDisconnectAtUtc, status.Reconnects));
+        }
+
+        return rows;
+    }
+
+    private void Notify(string runnerId)
+    {
+        if (_observer is null)
+            return;
+        try
+        {
+            _observer.Changed(runnerId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Runner eligibility observer failed for {RunnerId}", runnerId);
+        }
+    }
 
     public IReadOnlyList<string> KnownRunnerIds
     {
@@ -87,8 +117,17 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     {
         if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot))
             return null;
+        string? expired;
+        Guid? storeId;
         lock (_gate)
-            return SnapshotOf(slot)?.RunnerStoreId ?? slot.StoreId;
+        {
+            var live = ReadSnapshot(slot, out expired);
+            storeId = live?.RunnerStoreId ?? slot.StoreId;
+        }
+
+        if (expired is not null)
+            Notify(expired);
+        return storeId;
     }
 
     /// <summary>
@@ -303,6 +342,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     public PhoneHomeLiveConnection AcceptConnect(
         string runnerId, string ticketValue, System.Net.WebSockets.WebSocket socket)
     {
+        PhoneHomeLiveConnection connection;
+        var superseded = false;
         lock (_gate)
         {
             if (!_tickets.Remove(ticketValue, out var ticket))
@@ -311,34 +352,46 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
 
             if (!_slots.TryGetValue(runnerId, out var slot))
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
-            if (slot.Live is { } superseded)
+            if (slot.Live is { } previous)
             {
-                RecordDisconnect(slot, superseded, "superseded");
-                superseded.DisposeAsync("superseded").AsTask().GetAwaiter().GetResult();
+                RecordDisconnect(slot, previous, "superseded");
+                previous.DisposeAsync("superseded").AsTask().GetAwaiter().GetResult();
+                superseded = true;
             }
             // The ticket already carries the epoch the runner was told at registration.
             var epoch = ticket.Epoch;
-            var connection = new PhoneHomeLiveConnection(
+            connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
                 ticket.Capacity, ticket.Platform, ticket.Capabilities);
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;
-            return connection;
         }
+
+        if (superseded)
+            Notify(runnerId);
+        return connection;
     }
 
     public void MarkRecovered(PhoneHomeLiveConnection? connection)
     {
         if (connection is null)
             return;
+        var flipped = false;
         lock (_gate)
         {
             if (!_slots.TryGetValue(connection.RunnerId, out var slot) || !ReferenceEquals(slot.Live, connection))
                 return;
-            connection.DispatchEligible = true;
+            if (!connection.DispatchEligible)
+            {
+                connection.DispatchEligible = true;
+                flipped = true;
+            }
             slot.LastRecovered = connection;
         }
+
+        if (flipped)
+            Notify(connection.RunnerId);
     }
 
     private void ValidateTicket(string runnerId, Ticket ticket)
@@ -358,6 +411,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     /// </summary>
     public void Disconnect(PhoneHomeLiveConnection connection, string reason)
     {
+        var dropped = false;
         lock (_gate)
         {
             if (!_slots.TryGetValue(connection.RunnerId, out var slot) || !ReferenceEquals(slot.Live, connection))
@@ -365,7 +419,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             RecordDisconnect(slot, connection, reason);
             connection.DispatchEligible = false;
             slot.Live = null;
+            dropped = true;
         }
+
+        if (dropped)
+            Notify(connection.RunnerId);
     }
 
     // Caller holds _gate.
@@ -637,18 +695,29 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
 
     private PhoneHomeLiveConnection? SnapshotOf(RunnerSlot slot)
     {
+        string? expired;
+        PhoneHomeLiveConnection? live;
         lock (_gate)
-        {
-            if (slot.Live is null)
-                return null;
-            if (slot.Live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
-            {
-                slot.Live.DispatchEligible = false;
-                return slot.Live;
-            }
+            live = ReadSnapshot(slot, out expired);
+        if (expired is not null)
+            Notify(expired);
+        return live;
+    }
 
-            return slot.Live;
+    // Caller holds _gate. A lease that flips eligible to ineligible is reported after the lock.
+    private PhoneHomeLiveConnection? ReadSnapshot(RunnerSlot slot, out string? expiredRunnerId)
+    {
+        expiredRunnerId = null;
+        if (slot.Live is null)
+            return null;
+        if (slot.Live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+        {
+            if (slot.Live.DispatchEligible)
+                expiredRunnerId = slot.Id;
+            slot.Live.DispatchEligible = false;
         }
+
+        return slot.Live;
     }
 
     private sealed class RunnerSlot

@@ -37,6 +37,7 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
                 if (await RepositoryChildJournal.HasUnfinishedAsync(common, git, ct))
                 {
                     await stream.DisposeAsync();
+                    NotifyFenced(common);
                     return null;
                 }
 
@@ -78,6 +79,7 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
         var common = await git.CommonDirectoryAsync(repository, ct);
         if (!await RepositoryChildJournal.HasUnfinishedAsync(common, git, ct))
             return null;
+        NotifyFenced(common);
         return "unfinished repository child journal under "
             + Path.Combine(common, "antiphon", "children")
             + "; run scripts/recover-repository-children.ps1";

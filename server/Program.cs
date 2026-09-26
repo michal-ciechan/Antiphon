@@ -180,6 +180,10 @@ try
     builder.Services.AddOptions<ZombieCensusSettings>()
         .Bind(builder.Configuration.GetSection("ZombieCensus"))
         .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<AlarmSettings>, AlarmSettingsValidator>();
+    builder.Services.AddOptions<AlarmSettings>()
+        .Bind(builder.Configuration.GetSection("Alarms"))
+        .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
     builder.Services.AddOptions<WorktreeResidueSettings>()
         .Bind(builder.Configuration.GetSection("WorktreeResidue"))
@@ -298,8 +302,10 @@ try
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<TimeProvider>(),
         sp.GetRequiredService<RemoteSpillCourier>(),
-        sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>()));
+        sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>(),
+        sp.GetService<IRunnerEligibilityObserver>()));
     builder.Services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
+    builder.Services.AddSingleton<IRunnerEligibilitySnapshotSource>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<ISessionRunnerClient, RoutingSessionRunnerClient>();
     // The /events SSE stream must never hit HttpClient.Timeout (a long-lived response is not a
     // slow request) — liveness is handled by runner keepalives + the client-side idle watchdog.
@@ -390,7 +396,9 @@ try
     builder.Services.AddSingleton<IWorktreeEvidenceRetention, RefusingEvidenceRetention>();
     builder.Services.AddSingleton<WorktreeIgnoredContentGate>();
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
-    builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
+    builder.Services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
+        sp.GetRequiredService<ILandingGit>(),
+        sp.GetService<IRepositoryFenceObserver>()));
     // CARD-0672 D-2: the dispatch-first turnstile shared by the dispatcher and the land service.
     builder.Services.AddSingleton<RepositoryLeaseWaiters>();
     builder.Services.AddScoped<AgentTaskLandingState>();
