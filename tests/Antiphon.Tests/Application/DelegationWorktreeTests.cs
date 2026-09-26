@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -186,7 +187,7 @@ public partial class DelegationWorktreeTests
         await repo.CommitFileAsync(".gitignore", "bin-private/\n");
         var hooks = Path.Combine(repo.Path, ".git-hooks-fail");
         Directory.CreateDirectory(hooks);
-        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"),
+        await WriteExecutableHookAsync(Path.Combine(hooks, "post-checkout"),
             "#!/bin/sh\nmkdir -p bin-private\nprintf 'valuable' > " + relative + "\nexit 1\n");
         await repo.GitAsync("config", "core.hooksPath", hooks);
         var (service, _) = CreateService(repo);
@@ -208,7 +209,7 @@ public partial class DelegationWorktreeTests
 
         var hooks = Path.Combine(repo.Path, ".git-hooks-fail");
         Directory.CreateDirectory(hooks);
-        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nexit 1\n");
+        await WriteExecutableHookAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nexit 1\n");
         await repo.GitAsync("config", "core.hooksPath", hooks);
 
         var (service, manager) = CreateService(repo);
@@ -226,7 +227,7 @@ public partial class DelegationWorktreeTests
 
         // Timeout arm: the same hook with sleep, a 1 s add budget, TimeoutException (not OCE),
         // and the same clean post-state.
-        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nsleep 30\nexit 0\n");
+        await WriteExecutableHookAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nsleep 30\nexit 0\n");
         var (timeoutService, timeoutManager) = CreateService(repo, worktreeAddTimeoutSeconds: 1);
         var timeoutTask = NewTask(repo.Path, mergeTarget: null);
         var (timeoutBranch, timeoutPath) = ExpectedCoordinates(repo, timeoutTask);
@@ -348,24 +349,43 @@ public partial class DelegationWorktreeTests
         await service.CreateForTaskAsync(task, CancellationToken.None);
         task.Status = AgentTaskStatus.Succeeded;
         task.CompletedAt = DateTime.UtcNow;
-        task.LandRequestedAt = DateTime.UtcNow;
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        await RequiredGitAsync(task.WorktreePath!, "add", "feature.md");
+        await RequiredGitAsync(task.WorktreePath!, "commit", "-m", "feature");
         await repo.CommitFileAsync("README.md", "base advanced\n");
         await repo.GitAsync("push", "origin", "master");
+        var movedBase = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var (request, sourceSha, sourcePath, _, sourceFullRef) = await PublishAndRequestAsync(land, task);
 
         (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
-        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        var operation = await AssertBoundOperationAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
         operation.Publication.ShouldBe(LandPublicationOutcome.Landed);
         operation.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        operation.Phase.ShouldBe(LandPhase.Complete);
         operation.RemoteConfirmedAt.ShouldNotBeNull();
-        operation.RebasedSourceSha.ShouldNotBe(operation.OriginalSourceSha);
-
-        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("land me\n");
-        Directory.Exists(task.WorktreePath).ShouldBeFalse();
+        operation.PushStartedAt.ShouldNotBeNull();
+        operation.PushExitCode.ShouldBe(0);
+        operation.LastReason.ShouldBeNull();
+        operation.RebasedSourceSha.ShouldNotBe(sourceSha);
+        operation.VerifiedSourceSha.ShouldBe(operation.RebasedSourceSha);
+        var remoteSha = (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim();
+        remoteSha.ShouldBe(operation.VerifiedSourceSha);
+        (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(remoteSha);
+        await RequiredGitAsync(remote.Path, "merge-base", "--is-ancestor", movedBase, "master");
+        (await RequiredGitAsync(remote.Path, "show", "master:feature.md")).ShouldBe("land me\n");
+        (await RequiredGitAsync(remote.Path, "show", "master:README.md")).ShouldBe("base advanced\n");
+        operation.CanonicalAdvancedAt.ShouldNotBeNull();
+        operation.CanonicalAdvanceReason.ShouldBeNull();
+        operation.LocalTargetAfterSha.ShouldBe(operation.VerifiedSourceSha);
+        Directory.Exists(sourcePath).ShouldBeFalse();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", sourceFullRef)).Ok.ShouldBeFalse();
+        operation.DirectoryRemoved.ShouldBeTrue();
+        operation.RegistrationRemoved.ShouldBeTrue();
+        operation.BranchRemoved.ShouldBeTrue();
+        (await AssertTerminalAsync(db, task.Id, request.RequestId, operation.Id, AgentTaskEventType.Landed))
+            .Detail.ShouldContain($"remote={remoteSha}");
     }
 
     [Test]
@@ -385,26 +405,51 @@ public partial class DelegationWorktreeTests
         await service.CreateForTaskAsync(task, CancellationToken.None);
         task.Status = AgentTaskStatus.Succeeded;
         task.CompletedAt = DateTime.UtcNow;
-        task.LandRequestedAt = DateTime.UtcNow;
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "push", "-u", "origin", task.WorktreeBranch!);
+        await RequiredGitAsync(task.WorktreePath!, "add", "feature.md");
+        await RequiredGitAsync(task.WorktreePath!, "commit", "-m", "feature");
+        var sourceSha = (await RequiredGitAsync(task.WorktreePath!, "rev-parse", "HEAD")).Trim();
+        var sourceFullRef = $"refs/heads/{task.WorktreeBranch}";
+        await RequiredGitAsync(task.WorktreePath!, "push", "-u", "origin", $"HEAD:{sourceFullRef}");
+        (await RequiredGitAsync(task.WorktreePath!, "rev-parse", "@{upstream}")).Trim().ShouldBe(sourceSha);
         await repo.CommitFileAsync("README.md", "base advanced\n");
         await repo.GitAsync("push", "origin", "master");
+        var movedBase = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var (request, publishedSha, sourcePath, _, publishedRef) = await PublishAndRequestAsync(land, task);
+        publishedSha.ShouldBe(sourceSha);
+        publishedRef.ShouldBe(sourceFullRef);
 
         (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
-        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        var operation = await AssertBoundOperationAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
         operation.Publication.ShouldBe(LandPublicationOutcome.Landed);
         operation.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        operation.Phase.ShouldBe(LandPhase.Complete);
         operation.RemoteConfirmedAt.ShouldNotBeNull();
-        operation.RebasedSourceSha.ShouldNotBe(operation.OriginalSourceSha);
-
-        Directory.Exists(task.WorktreePath).ShouldBeFalse();
-        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{task.WorktreeBranch}"))
-            .Ok.ShouldBeFalse("the rebased branch must be deleted even when its upstream is behind");
+        operation.PushStartedAt.ShouldNotBeNull();
+        operation.PushExitCode.ShouldBe(0);
+        operation.LastReason.ShouldBeNull();
+        operation.RebasedSourceSha.ShouldNotBe(sourceSha);
+        operation.VerifiedSourceSha.ShouldBe(operation.RebasedSourceSha);
+        var remoteSha = (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim();
+        remoteSha.ShouldBe(operation.VerifiedSourceSha);
+        (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(remoteSha);
+        await RequiredGitAsync(remote.Path, "merge-base", "--is-ancestor", movedBase, "master");
+        (await RequiredGitAsync(remote.Path, "show", "master:feature.md")).ShouldBe("land me\n");
+        (await RequiredGitAsync(remote.Path, "show", "master:README.md")).ShouldBe("base advanced\n");
+        (await RequiredGitAsync(remote.Path, "rev-parse", sourceFullRef)).Trim().ShouldBe(sourceSha);
+        operation.CanonicalAdvancedAt.ShouldNotBeNull();
+        operation.CanonicalAdvanceReason.ShouldBeNull();
+        operation.LocalTargetAfterSha.ShouldBe(operation.VerifiedSourceSha);
+        Directory.Exists(sourcePath).ShouldBeFalse();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", sourceFullRef))
+            .Ok.ShouldBeFalse("the source branch must be deleted even when its upstream is behind");
+        operation.DirectoryRemoved.ShouldBeTrue();
+        operation.RegistrationRemoved.ShouldBeTrue();
+        operation.BranchRemoved.ShouldBeTrue();
+        (await AssertTerminalAsync(db, task.Id, request.RequestId, operation.Id, AgentTaskEventType.Landed))
+            .Detail.ShouldContain($"remote={remoteSha}");
     }
 
     [Test]
@@ -424,24 +469,45 @@ public partial class DelegationWorktreeTests
         await service.CreateForTaskAsync(task, CancellationToken.None);
         task.Status = AgentTaskStatus.Succeeded;
         task.CompletedAt = DateTime.UtcNow;
-        task.LandRequestedAt = DateTime.UtcNow;
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"), "task version\n");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "shared.md");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "task edit");
+        await RequiredGitAsync(task.WorktreePath!, "add", "shared.md");
+        await RequiredGitAsync(task.WorktreePath!, "commit", "-m", "task edit");
         await repo.CommitFileAsync("shared.md", "target version\n");
         await repo.GitAsync("push", "origin", "master");
+        var localBefore = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var remoteBefore = (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim();
+        var (request, sourceSha, sourcePath, _, sourceFullRef) = await PublishAndRequestAsync(land, task);
 
-        await land.RunAsync(task.Id, null, CancellationToken.None);
-        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
+        var operation = await AssertBoundOperationAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
         operation.LastReason.ShouldBe("rebase_conflict");
+        operation.Phase.ShouldBe(LandPhase.Refused);
+        operation.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
         operation.RemoteConfirmedAt.ShouldBeNull();
-        (await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Conflicted))
-            .Detail.ShouldContain("shared.md");
-        Directory.Exists(task.WorktreePath).ShouldBeTrue("a merge delegate must receive the original worktree");
-        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain")).StdOut.Trim().ShouldBeEmpty(
-            "the rebase is aborted before the Merge delegate starts it again");
+        operation.PushStartedAt.ShouldBeNull();
+        operation.Cleanup.ShouldBe(LandCleanupStatus.NotStarted);
+        operation.LocalTargetAfterSha.ShouldBeNull();
+        var finalRequest = await AssertRequestAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
+        finalRequest.State.ShouldBe(LandRequestState.NeedsResolution);
+        finalRequest.IsPending.ShouldBeTrue();
+        finalRequest.LandingOperationId.ShouldBe(operation.Id);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Blocked);
+        var conflict = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.AgentTaskId == task.Id
+            && e.LandRequestId == request.RequestId && e.Type == AgentTaskEventType.Conflicted);
+        conflict.LandingOperationId.ShouldBe(operation.Id);
+        conflict.Detail.ShouldContain("shared.md");
+        await AssertUnchangedSourceAsync(sourcePath, sourceFullRef, sourceSha, "shared.md", "task version\n");
+        (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(localBefore);
+        (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim().ShouldBe(remoteBefore);
+        (await RequiredGitAsync(remote.Path, "show", "master:shared.md")).ShouldBe("target version\n");
+        operation.LandWorktreePath.ShouldNotBeNull();
+        (await RequiredGitAsync(operation.LandWorktreePath!, "status", "--porcelain")).Trim().ShouldBeEmpty();
+        (await RebaseStateDirectoryAsync(operation.LandWorktreePath!)).ShouldBeNull();
+        (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
+            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent
+                || e.Type == AgentTaskEventType.LandedWithResidue))).ShouldBe(0);
     }
 
     [Test]
@@ -479,7 +545,7 @@ public partial class DelegationWorktreeTests
     }
 
     [Test]
-    public async Task already_landed_arm_pushes_a_target_that_is_ahead_of_origin()
+    public async Task land_local_target_ahead_of_origin_is_refused_without_publication()
     {
         using var repo = new ScratchGitRepo("antiphon-land-ahead");
         using var remote = new TemporaryDirectory("antiphon-land-ahead-remote");
@@ -494,34 +560,44 @@ public partial class DelegationWorktreeTests
         var task = NewTask(repo.Path, mergeTarget: null);
         task.Status = AgentTaskStatus.Succeeded;
         task.CompletedAt = DateTime.UtcNow;
-        task.LandRequestedAt = DateTime.UtcNow;
         await worktrees.CreateForTaskAsync(task, CancellationToken.None);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        await RequiredGitAsync(task.WorktreePath!, "add", "feature.md");
+        await RequiredGitAsync(task.WorktreePath!, "commit", "-m", "feature");
         (await ScratchGitRepo.GitInAsync(repo.Path, "merge", "--ff-only", task.WorktreeBranch!))
             .Ok.ShouldBeTrue("ff-merge into local master without pushing");
 
-        var localSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
-        var originBefore = (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim();
-        originBefore.ShouldNotBe(localSha);
+        var localBefore = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var remoteBefore = (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim();
+        var (request, sourceSha, sourcePath, _, sourceFullRef) = await PublishAndRequestAsync(land, task);
+        localBefore.ShouldBe(sourceSha);
+        remoteBefore.ShouldNotBe(localBefore);
 
         var result = await land.RunAsync(task.Id, null, CancellationToken.None);
 
         result.ShouldBe(LandRunResult.Complete);
-        var originAfter = (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim();
-        originAfter.ShouldBe(localSha);
-        var landed = await db.AgentTaskEvents.AsNoTracking()
-            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed);
-        landed.Detail.ShouldContain($"remote={originAfter}");
-        landed.Detail.ShouldContain(originAfter);
+        var finalRequest = await AssertRequestAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
+        finalRequest.SourceRefusalReason.ShouldBe("target_local_ahead");
+        finalRequest.LandingOperationId.ShouldBeNull();
+        (await db.AgentTaskLandings.AsNoTracking().CountAsync(o => o.TaskId == task.Id)).ShouldBe(0);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).ActiveLandingId.ShouldBeNull();
+        (await AssertTerminalAsync(db, task.Id, request.RequestId, null, AgentTaskEventType.LandRefused))
+            .Detail.ShouldContain("target_local_ahead");
+        (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(localBefore);
+        (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim().ShouldBe(remoteBefore);
+        (await RequiredGitAsync(remote.Path, "rev-parse", sourceFullRef)).Trim().ShouldBe(sourceSha);
+        await AssertUnchangedSourceAsync(sourcePath, sourceFullRef, sourceSha, "feature.md", "land me\n");
+        (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
+            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent
+                || e.Type == AgentTaskEventType.LandedWithResidue))).ShouldBe(0);
+        Directory.EnumerateDirectories(repo.WorktreeRoot, "*land*", SearchOption.AllDirectories).ShouldBeEmpty();
     }
 
     [Test]
-    public async Task land_push_rejection_keeps_the_rebased_branch_and_worktree()
+    public async Task land_push_rejection_keeps_the_source_branch_and_worktree()
     {
         using var repo = new ScratchGitRepo("antiphon-land-push-reject");
         using var remote = new TemporaryDirectory("antiphon-land-remote");
@@ -537,21 +613,52 @@ public partial class DelegationWorktreeTests
         await service.CreateForTaskAsync(task, CancellationToken.None);
         task.Status = AgentTaskStatus.Succeeded;
         task.CompletedAt = DateTime.UtcNow;
-        task.LandRequestedAt = DateTime.UtcNow;
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
-        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
-        await File.WriteAllTextAsync(Path.Combine(remote.Path, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n");
-        var remoteBefore = (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim();
-        await land.RunAsync(task.Id, null, CancellationToken.None);
-        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
-        operation.LocalTargetAfterSha.ShouldNotBeNull();
-        operation.RemoteConfirmedAt.ShouldBeNull();
+        await RequiredGitAsync(task.WorktreePath!, "add", "feature.md");
+        await RequiredGitAsync(task.WorktreePath!, "commit", "-m", "feature");
+        await repo.CommitFileAsync("README.md", "base advanced\n");
+        await repo.GitAsync("push", "origin", "master");
+        var (request, sourceSha, sourcePath, _, sourceFullRef) = await PublishAndRequestAsync(land, task);
+        await WriteExecutableHookAsync(Path.Combine(remote.Path, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n");
+        var localBefore = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var remoteBefore = (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim();
+
+        (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
+        var operation = await AssertBoundOperationAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
+        operation.LastReason.ShouldBe("push_rejected");
+        operation.Phase.ShouldBe(LandPhase.PushStarted);
+        operation.PushStartedAt.ShouldNotBeNull();
+        operation.PushExitCode.ShouldNotBeNull();
+        operation.PushExitCode.ShouldNotBe(0);
         operation.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
-        (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim().ShouldBe(remoteBefore);
-        Directory.Exists(task.WorktreePath).ShouldBeTrue("a push rejection must not clean up recoverable work");
+        operation.RemoteConfirmedAt.ShouldBeNull();
+        operation.Cleanup.ShouldBe(LandCleanupStatus.NotStarted);
+        operation.DirectoryRemoved.ShouldBeFalse();
+        operation.RegistrationRemoved.ShouldBeFalse();
+        operation.BranchRemoved.ShouldBeFalse();
+        operation.RebasedSourceSha.ShouldNotBe(sourceSha);
+        operation.VerifiedSourceSha.ShouldBe(operation.RebasedSourceSha);
+        operation.PreparedPinned.ShouldBeTrue();
+        (await RequiredGitAsync(repo.Path, "rev-parse", $"{operation.RecoveryRefPrefix}/prepared")).Trim()
+            .ShouldBe(operation.RebasedSourceSha);
+        operation.LandWorktreePath.ShouldNotBeNull();
+        (await RequiredGitAsync(operation.LandWorktreePath!, "rev-parse", "HEAD")).Trim()
+            .ShouldBe(operation.RebasedSourceSha);
+        (await RequiredGitAsync(operation.LandWorktreePath!, "status", "--porcelain")).Trim().ShouldBeEmpty();
+        operation.LocalTargetAfterSha.ShouldBeNull();
+        operation.CanonicalAdvanceStartedAt.ShouldBeNull();
+        operation.CanonicalAdvancedAt.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(localBefore);
+        (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim().ShouldBe(remoteBefore);
+        await AssertUnchangedSourceAsync(sourcePath, sourceFullRef, sourceSha, "feature.md", "land me\n");
+        (await RequiredGitAsync(remote.Path, "rev-parse", sourceFullRef)).Trim().ShouldBe(sourceSha);
+        (await AssertTerminalAsync(db, task.Id, request.RequestId, operation.Id, AgentTaskEventType.LandRefused))
+            .Detail.ShouldContain("push_rejected");
+        (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
+            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent
+                || e.Type == AgentTaskEventType.LandedWithResidue))).ShouldBe(0);
     }
 
     [Test]
@@ -1057,6 +1164,90 @@ public partial class DelegationWorktreeTests
                 gitSettings: Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot })),
             graph.Leases, graph.Git);
         return (land, worktrees);
+    }
+
+    private static async Task<string> RequiredGitAsync(string path, params string[] args)
+    {
+        var result = await ScratchGitRepo.GitInAsync(path, args);
+        result.Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed: {result.StdErr}");
+        return result.StdOut;
+    }
+
+    private static async Task<(LandRequestResult Request, string SourceSha, string SourcePath, string SourceBranch, string SourceFullRef)>
+        PublishAndRequestAsync(AgentTaskLandService land, AgentTask task)
+    {
+        var sourcePath = task.WorktreePath!;
+        var sourceBranch = task.WorktreeBranch!;
+        var sourceFullRef = $"refs/heads/{sourceBranch}";
+        var sourceSha = (await RequiredGitAsync(sourcePath, "rev-parse", "HEAD")).Trim();
+        var pushUrl = (await RequiredGitAsync(sourcePath, "remote", "get-url", "--push", "origin")).Trim();
+        await RequiredGitAsync(sourcePath, "push", pushUrl, $"HEAD:{sourceFullRef}");
+        var request = await land.RequestAsync(task.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: sourceSha), CancellationToken.None);
+        return (request, sourceSha, sourcePath, sourceBranch, sourceFullRef);
+    }
+
+    private static async Task<AgentTaskLandRequest> AssertRequestAsync(AppDbContext db, Guid taskId,
+        Guid requestId, string sourceSha, string sourceFullRef)
+    {
+        var request = await db.AgentTaskLandRequests.AsNoTracking()
+            .SingleAsync(r => r.TaskId == taskId && r.Id == requestId);
+        request.SchemaVersion.ShouldBe(2);
+        request.ExpectedSourceSha.ShouldBe(sourceSha);
+        request.SourceFullRefSnapshot.ShouldBe(sourceFullRef);
+        return request;
+    }
+
+    private static async Task<AgentTaskLanding> AssertBoundOperationAsync(AppDbContext db, Guid taskId,
+        Guid requestId, string sourceSha, string sourceFullRef)
+    {
+        var request = await AssertRequestAsync(db, taskId, requestId, sourceSha, sourceFullRef);
+        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == taskId);
+        operation.SchemaVersion.ShouldBe(3);
+        operation.ApprovalLandRequestId.ShouldBe(requestId);
+        operation.OriginalSourceSha.ShouldBe(sourceSha);
+        operation.ReviewedSourceSha.ShouldBe(sourceSha);
+        operation.SourceLocalSha.ShouldBe(sourceSha);
+        operation.SourceRemoteSha.ShouldBe(sourceSha);
+        request.LandingOperationId.ShouldBe(operation.Id);
+        request.SourceRefusalReason.ShouldBeNull();
+        return operation;
+    }
+
+    private static async Task<AgentTaskEvent> AssertTerminalAsync(AppDbContext db, Guid taskId,
+        Guid requestId, Guid? operationId, AgentTaskEventType type)
+    {
+        var request = await db.AgentTaskLandRequests.AsNoTracking()
+            .SingleAsync(r => r.TaskId == taskId && r.Id == requestId);
+        request.State.ShouldBe(LandRequestState.Completed);
+        request.IsPending.ShouldBeFalse();
+        request.TerminalEventId.ShouldNotBeNull();
+        var terminal = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.Id == request.TerminalEventId && e.AgentTaskId == taskId);
+        terminal.LandRequestId.ShouldBe(requestId);
+        terminal.LandingOperationId.ShouldBe(operationId);
+        terminal.Type.ShouldBe(type);
+        return terminal;
+    }
+
+    private static async Task AssertUnchangedSourceAsync(string sourcePath, string sourceFullRef,
+        string sourceSha, string file, string content)
+    {
+        Directory.Exists(sourcePath).ShouldBeTrue();
+        (await RequiredGitAsync(sourcePath, "rev-parse", "HEAD")).Trim().ShouldBe(sourceSha);
+        (await RequiredGitAsync(sourcePath, "rev-parse", sourceFullRef)).Trim().ShouldBe(sourceSha);
+        (await File.ReadAllTextAsync(Path.Combine(sourcePath, file))).ShouldBe(content);
+        (await RequiredGitAsync(sourcePath, "status", "--porcelain")).Trim().ShouldBeEmpty();
+        (await RebaseStateDirectoryAsync(sourcePath)).ShouldBeNull();
+    }
+
+    private static async Task WriteExecutableHookAsync(string path, string script)
+    {
+        await File.WriteAllTextAsync(path, script);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
     }
 
     private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateService(
