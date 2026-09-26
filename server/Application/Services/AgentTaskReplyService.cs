@@ -4151,6 +4151,12 @@ public sealed class AgentTaskReplyService
         "(?<![A-Za-z0-9])(?<path>[A-Za-z]:[\\\\/][^\\s`\\\"'<>|]+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // Leading slash, slash-separated body, and an extension. The lookbehind rejects a letter,
+    // digit, '_', '.', ':', or '/' so a URL (https://host/a.md) and a glued token do not match.
+    private static readonly Regex ReportedPosixAbsolutePathPattern = new(
+        "(?<![A-Za-z0-9_.:/])(?<path>/(?:[^\\s`\\\"'<>|/]+/)*[^\\s`\\\"'<>|/]+\\.[A-Za-z0-9]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex ReportedRelativePathPattern = new(
         "(?<![A-Za-z0-9_.-])(?<path>(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\\.[A-Za-z0-9]+)(?![A-Za-z0-9_.-])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -4166,12 +4172,23 @@ public sealed class AgentTaskReplyService
             return [];
 
         var paths = new List<string>(20);
-        foreach (var pattern in new[]
-                 {
-                     ReportedBacktickPathPattern,
-                     ReportedWindowsPathPattern,
-                     ReportedRelativePathPattern,
-                 })
+        // Windows keeps the drive-letter list. Path.GetFullPath maps a leading slash onto the
+        // current drive there, which would accept a report path the drive-letter pattern does not.
+        var patterns = OperatingSystem.IsWindows()
+            ? new[]
+            {
+                ReportedBacktickPathPattern,
+                ReportedWindowsPathPattern,
+                ReportedRelativePathPattern,
+            }
+            : new[]
+            {
+                ReportedBacktickPathPattern,
+                ReportedWindowsPathPattern,
+                ReportedPosixAbsolutePathPattern,
+                ReportedRelativePathPattern,
+            };
+        foreach (var pattern in patterns)
         {
             foreach (Match match in pattern.Matches(report))
             {
