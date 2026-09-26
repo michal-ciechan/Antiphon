@@ -272,6 +272,34 @@ public sealed class RunnerAlarmCoordinatorTests
     }
 
     [Test]
+    public async Task a_caller_pinned_after_the_raise_is_told_once()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var seed = await SeedServer2Async(db);
+        var source = Down("server2", "transport_abort");
+        var state = new RunnerAlarmState();
+        var notifier = new RecordingNotifier();
+        var coordinator = Build(db, source, state, notifier);
+        await coordinator.EvaluateRunnersAsync(T0, CancellationToken.None);
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(180), CancellationToken.None);
+        notifier.Notes.Count(note => note.SessionId == seed.P1 && note.Header == "[runner server2 unavailable]").ShouldBe(1);
+        notifier.Notes.ShouldNotContain(note => note.SessionId == seed.P3);
+
+        var late = await AddTaskAsync(db, "server2", AgentTaskStatus.Queued, seed.P3, AgentTaskReplyTo.Session, AgentTaskRole.Code);
+        await db.SaveChangesAsync();
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(181), CancellationToken.None);
+        var p3 = notifier.Notes.Single(note => note.SessionId == seed.P3 && note.Header == "[runner server2 unavailable]");
+        p3.Body.ShouldContain(Short(late));
+        notifier.Notes.Count(note => note.SessionId == seed.P1 && note.Header == "[runner server2 unavailable]").ShouldBe(1);
+
+        await coordinator.EvaluateRunnersAsync(T0.AddSeconds(182), CancellationToken.None);
+        notifier.Notes.Count(note => note.SessionId == seed.P3 && note.Header == "[runner server2 unavailable]").ShouldBe(1);
+        notifier.Notes.Count(note => note.SessionId == seed.P1 && note.Header == "[runner server2 unavailable]").ShouldBe(1);
+        state.Current.Episodes.ShouldHaveSingleItem().NotifiedSessionIds.ShouldBe([seed.P1, seed.P2, seed.P3], ignoreOrder: true);
+    }
+
+    [Test]
     public async Task a_later_runner_failure_does_not_resend_notes_already_sent()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
