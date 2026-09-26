@@ -39,13 +39,13 @@ public sealed partial class AttentionService
             var oldestAge = stale.Count > 0
                 ? stale[0].Age.TotalMinutes.ToString("0.#", CultureInfo.InvariantCulture)
                 : "unknown";
+            var states = string.Join(", ", stale.Select(record => record.State).Distinct());
             var commonKey = Path.TrimEndingDirectorySeparator(Path.GetFullPath(finding.CommonDirectory));
-            var command = $"pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository {finding.Repository} "
-                + "-Execute -ConfirmDescendantsExited";
+            var command = $"pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository {finding.Repository}";
             var evidence = new List<string>
             {
-                $"repository={finding.Repository}; commonDirectory={commonKey}",
-                $"After confirming descendants have exited: {command}",
+                $"common={commonKey}; records:",
+                $"Recovery: run {command} first (preview), then {command} -Execute -ConfirmDescendantsExited after confirming the descendants exited. Unknown or malformed records are retained by the script and need inspection.",
             };
             evidence.AddRange(finding.Records.OrderBy(record => record.WrittenAt).Select(record =>
                 $"file={record.File}; state={record.State}; "
@@ -55,8 +55,8 @@ public sealed partial class AttentionService
             items.Add(new AttentionItemDto(
                 AttentionKind.RepositoryChildJournalStale, AlertSeverity.Error,
                 null, null, null, null,
-                $"Repository child journal stale: {finding.Repository}",
-                $"{finding.StaleCount} stale child-journal record(s) fence repository mutation; oldest {oldestAge} min old.",
+                $"Repository fenced: {finding.Repository}",
+                $"{finding.StaleCount} stale child-journal record(s) ({states}) fence every land and dispatch here; oldest {oldestAge} min.",
                 string.Join("\n", evidence),
                 stale.Count > 0 ? stale[0].WrittenAt.UtcDateTime : finding.InspectedAt.UtcDateTime,
                 null, [AttentionAction.OpenDrawer],
