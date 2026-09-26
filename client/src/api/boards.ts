@@ -313,11 +313,18 @@ export interface TrackerCardStatePush {
   reason?: string | null
 }
 
+/** Short ids a terminal move cancelled or left running (CARD-0738). Absent when nothing was bound. */
+export interface CardTaskSettlement {
+  canceled: string[]
+  leftOpen: string[]
+}
+
 export interface MoveCardResult {
   card: CardDto
   spawnedSessionId: string | null
   spawnSuppressed: boolean
   trackerPush?: TrackerCardStatePush | null
+  taskSettlement?: CardTaskSettlement | null
 }
 
 /**
