@@ -84,6 +84,7 @@ public sealed class HostStatsPollServiceTests
             await poll.TickOnceAsync();
             peer.SilentFor(PhoneHomeOperation.HostStats);
             time.Advance(TimeSpan.FromMilliseconds(12000));
+            host.Local.HostStats = HostStatsCacheTests.Sample(at: time.GetUtcNow(), cpu: 25);
             var tick = poll.TickOnceAsync();
             while (peer.RequestCount(PhoneHomeOperation.HostStats) < 2)
                 await Task.Delay(10);
