@@ -355,15 +355,32 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
+    public void Deploy_parent_phone_home_grep_matches_the_runners_registration_failure_template()
+    {
+        var service = File.ReadAllText(Path.Combine(
+            DelegateScriptRunner.RepoRoot, "src", "Antiphon.SessionRunner", "PhoneHomeConnectionService.cs"));
+        var deploy = Block(Remote(), "case_deploy_parent");
+
+        // The runner's message template must still start with the text the deploy gate greps for.
+        service.ShouldContain("\"Phone-home registration failed: reason={Reason}");
+        var grep = deploy.Replace("\r\n", "\n").Split('\n')
+            .Single(line => line.Contains("phone_home_failures=\"$(grep -cE", StringComparison.Ordinal));
+        grep.ShouldContain("Phone-home registration failed");
+    }
+
+    [Test]
     public void Deploy_parent_refuses_a_runner_whose_phone_home_keeps_failing()
     {
         var deploy = Block(Remote(), "case_deploy_parent");
 
         // The window opens after the health wait (i.e. past the compose start_period), so a
         // single cold-start reconnect is not a verdict, and it is long enough for the 15s
-        // backoff to leave more than one mark if the loop can only fail.
+        // backoff (capped at 5s) to leave more than one mark if the loop can only fail.
         deploy.ShouldContain("phone_home_since=\"$(date -u +%Y-%m-%dT%H:%M:%S)\"");
         deploy.ShouldContain("docker logs --since \"$phone_home_since\" \"$container\"");
+        // The current runner logs a rejected/unreachable registration as "registration failed";
+        // the old line is kept so a pre-S4 image is still gated.
+        deploy.ShouldContain("Phone-home registration failed");
         deploy.ShouldContain("Phone-home connection ended; reconnecting");
         deploy.ShouldContain("UnauthorizedAccessException");
         deploy.ShouldContain("write_result false PhoneHomeUnreachable 2");
