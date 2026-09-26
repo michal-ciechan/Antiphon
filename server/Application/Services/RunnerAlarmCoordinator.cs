@@ -193,12 +193,14 @@ public sealed class RunnerAlarmCoordinator(
     private async Task ResolveAsync(RunnerOutageEpisode episode, DateTimeOffset now, CancellationToken ct)
     {
         var minutes = (now - episode.DownSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
-        var body = $"Runner '{episode.DisplayName}' is dispatch-eligible again after {minutes} min down (since {episode.DownSince:O}). Queued work bound to it dispatches on the next tick.";
+        var header = $"[runner {episode.RunnerId} recovered]";
+        var body = header + "\n"
+            + $"Runner '{episode.DisplayName}' is dispatch-eligible again after {minutes} min down (since {episode.DownSince:O}). Queued work bound to it dispatches on the next tick.";
         foreach (var session in episode.NotifiedSessionIds)
         {
             try
             {
-                await notifier.NotifyAsync(session, $"[runner {episode.RunnerId} recovered]", body, ct);
+                await notifier.NotifyAsync(session, header, body, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -213,16 +215,18 @@ public sealed class RunnerAlarmCoordinator(
         List<PinnedTask> tasks, List<Guid> notified, List<NotedAlarmRow> noted, bool recovered, CancellationToken ct)
     {
         var minutes = (now - downSince).TotalMinutes.ToString("0.0", CultureInfo.InvariantCulture);
+        var header = $"[runner {snapshot.RunnerId} unavailable]";
         foreach (var group in tasks.Where(task => task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid)
                      .GroupBy(task => task.ParentSessionId!.Value))
         {
             if (notified.Contains(group.Key))
                 continue;
             var ids = string.Join(", ", group.Select(task => DelegationReportFormatter.Short(task.Id)));
-            var body = $"Runner '{snapshot.DisplayName}' has not been dispatch-eligible for {minutes} min (since {downSince:O}; last reason: {snapshot.DisconnectReason}). {group.Count()} of your open tasks are pinned to it: {ids}. New dispatches to it stay Queued until it recovers; Antiphon sends a note when it does. Do not reroute them silently.";
+            var body = header + "\n"
+                + $"Runner '{snapshot.DisplayName}' has not been dispatch-eligible for {minutes} min (since {downSince:O}; last reason: {snapshot.DisconnectReason}). {group.Count()} of your open tasks are pinned to it: {ids}. New dispatches to it stay Queued until it recovers; Antiphon sends a note when it does. Do not reroute them silently.";
             try
             {
-                var rowId = await notifier.NotifyAsync(group.Key, $"[runner {snapshot.RunnerId} unavailable]", body, ct);
+                var rowId = await notifier.NotifyAsync(group.Key, header, body, ct);
                 notified.Add(group.Key);
                 noted.Add(new NotedAlarmRow(group.Key, rowId));
             }
