@@ -65,7 +65,18 @@ public sealed class ScratchGitRepo : IDisposable
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEndAsync();
         var stderr = p.StandardError.ReadToEndAsync();
-        await p.WaitForExitAsync();
+        // A stuck git (credential prompt, lock) must not hang the fixture. 60s covers init,
+        // commit and a local push; a timeout is a failed command, not a silent success.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try
+        {
+            await p.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { p.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+            return new GitResult(false, "", "git timed out after 60s");
+        }
         return new GitResult(p.ExitCode == 0, await stdout, await stderr);
     }
 
