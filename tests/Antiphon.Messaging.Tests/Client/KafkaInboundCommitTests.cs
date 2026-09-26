@@ -153,6 +153,30 @@ public sealed class KafkaInboundCommitTests
             await unresolved.AcknowledgeAsync("accepted", timeout.Token);
         }
         (await CommittedAsync(gapTopic, gapGroup, 0)).ShouldBe(2);
+
+        var (poisonTopic, poisonGroup) = await CreateTopicAsync();
+        await ProduceRawAsync(poisonTopic, 0, "{invalid-json");
+        await ProduceAsync(poisonTopic, 0, "valid after poison");
+        var poisonClient = Client(poisonTopic, poisonGroup);
+        await using (var e = poisonClient.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message.ShouldBeNull();
+            e.Current.Diagnostic.ShouldBe("malformed-json");
+        }
+        (await CommittedAsync(poisonTopic, poisonGroup, 0)).ShouldBeLessThanOrEqualTo(0);
+        var poisonReplay = Client(poisonTopic, poisonGroup);
+        await using (var e = poisonReplay.ConsumeDeliveriesAsync(timeout.Token).GetAsyncEnumerator())
+        {
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Diagnostic.ShouldBe("malformed-json");
+            await e.Current.AcknowledgeAsync("malformed:malformed-json", timeout.Token);
+            (await CommittedAsync(poisonTopic, poisonGroup, 0)).ShouldBe(1);
+            (await e.MoveNextAsync()).ShouldBeTrue();
+            e.Current.Message!.Text.ShouldBe("valid after poison");
+            await e.Current.AcknowledgeAsync("accepted", timeout.Token);
+        }
+        (await CommittedAsync(poisonTopic, poisonGroup, 0)).ShouldBe(2);
     }
 
     private static KafkaAntiphonMessagingConsumer Client(string topic, string group,
@@ -188,6 +212,18 @@ public sealed class KafkaInboundCommitTests
         await producer.ProduceAsync(new TopicPartition(topic, partition), new Message<string, string>
         {
             Key = "c593", Value = System.Text.Json.JsonSerializer.Serialize(message, Antiphon.Messaging.MessagingJson.Options),
+        });
+    }
+
+    private static async Task ProduceRawAsync(string topic, int partition, string value)
+    {
+        using var producer = new ProducerBuilder<string, string>(new ProducerConfig
+        {
+            BootstrapServers = _broker!.GetBootstrapAddress(),
+        }).Build();
+        await producer.ProduceAsync(new TopicPartition(topic, partition), new Message<string, string>
+        {
+            Key = "c593", Value = value,
         });
     }
 
