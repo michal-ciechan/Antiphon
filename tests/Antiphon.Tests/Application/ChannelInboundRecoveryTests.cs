@@ -60,10 +60,7 @@ public sealed class ChannelInboundRecoveryTests
             var record = new SessionRunnerTranscriptEvent(h.SessionId, sequence, TranscriptKinds.UserPrompt,
                 Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
                 null, null, null, null, null);
-            var turnEnd = new SessionRunnerTranscriptEvent(h.SessionId, sequence + 1, TranscriptKinds.TurnEnd,
-                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "assistant", null,
-                null, null, null, null, "end_turn");
-            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record, turnEnd], sequence + 1));
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], sequence));
             await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
         };
     }
