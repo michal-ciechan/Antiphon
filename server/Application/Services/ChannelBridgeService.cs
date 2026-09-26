@@ -197,11 +197,19 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var page = await db.ChannelInbounds.AsNoTracking()
-                .Where(i => i.AcceptanceSequence > _lastInboundScanSequence
-                    && i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null)
-                .OrderBy(i => i.AcceptanceSequence)
-                .Take(64).Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+            var pending = db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null);
+            var page = await pending.Where(i => i.AcceptanceSequence > _lastInboundScanSequence)
+                .OrderBy(i => i.AcceptanceSequence).Take(64)
+                .Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+            if (page.Count == 0 && _lastInboundScanSequence != 0)
+            {
+                // A Running signal after a held scan must retry the first page now,
+                // instead of waiting for another timer tick just to wrap the cursor.
+                _lastInboundScanSequence = 0;
+                page = await pending.OrderBy(i => i.AcceptanceSequence).Take(64)
+                    .Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+            }
             foreach (var inbound in page)
             {
                 try { await ProcessInboundAsync(inbound.Id, ct); }
@@ -211,8 +219,6 @@ public sealed class ChannelBridgeService : BackgroundService
                 }
                 _lastInboundScanSequence = inbound.AcceptanceSequence;
             }
-            if (page.Count == 0)
-                _lastInboundScanSequence = 0; // next pass revisits held and failed rows
 
             // A crash or uncertain terminal write after queue ownership must not strand a
             // Channel row on a non-AlwaysOn agent. The queue keeps its original attempt floor
