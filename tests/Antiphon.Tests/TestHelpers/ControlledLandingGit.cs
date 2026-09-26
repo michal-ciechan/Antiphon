@@ -345,7 +345,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         return sha;
     }
 
-    /// <summary>CARD-0711: move the observed target tip to a child of itself. The push arm still accepts any SHA until S4b.</summary>
+    /// <summary>CARD-0711: move the observed target tip to a child of itself.</summary>
     public string AdvanceRemoteTarget()
     {
         var sha = NextOid();
@@ -676,7 +676,12 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             var colon = spec.IndexOf(':');
             var sha = spec[..colon];
             var dest = spec[(colon + 1)..];
-            if (dest == TargetRef || dest.EndsWith("/master", StringComparison.Ordinal)) _remoteTarget = sha;
+            if (dest == TargetRef || dest.EndsWith("/master", StringComparison.Ordinal))
+            {
+                if (!IsAncestor(_remoteTarget, sha))
+                    return new(1, "", "! [rejected] master -> master (fetch first)");
+                _remoteTarget = sha;
+            }
             if (dest == SourceRef) _remoteSource = sha;
             return new(0, "", "");
         }

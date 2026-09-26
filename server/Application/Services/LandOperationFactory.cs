@@ -13,7 +13,7 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 internal static class LandOperationFactory
 {
-    internal sealed record Outcome(AgentTaskLanding? Operation, string? Reason, LandInspectionDiagnostic? Diagnostic = null);
+    internal sealed record Outcome(AgentTaskLanding? Operation, string? Reason, LandInspectionDiagnostic? Diagnostic = null, string? Detail = null);
 
     public static async Task<Outcome> CreateAsync(ILandingGit git, ILandWorkspace workspace, DateTime now,
         AgentTask task, AgentTaskLandRequest request, LandSourceCoordinates coordinates, string common,
@@ -48,7 +48,9 @@ internal static class LandOperationFactory
         {
             var ancestry = await git.RunAsync(coordinates.RepositoryPath, ["merge-base", "--is-ancestor", localTarget, remote.Sha], ct);
             if (ancestry.ExitCode is not (0 or 1)) return new(null, "ancestry_error");
-            if (ancestry.ExitCode == 1) return new(null, "target_local_ahead");
+            if (ancestry.ExitCode == 1)
+                return new(null, "target_local_ahead", Detail: TargetAheadDetail(
+                    coordinates.TargetFullRef, localTarget, remote.Sha, destination.RemoteName));
         }
 
         string worktreePath, gitDirectory;
@@ -94,6 +96,12 @@ internal static class LandOperationFactory
         };
         return new(op, null);
     }
+
+    /// <summary>The reason code stays <c>target_local_ahead</c>. This sentence is the event detail only.</summary>
+    private static string TargetAheadDetail(string targetRef, string local, string remote, string remoteName) =>
+        $"local `{targetRef}` `{local}` is ahead of `{remoteName}` `{remote}`; in the main checkout run "
+        + "`git fetch origin && git reset --hard origin/master` (after committing or stashing any operator work), "
+        + "then run `-Land` again; rebasing a fetched origin carries the stray commit forward (CARD-0711 request 524311c6)";
 
     internal static bool IsLegacyDerivation(AgentTaskLanding? previous, string local, string expected) =>
         previous is { SchemaVersion: 2, Active: true, RebasedSourceSha: { } prepared }
