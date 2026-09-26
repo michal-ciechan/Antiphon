@@ -25,6 +25,12 @@
   busy-session delivery trigger. Wakeup overflow requests a sweep, and repeated failures back
   off to sixty seconds. These wakeups are hints, never transcript-confirmed delivery receipts.
 
+- **Runner and child-journal alarms use two clocks (CARD-0726).** A runner outage raises only
+  after `Alarms:RunnerGraceSeconds`; a startup pass, event wakes and the
+  `Alarms:SweepMinutes` backstop inspect runner eligibility and registered journals.
+  The alarm state projects into attention; caller notes still use the ordinary queued
+  `WhenIdle` path and require a complete `UserPrompt` for delivery evidence.
+
 - **Working state is a committed projection (CARD-0701, Round 1).** Production queue gates/DTOs
   and agent list/detail read the DI-owned `SessionStateStore`. Each read, runtime ingest and
   synthetic restart boundary shares a per-session gate. PostgreSQL remains the record: publish
