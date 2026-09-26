@@ -118,7 +118,7 @@ public sealed class HostStatsStore : IHostStatsSource
         => new(metric, window, _intervalSeconds, Series(metric, window, _time.GetUtcNow()));
 
     internal static bool KnownQuery(string? metric, string? window)
-        => metric is "cpu" or "load" or "memory" or "tasks"
+        => metric is "cpu" or "load" or "memory"
            && window is "1m" or "5m" or "15m" or "30m";
 
     private RunnerHostBuildSlotsDto? ReadBuildSlots()
@@ -203,7 +203,6 @@ public sealed class HostStatsStore : IHostStatsSource
         "cpu" => static sample => sample.CpuPercent,
         "load" => static sample => sample.Load1,
         "memory" => MemoryUsed,
-        "tasks" => static _ => null,
         _ => throw new ArgumentException($"Unknown host stats metric '{metric}'.", nameof(metric)),
     };
 

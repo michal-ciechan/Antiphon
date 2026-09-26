@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Application;
 public sealed class HostStatsPollServiceTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
+    private const int DesktopSeats = 6;
     private sealed class EmptyCounters : IHostStatsAntiphonCounters
     {
         public Task<IReadOnlyDictionary<string, HostStatsAntiphonDto>> ReadAsync(CancellationToken ct) =>
@@ -27,7 +28,8 @@ public sealed class HostStatsPollServiceTests
     private static HostStatsPollService Service(PhoneHomeTestHost host, FakeTimeProvider time,
         HostStatsCache cache, RecordingHostStatsEventBus bus) =>
         new(host.Directory, cache, new EmptyCounters(), bus, Options.Create(new HostStatsSettings()),
-            time, NullLogger<HostStatsPollService>.Instance);
+            time, NullLogger<HostStatsPollService>.Instance,
+            Options.Create(new DelegationSettings { MaxConcurrentTasks = DesktopSeats }));
 
     private static PhoneHomeFrame Reply(PhoneHomeFrame request, RunnerHostStatsDto dto) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
@@ -63,7 +65,7 @@ public sealed class HostStatsPollServiceTests
             rows.Single(r => r.HostId == host.AllowedRunnerId).Current!.CpuPercent.ShouldBe(42);
             rows.Single(r => r.HostId == host.AllowedRunnerId).Antiphon.SessionsLive.ShouldBe(0);
             rows.Single(r => r.HostId == host.AllowedRunnerId).Antiphon.SeatsDeclared.ShouldBe(1);
-            rows.Single(r => r.HostId == "desktop").Antiphon.SeatsDeclared.ShouldBe(6);
+            rows.Single(r => r.HostId == "desktop").Antiphon.SeatsDeclared.ShouldBe(DesktopSeats);
             bus.Events.Count.ShouldBe(1);
             bus.Events[0].Group.ShouldBe("hosts");
             bus.Events[0].EventName.ShouldBe("HostStatsUpdated");

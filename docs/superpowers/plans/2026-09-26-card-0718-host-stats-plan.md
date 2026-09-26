@@ -79,10 +79,13 @@ broker, so the memory floor and the Hosts page can never show two different numb
   the host's figures (no cgroup caps, `privileged: true`), which is what the operator wants.
 - Windows: `GetSystemTimes` (kernel32; idle/kernel/user 100 ns totals; CPU % from the delta the
   same way, kernel includes idle), `GlobalMemoryStatusEx` (already P/Invoked; now returning the
-  whole struct: `TotalPhys`, `AvailPhys`, page file as swap), `DriveInfo`, process count from
+  whole struct: `TotalPhys`, `AvailPhys`, `TotalPageFile`, `AvailPageFile`), `DriveInfo`, process count from
   `Process.GetProcesses().Length` **only if** CP-4 measures it under 1 ms, else omitted until
   Round 2. No WMI: `System.Management` is not referenced by the runner and one `Win32_Process`
   query is tens of milliseconds.
+  The Windows `TotalPageFile` / `AvailPageFile` pair represents commit limit and available
+  commit, so S4 docs must label the displayed figures as commit limit and charge, not physical
+  swap capacity and use.
 - Per-process (D-6): own process, each live session's `Pid` and `HostPid` from
   `SessionRunnerRuntime.List()`, via `Process.GetProcessById` guarded like
   `SystemProcessCpuProbe` (start-time tolerance so a recycled pid is not charged).
@@ -194,8 +197,8 @@ Postgres container (needs the Docker socket the runner deliberately does not mou
 
 | Route | Answer |
 |---|---|
-| `GET /api/hosts/stats` | `HostStatsDto[]`: `hostId`, `displayName`, `platform`, `state`, `observedAt`, `intervalSeconds`, `cores`, `current` (`cpuPercent`, `load1/5/15` or null, `memoryUsedBytes`, `memoryAvailableBytes`, `memoryTotalBytes`, `swapUsedBytes`, `swapTotalBytes`, `disks[] { path, freeBytes, totalBytes }`, `processCount`, `processes[] { name, sessionId?, cpuPercent, workingSetBytes }`), `rollups` (`{ "1m": {avg,max}, "5m": ..., "15m": ..., "30m": ... }` for `cpuPercent`, `load1`, `memoryUsedBytes`, `tasksInFlight`), `antiphon` (`tasksInFlight`, `byStage`, `byKind`, `queued`, `held`, `landsPending`, `sessionsLive`, `seatsDeclared`, `buildSlots { occupied, budget, waiters }`) |
-| `GET /api/hosts/{hostId}/stats/series?metric=cpu&window=30m` | `{ hostId, metric, window, intervalSeconds, points: [{ t, v }] }`; `metric` ∈ `cpu`, `load`, `memory`, `tasks`; `window` ∈ `1m`, `5m`, `15m`, `30m`; 400 otherwise; 404 unknown host; 409 `phone_home_unavailable` when the runner cannot be asked (the page then keeps what it has) |
+| `GET /api/hosts/stats` | `HostStatsDto[]`: `hostId`, `displayName`, `platform`, `state`, `observedAt`, `intervalSeconds`, `cores`, `current` (`cpuPercent`, `load1/5/15` or null, `memoryUsedBytes`, `memoryAvailableBytes`, `memoryTotalBytes`, `swapUsedBytes`, `swapTotalBytes`, `disks[] { path, freeBytes, totalBytes }`, `processCount`, `processes[] { name, sessionId?, cpuPercent, workingSetBytes }`), `rollups` (`{ "1m": {avg,max}, "5m": ..., "15m": ..., "30m": ... }` for `cpuPercent`, `load1`, `memoryUsedBytes`), `antiphon` (`tasksInFlight`, `byStage`, `byKind`, `queued`, `held`, `landsPending`, `sessionsLive`, `seatsDeclared`, `buildSlots { occupied, budget, waiters }`) |
+| `GET /api/hosts/{hostId}/stats/series?metric=cpu&window=30m` | `{ hostId, metric, window, intervalSeconds, points: [{ t, v }] }`; `metric` ∈ `cpu`, `load`, `memory`; `window` ∈ `1m`, `5m`, `15m`, `30m`; 400 otherwise; 404 unknown host; 409 `phone_home_unavailable` when the runner cannot be asked (the page then keeps what it has) |
 | SignalR `HostStatsUpdated` to group `hosts` | the same `HostStatsDto[]` after every tick; published only when the cache changed |
 
 Not `GET /api/hosts`: CARD-0654 (Review) owns that collection for budgets, and this card's
@@ -203,11 +206,15 @@ routes nest under it so both can land in either order; when both are live the bu
 carry a `stats` link later. Rejected: `PublishToAllAsync` every 5 s (every open tab pays for a
 page nobody has open; a group with no members costs a dictionary lookup).
 
+`tasksInFlight` remains a current Antiphon counter only. Its historical rollups and `metric=tasks`
+series are deferred: the runner does not sample task counts, so accepting that metric would return
+a successful empty series. S3 should display the current count without a tasks sparkline.
+
 ### D-8. Hosts page: a card per host, inline SVG sparklines, no chart dependency
 
 `client/src/features/hosts/`: `HostsPage.tsx` (route `/hosts`, nav item **Hosts** after
 **Agents**), `HostCard.tsx` (name, platform, state badge, current CPU / memory / load / tasks
-and seats, a 1/5/15/30 table of avg and max, four `Sparkline`s), `Sparkline.tsx` (inline
+and seats, a 1/5/15/30 table of avg and max, three `Sparkline`s), `Sparkline.tsx` (inline
 `<svg viewBox="0 0 W H" preserveAspectRatio="none">` with one `<path>` from the points, a
 `<title>` for accessibility, the newest point at the right; width 100 %, so it is the mobile
 layout too), `hosts.ts` API hooks under `client/src/api/` (`useHostStats`,
