@@ -51,6 +51,29 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         Git.Commands.Clear();
     }
 
+    /// <summary>CARD-0711: an independent clone commits <paramref name="name"/>.txt and pushes it to <c>master</c>.</summary>
+    public Task<string> PushIndependentAsync(string name) =>
+        PushIndependentAsync(name, name + ".txt", name + "\n");
+
+    /// <summary>Same stranger push, with the committed path and content chosen by the caller.</summary>
+    public async Task<string> PushIndependentAsync(string name, string path, string content)
+    {
+        var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId);
+        var full = Path.Combine(Observer, path.Replace('/', Path.DirectorySeparatorChar));
+        var parent = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+        await File.WriteAllTextAsync(full, content);
+        var add = await reader.RunAsync(Observer, ["add", "--", path], CancellationToken.None);
+        add.Succeeded.ShouldBeTrue(add.Diagnostic);
+        var commit = await reader.RunAsync(Observer, ["commit", "-m", name], CancellationToken.None);
+        commit.Succeeded.ShouldBeTrue(commit.Diagnostic);
+        var push = await reader.RunAsync(Observer, ["push", "origin", "HEAD:" + TargetRef], CancellationToken.None);
+        push.Succeeded.ShouldBeTrue(push.Diagnostic);
+        var head = await reader.RunAsync(Observer, ["rev-parse", "HEAD"], CancellationToken.None);
+        head.Succeeded.ShouldBeTrue(head.Diagnostic);
+        return head.Output.Trim();
+    }
+
     public async Task<string> RequiredAsync(string path, params string[] arguments)
     {
         var result = await Git.RunAsync(path, arguments, CancellationToken.None);

@@ -25,6 +25,7 @@ public class ProcessSpawnLimitTests
         [
             typeof(LandSourceIdentityTests),
             typeof(AgentTaskLandPublicationTests),
+            typeof(AgentTaskLandTargetRaceTests),
             typeof(AgentTaskLandPersistenceFailureTests),
             typeof(AgentTaskLandVerifierTests),
             typeof(AgentTaskDispatchBaseGuardTests),

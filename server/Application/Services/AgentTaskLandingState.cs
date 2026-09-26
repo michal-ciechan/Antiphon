@@ -62,6 +62,14 @@ public sealed class AgentTaskLandingState
             && CanReplaceRefused(previous, explicitRequest, leaseHeld);
     }
 
+    /// <summary>CARD-0711: a schema-3 operation refused for an unpublished target race. S0 returns false so the
+    /// red gate compiles; S1 is the real predicate.</summary>
+    public bool IsTargetRaceRefusal(AgentTaskLanding operation)
+    {
+        _ = operation;
+        return false;
+    }
+
     /// <summary>CARD-0688: replacing a refused operation needs no worktree inspection; the replacement reads the
     /// branch ref itself. Only an explicit request under the lease may replace, and never a publication.</summary>
     public bool CanReplaceRefused(AgentTaskLanding previous, bool explicitRequest, bool leaseHeld)
