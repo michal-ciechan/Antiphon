@@ -37,6 +37,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         var card = await SeedCardAsync(db, "CARD-0215");
         var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, commitMessage: "docs(plan): CARD-0215");
         sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        await SeedPendingSiblingLandAsync(db, repo, sibling);
         var parentSessionId = Guid.NewGuid();
         await SeedParentSessionAsync(db, parentSessionId);
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
@@ -61,6 +62,9 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         var heldSibling = await db.AgentTasks.SingleAsync(t => t.Id == sibling.Id, ct);
         heldSibling.LandRequestedAt = null;
+        var landedRequest = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == sibling.CurrentLandRequestId, ct);
+        landedRequest.IsPending = false;
+        landedRequest.State = LandRequestState.Completed;
         await db.SaveChangesAsync(ct);
         await repo.GitAsync("merge", "--ff-only", sibling.WorktreeBranch!);
 
@@ -90,6 +94,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         var card = await SeedCardAsync(db, "CARD-0146");
         var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, commitMessage: "docs(plan): CARD-0146");
         sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        await SeedPendingSiblingLandAsync(db, repo, sibling);
         var parentSessionId = Guid.NewGuid();
         await SeedParentSessionAsync(db, parentSessionId);
         var task = await SeedQueuedWorktreeTaskAsync(
@@ -790,6 +795,20 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         public bool Owns(RepositoryLease lease, string commonDirectory) =>
             inner.Owns(lease, commonDirectory);
+    }
+
+    private static async Task SeedPendingSiblingLandAsync(AppDbContext db, ScratchGitRepo repo, AgentTask sibling)
+    {
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = sibling.Id, RequestedAt = sibling.LandRequestedAt!.Value,
+            LastEvaluatedAt = sibling.LandRequestedAt.Value,
+            LastProgressAt = sibling.LandRequestedAt.Value,
+            State = LandRequestState.Queued, IsPending = true,
+            ExpectedSourceSha = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim(),
+        };
+        db.AgentTaskLandRequests.Add(request);
+        sibling.CurrentLandRequestId = request.Id;
     }
 
     private static ServiceProvider CreateProvider(
