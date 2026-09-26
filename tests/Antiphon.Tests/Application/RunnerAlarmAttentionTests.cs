@@ -76,11 +76,14 @@ public sealed class RunnerAlarmAttentionTests
         var row = rows.Single(item => item.ConditionKey == "journal-stale:" + key);
         row.Severity.ShouldBe(AlertSeverity.Error);
         row.Headline.ShouldStartWith("2 stale");
+        row.Headline.ShouldContain("oldest 11 min");
         row.Evidence.ShouldContain("recover-repository-children.ps1 -Repository " + repositoryA);
         row.Evidence.ShouldContain("-Execute -ConfirmDescendantsExited");
-        row.Evidence.ShouldContain("dead-old");
-        row.Evidence.ShouldContain("unknown-new");
-        row.Evidence.ShouldContain("alive");
+        var recordLines = row.Evidence.Split('\n').Where(line => line.StartsWith("file=", StringComparison.Ordinal)).ToList();
+        recordLines.Count.ShouldBe(3);
+        recordLines.ShouldContain(line => line.Contains("file=dead-old; state=Dead;", StringComparison.Ordinal));
+        recordLines.ShouldContain(line => line.Contains("file=unknown-new; state=Unknown;", StringComparison.Ordinal));
+        recordLines.ShouldContain(line => line.Contains("file=alive; state=Alive;", StringComparison.Ordinal));
         row.SinceUtc.ShouldBe(old.UtcDateTime);
         row.ConditionKey.ShouldNotBe(rows.Single(item => item != row).ConditionKey);
         rows.ShouldNotContain(item => item.ConditionKey == "journal-stale:" + commonB);

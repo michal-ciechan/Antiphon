@@ -1,14 +1,15 @@
 using System.Globalization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 namespace Antiphon.Server.Application.Services;
 
 public sealed partial class AttentionService
 {
-    private List<AttentionItemDto> BuildRunnerUnavailableItems()
+    private static List<AttentionItemDto> BuildRunnerUnavailableItems(RunnerAlarmSnapshot? snapshot)
     {
-        var episodes = _alarms?.Current.Episodes;
+        var episodes = snapshot?.Episodes;
         if (episodes is null) return [];
 
         return episodes.Where(episode => episode.RaisedAt is not null)
@@ -25,9 +26,9 @@ public sealed partial class AttentionService
             .ToList();
     }
 
-    private List<AttentionItemDto> BuildJournalStaleItems()
+    private static List<AttentionItemDto> BuildJournalStaleItems(RunnerAlarmSnapshot? snapshot)
     {
-        var findings = _alarms?.Current.Journals;
+        var findings = snapshot?.Journals;
         if (findings is null) return [];
 
         var items = new List<AttentionItemDto>();
@@ -35,6 +36,9 @@ public sealed partial class AttentionService
         {
             var stale = finding.Records.Where(record => record.Stale)
                 .OrderBy(record => record.WrittenAt).ToList();
+            var oldestAge = stale.Count > 0
+                ? stale[0].Age.TotalMinutes.ToString("0.#", CultureInfo.InvariantCulture)
+                : "unknown";
             var commonKey = Path.TrimEndingDirectorySeparator(Path.GetFullPath(finding.CommonDirectory));
             var command = $"pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository {finding.Repository} "
                 + "-Execute -ConfirmDescendantsExited";
@@ -52,7 +56,7 @@ public sealed partial class AttentionService
                 AttentionKind.RepositoryChildJournalStale, AlertSeverity.Error,
                 null, null, null, null,
                 $"Repository child journal stale: {finding.Repository}",
-                $"{finding.StaleCount} stale child-journal record(s) fence repository mutation.",
+                $"{finding.StaleCount} stale child-journal record(s) fence repository mutation; oldest {oldestAge} min old.",
                 string.Join("\n", evidence),
                 stale.Count > 0 ? stale[0].WrittenAt.UtcDateTime : finding.InspectedAt.UtcDateTime,
                 null, [AttentionAction.OpenDrawer],
