@@ -90,6 +90,13 @@ public static class AgentTaskEndpoints
             WorktreeHealthService health,
             CancellationToken ct) => Results.Ok(await health.SweepAsync(ct)));
 
+        // CARD-0738. Before /{id}. apply defaults to false: a bare POST lists and writes nothing.
+        tasks.MapPost("/closed-card-sweep", async (
+            ClosedCardSweepRequest? request,
+            CardTaskSettlement settlement,
+            CancellationToken ct) =>
+            Results.Ok(await settlement.SweepAsync(request?.Apply ?? false, ct)));
+
         // CARD-0459. Static residue routes before /{id}.
         tasks.MapPost("/worktree-residue/preview", async (
             WorktreeResiduePreviewRequest request,

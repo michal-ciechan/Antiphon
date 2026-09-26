@@ -129,11 +129,107 @@ public sealed class CardTaskSettlement
         return new CardTaskSettlementResult(canceled, leftOpen);
     }
 
-    public Task<ClosedCardSweepDto> SweepAsync(bool apply, CancellationToken ct)
+    public async Task<ClosedCardSweepDto> SweepAsync(bool apply, CancellationToken ct)
     {
-        _ = apply;
-        _ = ct;
-        return Task.FromResult(new ClosedCardSweepDto(_time.GetUtcNow().UtcDateTime, false, [], 0, 0));
+        var asOf = _time.GetUtcNow().UtcDateTime;
+        var tasks = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.CardId != null)
+            .Where(AgentTaskRoles.NotSpecialist)
+            .Where(t => OpenStatuses.Contains(t.Status))
+            .OrderBy(t => t.CreatedAt)
+            .ThenBy(t => t.Id)
+            .ToListAsync(ct);
+        var cardIds = tasks.Select(t => t.CardId!.Value).Distinct().ToList();
+        var cards = cardIds.Count == 0
+            ? new Dictionary<Guid, Card>()
+            : await _db.Cards.AsNoTracking()
+                .Where(c => cardIds.Contains(c.Id)
+                    && (c.Status == CardStatus.Done || c.Status == CardStatus.Canceled || c.ArchivedAt != null))
+                .ToDictionaryAsync(c => c.Id, ct);
+
+        var rows = new List<ClosedCardSweepRowDto>();
+        var canceled = 0;
+        var leftOpen = 0;
+        foreach (var task in tasks)
+        {
+            if (task.CardId is not Guid cardId || !cards.TryGetValue(cardId, out var card))
+                continue;
+            var closeAt = card.CompletedAt ?? card.ArchivedAt;
+            if (closeAt is null)
+                continue;
+
+            var createdAfter = task.CreatedAt >= closeAt.Value;
+            var started = await HasStartedAsync(task, ct);
+            var archivedOnly = card.ArchivedAt != null
+                && card.Status is not (CardStatus.Done or CardStatus.Canceled);
+            var closure = new CardClosure(
+                card.Id,
+                card.Identifier,
+                card.BoardId,
+                archivedOnly ? CardClosureKind.Archived : CardClosureKind.Closed,
+                card.Status,
+                (archivedOnly ? card.ArchivedReason : card.TerminalReason) ?? string.Empty,
+                closeAt.Value);
+            var action = ClosedCardSweepAction.Listed;
+            string? note = null;
+            if (apply)
+            {
+                if (createdAfter)
+                {
+                    action = ClosedCardSweepAction.LeftOpenCreatedAfterClose;
+                    leftOpen++;
+                }
+                else if (started)
+                {
+                    action = ClosedCardSweepAction.LeftOpenStarted;
+                    leftOpen++;
+                }
+                else
+                {
+                    try
+                    {
+                        await _tasks.CancelAsync(task.Id, ct, Clamp("Closed-card sweep: " + ComposeReason(closure), ReasonLimit));
+                        action = ClosedCardSweepAction.Canceled;
+                        canceled++;
+                    }
+                    catch (ConflictException)
+                    {
+                        // Settled between the read and the cancel. Nothing left to do.
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "Closed-card sweep could not cancel task {ShortId} on card {Identifier}",
+                            Short(task.Id),
+                            card.Identifier);
+                        action = ClosedCardSweepAction.CancelFailed;
+                        note = ex.Message;
+                        leftOpen++;
+                    }
+                }
+            }
+
+            rows.Add(new ClosedCardSweepRowDto(
+                task.Id,
+                Short(task.Id),
+                task.Title,
+                task.Status,
+                task.Role,
+                card.Id,
+                card.Identifier,
+                card.BoardId,
+                card.Status,
+                card.ArchivedAt != null,
+                closeAt.Value,
+                string.IsNullOrEmpty(closure.Reason) ? null : closure.Reason,
+                createdAfter,
+                started,
+                action,
+                note));
+        }
+
+        return new ClosedCardSweepDto(asOf, apply, rows, canceled, leftOpen);
     }
 
     /// <summary>
