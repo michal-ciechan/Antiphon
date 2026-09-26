@@ -99,7 +99,12 @@ public sealed class AgentTaskLandService
         if (recoveryMode != LandRecoveryMode.None && !LandApproval.RecoveryStatusEligible(task.Status))
             throw new ConflictException("Reviewed recovery requires a Succeeded, Blocked or Failed landing owner.",
                 "recovery_owner_ineligible");
-        if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded)
+        var resumeConflict = recoveryMode == LandRecoveryMode.None
+            && task.Status == AgentTaskStatus.Blocked && task.LandRequestedAt is not null
+            && task.CurrentLandRequestId is Guid currentId
+            && await _db.AgentTaskLandRequests.AsNoTracking().AnyAsync(r => r.Id == currentId
+                && r.IsPending && r.State == LandRequestState.NeedsResolution, ct);
+        if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded && !resumeConflict)
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
         WorkspaceReservationSnapshot? admitted = null;
         var committed = false;
@@ -150,7 +155,15 @@ public sealed class AgentTaskLandService
                     || suppliedEvidence is not null && request!.ReviewEvidenceId is null)
                     throw new ConflictException("A pending land request cannot change expected SHA, evidence or filter.",
                         "land_request_identity_conflict");
-                if (request!.State == LandRequestState.NeedsResolution) request.State = LandRequestState.Queued;
+                if (request!.State == LandRequestState.NeedsResolution)
+                {
+                    request.State = LandRequestState.Queued;
+                    if (task.Status == AgentTaskStatus.Blocked)
+                    {
+                        task.Status = AgentTaskStatus.Succeeded;
+                        task.FailureReason = null;
+                    }
+                }
             }
             else
             {
