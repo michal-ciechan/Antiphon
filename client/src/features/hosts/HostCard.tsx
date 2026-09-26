@@ -30,6 +30,7 @@ export function HostCard({ host }: { host: HostStats }) {
           <Badge color={STATE_COLORS[host.state]} variant="light">{host.state[0].toUpperCase() + host.state.slice(1)}</Badge>
         </Group>
         {host.observedAt && <Text size="xs" c="dimmed">Last sample: {new Date(host.observedAt).toLocaleString()}</Text>}
+        {host.reason && <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{host.reason}</Text>}
         {!hasData ? <Text c="dimmed">No data</Text> : <>
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="sm">
             <Metric label="CPU">{value(current.cpuPercent, ' %')}</Metric>
