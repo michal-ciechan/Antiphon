@@ -1069,3 +1069,86 @@ green for the client file; `tests/Antiphon.Tests/Application/RunnerAlarmAttentio
   the four existing `it.each` cases of `attentionVisuals.test.ts` (`CP-11`).
 - **R-5: every new class declares its lane** | `TestLaneCategoryGuardTests` (1, `CP-7`) fails on
   a new test class without `[Category]`.
+
+### Guard inventory
+
+Safety-critical here means a guard whose failure would **miss an alarm** (an outage or a fence
+nobody hears of), **raise a false one** (a flap, a drained or retired runner, a live or in-flight
+journal record), **mis-deliver caller notes** (spam, a second note, a lost note, a note typed into
+a busy caller, a recovery note to someone never told), **fault or slow the directory, the lease,
+the land or the dispatcher**, **poll**, or **touch a journal record** (D-9). Guards are split
+where two lines can be broken independently; each maps 1:1 to a distinct PC. Assertions that
+are not guards (a notify on a non-flipping `MarkRecovered`, the exact second a raise lands, the
+note's wording) are named in their V row but carry no PC.
+
+| G | Plan ref | Guard | PC |
+|---|---|---|---|
+| G-1 | D-2 | a `MarkRecovered` that flips eligibility notifies | PC-1 |
+| G-2 | D-2 | a superseded connection notifies | PC-2 |
+| G-3 | D-2 | the live connection's `Disconnect` notifies | PC-3 |
+| G-4 | D-2 | a lease expiry seen by `SnapshotOf` notifies | PC-4 |
+| G-5 | D-2 | lease-expiry notification is edge-only (the pump reads every 50 ms; per-read signals would poll the loop) | PC-5 |
+| G-6 | S1 | the snapshot source's `Eligible` is the dispatch predicate, not `Available` | PC-6 |
+| G-7 | D-8 | a busy `landing.lock` refusal is not a fence signal (dispatcher ticks would drive an inspection each) | PC-7 |
+| G-8 | D-2 | an observer exception never escapes the directory | PC-8 |
+| G-9 | D-2 | the observer runs outside `_gate` | PC-9 |
+| G-10 | D-8 | a journal-fenced `AcquireAsync` signals `Fenced(common)` | PC-10 |
+| G-11 | D-8 | a non-null `DescribeUnavailableAsync` signals `Fenced(common)` | PC-11 |
+| G-12 | D-1 | `RunnerGraceSeconds <= 0` fails validation (every flap would alarm) | PC-12 |
+| G-13 | D-1 | `SweepMinutes <= 0` fails validation (a tight sweep is a poll) | PC-13 |
+| G-14 | D-1 | `JournalStaleMinutes <= 0` fails validation (every in-flight record would alarm) | PC-14 |
+| G-15 | D-8 | an `Alive` record is never stale | PC-15 |
+| G-16 | D-8 | a `false` liveness read (missing or reused PID) is `Dead`, never `Alive` | PC-16 |
+| G-17 | D-8 | a `Completed` record is never `Alive` | PC-17 |
+| G-18 | D-8 | a start-intent or foreign record is `Unknown`, never `Alive` | PC-18 |
+| G-19 | D-8 | a non-`.json` or torn file surfaces as `Malformed` | PC-19 |
+| G-20 | D-9 | the inspector deletes nothing | PC-20 |
+| G-21 | D-8 | the inspector never opens `landing.lock` (CARD-0535 V-2b) | PC-21 |
+| G-22 | D-8 | a non-alive record younger than the threshold is not stale | PC-22 |
+| G-23 | TD-3 | a `null` liveness read is `Unknown`, never `Alive` | PC-23 |
+| G-24 | TD-3 | a `children` file surfaces as one `Malformed` finding | PC-24 |
+| G-25 | D-3 | no raise before the grace has elapsed | PC-25 |
+| G-26 | D-3 | an open episode past the grace is raised | PC-26 |
+| G-27 | D-4 | every open status (`Queued`, `Dispatched`, `Working`, `Blocked`) counts, so its caller is told | PC-27 |
+| G-28 | D-4 | specialist tasks' parents are not told | PC-28 |
+| G-29 | D-4 | only `ReplyTo == Session` parents are told | PC-29 |
+| G-30 | D-7 | a recorded caller is never told twice in one episode | PC-30 |
+| G-31 | D-3 | a flap inside the grace closes silently | PC-31 |
+| G-32 | D-7 | the recovery note goes only to `NotifiedSessionIds` | PC-32 |
+| G-33 | D-3 | a resolved episode leaves the state | PC-33 |
+| G-34 | D-5 | an excluded (draining/retired) runner never opens or raises an episode | PC-34 |
+| G-35 | D-5 | the exclusion is consulted on every wake, closing a raised episode | PC-35 |
+| G-36 | D-3 | disabled entries are never evaluated | PC-36 |
+| G-37 | D-5 | a cleared exclusion re-arms with `DownSince = now` | PC-37 |
+| G-38 | D-3 | the first pass opens an episode for a runner already down (the CARD-0716 restart case) | PC-38 |
+| G-39 | D-3 | a disconnect older than the last resolution is not reused as `DownSince` (instant false raise) | PC-39 |
+| G-40 | D-3 | a disconnect later than the last resolution is used as `DownSince` | PC-40 |
+| G-41 | TD-1 | a failed note leaves the caller unrecorded and is retried next wake | PC-41 |
+| G-42 | D-8 | repositories are keyed on the common directory (one row per repository) | PC-42 |
+| G-43 | D-8 | a missing or non-git path is skipped without aborting the pass | PC-43 |
+| G-44 | D-1 | `JournalEnabled = false` inspects nothing | PC-44 |
+| G-45 | D-3 | the wait due time includes each unraised episode's grace expiry | PC-45 |
+| G-46 | D-8 | `Fenced` wakes the loop | PC-46 |
+| G-47 | D-3 | no timer other than the grace and the sweep (no poll) | PC-47 |
+| G-48 | D-3 | the sweep runs at `SweepMinutes` | PC-48 |
+| G-49 | D-1 | `Enabled = false` returns at once | PC-49 |
+| G-50 | D-3 | a failing pass is caught, logged and retried; the loop survives | PC-50 |
+| G-51 | D-2 | `Signal` wakes the loop | PC-51 |
+| G-52 | D-7 | `deliverIfIdle: false` (never typed on the alarm loop's thread) | PC-52 |
+| G-53 | D-7 | the notifier hints `CompletionNoteFlushQueue.TryEnqueue(session)` | PC-53 |
+| G-54 | D-7 | origin `System` | PC-54 |
+| G-55 | D-4 | the caller receives the body, not only the header | PC-55 |
+| G-56 | D-7 | `MessageSendMode.WhenIdle`, never `Now` | PC-56 |
+| G-57 | TD-2 | a `Pending` alarm row is re-hinted on the next wake | PC-57 |
+| G-58 | S1 | `Program` passes the `AlarmWakeQueue` to the directory as its observer | PC-58 |
+| G-59 | S1 | `Program` gives the lease its fence observer | PC-59 |
+| G-60 | S3 | `Program` registers `RunnerAlarmHostedService` | PC-60 |
+| G-61 | D-5 | `Program` registers `NeverExcluded` as `IRunnerAlarmExclusion` | PC-61 |
+| G-62 | D-6 | an unraised episode is never a feed row | PC-62 |
+| G-63 | D-8 | the journal row counts stale records only | PC-63 |
+| G-64 | D-8 | a finding with no stale record is never a feed row | PC-64 |
+| G-65 | D-6 | both kinds count as Open in the summary | PC-65 |
+| G-66 | D-6 | the client maps both kinds to a visual | PC-66 |
+| G-67 | D-6 | the client puts both kinds in the `broken` home bucket at `Error` | PC-67 |
+
+Guards = 67, mapped = 67, missing = 0, duplicate PC maps = 0.
