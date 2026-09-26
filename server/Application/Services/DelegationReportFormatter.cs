@@ -221,6 +221,8 @@ public static class DelegationReportFormatter
             sb.AppendLine("Automatic commit-on-settle is disabled for this child to prevent recursion. "
                 + "You are explicitly authorized to commit the assigned paths through scripts/task-commit.ps1. "
                 + "Do NOT push. Report a gate refusal verbatim.").AppendLine();
+        else if (task.Workspace == WorkspaceMode.Shared && task.Role == AgentTaskRole.Merge)
+            sb.AppendLine("This is a conflict-resolution seat. Follow the push instructions in the goal for its named branch and remote lease. Never push a landing target by hand when the server owns its Land operation.").AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared && task.CommitOnSettle == CommitOnSettlePolicy.Never)
             sb.AppendLine(DoNotCommitLine).AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared
