@@ -693,3 +693,116 @@ Declared substitutes and what each cannot prove:
   types the held note; cannot prove the transcript ingester calls `OnTurnEndAsync` on a real
   TurnEnd, which is existing CARD-0055/0164 behaviour this card does not touch.
 - Dead or stopped caller (the note is never typed): out of scope per D-7; no substitute claims it.
+
+### Proves it works now
+
+Each row: `V-n: behaviour | layer | test | expected`, then the **decisive assertions**, the
+**red-first line** (the production change that turns the method red at that assertion; a compile
+failure is never counted) and the checkpoint rows. File homes: `Application/` classes sit beside
+`MultiRunnerDirectoryTests`, `Infrastructure/` beside `RepositoryMutationLeaseDescribeTests`.
+Every class carries `[Category("Unit")]` or `[Category("Integration")]` (R-5); every class that
+runs git or boots a process-spawning harness carries `[ParallelLimiter<ProcessSpawnLimit>]`.
+
+**S1: settings and seams** (`CP-1` red, `CP-2` green)
+
+- **V-1: `Alarms` defaults validate and every non-positive key is named | Unit |
+  `tests/Antiphon.Tests/Application/AlarmSettingsValidatorTests.cs`
+  `AlarmSettingsValidatorTests.defaults_validate_and_nonpositive_values_are_named` | green.**
+  Asserts `new AlarmSettings()` is `Enabled`, `JournalEnabled`, `RunnerGraceSeconds == 180`,
+  `SweepMinutes == 15`, `JournalStaleMinutes == 5` and `Validate(...).Succeeded`; each of
+  `RunnerGraceSeconds = 0`, `SweepMinutes = 0`, `JournalStaleMinutes = -1` alone gives `Failed`
+  with one failure containing `Alarms:<Key>`. Red: delete the `RunnerGraceSeconds <= 0` check ->
+  fails at the `Alarms:RunnerGraceSeconds` failure assertion.
+- **V-2: the directory tells the observer on recovery, supersede and a live disconnect, and only
+  then | Integration, real directory over `PhoneHomeTestHost` (MS-1) |
+  `tests/Antiphon.Tests/Application/RunnerEligibilityObserverTests.cs`
+  `RunnerEligibilityObserverTests.disconnect_recovery_and_supersede_notify_the_observer_with_the_runner_id`
+  | recorder sequence exactly as below.** Runners `runner-a`, `runner-b` (`Pair` as in
+  `MultiRunnerDirectoryTests`). First `ConnectPeerAsync(a)`: recorder `[]` (no supersede, no
+  flip). `MarkRecovered(liveA)`: `[a]`; `MarkRecovered(liveA)` again: still `[a]` (no flip, no
+  call). Connect a replacement for `a` while the first is live: `[a, a]`. `MarkRecovered(replacement)`:
+  `[a, a, a]`. `replacement.Socket.Abort()` and wait `Status(a).Available == false`: `[a, a, a, a]`,
+  and the superseded first connection's own route end adds nothing (it is not the slot's live
+  connection). `b` never appears. Red: remove the `Notify` after `MarkRecovered` -> fails at
+  `[a]`; after the supersede -> at `[a, a]`; after `Disconnect` -> at the fourth `a`; notify on a
+  non-flipping `MarkRecovered` -> at the repeated-call assertion.
+- **V-3: lease expiry seen by a read notifies once | Integration, `FakeTimeProvider` host (the
+  `DefaultRunnerEligibilityTests.cs:66-87` recipe) |
+  `RunnerEligibilityObserverTests.lease_expiry_seen_by_a_snapshot_notifies_once` | one new call.**
+  Recovered `a` (recorder `[a]`); `clock.Advance(91 s)`; `SnapshotLive(a)` twice and `Status(a)`
+  once: recorder `[a, a]` exactly and `Status(a).DispatchEligible == false`. Red: no `Notify` in
+  `SnapshotOf` -> fails at count 2; notify on every expired read instead of the true->false edge
+  -> fails at count 2 with 4.
+- **V-21: the directory's snapshot source reports one row per configured remote with the dispatch
+  predicate | Integration, `FakeTimeProvider` host |
+  `RunnerEligibilityObserverTests.snapshots_carry_one_row_per_configured_remote_with_the_dispatch_predicate`
+  | rows as below.** Configured `a`, `b` enabled and `c` with `Enabled = false`.
+  `((IRunnerEligibilitySnapshotSource)host.Directory).Snapshots()` ids are exactly `{a, b, c}` (no
+  `desktop`), `c.Enabled == false`; `a` connected but not recovered: `Eligible == false`;
+  recovered: `Eligible == true`, `Reconnects == 1`; `Advance(91 s)`: `Eligible == false`,
+  `DisconnectReason == "lease_expired"`. Red: derive `Eligible` from `Status.Available` instead of
+  `Status.DispatchEligible` -> fails at the connected-not-recovered assertion.
+- **V-22: a throwing observer never reaches the connect route or the pump | Integration |
+  `RunnerEligibilityObserverTests.a_throwing_observer_is_contained_and_logged` | no throw, one
+  Warning.** Observer throws on every call. `MarkRecovered(liveA)` and then
+  `Disconnect(liveA, "socket_closed")` do not throw (`Should.NotThrow`); after the first,
+  `Status(a).DispatchEligible == true`; after the second, `Status(a).Available == false`;
+  `host.Logs` holds Warning entries naming `runner-a` for each. Red: remove the observer
+  `try/catch` in `Notify` -> fails at the first `Should.NotThrow`.
+- **V-23: the observer runs outside the directory gate | Integration |
+  `RunnerEligibilityObserverTests.the_observer_runs_outside_the_directory_gate` | every
+  cross-thread read completes.** The observer's `Changed` runs `Task.Run(() =>
+  directory.Status(id)).Wait(TimeSpan.FromSeconds(2))` and records the result. After
+  `MarkRecovered(liveA)` and an abort: recorded results `[true, true]`. Red: move the `Notify`
+  call inside `lock (_gate)` in `MarkRecovered` -> the other thread blocks on `_gate` and the
+  first recorded result is `false`.
+- **V-4: the lease names the common directory on a journal fence only | Integration, real
+  `LandingGit` over `ScratchGitRepo` | `tests/Antiphon.Tests/Infrastructure/RepositoryFenceObserverTests.cs`
+  `RepositoryFenceObserverTests.a_fenced_acquire_and_a_describe_name_the_common_directory_once_each`
+  | recorder as below.** `new RepositoryMutationLease(git, fences: recorder)`. Busy lock first:
+  hold one lease, a second `TryAcquireAsync` returns null, recorder `[]`; release. Plant a dead
+  record (own PID, `StartTicks + 1`): `TryAcquireAsync` null and recorder `[common]`
+  (`LandingGit.PathsEqual`); `DescribeUnavailableAsync` non-null and recorder `[common, common]`;
+  delete the record: `TryAcquireAsync` succeeds, `DescribeUnavailableAsync` is null, recorder still
+  two entries. Red: drop the `Fenced` call in `AcquireAsync` -> fails at `[common]`; in
+  `DescribeUnavailableAsync` -> at the second entry; call `Fenced` in the `IOException` branch ->
+  at the busy-lock `[]`.
+
+**S2: the journal inspector** (`CP-3` red, `CP-4` green;
+`tests/Antiphon.Tests/Infrastructure/RepositoryChildJournalInspectorTests.cs`, real `LandingGit`,
+records planted as `RepositoryMutationLeaseTests.cs:515-523`, ages set with
+`File.SetLastWriteTimeUtc`, `now` passed explicitly)
+
+- **V-5: a live record is `Alive` and never stale | Integration |
+  `RepositoryChildJournalInspectorTests.a_live_record_is_alive_and_never_stale` | one finding.**
+  Record with the test process's PID and start ticks, written 1 h before `now`, threshold 5 min:
+  `Findings.Single()` has `State == Alive`, `Stale == false`, `ProcessId == Environment.ProcessId`;
+  `StaleCount == 0`. Red: mark a record stale on age alone (drop the `State != Alive` term) ->
+  fails at `Stale == false`.
+- **V-6: every non-live record past the threshold is stale and named | Integration |
+  `RepositoryChildJournalInspectorTests.dead_completed_unknown_and_malformed_records_past_the_threshold_are_stale`
+  | seven findings.** Seven files, all 10 min old: reused (own PID, `StartTicks + 1`) and missing
+  PID (`int.MaxValue`) -> `Dead`, `Dead`; `Completed` with null `StartTicks` -> `Completed`;
+  start intent (`ProcessId` and `StartTicks` null) and foreign `CommonDirectory` -> `Unknown`,
+  `Unknown`; `invalid json` in a `.json` and a `<guid>.json.tmp` -> `Malformed`, `Malformed`. The
+  state multiset is exactly that, every `Stale == true`, `StaleCount == 7`; afterwards all seven
+  files still exist and `<common>/antiphon/landing.lock` does not. Red: classify `false` liveness
+  as `Unknown` -> multiset; map a torn file to `Unknown` -> multiset; delete a classified file ->
+  the file-count assertion; open `landing.lock` -> the last assertion.
+- **V-7: the age threshold is inclusive and an absent journal raises nothing | Integration |
+  `RepositoryChildJournalInspectorTests.age_threshold_is_inclusive_and_an_absent_journal_raises_nothing`
+  | as below.** One dead record: inspected at write time + 4:59 -> `Dead`, `Stale == false`; at
+  + 5:00 -> `Stale == true`. A repository with no `antiphon/children`: zero findings, and neither
+  `children` nor `landing.lock` is created. Red: `>` for `>=` in the age comparison -> fails at
+  the 5:00 assertion.
+- **V-24: an unreadable process is `Unknown` and stale (TD-3) | Integration, MS-2 |
+  `RepositoryChildJournalInspectorTests.a_record_whose_process_cannot_be_read_is_unknown_and_stale`
+  | one `Unknown` finding.** Inspector over `UnreadableLivenessGit`; the test process's own PID and
+  ticks, 10 min old: `State == Unknown`, `Stale == true`. Red: treat `null` liveness as alive
+  (`!= false`) -> `Alive`, `Stale == false`.
+- **V-25: a `children` path that is a file is one `Malformed` finding (TD-3) | Integration |
+  `RepositoryChildJournalInspectorTests.a_children_path_that_is_a_file_is_one_malformed_finding` |
+  one finding.** `antiphon/children` created as a file 10 min old: the lease's
+  `DescribeUnavailableAsync` is non-null (control: it fences), and the inspection has exactly one
+  finding, `Malformed`, `Stale`, whose `File` is that path. Red: return an empty inspection when
+  `children` is not a directory -> fails at the finding count.
