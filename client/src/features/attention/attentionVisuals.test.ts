@@ -19,6 +19,8 @@ import {
  * in a hurry.
  */
 const ALL_KINDS: AttentionKind[] = [
+  'RunnerUnavailable',
+  'RepositoryChildJournalStale',
   'LandHeld',
   'LandNoProgress',
   'LandOutcomeUnconfirmed',
@@ -89,6 +91,8 @@ function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): A
 
 describe('attentionVisuals', () => {
   it.each([
+    ['RunnerUnavailable', 'Error', 'broken'],
+    ['RepositoryChildJournalStale', 'Error', 'broken'],
     ['PoolDelegateUnreleased', 'Error', 'broken'],
     ['SessionStopStuck', 'Error', 'broken'],
     ['SessionUnowned', 'Warning', 'review'],

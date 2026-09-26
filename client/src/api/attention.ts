@@ -15,6 +15,8 @@ import type { AlertSeverity } from './agents'
 
 /** The named conditions. Mirrors the server enum; the server serialises these as strings. */
 export type AttentionKind =
+  | 'RunnerUnavailable'
+  | 'RepositoryChildJournalStale'
   | 'PoolDelegateUnreleased'
   | 'SessionStopStuck'
   | 'SessionUnowned'
