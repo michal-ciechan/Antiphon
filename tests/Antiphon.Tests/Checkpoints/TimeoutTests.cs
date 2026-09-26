@@ -1,10 +1,13 @@
+using System.Diagnostics;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TimeoutTests
 {
     [Test]
@@ -51,6 +54,75 @@ public sealed class TimeoutTests
             TotalTimeout = TimeSpan.FromMilliseconds(200),
         }, CancellationToken.None);
         result.Rows.Select(row => row.State).OrderBy(state => state).ShouldBe(["skipped", "timeout"]);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task windows_row_timeout_kills_the_breakaway_grandchild(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("Windows Job Object kill covers a grandchild whose parent has exited.");
+            return;
+        }
+
+        var marker = "C760W2" + Guid.NewGuid().ToString("N");
+        try
+        {
+            var command = "start /b pwsh -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 600 # " + marker + "\"";
+            var result = await RowTimeout.RunWithDeadlineAsync(
+                new ProcessDriver(),
+                new DriverRequest("cmd.exe", ["/d", "/s", "/c", command], CheckpointFixtures.TempDir()),
+                TimeSpan.FromMinutes(1),
+                cancellationToken);
+            result.TimedOut.ShouldBeTrue();
+            PidsWithMarker(marker).ShouldBeEmpty();
+        }
+        finally
+        {
+            foreach (var pid in PidsWithMarker(marker))
+            {
+                try
+                {
+                    Process.GetProcessById(pid).Kill(entireProcessTree: true);
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                }
+            }
+        }
+    }
+
+    private static int[] PidsWithMarker(string marker)
+    {
+        var split = marker.Length / 2;
+        var script = "$m='" + marker[..split] + "'+'" + marker[split..] + "'; "
+            + "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ('*'+$m+'*') -and $_.ProcessId -ne $PID } "
+            + "| ForEach-Object { $_.ProcessId }";
+        var start = new ProcessStartInfo("powershell.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(script);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("powershell did not start");
+        var text = process.StandardOutput.ReadToEnd();
+        if (!process.WaitForExit(20_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            return [];
+        }
+
+        return text.Split(['\r', '\n', ' '], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => int.TryParse(line.Trim(), out var pid) ? pid : 0)
+            .Where(pid => pid > 0 && pid != Environment.ProcessId)
+            .Distinct()
+            .ToArray();
     }
 
     [Test]
