@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -26,7 +27,7 @@ public sealed class CardTaskSettlementTests
         var task = await world.SeedTaskAsync(card.Id, AgentTaskStatus.Blocked, sessionId: sessionId);
         var stopper = new RecordingSessionStopper();
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         var cards = world.Cards(db, stopper);
         var result = await cards.MoveAsync(
             card.Id,
@@ -56,7 +57,7 @@ public sealed class CardTaskSettlementTests
             card.Id, AgentTaskStatus.Dispatched, sessionId: sessionId, dispatchedAt: dispatchedAt, createdAt: Utc(-6));
         await world.SeedBriefAsync(sessionId, dispatched.Id, dispatchedAt, QueuedMessageStatus.Pending);
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         var result = await world.Cards(db, new RecordingSessionStopper()).MoveAsync(
             card.Id,
             new MoveCardRequest(world.Done.Id, card.ConcurrencyToken, "finished"),
@@ -83,7 +84,7 @@ public sealed class CardTaskSettlementTests
             card.Id, AgentTaskStatus.Working, sessionId: workingSession, dispatchedAt: Utc(-15), createdAt: Utc(-16));
         var stopper = new RecordingSessionStopper();
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         var result = await world.Cards(db, stopper).MoveAsync(
             card.Id,
             new MoveCardRequest(world.Done.Id, card.ConcurrencyToken, "shipped"),
@@ -115,7 +116,7 @@ public sealed class CardTaskSettlementTests
         var settledEvents = (await world.EventsAsync(settled.Id, type: null)).Count;
         var outsiderEvents = (await world.EventsAsync(outsider.Id, type: null)).Count;
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         await world.Cards(db, new RecordingSessionStopper()).MoveAsync(
             closing.Id,
             new MoveCardRequest(world.Done.Id, closing.ConcurrencyToken, "done"),
@@ -135,7 +136,7 @@ public sealed class CardTaskSettlementTests
         var card = await world.SeedCardAsync("CARD-0001", world.Backlog);
         var task = await world.SeedTaskAsync(card.Id, AgentTaskStatus.Queued);
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         var archived = await world.Cards(db, new RecordingSessionStopper()).ArchiveAsync(
             card.Id,
             new ArchiveCardRequest(card.ConcurrencyToken, "Duplicate of CARD-0002"),
@@ -154,7 +155,7 @@ public sealed class CardTaskSettlementTests
         var card = await world.SeedCardAsync("CARD-0020", world.Backlog);
         var task = await world.SeedTaskAsync(card.Id, AgentTaskStatus.Queued);
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         var cards = world.Cards(db, new RecordingSessionStopper());
         var reviewed = await cards.MoveAsync(
             card.Id,
@@ -189,7 +190,7 @@ public sealed class CardTaskSettlementTests
         var second = await world.SeedTaskAsync(card.Id, AgentTaskStatus.Queued, createdAt: Utc(-4));
         var stopper = new SucceedSecondOnKill(world.ConnectionString, firstSession, second.Id);
 
-        await using var db = world.Open();
+        await using var db = world.Connect();
         var result = await world.Cards(db, stopper).MoveAsync(
             card.Id,
             new MoveCardRequest(world.Done.Id, card.ConcurrencyToken, "closing"),
@@ -445,7 +446,7 @@ public sealed class CardTaskSettlementTests
         public static async Task<World> CreateAsync()
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await using var db = Open(schema);
+            await using var db = CardTaskSettlementTests.Open(schema);
             var now = DateTime.UtcNow;
             var project = new Project
             {
@@ -478,7 +479,7 @@ public sealed class CardTaskSettlementTests
             return new World(schema, backlog, inProgress, review, done);
         }
 
-        public AppDbContext Open() => CardTaskSettlementTests.Open(_schema);
+        public AppDbContext Connect() => CardTaskSettlementTests.Open(_schema);
 
         public CardService Cards(AppDbContext db, IDelegateSessionStopper stopper)
         {
@@ -491,7 +492,7 @@ public sealed class CardTaskSettlementTests
 
         public async Task<Card> SeedCardAsync(string identifier, BoardColumn column)
         {
-            await using var db = Open();
+            await using var db = Connect();
             var now = DateTime.UtcNow;
             var card = new Card
             {
@@ -513,7 +514,7 @@ public sealed class CardTaskSettlementTests
 
         public async Task<Guid> SeedSessionAsync()
         {
-            await using var db = Open();
+            await using var db = Connect();
             var now = DateTime.UtcNow;
             var session = new AgentSession
             {
@@ -540,7 +541,7 @@ public sealed class CardTaskSettlementTests
             DateTime? dispatchedAt = null,
             DateTime? createdAt = null)
         {
-            await using var db = Open();
+            await using var db = Connect();
             var task = NewTask(cardId, status, createdAt ?? DateTime.UtcNow, sessionId, dispatchedAt);
             db.AgentTasks.Add(task);
             await db.SaveChangesAsync();
@@ -549,7 +550,7 @@ public sealed class CardTaskSettlementTests
 
         public async Task SeedBriefAsync(Guid sessionId, Guid taskId, DateTime at, QueuedMessageStatus status)
         {
-            await using var db = Open();
+            await using var db = Connect();
             db.SessionQueuedMessages.Add(new SessionQueuedMessage
             {
                 Id = Guid.NewGuid(),
@@ -565,13 +566,13 @@ public sealed class CardTaskSettlementTests
 
         public async Task<AgentTask> ReloadTaskAsync(Guid id)
         {
-            await using var db = Open();
+            await using var db = Connect();
             return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
         }
 
         public async Task<List<AgentTaskEvent>> EventsAsync(Guid taskId, AgentTaskEventType? type)
         {
-            await using var db = Open();
+            await using var db = Connect();
             var query = db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == taskId);
             if (type is { } kind)
                 query = query.Where(e => e.Type == kind);
