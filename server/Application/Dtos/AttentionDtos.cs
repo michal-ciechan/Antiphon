@@ -309,6 +309,12 @@ public enum AttentionKind
 
     /// <summary>Grouped candidates from the last successful local OS census. Warning; absent before a run.</summary>
     ZombieCensusReport = 47,
+
+    /// <summary>
+    /// A task still open under a card that has been closed or archived (CARD-0738). Not stopped
+    /// by design: a human cancels it or reopens the card. Appended after shipped 47; do not renumber.
+    /// </summary>
+    CardClosedWhileWorking = 48,
 }
 
 /// <summary>
