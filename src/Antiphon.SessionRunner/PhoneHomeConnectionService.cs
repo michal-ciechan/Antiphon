@@ -67,7 +67,21 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Phone-home connection ended; reconnecting with backoff {Backoff}ms", backoff);
+                var reason = PhoneHomeReconnectReason.Classify(ex, stoppingToken);
+                if (reason.StartsWith("other:", StringComparison.Ordinal))
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Phone-home registration failed: reason={Reason} attempt={Attempt} backoffMs={Backoff}",
+                        reason, RegistrationAttempts, backoff);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Phone-home registration failed: reason={Reason} attempt={Attempt} backoffMs={Backoff}",
+                        reason, RegistrationAttempts, backoff);
+                }
+
                 await Task.Delay(TimeSpan.FromMilliseconds(backoff), _clock, stoppingToken);
                 backoff = Math.Min(backoff * 2, _settings.ReconnectBackoffMaxMs);
             }
@@ -81,6 +95,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         secret = secret.Trim();
         RegistrationAttempts++;
         using var http = _httpFactory.CreateClient(nameof(PhoneHomeConnectionService));
+        http.Timeout = TimeSpan.FromSeconds(_settings.RegistrationTimeoutSeconds);
         http.BaseAddress = new Uri(_settings.ServerOrigin.TrimEnd('/') + "/");
         using var register = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath.TrimStart('/'));
         register.Headers.TryAddWithoutValidation(PhoneHomeProtocol.SecretHeader, secret);
@@ -101,11 +116,21 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             ?? throw new InvalidOperationException("Empty registration response.");
 
         var ws = new ClientWebSocket();
-        ws.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
-        var origin = new Uri(_settings.ServerOrigin);
-        var wsScheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws";
-        var connect = new Uri($"{wsScheme}://{origin.Authority}/api/session-runners/{Uri.EscapeDataString(_settings.RunnerId)}/connect");
-        await ws.ConnectAsync(connect, ct);
+        try
+        {
+            ws.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
+            var origin = new Uri(_settings.ServerOrigin);
+            var wsScheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws";
+            var connect = new Uri($"{wsScheme}://{origin.Authority}/api/session-runners/{Uri.EscapeDataString(_settings.RunnerId)}/connect");
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(_settings.ConnectTimeoutSeconds));
+            await ws.ConnectAsync(connect, connectCts.Token);
+        }
+        catch
+        {
+            ws.Dispose();
+            throw;
+        }
         // CARD-0604 CP-6a: the SERVER owns the epoch and handed it to us in the registration
         // response. Numbering our own connections here desynchronised the two counters the moment
         // either process restarted alone, and both receive loops silently dropped every frame that
@@ -143,6 +168,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         var pendingEvents = 0;
         var pendingBytes = 0;
         var inFlight = 0;
+        WebSocketCloseStatus? peerClose = null;
+        string? peerCloseDescription = null;
         try
         {
             ended = await Task.WhenAny(receive, heartbeat, events);
@@ -154,6 +181,13 @@ public sealed class PhoneHomeConnectionService : BackgroundService
                 pendingBytes = lease.PendingBytes;
             }
             inFlight = InFlight;
+            // CARD-0716 D-4: a close frame is the receive loop returning. Read the status before
+            // dispose; a faulted loop has no close frame.
+            if (ended == receive && receive.IsCompletedSuccessfully)
+            {
+                peerClose = ws.CloseStatus;
+                peerCloseDescription = ws.CloseStatusDescription;
+            }
         }
         finally
         {
@@ -176,10 +210,23 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             { IsCanceled: true } => "cancelled",
             _ => "none",
         };
-        _logger.LogInformation(
-            "Phone-home connection ended: epoch={Epoch} loop={Loop} fault={Fault} overflow={Overflow} pending={PendingEvents} pendingBytes={PendingBytes} inFlight={InFlight} lifetimeMs={LifetimeMs}",
-            epoch, loop, fault, overflow ? "true" : "false", pendingEvents, pendingBytes, inFlight,
-            (long)_clock.GetElapsedTime(connectedAt).TotalMilliseconds);
+        var close = peerClose is { } status ? $"{status}:{peerCloseDescription}" : "none";
+        var transport = ended is { IsFaulted: true, Exception: { } faulted } ? FindWebSocket(faulted) : null;
+        if (transport is null)
+        {
+            _logger.LogInformation(
+                "Phone-home connection ended: epoch={Epoch} loop={Loop} fault={Fault} overflow={Overflow} pending={PendingEvents} pendingBytes={PendingBytes} inFlight={InFlight} lifetimeMs={LifetimeMs} close={Close}",
+                epoch, loop, fault, overflow ? "true" : "false", pendingEvents, pendingBytes, inFlight,
+                (long)_clock.GetElapsedTime(connectedAt).TotalMilliseconds, close);
+        }
+        else
+        {
+            var described = PhoneHomeTransportFault.Describe(transport);
+            _logger.LogInformation(
+                "Phone-home connection ended: epoch={Epoch} loop={Loop} fault={Fault} overflow={Overflow} pending={PendingEvents} pendingBytes={PendingBytes} inFlight={InFlight} lifetimeMs={LifetimeMs} close={Close} wsError={WsError} socketError={SocketError}",
+                epoch, loop, fault, overflow ? "true" : "false", pendingEvents, pendingBytes, inFlight,
+                (long)_clock.GetElapsedTime(connectedAt).TotalMilliseconds, close, described.WsError, described.SocketError);
+        }
 
         if (overflow)
             throw new PhoneHomeTransportException(PhoneHomeProblemTypes.EventOverflow, "Event hub overflow.");
@@ -337,6 +384,29 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             if (reader is ISessionRunnerEventLease unread)
                 unread.ReleaseUnread();
         }
+    }
+
+    private static WebSocketException? FindWebSocket(Exception exception)
+    {
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                var found = FindWebSocket(inner);
+                if (found is not null)
+                    return found;
+            }
+
+            return null;
+        }
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is WebSocketException webSocket)
+                return webSocket;
+        }
+
+        return null;
     }
 
     private void CancelWaiters(long epoch)
