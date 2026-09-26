@@ -185,7 +185,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
 
         await world.TickAsync();
         var mirror = await world.PeerA.WaitForAsync(PhoneHomeOperation.WorkspaceMirror, TimeSpan.FromSeconds(15));
-        var request = mirror.Payload!.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var request = mirror.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json);
+        request.ShouldNotBeNull();
         var oldPath = "/work/runners/server2/" + request.Name;
         var newPath = "/work/worktrees/" + request.Name;
 
@@ -200,7 +201,9 @@ public sealed partial class PhoneHomeRollingRunnerTests
         world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBe(0);
         world.PeerB.Launches.ShouldBeEmpty();
 
-        await world.PeerA.EmitAsync(Result(mirror, new PhoneHomeWorkspaceMirrorResponse(oldPath)));
+        await world.PeerA.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Result, mirror.Epoch, mirror.RequestId, mirror.Operation,
+            JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(oldPath), PhoneHomeFraming.Json)));
         await world.WaitPrepAsync();
 
         for (var tick = 0; tick < 6 && world.PeerB.Launches.Count == 0; tick++)
@@ -212,7 +215,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
         world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBeGreaterThanOrEqualTo(1);
         world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBeGreaterThanOrEqualTo(1);
         world.PeerB.Launches.Count.ShouldBe(1);
-        var cwd = world.PeerB.Launches[0].Payload!.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)!.Cwd;
+        var cwd = world.PeerB.Launches[0].Payload?.Deserialize<RunnerLaunchRequest>(PhoneHomeFraming.Json)?.Cwd;
         cwd.ShouldBe(newPath);
         cwd.ShouldNotBe(oldPath);
         var saved = await world.ReadTaskAsync(id);
