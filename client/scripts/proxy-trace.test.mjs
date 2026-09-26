@@ -47,6 +47,18 @@ describe('phone-home proxy trace', () => {
     expect(lines).toEqual([])
   })
 
+  it('still logs to the console when the file append throws', () => {
+    const lines = []
+    const proxy = new EventEmitter()
+    createWsProxyTrace({
+      log: (line) => lines.push(line),
+      appendLine: () => { throw new Error('EBUSY') },
+    })(proxy)
+    const client = socket(7)
+    expect(() => proxy.emit('error', { code: 'ECONNRESET' }, { url: '/api/session-runners/x/connect', socket: client })).not.toThrow()
+    expect(lines.some((line) => line.includes('ws error ECONNRESET'))).toBe(true)
+  })
+
   it('names a reset on the connect upgrade', () => {
     const { lines, proxy } = harness()
     const client = socket(4242)
