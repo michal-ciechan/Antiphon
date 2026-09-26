@@ -28,8 +28,12 @@ public sealed class RunStateStoreTests
                     Interlocked.Increment(ref seen);
             }
         });
-        for (var i = 1; i <= 80; i++)
+        for (var i = 1; i <= 400 && Volatile.Read(ref seen) == 0; i++)
+        {
             store.Write(path, new RunState { RunId = i.ToString(), Marker = new string('x', i), Phase = "running" });
+            if (i % 8 == 0)
+                await Task.Yield();
+        }
         Volatile.Write(ref stop, true);
         await reader;
         failures.ShouldBe(0);
