@@ -241,9 +241,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddScoped<ModelAvailability>();
         services.AddSingleton(Options.Create(new DeliverablesSettings
         {
-            BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
         }));
-        services.AddSingleton<MarkdownPdfRenderer>();
         services.AddSingleton<DeliverableBundleService>();
         services.AddSingleton<AgentTaskReplyService>();
         services.AddSingleton<AgentTaskLandQueue>();

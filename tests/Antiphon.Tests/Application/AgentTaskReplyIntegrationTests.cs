@@ -5226,9 +5226,7 @@ public partial class AgentTaskReplyIntegrationTests
             }, workspaceGit: gitSpy);
             services.AddSingleton(Options.Create(new DeliverablesSettings
             {
-                BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
             }));
-            services.AddSingleton<MarkdownPdfRenderer>();
             services.AddSingleton<DeliverableBundleService>();
             configureServices?.Invoke(services);
             _provider = services.BuildServiceProvider();

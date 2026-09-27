@@ -264,8 +264,9 @@ public sealed class AgentWorkspaceProvisioner
                 + "To send a file to the chat, put `[[attach: <absolute path>]]` on its own line in the turn that\n"
                 + "answers the chat — or in a turn triggered by an Antiphon note (`[task … done]`, a check-in).\n"
                 + "Your reply to a `[task …]`, `[check …]` or scheduled note is delivered to the chat as a follow-up unless it is exactly `NO_REPLY`; a delegate's own `[[attach:]]` is not — re-emit it or let the `--- deliverable ---` block do it.\n"
-                + "Up to 14 MB per turn. Always attach a PDF for documents: Slack renders HTML as a text snippet,\n"
-                + "local paths mean nothing to the chat, and a chat user cannot see later file edits.");
+                + "Up to 14 MB per turn. Completed document tasks attach their Markdown sources automatically;\n"
+                + "a configured channel delivery step may add a converted file. Local paths mean nothing to the chat,\n"
+                + "and a chat user cannot see later file edits.");
         }
 
         return text.ToString();

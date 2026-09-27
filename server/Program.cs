@@ -713,7 +713,6 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddSingleton<GitWorkspaceService>();
     builder.Services.AddSingleton<GatedCommitService>();
     builder.Services.AddSingleton<IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
-    builder.Services.AddSingleton<MarkdownPdfRenderer>();
     builder.Services.AddSingleton<DeliverableBundleService>();
     builder.Services.AddMemoryCache();
     builder.Services.AddSingleton<ProjectReadinessCache>();

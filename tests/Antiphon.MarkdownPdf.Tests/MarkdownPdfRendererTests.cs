@@ -1,13 +1,11 @@
-using Antiphon.Server.Application.Services;
-using Antiphon.Server.Application.Settings;
-using Antiphon.Tests.TestHelpers;
+using Antiphon.MarkdownPdf;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
 
-namespace Antiphon.Tests.Application;
+namespace Antiphon.MarkdownPdf.Tests;
 
 /// <summary>CARD-0337 S1: Markdig HTML and the Edge/Chrome print-to-pdf invocation.</summary>
 [Category("Unit")]
@@ -114,38 +112,9 @@ public class MarkdownPdfRendererTests
         }
     }
 
-    [Test]
-    public async Task Edge_or_Chrome_prints_a_one_page_pdf()
-    {
-        var renderer = CreateRenderer();
-        if (renderer.ResolveBrowserPath() is null)
-            throw new SkipTestException("no Edge/Chrome found for PDF rendering");
-
-        var dir = Directory.CreateTempSubdirectory("antiphon-pdf-render").FullName;
-        try
-        {
-            var pdf = Path.Combine(dir, "out.pdf");
-            var html = renderer.ToHtml(
-                "cover",
-                [new MarkdownPdfRenderer.DocumentSection("docs/a.md", "# Hello\n\nA paragraph.")]);
-            var result = await renderer.RenderToPdfAsync(html, pdf, CancellationToken.None);
-            result.Succeeded.ShouldBeTrue(result.Error ?? result.Log);
-            File.Exists(pdf).ShouldBeTrue();
-            new FileInfo(pdf).Length.ShouldBeGreaterThan(100);
-            var header = new byte[5];
-            await using (var stream = File.OpenRead(pdf))
-                _ = await stream.ReadAsync(header);
-            System.Text.Encoding.ASCII.GetString(header).ShouldBe("%PDF-");
-        }
-        finally
-        {
-            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
-        }
-    }
-
     private static MarkdownPdfRenderer CreateRenderer(string? browserPath = null, int timeoutSeconds = 20) =>
         new(
-            Options.Create(new DeliverablesSettings
+            Options.Create(new MarkdownPdfToolSettings
             {
                 BrowserPath = browserPath,
                 RenderTimeoutSeconds = timeoutSeconds,

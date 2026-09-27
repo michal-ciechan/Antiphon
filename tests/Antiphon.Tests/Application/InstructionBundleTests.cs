@@ -23,6 +23,13 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void Channel_sources_do_not_instruct_universal_pdf_conversion()
+    {
+        ChannelPreamble.TelegramPresetTemplate.ShouldNotContain("Prefer PDF for documents");
+        InstructionBundles.All["orchestrator"].Text.ShouldNotContain("Prefer PDF");
+    }
+
+    [Test]
     public void Phone_with_attachments_and_append_keeps_the_command_line_budget_guard()
     {
         var composed = InstructionBundleComposer.Compose(
