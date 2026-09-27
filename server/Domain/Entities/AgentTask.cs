@@ -25,6 +25,8 @@ public class AgentTask
     public DateTime? SpecialistSessionStartedAt { get; set; }
     public Guid? SpecialistProfileRevisionId { get; set; }
     public Guid Id { get; set; }
+    /// <summary>Internal outbound preparation purpose; never accepted from the public task API.</summary>
+    public Guid? OutboundDeliveryId { get; set; }
 
     /// <summary>Equals <see cref="Id"/> for roots. Denormalised so a whole run is one query.</summary>
     public Guid RootTaskId { get; set; }

@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260927195749_AddChannelOutboundDelivery")]
+    partial class AddChannelOutboundDelivery
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -988,9 +991,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("CardId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("CardWorkflowStageId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("CheckCount")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -1258,14 +1258,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<long?>("ReportNudgedSequence")
                         .HasColumnType("bigint");
 
-                    b.Property<int>("RequestedWorktreeBaseMode")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<Guid?>("RequestedWorktreeBaseTaskId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("RequiredPlatform")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -1415,13 +1407,6 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
-                    b.Property<string>("WorktreeBaseBranch")
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<string>("WorktreeBasePreviewJson")
-                        .HasColumnType("text");
-
                     b.Property<string>("WorktreeBaseRef")
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)");
@@ -1462,9 +1447,6 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("CardId")
                         .HasDatabaseName("IX_AgentTasks_CardId");
-
-                    b.HasIndex("CardWorkflowStageId")
-                        .HasDatabaseName("IX_AgentTasks_CardWorkflowStageId");
 
                     b.HasIndex("Id")
                         .HasDatabaseName("IX_AgentTasks_MissingCompletionNote")
@@ -2935,9 +2917,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
-                    b.Property<Guid?>("PipelineDefinitionId")
-                        .HasColumnType("uuid");
-
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -2959,9 +2938,6 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("PipelineDefinitionId")
-                        .HasDatabaseName("IX_Boards_PipelineDefinitionId");
 
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("IX_Boards_ProjectId");
@@ -3589,6 +3565,9 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("CardId")
                         .HasColumnType("uuid");
 
@@ -3605,12 +3584,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
-                    b.Property<Guid>("PipelineDefinitionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("PipelineDefinitionRevisionId")
-                        .HasColumnType("uuid");
-
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3620,25 +3593,29 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("WorkflowDefinitionSnapshot")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("WorkflowName")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<Guid?>("WorkflowTemplateId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
+                    b.HasIndex("AgentId")
+                        .HasDatabaseName("IX_CardWorkflowRuns_AgentId");
+
                     b.HasIndex("CardId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_CardWorkflowRuns_CardId_Open")
-                        .HasFilter("\"Status\" IN (0, 1)");
+                        .HasDatabaseName("IX_CardWorkflowRuns_CardId");
 
                     b.HasIndex("CurrentStageId");
 
-                    b.HasIndex("PipelineDefinitionId")
-                        .HasDatabaseName("IX_CardWorkflowRuns_PipelineDefinitionId");
-
-                    b.HasIndex("PipelineDefinitionRevisionId")
-                        .HasDatabaseName("IX_CardWorkflowRuns_PipelineDefinitionRevisionId");
+                    b.HasIndex("WorkflowTemplateId");
 
                     b.HasIndex("CardId", "Id")
                         .IsUnique()
@@ -3656,15 +3633,6 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("AllowedNextJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("BundleKey")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
                     b.Property<Guid>("CardWorkflowRunId")
                         .HasColumnType("uuid");
 
@@ -3674,9 +3642,21 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ExecutorType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("FailureReason")
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
+
+                    b.Property<bool>("GateRequired")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ModelName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -3687,9 +3667,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
-                    b.Property<int>("Role")
-                        .HasColumnType("integer");
-
                     b.Property<int>("StageOrder")
                         .HasColumnType("integer");
 
@@ -3699,6 +3676,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
+                    b.Property<string>("SystemPrompt")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3707,10 +3688,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("CardWorkflowRunId", "Id")
                         .IsUnique()
                         .HasDatabaseName("IX_CardWorkflowStages_RunId_Id");
-
-                    b.HasIndex("CardWorkflowRunId", "Role")
-                        .IsUnique()
-                        .HasDatabaseName("IX_CardWorkflowStages_RunId_Role");
 
                     b.HasIndex("CardWorkflowRunId", "StageOrder")
                         .IsUnique()
@@ -5213,96 +5190,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("OutputDistillations", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineDefinition", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("ActiveRevisionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ArchivedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ArchivedBy")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("ArchivedReason")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int>("Source")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Name")
-                        .IsUnique()
-                        .HasDatabaseName("IX_PipelineDefinitions_Name");
-
-                    b.HasIndex("Id", "ActiveRevisionId");
-
-                    b.ToTable("PipelineDefinitions", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineDefinitionRevision", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ChangeNote")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("ContentHash")
-                        .IsRequired()
-                        .HasMaxLength(8)
-                        .HasColumnType("character(8)")
-                        .IsFixedLength();
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("DefinitionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("RevisionNumber")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("StagesJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DefinitionId", "RevisionNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_PipelineDefinitionRevisions_DefinitionId_RevisionNumber");
-
-                    b.ToTable("PipelineDefinitionRevisions", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_PipelineDefinitionRevisions_RevisionNumber_Positive", "\"RevisionNumber\" > 0");
-                        });
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Project", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5345,9 +5232,6 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("jsonb")
                         .HasDefaultValue("{}");
 
-                    b.Property<Guid?>("DefaultPipelineDefinitionId")
-                        .HasColumnType("uuid");
-
                     b.Property<bool>("GitHubIntegrationEnabled")
                         .HasColumnType("boolean");
 
@@ -5381,9 +5265,6 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("DefaultPipelineDefinitionId")
-                        .HasDatabaseName("IX_Projects_DefaultPipelineDefinitionId");
 
                     b.HasIndex("Name")
                         .IsUnique();
@@ -8151,11 +8032,6 @@ namespace Antiphon.Server.Migrations
                         .HasForeignKey("CardId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Antiphon.Server.Domain.Entities.CardWorkflowStage", "CardWorkflowStage")
-                        .WithMany()
-                        .HasForeignKey("CardWorkflowStageId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("Antiphon.Server.Domain.Entities.ChannelOutboundDelivery", null)
                         .WithMany()
                         .HasForeignKey("OutboundDeliveryId")
@@ -8177,8 +8053,6 @@ namespace Antiphon.Server.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Card");
-
-                    b.Navigation("CardWorkflowStage");
 
                     b.Navigation("ParentTask");
                 });
@@ -8370,18 +8244,11 @@ namespace Antiphon.Server.Migrations
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Board", b =>
                 {
-                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineDefinition", "PipelineDefinition")
-                        .WithMany()
-                        .HasForeignKey("PipelineDefinitionId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Antiphon.Server.Domain.Entities.Project", "Project")
                         .WithMany("Boards")
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.Navigation("PipelineDefinition");
 
                     b.Navigation("Project");
                 });
@@ -8498,6 +8365,12 @@ namespace Antiphon.Server.Migrations
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardWorkflowRun", b =>
                 {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
+                        .WithMany("WorkflowRuns")
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
                         .WithMany("WorkflowRuns")
                         .HasForeignKey("CardId")
@@ -8509,25 +8382,18 @@ namespace Antiphon.Server.Migrations
                         .HasForeignKey("CurrentStageId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineDefinition", "PipelineDefinition")
+                    b.HasOne("Antiphon.Server.Domain.Entities.WorkflowTemplate", "WorkflowTemplate")
                         .WithMany()
-                        .HasForeignKey("PipelineDefinitionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .HasForeignKey("WorkflowTemplateId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineDefinitionRevision", "PipelineDefinitionRevision")
-                        .WithMany("Runs")
-                        .HasForeignKey("PipelineDefinitionRevisionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                    b.Navigation("Agent");
 
                     b.Navigation("Card");
 
                     b.Navigation("CurrentStage");
 
-                    b.Navigation("PipelineDefinition");
-
-                    b.Navigation("PipelineDefinitionRevision");
+                    b.Navigation("WorkflowTemplate");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardWorkflowStage", b =>
@@ -8762,38 +8628,6 @@ namespace Antiphon.Server.Migrations
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineDefinition", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineDefinitionRevision", "ActiveRevision")
-                        .WithMany()
-                        .HasForeignKey("Id", "ActiveRevisionId")
-                        .HasPrincipalKey("DefinitionId", "Id")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.Navigation("ActiveRevision");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineDefinitionRevision", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineDefinition", "Definition")
-                        .WithMany("Revisions")
-                        .HasForeignKey("DefinitionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Definition");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.Project", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineDefinition", "DefaultPipelineDefinition")
-                        .WithMany()
-                        .HasForeignKey("DefaultPipelineDefinitionId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("DefaultPipelineDefinition");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.RemoteControlModalEpisode", b =>
@@ -9133,6 +8967,8 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("BundleAttachments");
 
                     b.Navigation("QueueCards");
+
+                    b.Navigation("WorkflowRuns");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentSession", b =>
@@ -9216,16 +9052,6 @@ namespace Antiphon.Server.Migrations
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.LlmProvider", b =>
                 {
                     b.Navigation("ModelRoutings");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineDefinition", b =>
-                {
-                    b.Navigation("Revisions");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineDefinitionRevision", b =>
-                {
-                    b.Navigation("Runs");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Project", b =>

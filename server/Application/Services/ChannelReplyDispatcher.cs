@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Exceptions;
@@ -18,6 +19,7 @@ public enum ChannelReplyDispatchOutcome
 {
     NotPublished,
     Published,
+    Deferred,
     IntentionallyWithheld,
     PublicationFailed,
 }
@@ -29,7 +31,8 @@ public enum ChannelReplyDispatchOutcome
 public sealed record ChannelReplyDispatchResult(
     IReadOnlySet<Guid> PublishedCorrelationIds,
     IReadOnlySet<Guid> IntentionallyWithheldCorrelationIds,
-    IReadOnlySet<Guid> FailedCorrelationIds)
+    IReadOnlySet<Guid> FailedCorrelationIds,
+    IReadOnlySet<Guid>? DeferredCorrelationIds = null)
 {
     public static ChannelReplyDispatchResult Empty { get; } = new(
         new HashSet<Guid>(), new HashSet<Guid>(), new HashSet<Guid>());
@@ -37,6 +40,8 @@ public sealed record ChannelReplyDispatchResult(
     public ChannelReplyDispatchOutcome OutcomeFor(Guid correlationId) =>
         PublishedCorrelationIds.Contains(correlationId)
             ? ChannelReplyDispatchOutcome.Published
+            : DeferredCorrelationIds?.Contains(correlationId) == true
+                ? ChannelReplyDispatchOutcome.Deferred
             : IntentionallyWithheldCorrelationIds.Contains(correlationId)
                 ? ChannelReplyDispatchOutcome.IntentionallyWithheld
                 : FailedCorrelationIds.Contains(correlationId)
@@ -76,7 +81,8 @@ public sealed record ChannelReplyDispatchResult(
 /// </summary>
 public sealed class ChannelReplyDispatcher
 {
-    private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
+    private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId,
+        IReadOnlyList<Guid> CorrelationIds);
 
     /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
     private enum LossReason
@@ -179,7 +185,8 @@ public sealed class ChannelReplyDispatcher
             .Where(m => m.Origin == QueuedMessageOrigin.Channel
                 && m.Status == QueuedMessageStatus.Sent
                 && m.ConversationKey != null
-                && m.ChannelReplySettledAt == null);
+                && m.ChannelReplySettledAt == null
+                && m.ChannelOutboundDeliveryId == null);
 
     /// <summary>
     /// Called on every completed turn. Cheap for sessions with no channel correlations (one indexed
@@ -337,12 +344,8 @@ public sealed class ChannelReplyDispatcher
             return ChannelReplyDispatchResult.Empty;
         }
 
-        // Resolve the reply target from the row itself — the whole CARD-0067 fix. ConversationKey is
-        // '{provider}:{conversationId}'; the addressing handle comes from the channel catalog, which
-        // keeps the newest one the provider gave us (for every Telegram record on the topic it equals
-        // the conversation id). ConversationId alone is a complete address for the gateway, so a
-        // missing catalog row degrades to a Warning and still sends — a reply nobody reads because
-        // the handle was null would be this card's bug wearing a different hat.
+        // Freeze the native handle from the inbound that caused this turn. The catalog handle may
+        // already name a newer Slack thread when an earlier answer is finally published.
         var targets = new List<ReplyTarget>();
         var unroutable = new List<SessionQueuedMessage>();
         foreach (var group in matches.GroupBy(m => m.ConversationKey!, StringComparer.Ordinal))
@@ -364,7 +367,9 @@ public sealed class ChannelReplyDispatcher
                     + "by conversation id alone", group.Key, sessionId);
             }
 
-            targets.Add(new ReplyTarget(provider, channel?.ReplyHandle, conversationId));
+            var replyHandle = await ResolveInboundReplyHandleAsync(db, group, channel?.ReplyHandle, ct);
+            targets.Add(new ReplyTarget(provider, replyHandle, conversationId,
+                group.Select(m => m.Id).ToArray()));
         }
 
         var failed = unroutable.Select(m => m.Id).ToHashSet();
@@ -386,8 +391,6 @@ public sealed class ChannelReplyDispatcher
         // correlation an unclaimed row would answer the same turn again — a duplicate into a real
         // family chat. Same shape, and the same reasoning, as the queue stamping Sent before it types.
         // A produce failure below un-claims, so a broker blip retries on the next turn end.
-        await SettleAsync(db, matches, ct);
-
         // Settling the correlations closes the turn — remember its watermark so text that lands
         // AFTER this dispatch (stop marker mid-stream) can still be delivered as a follow-up.
         _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
@@ -396,6 +399,7 @@ public sealed class ChannelReplyDispatcher
         // sends nothing — system notes and housekeeping turns must never spam the chat.
         if (ChannelContracts.IsNoReply(responseText))
         {
+            await SettleAsync(db, matches, ct);
             _logger.LogInformation(
                 "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) settled without a reply",
                 sessionId, matches.Count);
@@ -410,10 +414,13 @@ public sealed class ChannelReplyDispatcher
         // One reply per distinct conversation. With same-conversation batching this loop is
         // degenerate (exactly one send) — the fan-out is a deliberate latent safety net in case
         // batching scope ever widens to cross-conversation.
-        var produced = false;
-        try
+        var published = new HashSet<Guid>();
+        var deferred = new HashSet<Guid>();
+        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+        var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
+        foreach (var target in targets)
         {
-            foreach (var target in targets)
+            try
             {
                 var reply = new ChannelReply
                 {
@@ -424,38 +431,56 @@ public sealed class ChannelReplyDispatcher
                     Kind = kind,
                     Attachments = attachments,
                 };
-                await _producer.SendAsync(reply, ct);
+                var targetRows = matches.Where(m => target.CorrelationIds.Contains(m.Id)).ToList();
+                ChannelOutboundSendOutcome outcome;
+                if (outbound is null)
+                {
+                    await SettleAsync(db, targetRows, ct);
+                    await _producer.SendAsync(reply, ct);
+                    outcome = ChannelOutboundSendOutcome.Published;
+                }
+                else
+                {
+                    outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+                        new ChannelOutboundSource(sessionId, userPrompt.Sequence,
+                            userPrompt.Sequence + 1, maxTextSeq, "main", target.CorrelationIds,
+                            targetRows.Select(m => m.SourceTaskId).FirstOrDefault(id => id.HasValue)), ct);
+                }
+                if (outcome == ChannelOutboundSendOutcome.Published)
+                {
+                    published.UnionWith(target.CorrelationIds);
+                    try { await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct); }
+                    catch (Exception stampError) when (stampError is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(stampError,
+                            "Published reply to {ConversationId} but could not update its catalog preview",
+                            target.ConversationId);
+                    }
+                }
+                else
+                    deferred.UnionWith(target.CorrelationIds);
                 _logger.LogInformation(
-                    "Sent {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
-                    reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
+                    "{Outcome} {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
+                    outcome, reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
             }
-            produced = true;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Un-claim so the next turn end tries again, and drop the follow-up watermark with it —
-            // a turn whose reply never left must not have trailing text sent on its behalf.
-            _dispatched.TryRemove(sessionId, out _);
-            foreach (var m in matches)
-                m.ChannelReplySettledAt = null;
-            await db.SaveChangesAsync(CancellationToken.None);
-            _logger.LogError(ex,
-                "Producing the channel reply for session {SessionId} failed; {Count} correlation(s) returned to "
-                + "owed for the next turn end", sessionId, matches.Count);
-            failed.UnionWith(matches.Select(m => m.Id));
-        }
-
-        if (produced)
-        {
-            var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
-            foreach (var target in targets)
-                await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _dispatched.TryRemove(sessionId, out _);
+                foreach (var m in matches.Where(m => target.CorrelationIds.Contains(m.Id)))
+                    m.ChannelReplySettledAt = null;
+                await db.SaveChangesAsync(CancellationToken.None);
+                _logger.LogError(ex,
+                    "Producing the channel reply for session {SessionId} failed; target {ConversationId} remains owed",
+                    sessionId, target.ConversationId);
+                failed.UnionWith(target.CorrelationIds);
+            }
         }
 
         return new ChannelReplyDispatchResult(
-            failed.Count == 0 ? matches.Select(m => m.Id).ToHashSet() : new HashSet<Guid>(),
+            published,
             new HashSet<Guid>(),
-            failed);
+            failed,
+            deferred);
     }
 
     /// <summary>
@@ -1147,6 +1172,7 @@ public sealed class ChannelReplyDispatcher
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+        var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
         foreach (var target in turn.Targets)
         {
             var reply = new ChannelReply
@@ -1158,8 +1184,21 @@ public sealed class ChannelReplyDispatcher
                 Kind = kind,
                 Attachments = attachments,
             };
-            await _producer.SendAsync(reply, ct);
-            await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct);
+            var outcome = outbound is null
+                ? await SendLegacyFollowUpAsync(reply, ct)
+                : await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+                    new ChannelOutboundSource(sessionId, turn.PromptSeq,
+                        turn.MaxTextSeq + 1, claimed.MaxTextSeq, "trailing", []), ct);
+            if (outcome == ChannelOutboundSendOutcome.Published)
+            {
+                try { await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct); }
+                catch (Exception stampError) when (stampError is not OperationCanceledException)
+                {
+                    _logger.LogWarning(stampError,
+                        "Published follow-up to {ConversationId} but could not update its catalog preview",
+                        target.ConversationId);
+                }
+            }
             _logger.LogInformation(
                 "Sent follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
                 reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
@@ -1169,6 +1208,12 @@ public sealed class ChannelReplyDispatcher
         // the advanced watermark for a later fragment of the same turn.
         if (nextPromptSeq is not null)
             _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
+    }
+
+    private async Task<ChannelOutboundSendOutcome> SendLegacyFollowUpAsync(ChannelReply reply, CancellationToken ct)
+    {
+        await _producer.SendAsync(reply, ct);
+        return ChannelOutboundSendOutcome.Published;
     }
 
     /// <summary>
@@ -1241,7 +1286,8 @@ public sealed class ChannelReplyDispatcher
                     || m.Origin == QueuedMessageOrigin.System
                     || m.Origin == QueuedMessageOrigin.Scheduled)
                 && m.Status == QueuedMessageStatus.Sent
-                && m.ChannelReplySettledAt == null)
+                && m.ChannelReplySettledAt == null
+                && m.ChannelOutboundDeliveryId == null)
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
         var ids = ChannelContracts.CollectInjectionShortIds(promptText);
@@ -1308,8 +1354,6 @@ public sealed class ChannelReplyDispatcher
                 conversationKey, sessionId);
         }
 
-        await SettleAsync(db, matches, ct);
-
         var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId, impliedPaths);
         // A remaining-text of NO_REPLY still sends — the marker is the explicit ask. Empty text
         // (the file IS the follow-up), never a skip.
@@ -1317,22 +1361,41 @@ public sealed class ChannelReplyDispatcher
             bodyText = "";
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
-        var target = new ReplyTarget(provider, channel?.ReplyHandle, conversationId);
+        var replyHandle = await ResolveInboundReplyHandleAsync(db, matches, channel?.ReplyHandle, ct);
+        var target = new ReplyTarget(provider, replyHandle, conversationId,
+            matches.Select(m => m.Id).ToArray());
 
+        var publicationAccepted = false;
         try
         {
             var reply = new ChannelReply
             {
                 Channel = provider,
-                ReplyHandle = channel?.ReplyHandle,
+                ReplyHandle = replyHandle,
                 ConversationId = conversationId,
                 Text = text.Length == 0 ? null : text,
                 Kind = kind,
                 Attachments = attachments,
             };
-            await _producer.SendAsync(reply, ct);
-            StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
-            await db.SaveChangesAsync(ct);
+            var outbound = scope.ServiceProvider.GetService<ChannelOutboundService>();
+            ChannelOutboundSendOutcome outcome;
+            if (outbound is null)
+            {
+                await SettleAsync(db, matches, ct);
+                await _producer.SendAsync(reply, ct);
+                outcome = ChannelOutboundSendOutcome.Published;
+            }
+            else
+                outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+                    new ChannelOutboundSource(sessionId, userPrompt.Sequence,
+                        userPrompt.Sequence + 1, maxTextSeq, "machine", target.CorrelationIds,
+                        impliedTasks.FirstOrDefault()?.Id), ct);
+            publicationAccepted = outcome == ChannelOutboundSendOutcome.Published;
+            if (outcome == ChannelOutboundSendOutcome.Published)
+            {
+                StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
+                await db.SaveChangesAsync(ct);
+            }
             _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
             _logger.LogInformation(
                 "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
@@ -1341,20 +1404,26 @@ public sealed class ChannelReplyDispatcher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            foreach (var m in matches)
-                m.ChannelReplySettledAt = null;
-            foreach (var task in impliedTasks)
-                task.DeliverableDeliveredAt = null;
-            await db.SaveChangesAsync(CancellationToken.None);
+            if (!publicationAccepted)
+            {
+                foreach (var m in matches)
+                    m.ChannelReplySettledAt = null;
+                foreach (var task in impliedTasks)
+                    task.DeliverableDeliveredAt = null;
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
             _logger.LogError(ex,
-                "Producing the machine-turn follow-up for session {SessionId} failed; "
-                + "{Count} injection row(s) returned to unclaimed for the next turn end",
-                sessionId, matches.Count);
+                "Machine-turn follow-up for session {SessionId} failed after accepted={Accepted}; "
+                + "{Count} injection row(s) affected",
+                sessionId, publicationAccepted, matches.Count);
             return;
         }
 
-        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
-        await channels.StampLastReplyAsync(provider, conversationId, text, ct);
+        if (matches.All(m => m.ChannelOutboundDeliveryId is null))
+        {
+            var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+            await channels.StampLastReplyAsync(provider, conversationId, text, ct);
+        }
     }
 
     private static bool MatchesByTaskId(
@@ -1623,6 +1692,34 @@ public sealed class ChannelReplyDispatcher
 
     private static string Normalize(string s) =>
         s.ReplaceLineEndings("\n").Trim();
+
+    private static async Task<string?> ResolveInboundReplyHandleAsync(AppDbContext db,
+        IEnumerable<SessionQueuedMessage> rows, string? catalogHandle, CancellationToken ct)
+    {
+        var inboundIds = rows.OrderByDescending(r => r.Sequence)
+            .Where(r => r.SourceChannelInboundId.HasValue)
+            .Select(r => r.SourceChannelInboundId!.Value).ToArray();
+        if (inboundIds.Length == 0)
+            return catalogHandle;
+        var envelopes = await db.ChannelInbounds.AsNoTracking()
+            .Where(i => inboundIds.Contains(i.Id) && i.EnvelopeJson != null)
+            .Select(i => new { i.Id, i.EnvelopeJson }).ToListAsync(ct);
+        var byId = envelopes.ToDictionary(i => i.Id, i => i.EnvelopeJson);
+        foreach (var id in inboundIds)
+        {
+            if (!byId.TryGetValue(id, out var json) || json is null)
+                continue;
+            try
+            {
+                var handle = JsonSerializer.Deserialize<ChannelMessage>(json,
+                    global::Antiphon.Messaging.MessagingJson.Options)?.ReplyHandle;
+                if (!string.IsNullOrWhiteSpace(handle))
+                    return handle;
+            }
+            catch (JsonException) { /* Old or damaged envelope: use the catalog fallback. */ }
+        }
+        return catalogHandle;
+    }
 
     /// <summary>
     /// Final answer vs blocking question. Heuristic: the response's closing line asking something is

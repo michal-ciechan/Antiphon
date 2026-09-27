@@ -28,6 +28,15 @@ public static class ChannelEndpoints
         channels.MapGet("/outbound-profiles", (ChatChannelService service) =>
             Results.Ok(service.GetOutboundProfiles()));
 
+        channels.MapPost("/outbound-deliveries/{id:guid}/retry", async (
+            Guid id, RetryUncertainOutboundRequest request, ChannelOutboundService service,
+            CancellationToken cancellationToken) =>
+        {
+            await service.RetryUncertainAsync(id, request.AcknowledgePossibleDuplicate,
+                cancellationToken);
+            return Results.Accepted();
+        });
+
         channels.MapPatch("/{id:guid}", async (
             Guid id,
             UpdateChatChannelRequest request,
@@ -43,3 +52,5 @@ public static class ChannelEndpoints
         // that deserves its own card if it is ever wanted.
     }
 }
+
+public sealed record RetryUncertainOutboundRequest(bool AcknowledgePossibleDuplicate);

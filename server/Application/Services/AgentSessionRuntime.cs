@@ -675,6 +675,7 @@ public sealed class AgentSessionRuntime
         {
             var outcome = dispatchResult.OutcomeFor(row.Id);
             if (outcome is ChannelReplyDispatchOutcome.Published
+                or ChannelReplyDispatchOutcome.Deferred
                 or ChannelReplyDispatchOutcome.IntentionallyWithheld
                 || row.ChannelReplySettledAt is not null)
             {
@@ -684,7 +685,7 @@ public sealed class AgentSessionRuntime
             _logger.LogWarning(
                 "Late-confirmed channel reply was not published after recovery dispatch: session {SessionId}, "
                 + "queue message/correlation {QueueMessageId}, conversation {ConversationKey}, dispatch outcome "
-                + "{DispatchOutcome}. The correlation remains owed for the existing loss/TTL path.",
+                + "{DispatchOutcome}. The correlation remains owed for the existing loss/TTL path unless durable preparation owns it.",
                 sessionId, row.Id, row.ConversationKey, outcome);
         }
     }

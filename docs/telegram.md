@@ -44,6 +44,29 @@ existing incident policies.
 Capacity notices use the reply handle captured in that inbound envelope, even if the channel
 catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 
+## Optional outbound agent preparation (CARD-0418)
+
+Agent replies normally publish directly with source Markdown attachments. A channel may select
+one named `ChannelOutbound:Profiles` entry with `PATCH /api/channels/{id}`. Its worker belongs to
+the same project, has its own workspace, and reads a frozen request under the server's durable
+`.antiphon/outbound/<delivery-id>/` directory. `MarkdownSources` runs for an attached Markdown
+source or source manifest; `EveryAgentReply` runs for every agent reply. Server-composed control
+notices and proactive sends always publish directly. Clearing the binding restores the direct
+source path for new replies.
+
+The delivery record owns publication while conversion runs. A queued reply has not yet been
+published; the normal correlation and source-delivery timestamps are saved only after Kafka
+accepts the final `ChannelReply`. The payload retains the inbound conversation and native reply
+handle, even if another message updates the catalog. A missing, invalid or late conversion sends
+the original sources with an honest fallback note. Disabled or rebound channels hold the reply;
+an ambiguous broker result is `PublishUncertain` and needs operator review in attention. Kafka
+acceptance is publication evidence, not provider receipt.
+
+The PDF renderer is an optional worker tool. See the
+[sample PDF worker prompt](samples/channel-outbound-pdf-agent.md) and the
+[incident migration record](investigations/2026-09-27-card-0418-code-evidence.md). The mav-ref
+Slack destination needs a separately authorized deployment and live delivery check.
+
 ## What the chat sees
 
 Channel input is correlated by a persisted `[antiphon-channel:<full-guid>]` marker,

@@ -711,6 +711,11 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         .ValidateOnStart();
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
+    builder.Services.AddScoped<ChannelOutboundService>();
+    builder.Services.AddScoped<OutboundConversionTaskRunner>();
+    builder.Services.AddScoped<ChannelOutboundDeliveryPump>();
+    builder.Services.AddHostedService<ChannelOutboundHostedService>();
+    builder.Services.AddSingleton<IChannelOutboundFileStore, Antiphon.Server.Infrastructure.Files.ChannelOutboundFileStore>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
     builder.Services.AddSingleton<GitProcessGate>(sp =>
         new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));

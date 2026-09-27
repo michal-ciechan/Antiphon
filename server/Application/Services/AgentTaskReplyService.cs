@@ -778,7 +778,7 @@ public sealed class AgentTaskReplyService
         }
         (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(
             services, task, settledBody, handoff.ArtifactPath, ct, remote.Result);
-        if (task.Status == AgentTaskStatus.Succeeded)
+        if (task.Status == AgentTaskStatus.Succeeded && task.OutboundDeliveryId is null)
             await TryBuildDeliverableBundleAsync(services, db, task, settledBody, ct);
 
         // What the report was built from, on the record. The report is the turn-ending response's

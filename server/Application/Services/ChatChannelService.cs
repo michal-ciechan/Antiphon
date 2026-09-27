@@ -26,14 +26,16 @@ public sealed class ChatChannelService
     private readonly TimeProvider _timeProvider;
     private readonly IAntiphonMessagingProducer _producer;
     private readonly ChannelOutboundSettings _outbound;
+    private readonly ChannelOutboundService? _outboundSender;
 
     public ChatChannelService(AppDbContext db, TimeProvider timeProvider, IAntiphonMessagingProducer producer,
-        IOptions<ChannelOutboundSettings>? outbound = null)
+        IOptions<ChannelOutboundSettings>? outbound = null, ChannelOutboundService? outboundSender = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _producer = producer;
         _outbound = outbound?.Value ?? new ChannelOutboundSettings();
+        _outboundSender = outboundSender;
     }
 
     public async Task<IReadOnlyList<ChatChannelDto>> GetAllAsync(CancellationToken ct)
@@ -95,7 +97,7 @@ public sealed class ChatChannelService
 
         if (channel.OutboundAgentProfile is not null &&
             (request.OutboundAgentProfile is not null || request.AgentId is not null))
-            await ValidateOutboundBindingAsync(channel, ct);
+            await ValidateOutboundBindingAsync(_db, _outbound, channel, ct);
 
         if (request.ClearAlertMinSeverity)
             channel.AlertMinSeverity = null;
@@ -139,8 +141,7 @@ public sealed class ChatChannelService
         JsonElement? rawOverrides = options?.Silent == true
             ? JsonDocument.Parse("{\"disable_notification\":true}").RootElement.Clone()
             : null;
-        await _producer.SendAsync(
-            new ChannelReply
+        var reply = new ChannelReply
             {
                 Channel = channel.Provider,
                 ConversationId = channel.ExternalId,
@@ -148,8 +149,11 @@ public sealed class ChatChannelService
                 Text = text,
                 ReplyToMessageId = options?.ReplyToMessageId,
                 RawOverrides = rawOverrides,
-            },
-            ct);
+            };
+        if (_outboundSender is null)
+            await _producer.SendAsync(reply, ct);
+        else
+            await _outboundSender.SendAsync(reply, ChannelOutboundOrigin.Control, source: null, ct);
         await StampLastReplyAsync(channel.Provider, channel.ExternalId, text, ct);
     }
 
@@ -250,24 +254,25 @@ public sealed class ChatChannelService
             "One metered worker invocation per matching agent reply");
     }
 
-    private async Task ValidateOutboundBindingAsync(ChatChannel channel, CancellationToken ct)
+    internal static async Task ValidateOutboundBindingAsync(
+        AppDbContext db, ChannelOutboundSettings outbound, ChatChannel channel, CancellationToken ct)
     {
         var name = channel.OutboundAgentProfile!;
-        if (!_outbound.Profiles.TryGetValue(name, out var profile))
+        if (!outbound.Profiles.TryGetValue(name, out var profile))
             throw new ValidationException(nameof(channel.OutboundAgentProfile), $"Unknown profile '{name}'.");
         if (!channel.Enabled || channel.AgentId is null)
             throw new ValidationException(nameof(channel.OutboundAgentProfile),
                 "An outbound profile requires an enabled channel bound to an agent.");
-        var inbound = await _db.Agents.Include(a => a.Board)
+        var inbound = await db.Agents.Include(a => a.Board)
             .SingleOrDefaultAsync(a => a.Id == channel.AgentId, ct);
-        var converter = await _db.Agents.Include(a => a.Board)
+        var converter = await db.Agents.Include(a => a.Board)
             .SingleOrDefaultAsync(a => a.Id == profile.AgentId, ct);
         if (inbound?.Board?.ProjectId != profile.ProjectId || converter?.Board?.ProjectId != profile.ProjectId
             || converter.Id == inbound.Id || converter.IsPoolDelegate || converter.AlwaysOn
             || !AgentTaskService.DelegatableKinds.Contains(converter.Kind))
             throw new ValidationException(nameof(channel.OutboundAgentProfile),
                 "Inbound and conversion agents must be distinct, delegatable agents in the profile project.");
-        if (await _db.ChatChannels.AnyAsync(c => c.AgentId == converter.Id, ct))
+        if (await db.ChatChannels.AnyAsync(c => c.AgentId == converter.Id, ct))
             throw new ValidationException(nameof(channel.OutboundAgentProfile),
                 "The conversion agent is bound to an inbound channel.");
         if (!TryGetPromptPath(converter, profile.PromptFile, out var promptPath) || !File.Exists(promptPath))
@@ -275,7 +280,7 @@ public sealed class ChatChannelService
                 "The conversion agent needs an existing prompt inside its dedicated workspace.");
     }
 
-    private static bool TryGetPromptPath(Agent agent, string relative, out string path)
+    internal static bool TryGetPromptPath(Agent agent, string relative, out string path)
     {
         path = string.Empty;
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory) || Path.IsPathRooted(relative))
