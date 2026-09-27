@@ -1128,6 +1128,13 @@ public class AgentTaskPipelineEndpointTests
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             (await db.Cards.CountAsync(c => cardIds.Contains(c.Id))).ShouldBe(7);
             (await db.Cards.CountAsync(c => cardIds.Contains(c.Id) && c.Status == CardStatus.Backlog)).ShouldBe(7);
+            db.AgentTasks.RemoveRange(db.AgentTasks.Where(t => t.CardId == readyId));
+            db.Cards.RemoveRange(db.Cards.Where(c => cardIds.Contains(c.Id) || c.Id == readyId));
+            await db.SaveChangesAsync();
+            db.BoardColumns.RemoveRange(db.BoardColumns.Where(c => boardIds.Contains(c.BoardId)));
+            db.Boards.RemoveRange(db.Boards.Where(b => boardIds.Contains(b.Id)));
+            db.Projects.RemoveRange(db.Projects.Where(p => p.Id == projectId));
+            await db.SaveChangesAsync();
         }
         await _factory.ResetAsync();
         using var empty = JsonDocument.Parse(await client.GetStringAsync("/api/agent-tasks/pipeline"));
