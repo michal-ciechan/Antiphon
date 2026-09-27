@@ -1,8 +1,5 @@
-using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Antiphon.E2E.Fixtures;
-using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,13 +14,6 @@ namespace Antiphon.E2E;
 [Category("OptIn")]
 public class AgentE2ETests
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly AntiphonAppFixture _appFixture = new();
     private readonly PlaywrightFixture _playwrightFixture = new();
     private readonly List<string> _tempRoots = [];
@@ -49,7 +39,6 @@ public class AgentE2ETests
     public async Task Agents_page_creates_agent_and_assigns_card_to_queue()
     {
         const string suffix = "foundation";
-        var templateId = await CreateWorkflowTemplateAsync($"E2E Agent Queue {suffix}");
         var cardTitle = $"Agent Queue Card {suffix}";
         var cardDescription = "Created through the agents E2E Add Card flow.";
         var agentName = $"E2E Agent {suffix}";
@@ -79,10 +68,6 @@ public class AgentE2ETests
                 throw new InvalidOperationException(
                     $"Agent creation failed with HTTP {createResponse.Status}: {responseBody}");
             }
-
-            using var createBody = JsonDocument.Parse(await createResponse.TextAsync());
-            var agentId = createBody.RootElement.GetProperty("id").GetGuid();
-            await SetAgentDefaultWorkflowTemplateAsync(agentId, templateId);
 
             var agentTile = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = $"Agent {agentName}" });
             await Expect(agentTile).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions { Timeout = 10_000 });
@@ -114,9 +99,9 @@ public class AgentE2ETests
             await Expect(queueRow).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions { Timeout = 10_000 });
             await Expect(queueRow).ToContainTextAsync($"{identifier} - {cardTitle}");
             await Expect(queueRow).ToContainTextAsync(agentName);
-            await Expect(queueRow).ToContainTextAsync("Implement");
+            await Expect(queueRow.GetByRole(AriaRole.Cell).Last).ToHaveTextAsync("-");
 
-            await AssertCardAssignedAsync(cardId, templateId);
+            await AssertCardAssignedAsync(cardId);
             await page.GetByText("Agent created").WaitForAsync(new LocatorWaitForOptions
             {
                 State = WaitForSelectorState.Hidden,
@@ -145,61 +130,16 @@ public class AgentE2ETests
         }
     }
 
-    private async Task<Guid> CreateWorkflowTemplateAsync(string name)
+    private async Task AssertCardAssignedAsync(Guid cardId)
     {
         using var scope = _appFixture.Services.CreateScope();
         await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var now = DateTime.UtcNow;
-        var templateId = Guid.NewGuid();
-        db.WorkflowTemplates.Add(new WorkflowTemplate
-        {
-            Id = templateId,
-            Name = name,
-            Description = "Agents page E2E default workflow",
-            YamlDefinition = """
-                name: One Shot
-                description: Implement then review
-                stages:
-                  - name: Implement
-                    executorType: agent
-                    gateRequired: false
-                  - name: Human Review
-                    executorType: human
-                    gateRequired: true
-                """,
-            IsBuiltIn = false,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        await db.SaveChangesAsync();
-        return templateId;
-    }
-
-    private async Task SetAgentDefaultWorkflowTemplateAsync(Guid agentId, Guid templateId)
-    {
-        using var scope = _appFixture.Services.CreateScope();
-        await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
-        agent.DefaultWorkflowTemplateId = templateId;
-        agent.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-    }
-
-    private async Task AssertCardAssignedAsync(Guid cardId, Guid templateId)
-    {
-        using var scope = _appFixture.Services.CreateScope();
-        await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var card = await db.Cards
-            .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
-            .SingleAsync(c => c.Id == cardId);
+        var card = await db.Cards.SingleAsync(c => c.Id == cardId);
 
         card.AssignedAgentId.ShouldNotBeNull();
         card.AgentQueuePosition.ShouldBe(1);
-        card.ActiveWorkflowRun.ShouldNotBeNull();
-        card.ActiveWorkflowRun!.WorkflowTemplateId.ShouldBe(templateId);
-        card.ActiveWorkflowRun.WorkflowDefinitionSnapshot.ShouldContain("name: One Shot");
-        card.ActiveWorkflowRun!.CurrentStage.ShouldNotBeNull();
-        card.ActiveWorkflowRun.CurrentStage!.Name.ShouldBe("Implement");
+        card.ActiveWorkflowRunId.ShouldBeNull();
+        (await db.CardWorkflowRuns.CountAsync(r => r.CardId == cardId)).ShouldBe(0);
     }
 
     private string CreateWorkingDirectory(string suffix)
