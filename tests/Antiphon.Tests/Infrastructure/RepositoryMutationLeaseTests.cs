@@ -449,10 +449,37 @@ public sealed class RepositoryMutationLeaseTests
             record.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
             record.ProcessId.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
             child = Process.GetProcessById(record.ProcessId.Value);
-            child.StartTime.ToUniversalTime().Ticks.ShouldBe(record.StartTicks!.Value);
+            record.StartTicks.ShouldNotBeNull("the worker must record the real child's start identity");
+            child.HasExited.ShouldBeFalse("the recorded Git child must still be running");
             process.Kill(entireProcessTree: false); // Actual OS worker death, not an in-process exception.
             await process.WaitForExitAsync();
             child.HasExited.ShouldBeFalse();
+            // Linux Process.StartTime derives from wall-clock boot time and can shift between
+            // processes (CARD-0668). As in C448_D1, seed and inspect the live identity in one
+            // PowerShell reader immediately before the recovery script checks it.
+            var recordPath = Directory.EnumerateFiles(directory, "*.json").Single();
+            var liveSnapshot = Path.Combine(fixture.Root, "live-child-before-recovery.json");
+            var liveRecoveryWorker = Path.Combine(fixture.Root, "live-recovery-worker.ps1");
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
+            root.ShouldNotBeNull();
+            await File.WriteAllTextAsync(liveRecoveryWorker, """
+                param([string]$RecordPath, [int]$ChildId, [string]$Snapshot, [string]$RecoveryScript, [string]$Repository)
+                $ErrorActionPreference = 'Stop'
+                $record = Get-Content -LiteralPath $RecordPath -Raw | ConvertFrom-Json
+                if ($record.ProcessId -ne $ChildId -or $record.StartTicks -le 0) { throw 'worker did not record the live child' }
+                $live = [Diagnostics.Process]::GetProcessById($ChildId)
+                if ($live.HasExited) { throw 'recorded child exited before recovery' }
+                $record.StartTicks = $live.StartTime.ToUniversalTime().Ticks
+                [IO.File]::WriteAllText($RecordPath, ($record | ConvertTo-Json -Compress))
+                [IO.File]::Copy($RecordPath, $Snapshot)
+                & $RecoveryScript -Repository $Repository -Execute -ConfirmDescendantsExited
+                """);
+            var liveRecoveryOutput = await RunChildAsync("pwsh", ["-NoProfile", "-File", liveRecoveryWorker, recordPath,
+                child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), liveSnapshot,
+                Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), fixture.Source], expectedExit: 3);
+            liveRecoveryOutput.ShouldContain("retained (alive):");
+            (await File.ReadAllBytesAsync(recordPath)).ShouldBe(await File.ReadAllBytesAsync(liveSnapshot));
             var recoveryWorker = Path.Combine(fixture.Root, "recovery-worker.ps1");
             var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
             await File.WriteAllTextAsync(recoveryWorker, """
@@ -498,7 +525,6 @@ public sealed class RepositoryMutationLeaseTests
                 mainAdmission.ShouldBeNull();
             child.HasExited.ShouldBeFalse();
             unrelated.HasExited.ShouldBeFalse("worker recovery must not terminate an unrelated fixture process");
-            await RecoverChildrenAsync(fixture.Source, 3, "-Execute", "-ConfirmDescendantsExited");
             child.HasExited.ShouldBeFalse("recovery must preserve the live recorded child");
             child.Kill(true);
             await child.WaitForExitAsync();
@@ -564,7 +590,7 @@ public sealed class RepositoryMutationLeaseTests
         finally { Directory.Delete(alias, recursive: false); }
     }
 
-    private static async Task RunChildAsync(string executable, string[] arguments, int expectedExit)
+    private static async Task<string> RunChildAsync(string executable, string[] arguments, int expectedExit)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -584,6 +610,7 @@ public sealed class RepositoryMutationLeaseTests
         }
         await Task.WhenAll(output, error);
         child.ExitCode.ShouldBe(expectedExit, await error);
+        return await output;
     }
 
     [Test]
