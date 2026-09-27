@@ -46,5 +46,13 @@ to those four stale tests. This run does not claim those classes green. CP-3 sel
 `AgentTuiLaunchResolverTests` results, all passed, but missed `AgentTuiProfileServiceTests`
 because its namespace is `Antiphon.Tests`; the roster check exited 3, so CP-3 was red.
 
+CP-3 was rerun with the corrected filter at commit
+`6a2895612afea2665b7753cf117e071f969bfe73` in run `20260927-211824-9577`:
+
+`CHECKPOINT CP-3 commit=6a2895612afea2665b7753cf117e071f969bfe73 build=ok filter=/*/*/(AgentTuiLaunchResolverTests*)|(AgentTuiProfileServiceTests*)/* executed=36 passed=36 failed=0 skipped=0 trx=.antiphon/checkpoints/20260927-211824-9577/rows/CP-3/run.trx slot=granted waited=0s`
+
+The 36 include 14 resolver and 22 profile-service results. CP-3 is green; the checkpoint
+tool deleted its `bin-c611-final/` output. CP-1 and CP-2 retain their original red results.
+
 The two live CLI probes passed. The checkpoint failures leave the ordinary verification round
 red, and method-scoped SourceLanding Mutation positive controls remain pending.
