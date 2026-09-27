@@ -145,7 +145,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         op!.OriginalSourceSha.ShouldBe(b);
         op.ReviewedSourceSha.ShouldBe(b);
         op.PreparationInputSha.ShouldBe(b);
-        op.VerifiedSourceSha.ShouldNotBeNull();
+        op.VerifiedSourceSha.ShouldNotBeNull($"reason={op.LastReason}; verifier={recording.LastResult?.Description}; calls={recording.Invocations.Count}");
         op.VerifiedSourceSha.ShouldNotBe(b);
         op.Publication.ShouldBe(LandPublicationOutcome.Landed);
         recording.Invocations.Count.ShouldBe(1);
@@ -1039,6 +1039,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
     {
         public IBuildSlotGate BuildSlots { get; set; } = null!;
         public LandingVerifier Inner { get; set; } = null!;
+        public LandingVerification? LastResult { get; private set; }
         public List<(string Worktree, string? Filter, string Head, string ArtifactsPath)> Invocations { get; } = [];
 
         public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct) =>
@@ -1051,7 +1052,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
             head.Succeeded.ShouldBeTrue();
             var artifacts = Path.Combine(root, "verify-artifacts", Guid.NewGuid().ToString("N"));
             Invocations.Add((worktree, filter, head.Output.Trim(), artifacts));
-            return await Inner.VerifyAsync(worktree, filter, correlation with { ArtifactsPath = artifacts }, ct);
+            LastResult = await Inner.VerifyAsync(worktree, filter, correlation with { ArtifactsPath = artifacts }, ct);
+            return LastResult;
         }
     }
 }
