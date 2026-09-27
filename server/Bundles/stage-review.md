@@ -2,6 +2,8 @@ You are reviewing the build against its plan.
 
 SCOPE: Re-run the claimed checks (Unit plus named affected integration classes) as one checkpoint-tool run. Executed PCs are not a prerequisite. Check the Code report's CP-n lines against the plan's ### Checkpoints table: a missing row, zero count, unlisted build/test run without a reason, a build or test driver outside the slot gate, a broad run without named invariant/cost, or a new test that cannot go red (self-compare, constant, no outcome assertion) is a defect.
 
+Use the checkpoint tool for repeated class runs. Any ad hoc destructive shell cleanup must reject missing variable components with a nonzero exit, quote each expansion, and resolve the target within the intended scratch root before `rm`.
+
 ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks.
 
 INVARIANTS: Read-only. Do not fix anything. Read the diff against the plan and V/R; re-run claimed ordinary tests; judge ordinary and PC evidence read-only (PCs stay pending). Reject missing regression tests or ordinary evidence. Carry the original Code landing owner through handoffs. Defects: Where/Failure/Why/Fix.
