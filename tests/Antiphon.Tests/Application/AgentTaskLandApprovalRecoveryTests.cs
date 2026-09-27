@@ -1226,9 +1226,326 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     }
 
     [Test]
+    [Arguments("invalid-first")]
+    [Arguments("valid-first")]
+    public async Task C494_GuardsAreScopedToTheirOwnOperation(string order)
+    {
+        await using var world = await TwoOwnerLandingWorld.CreateAsync();
+        var legacy = await world.CreateOwnerAsync();
+        var valid = await world.CreateOwnerAsync();
+        var incomplete = await world.CreateOwnerAsync();
+        await world.ArrangeLegacyAsync(legacy);
+        await world.ArrangeVerifiedAsync(valid);
+        await world.ArrangeIncompleteAsync(incomplete);
+        if (order == "invalid-first")
+        {
+            await world.RunServiceAsync(legacy);
+            var mark = world.TraceCount;
+            await world.RunServiceAsync(valid);
+            AssertOwnerTrace(world.TraceSince(mark), legacy);
+        }
+        else
+        {
+            var mark = world.TraceCount;
+            await world.RunServiceAsync(valid);
+            AssertOwnerTrace(world.TraceSince(mark), legacy);
+            await world.RunServiceAsync(legacy);
+        }
+        var probe = await world.ProbeAsync(incomplete);
+        probe.Reason.ShouldBe("source_resolution_required");
+        probe.Operation.ShouldNotBeNull().Id.ShouldBe(incomplete.OperationId);
+        probe.Operation.TaskId.ShouldBe(incomplete.TaskId);
+
+        await using var db = world.CreateContext();
+        var legacyOp = await db.AgentTaskLandings.SingleAsync(o => o.Id == legacy.OperationId);
+        var legacyRequest = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == legacy.RequestId);
+        legacyOp.TaskId.ShouldBe(legacy.TaskId);
+        legacyOp.SchemaVersion.ShouldBe(1);
+        legacyOp.OriginalSourceSha.ShouldBe(legacy.OriginalSha);
+        legacyOp.CreatedAt.ShouldBe(legacy.CreatedAt);
+        legacyOp.ApprovalLandRequestId.ShouldBeNull();
+        legacyOp.ReviewedSourceSha.ShouldBeNull();
+        legacyRequest.LocalBeforeSha.ShouldBe(legacy.HistoricalLocal);
+        legacyRequest.RemoteSourceSha.ShouldBe(legacy.HistoricalRemote);
+        legacyRequest.CandidateSourceSha.ShouldBe(legacy.HistoricalCandidate);
+        (await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == legacy.TaskId && e.IsLandTerminal))
+            .Detail.ShouldContain("legacy_review_binding_required");
+        (await db.AgentTaskLandNotifications.Where(n => n.TaskId == legacy.TaskId).ToListAsync())
+            .ShouldAllBe(n => n.TaskId == legacy.TaskId);
+
+        var published = await db.AgentTaskLandings.SingleAsync(o => o.Id == valid.OperationId);
+        published.TaskId.ShouldBe(valid.TaskId);
+        published.VerifiedSourceSha.ShouldBe(valid.VerifiedSha);
+        published.OriginalSourceSha.ShouldBe(valid.OriginalSha);
+        published.RemoteConfirmedAt.ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(published).ShouldBeTrue();
+        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == valid.TaskId && o.Active)).ShouldBe(1);
+        var validEvents = await db.AgentTaskEvents.Where(e => e.AgentTaskId == valid.TaskId).ToListAsync();
+        validEvents.ShouldNotBeEmpty();
+        validEvents.ShouldAllBe(e => e.AgentTaskId == valid.TaskId);
+        validEvents.ShouldNotContain(e => e.Detail != null && (e.Detail.Contains(legacy.FeatureSha) || e.Detail.Contains(legacy.TaskId.ToString("N"))));
+        (await db.AgentTaskLandNotifications.Where(n => n.TaskId == valid.TaskId).ToListAsync())
+            .ShouldAllBe(n => n.TaskId == valid.TaskId && (n.Body == null || !n.Body.Contains(legacy.FeatureSha)));
+
+        var probed = await db.AgentTaskLandings.SingleAsync(o => o.Id == incomplete.OperationId);
+        probed.TaskId.ShouldBe(incomplete.TaskId);
+        probed.SourceRemoteSha.ShouldBeNull();
+        probed.ApprovalLandRequestId.ShouldBe(incomplete.RequestId);
+    }
+
+    [Test]
+    [Arguments("Observed", "before-save")]
+    [Arguments("Observed", "after-save-before-commit")]
+    [Arguments("Observed", "commit-failed")]
+    [Arguments("Observed", "after-commit-before-ack")]
+    [Arguments("Resolved", "before-save")]
+    [Arguments("Resolved", "after-save-before-commit")]
+    [Arguments("Resolved", "commit-failed")]
+    [Arguments("Resolved", "after-commit-before-ack")]
+    [Arguments("Inspected", "before-save")]
+    [Arguments("Inspected", "after-save-before-commit")]
+    [Arguments("Inspected", "commit-failed")]
+    [Arguments("Inspected", "after-commit-before-ack")]
+    public async Task C494_Schema3CheckpointCutsPreserveApproval(string checkpoint, string cut)
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var expected = h.Git.AdvanceRemoteSource();
+        var local = h.Git.SourceHead;
+        var queued = await h.RequestAsync(expectedSourceSha: expected);
+        h.Fault.TerminalCut = cut switch
+        {
+            "before-save" => "before-save",
+            "after-save-before-commit" => "after-save",
+            "commit-failed" => "commit",
+            "after-commit-before-ack" => "after-commit",
+            _ => throw new ArgumentOutOfRangeException(nameof(cut)),
+        };
+        h.Fault.AfterCommit = false;
+        h.Fault.AfterSave = false;
+        switch (checkpoint)
+        {
+            case "Observed": h.Fault.RequestResolution = LandSourceResolutionState.Observed; break;
+            case "Resolved": h.Fault.RequestResolution = LandSourceResolutionState.Resolved; break;
+            case "Inspected": h.Fault.Phase = LandPhase.Inspected; break;
+            default: throw new ArgumentOutOfRangeException(nameof(checkpoint));
+        }
+        var traceAt = h.Git.Trace.Count;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        h.Git.SourceHead.ShouldBe(local);
+        h.Git.Trace.Skip(traceAt).ShouldNotContain(a =>
+            a.Length > 0 && (a[0] == "push" || a[0] == "reset" || a[0] == "merge" || a.Contains("rebase")));
+        var durable = cut == "after-commit-before-ack";
+        Guid? inspectedId = null;
+        string? observation = null;
+        await using (var fresh = h.CreateContext())
+        {
+            var request = await fresh.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+            request.ExpectedSourceSha.ShouldBe(expected);
+            request.IsPending.ShouldBeTrue();
+            observation = request.SourceObservationRef;
+            var ops = await fresh.AgentTaskLandings.Where(o => o.TaskId == h.Git.TaskId).ToListAsync();
+            switch (checkpoint)
+            {
+                case "Observed":
+                    request.SourceResolutionState.ShouldBe(durable
+                        ? LandSourceResolutionState.Observed : LandSourceResolutionState.None);
+                    if (durable)
+                    {
+                        request.CandidateSourceSha.ShouldBe(expected);
+                        request.SourceObservationRef.ShouldNotBeNull();
+                    }
+                    else request.CandidateSourceSha.ShouldBeNull();
+                    ops.ShouldBeEmpty();
+                    break;
+                case "Resolved":
+                    request.SourceResolutionState.ShouldBe(durable
+                        ? LandSourceResolutionState.Resolved : LandSourceResolutionState.Observed);
+                    if (durable) request.ResolvedSourceSha.ShouldBe(expected);
+                    else request.ResolvedSourceSha.ShouldBeNull();
+                    request.SourceObservationRef.ShouldNotBeNull();
+                    ops.ShouldBeEmpty();
+                    break;
+                case "Inspected":
+                    request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Resolved);
+                    request.SourceObservationRef.ShouldNotBeNull();
+                    if (durable)
+                    {
+                        var op = ops.ShouldHaveSingleItem();
+                        op.Active.ShouldBeTrue();
+                        op.Phase.ShouldBe(LandPhase.Inspected);
+                        op.SchemaVersion.ShouldBe(3);
+                        op.OriginalSourceSha.ShouldBe(expected);
+                        inspectedId = op.Id;
+                    }
+                    else ops.ShouldBeEmpty();
+                    break;
+            }
+        }
+        h.Fault.Phase = null;
+        h.Fault.RequestResolution = null;
+        h.Fault.TerminalCut = null;
+        h.Fault.Rearm();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        h.Git.SourceHead.ShouldBe(local, "schema 3 does not fast-forward the task branch");
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.OriginalSourceSha.ShouldBe(expected);
+        after.ReviewedSourceSha.ShouldBe(expected);
+        new AgentTaskLandingState().HasPublication(after).ShouldBeTrue();
+        if (inspectedId is Guid same) after.Id.ShouldBe(same);
+        await using var done = h.CreateContext();
+        var resumed = await done.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+        resumed.ExpectedSourceSha.ShouldBe(expected);
+        resumed.SourceObservationRef.ShouldNotBeNull();
+        // A durable Resolved row is already past observation, so resume must keep that ref.
+        // Earlier cuts observe again and mint a new ref; that is not a lost pin.
+        if (durable && checkpoint == "Resolved") resumed.SourceObservationRef.ShouldBe(observation);
+        (await done.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId && o.Active)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C494_LegacyPreparedRefusesThenFreshApprovalRepairs()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var feature = await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.Prepared;
+        h.Fault.AfterCommit = true;
+        await h.RequestAsync("/*/*/Required/*", feature);
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunQueuedAsync());
+        var prepared = (await h.OperationAsync()).ShouldNotBeNull();
+        prepared.SchemaVersion.ShouldBe(3);
+        prepared.Phase.ShouldBe(LandPhase.Prepared);
+        var createdAt = prepared.CreatedAt;
+        var original = prepared.OriginalSourceSha;
+        var prefix = prepared.RecoveryRefPrefix;
+        var sourcePin = (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/source")).Trim();
+        var targetPin = (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/target-before")).Trim();
+        var preparedPin = (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/prepared")).Trim();
+        await using (var db = h.CreateContext())
+        {
+            var stored = await db.AgentTaskLandings.SingleAsync(o => o.Id == prepared.Id);
+            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == stored.ApprovalLandRequestId);
+            request.SchemaVersion.ShouldBe(2);
+            request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Resolved);
+            request.ResolvedSourceSha.ShouldBe(feature);
+            stored.SchemaVersion = 1;
+            stored.ApprovalLandRequestId = null;
+            stored.ReviewedSourceSha = null;
+            await db.SaveChangesAsync();
+        }
+        var verifications = h.Verifier.Calls;
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        h.Fault.Rearm();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        h.Verifier.Calls.ShouldBe(verifications);
+        await using (var observer = h.CreateContext())
+        {
+            var refused = await observer.AgentTaskLandings.SingleAsync(o => o.Id == prepared.Id);
+            refused.SchemaVersion.ShouldBe(1);
+            refused.Phase.ShouldBe(LandPhase.Refused);
+            refused.LastReason.ShouldBe("landing_schema_superseded");
+            refused.OriginalSourceSha.ShouldBe(original);
+            refused.CreatedAt.ShouldBe(createdAt);
+            refused.ApprovalLandRequestId.ShouldBeNull();
+            refused.ReviewedSourceSha.ShouldBeNull();
+            new AgentTaskLandingState().HasPublication(refused).ShouldBeFalse();
+            (await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal))
+                .Detail.ShouldContain("landing_schema_superseded");
+        }
+        (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/source")).Trim().ShouldBe(sourcePin);
+        (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/target-before")).Trim().ShouldBe(targetPin);
+        (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/prepared")).Trim().ShouldBe(preparedPin);
+
+        await h.RequestAsync("/*/*/Required/*", feature);
+        await h.RunQueuedAsync();
+        h.Verifier.Calls.ShouldBeGreaterThan(verifications);
+        var repaired = (await h.OperationAsync()).ShouldNotBeNull();
+        repaired.Id.ShouldNotBe(prepared.Id);
+        repaired.SchemaVersion.ShouldBe(3);
+        repaired.OriginalSourceSha.ShouldBe(feature);
+        new AgentTaskLandingState().HasPublication(repaired).ShouldBeTrue();
+        await using var after = h.CreateContext();
+        var legacy = await after.AgentTaskLandings.SingleAsync(o => o.Id == prepared.Id);
+        legacy.SchemaVersion.ShouldBe(1);
+        legacy.OriginalSourceSha.ShouldBe(original);
+        legacy.CreatedAt.ShouldBe(createdAt);
+        legacy.ApprovalLandRequestId.ShouldBeNull();
+        legacy.Active.ShouldBeFalse();
+        (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/source")).Trim().ShouldBe(sourcePin);
+        (await h.Git.RequiredAsync(h.Git.Repository, "show-ref", "--verify", "--hash", prefix + "/prepared")).Trim().ShouldBe(preparedPin);
+    }
+
+    [Test]
     public async Task C488_CleanupRetainsMovedSource()
     {
-        await C488_PublishedPayloadSurvivesSourceMovement("local-only", false);
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Git.AfterCommand = (_, args, result) =>
+        {
+            if (args[0] == "push" && result.Succeeded)
+            {
+                h.Fault.Matches = op => op.Phase == LandPhase.PushStarted
+                    && op.ChildOperation is null && op.PushExitCode is null;
+                h.Fault.AfterCommit = true;
+            }
+            return Task.CompletedTask;
+        };
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Phase.ShouldBe(LandPhase.PushStarted);
+        op.SchemaVersion.ShouldBe(3);
+        op.RemoteConfirmedAt.ShouldBeNull();
+        var verified = op.VerifiedSourceSha.ShouldNotBeNull();
+        var sourceLocal = op.SourceLocalSha.ShouldNotBeNull();
+        sourceLocal.ShouldNotBe(verified);
+        await File.WriteAllTextAsync(Path.Combine(h.Git.Source, "valuable-c494.txt"), "keep this local work\n");
+        await h.Git.RequiredAsync(h.Git.Source, "add", "valuable-c494.txt");
+        await h.Git.RequiredAsync(h.Git.Source, "commit", "-m", "later local work");
+        var moved = h.Git.SourceHead;
+        moved.ShouldNotBe(sourceLocal);
+        h.Fault.Matches = null;
+        h.Fault.AfterCommit = false;
+        h.Fault.Rearm();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(op.Id);
+        after.VerifiedSourceSha.ShouldBe(verified);
+        after.RemoteConfirmedAt.ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(after).ShouldBeTrue();
+        after.ExpectedDeletionSha.ShouldBe(sourceLocal);
+        after.ExpectedDeletionSha.ShouldNotBe(verified);
+        after.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        after.LastReason.ShouldBe("source_changed");
+        h.Git.SourceHead.ShouldBe(moved);
+        File.ReadAllText(Path.Combine(h.Git.Source, "valuable-c494.txt")).ShouldBe("keep this local work\n");
+        var registration = (await h.Git.RegistrationsAsync(h.Git.Repository, CancellationToken.None))
+            .Single(r => string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(r.Path)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(h.Git.Source)),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+        registration.Head.ShouldBe(moved);
+        registration.Branch.ShouldBe(h.Git.SourceRef);
+        await using var observer = h.CreateContext();
+        var terminal = await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal);
+        terminal.Detail.ShouldContain("cleanup=Refused");
+        terminal.Detail.ShouldContain("source_changed");
+    }
+
+    private static void AssertOwnerTrace(IReadOnlyList<(string Directory, string[] Arguments)> trace, TwoOwnerLandingWorld.Owner legacy)
+    {
+        var id = legacy.TaskId.ToString("N");
+        trace.ShouldNotBeEmpty();
+        trace.ShouldNotContain(c => c.Arguments.Any(a =>
+            a.Contains(id, StringComparison.Ordinal) || a.Contains(legacy.FeatureSha, StringComparison.Ordinal)
+            || a.Contains(legacy.SeedSha, StringComparison.Ordinal) || a.Contains(legacy.Fixture.SourceRef, StringComparison.Ordinal)));
     }
 
     [Test]
