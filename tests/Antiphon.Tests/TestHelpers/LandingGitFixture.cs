@@ -156,6 +156,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     internal class FixtureGit(string home, Guid taskId) : LandingGit
     {
         public List<string[]> Trace { get; } = [];
+        public string? HooksPathOverride { get; set; }
         /// <summary>CARD-0688: every command with the directory it ran in.</summary>
         public List<(string Directory, string[] Arguments)> Commands { get; } = [];
         public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
@@ -181,7 +182,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             start.Environment["GIT_CONFIG_KEY_1"] = "credential.helper";
             start.Environment["GIT_CONFIG_VALUE_1"] = "";
             start.Environment["GIT_CONFIG_KEY_2"] = "core.hooksPath";
-            start.Environment["GIT_CONFIG_VALUE_2"] = Path.Combine(home, "no-hooks");
+            start.Environment["GIT_CONFIG_VALUE_2"] = HooksPathOverride ?? Path.Combine(home, "no-hooks");
         }
 
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
