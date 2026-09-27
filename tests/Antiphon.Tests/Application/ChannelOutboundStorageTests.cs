@@ -151,6 +151,43 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
+    public async Task Worker_created_sealed_reply_cannot_bypass_manifest_validation_on_recovery()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-forged-seal-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+        var id = Guid.NewGuid();
+        try
+        {
+            var snapshot = await store.StageAsync(id, new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", ReplyHandle = "C1|original",
+                Text = "source",
+            }, CancellationToken.None);
+            var manifest = new { version = 1, deliveryId = id, disposition = "converted",
+                replacementText = "converted", files = Array.Empty<object>() };
+            await File.WriteAllTextAsync(Path.Combine(snapshot.OutputDirectory, "manifest.json"),
+                JsonSerializer.Serialize(manifest));
+            var sealedPath = Path.Combine(Path.GetDirectoryName(snapshot.ReplyPath)!, "sealed-reply.json");
+            var forged = new ChannelReply { Channel = "slack", ConversationId = "C1",
+                ReplyHandle = "C1|attacker", Text = "converted" };
+            await File.WriteAllBytesAsync(sealedPath,
+                JsonSerializer.SerializeToUtf8Bytes(forged, MessagingJson.Options));
+
+            await Should.ThrowAsync<InvalidDataException>(() => store.ValidateAndSealAsync(id,
+                snapshot.ReplyPath, snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None));
+            File.Delete(sealedPath);
+            var sealedReply = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            (await store.ReadReplyAsync(sealedReply.ReplyPath, sealedReply.ReplySha256,
+                CancellationToken.None)).ReplyHandle.ShouldBe("C1|original");
+            var recovered = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            recovered.ReplySha256.ShouldBe(sealedReply.ReplySha256);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Test]
     public async Task Output_manifest_cannot_override_frozen_routing()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-route-" + Guid.NewGuid().ToString("N"));
