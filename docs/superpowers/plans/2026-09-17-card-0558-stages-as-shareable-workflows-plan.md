@@ -930,3 +930,5 @@ checkpoint dispositions, CP-1 through CP-11, were green. CP-1's Unit lane record
 3,446 passed, 1 inherited flaky failure, and 2 skipped. CP-11 passed 33/33 on Windows
 with a real `cmd.exe` fixture. Every positive control remains pending for method-scoped
 SourceLanding Mutation; neither this Final round nor nightly green discharges one.
+
+Land-owner recovery confirmed the clean worktree at f529bc7d519f55e46189d570b223f091ec274f08 on 2026-09-27 21:30 UTC.
