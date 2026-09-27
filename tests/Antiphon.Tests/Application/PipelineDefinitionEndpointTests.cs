@@ -105,7 +105,22 @@ public sealed class PipelineDefinitionEndpointTests(AntiphonWebAppFactory factor
         boardResponse.StatusCode.ShouldBe(HttpStatusCode.OK, await boardResponse.Content.ReadAsStringAsync());
         using var boardJson = JsonDocument.Parse(await boardResponse.Content.ReadAsStringAsync());
         boardJson.RootElement.GetProperty("pipeline").GetProperty("source").GetString().ShouldBe("board");
-        (await client.PutAsJsonAsync($"/api/boards/{board.Id}/pipeline",
-            new { pipelineDefinitionId = (Guid?)null })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        boardJson.RootElement.GetProperty("pipeline").GetProperty("definitionId").GetGuid().ShouldBe(custom.Id);
+        var inherited = await client.PutAsJsonAsync($"/api/boards/{board.Id}/pipeline",
+            new { pipelineDefinitionId = (Guid?)null });
+        inherited.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var inheritedJson = JsonDocument.Parse(await inherited.Content.ReadAsStringAsync());
+        inheritedJson.RootElement.GetProperty("pipeline").GetProperty("source").GetString().ShouldBe("project");
+        var builtin = await client.PutAsJsonAsync($"/api/projects/{board.ProjectId}/pipeline",
+            new { pipelineDefinitionId = (Guid?)null });
+        builtin.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var builtinJson = JsonDocument.Parse(await builtin.Content.ReadAsStringAsync());
+        builtinJson.RootElement.GetProperty("pipeline").GetProperty("source").GetString().ShouldBe("builtin");
+        (await client.PostAsJsonAsync($"/api/pipeline-definitions/{custom.Id}/archive", new { reason = "retired" }))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        (await client.PutAsJsonAsync($"/api/boards/{board.Id}/pipeline", new { pipelineDefinitionId = custom.Id }))
+            .StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await client.PutAsJsonAsync($"/api/projects/{board.ProjectId}/pipeline", new { pipelineDefinitionId = Guid.NewGuid() }))
+            .StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 }

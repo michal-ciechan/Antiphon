@@ -3643,8 +3643,8 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<string>("BundleKey")
                         .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<Guid>("CardWorkflowRunId")
                         .HasColumnType("uuid");
