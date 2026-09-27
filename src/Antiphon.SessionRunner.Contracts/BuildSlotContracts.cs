@@ -26,7 +26,8 @@ public sealed record BuildSlotGrant(
     int Occupied,
     int Budget,
     DateTime? ExpiresAtUtc,
-    bool Unlimited = false);
+    bool Unlimited = false,
+    int? RenewEverySeconds = null);
 
 /// <summary>409 <see cref="BuildSlotProblemTypes.Busy"/> extension members.</summary>
 public sealed record BuildSlotBusy(int Occupied, int Budget, int QueuePosition, int RetryAfterMs);

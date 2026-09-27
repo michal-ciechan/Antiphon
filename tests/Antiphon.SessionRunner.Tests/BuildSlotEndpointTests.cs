@@ -106,6 +106,16 @@ public sealed class BuildSlotEndpointTests
         listing.Waiters.Select(w => (w.Pid, w.Label, w.Position)).ShouldBe([(102, "waiter", 1)]);
     }
 
+    [Test]
+    public async Task Post_renew_answers_204_for_a_held_lease_and_404_otherwise()
+    {
+        await using var host = await StartAsync(maxConcurrent: 1, maxCpuCount: 4);
+        var grant = await (await host.Http.PostAsJsonAsync("build-slots", Request(101, "renew")))
+            .Content.ReadFromJsonAsync<BuildSlotGrant>();
+        (await host.Http.PostAsync($"build-slots/{grant!.LeaseId}/renew", null)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        (await host.Http.PostAsync($"build-slots/{Guid.NewGuid()}/renew", null)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
     private static BuildSlotRequest Request(int pid, string label) => new(pid, T0, label, "session-" + pid, "task-" + pid);
 
     private static Task<BuildSlotTestHost> StartAsync(int maxConcurrent, int maxCpuCount, int floorMb = 0,

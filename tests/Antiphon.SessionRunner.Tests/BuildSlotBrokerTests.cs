@@ -196,6 +196,35 @@ public sealed class BuildSlotBrokerTests
         f.Broker.List().MaxCpuCount.ShouldBe(3);
     }
 
+    [Test]
+    public void Renew_mode_reaps_a_lease_not_renewed_within_the_grace_and_ignores_pid_liveness()
+    {
+        var f = new Fixture(maxConcurrent: 1, holderLiveness: "renew", renewGraceSeconds: 90);
+        var grant = f.Granted(f.Request(101, "remote"));
+        grant.RenewEverySeconds.ShouldBe(30);
+        f.Liveness.Kill(101);
+        f.Time.Advance(TimeSpan.FromSeconds(89));
+        f.Broker.Sweep().ShouldBe(0);
+        f.Broker.Renew(grant.LeaseId!.Value).ShouldBeTrue();
+        f.Time.Advance(TimeSpan.FromSeconds(89));
+        f.Broker.Sweep().ShouldBe(0);
+        f.Time.Advance(TimeSpan.FromSeconds(1));
+        f.Broker.Sweep().ShouldBe(1);
+    }
+
+    [Test]
+    public void Renew_extends_a_held_lease_and_an_unknown_lease_answers_false()
+    {
+        var f = new Fixture(holderLiveness: "renew");
+        var grant = f.Granted(f.Request(101, "holder"));
+        f.Time.Advance(TimeSpan.FromSeconds(10));
+        f.Broker.Renew(grant.LeaseId!.Value).ShouldBeTrue();
+        f.Broker.Renew(Guid.NewGuid()).ShouldBeFalse();
+        f.Liveness.Kill(101);
+        f.Time.Advance(TimeSpan.FromSeconds(89));
+        f.Broker.Sweep().ShouldBe(0);
+    }
+
     internal sealed class Fixture
     {
         public FakeTimeProvider Time { get; } = new(T0);
@@ -205,13 +234,15 @@ public sealed class BuildSlotBrokerTests
         public BuildSlotBroker Broker { get; }
 
         public Fixture(int maxConcurrent = 2, int maxCpuCount = 4, int floorMb = 0, int ttlMinutes = 90,
-            int retryAfterMs = 15_000, int waiterSilenceMs = 60_000, bool enabled = true)
+            int retryAfterMs = 15_000, int waiterSilenceMs = 60_000, bool enabled = true,
+            string holderLiveness = "pid", int renewGraceSeconds = 90)
         {
             var settings = new BuildSlotSettings
             {
                 Enabled = enabled, MaxConcurrent = maxConcurrent, MaxCpuCount = maxCpuCount,
                 MinAvailableMemoryMb = floorMb, LeaseTtlMinutes = ttlMinutes, RetryAfterMs = retryAfterMs,
                 WaiterSilenceMs = waiterSilenceMs,
+                HolderLiveness = holderLiveness, RenewGraceSeconds = renewGraceSeconds,
             };
             Broker = new BuildSlotBroker(Options.Create(settings), Liveness, Memory, Time, new ListLogger<BuildSlotBroker>(Messages));
         }

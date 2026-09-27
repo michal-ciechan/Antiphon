@@ -135,6 +135,8 @@ public sealed class BuildSlotBroker
         }
     }
 
+    public bool Renew(Guid leaseId) => false;
+
     /// <summary>Reaps dead, recycled and expired leases and drops silent waiters; returns the leases reaped.</summary>
     public int Sweep()
     {

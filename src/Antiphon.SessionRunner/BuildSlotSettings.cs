@@ -32,6 +32,10 @@ public sealed class BuildSlotSettings
 
     public int SweepIntervalMs { get; set; } = 30_000;
 
+    public string HolderLiveness { get; set; } = "pid";
+    public int RenewGraceSeconds { get; set; } = 90;
+    public int RenewEverySeconds { get; set; } = 30;
+
     public void Validate()
     {
         if (MaxConcurrent < 1)
