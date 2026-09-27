@@ -161,7 +161,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         var show = await observer.RunAsync(h.Fixture.Observer, ["show", targetObserved + ":nonce.txt"], CancellationToken.None);
         show.Succeeded.ShouldBeTrue();
         show.Output.ShouldContain("unique-b-fix");
-        (await observer.RunAsync(h.Fixture.Observer, ["merge-base", "--is-ancestor", b, targetObserved], CancellationToken.None))
+        (await observer.RunAsync(h.Fixture.Observer, ["merge-base", "--is-ancestor", op.VerifiedSourceSha!, targetObserved], CancellationToken.None))
             .Succeeded.ShouldBeTrue();
         (await observer.RunAsync(h.Fixture.Observer, ["merge-base", "--is-ancestor", t, targetObserved], CancellationToken.None))
             .Succeeded.ShouldBeTrue();
