@@ -12,6 +12,13 @@ $script:verifyResult = $null
 $script:laterCalls = 0
 $script:endpoint = $env:C504_ENDPOINT
 $script:fixture = $FixtureDirectory
+$script:hostLines = New-Object 'System.Collections.Generic.List[string]'
+function Write-Host {
+    param([object]$Object)
+    $line = [string]$Object
+    $script:hostLines.Add($line)
+    [Console]::WriteLine($line)
+}
 
 function Invoke-C504Shell {
     param([string]$Command)
@@ -93,8 +100,8 @@ try {
     if ($script:deploymentResult) { $record.adapterNames = @($script:deploymentResult.AdapterNames) }
 } catch {
     $record.outerError = $_.Exception.Message
-    $record.outerLog += "`nREMOTE DEPLOY VERDICT: failed $($record.outerError)"
 }
+$record.outerLog = $script:hostLines -join [Environment]::NewLine
 if ($script:verifyResult) {
     $record.shellExit = $script:verifyResult.ExitCode
     $record.shellOutput = @($script:verifyResult.Output)
