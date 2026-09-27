@@ -276,6 +276,100 @@ public class WatchdogServiceTests
             }
             caseHarness.Stopper.Killed.ShouldBeEmpty();
         }
+
+        await C566ParentDeliveryCaseAsync(failFirstDelivery: false);
+        await C566ParentDeliveryCaseAsync(failFirstDelivery: true);
+    }
+
+    private static async Task C566ParentDeliveryCaseAsync(bool failFirstDelivery)
+    {
+        var harness = OverdueSweepHarness.Create();
+        await using var provider = harness.Provider;
+        await using var fixture = await C566Fixture.CreateAsync(C566Menu, dispatcher: harness.Dispatcher);
+        var parent = NewSession(fixture.Session.Card!);
+        parent.AgentKind = AgentKind.ClaudeCode;
+        fixture.Db.AgentSessions.Add(parent);
+        await fixture.Db.SaveChangesAsync();
+        await C566SeedEntryAsync(parent.Id, 1, TranscriptKinds.UserPrompt, "dispatch delegate");
+        await C566SeedEntryAsync(parent.Id, 2, TranscriptKinds.AssistantText, "Dispatched.");
+        await C566SeedEntryAsync(parent.Id, 3, TranscriptKinds.TurnEnd, null);
+        await C566SeedEntryAsync(parent.Id, 4, TranscriptKinds.UserPrompt, "parent is busy");
+
+        var parentAdapter = new FakeAgentProtocolAdapter
+        {
+            ClaudeComposerChrome = true,
+            OnSubmitted = async body =>
+            {
+                await using var read = CreateContext();
+                var seq = (await read.TranscriptEntries.Where(t => t.AgentSessionId == parent.Id)
+                    .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+                await C566SeedEntryAsync(parent.Id, seq, TranscriptKinds.UserPrompt, body);
+                await C566SeedEntryAsync(parent.Id, seq + 1, TranscriptKinds.TurnEnd, null);
+            }
+        };
+        harness.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent.Id, parentAdapter);
+        var taskId = Guid.NewGuid();
+        fixture.Db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "unsafe cleanup queued receipt",
+            Goal = "run tests", Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Worktree, WorkingDirectory = fixture.Root,
+            AgentSessionId = fixture.Session.Id, Status = AgentTaskStatus.Working,
+            Attempt = 1, ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = parent.Id,
+            CreatedAt = DateTime.UtcNow, DispatchedAt = DateTime.UtcNow
+        });
+        await fixture.Db.SaveChangesAsync();
+        await C566SeedEntryAsync(fixture.Session.Id, 1, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(taskId) + "\nRun tests");
+        await C566SeedEntryAsync(fixture.Session.Id, 2, TranscriptKinds.ToolCall, null,
+            toolUseId: "toolu_c566", toolName: "Bash", toolInput: "{\"command\":\"rm -rf $R/$name\"}");
+
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        fixture.Adapter.Inputs.ShouldBe(["2"]);
+        await C566SeedEntryAsync(fixture.Session.Id, 3, TranscriptKinds.ToolResult,
+            "User rejected tool use", toolUseId: "toolu_c566", isError: true);
+        await C566SeedEntryAsync(fixture.Session.Id, 4, TranscriptKinds.UserPrompt,
+            "[Request interrupted by user for tool use]");
+
+        await using (var queued = CreateContext())
+        {
+            var task = await queued.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            task.Status.ShouldBe(AgentTaskStatus.Failed);
+            task.CompletedAt.ShouldNotBeNull();
+            task.FailureReason.ShouldContain("watchdog selected No");
+            var note = await queued.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId);
+            note.Status.ShouldBe(QueuedMessageStatus.Pending);
+            note.ConversationKey.ShouldBe($"task:{taskId:N}");
+            note.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(task.FailureReason!));
+            parentAdapter.Inputs.ShouldBeEmpty("a busy parent does not receive the note mid-turn");
+        }
+
+        await C566SeedEntryAsync(parent.Id, 5, TranscriptKinds.AssistantText, "Ready for note.");
+        await C566SeedEntryAsync(parent.Id, 6, TranscriptKinds.TurnEnd, null);
+        var queue = harness.Provider.GetRequiredService<SessionMessageQueueService>();
+        if (failFirstDelivery)
+            parentAdapter.ThrowOnSend = new InvalidOperationException("runner rejected the note before input");
+        await queue.FlushSessionAsync(parent.Id, CancellationToken.None);
+        if (failFirstDelivery)
+        {
+            await using var failed = CreateContext();
+            var note = await failed.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId);
+            note.Status.ShouldBe(QueuedMessageStatus.Pending);
+            note.DeliveryAttempts.ShouldBe(1);
+            (await failed.TranscriptEntries.CountAsync(t => t.AgentSessionId == parent.Id
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == note.Body)).ShouldBe(0);
+            parentAdapter.ThrowOnSend = null;
+            await queue.FlushSessionAsync(parent.Id, CancellationToken.None);
+        }
+
+        await using var verify = CreateContext();
+        var delivered = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId);
+        delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+        delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == parent.Id
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == delivered.Body)).ShouldBe(1);
+        fixture.Adapter.Inputs.ShouldBe(["2"]);
+        harness.Stopper.Killed.ShouldBeEmpty();
     }
     [Test]
     public void Watchdog_matches_known_prompt_patterns()
@@ -613,7 +707,8 @@ public class WatchdogServiceTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static async Task C566SeedEntryAsync(Guid sessionId, long sequence, string kind, string? body)
+    private static async Task C566SeedEntryAsync(Guid sessionId, long sequence, string kind, string? body,
+        string? toolUseId = null, string? toolName = null, string? toolInput = null, bool? isError = null)
     {
         await using var db = CreateContext();
         db.TranscriptEntries.Add(new TranscriptEntry
@@ -621,7 +716,8 @@ public class WatchdogServiceTests
             Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence,
             Kind = kind, Text = body, CreatedAt = DateTime.UtcNow,
             Timestamp = DateTime.UtcNow,
-            StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null
+            StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
+            ToolUseId = toolUseId, ToolName = toolName, ToolInput = toolInput, ToolIsError = isError
         });
         await db.SaveChangesAsync();
     }
