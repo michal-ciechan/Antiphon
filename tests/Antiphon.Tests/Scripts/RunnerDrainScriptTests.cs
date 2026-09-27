@@ -20,7 +20,9 @@ public sealed class RunnerDrainScriptTests
         foreach (var b in System.Text.Encoding.UTF8.GetBytes(text))
             b.ShouldBeLessThan((byte)128, "runner-drain.ps1 must stay ASCII");
 
-        text.ShouldContain("ValidateSet('status', 'drain', 'clear')");
+        text.ShouldContain("ValidateSet('status', 'drain', 'clear', 'retire')");
+        text.ShouldContain("confirmRunnerId = $Confirm");
+        text.ShouldContain("/retire\" -Body");
         text.ShouldContain("X-Antiphon-Operator-Token");
         text.ShouldContain("not eligible");
         text.ShouldContain("[uri]::EscapeDataString($RunnerId)");

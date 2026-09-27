@@ -234,7 +234,7 @@ public sealed class DockerStackContractTests
         Server2Runner().Contains("restart: unless-stopped", StringComparison.Ordinal).ShouldBeTrue();
 
     [Test]
-    public void Server2_file_defines_only_runner_and_state_init()
+    public void Server2_file_defines_runner_state_init_and_profiled_broker()
     {
         var blocks = Text("docker-compose.server2-runner.yml")
             .Replace("\r\n", "\n").Split('\n')
@@ -243,7 +243,39 @@ public sealed class DockerStackContractTests
                 && line.TrimEnd().EndsWith(':'))
             .Select(line => line.Trim().TrimEnd(':'))
             .ToList();
-        blocks.ShouldBe(["state-init", "session-runner", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data"]);
+        blocks.ShouldBe(["state-init", "session-runner", "build-slots", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data", "antiphon-build-slots"]);
+        DockerStackDocuments.Service(Text("docker-compose.server2-runner.yml"), "build-slots")
+            .ShouldContain("profiles: [broker]");
+    }
+
+    [Test]
+    public void Temp_runner_override_keeps_project_state_separate()
+    {
+        var text = Text("docker-compose.server2-runner.temp.yml");
+        var runner = DockerStackDocuments.Service(text, "session-runner");
+        runner.ShouldContain("PhoneHome__RunnerId: server2-temp");
+        runner.ShouldContain("restart: \"no\"");
+        runner.ShouldContain("${RUNNER_GROK_STORE_DIR:?RUNNER_GROK_STORE_DIR is required}:/state/grok");
+        runner.ShouldContain("antiphon-build-slots");
+        runner.ShouldNotContain("runner-state:");
+        runner.ShouldNotContain("healthcheck:");
+    }
+
+    [Test]
+    public void Server2_broker_is_unprivileged_and_pinned_separately()
+    {
+        var text = Text("docker-compose.server2-runner.yml");
+        var broker = DockerStackDocuments.Service(text, "build-slots");
+        broker.ShouldContain("profiles: [broker]");
+        broker.ShouldContain("session-testing:${BUILD_SLOTS_SHA12:");
+        broker.ShouldContain("user: \"1654:1654\"");
+        broker.ShouldContain("SessionRunner__BuildSlotsOnly: \"true\"");
+        broker.ShouldContain("SessionRunner__BuildSlots__HolderLiveness: renew");
+        broker.ShouldContain("http://127.0.0.1:8080/build-slots");
+        broker.ShouldNotContain("privileged: true");
+        var runner = DockerStackDocuments.Service(text, "session-runner");
+        runner.ShouldContain("ANTIPHON_BUILD_SLOTS_URL: http://build-slots:8080/build-slots");
+        runner.ShouldContain("antiphon-build-slots");
     }
 
     [Test]

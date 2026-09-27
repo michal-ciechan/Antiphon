@@ -38,6 +38,7 @@ public sealed class RemoteScriptContractTests
             .ToList();
         sudoLines.ShouldNotBeEmpty("the host lane still elevates to create its own directories");
         var containment = Block(text, "case_custody_containment");
+        var tempDeploy = Block(text, "case_deploy_temp_runner");
         // CARD-0660 (amended): the third is `ensure_runner_codex_home`, which creates and owns the
         // host Codex home for uid 1654 -- a chown the host user mc cannot do. It refuses off the
         // host lane before any of its sudo lines.
@@ -45,8 +46,9 @@ public sealed class RemoteScriptContractTests
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
+                || tempDeploy.Contains(line, StringComparison.Ordinal)
                 || codexHome.Contains(line, StringComparison.Ordinal))
-                .ShouldBeTrue("sudo outside ensure_dirs' host branch, the Codex home or the containment case: " + line);
+                .ShouldBeTrue("sudo outside a declared host-lane case or helper: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
         var codexCommands = Commands(codexHome);
         codexCommands[1].ShouldBe("if [ \"$LANE\" != \"host\" ]; then", "the Codex home refuses off the host lane first");
@@ -57,6 +59,11 @@ public sealed class RemoteScriptContractTests
         foreach (var line in sudoLines.Where(l => containment.Contains(l, StringComparison.Ordinal)))
             line.ShouldContain("sudo -n -l");
         containment.ShouldContain("docker exec -u 1654");
+        tempDeploy.ShouldContain("require_lane host");
+        foreach (var line in sudoLines.Where(l => tempDeploy.Contains(l, StringComparison.Ordinal)))
+            (line.Contains("sudo -n test -d \"$grok_dir\"", StringComparison.Ordinal)
+                || line.Contains("sudo -n df -Pk \"$mount\"", StringComparison.Ordinal))
+                .ShouldBeTrue("temp deploy only inspects the host volume filesystem: " + line);
     }
 
     // CARD-0604 S12 / R-5, G-40 (Cut B). The fence inverts with the cut: the session-testing
@@ -204,7 +211,8 @@ public sealed class RemoteScriptContractTests
         Block(text, "compose_child").ShouldNotContain("HOST_PROJECT");
         Block(text, "compose_host").ShouldContain("-p \"$HOST_PROJECT\"");
         Block(text, "compose_host").ShouldNotContain("CHILD_PROJECT");
-        // `down -v` is only ever aimed at the child, never at the persistent project.
+        // `down -v` is only ever aimed at the child or the temp project, never at the persistent project.
+        Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
         foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
         {
             var trimmed = line.Trim();
@@ -214,8 +222,9 @@ public sealed class RemoteScriptContractTests
             if (!trimmed.Contains("down -v", StringComparison.Ordinal))
                 continue;
             (trimmed.StartsWith("compose_child ", StringComparison.Ordinal)
+                || trimmed.StartsWith("compose_temp ", StringComparison.Ordinal)
                 || trimmed.Contains("-p \"$project\"", StringComparison.Ordinal))
-                .ShouldBeTrue("down -v aimed at something other than the child or a retired c590 project: " + trimmed);
+                .ShouldBeTrue("down -v aimed at something other than the child, temp or a retired c590 project: " + trimmed);
         }
     }
 
@@ -432,6 +441,44 @@ public sealed class RemoteScriptContractTests
         deploy.ShouldContain("inventory-images-after.txt");
     }
 
+    [Test]
+    public void Temp_deploy_uses_its_own_project_and_the_inspected_grok_store()
+    {
+        var text = Remote();
+        var deploy = Block(text, "case_deploy_temp_runner");
+        deploy.ShouldContain("docker volume inspect -f '{{.Mountpoint}}' antiphon-runner_runner-state");
+        deploy.ShouldContain("NestedStoreDiskLow");
+        deploy.ShouldContain("RUNNER_GROK_STORE_DIR=\"$grok_dir\"");
+        deploy.ShouldContain("cat > \"$SERVER2_TEMP_ENV\"");
+        deploy.ShouldContain("seed_runner_checkout \"$TEMP_PROJECT\"");
+        deploy.ShouldContain("compose_temp up -d --no-build");
+        deploy.ShouldContain("temp-container.txt");
+        deploy.ShouldContain("bridge-nf.txt");
+        deploy.ShouldNotContain("--remove-orphans");
+        Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
+        var live = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-real.ps1"));
+        live.ShouldContain("'deploy-temp-runner'");
+    }
+
+    [Test]
+    public void Temp_retire_requires_the_retired_receipt_and_downs_only_temp_volumes()
+    {
+        var text = Remote();
+        var retire = Block(text, "case_retire_temp_runner");
+        retire.ShouldContain("C590_TEMP_RETIRED_AT");
+        retire.ShouldContain("TempRunnerNotRetired");
+        retire.ShouldContain("compose_temp down -v");
+        retire.ShouldContain("temp-down.txt");
+        retire.ShouldNotContain("docker image rm");
+        Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
+        var keep = Block(text, "retire_superseded_server2_images");
+        keep.ShouldContain("temp_keep");
+        keep.ShouldContain("broker_keep");
+        keep.ShouldContain("live_temp_image");
+        keep.ShouldContain("live_broker_image");
+        Block(text, "case_deploy_parent").ShouldNotContain("--remove-orphans");
+    }
+
     // CARD-0631 D-9 (amended). The runner's git identity is a file on server2 beside the deploy
     // key and the Claude token. deploy-parent creates it when missing, from stack.env's values or
     // the defaults, and never rewrites one that exists: the operator may have edited it.
@@ -485,8 +532,10 @@ public sealed class RemoteScriptContractTests
 
         var deploy = Block(text, "case_deploy_parent");
         // Before compose binds it, and before stack.env (its seed values' source) is rewritten.
-        Order(deploy, "ensure_runner_git_identity", "cat > \"$SERVER2_ENV\"").ShouldBeTrue();
-        Order(deploy, "ensure_runner_git_identity", "compose_host up -d").ShouldBeTrue();
+        var bootFiles = Block(text, "ensure_runner_boot_files");
+        bootFiles.ShouldContain("ensure_runner_git_identity");
+        Order(deploy, "ensure_runner_boot_files", "cat > \"$SERVER2_ENV\"").ShouldBeTrue();
+        Order(deploy, "ensure_runner_boot_files", "compose_host up -d").ShouldBeTrue();
         deploy.ShouldContain("RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH\n");
         deploy.ShouldContain("RUNNER_GIT_USER_NAME=$RUNNER_GIT_USER_NAME\n");
         deploy.ShouldContain("RUNNER_GIT_USER_EMAIL=$RUNNER_GIT_USER_EMAIL\n");
@@ -577,8 +626,8 @@ public sealed class RemoteScriptContractTests
         // state-init owns the fresh volume for uid 1654 first, then a one-off of the runner image.
         var init = commands.Single(line => line.Contains("run --rm --no-deps -T state-init", StringComparison.Ordinal));
         init.ShouldContain("|| write_result false StateInitFailed 2");
-        var oneOff = commands.Single(line => line.StartsWith("compose_host run --rm --no-deps -T --user ", StringComparison.Ordinal));
-        oneOff.ShouldBe("compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
+        var oneOff = commands.Single(line => line.StartsWith("\"$compose\" run --rm --no-deps -T --user ", StringComparison.Ordinal));
+        oneOff.ShouldBe("\"$compose\" run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 --entrypoint /bin/sh session-runner -c '");
         commands.IndexOf(init).ShouldBeLessThan(commands.IndexOf(oneOff));
         Order(seed, "--user 1654:1654", "git clone").ShouldBeTrue("the clone runs inside the uid-1654 one-off");
         seed.ShouldContain("git clone --filter=blob:none --no-checkout \"$2\" \"$repo\"");
@@ -592,7 +641,8 @@ public sealed class RemoteScriptContractTests
         // Before the runner exists, after both images exist, and still verified by name.
         var deploy = Block(text, "case_deploy_parent");
         deploy.ShouldContain("\n    seed_runner_checkout\n");
-        Order(deploy, "StateInitBuildFailed", "seed_runner_checkout").ShouldBeTrue("the images are built first");
+        Block(text, "build_server2_images").ShouldContain("StateInitBuildFailed");
+        Order(deploy, "build_server2_images", "seed_runner_checkout").ShouldBeTrue("the images are built first");
         Order(deploy, "seed_runner_checkout", "compose_host up -d").ShouldBeTrue("seeded before the runner starts");
         Order(deploy, "compose_host up -d", "verify_runner_checkout \"$container\"").ShouldBeTrue();
 
@@ -775,8 +825,9 @@ public sealed class RemoteScriptContractTests
         // Before state-init binds it (seed_runner_checkout runs state-init) and before compose up;
         // stack.env names it for every later compose call.
         var deploy = Block(text, "case_deploy_parent");
-        Order(deploy, "ensure_runner_codex_home", "seed_runner_checkout").ShouldBeTrue();
-        Order(deploy, "ensure_runner_codex_home", "compose_host up -d").ShouldBeTrue();
+        Block(text, "ensure_runner_boot_files").ShouldContain("ensure_runner_codex_home");
+        Order(deploy, "ensure_runner_boot_files", "seed_runner_checkout").ShouldBeTrue();
+        Order(deploy, "ensure_runner_boot_files", "compose_host up -d").ShouldBeTrue();
         deploy.ShouldContain("RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH\n");
 
         var restart = Block(text, "case_persistent_restart");

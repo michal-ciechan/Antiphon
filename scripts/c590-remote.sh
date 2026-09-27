@@ -1462,8 +1462,9 @@ case_deploy_temp_runner() {
     mount="$(docker volume inspect -f '{{.Mountpoint}}' antiphon-runner_runner-state 2>> "$CASE_DIR/command.log")" \
         || write_result false ParentRunnerStateMissing 2
     grok_dir="$mount/grok"
-    if [ ! -d "$grok_dir" ]; then write_result false GrokStoreMissing 2; fi
-    free_kb="$(df -Pk "$mount" | awk 'NR==2 {print $4}')"
+    if ! sudo -n test -d "$grok_dir"; then write_result false GrokStoreMissing 2; fi
+    free_kb="$(sudo -n df -Pk "$mount" 2>> "$CASE_DIR/command.log" | awk 'NR==2 {print $4}')" \
+        || write_result false NestedStoreDiskUnavailable 2
     if [[ ! "$free_kb" =~ ^[0-9]+$ ]] || [ "$free_kb" -lt 20971520 ]; then
         write_result false NestedStoreDiskLow 2
     fi

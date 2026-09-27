@@ -100,6 +100,20 @@ public sealed class DindRunnerContractTests
     }
 
     [Test]
+    public void Temp_override_keeps_the_base_healthcheck_and_secret_path()
+    {
+        var baseRunner = DockerStackDocuments.Service(Server2Compose(), "session-runner");
+        var tempRunner = DockerStackDocuments.Service(Read("docker-compose.server2-runner.temp.yml"), "session-runner");
+        baseRunner.ShouldContain("healthcheck:");
+        baseRunner.ShouldContain("PhoneHome__SecretPath: /run/antiphon/phone-home");
+        baseRunner.ShouldContain("ANTIPHON_PHONE_HOME_SECRET_SOURCE: /run/secrets/phone-home");
+        tempRunner.ShouldNotContain("healthcheck:");
+        tempRunner.ShouldNotContain("PhoneHome__SecretPath");
+        tempRunner.ShouldNotContain("ANTIPHON_PHONE_HOME_SECRET_SOURCE");
+        tempRunner.ShouldContain("PhoneHome__RunnerId: server2-temp");
+    }
+
+    [Test]
     public void Entrypoint_drops_to_app_uid()
     {
         var text = Entrypoint();
