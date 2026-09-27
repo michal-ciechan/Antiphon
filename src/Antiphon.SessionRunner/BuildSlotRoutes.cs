@@ -60,6 +60,11 @@ public static class BuildSlotRoutes
                 ? Results.NoContent()
                 : Problem(StatusCodes.Status404NotFound, BuildSlotProblemTypes.Unknown, $"no lease {leaseId}"));
 
+        app.MapPost("/build-slots/{leaseId:guid}/renew", (Guid leaseId, BuildSlotBroker broker) =>
+            broker.Renew(leaseId)
+                ? Results.NoContent()
+                : Problem(StatusCodes.Status404NotFound, BuildSlotProblemTypes.Unknown, $"no lease {leaseId}"));
+
         app.MapGet("/build-slots", (BuildSlotBroker broker) => Results.Ok(broker.List()));
         return app;
     }

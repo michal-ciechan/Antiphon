@@ -38,6 +38,10 @@ public sealed class BuildSlotSettings
 
     public void Validate()
     {
+        if (HolderLiveness is not ("pid" or "renew"))
+            throw new InvalidOperationException($"{SectionName}:HolderLiveness must be pid or renew.");
+        if (RenewGraceSeconds < 1 || RenewEverySeconds < 1 || RenewEverySeconds >= RenewGraceSeconds)
+            throw new InvalidOperationException($"{SectionName}:RenewEverySeconds must be positive and less than RenewGraceSeconds.");
         if (MaxConcurrent < 1)
             throw new InvalidOperationException($"{SectionName}:MaxConcurrent must be at least 1.");
         if (MaxCpuCount < 1)

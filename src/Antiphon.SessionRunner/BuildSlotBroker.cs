@@ -109,7 +109,7 @@ public sealed class BuildSlotBroker
 
             _waiters.Remove(waiter);
             var lease = new Lease(Guid.NewGuid(), request.Pid, start.Value, label, request.SessionId, request.TaskId,
-                now, now.AddMinutes(_settings.LeaseTtlMinutes));
+                now, now.AddMinutes(_settings.LeaseTtlMinutes)) { LastRenewedAtUtc = now };
             _leases.Add(lease);
             _logger.LogInformation(
                 "Build slot lease {LeaseId} granted to {Label} (pid {Pid}, session {SessionId}, task {TaskId}) after {WaitedSeconds:0}s; {Occupied}/{Budget} occupied",
@@ -135,7 +135,19 @@ public sealed class BuildSlotBroker
         }
     }
 
-    public bool Renew(Guid leaseId) => false;
+    public bool Renew(Guid leaseId)
+    {
+        lock (_gate)
+        {
+            var now = UtcNow;
+            SweepLocked(now);
+            var lease = _leases.FirstOrDefault(l => l.Id == leaseId);
+            if (lease is null)
+                return false;
+            lease.LastRenewedAtUtc = now;
+            return true;
+        }
+    }
 
     /// <summary>Reaps dead, recycled and expired leases and drops silent waiters; returns the leases reaped.</summary>
     public int Sweep()
@@ -156,7 +168,7 @@ public sealed class BuildSlotBroker
                 _leases.Count,
                 new BuildSlotMemory(available is { } bytes ? bytes / (1024 * 1024) : null, _settings.MinAvailableMemoryMb),
                 _leases.Select(l => new BuildSlotLease(l.Id, l.Pid, l.Label, l.SessionId, l.TaskId, l.GrantedAtUtc,
-                    l.ExpiresAtUtc, _liveness.IsAlive(l.Pid, l.ProcessStartUtc))).ToList(),
+                    l.ExpiresAtUtc, HolderAlive(l, UtcNow))).ToList(),
                 _waiters.Select((w, i) => new BuildSlotWaiter(w.Pid, w.Label, w.SinceUtc, i + 1)).ToList());
         }
     }
@@ -169,8 +181,10 @@ public sealed class BuildSlotBroker
             string? reason = null;
             if (now >= lease.ExpiresAtUtc)
                 reason = $"ttl {_settings.LeaseTtlMinutes}m expired";
-            else if (!_liveness.IsAlive(lease.Pid, lease.ProcessStartUtc))
-                reason = "holder pid exited or was recycled";
+            else if (!HolderAlive(lease, now))
+                reason = _settings.HolderLiveness == "renew"
+                    ? $"renew silent for {_settings.RenewGraceSeconds}s"
+                    : "holder pid exited or was recycled";
             if (reason is null)
                 continue;
             _leases.Remove(lease);
@@ -190,12 +204,21 @@ public sealed class BuildSlotBroker
     }
 
     private BuildSlotGrant GrantOf(Lease lease) =>
-        new(lease.Id, _settings.MaxCpuCount, _leases.Count, _settings.MaxConcurrent, lease.ExpiresAtUtc);
+        new(lease.Id, _settings.MaxCpuCount, _leases.Count, _settings.MaxConcurrent, lease.ExpiresAtUtc,
+            RenewEverySeconds: _settings.HolderLiveness == "renew" ? _settings.RenewEverySeconds : null);
+
+    private bool HolderAlive(Lease lease, DateTime now) =>
+        _settings.HolderLiveness == "renew"
+            ? now - lease.LastRenewedAtUtc < TimeSpan.FromSeconds(_settings.RenewGraceSeconds)
+            : _liveness.IsAlive(lease.Pid, lease.ProcessStartUtc);
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
     private sealed record Lease(Guid Id, int Pid, DateTime ProcessStartUtc, string Label, string? SessionId, string? TaskId,
-        DateTime GrantedAtUtc, DateTime ExpiresAtUtc);
+        DateTime GrantedAtUtc, DateTime ExpiresAtUtc)
+    {
+        public DateTime LastRenewedAtUtc { get; set; }
+    }
 
     private sealed class Waiter(int pid, DateTime processStartUtc, string label, DateTime sinceUtc)
     {
