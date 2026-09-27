@@ -52,7 +52,7 @@ public class PipelineGlanceE2ETests
         {
             foreach (var width in new[] { 390, 1280 })
             {
-                await page.SetViewportSizeAsync(new ViewportSize { Width = width, Height = 844 });
+                await page.SetViewportSizeAsync(width, 844);
                 var navigation = await page.GotoAsync($"{_app.PlaywrightAddress}/orchestrator?tab=pipeline");
                 navigation.ShouldNotBeNull();
                 navigation!.Status.ShouldBeLessThan(500);
