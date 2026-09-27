@@ -78,6 +78,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (IsCompletionNoteKind(note.Kind) && note.Kind != LandNotificationKind.LegacyCheckNote)
                         await CompletionNoteStamp.ApplyAsync(db, note.TaskId, note.ContentDigest, existing.CreatedAt, ct);
                     await db.SaveChangesAsync(ct);
+                    // CARD-0481 F3 recovers a producer-committed row here; CARD-0550 observes the
+                    // durable link through the same reuse boundary as keyed EnqueueAsync.
                     if (boundary is not null)
                         await boundary.ReachedAsync("queue-existing-key", note.TaskId, existing.Id, ct);
                     if (Actionable(existing, MaxAttempts()) && boundary?.DropWakeup("completion", note.Id) != true)

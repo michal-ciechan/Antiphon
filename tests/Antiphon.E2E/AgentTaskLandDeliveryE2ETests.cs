@@ -33,7 +33,7 @@ public class AgentTaskLandDeliveryE2ETests
         await busy.InitializeAsync(busy: true);
         await busy.RequestAsync();
         await busy.ReleaseExecutionAsync();
-        await LandDeliveryFixture.UntilAsync(async () => {
+        await busy.UntilProtocolAsync(async () => {
             await using var db = busy.CreateContext();
             return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == busy.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null);
         }, "busy caller has queued outcome");
@@ -98,7 +98,7 @@ public class AgentTaskLandDeliveryE2ETests
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.UseChildAsync("terminal");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
-        await LandDeliveryFixture.UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(f.Root, "terminal-committed.barrier.json"))), "terminal committed crash cut");
+        await f.WaitForBoundaryAsync("terminal-committed");
         await using (var db = f.CreateContext())
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == f.TaskId);
@@ -118,7 +118,7 @@ public class AgentTaskLandDeliveryE2ETests
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(busy: true); await f.UseChildAsync("queue");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
-        await LandDeliveryFixture.UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(f.Root, "queue-inserted.barrier.json"))), "queue inserted crash cut");
+        await f.WaitForBoundaryAsync("queue-inserted");
         Guid queueId;
         await using (var db = f.CreateContext())
         {
@@ -162,7 +162,7 @@ public class AgentTaskLandDeliveryE2ETests
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.UseChildAsync(cut);
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         var barrier = cut == "receipt" ? "receipt-before-save" : "queue-before-verdict";
-        await LandDeliveryFixture.UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(f.Root, barrier + ".barrier.json"))), "native prompt persisted before receipt/verdict save");
+        await f.WaitForBoundaryAsync(barrier);
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
@@ -219,7 +219,7 @@ public class AgentTaskLandDeliveryE2ETests
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(cut: "enqueue-errors");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         Guid original = default;
-        await LandDeliveryFixture.UntilAsync(async () => {
+        await f.UntilProtocolAsync(async () => {
             await using var db = f.CreateContext();
             var note = await db.AgentTaskLandNotifications.FirstOrDefaultAsync(n => n.TaskId == f.TaskId && n.State == LandNotificationState.RetryPending && n.EnqueueAttempts == 2);
             if (note is null) return false;
@@ -237,7 +237,7 @@ public class AgentTaskLandDeliveryE2ETests
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(busy: state == "busy", cut: state == "attempt" ? "attempt" : "none");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
-        await LandDeliveryFixture.UntilAsync(async () => {
+        await f.UntilProtocolAsync(async () => {
             await using var db = f.CreateContext();
             return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null)
                 && (state == "busy" || File.Exists(Path.Combine(f.Root, "queue-before-typing.barrier.json")));
@@ -316,7 +316,7 @@ public class AgentTaskLandDeliveryE2ETests
         await f.ReleaseExecutionAsync();
         if (busy)
         {
-            await LandDeliveryFixture.UntilAsync(async () =>
+            await f.UntilProtocolAsync(async () =>
             {
                 await using var db = f.CreateContext();
                 var note = await db.AgentTaskLandNotifications.SingleOrDefaultAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);

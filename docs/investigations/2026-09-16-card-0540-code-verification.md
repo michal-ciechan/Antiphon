@@ -41,10 +41,13 @@ Results on `9c1dafb6`:
 - Affected classes, one per invocation: SR 6/6, BS 15/15, DN 24/24, DG 42/42
   (includes both new rows), DelegationWorktreeTests 29/34 with the same five failures.
 - Native `DispatchBaseWarningDeliveryE2ETests` C540: 10/10 (V18 alone, then 5 + 4).
-- Named native land rows: V22, V23, V26, V30(receipt), V30(verdict) all time out
-  (5/5 failed). All five reproduce identically at master `f091e84d`, as do the five
-  DelegationWorktreeTests failures. V23/V26/V30(verdict) passing at the old base
-  does not hold on current master; this is inherited, not caused by the repair.
+- Named native land rows: V22, V23, V26, V30(receipt), V30(verdict) failed in this
+  loaded run, but the [CARD-0550 investigation](2026-09-17-card-0550-native-land-check-v26-regression.md)
+  narrowed the reproducible regression to V26's `queue-existing-key` evidence assertion
+  at line 132. The other rows had timeout or environment failures under load and pass on a
+  quiet machine. V26's evidence became stale when `c3dc6f4c` added the pre-link recovery
+  path; the [CARD-0550 plan](../superpowers/plans/2026-09-17-card-0550-native-land-check-v26-evidence-and-barrier-plan.md)
+  restores the observation at that path and makes protocol-bound waits progress-aware.
 
 ## Implementation
 

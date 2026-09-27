@@ -9,6 +9,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.EntityFrameworkCore;
@@ -204,7 +205,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         Guid? requestId = null, Guid? notificationId = null)
     {
         AgentTaskLandNotification? result = null;
-        await UntilAsync(async () => {
+        await UntilProtocolAsync(async () => {
             await using var db = CreateContext();
             result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId)
                 && (notificationId == null || n.Id == notificationId));
@@ -337,11 +338,26 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             await GitAsync(Repository, "push", "origin", "master");
         }
     }
-    public static async Task UntilAsync(Func<Task<bool>> predicate, string evidence, int seconds = 60)
+    public static Task UntilAsync(Func<Task<bool>> predicate, string evidence, int seconds = 60,
+        Func<long>? progress = null, int capSeconds = 600)
+        => ProgressAwareWait.UntilAsync(predicate, evidence, seconds, progress, capSeconds);
+
+    public long ProtocolProgress() => Directory.GetFiles(Root, "protocol-git-*.json").LongLength;
+
+    public async Task UntilProtocolAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(seconds);
-        while (DateTime.UtcNow < deadline) { if (await predicate()) return; await Task.Delay(100); }
-        throw new TimeoutException(evidence);
+        var started = DateTime.UtcNow;
+        var before = ProtocolProgress();
+        var outcome = "satisfied";
+        try { await UntilAsync(predicate, evidence, quietSeconds, ProtocolProgress); }
+        catch (TimeoutException) { outcome = "timeout"; throw; }
+        finally
+        {
+            var elapsed = (DateTime.UtcNow - started).TotalSeconds;
+            await File.WriteAllTextAsync(Path.Combine(Root, $"wait-{Guid.NewGuid():N}.json"), JsonSerializer.Serialize(new {
+                evidence, outcome, quietSeconds, elapsedSeconds = elapsed, protocolGitBefore = before,
+                protocolGitAfter = ProtocolProgress(), renewed = elapsed > quietSeconds }));
+        }
     }
     private async Task<string> GitAsync(string cwd, params string[] args)
     {
