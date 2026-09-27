@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Time.Testing;
@@ -114,6 +116,55 @@ public sealed class BuildSlotEndpointTests
             .Content.ReadFromJsonAsync<BuildSlotGrant>();
         (await host.Http.PostAsync($"build-slots/{grant!.LeaseId}/renew", null)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
         (await host.Http.PostAsync($"build-slots/{Guid.NewGuid()}/renew", null)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Build_slots_only_host_serves_health_and_build_slots_and_nothing_else()
+    {
+        var runnerDll = Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.dll");
+        var logs = Path.Combine(Path.GetTempPath(), "c727-broker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(logs);
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in new[] { runnerDll, "--urls", "http://127.0.0.1:0", "--SessionRunner:BuildSlotsOnly", "true", "--Serilog:LogPath", logs })
+            start.ArgumentList.Add(arg);
+        using var process = new Process { StartInfo = start };
+        var listening = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Capture(string? line)
+        {
+            if (line is null) return;
+            var match = Regex.Match(line, @"Now listening on:\s+(http://127\.0\.0\.1:\d+)");
+            if (match.Success) listening.TrySetResult(new Uri(match.Groups[1].Value));
+        }
+        process.OutputDataReceived += (_, e) => Capture(e.Data);
+        process.ErrorDataReceived += (_, e) => Capture(e.Data);
+        try
+        {
+            process.Start().ShouldBeTrue();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            var address = await listening.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            address.Port.ShouldNotBe(17204);
+            using var http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
+            (await http.GetAsync("/health")).StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await http.GetAsync("/build-slots")).StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await http.GetAsync("/sessions")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+            (await http.GetAsync("/capabilities")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     private static BuildSlotRequest Request(int pid, string label) => new(pid, T0, label, "session-" + pid, "task-" + pid);
