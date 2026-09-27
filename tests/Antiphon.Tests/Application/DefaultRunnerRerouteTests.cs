@@ -267,20 +267,60 @@ public sealed class DefaultRunnerRerouteTests
     [Test]
     public async Task C772_Usage_wall_note_reaches_parent()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
-        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
-        using var workspace = new TempWorkspace();
-        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
-            (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
-        await SeedHoldAsync(schema, "fable");
-        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Working,
-            sessionId: Guid.NewGuid(), parentSessionId: parent.SessionId, runnerId: null);
-        await using var db = CreateContext(schema);
-        var decision = await TaskService(db, workspace.Path).RerouteOnWallAsync(
-            await db.AgentTasks.SingleAsync(t => t.Id == taskId), "fable", "usage wall", false, CancellationToken.None);
-        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Blocked);
-        await AssertParentReceiptAsync(schema, parent, taskId);
+        foreach (var cut in new[] { BlockNoteCut.CrashAfterSave, BlockNoteCut.EnqueueFails })
+        {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var parent = await BridgeQueueHarness.CreateAsync(new()
+            { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+            using var workspace = new TempWorkspace();
+            var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+            await SeedHoldAsync(schema, "fable");
+            var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Working,
+                sessionId: Guid.NewGuid(), parentSessionId: parent.SessionId, runnerId: null);
+            var fault = new BlockNoteFault(cut, taskId, parent.SessionId);
+            var intercepted = new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(schema.ConnectionString).AddInterceptors(fault).Options;
+            await using (var db = new AppDbContext(intercepted))
+            {
+                try
+                {
+                    await TaskService(db, workspace.Path).RerouteOnWallAsync(
+                        await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                        "fable", "usage wall", false, CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is SimulatedCutException || ex.InnerException is SimulatedCutException) { }
+            }
+            fault.Fired.ShouldBeTrue(cut + ": the wall did not reach the fault cut");
+            await using (var read = CreateContext(schema))
+            {
+                var stored = await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                var notes = await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId);
+                var events = await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+                    && e.Type == AgentTaskEventType.Blocked);
+                if (cut == BlockNoteCut.CrashAfterSave)
+                {
+                    AssertDesktopCodexBlocked(stored, pin.Id);
+                    notes.ShouldBe(1);
+                    events.ShouldBe(1);
+                }
+                else
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Working);
+                    notes.ShouldBe(0);
+                    events.ShouldBe(0);
+                }
+            }
+            if (cut == BlockNoteCut.EnqueueFails)
+            {
+                await using var retryDb = CreateContext(schema);
+                var retry = await TaskService(retryDb, workspace.Path).RerouteOnWallAsync(
+                    await retryDb.AgentTasks.SingleAsync(t => t.Id == taskId),
+                    "fable", "usage wall", false, CancellationToken.None);
+                retry.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Blocked);
+            }
+            await AssertParentReceiptAsync(schema, parent, taskId);
+        }
     }
 
     private static async Task AssertParentReceiptAsync(IsolatedTestSchema schema, BridgeQueueHarness parent, Guid taskId)
