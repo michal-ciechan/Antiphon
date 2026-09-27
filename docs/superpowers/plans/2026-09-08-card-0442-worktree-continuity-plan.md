@@ -725,3 +725,38 @@ verified by rerunning that exact test at the base commit in isolation. Finish wi
 `git diff --check`, confirm no mutation remains, and remove only this checkout's verified
 `bin-c442` directories using native PowerShell path handling per the testing owner. Commit/push
 the implementation and evidence; landing/deployment remain the caller's operation.
+
+### Checkpoints
+
+This is the Final Code round's closed ordinary verification list. Run it through
+`tools/Antiphon.Checkpoints` after all named V fixtures are committed. The V floors
+are TUnit invocations, not assertion counts. PCs remain for post-land SourceLanding Mutation.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c442cp/` | unit | `/*/*/*/*[Category=Unit]` | R-11 | >= 3408 executed, 0 failed | 3408 | 8 |
+| CP-2 | all | CP-1 | continuity-v | `/*/*/AgentTaskWorktreeContinuityTests/T0442_V*` | V-1, V-27, V-31, R-1, R-8, R-12 | all 8 cases, 0 failed/skipped | 8 | 6 |
+| CP-3 | all | CP-1 | resolver-v | `/*/*/AgentTaskWorktreeBaseResolverTests/T0442_V*` | V-2, V-3, V-4, V-5, V-6, V-7, V-8, V-9, V-10, V-29, R-2, R-3, R-4, R-5, R-13 | all 46 cases, 0 failed/skipped | 46 | 5 |
+| CP-4 | all | CP-1 | create-v | `/*/*/AgentTaskWorktreeBaseCreateTests/T0442_V*` | V-11, V-12, V-13, V-14, V-17, R-2, R-3, R-14 | all 23 cases, 0 failed/skipped | 23 | 5 |
+| CP-5 | all | CP-1 | script-preview-v | `/*/*/DelegateScriptWorktreeBaseTests/T0442_V15*` | V-15, R-6 | all 4 cases, 0 failed/skipped | 4 | 4 |
+| CP-6 | all | CP-1 | script-payload-v | `/*/*/DelegateScriptKindTests/T0442_V16*` | V-16, R-6, R-14 | all 9 cases, 0 failed/skipped | 9 | 2 |
+| CP-7 | all | CP-1 | migration-v | `/*/*/AgentTaskWorktreeBaseMigrationTests/T0442_V18*` | V-18, R-11 | 1 case, 0 failed/skipped | 1 | 2 |
+| CP-8 | all | CP-1 | dispatch-v | `/*/*/AgentTaskDispatchBaseGuardTests/T0442_V*` | V-19, V-20, V-21, V-22, V-26, V-28, V-30, R-7, R-9, R-10 | all 24 cases, 0 failed/skipped | 24 | 6 |
+| CP-9 | all | CP-1 | worktree-create-v | `/*/*/DelegationWorktreeTests/T0442_V2*` | V-23, V-24, R-7 | both cases, 0 failed/skipped | 2 | 3 |
+| CP-10 | all | CP-1 | worktree-adopt-v | `/*/*/WorktreeBaseSelectionTests/T0442_V25*` | V-25, R-10 | all 3 cases, 0 failed/skipped | 3 | 3 |
+| CP-11 | all | CP-1 | dispatch-retained | `/*/*/AgentTaskDispatchBaseGuardTests/*` | R-9, R-11 | full class, 0 failed | 15 | 4 |
+| CP-12 | all | CP-1 | worktree-retained | `/*/*/DelegationWorktreeTests/*` | R-1, R-7, R-10, R-11 | full class, 0 failed | 32 | 6 |
+| CP-13 | all | CP-1 | land-stage-retained | `/*/*/AgentTaskLandStageOutcomeTests/*` | R-11, R-12 | full class, 0 failed | 14 | 4 |
+| CP-14 | all | CP-1 | pipeline-retained | `/*/*/AgentTaskPipelineStatusTests/*` | R-9, R-11 | full class, 0 failed | 19 | 3 |
+| CP-15 | all | CP-1 | script-kind-retained | `/*/*/DelegateScriptKindTests/*` | R-6, R-11, R-14 | full class, 0 failed | 38 | 3 |
+| CP-16 | all | CP-1 | script-capability-retained | `/*/*/DelegateScriptCapabilityTests/*` | R-3, R-11 | full class, 0 failed | 6 | 2 |
+| CP-17 | all | CP-1 | capability-retained | `/*/*/DelegationCapabilityTests/*` | R-3, R-11 | full class, 0 failed | 20 | 3 |
+| CP-18 | all | CP-1 | delegation-di-retained | `/*/*/DelegationTestServicesTests/*` | R-11 | full class, 0 failed | 5 | 2 |
+| CP-19 | all | CP-1 | delegation-census-retained | `/*/*/DelegationHarnessCensusTests/*` | R-11 | full class, 0 failed | 7 | 2 |
+| CP-20 | all | CP-1 | followup-service-retained | `/*/*/AgentTaskServiceIntegrationTests/a_follow_up_*` | R-4, R-10, R-11 | all matching methods, 0 failed | 1 | 2 |
+| CP-21 | all | CP-1 | followup-default-retained | `/*/*/AgentTaskServiceIntegrationTests/OnAgent_defaults_stage_to_FollowUp_and_sets_FollowUpOfTaskId` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
+| CP-22 | all | CP-1 | retry-service-retained | `/*/*/AgentTaskServiceIntegrationTests/retrying_*` | R-10, R-11 | all matching methods, 0 failed | 1 | 2 |
+| CP-23 | all | CP-1 | followup-kind-retained | `/*/*/AgentTaskAgentKindTests/a_follow_up_*` | R-4, R-11 | all matching methods, 0 failed | 1 | 2 |
+| CP-24 | all | CP-1 | followup-pool-retained | `/*/*/AgentTaskPoolTests/a_follow_up_in_the_same_run_keeps_the_context_uncompacted` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
+| CP-25 | all | CP-1 | pinned-pool-retained | `/*/*/AgentTaskPoolTests/a_pinned_follow_up_waits_while_its_agent_is_still_working` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
+| CP-26 | all | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-11 | exit 0, 0 TypeScript errors | n/a | 2 |

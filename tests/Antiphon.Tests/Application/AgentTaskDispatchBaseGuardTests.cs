@@ -925,7 +925,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             inner.Owns(lease, commonDirectory);
     }
 
-    private static async Task SeedPendingSiblingLandAsync(AppDbContext db, ScratchGitRepo repo, AgentTask sibling)
+    internal static async Task SeedPendingSiblingLandAsync(AppDbContext db, ScratchGitRepo repo, AgentTask sibling)
     {
         var request = new AgentTaskLandRequest
         {
@@ -946,7 +946,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         Func<Task>? onLeaseAcquired = null,
         Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor? interceptor = null,
         LandDeliveryBoundary? boundary = null,
-        ILandingGit? git = null)
+        ILandingGit? git = null,
+        TimeProvider? clock = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -966,7 +967,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             if (interceptor is not null) o.AddInterceptors(interceptor);
         });
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(clock ?? TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new DelegationSettings { MaxConcurrentTasks = 512 }));
