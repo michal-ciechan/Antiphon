@@ -1143,6 +1143,8 @@ public class AppDbContext : DbContext
             entity.Property(r => r.CardId).IsRequired();
             entity.Property(r => r.PipelineDefinitionId).IsRequired();
             entity.Property(r => r.PipelineDefinitionRevisionId).IsRequired();
+            entity.Property(r => r.PipelineDefinitionRevisionId).Metadata.SetAfterSaveBehavior(
+                Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
             entity.Property(r => r.WorkflowName).IsRequired().HasMaxLength(200);
             entity.Property(r => r.Status).IsRequired();
             entity.Property(r => r.FailureReason).HasMaxLength(4000);
