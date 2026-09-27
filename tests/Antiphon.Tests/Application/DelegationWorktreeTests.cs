@@ -545,7 +545,7 @@ public partial class DelegationWorktreeTests
     }
 
     [Test]
-    public async Task land_local_target_ahead_of_origin_is_refused_without_publication()
+    public async Task land_reviewed_source_already_on_local_target_publishes_to_origin()
     {
         using var repo = new ScratchGitRepo("antiphon-land-ahead");
         using var remote = new TemporaryDirectory("antiphon-land-ahead-remote");
@@ -580,20 +580,18 @@ public partial class DelegationWorktreeTests
 
         result.ShouldBe(LandRunResult.Complete);
         var finalRequest = await AssertRequestAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
-        finalRequest.SourceRefusalReason.ShouldBe("target_local_ahead");
-        finalRequest.LandingOperationId.ShouldBeNull();
-        (await db.AgentTaskLandings.AsNoTracking().CountAsync(o => o.TaskId == task.Id)).ShouldBe(0);
-        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).ActiveLandingId.ShouldBeNull();
-        (await AssertTerminalAsync(db, task.Id, request.RequestId, null, AgentTaskEventType.LandRefused))
-            .Detail.ShouldContain("target_local_ahead");
+        finalRequest.SourceRefusalReason.ShouldBeNull();
+        var operation = await AssertBoundOperationAsync(db, task.Id, request.RequestId, sourceSha, sourceFullRef);
+        operation.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        operation.PushExitCode.ShouldBe(0);
+        (await AssertTerminalAsync(db, task.Id, request.RequestId, operation.Id, AgentTaskEventType.Landed))
+            .Detail.ShouldContain($"remote={sourceSha}");
         (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(localBefore);
-        (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim().ShouldBe(remoteBefore);
-        (await RequiredGitAsync(remote.Path, "rev-parse", sourceFullRef)).Trim().ShouldBe(sourceSha);
-        await AssertUnchangedSourceAsync(sourcePath, sourceFullRef, sourceSha, "feature.md", "land me\n");
-        (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == task.Id
-            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent
-                || e.Type == AgentTaskEventType.LandedWithResidue))).ShouldBe(0);
-        Directory.EnumerateDirectories(repo.WorktreeRoot, "*land*", SearchOption.AllDirectories).ShouldBeEmpty();
+        (await RequiredGitAsync(remote.Path, "rev-parse", "master")).Trim().ShouldBe(sourceSha);
+        (await RequiredGitAsync(remote.Path, "show", "master:feature.md")).ShouldBe("land me\n");
+        Directory.Exists(sourcePath).ShouldBeFalse();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", sourceFullRef)).Ok.ShouldBeFalse();
+        remoteBefore.ShouldNotBe(sourceSha);
     }
 
     [Test]
