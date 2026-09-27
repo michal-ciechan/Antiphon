@@ -229,19 +229,46 @@ public sealed class DefaultRunnerRerouteTests
     [Test]
     public async Task C772_Desktop_codex_block_note_reaches_parent()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
-        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
-        using var workspace = new TempWorkspace();
-        await parent.InsertTurnAsync("prior question", "prior answer");
-        await parent.MarkWorkingAsync();
-        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
-            kind: AgentKind.Codex, parentSessionId: parent.SessionId, runnerId: null);
-        await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
-        parent.Adapter.SubmittedBodies.ShouldBeEmpty();
-        await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
-        await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
-        await AssertParentReceiptAsync(schema, parent, taskId);
+        foreach (var producer in new[] { "preclaim", "queued-rewalk", "blocked-resume" })
+        foreach (var busy in new[] { false, true })
+        {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var parent = await BridgeQueueHarness.CreateAsync(new()
+            { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+            using var workspace = new TempWorkspace();
+            if (busy)
+            {
+                await parent.InsertTurnAsync("prior question", "prior answer");
+                await parent.MarkWorkingAsync();
+            }
+            Guid? pinId = null;
+            if (producer != "preclaim")
+            {
+                var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                    (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+                pinId = pin.Id;
+                await SeedHoldAsync(schema, "fable");
+            }
+            var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pinId,
+                producer == "blocked-resume" ? AgentTaskStatus.Blocked : AgentTaskStatus.Queued,
+                kind: producer == "preclaim" ? AgentKind.Codex : AgentKind.ClaudeCode,
+                parentSessionId: parent.SessionId, runnerId: null);
+            await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+            await using (var read = CreateContext(schema))
+            {
+                var stored = await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                stored.Status.ShouldBe(AgentTaskStatus.Blocked, producer);
+                stored.FailureReason.ShouldContain("codex_desktop_unqualified");
+                (await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId)).ShouldBe(1);
+            }
+            if (busy)
+            {
+                parent.Adapter.SubmittedBodies.ShouldBeEmpty(producer);
+                await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+                await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
+            }
+            await AssertParentReceiptAsync(schema, parent, taskId);
+        }
     }
 
     [Test]
@@ -249,7 +276,7 @@ public sealed class DefaultRunnerRerouteTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var parent = await BridgeQueueHarness.CreateAsync(new()
-        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        { AlwaysOn = false, ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true });
         using var workspace = new TempWorkspace();
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
             kind: AgentKind.Codex, parentSessionId: parent.SessionId, runnerId: null);
@@ -261,7 +288,13 @@ public sealed class DefaultRunnerRerouteTests
         catch (Exception ex) when (ex is SimulatedCutException || ex.InnerException is SimulatedCutException) { }
         fault.Fired.ShouldBeTrue();
         await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
-        await AssertParentReceiptAsync(schema, parent, taskId);
+        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = schema.ConnectionString,
+            AttachSessionId = parent.SessionId, AttachAgentId = parent.AgentId,
+            PreserveDatabaseOnDispose = true,
+        });
+        await AssertParentReceiptAsync(schema, recovered, taskId);
     }
 
     [Test]
@@ -334,6 +367,12 @@ public sealed class DefaultRunnerRerouteTests
         note.AgentSessionId.ShouldBe(parent.SessionId);
         note.Body.ShouldBe(submitted);
         note.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        var prompts = await read.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == parent.SessionId && e.Kind == TranscriptKinds.UserPrompt)
+            .Select(e => e.Text)
+            .ToListAsync();
+        prompts.Count(p => p is not null && PromptSubmissionMatch.IsCompleteIn(note.Body, p)).ShouldBe(1,
+            "a complete recipient UserPrompt, rather than a queue row, proves delivery");
     }
 
     [Test]
