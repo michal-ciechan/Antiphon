@@ -172,11 +172,13 @@ public sealed class AgentTaskLandActiveSourceClaimTests
                 }
                 await db.SaveChangesAsync();
             }
-            await h.Services.GetRequiredService<IWorkspaceReservationJournal>()
-                .ReleaseTaskConsumersAsync(claimId, CancellationToken.None);
-            if (claimant == "merge-helper")
-                await h.Services.GetRequiredService<IWorkspaceReservationJournal>()
-                    .ReleaseSessionConsumersAsync(sessionId, CancellationToken.None);
+            await using (var scope = h.Services.CreateAsyncScope())
+            {
+                var reservations = scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
+                await reservations.ReleaseTaskConsumersAsync(claimId, CancellationToken.None);
+                if (claimant == "merge-helper")
+                    await reservations.ReleaseSessionConsumersAsync(sessionId, CancellationToken.None);
+            }
             await using (var db = h.CreateContext())
                 (await db.WorkspaceUseReservations.AsNoTracking().SingleAsync(r => r.Id == reservationId))
                     .Active.ShouldBeFalse();
