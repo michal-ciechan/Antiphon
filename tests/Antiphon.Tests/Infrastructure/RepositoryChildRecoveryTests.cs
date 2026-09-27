@@ -124,7 +124,16 @@ public sealed class RepositoryChildRecoveryTests
                     new RepositoryChildJournal.ChildRecord(1, repo.WorktreeRoot, child.Id, child.StartTime.ToUniversalTime().Ticks)));
             var retainedHash = SHA256.HashData(await File.ReadAllBytesAsync(path));
             var recoverable = state == "reused";
-            await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
+            if (state == "alive")
+            {
+                // Linux Process.StartTime is derived from wall-clock boot time and shifts across
+                // separate readers (CARD-0668). Seed the live identity in the same PowerShell
+                // process that immediately runs the recovery script, then retain its pre-run bytes.
+                var snapshot = Path.Combine(repo.WorktreeRoot, "alive-before.json");
+                await RecoverLiveRecordAsync(repo.Path, path, snapshot);
+                retainedHash = SHA256.HashData(await File.ReadAllBytesAsync(snapshot));
+            }
+            else await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
             Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).Count().ShouldBe(recoverable ? 0 : 1);
             if (!recoverable) SHA256.HashData(await File.ReadAllBytesAsync(path)).ShouldBe(retainedHash);
             File.Exists(Path.Combine(common, "antiphon", "landing.lock")).ShouldBeTrue();
@@ -327,6 +336,28 @@ public sealed class RepositoryChildRecoveryTests
             new Dictionary<string, string> { ["ANTIPHON_C452_READ_PID"] = processId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
         read.Exit.ShouldBe(0, read.Error);
         return long.Parse(read.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task RecoverLiveRecordAsync(string repository, string record, string snapshot)
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
+        root.ShouldNotBeNull();
+        var script = Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1");
+        var command = """
+            $record = Get-Content -LiteralPath $env:ANTIPHON_C452_RECORD -Raw | ConvertFrom-Json
+            $record.StartTicks = [Diagnostics.Process]::GetProcessById([int]$record.ProcessId).StartTime.ToUniversalTime().Ticks
+            [IO.File]::WriteAllText($env:ANTIPHON_C452_RECORD, ($record | ConvertTo-Json -Compress))
+            [IO.File]::Copy($env:ANTIPHON_C452_RECORD, $env:ANTIPHON_C452_SNAPSHOT)
+            & $env:ANTIPHON_C452_SCRIPT -Repository $env:ANTIPHON_C452_REPOSITORY -Execute -ConfirmDescendantsExited
+            """;
+        var result = await RunProcessAsync("pwsh", ["-NoProfile", "-Command", command],
+            new Dictionary<string, string> {
+                ["ANTIPHON_C452_RECORD"] = record, ["ANTIPHON_C452_SNAPSHOT"] = snapshot,
+                ["ANTIPHON_C452_SCRIPT"] = script, ["ANTIPHON_C452_REPOSITORY"] = repository,
+            });
+        result.Exit.ShouldBe(3, result.Error + result.Output);
+        File.Exists(snapshot).ShouldBeTrue();
     }
 
     private static async Task<(int Exit, string Output, string Error)> RecoverAsync(string repository,
