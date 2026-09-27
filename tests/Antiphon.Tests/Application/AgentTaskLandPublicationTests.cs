@@ -72,7 +72,8 @@ public sealed partial class AgentTaskLandPublicationTests
             .Succeeded.ShouldBeTrue();
         await using var db = h.CreateContext();
         (await db.AgentTaskEvents.SingleAsync(e => e.LandingOperationId == intent.Id && e.IsLandTerminal))
-            .Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+            .Type.ShouldBe(AgentTaskEventType.AlreadyPresent);
+        landed.Cleanup.ShouldNotBe(LandCleanupStatus.Complete);
     }
 
     [Test]
