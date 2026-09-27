@@ -12,7 +12,7 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { TbBrandTelegram, TbBrandWhatsapp, TbBrandDiscord, TbMessageCircle } from 'react-icons/tb'
-import { useChannels, useUpdateChannel, type AlertSeverity, type ChatChannelDto } from '../../api/channels'
+import { useChannels, useOutboundProfiles, useUpdateChannel, type AlertSeverity, type ChatChannelDto } from '../../api/channels'
 import { useAgentList } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -44,6 +44,7 @@ function relativeTime(iso: string | null): string {
 
 function ChannelRow({ channel }: { channel: ChatChannelDto }) {
   const { data: agents } = useAgentList()
+  const { data: outboundProfiles } = useOutboundProfiles()
   const update = useUpdateChannel()
 
   const agentOptions = (agents ?? []).map((a) => ({ value: a.id, label: a.name }))
@@ -88,6 +89,13 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
     )
   }
 
+  const onOutboundChange = (name: string | null) => {
+    update.mutate(
+      { id: channel.id, request: name ? { outboundAgentProfile: name } : { clearOutboundAgentProfile: true } },
+      { onError: (e) => notifications.show({ color: 'red', message: getApiErrorMessage(e, 'Failed to update outbound profile') }) },
+    )
+  }
+
   return (
     <Table.Tr>
       <Table.Td>
@@ -129,6 +137,30 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
           w={200}
           disabled={update.isPending}
         />
+      </Table.Td>
+      <Table.Td>
+        <Stack gap={2}>
+          <Select
+            aria-label={`Outbound profile for ${channel.title ?? channel.externalId}`}
+            placeholder="Source files only"
+            data={(outboundProfiles ?? []).map((profile) => ({ value: profile.name, label: profile.name }))}
+            value={channel.outboundAgentProfile}
+            onChange={onOutboundChange}
+            clearable
+            clearButtonProps={{ 'aria-hidden': false, 'aria-label': `Clear outbound profile for ${channel.title ?? channel.externalId}` }}
+            searchable
+            size="xs"
+            w={190}
+            disabled={update.isPending || !channel.enabled || !channel.agentId}
+          />
+          {channel.outboundProfile && (
+            <Tooltip label={`Project ${channel.outboundProfile.projectId}; converter ${channel.outboundProfile.agentName} (${channel.outboundProfile.agentId}); prompt SHA-256 ${channel.outboundProfile.promptRevision}; ${channel.outboundProfile.trigger}; ${channel.outboundProfile.timeoutSeconds}s deadline; ${channel.outboundProfile.authorization}`} withArrow>
+              <Text size="xs" c="dimmed" lineClamp={1}>
+                {channel.outboundProfile.agentName} · {channel.outboundProfile.trigger} · {channel.outboundProfile.timeoutSeconds}s · metered
+              </Text>
+            </Tooltip>
+          )}
+        </Stack>
       </Table.Td>
       <Table.Td>
         <Tooltip label={channel.enabled ? 'Routing on' : 'Routing paused'} withArrow>
@@ -196,6 +228,7 @@ export function ChannelsPage() {
               <Table.Th>Conversation</Table.Th>
               <Table.Th>Last message</Table.Th>
               <Table.Th w={220}>Agent</Table.Th>
+              <Table.Th w={220}>Outbound profile</Table.Th>
               <Table.Th w={90}>Enabled</Table.Th>
               <Table.Th w={140}>Alerts</Table.Th>
               <Table.Th w={100}>Digest</Table.Th>
@@ -207,7 +240,7 @@ export function ChannelsPage() {
             ))}
             {!isLoading && (channels ?? []).length === 0 && (
               <Table.Tr>
-                <Table.Td colSpan={7}>
+                <Table.Td colSpan={8}>
                   <Text c="dimmed" ta="center" py="lg" size="sm">
                     No channels yet — they appear automatically when a connected provider (e.g. the
                     Telegram bot) receives its first message.

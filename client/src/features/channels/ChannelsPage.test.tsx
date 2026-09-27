@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import type { ChatChannelDto } from '../../api/channels'
-import { renderWithProviders, screen } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ChannelsPage } from './ChannelsPage'
 
@@ -25,6 +25,8 @@ function channel(over: Partial<ChatChannelDto> = {}): ChatChannelDto {
     alertMinSeverity: null,
     digestEnabled: false,
     digestLastSentAt: null,
+    outboundAgentProfile: null,
+    outboundProfile: null,
     ...over,
   }
 }
@@ -50,5 +52,40 @@ describe('ChannelsPage', () => {
     renderWithProviders(<ChannelsPage />)
     await screen.findByText(/Mike Ciechan/)
     expect(screen.queryByText(/↩/)).not.toBeInTheDocument()
+  })
+
+  it('saves and clears an explicit outbound profile with its metered preview', async () => {
+    const profile = {
+      name: 'pdf-project', projectId: 'project-1', agentId: 'converter-1', agentName: 'PDF converter',
+      promptRevision: 'abcdef', trigger: 'MarkdownSources' as const, timeoutSeconds: 120,
+      maxPending: 8, authorization: 'One metered worker invocation per matching agent reply',
+    }
+    let selected: string | null = null
+    const requests: unknown[] = []
+    server.use(
+      http.get('/api/channels', () => HttpResponse.json([channel({
+        agentId: 'agent-1', outboundAgentProfile: selected, outboundProfile: selected ? profile : null,
+      })])),
+      http.get('/api/channels/outbound-profiles', () => HttpResponse.json([profile])),
+      http.get('/api/agents', () => HttpResponse.json([{ id: 'agent-1', name: 'Inbound agent' }])),
+      http.patch('/api/channels/ch-1', async ({ request }) => {
+        const body = await request.json() as { outboundAgentProfile?: string; clearOutboundAgentProfile?: boolean }
+        requests.push(body)
+        selected = body.clearOutboundAgentProfile ? null : body.outboundAgentProfile ?? selected
+        return HttpResponse.json(channel({ agentId: 'agent-1', outboundAgentProfile: selected,
+          outboundProfile: selected ? profile : null }))
+      }),
+    )
+    renderWithProviders(<ChannelsPage />)
+    const selector = await screen.findByRole('textbox', { name: 'Outbound profile for Family' })
+    await userEvent.click(selector)
+    await userEvent.click(await screen.findByText('pdf-project'))
+    await waitFor(() => expect(requests).toEqual([{ outboundAgentProfile: 'pdf-project' }]))
+    expect(await screen.findByText(/PDF converter · MarkdownSources/)).toBeInTheDocument()
+    await waitFor(() => expect(selector).not.toBeDisabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Clear outbound profile for Family' }))
+    await waitFor(() => expect(requests).toEqual([
+      { outboundAgentProfile: 'pdf-project' }, { clearOutboundAgentProfile: true },
+    ]))
   })
 })

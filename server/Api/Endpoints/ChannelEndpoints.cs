@@ -25,6 +25,9 @@ public static class ChannelEndpoints
             return Results.Ok(await service.GetAllAsync(cancellationToken));
         });
 
+        channels.MapGet("/outbound-profiles", (ChatChannelService service) =>
+            Results.Ok(service.GetOutboundProfiles()));
+
         channels.MapPatch("/{id:guid}", async (
             Guid id,
             UpdateChatChannelRequest request,

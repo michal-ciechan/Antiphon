@@ -4,6 +4,18 @@ import { apiGet, apiPatch } from './client'
 export type ChatChannelKind = 'Direct' | 'Group' | 'Broadcast'
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 
+export interface ChannelOutboundProfileDto {
+  name: string
+  projectId: string
+  agentId: string
+  agentName: string
+  promptRevision: string
+  trigger: 'MarkdownSources' | 'EveryAgentReply'
+  timeoutSeconds: number
+  maxPending: number
+  authorization: string
+}
+
 export interface ChatChannelDto {
   id: string
   provider: string
@@ -24,6 +36,8 @@ export interface ChatChannelDto {
   alertMinSeverity: AlertSeverity | null
   digestEnabled: boolean
   digestLastSentAt: string | null
+  outboundAgentProfile: string | null
+  outboundProfile: ChannelOutboundProfileDto | null
 }
 
 export interface UpdateChatChannelRequest {
@@ -33,10 +47,21 @@ export interface UpdateChatChannelRequest {
   alertMinSeverity?: AlertSeverity | null
   clearAlertMinSeverity?: boolean
   digestEnabled?: boolean
+  outboundAgentProfile?: string
+  clearOutboundAgentProfile?: boolean
 }
 
 export const channelKeys = {
   all: ['channels'] as const,
+  outboundProfiles: ['channels', 'outbound-profiles'] as const,
+}
+
+export function useOutboundProfiles() {
+  return useQuery({
+    queryKey: channelKeys.outboundProfiles,
+    queryFn: () => apiGet<ChannelOutboundProfileDto[]>('/channels/outbound-profiles'),
+    staleTime: 10_000,
+  })
 }
 
 export function useChannels() {
