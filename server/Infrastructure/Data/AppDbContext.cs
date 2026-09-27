@@ -257,6 +257,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.Provider).IsRequired().HasMaxLength(50);
             entity.Property(c => c.ExternalId).IsRequired().HasMaxLength(200);
             entity.Property(c => c.Title).HasMaxLength(500);
+            entity.Property(c => c.OutboundAgentProfile).HasMaxLength(100);
             entity.Property(c => c.ReplyHandle).HasMaxLength(500);
             entity.Property(c => c.LastMessagePreview).HasMaxLength(500);
             entity.Property(c => c.LastAuthor).HasMaxLength(200);

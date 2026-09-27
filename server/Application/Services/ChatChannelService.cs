@@ -5,7 +5,10 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Application.Settings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Antiphon.Server.Application.Services;
@@ -22,23 +25,30 @@ public sealed class ChatChannelService
     private readonly AppDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IAntiphonMessagingProducer _producer;
+    private readonly ChannelOutboundSettings _outbound;
 
-    public ChatChannelService(AppDbContext db, TimeProvider timeProvider, IAntiphonMessagingProducer producer)
+    public ChatChannelService(AppDbContext db, TimeProvider timeProvider, IAntiphonMessagingProducer producer,
+        IOptions<ChannelOutboundSettings>? outbound = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _producer = producer;
+        _outbound = outbound?.Value ?? new ChannelOutboundSettings();
     }
 
     public async Task<IReadOnlyList<ChatChannelDto>> GetAllAsync(CancellationToken ct)
     {
-        return await _db.ChatChannels
+        var channels = await _db.ChatChannels
             .AsNoTracking()
             .Include(c => c.Agent)
             .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
-            .Select(c => ToDto(c))
             .ToListAsync(ct);
+        return channels.Select(ToDto).ToList();
     }
+
+    public IReadOnlyList<ChannelOutboundProfileDto> GetOutboundProfiles() =>
+        _outbound.Profiles.Keys.OrderBy(n => n, StringComparer.Ordinal)
+            .Select(n => Preview(n)!).ToList();
 
     public async Task<ChatChannelDto> UpdateAsync(Guid id, UpdateChatChannelRequest request, CancellationToken ct)
     {
@@ -51,6 +61,7 @@ public sealed class ChatChannelService
         {
             channel.AgentId = null;
             channel.Agent = null;
+            channel.OutboundAgentProfile = null;
         }
         else if (request.AgentId is Guid agentId)
         {
@@ -60,12 +71,31 @@ public sealed class ChatChannelService
             // AlwaysOn / channel-bound arms were lifted (CARD-0186); Grok/Codex by CARD-0187.
             AgentService.ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
 
+            var bindingChanged = channel.AgentId != agent.Id;
             channel.AgentId = agent.Id;
             channel.Agent = agent;
+            if (bindingChanged)
+                channel.OutboundAgentProfile = null;
+        }
+
+        if (request.ClearOutboundAgentProfile && request.OutboundAgentProfile is not null)
+            throw new ValidationException(nameof(request.OutboundAgentProfile),
+                "Set or clear the outbound profile, not both.");
+        if (request.ClearOutboundAgentProfile)
+            channel.OutboundAgentProfile = null;
+        else if (request.OutboundAgentProfile is { } profileName)
+        {
+            if (string.IsNullOrWhiteSpace(profileName))
+                throw new ValidationException(nameof(request.OutboundAgentProfile), "Profile name is required.");
+            channel.OutboundAgentProfile = profileName;
         }
 
         if (request.Enabled is bool enabled)
             channel.Enabled = enabled;
+
+        if (channel.OutboundAgentProfile is not null &&
+            (request.OutboundAgentProfile is not null || request.AgentId is not null))
+            await ValidateOutboundBindingAsync(channel, ct);
 
         if (request.ClearAlertMinSeverity)
             channel.AlertMinSeverity = null;
@@ -194,12 +224,84 @@ public sealed class ChatChannelService
     private static string? Truncate(string? text) =>
         text is { Length: > PreviewMaxChars } ? text[..PreviewMaxChars] : text;
 
-    private static ChatChannelDto ToDto(ChatChannel c) => new(
+    private ChatChannelDto ToDto(ChatChannel c) => new(
         c.Id, c.Provider, c.ExternalId, c.Kind, c.Title,
         c.AgentId, c.Agent?.Name, c.Enabled,
         c.LastMessageAt, c.LastMessagePreview, c.LastAuthor,
         c.LastReplyAt, c.LastReplyPreview, c.MessageCount, c.CreatedAt,
-        c.AlertMinSeverity, c.DigestEnabled, c.DigestLastSentAt);
+        c.AlertMinSeverity, c.DigestEnabled, c.DigestLastSentAt,
+        c.OutboundAgentProfile, Preview(c.OutboundAgentProfile));
+
+    private ChannelOutboundProfileDto? Preview(string? name)
+    {
+        if (name is null || !_outbound.Profiles.TryGetValue(name, out var profile))
+            return null;
+        var agent = _db.Agents.AsNoTracking().FirstOrDefault(a => a.Id == profile.AgentId);
+        string revision = "unavailable";
+        if (agent is not null && TryGetPromptPath(agent, profile.PromptFile, out var path)
+            && File.Exists(path))
+        {
+            try { revision = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return new ChannelOutboundProfileDto(name, profile.ProjectId, profile.AgentId,
+            agent?.Name ?? "unavailable", revision, profile.Trigger.ToString(),
+            profile.TimeoutSeconds, profile.MaxPending,
+            "One metered worker invocation per matching agent reply");
+    }
+
+    private async Task ValidateOutboundBindingAsync(ChatChannel channel, CancellationToken ct)
+    {
+        var name = channel.OutboundAgentProfile!;
+        if (!_outbound.Profiles.TryGetValue(name, out var profile))
+            throw new ValidationException(nameof(channel.OutboundAgentProfile), $"Unknown profile '{name}'.");
+        if (!channel.Enabled || channel.AgentId is null)
+            throw new ValidationException(nameof(channel.OutboundAgentProfile),
+                "An outbound profile requires an enabled channel bound to an agent.");
+        var inbound = await _db.Agents.Include(a => a.Board)
+            .SingleOrDefaultAsync(a => a.Id == channel.AgentId, ct);
+        var converter = await _db.Agents.Include(a => a.Board)
+            .SingleOrDefaultAsync(a => a.Id == profile.AgentId, ct);
+        if (inbound?.Board?.ProjectId != profile.ProjectId || converter?.Board?.ProjectId != profile.ProjectId
+            || converter.Id == inbound.Id || converter.IsPoolDelegate || converter.AlwaysOn
+            || !AgentTaskService.DelegatableKinds.Contains(converter.Kind))
+            throw new ValidationException(nameof(channel.OutboundAgentProfile),
+                "Inbound and conversion agents must be distinct, delegatable agents in the profile project.");
+        if (await _db.ChatChannels.AnyAsync(c => c.AgentId == converter.Id, ct))
+            throw new ValidationException(nameof(channel.OutboundAgentProfile),
+                "The conversion agent is bound to an inbound channel.");
+        if (!TryGetPromptPath(converter, profile.PromptFile, out var promptPath) || !File.Exists(promptPath))
+            throw new ValidationException(nameof(channel.OutboundAgentProfile),
+                "The conversion agent needs an existing prompt inside its dedicated workspace.");
+    }
+
+    private static bool TryGetPromptPath(Agent agent, string relative, out string path)
+    {
+        path = string.Empty;
+        if (string.IsNullOrWhiteSpace(agent.WorkingDirectory) || Path.IsPathRooted(relative))
+            return false;
+        try
+        {
+            var root = Path.GetFullPath(agent.WorkingDirectory);
+            var candidate = Path.GetFullPath(Path.Combine(root, relative));
+            if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!Directory.Exists(root) || File.GetAttributes(root).HasFlag(FileAttributes.ReparsePoint))
+                return false;
+            for (var parent = Path.GetDirectoryName(candidate); parent is not null && parent.Length > root.Length;
+                 parent = Path.GetDirectoryName(parent))
+                if (Directory.Exists(parent) && File.GetAttributes(parent).HasFlag(FileAttributes.ReparsePoint))
+                    return false;
+            if (File.Exists(candidate) && File.GetAttributes(candidate).HasFlag(FileAttributes.ReparsePoint))
+                return false;
+            path = candidate;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }

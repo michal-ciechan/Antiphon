@@ -26,6 +26,9 @@ public class ChatChannel
     /// <summary>The agent this channel routes to. Null = unmapped (messages are recorded, not routed).</summary>
     public Guid? AgentId { get; set; }
 
+    /// <summary>Explicit per-conversation outbound preparation profile. Null publishes directly.</summary>
+    public string? OutboundAgentProfile { get; set; }
+
     /// <summary>Routing on/off without losing the agent binding.</summary>
     public bool Enabled { get; set; } = true;
 

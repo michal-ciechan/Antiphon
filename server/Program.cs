@@ -705,6 +705,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddOptions<ChannelBridgeSettings>()
         .Bind(builder.Configuration.GetSection(ChannelBridgeSettings.SectionName))
         .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<ChannelOutboundSettings>, ChannelOutboundSettingsValidator>();
+    builder.Services.AddOptions<ChannelOutboundSettings>()
+        .Bind(builder.Configuration.GetSection(ChannelOutboundSettings.SectionName))
+        .ValidateOnStart();
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
