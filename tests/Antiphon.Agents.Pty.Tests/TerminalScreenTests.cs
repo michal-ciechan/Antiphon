@@ -59,6 +59,10 @@ public class TerminalScreenTests
 			}, seed: "AB\r\nCD");
 		}
 		AssertAllCuts("A\x1b[?2JZ", s => { s.GetRow(0).ShouldBe("AZ"); s.CursorCol.ShouldBe(2); });
+		AssertAllCuts("A\x1b[2CZ", s =>
+		{ s.GetRow(0).ShouldBe("A  Z"); s.CursorRow.ShouldBe(0); s.CursorCol.ShouldBe(4); });
+		AssertAllCuts("A\x1b[1BZ", s =>
+		{ s.GetRow(0).ShouldBe("A"); s.GetRow(1).ShouldBe(" Z"); s.CursorRow.ShouldBe(1); s.CursorCol.ShouldBe(2); });
 		AssertAllCuts("A\x1b[1 qZ", s => s.GetRow(0).ShouldBe("AZ"));
 		AssertAllCuts("A\x1b[;0mZ", s => s.GetRow(0).ShouldBe("AZ"));
 		AssertAllCuts("\x1b[2;3r\x1b[3;1H\nZ", s =>
