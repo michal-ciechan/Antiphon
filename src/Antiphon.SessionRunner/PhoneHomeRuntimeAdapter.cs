@@ -16,6 +16,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     }
 
     public int OwnedSessionCount => _runtime.LiveSessionCount;
+    public async Task<int> KillAllAsync(TimeSpan timeout, CancellationToken ct) =>
+        (await _runtime.KillAllAsync(timeout, ct)).Count;
 
     public RunnerCapabilitiesDto Capabilities()
     {

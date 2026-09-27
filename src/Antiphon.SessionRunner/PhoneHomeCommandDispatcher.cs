@@ -20,6 +20,10 @@ public interface IPhoneHomeRuntimeSurface
     Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct);
     int OwnedSessionCount { get; }
 
+    Task<int> KillAllAsync(TimeSpan timeout, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+            "Retire is not supported on this runner.", 409);
+
     /// <summary>CARD-0653. Default refuses so an old fake cannot pretend it freed a seat.</summary>
     Task<RunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
@@ -53,6 +57,9 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly IHostStatsSource? _hostStats;
     private readonly IHostApplicationLifetime? _lifetime;
     private readonly TimeProvider _time;
+    private readonly Guid _processBootId;
+    private int _retireAccepted;
+    private int _stopScheduled;
     private readonly object _mutationGate = new();
     private readonly ILogger _logger;
     private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
@@ -61,7 +68,8 @@ public sealed class PhoneHomeCommandDispatcher
     public PhoneHomeCommandDispatcher(
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
         ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null,
-        IHostApplicationLifetime? lifetime = null, TimeProvider? time = null)
+        IHostApplicationLifetime? lifetime = null, TimeProvider? time = null,
+        PhoneHomeProcessIdentity? identity = null)
     {
         _runtime = runtime;
         _settings = settings;
@@ -69,6 +77,7 @@ public sealed class PhoneHomeCommandDispatcher
         _hostStats = hostStats;
         _lifetime = lifetime;
         _time = time ?? TimeProvider.System;
+        _processBootId = identity?.BootId ?? Guid.NewGuid();
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _launchGenerations = new PhoneHomeLaunchGenerationStore(settings.LaunchGenerationsPath);
     }
@@ -79,7 +88,19 @@ public sealed class PhoneHomeCommandDispatcher
     /// </summary>
     public RunnerCapabilitiesDto Capabilities() => _runtime.Capabilities();
 
-    public void NotifyRetireReplyWritten() { }
+    /// <summary>The socket writer calls this only after an accepted Retire reply was sent.</summary>
+    public void NotifyRetireReplyWritten()
+    {
+        if (Volatile.Read(ref _retireAccepted) == 0 || Interlocked.Exchange(ref _stopScheduled, 1) != 0)
+            return;
+        _ = StopAfterReplyAsync();
+    }
+
+    private async Task StopAfterReplyAsync()
+    {
+        await Task.Delay(TimeSpan.FromMilliseconds(250), _time, CancellationToken.None);
+        _lifetime?.StopApplication();
+    }
 
     private RunnerWorkspaceService Workspace() =>
         _workspace ??= new RunnerWorkspaceService(_settings.RunnerRepository, _settings.AllowedCwd);
@@ -171,6 +192,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.Get => Result(request, await _runtime.GetAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.Launch => await LaunchAsync(request, trace, ct),
                 PhoneHomeOperation.LaunchPlatformConstrained => await LaunchPlatformConstrainedAsync(request, trace, ct),
+                PhoneHomeOperation.Retire => await RetireAsync(request, ct),
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
                 PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
                 PhoneHomeOperation.Snapshot => Result(request, _runtime.GetSnapshot(ReadSessionId(request))),
@@ -311,6 +333,22 @@ public sealed class PhoneHomeCommandDispatcher
             // this request. Cancellation stays cancellation; the receive pump decides what it means.
             return PhoneHomeErrorFrames.Internal(request, ex, _settings.Limits.MaxMessageUtf8Bytes);
         }
+    }
+
+    private async Task<PhoneHomeFrame> RetireAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var body = request.Payload?.Deserialize<RunnerRetireRequest>(PhoneHomeFraming.Json)
+            ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Retire body is required.", 400);
+        if (string.IsNullOrWhiteSpace(body.Reason))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Retire reason is required.", 400);
+        var owned = _runtime.OwnedSessionCount;
+        if (!body.Force && owned > 0)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RunnerBusy,
+                $"Runner still owns {owned} session(s).", 409);
+        var killed = body.Force ? await _runtime.KillAllAsync(TimeSpan.FromSeconds(5), ct) : 0;
+        Volatile.Write(ref _retireAccepted, 1);
+        return Result(request, new RunnerRetireResult(_processBootId, killed,
+            _time.GetUtcNow().UtcDateTime.AddMilliseconds(250)));
     }
 
     private async Task<PhoneHomeFrame> LaunchPlatformConstrainedAsync(

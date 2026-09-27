@@ -17,7 +17,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     private readonly IHttpClientFactory _httpFactory;
     private readonly TimeProvider _clock;
     private readonly ILogger<PhoneHomeConnectionService> _logger;
-    private readonly Guid _bootId = Guid.NewGuid();
+    private readonly Guid _bootId;
+    private int _retiring;
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<PhoneHomeFrame>> _waiters = new();
     private long _epoch;
     private int _inFlight;
@@ -30,7 +31,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         SessionRunnerRuntime runtime,
         IHttpClientFactory httpFactory,
         TimeProvider clock,
-        ILogger<PhoneHomeConnectionService> logger)
+        ILogger<PhoneHomeConnectionService> logger,
+        PhoneHomeProcessIdentity? identity = null)
     {
         _settings = settings.Value;
         _adoption = adoption;
@@ -39,6 +41,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         _httpFactory = httpFactory;
         _clock = clock;
         _logger = logger;
+        _bootId = identity?.BootId ?? Guid.NewGuid();
     }
 
     internal int RegistrationAttempts { get; private set; }
@@ -195,7 +198,9 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             CancelWaiters(epoch);
             // CARD-0631 D-4: the close handshake goes through the writer's gate, so it never
             // overlaps a reply or heartbeat that is still being written.
-            try { await writer.CloseAsync(WebSocketCloseStatus.NormalClosure, overflow ? PhoneHomeProblemTypes.EventOverflow : "disconnect"); }
+            try { await writer.CloseAsync(WebSocketCloseStatus.NormalClosure,
+                Volatile.Read(ref _retiring) != 0 ? PhoneHomeCloseReasons.Retiring
+                : overflow ? PhoneHomeProblemTypes.EventOverflow : "disconnect"); }
             catch { /* closing a dropped socket */ }
             ws.Dispose();
         }
@@ -319,6 +324,11 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         try
         {
             await writer.SendAsync(reply, ct);
+            if (frame.Operation == PhoneHomeOperation.Retire && reply.Kind == PhoneHomeFrameKind.Result)
+            {
+                Volatile.Write(ref _retiring, 1);
+                _dispatcher.NotifyRetireReplyWritten();
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

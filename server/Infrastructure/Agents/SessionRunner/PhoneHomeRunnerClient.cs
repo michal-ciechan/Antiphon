@@ -35,6 +35,13 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<RunnerProviderAuthDto>(frame);
     }
 
+    public async Task<RunnerRetireResult> RetireAsync(bool force, string reason, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.Retire,
+            new RunnerRetireRequest(force, reason), ct);
+        return Read<RunnerRetireResult>(frame) ?? throw Missing("retire");
+    }
+
     public async Task<RunnerHostStatsDto?> GetHostStatsAsync(CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.HostStats, null, ct);

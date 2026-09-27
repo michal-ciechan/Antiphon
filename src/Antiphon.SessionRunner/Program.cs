@@ -56,6 +56,7 @@ builder.Services.PostConfigure<PhoneHomeSettings>(settings =>
         settings.LaunchGenerationsPath = settings.ResolvedLaunchGenerationsPath();
 });
 builder.Services.AddHttpClient(nameof(PhoneHomeConnectionService));
+builder.Services.AddSingleton<PhoneHomeProcessIdentity>();
 builder.Services.AddSingleton<IPhoneHomeAdoptionGate, PhoneHomeAdoptionGate>();
 builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
 {
@@ -68,7 +69,10 @@ builder.Services.AddSingleton<PhoneHomeCommandDispatcher>(sp =>
         sp.GetRequiredService<IOptions<PhoneHomeSettings>>().Value,
         sp.GetRequiredService<IProviderAuthProbe>(),
         sp.GetRequiredService<ILogger<PhoneHomeCommandDispatcher>>(),
-        hostStatsOptions.Enabled ? sp.GetRequiredService<IHostStatsSource>() : null);
+        hostStatsOptions.Enabled ? sp.GetRequiredService<IHostStatsSource>() : null,
+        sp.GetRequiredService<IHostApplicationLifetime>(),
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<PhoneHomeProcessIdentity>());
 });
 // CARD-0628 D-7 / CARD-0647 / CARD-0660: the Claude, Grok and Codex probes behind one router.
 builder.Services.AddProviderAuthProbes();
