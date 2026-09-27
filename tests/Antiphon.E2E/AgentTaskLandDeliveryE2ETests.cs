@@ -272,13 +272,86 @@ public class AgentTaskLandDeliveryE2ETests
     }
 
     [Test]
-    public async Task C488_ApprovalOutcomeReceiptMatrix() => await C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput();
+    [Arguments("stale-A")]
+    public async Task C488_ApprovalOutcomeReceiptMatrix(string arm)
+    {
+        arm.ShouldBe("stale-A");
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync();
+        await f.StartReviewDelegateAsync("raw");
+        await f.ReleaseReviewReportAsync();
+        var receipt = await f.WaitForReviewReceiptAsync();
+        await f.RefuseStaleReviewAsync(receipt);
+    }
 
     [Test]
-    public async Task C488_ReviewToLandReceiptMatrix() => await C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput();
+    [Arguments("idle", "raw")]
+    [Arguments("idle", "Apply")]
+    [Arguments("idle", "spill")]
+    [Arguments("busy", "raw")]
+    [Arguments("busy", "Apply")]
+    [Arguments("busy", "spill")]
+    public async Task C488_ReviewToLandReceiptMatrix(string recipient, string form)
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(busy: recipient == "busy", completionForm: form);
+        await f.StartReviewDelegateAsync(form);
+        await f.ReleaseReviewReportAsync();
+        if (recipient == "busy")
+        {
+            await f.WaitForUnattemptedReviewQueueAsync();
+            if (form == "raw")
+            {
+                await using var idle = new LandDeliveryFixture(f);
+                await idle.InitializeAsync();
+                await idle.RequestAsync(initial: false);
+                await idle.ReleaseExecutionAsync();
+                await idle.ReceiptAsync(seconds: 180);
+                await idle.AssertRemoteAsync();
+            }
+            await f.WaitForUnattemptedReviewQueueAsync();
+            await f.ReleaseBusyAsync();
+        }
+        var receipt = await f.WaitForReviewReceiptAsync(form);
+        await f.LandReviewedAsync(receipt);
+    }
 
     [Test]
-    public async Task C488_ReviewDeliveryCrashMatrix() => await C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt();
+    [Arguments("settlement-before-save")]
+    [Arguments("settlement-before-commit")]
+    [Arguments("enqueue-exception")]
+    [Arguments("queue-before-commit")]
+    [Arguments("queue-inserted-before-outbox-link")]
+    [Arguments("queue-committed-before-wakeup")]
+    [Arguments("idle-lost-wakeup")]
+    [Arguments("before-typing")]
+    [Arguments("prompt-before-verdict")]
+    public async Task C488_ReviewDeliveryCrashMatrix(string cut)
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(cut: ReviewCut(cut));
+        await f.StartReviewDelegateAsync("raw");
+        await f.ReleaseReviewReportAsync();
+        if (cut == "enqueue-exception")
+        {
+            await LandDeliveryFixture.UntilAsync(async () =>
+            {
+                await using var db = f.CreateContext();
+                return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.ReviewTaskId
+                    && n.Kind == LandNotificationKind.TaskCompletion && n.EnqueueAttempts == 2 && n.QueueMessageId == null);
+            }, "two persisted review enqueue failures", 180);
+        }
+        else if (cut != "idle-lost-wakeup")
+        {
+            await f.AssertReviewHeldAsync(cut);
+            await f.ReleaseBoundaryAsync(ReviewBarrier(cut));
+        }
+        var receipt = await f.WaitForReviewReceiptAsync();
+        if (cut == "prompt-before-verdict")
+            receipt.WireText.ShouldContain(receipt.EvidenceId.ToString("N"));
+        if (cut == "idle-lost-wakeup")
+            Directory.GetFiles(f.Root, "notification-scan-*.observation.json").ShouldNotBeEmpty();
+    }
 
     [Test]
     public async Task C488_ApprovalDeliveryCrashMatrix() => await C467_V26_HardCrashAfterQueueInsertReusesRow();
@@ -293,7 +366,71 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C488_ApprovalBusyCallerDoesNotBlock() => await C467_V23_BusyCallerDoesNotBlockAnotherLand();
 
     [Test]
-    public async Task C488_ReviewEvidenceCrashRecovers() => await C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt();
+    public async Task C488_ReviewEvidenceCrashRecovers()
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(cut: "review-committed");
+        await f.StartReviewDelegateAsync("raw");
+        await f.ReleaseReviewReportAsync();
+        await f.AssertReviewHeldAsync("settlement-committed-before-enqueue");
+        await f.UseChildAsync("none");
+        var receipt = await f.WaitForReviewReceiptAsync();
+        var again = await f.WaitForReviewReceiptAsync();
+        again.EvidenceId.ShouldBe(receipt.EvidenceId);
+        await using var db = f.CreateContext();
+        (await db.StageOutcomes.CountAsync(o => o.Id == receipt.EvidenceId)).ShouldBe(1);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == receipt.Note.Id)).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments("Sent-only")]
+    [Arguments("QueuedUserPrompt")]
+    [Arguments("wrong-session")]
+    [Arguments("wrong-id")]
+    [Arguments("wrong-sha")]
+    [Arguments("partial-middle")]
+    [Arguments("old-sequence")]
+    [Arguments("old-time")]
+    public async Task C494_ReviewReceiptRejectsFalseEvidence(string arm)
+    {
+        await using var f = new LandDeliveryFixture();
+        await f.InitializeAsync(cut: "attempt");
+        await f.StartReviewDelegateAsync("raw");
+        await f.ReleaseReviewReportAsync();
+        await f.SeedFalseReviewCandidateAsync(arm);
+        await f.ReleaseBoundaryAsync("queue-before-typing");
+        var receipt = await f.WaitForReviewReceiptAsync();
+        receipt.ReviewedSha.ShouldBe(f.SourceSha);
+        await using var db = f.CreateContext();
+        (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
+            && p.Text != null && PromptSubmissionMatch.IsCompleteIn(receipt.WireText, p.Text))).ShouldBe(1);
+    }
+
+    private static string ReviewCut(string cut) => cut switch
+    {
+        "settlement-before-save" => "review-before-save",
+        "settlement-before-commit" => "review-before-commit",
+        "enqueue-exception" => "enqueue-errors",
+        "queue-before-commit" => "review-queue-before-commit",
+        "queue-inserted-before-outbox-link" => "review-queue-inserted",
+        "queue-committed-before-wakeup" => "review-before-wakeup",
+        "idle-lost-wakeup" => "idle-lost-wakeup",
+        "before-typing" => "attempt",
+        "prompt-before-verdict" => "verdict",
+        _ => throw new ArgumentOutOfRangeException(nameof(cut)),
+    };
+
+    private static string ReviewBarrier(string cut) => cut switch
+    {
+        "settlement-before-save" => "settlement-before-save",
+        "settlement-before-commit" => "settlement-before-commit",
+        "queue-before-commit" => "queue-before-commit",
+        "queue-inserted-before-outbox-link" => "queue-inserted",
+        "queue-committed-before-wakeup" => "queue-committed-before-wakeup",
+        "before-typing" => "queue-before-typing",
+        "prompt-before-verdict" => "queue-before-verdict",
+        _ => throw new ArgumentOutOfRangeException(nameof(cut)),
+    };
 
     [Test]
     public async Task C488_ApprovalQueueInsertCrashReusesRow() => await C467_V26_HardCrashAfterQueueInsertReusesRow();

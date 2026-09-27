@@ -15,7 +15,7 @@ using Antiphon.Server.Infrastructure.Git;
 
 namespace Antiphon.E2E.Fixtures;
 
-internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
+internal sealed record LandDeliveryOptions(string Root, string Cut = "none", string CompletionForm = "raw")
 {
     public string Gate => Path.Combine(Root, "caller-busy");
     public void Configure(Dictionary<string, string?> settings)
@@ -27,8 +27,18 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         settings["Agents:Definitions:c467-grok:Exe"] = Path.Combine(Path.GetDirectoryName(typeof(LandDeliveryOptions).Assembly.Location)!, "fakegrok", "fakegrok.exe");
         settings["Agents:Definitions:c467-grok:Env:GROK_HOME"] = Path.Combine(Root, "native");
         settings["Agents:Definitions:c467-grok:Env:ANTIPHON_FAKE_BUSY_GATE"] = Gate;
+        settings["Agents:Definitions:c467-grok:Env:ANTIPHON_FAKE_REPORT_HOLD"] = Path.Combine(Root, "review-report-hold");
+        settings["Agents:Definitions:c467-grok:Env:ANTIPHON_FAKE_ASSISTANT_FILE"] = Path.Combine(Root, "review-assistant.txt");
         settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:0"] = "GROK_HOME";
         settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:1"] = "ANTIPHON_FAKE_BUSY_GATE";
+        settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:2"] = "ANTIPHON_FAKE_REPORT_HOLD";
+        settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:3"] = "ANTIPHON_FAKE_ASSISTANT_FILE";
+        if (string.Equals(CompletionForm, "Apply", StringComparison.Ordinal))
+        {
+            settings["Delegation:OutputDistillerEnabled"] = "true";
+            settings["Delegation:OutputDistillerMode"] = "Apply";
+            settings["Delegation:OutputDistillerWaitSeconds"] = "2";
+        }
         settings["Git:WorkspacePath"] = Path.Combine(Root, "repo");
         settings["Git:WorktreeBasePath"] = Path.Combine(Root, "trees");
         settings["GitHub:Enabled"] = "false";
@@ -110,6 +120,7 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
     {
         private int _enqueueCalls;
         public override bool DropWakeup(string boundary, Guid identity) => options.Cut == "lost-flush" && boundary == "completion"
+            || options.Cut == "idle-lost-wakeup" && boundary == "completion"
             || options.Cut == "lost-request" && boundary == "land-request";
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
@@ -142,7 +153,13 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
                 || options.Cut == "verdict" && boundary == "queue-before-verdict";
             blocked |= options.Cut == "dispatch-claim" && boundary is "dispatch-warning-claim-committed" or "dispatch-warning-before-materialize"
                 || options.Cut == "dispatch-projection" && boundary == "dispatch-warning-before-commit"
-                || options.Cut == "pre-enqueue" && boundary == "before-enqueue";
+                || options.Cut == "pre-enqueue" && boundary == "before-enqueue"
+                || options.Cut == "review-before-save" && boundary == "settlement-before-save"
+                || options.Cut == "review-before-commit" && boundary == "settlement-before-commit"
+                || options.Cut == "review-committed" && boundary == "settlement-saved"
+                || options.Cut == "review-queue-before-commit" && boundary == "queue-before-commit"
+                || options.Cut == "review-queue-inserted" && boundary == "queue-inserted"
+                || options.Cut == "review-before-wakeup" && boundary == "queue-committed-before-wakeup";
             if (!blocked || File.Exists(Path.Combine(options.Root, boundary + ".release"))) return;
             var barrierPath = Path.Combine(options.Root, boundary + ".barrier.json");
             var temporary = barrierPath + "." + Guid.NewGuid().ToString("N") + ".tmp";

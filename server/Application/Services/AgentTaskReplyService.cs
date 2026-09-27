@@ -1984,7 +1984,10 @@ public sealed class AgentTaskReplyService
             using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
                 "settlement.save", task.Id);
             if (services.GetService<LandDeliveryBoundary>() is { } beforeSave)
+            {
                 await beforeSave.ReachedAsync("settlement-before-save", task.Id, task.Id, ct);
+                await beforeSave.ReachedAsync("settlement-before-commit", task.Id, task.Id, ct);
+            }
             await db.SaveChangesAsync(ct);
             observation.Completed();
         }
