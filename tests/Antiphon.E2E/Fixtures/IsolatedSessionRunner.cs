@@ -129,30 +129,27 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
 
     private Process StartProcess(int port)
     {
-        string runnerPath;
-        try
-        {
-            runnerPath = TestAppHostPath.Require(
-                "Antiphon.SessionRunner", AppContext.BaseDirectory, siblingProducer: false);
-        }
-        catch (FileNotFoundException ex)
-        {
+        var runnerPath = TestAppHostPath.Resolve(
+            "Antiphon.SessionRunner", AppContext.BaseDirectory,
+            OperatingSystem.IsWindows(), siblingProducer: false);
+        var runnerDll = Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.dll");
+        var useDll = !File.Exists(runnerPath);
+        if (useDll && !File.Exists(runnerDll))
             throw new FileNotFoundException(
                 "Antiphon.SessionRunner was not copied to the E2E output directory. "
-                + "The E2E project must reference Antiphon.SessionRunner. Attempted " + ex.FileName,
-                ex.FileName,
-                ex);
-        }
+                + "The E2E project must reference Antiphon.SessionRunner. Attempted "
+                + runnerPath + " and " + runnerDll, runnerDll);
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = runnerPath,
+            FileName = useDll ? "dotnet" : runnerPath,
             WorkingDirectory = RunDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        if (useDll) startInfo.ArgumentList.Add(runnerDll);
         startInfo.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
         startInfo.Environment["SessionRunner__SessionLogPath"] = Path.Combine(RunDirectory, "logs");
         startInfo.Environment["SessionRunner__PtyHostLingerHours"] = "0.02";
