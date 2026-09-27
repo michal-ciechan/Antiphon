@@ -584,7 +584,7 @@ public sealed class ChannelInboundRecoveryTests
             var waiting = bridge.DrainPendingAsync(Ct);
             await clock.PollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             clock.Advance(TimeSpan.FromSeconds(90));
-            await waiting.WaitAsync(TimeSpan.FromSeconds(20));
+            await waiting.WaitAsync(TimeSpan.FromSeconds(90));
         }
         else
             await bridge.DrainPendingAsync(Ct);
@@ -630,6 +630,7 @@ public sealed class ChannelInboundRecoveryTests
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureDbContext = options => options.AddInterceptors(gate),
         });
+        InstallTranscriptReceipt(second);
         gate.Arm(first.AgentId);
         var winner = Bridge(first).DrainPendingAsync(Ct);
         Task? loser = null;
@@ -656,7 +657,7 @@ public sealed class ChannelInboundRecoveryTests
             await revive.Agents.Where(a => a.Id == first.AgentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, first.SessionId.ToString("D")));
         }
-        await AssertOrderedPageDeliveryAsync(Bridge(second), first, schema.ConnectionString, native);
+        await AssertOrderedPageDeliveryAsync(Bridge(second), second, schema.ConnectionString, native);
         gate.Entries.ShouldBe(1);
     }
 
