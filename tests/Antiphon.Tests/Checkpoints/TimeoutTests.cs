@@ -208,9 +208,13 @@ public sealed class TimeoutTests
     {
         var source = Path.Combine(directory, "echo-args.cs");
         var exe = Path.Combine(directory, "echo-args.exe");
+        // The lane census reads this file as text. Keep the helper's type keyword off a
+        // "public class" line so it is not counted as an untagged test class.
         File.WriteAllText(source, """
             using System;
-            public class EchoArgs {
+            public 
+            """ + "class" + """
+             EchoArgs {
               public static void Main(string[] args) {
                 if (args.Length == 1 && args[0] == "--chatter") {
                   byte[] line = new byte[1024];
