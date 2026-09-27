@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
@@ -158,5 +159,24 @@ public sealed class ChannelOutboundPolicyTests
         text.ShouldContain("original answer");
         text.ShouldContain("original reply sent");
         text.ShouldNotContain("files attached");
+    }
+
+    [Test]
+    public void Markdown_source_trigger_requires_an_attached_manifested_zip()
+    {
+        var manifest = JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+            [new("docs/source.md", "sources.zip", "docs/source.md", 7, new string('a', 64))], []),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        ChannelReply Reply(string name) => new()
+        {
+            Channel = "fake", ConversationId = "C1",
+            Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                Name = name, Mime = "application/zip", Content = [1, 2, 3] }],
+        };
+        ChannelOutboundService.MatchesMarkdownSources(Reply("unrelated.zip"), manifest).ShouldBeFalse();
+        ChannelOutboundService.MatchesMarkdownSources(Reply("sources.zip"), manifest).ShouldBeTrue();
+        ChannelOutboundService.MatchesMarkdownSources(Reply("source.md"), null).ShouldBeTrue();
+        ChannelOutboundService.MatchesMarkdownSources(new ChannelReply
+            { Channel = "fake", ConversationId = "C1", Text = "plain" }, manifest).ShouldBeFalse();
     }
 }
