@@ -109,6 +109,20 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
             ?? throw new InvalidDataException("The source manifest is empty.");
         if (manifest.Version != 1 || manifest.Sources is null || manifest.Sources.Count > 256)
             throw new InvalidDataException("The source manifest has an unsupported shape.");
+        var sourcePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in manifest.Sources)
+        {
+            if (!SafeSourcePath(source.OriginalRelativePath)
+                || !SafeStoredName(source.StoredFile)
+                || source.Length < 0 || source.Sha256 is null || source.Sha256.Length != 64
+                || !source.Sha256.All(Uri.IsHexDigit)
+                || !sourcePaths.Add(source.OriginalRelativePath)
+                || source.ZipEntry is not null
+                    && (!SafeSourcePath(source.ZipEntry)
+                        || !string.Equals(source.ZipEntry, source.OriginalRelativePath,
+                            StringComparison.Ordinal)))
+                throw new InvalidDataException("The source manifest has an unsafe or ambiguous member.");
+        }
         var staged = new List<StagedSource>();
         long expanded = 0;
         foreach (var source in manifest.Sources.Where(s => s.ZipEntry is null))
@@ -175,6 +189,20 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
         }
         return staged;
     }
+
+    private static bool SafeSourcePath(string? path) =>
+        !string.IsNullOrWhiteSpace(path)
+        && !Path.IsPathRooted(path)
+        && !path.Contains('\\') && !path.Contains(':')
+        && path.Split('/').All(part => part.Length > 0 && part is not ("." or ".."));
+
+    private static bool SafeStoredName(string? name) =>
+        !string.IsNullOrWhiteSpace(name)
+        && name.Length <= 255
+        && name is not ("." or "..")
+        && !Path.IsPathRooted(name)
+        && name == Path.GetFileName(name)
+        && !name.Contains('\\') && !name.Contains(':');
 
     public async Task<ChannelReply> ReadReplyAsync(string path, string expectedSha256,
         CancellationToken ct)
