@@ -9,7 +9,8 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-0688 D-2/D-4/D-7: builds one schema-3 operation. The source is the branch ref plus the reviewed SHA;
 /// the task worktree is read once, for its git directory. The rebase base is the observed remote target, and
-/// local target must be an ancestor of it (unpushed local target commits are the operator's, not a land's).
+/// local target must be an ancestor of it, except when it is exactly the reviewed source and
+/// the observed remote is its ancestor (unpushed unrelated local commits belong to the operator).
 /// </summary>
 internal static class LandOperationFactory
 {
@@ -49,8 +50,21 @@ internal static class LandOperationFactory
             var ancestry = await git.RunAsync(coordinates.RepositoryPath, ["merge-base", "--is-ancestor", localTarget, remote.Sha], ct);
             if (ancestry.ExitCode is not (0 or 1)) return new(null, "ancestry_error");
             if (ancestry.ExitCode == 1)
-                return new(null, "target_local_ahead", Detail: TargetAheadDetail(
-                    coordinates.TargetFullRef, localTarget, remote.Sha, destination.RemoteName));
+            {
+                // The reviewed commit can already be in the canonical checkout while the remote
+                // target still needs publication. This exception never admits a later local tip.
+                var reviewedOnly = false;
+                if (localTarget == expected)
+                {
+                    var remoteToReviewed = await git.RunAsync(coordinates.RepositoryPath,
+                        ["merge-base", "--is-ancestor", remote.Sha, expected], ct);
+                    if (remoteToReviewed.ExitCode is not (0 or 1)) return new(null, "ancestry_error");
+                    reviewedOnly = remoteToReviewed.ExitCode == 0;
+                }
+                if (!reviewedOnly)
+                    return new(null, "target_local_ahead", Detail: TargetAheadDetail(
+                        coordinates.TargetFullRef, localTarget, remote.Sha, destination.RemoteName));
+            }
         }
 
         string worktreePath, gitDirectory;
