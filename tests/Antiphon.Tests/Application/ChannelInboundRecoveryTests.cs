@@ -453,6 +453,95 @@ public sealed class ChannelInboundRecoveryTests
     }
 
     [Test]
+    public async Task C767_FailedPage_ResumesOldestPendingBeforeLaterRows()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var refusal = new StartLockRefusal();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 150, timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(refusal),
+        });
+        InstallTranscriptReceipt(h);
+        var chat = await h.BindChannelAsync();
+        var native = Enumerable.Range(0, 70).Select(i => $"ordered-{i:D2}-{Guid.NewGuid():N}").ToArray();
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            await seed.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await seed.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+            var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat)
+                .Select(c => c.Id).SingleAsync();
+            foreach (var (id, index) in native.Select((id, index) => (id, index)))
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                    NativeMessageId = id, AgentId = h.AgentId, ChatChannelId = channelId,
+                    EnvelopeJson = JsonSerializer.Serialize(Message(chat, id, $"ordered line {index:D2} DISTINCT TAIL"),
+                        Antiphon.Messaging.MessagingJson.Options), AcceptedAt = h.Now,
+                });
+            await seed.SaveChangesAsync();
+        }
+        refusal.Arm(h.AgentId);
+        var bridge = Bridge(h);
+        await bridge.DrainPendingAsync(Ct);
+        refusal.Entries.ShouldBe(1);
+        await using (var pending = Db(schema.ConnectionString))
+            (await pending.ChannelInbounds.CountAsync(i => native.Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(0);
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            await revive.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await revive.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, h.SessionId.ToString("D")));
+        }
+        await bridge.DrainPendingAsync(Ct);
+        await WaitForAsync(async () =>
+        {
+            await using var db = Db(schema.ConnectionString);
+            return await db.ChannelInbounds.CountAsync(i => native.Take(64).Contains(i.NativeMessageId)
+                && i.QueueMessageId != null) == 64;
+        });
+        await using (var firstPage = Db(schema.ConnectionString))
+        {
+            (await firstPage.ChannelInbounds.CountAsync(i => native.Skip(64).Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(0, "later rows must wait behind the failed page");
+            var headId = await firstPage.ChannelInbounds.Where(i => i.NativeMessageId == native[0])
+                .Select(i => i.Id).SingleAsync();
+            var firstOwner = await firstPage.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.SourceChannelInboundId == headId);
+            (await firstPage.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == firstOwner.Body)).ShouldBe(1);
+        }
+        await bridge.DrainPendingAsync(Ct);
+        await WaitForAsync(async () =>
+        {
+            await using var db = Db(schema.ConnectionString);
+            return await db.ChannelInbounds.CountAsync(i => native.Contains(i.NativeMessageId)
+                && i.QueueMessageId != null) == 70;
+        });
+        await h.Queue.OnTurnEndAsync(h.SessionId, Ct);
+        await using var delivered = Db(schema.ConnectionString);
+        var rows = await delivered.ChannelInbounds.AsNoTracking()
+            .Where(i => native.Contains(i.NativeMessageId)).OrderBy(i => i.AcceptanceSequence).ToListAsync();
+        rows.Select(i => i.NativeMessageId).ShouldBe(native);
+        var owners = await delivered.SessionQueuedMessages.AsNoTracking()
+            .Where(q => q.SourceChannelInboundId == rows[0].Id || q.SourceChannelInboundId == rows[64].Id)
+            .OrderBy(q => q.CreatedAt).ToListAsync();
+        owners.Count.ShouldBe(2);
+        owners[0].Body.ShouldContain("ordered line 00 DISTINCT TAIL");
+        owners[0].Body.ShouldContain("ordered line 63 DISTINCT TAIL");
+        owners[1].Body.ShouldContain("ordered line 64 DISTINCT TAIL");
+        owners[1].Body.ShouldContain("ordered line 69 DISTINCT TAIL");
+        foreach (var owner in owners)
+            (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+    }
+
+    [Test]
     public async Task C767_AgentHeadPaging_WrapsPastHeldAgents()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -685,15 +774,18 @@ public sealed class ChannelInboundRecoveryTests
             ConnectionString = schema.ConnectionString, AttachAgentId = first.AgentId,
             AttachSessionId = first.SessionId, Bridge = Settings(timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
         });
         InstallTranscriptReceipt(second);
         gate.Arm(first.AgentId);
         var firstDrain = Bridge(first).DrainPendingAsync(Ct);
+        Task? competingDrain = null;
         try
         {
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await AssertCompleteHealthyReceiptAsync(first, healthy);
-            await Bridge(second).DrainPendingAsync(Ct);
+            competingDrain = Bridge(second).DrainPendingAsync(Ct);
+            await competingDrain.WaitAsync(TimeSpan.FromSeconds(5));
             gate.Entries.ShouldBe(1, "the competing bridge must miss the PostgreSQL agent claim");
             await using (var pending = Db(schema.ConnectionString))
                 (await pending.ChannelInbounds.Where(i => i.NativeMessageId == native)
@@ -703,6 +795,8 @@ public sealed class ChannelInboundRecoveryTests
         {
             gate.Release.TrySetResult();
             await firstDrain.WaitAsync(TimeSpan.FromSeconds(10));
+            if (competingDrain is not null)
+                await competingDrain.WaitAsync(TimeSpan.FromSeconds(10));
         }
         await using (var revive = Db(schema.ConnectionString))
         {
@@ -964,6 +1058,74 @@ public sealed class ChannelInboundRecoveryTests
             (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == agent.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
         }
+    }
+
+    [Test]
+    public async Task C767_CancelledPermitWait_DoesNotOverRelease()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new CountingStartGate();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        var agentIds = new List<Guid>();
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            for (var index = 0; index < 5; index++)
+            {
+                var id = Guid.NewGuid();
+                var chat = $"cancel-permit-{index}-{Guid.NewGuid():N}";
+                var directory = Path.Combine(h.TempRoot, $"cancel-permit-{index}");
+                Directory.CreateDirectory(directory);
+                seed.Agents.Add(new Agent
+                {
+                    Id = id, Name = $"Permit {index}", Slug = $"permit-{Guid.NewGuid():N}",
+                    WorkingDirectory = directory, AlwaysOn = false,
+                    CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                var channelId = Guid.NewGuid();
+                seed.ChatChannels.Add(new ChatChannel
+                {
+                    Id = channelId, Provider = "telegram", ExternalId = chat, ReplyHandle = chat,
+                    Kind = ChatChannelKind.Direct, AgentId = id, Enabled = true,
+                    CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                    NativeMessageId = $"cancel-{index}-{Guid.NewGuid():N}", AgentId = id,
+                    ChatChannelId = channelId,
+                    EnvelopeJson = JsonSerializer.Serialize(Message(chat, $"cancel-body-{index}-{Guid.NewGuid():N}",
+                        $"cancelled permit body {index}"), Antiphon.Messaging.MessagingJson.Options),
+                    AcceptedAt = h.Now,
+                });
+                agentIds.Add(id);
+            }
+            await seed.SaveChangesAsync();
+        }
+        gate.Arm(agentIds);
+        using var cancellation = new CancellationTokenSource();
+        var drain = Bridge(h).DrainPendingAsync(cancellation.Token);
+        try
+        {
+            await gate.FourEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            gate.Entries.ShouldBe(4, "the fifth group must still be waiting for a permit");
+            gate.Peak.ShouldBe(4);
+            cancellation.Cancel();
+            await Task.Delay(100);
+        }
+        finally { gate.ReleaseAll(); }
+        try { await drain.WaitAsync(TimeSpan.FromSeconds(10)); }
+        catch (OperationCanceledException) { }
+        drain.Exception?.Flatten().InnerExceptions.ShouldNotContain(
+            ex => ex is SemaphoreFullException,
+            "a cancelled waiter never acquired a permit to release");
+        gate.Active.ShouldBe(0);
+        gate.Peak.ShouldBe(4);
+        gate.Entries.ShouldBe(4);
     }
 
     private sealed class CountingStartGate : DbCommandInterceptor
