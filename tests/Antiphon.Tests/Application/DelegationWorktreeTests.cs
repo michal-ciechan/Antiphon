@@ -1076,6 +1076,93 @@ public partial class DelegationWorktreeTests
         recording.CreateCalls.ShouldBe(1);
     }
 
+    [Test]
+    public async Task T0442_V23_selected_sha_is_immutable_when_source_ref_moves()
+    {
+        using var repo = new ScratchGitRepo("c442-sha-barrier");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await repo.GitAsync("checkout", "-b", "source-A");
+        await repo.CommitFileAsync("a.txt", "A\n");
+        var shaA = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "-b", "advanced-B");
+        await repo.CommitFileAsync("b.txt", "B\n");
+        var shaB = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        var (service, recording, leases) = CreateRecordingWorktreeService(repo);
+        recording.OnCreate = async startRef =>
+        {
+            startRef.ShouldBe(shaA);
+            await repo.GitAsync("branch", "-f", "source-A", "advanced-B");
+        };
+        var task = NewTask(repo.Path, mergeTarget: null);
+        var sourceId = Guid.NewGuid();
+        await using (var lease = await leases.TryAcquireAsync(repo.Path, CancellationToken.None))
+        {
+            lease.ShouldNotBeNull();
+            await service.CreateForTaskAsync(task, lease!, CancellationToken.None,
+                cardBase: new ResolvedBase(shaA, WorktreeBaseSource.CardCurrent, null),
+                cardBaseTaskId: sourceId, cardBaseBranch: "source-A");
+        }
+        recording.CreateCalls.ShouldBe(1);
+        (await repo.GitReadAsync("rev-parse", "source-A")).Trim().ShouldBe(shaB);
+        task.WorktreeBaseSha.ShouldBe(shaA);
+        task.WorktreeBaseTaskId.ShouldBe(sourceId);
+        task.WorktreeBaseBranch.ShouldBe("source-A");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(shaA);
+        File.Exists(Path.Combine(task.WorktreePath!, "a.txt")).ShouldBeTrue();
+        File.Exists(Path.Combine(task.WorktreePath!, "b.txt")).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task T0442_V24_failed_sha_add_never_retries_from_target()
+    {
+        using var repo = new ScratchGitRepo("c442-sha-failure");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await repo.GitAsync("checkout", "-b", "source-A");
+        await repo.CommitFileAsync("a.txt", "A\n");
+        var shaA = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        var (service, recording, leases) = CreateRecordingWorktreeService(repo);
+        var attempted = new List<string>();
+        recording.OnCreate = startRef =>
+        {
+            attempted.Add(startRef);
+            throw new ConflictException("injected worktree add failure");
+        };
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await using (var lease = await leases.TryAcquireAsync(repo.Path, CancellationToken.None))
+        {
+            lease.ShouldNotBeNull();
+            await Should.ThrowAsync<ConflictException>(() => service.CreateForTaskAsync(task, lease!,
+                CancellationToken.None, cardBase: new ResolvedBase(shaA, WorktreeBaseSource.CardCurrent, null)));
+        }
+        recording.CreateCalls.ShouldBe(1);
+        attempted.ShouldBe(new[] { shaA });
+        task.WorktreePath.ShouldBeNull();
+        task.WorktreeBaseSha.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "source-A")).Trim().ShouldBe(shaA);
+        File.ReadAllText(Path.Combine(repo.Path, "README.md")).ShouldBe("M\n");
+    }
+
+    private static (DelegationWorktreeService Service, RecordingWorktreeManager Recording,
+        RepositoryMutationLease Leases) CreateRecordingWorktreeService(ScratchGitRepo repo)
+    {
+        var settings = new GitSettings { WorktreeBasePath = repo.WorktreeRoot, DefaultBranch = "master" };
+        var git = new LandingGit();
+        var leases = new RepositoryMutationLease(git);
+        var guarded = new GuardedWorktreeRemoval(git, leases, new NullRemovalEvidence());
+        var real = new WorktreeManager(Options.Create(settings), TimeProvider.System,
+            NullLogger<WorktreeManager>.Instance, guarded, leases, git);
+        var recording = new RecordingWorktreeManager(real);
+        var service = new DelegationWorktreeService(recording,
+            new GitService(NullLogger<GitService>.Instance),
+            NullLogger<DelegationWorktreeService>.Instance,
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+            leases, git, gitSettings: Options.Create(settings));
+        return (service, recording, leases);
+    }
+
     private sealed class NullRemovalEvidence : IWorktreeRemovalEvidence
     {
         public Task<AgentTaskLanding?> ReadAsync(Guid operationId, CancellationToken ct) =>
@@ -1089,6 +1176,7 @@ public partial class DelegationWorktreeTests
     private sealed class RecordingWorktreeManager(IWorktreeManager inner) : IWorktreeManager
     {
         public int CreateCalls { get; private set; }
+        public Func<string, Task>? OnCreate { get; set; }
 
         public Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateAsync(
             string repoPath, string cardId, string baseRef, CancellationToken ct)
@@ -1097,11 +1185,12 @@ public partial class DelegationWorktreeTests
             return inner.CreateAsync(repoPath, cardId, baseRef, ct);
         }
 
-        public Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateAsync(
+        public async Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateAsync(
             string repoPath, string cardId, string baseRef, RepositoryLease lease, CancellationToken ct)
         {
             CreateCalls++;
-            return inner.CreateAsync(repoPath, cardId, baseRef, lease, ct);
+            if (OnCreate is not null) await OnCreate(baseRef);
+            return await inner.CreateAsync(repoPath, cardId, baseRef, lease, ct);
         }
 
         public Task<Antiphon.Server.Application.Dtos.WorktreeInfo> CreateVerificationAsync(
