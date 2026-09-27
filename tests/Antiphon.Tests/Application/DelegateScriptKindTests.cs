@@ -202,7 +202,8 @@ public sealed class DelegateScriptKindTests
 
         run.ExitCode.ShouldNotBe(0);
         var plainOutput = Regex.Replace(run.Output, @"\x1B\[[0-9;]*m", "");
-        Regex.Replace(plainOutput, @"\s+", " ").ShouldContain("never silently rerouted");
+        var unwrappedOutput = Regex.Replace(plainOutput, @"\s*\|\s*", " ");
+        Regex.Replace(unwrappedOutput, @"\s+", " ").ShouldContain("never silently rerouted");
         server.RequestCount.ShouldBe(0);
     }
 
