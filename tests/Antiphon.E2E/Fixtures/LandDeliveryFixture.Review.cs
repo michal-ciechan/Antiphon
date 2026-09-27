@@ -26,7 +26,7 @@ public sealed partial class LandDeliveryFixture
         var marker = DelegationReportFormatter.TaskMarker(ReviewTaskId);
         var finding = DelegationReportFormatter.FindingToken(ReviewTaskId, "clean");
         var pad = string.Equals(form, "spill", StringComparison.Ordinal)
-            ? new string('x', 2200) + "\nSPILL-MARKER-C494\n" + new string('y', 2200) + "\n"
+            ? new string('x', 9000) + "\nSPILL-MARKER-C494\n" + new string('y', 9000) + "\n"
             : "";
         ReviewReportText = (pad
             + "Reviewed the owned change.\n"
