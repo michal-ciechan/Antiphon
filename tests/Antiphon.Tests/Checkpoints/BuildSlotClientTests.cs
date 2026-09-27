@@ -89,6 +89,27 @@ public sealed class BuildSlotClientTests
     }
 
     [Test]
+    public async Task renewable_grant_is_renewed_until_the_checkpoint_releases_it()
+    {
+        var handler = new RenewableSlotHandler();
+        var (client, _) = Client(handler);
+        var session = await client.ProbeAsync(CancellationToken.None);
+        var lease = await client.AcquireAsync(session, "CP-renew", CancellationToken.None);
+        try
+        {
+            await handler.Renewed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            handler.Calls.ShouldContain(call => call.Method == "POST"
+                && call.Uri.EndsWith("/L-renew/renew", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await lease.DisposeAsync();
+        }
+        handler.Calls.ShouldContain(call => call.Method == "DELETE"
+            && call.Uri.EndsWith("/L-renew", StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task pid_idempotent_broker_grants_distinct_leases_and_one_release_keeps_the_other()
     {
         var handler = new PidIdempotentSlotHandler();
@@ -197,6 +218,32 @@ public sealed class BuildSlotClientTests
             public string? ProcessStartUtc => null;
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class RenewableSlotHandler : HttpMessageHandler
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(string Method, string Uri)> Calls { get; } = new();
+        public TaskCompletionSource Renewed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var uri = request.RequestUri!.ToString();
+            Calls.Enqueue((request.Method.Method, uri));
+            if (uri.EndsWith("/renew", StringComparison.Ordinal))
+            {
+                Renewed.TrySetResult();
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+            if (request.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            var body = request.Method == HttpMethod.Get
+                ? "{\"enabled\":true}"
+                : "{\"leaseId\":\"L-renew\",\"maxCpuCount\":2,\"renewEverySeconds\":1}";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body),
+            });
         }
     }
 }
