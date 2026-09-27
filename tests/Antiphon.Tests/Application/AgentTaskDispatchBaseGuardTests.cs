@@ -360,6 +360,53 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
+    [Timeout(90_000)]
+    public async Task T0442_V28_reply_cannot_select_a_blocked_task_source(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v28");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var source = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        AgentTaskCreatedDto created;
+        await using (var createProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = createProvider.CreateAsyncScope())
+            created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+                    Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+                    Card: card.Id.ToString("D")),
+                    new AgentTaskService.Caller(null, null, repo.Path), ct);
+        var originalPreview = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct))
+            .WorktreeBasePreviewJson;
+        var divergent = await SeedKeptSiblingAsync(db, repo, card.Id, "X", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = launchProvider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct))
+            .Status.ShouldBe(AgentTaskStatus.Blocked);
+
+        await using (var replyProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = replyProvider.CreateAsyncScope())
+            await Should.ThrowAsync<ConflictException>(() => scope.ServiceProvider
+                .GetRequiredService<AgentTaskReplyService>()
+                .AnswerAsync(created.Id, $"Use {divergent.WorktreeBranch} or {source.Id:D}", ct));
+
+        db.ChangeTracker.Clear();
+        var after = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        after.Status.ShouldBe(AgentTaskStatus.Blocked);
+        after.RequestedWorktreeBaseMode.ShouldBe(RequestedWorktreeBaseMode.Auto);
+        after.RequestedWorktreeBaseTaskId.ShouldBeNull();
+        after.WorktreeBasePreviewJson.ShouldBe(originalPreview);
+        after.WorktreePath.ShouldBeNull();
+        after.WorktreeBranch.ShouldBeNull();
+        after.AgentSessionId.ShouldBeNull();
+    }
+
+    [Test]
     [Arguments("auto")]
     [Arguments("target")]
     [Arguments("task")]
@@ -1402,6 +1449,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         services.AddSingleton<LandDeliveryBoundary>(boundary ?? new LandDeliveryBoundary());
         services.AddScoped<AgentTaskLandNotificationService>();
         services.AddScoped<AgentTaskService>();
+        services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();
         return services.BuildServiceProvider();
     }
