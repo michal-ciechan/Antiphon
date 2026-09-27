@@ -168,6 +168,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     }
 
                     var max = ReadInt(body, "maxCpuCount", 4);
+                    var renewEvery = ReadInt(body, "renewEverySeconds", 0);
                     try
                     {
                         _log?.Invoke($"BUILD SLOT granted lease={leaseId} waited={elapsed}s maxcpucount={max}");
@@ -181,6 +182,10 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     }
                     var owned = holder;
                     holder = null;
+                    var renewalStop = renewEvery > 0 ? new CancellationTokenSource() : null;
+                    var renewal = renewalStop is null
+                        ? Task.CompletedTask
+                        : RenewUntilReleasedAsync(leaseId, renewEvery, renewalStop.Token);
                     return new SlotLease
                     {
                         State = "granted",
@@ -191,10 +196,16 @@ public sealed class BuildSlotClient : IBuildSlotClient
                         {
                             try
                             {
+                                if (renewalStop is not null)
+                                {
+                                    renewalStop.Cancel();
+                                    await renewal.ConfigureAwait(false);
+                                }
                                 await ReleaseAsync(leaseId, token).ConfigureAwait(false);
                             }
                             finally
                             {
+                                renewalStop?.Dispose();
                                 _held.TryRemove(leaseId, out _);
                                 if (owned is not null)
                                     await owned.DisposeAsync().ConfigureAwait(false);
@@ -236,6 +247,34 @@ public sealed class BuildSlotClient : IBuildSlotClient
         {
             if (holder is not null)
                 await holder.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task RenewUntilReleasedAsync(string leaseId, int everySeconds, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(everySeconds), ct).ConfigureAwait(false);
+                using var response = await _http.PostAsync(
+                    _endpoint + "/" + leaseId + "/renew", null, ct).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _log?.Invoke($"BUILD SLOT renew lost lease={leaseId}");
+                    return;
+                }
+                if (response.StatusCode != HttpStatusCode.NoContent)
+                    _log?.Invoke($"BUILD SLOT renew failed lease={leaseId} status={(int)response.StatusCode}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _log?.Invoke($"BUILD SLOT renew failed lease={leaseId} error={ex.Message}");
+            }
         }
     }
 
