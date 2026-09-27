@@ -647,6 +647,10 @@ public sealed class AgentTaskLandService
             var line = raceRetries > 0 && op is not null && state.IsTargetRaceRefusal(op)
                 ? $"{reason}; after {raceRetries} automatic rebases (Delegation:LandTargetRaceRetries={budget}); run -Land again"
                 : AppendDetail(reason, detail);
+            if (op is { Phase: LandPhase.PushStarted } && reason is
+                "source_remote_changed" or "source_remote_missing" or "source_remote_unreadable" or
+                "source_changed" or "remote_fetch_failed" or "remote_ancestry_error")
+                line = AppendDetail(line, "Publication is unconfirmed. Inspect the saved target for the verified commit before retrying; if it is absent, obtain a new Review of the intended source and submit a new land request for that exact SHA.");
             await RefuseAsync(task, line, ct);
             return LandRunResult.Complete;
         }

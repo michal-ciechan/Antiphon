@@ -1,9 +1,11 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -551,6 +553,109 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     }
 
     [Test]
+    public async Task C494_ServiceLegacyGuardStopsBeforeResolution()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.Prepared;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        Guid operationId;
+        Guid requestId;
+        string? historicalLocal;
+        string? historicalRemote;
+        string? historicalCandidate;
+        await using (var db = h.CreateContext())
+        {
+            var op = await db.AgentTaskLandings.SingleAsync();
+            var request = await db.AgentTaskLandRequests.SingleAsync();
+            operationId = op.Id;
+            requestId = request.Id;
+            historicalLocal = request.LocalBeforeSha.ShouldNotBeNull();
+            historicalRemote = request.RemoteSourceSha.ShouldNotBeNull();
+            historicalCandidate = request.CandidateSourceSha.ShouldNotBeNull();
+            op.SchemaVersion = 1;
+            op.ApprovalLandRequestId = null;
+            op.ReviewedSourceSha = null;
+            request.SchemaVersion = 1;
+            request.ExpectedSourceSha = null;
+            request.ReviewEvidenceId = null;
+            await db.SaveChangesAsync();
+        }
+        h.Git.AdvanceRemoteSource();
+        var sourceObservations = h.Git.SourceObservationAttempts;
+        var sourceRechecks = h.Git.SourceRemoteRechecks;
+        var commands = h.Git.Trace.Count;
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        await using var observer = h.CreateContext();
+        var stored = await observer.AgentTaskLandings.SingleAsync();
+        var requestAfter = await observer.AgentTaskLandRequests.SingleAsync();
+        stored.Id.ShouldBe(operationId);
+        requestAfter.Id.ShouldBe(requestId);
+        requestAfter.SourceRefusalReason.ShouldBe("legacy_review_binding_required");
+        requestAfter.LocalBeforeSha.ShouldBe(historicalLocal);
+        requestAfter.RemoteSourceSha.ShouldBe(historicalRemote);
+        requestAfter.CandidateSourceSha.ShouldBe(historicalCandidate);
+        stored.ApprovalLandRequestId.ShouldBeNull();
+        stored.ReviewedSourceSha.ShouldBeNull();
+        h.Git.SourceObservationAttempts.ShouldBe(sourceObservations);
+        h.Git.SourceRemoteRechecks.ShouldBe(sourceRechecks);
+        h.Git.Trace.Skip(commands).ShouldNotContain(a => a.Contains("push") || a.Contains("rebase"));
+    }
+
+    [Test]
+    public async Task C494_ProtocolSnapshotGuardIsIndependent()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.Prepared;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        Guid operationId;
+        Guid requestId;
+        await using (var db = h.CreateContext())
+        {
+            var op = await db.AgentTaskLandings.SingleAsync();
+            op.SchemaVersion.ShouldBe(3);
+            op.Phase.ShouldBe(LandPhase.Prepared);
+            op.SourceRemoteFingerprint.ShouldNotBeNull();
+            op.ReviewedSourceSha.ShouldNotBeNull();
+            op.ApprovalLandRequestId.ShouldNotBeNull();
+            operationId = op.Id;
+            requestId = op.ApprovalLandRequestId.Value;
+            op.SourceRemoteSha = null;
+            await db.SaveChangesAsync();
+        }
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        var rechecks = h.Git.SourceRemoteRechecks;
+        var commands = h.Git.Trace.Count;
+        await using var scope = h.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await context.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
+        var request = await context.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
+        await using var lease = (await scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(h.Git.Repository, CancellationToken.None)).ShouldNotBeNull();
+        var result = await scope.ServiceProvider.GetRequiredService<AgentTaskLandingProtocol>()
+            .RunAsync(task, lease, request, CancellationToken.None);
+        result.Reason.ShouldBe("source_resolution_required");
+        h.Git.SourceRemoteRechecks.ShouldBe(rechecks);
+        h.Git.Trace.Skip(commands).ShouldNotContain(a => a.Contains("push") || a.Contains("rebase"));
+        await using var observer = h.CreateContext();
+        var unchanged = await observer.AgentTaskLandings.SingleAsync();
+        unchanged.Id.ShouldBe(operationId);
+        unchanged.SourceRemoteSha.ShouldBeNull();
+        unchanged.ApprovalLandRequestId.ShouldBe(requestId);
+        (await observer.AgentTaskLandRequests.SingleAsync()).ExpectedSourceSha.ShouldBe(request.ExpectedSourceSha);
+    }
+
+    [Test]
     public async Task C488_VerifiedRetryRequiresSourceResolution()
     {
         await using var h = new LandingProtocolHarness();
@@ -703,7 +808,68 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     }
 
     [Test]
-    public async Task C488_PublishedPayloadSurvivesSourceMovement()
+    [Arguments("remote-only", false)]
+    [Arguments("local-only", false)]
+    [Arguments("both", true)]
+    public async Task C488_PublishedPayloadSurvivesSourceMovement(string movement, bool targetDescendant)
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        // Let the endpoint accept the push, then lose the acknowledgement at the
+        // durable child-clear save. The saved operation has an intent, not a receipt.
+        h.Git.AfterCommand = (_, args, result) =>
+        {
+            if (args[0] == "push" && result.Succeeded)
+            {
+                h.Fault.Matches = op => op.Phase == LandPhase.PushStarted
+                    && op.ChildOperation is null && op.PushExitCode is null;
+                h.Fault.AfterSave = true;
+            }
+            return Task.CompletedTask;
+        };
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Phase.ShouldBe(LandPhase.PushStarted);
+        op.ChildOperation.ShouldBeNull();
+        op.RemoteConfirmedAt.ShouldBeNull();
+        var verified = op.VerifiedSourceSha.ShouldNotBeNull();
+        h.Git.RemoteTarget.ShouldBe(verified);
+        var pushes = h.Git.Trace.Count(a => a.Contains("push"));
+        if (targetDescendant) h.Git.AdvanceRemoteTarget();
+        if (movement is "remote-only" or "both") h.Git.AdvanceRemoteSource();
+        if (movement is "local-only" or "both")
+        {
+            await File.WriteAllTextAsync(Path.Combine(h.Git.Source, "moved.txt"), "retain this local change\n");
+            await h.Git.RequiredAsync(h.Git.Source, "add", "moved.txt");
+            await h.Git.RequiredAsync(h.Git.Source, "commit", "-m", "later local work");
+        }
+        var remoteRechecks = h.Git.SourceRemoteRechecks;
+        await h.RestartServicesAsync();
+        h.Fault.Matches = null;
+        h.Fault.AfterSave = false;
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(op.Id);
+        after.VerifiedSourceSha.ShouldBe(verified);
+        after.OriginalSourceSha.ShouldBe(op.OriginalSourceSha);
+        after.RemoteConfirmedAt.ShouldNotBeNull();
+        after.ObservedRemoteTargetSha.ShouldBe(h.Git.RemoteTarget);
+        after.ConfirmationMethod.ShouldBe("push-endpoint-read-fetch-ancestry");
+        after.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        h.Git.Trace.Count(a => a.Contains("push")).ShouldBe(pushes);
+        h.Git.SourceRemoteRechecks.ShouldBe(remoteRechecks);
+        if (movement is "local-only" or "both")
+        {
+            Directory.Exists(h.Git.Source).ShouldBeTrue();
+            File.Exists(Path.Combine(h.Git.Source, "moved.txt")).ShouldBeTrue();
+            after.ExpectedDeletionSha.ShouldBe(op.SourceLocalSha);
+        }
+    }
+
+    [Test]
+    public async Task C488_RecoveryPushUsesSavedPayload()
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
@@ -712,19 +878,90 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        var verified = op.VerifiedSourceSha;
-        h.Git.AdvanceRemoteSource();
-        await h.RestartServicesAsync();
+        var saved = op.VerifiedSourceSha.ShouldNotBeNull();
+        h.Git.RemoteTarget.ShouldNotBe(saved);
+        var land = h.Git.Land.ShouldNotBeNull();
+        await h.Git.RequiredAsync(land, "reset", "--hard", h.Git.SeedSha);
         h.Fault.Phase = null;
         h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        var priorPushes = h.Git.Trace.Count(a => a.Contains("push"));
         await h.RunAsync();
-        var after = (await h.OperationAsync()).ShouldNotBeNull();
-        after.Id.ShouldBe(op.Id);
-        after.VerifiedSourceSha.ShouldBe(verified);
+        var recovered = (await h.OperationAsync()).ShouldNotBeNull();
+        recovered.Id.ShouldBe(op.Id);
+        recovered.VerifiedSourceSha.ShouldBe(saved);
+        recovered.RemoteConfirmedAt.ShouldNotBeNull();
+        recovered.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        h.Git.Trace.Count(a => a.Contains("push")).ShouldBe(priorPushes + 1);
+        h.Git.Trace.Last(a => a.Contains("push"))[^1].ShouldBe($"{saved}:{op.DestinationFullRef}");
     }
 
     [Test]
-    public async Task C488_RecoveryPushUsesSavedPayload() => await C488_PublishedPayloadSurvivesSourceMovement();
+    [Arguments("descendant", "source_remote_changed")]
+    [Arguments("diverged", "source_remote_changed")]
+    [Arguments("missing", "source_remote_missing")]
+    [Arguments("unreadable", "source_remote_unreadable")]
+    public async Task C494_PushIntentWithoutContainmentRechecksRemoteSource(string movement, string reason)
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.PushStarted;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var saved = (await h.OperationAsync()).ShouldNotBeNull();
+        switch (movement)
+        {
+            case "descendant": h.Git.AdvanceRemoteSource(); break;
+            case "diverged": h.Git.DivergeRemoteSource(); break;
+            case "missing": h.Git.RemoteSourceMissing = true; break;
+            case "unreadable": h.Git.SourceReadError = "source_remote_unreadable"; break;
+        }
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        var commands = h.Git.Trace.Count;
+        var pushes = h.Git.Trace.Count(a => a.Contains("push"));
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(saved.Id);
+        after.LastReason.ShouldBe(reason);
+        after.RemoteConfirmedAt.ShouldBeNull();
+        h.Git.Trace.Count(a => a.Contains("push")).ShouldBe(pushes);
+        var recovery = h.Git.Trace.Skip(commands).ToArray();
+        recovery.First(a => a.Contains("fetch"))[0].ShouldBe("fetch");
+        await using var observer = h.CreateContext();
+        var request = await observer.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId && r.Id == saved.ApprovalLandRequestId);
+        request.SourceRefusalReason.ShouldContain("Publication is unconfirmed. Inspect the saved target");
+    }
+
+    [Test]
+    public async Task C494_PushIntentWithoutContainmentRechecksLocalSource()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.PushStarted;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var saved = (await h.OperationAsync()).ShouldNotBeNull();
+        await h.Git.RequiredAsync(h.Git.Source, "commit", "--allow-empty", "-m", "local move");
+        var moved = h.Git.SourceHead;
+        h.Fault.Phase = null;
+        h.Fault.AfterCommit = false;
+        await h.RestartServicesAsync();
+        var pushes = h.Git.Trace.Count(a => a.Contains("push"));
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(saved.Id);
+        after.LastReason.ShouldBe("source_changed");
+        after.RemoteConfirmedAt.ShouldBeNull();
+        h.Git.SourceHead.ShouldBe(moved);
+        h.Git.Trace.Count(a => a.Contains("push")).ShouldBe(pushes);
+        await using var observer = h.CreateContext();
+        (await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == saved.ApprovalLandRequestId))
+            .SourceRefusalReason.ShouldContain("Publication is unconfirmed. Inspect the saved target");
+    }
 
     [Test]
     public async Task C488_InterruptedRebaseEvidenceRetained()
@@ -876,7 +1113,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
     [Test]
     public async Task C488_PublicationReconciliationMatrix()
     {
-        await C488_PublishedPayloadSurvivesSourceMovement();
+        await C488_PublishedPayloadSurvivesSourceMovement("remote-only", false);
         await C488_PublicationNeedsTargetContainment();
         await C488_NotificationFailureCannotUndoPublication();
     }

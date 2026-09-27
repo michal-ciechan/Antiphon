@@ -162,6 +162,22 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             {
                 if (op.SourcePinned || op.Phase != LandPhase.Inspected)
                     op.Mode = LandOperationMode.ResumePublication;
+                // A saved push may have reached the endpoint even when its acknowledgement was lost.
+                // Check the immutable approval and recovery evidence before observing the exact saved
+                // payload. A moved source must not hide a publication that already happened.
+                if (op.Phase == LandPhase.PushStarted)
+                {
+                    await RecheckApprovalAsync(op, request, ct, skipRecoverySourceFreshness: true);
+                    await RecheckSourceIdentityAndPinsAsync(op, ct);
+                    Require(GitObjectId.IsFull(op.VerifiedSourceSha), "verified_source_missing");
+                    var savedTarget = await ObserveAsync(op, op.VerifiedSourceSha!, ct);
+                    if (savedTarget.ContainsSource)
+                    {
+                        await ConfirmAsync(op, savedTarget,
+                            op.PushExitCode == 0 ? LandPublicationOutcome.Landed : LandPublicationOutcome.AlreadyPresent, ct);
+                        return await CleanupAsync(op, lease, request, ct);
+                    }
+                }
                 await RecheckApprovalAsync(op, request, ct);
                 await RecheckRemoteSourceAsync(op, ct);
                 await RecheckSourceAsync(op, ct);
@@ -559,7 +575,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     }
 
     /// <summary>CARD-0642 D-6 / CARD-0688 D-8: the DB half (latch, request identity, filter), at every boundary.</summary>
-    private async Task RecheckApprovalAsync(AgentTaskLanding op, AgentTaskLandRequest? request, CancellationToken ct)
+    private async Task RecheckApprovalAsync(AgentTaskLanding op, AgentTaskLandRequest? request, CancellationToken ct,
+        bool skipRecoverySourceFreshness = false)
     {
         if (op.RecoveryMode == LandRecoveryMode.None)
             await RecheckFinalVerificationAsync(op.TaskId, request?.ReviewEvidenceId ?? op.ReviewEvidenceId,
@@ -590,10 +607,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             }
             Require(op.SourceRemoteFingerprint is { Length: 64 }
                 && op.RecoverySourceFullRef is not null, "recovery_source_unbound");
-            var sourceRemote = await git.RecheckSourceRemoteAsync(op.RepositoryPath,
-                op.RecoverySourceFullRef!, op.OriginalSourceSha, op.SourceRemoteFingerprint!, ct);
-            Require(sourceRemote.Accepted && sourceRemote.Sha == op.OriginalSourceSha,
-                sourceRemote.Reason ?? "recovery_source_changed");
+            if (!skipRecoverySourceFreshness)
+            {
+                var sourceRemote = await git.RecheckSourceRemoteAsync(op.RepositoryPath,
+                    op.RecoverySourceFullRef!, op.OriginalSourceSha, op.SourceRemoteFingerprint!, ct);
+                Require(sourceRemote.Accepted && sourceRemote.Sha == op.OriginalSourceSha,
+                    sourceRemote.Reason ?? "recovery_source_changed");
+            }
         }
         if (request is null) return;
         Require(request.TaskId == op.TaskId, "stale_land_request");
@@ -643,6 +663,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     /// <summary>DB coordinates, recovery pins and one <c>show-ref</c> of the branch (I-1, I-2, I-8).</summary>
     private async Task RecheckSourceAsync(AgentTaskLanding op, CancellationToken ct)
     {
+        await RecheckSourceIdentityAndPinsAsync(op, ct);
+        var branch = await LandOperationFactory.ReadBranchAsync(git, op.RepositoryPath, op.SourceFullRef, ct);
+        Require(branch.Sha is not null && branch.Sha == ExpectedBranch(op), branch.Reason ?? "source_changed");
+    }
+
+    /// <summary>Immutable owner/coordinates and recovery pins; safe before a saved push is reconciled.</summary>
+    private async Task RecheckSourceIdentityAndPinsAsync(AgentTaskLanding op, CancellationToken ct)
+    {
         var currentTask = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
         Require(currentTask is not null && currentTask.ActiveLandingId == op.Id
             && (op.RecoveryMode == LandRecoveryMode.None
@@ -663,8 +691,6 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 ["show-ref", "--verify", "--hash", op.RecoveryRefPrefix + "/" + pin.Name], ct);
             Require(read.Succeeded && read.Output.Trim() == pin.Sha, "recovery_pin_changed");
         }
-        var branch = await LandOperationFactory.ReadBranchAsync(git, op.RepositoryPath, op.SourceFullRef, ct);
-        Require(branch.Sha is not null && branch.Sha == ExpectedBranch(op), branch.Reason ?? "source_changed");
     }
 
     private async Task<bool> PreparationChangedAsync(AgentTaskLanding op, LandSourceCoordinates coordinates,
