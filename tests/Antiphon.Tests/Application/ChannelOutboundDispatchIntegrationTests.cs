@@ -59,6 +59,7 @@ public sealed class ChannelOutboundDispatchIntegrationTests
             },
         });
         Guid? deliveryId = null;
+        Guid? unrelatedZipTaskId = null;
         try
         {
             await using (var seed = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
@@ -168,6 +169,43 @@ public sealed class ChannelOutboundDispatchIntegrationTests
             xReply.Attachments.Count.ShouldBe(2);
             xReply.Attachments[0].Content.ShouldBe(sourceBytes);
             xReply.Attachments[1].Content.ShouldBe("%PDF-1.4 synthetic conversion"u8.ToArray());
+
+            // A source task id and manifest do not turn an unrelated zip into a
+            // Markdown-source trigger. The actual send route must remain direct.
+            unrelatedZipTaskId = Guid.NewGuid();
+            var bundleDir = Path.Combine(root, "stray-bundle");
+            Directory.CreateDirectory(bundleDir);
+            var sourceManifest = new DeliverableBundleService.SourceManifest(1, true,
+                [new("docs/source.md", "sources.zip", "docs/source.md", sourceBytes.Length,
+                    Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant())], []);
+            await File.WriteAllTextAsync(Path.Combine(bundleDir, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(sourceManifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+            {
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = unrelatedZipTaskId.Value, RootTaskId = unrelatedZipTaskId.Value,
+                    ProjectId = profileProject, Title = "Source task", Goal = "Produce sources",
+                    WorkingDirectory = root, RepoPath = root, Status = AgentTaskStatus.Succeeded,
+                    DeliverableBundleDir = bundleDir, CreatedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+                var outbound = new ChannelOutboundService(db, store, h.Messaging,
+                    profileSettings, TimeProvider.System);
+                var unrelated = new ChannelReply
+                {
+                    Channel = "telegram", ConversationId = x, Text = "unrelated archive",
+                    Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                        Name = "unrelated.zip", Mime = "application/zip", Content = [1, 2, 3] }],
+                };
+                (await outbound.SendAsync(unrelated, ChannelOutboundOrigin.AgentReply,
+                    new ChannelOutboundSource(h.SessionId, 700, 701, 702, "main", [],
+                        unrelatedZipTaskId), CancellationToken.None))
+                    .ShouldBe(ChannelOutboundSendOutcome.Published);
+                (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == xId)).ShouldBe(1);
+            }
+            h.Messaging.SentReplies.Count.ShouldBe(3);
+            h.Messaging.SentReplies[2].Attachments.ShouldHaveSingleItem().Name.ShouldBe("unrelated.zip");
         }
         finally
         {
@@ -179,6 +217,8 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 await db.AgentTasks.Where(t => t.OutboundDeliveryId == id).ExecuteDeleteAsync();
                 await db.ChannelOutboundDeliveries.Where(d => d.Id == id).ExecuteDeleteAsync();
             }
+            if (unrelatedZipTaskId is Guid taskId)
+                await db.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == h.AgentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.BoardId, (Guid?)null));
             await db.Agents.Where(a => a.Id == converterId).ExecuteDeleteAsync();

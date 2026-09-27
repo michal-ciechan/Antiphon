@@ -83,9 +83,10 @@ public sealed class ChannelOutboundService
             catch (ValidationException ex) { unavailable = ex.Message; }
         }
 
+        var sourceManifest = profile is not null
+            ? await ReadSourceManifestAsync(source.SourceTaskId, ct) : null;
         var qualifies = profile is not null && (profile.Trigger == ChannelOutboundTrigger.EveryAgentReply
-            || reply.Attachments.Any(a => a.Name?.EndsWith(".md", StringComparison.OrdinalIgnoreCase) == true)
-            || await HasSourceManifestAsync(source.SourceTaskId, ct));
+            || MatchesMarkdownSources(reply, sourceManifest));
         var hasOlderIntent = channel is not null && await _db.ChannelOutboundDeliveries.AnyAsync(d =>
             d.ChannelId == channel.Id && d.State != ChannelOutboundDeliveryState.Published
             && d.State != ChannelOutboundDeliveryState.Failed, ct);
@@ -107,7 +108,7 @@ public sealed class ChannelOutboundService
 
         var now = _clock.GetUtcNow().UtcDateTime;
         var id = Guid.NewGuid();
-        var sourceManifest = await ReadSourceManifestAsync(source.SourceTaskId, ct);
+        sourceManifest ??= await ReadSourceManifestAsync(source.SourceTaskId, ct);
         var snapshot = await _files.StageAsync(id, reply, ct, sourceManifest);
         var converter = profile is null || unavailable is not null ? null
             : await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == profile.AgentId, ct);
@@ -197,13 +198,26 @@ public sealed class ChannelOutboundService
         return ChannelOutboundSendOutcome.Deferred;
     }
 
-    private async Task<bool> HasSourceManifestAsync(Guid? taskId, CancellationToken ct)
+    internal static bool MatchesMarkdownSources(ChannelReply reply, string? sourceManifestJson)
     {
-        if (taskId is not Guid id)
+        if (reply.Attachments.Any(a => a.Content is not null
+                && a.Name?.EndsWith(".md", StringComparison.OrdinalIgnoreCase) == true))
+            return true;
+        if (sourceManifestJson is null)
             return false;
-        var dir = await _db.AgentTasks.AsNoTracking().Where(t => t.Id == id)
-            .Select(t => t.DeliverableBundleDir).FirstOrDefaultAsync(ct);
-        return dir is not null && File.Exists(Path.Combine(dir, DeliverableBundleService.SourceManifestName));
+        try
+        {
+            var manifest = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(
+                sourceManifestJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            return manifest is { Version: 1, Sources.Count: > 0 }
+                && manifest.Sources.Any(s => s.ZipEntry is not null
+                    && reply.Attachments.Any(a => a.Content is not null
+                        && string.Equals(a.Name, s.StoredFile, StringComparison.Ordinal)));
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private async Task<string?> ReadSourceManifestAsync(Guid? taskId, CancellationToken ct)
