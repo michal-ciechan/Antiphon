@@ -29,6 +29,299 @@ namespace Antiphon.Tests.Application;
 public partial class AgentTaskDispatchBaseGuardTests
 {
     [Test]
+    [Arguments("new_descendant")]
+    [Arguments("landed_in_queue")]
+    [Arguments("unchanged")]
+    [Timeout(90_000)]
+    public async Task T0442_V19_dispatch_rechecks_the_create_preview(string scenario, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v19");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var a = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var aSha = (await repo.GitReadAsync("rev-parse", a.WorktreeBranch!)).Trim();
+        AgentTaskCreatedDto created;
+        await using (var previewProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var previewScope = previewProvider.CreateAsyncScope())
+        {
+            created = await previewScope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+                    Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+                    Card: card.Id.ToString("D")),
+                    new AgentTaskService.Caller(null, null, repo.Path), ct);
+        }
+        created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        created.WorktreeBase.SourceTaskId.ShouldBe(a.Id);
+        created.WorktreeBase.SourceSha.ShouldBe(aSha);
+
+        AgentTask? b = null;
+        if (scenario == "new_descendant")
+            b = await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: a.WorktreeBranch);
+        else if (scenario == "landed_in_queue")
+        {
+            await repo.GitAsync("merge", "--ff-only", a.WorktreeBranch!);
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = a.Id, Type = AgentTaskEventType.Landed,
+                Detail = "fixture landed", At = DateTime.UtcNow,
+            });
+        }
+        await db.SaveChangesAsync(ct);
+        var expectedSha = scenario == "new_descendant"
+            ? (await repo.GitReadAsync("rev-parse", b!.WorktreeBranch!)).Trim()
+            : aSha;
+
+        await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var launchScope = launchProvider.CreateAsyncScope())
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var launched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        launched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        launched.WorktreePath.ShouldNotBeNull();
+        (await ScratchGitRepo.GitInAsync(launched.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim().ShouldBe(expectedSha);
+        launched.WorktreeBaseSha.ShouldBe(expectedSha);
+        launched.WorktreeBaseTaskId.ShouldBe(scenario switch
+        {
+            "new_descendant" => b!.Id,
+            "landed_in_queue" => null,
+            _ => a.Id,
+        });
+        launched.MergeTargetRef.ShouldBeNull();
+        launched.WorktreeBasePreviewJson.ShouldContain(aSha);
+        var changed = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == created.Id && i.WarningKey == "worktree-base-preview-changed")
+            .ToListAsync(ct);
+        changed.Count.ShouldBe(scenario == "unchanged" ? 0 : 1);
+        if (changed.Count == 1)
+        {
+            changed[0].Detail.ShouldContain(aSha);
+            changed[0].Detail.ShouldContain(scenario == "landed_in_queue" ? "Target master" : expectedSha);
+        }
+    }
+
+    [Test]
+    [Arguments("auto_two")]
+    [Arguments("task_two")]
+    [Arguments("fresh_two")]
+    [Arguments("auto_four")]
+    [Arguments("task_four")]
+    [Arguments("fresh_four")]
+    [Timeout(90_000)]
+    public async Task T0442_V20_pending_land_precedes_source_selection_in_every_mode(
+        string scenario, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v20");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var a = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        var x = await SeedKeptSiblingAsync(db, repo, card.Id, "X", startRef: "master");
+        AgentTask chosen = a;
+        AgentTask pending = x;
+        if (scenario.EndsWith("four", StringComparison.Ordinal))
+        {
+            chosen = await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: a.WorktreeBranch);
+            pending = await SeedKeptSiblingAsync(db, repo, card.Id, "Y", startRef: x.WorktreeBranch);
+        }
+        pending.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        await SeedPendingSiblingLandAsync(db, repo, pending);
+        await db.SaveChangesAsync(ct);
+        var request = new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            Card: card.Id.ToString("D"));
+        if (scenario.StartsWith("task", StringComparison.Ordinal))
+            request = request with { WorktreeBaseTask = DelegationReportFormatter.Short(chosen.Id) };
+        else if (scenario.StartsWith("fresh", StringComparison.Ordinal))
+            request = request with { FreshWorktree = true };
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+            .CreateAsync(request, new AgentTaskService.Caller(null, null, repo.Path), ct);
+        created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
+        created.WorktreeBase.SourceTaskId.ShouldBe(pending.Id);
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        await dispatcher.TickAsync(ct);
+        await dispatcher.TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        held.Status.ShouldBe(AgentTaskStatus.Queued);
+        held.WorktreePath.ShouldBeNull();
+        held.WorktreeBranch.ShouldBeNull();
+        held.AgentSessionId.ShouldBeNull();
+        (await db.AgentSessions.AsNoTracking().CountAsync(s => s.Id == held.AgentSessionId, ct)).ShouldBe(0);
+        (await db.AgentTaskEvents.AsNoTracking().CountAsync(e =>
+            e.AgentTaskId == held.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(1);
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet",
+            $"refs/heads/feat/card-task-{DelegationReportFormatter.Short(created.Id)}")).Ok.ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("auto_diverges")]
+    [Arguments("task_deleted")]
+    [Arguments("task_dirty")]
+    [Arguments("task_active")]
+    [Timeout(90_000)]
+    public async Task T0442_V22_launch_blocks_when_preview_inputs_worsen(string scenario, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v22");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var source = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var sourceSha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+        var request = new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            Card: card.Id.ToString("D"));
+        if (scenario != "auto_diverges")
+            request = request with { WorktreeBaseTask = DelegationReportFormatter.Short(source.Id) };
+        AgentTaskCreatedDto created;
+        await using (var previewProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var previewScope = previewProvider.CreateAsyncScope())
+            created = await previewScope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(request, new AgentTaskService.Caller(null, null, repo.Path), ct);
+        created.WorktreeBase!.SourceSha.ShouldBe(sourceSha);
+
+        if (scenario == "auto_diverges")
+            await SeedKeptSiblingAsync(db, repo, card.Id, "X", startRef: "master");
+        else if (scenario == "task_deleted")
+            await repo.GitAsync("branch", "-D", source.WorktreeBranch!);
+        else
+        {
+            var checkout = Path.Combine(repo.WorktreeRoot, source.Id.ToString("N"));
+            await repo.GitAsync("worktree", "add", checkout, source.WorktreeBranch!);
+            source.WorktreePath = checkout;
+            if (scenario == "task_dirty")
+                await File.WriteAllTextAsync(Path.Combine(checkout, "untracked.txt"), "operator work\n", ct);
+            else
+            {
+                var writerId = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = writerId, RootTaskId = source.Id, ParentTaskId = source.Id,
+                    FollowUpOfTaskId = source.Id, Title = "shared writer", Goal = "shared writer",
+                    Role = AgentTaskRole.Code, AgentKind = AgentKind.ClaudeCode,
+                    ModelLevel = AgentModelLevel.Low, Workspace = WorkspaceMode.Shared,
+                    WorkingDirectory = checkout, WorktreePath = checkout, RepoPath = repo.Path,
+                    CardId = card.Id, Status = AgentTaskStatus.Working,
+                    ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+                });
+            }
+        }
+        await db.SaveChangesAsync(ct);
+
+        await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var launchScope = launchProvider.CreateAsyncScope())
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var blocked = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.WorktreePath.ShouldBeNull();
+        blocked.WorktreeBranch.ShouldBeNull();
+        blocked.AgentSessionId.ShouldBeNull();
+        blocked.WorktreeBasePreviewJson.ShouldContain(sourceSha);
+        blocked.FailureReason.ShouldContain(scenario == "auto_diverges"
+            ? "worktree_base_ambiguous" : "requested_source_invalid");
+        blocked.FailureReason.ShouldContain("-BaseTask");
+        blocked.FailureReason.ShouldContain("-FreshWorktree");
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet",
+            $"refs/heads/feat/card-task-{DelegationReportFormatter.Short(created.Id)}")).Ok.ShouldBeFalse();
+        if (scenario == "task_deleted")
+            (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet",
+                "refs/heads/" + source.WorktreeBranch)).Ok.ShouldBeFalse();
+        else
+            (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim().ShouldBe(sourceSha);
+    }
+
+    [Test]
+    [Arguments("auto")]
+    [Arguments("target")]
+    [Arguments("task")]
+    [Timeout(90_000)]
+    public async Task T0442_V26_retry_retains_requested_base_intent(string scenario, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v26");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        var masterSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var a = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var aSha = (await repo.GitReadAsync("rev-parse", a.WorktreeBranch!)).Trim();
+        var request = new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            Card: card.Id.ToString("D"));
+        if (scenario == "target") request = request with { FreshWorktree = true };
+        if (scenario == "task")
+            request = request with { WorktreeBaseTask = DelegationReportFormatter.Short(a.Id) };
+        AgentTaskCreatedDto created;
+        await using (var previewProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var previewScope = previewProvider.CreateAsyncScope())
+            created = await previewScope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(request, new AgentTaskService.Caller(null, null, repo.Path), ct);
+        var storedPreview = (await db.AgentTasks.AsNoTracking()
+            .SingleAsync(t => t.Id == created.Id, ct)).WorktreeBasePreviewJson;
+        storedPreview.ShouldNotBeNull();
+
+        // The preceding launch boundary owns this Blocked state. Retry must not treat the
+        // operator's retry as a fresh Auto request or silently discard an explicit base.
+        await db.AgentTasks.Where(t => t.Id == created.Id).ExecuteUpdateAsync(s => s
+            .SetProperty(t => t.Status, AgentTaskStatus.Blocked)
+            .SetProperty(t => t.FailureReason, "fixture prelaunch refusal"), ct);
+        var b = await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: a.WorktreeBranch);
+        await db.SaveChangesAsync(ct);
+        var bSha = (await repo.GitReadAsync("rev-parse", b.WorktreeBranch!)).Trim();
+        await using (var retryProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var retryScope = retryProvider.CreateAsyncScope())
+        {
+            var service = retryScope.ServiceProvider.GetRequiredService<AgentTaskService>();
+            await service.RetryAsync(created.Id, ct);
+            var retry = await retryScope.ServiceProvider.GetRequiredService<AppDbContext>()
+                .AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+            retry.Status.ShouldBe(AgentTaskStatus.Queued);
+            retry.Attempt.ShouldBe(2);
+            retry.RequestedWorktreeBaseMode.ShouldBe(scenario switch
+            {
+                "target" => RequestedWorktreeBaseMode.Target,
+                "task" => RequestedWorktreeBaseMode.Task,
+                _ => RequestedWorktreeBaseMode.Auto,
+            });
+            retry.RequestedWorktreeBaseTaskId.ShouldBe(scenario == "task" ? a.Id : null);
+            retry.WorktreeBasePreviewJson.ShouldBe(storedPreview);
+            retry.CardId.ShouldBe(card.Id);
+            retry.MergeTargetRef.ShouldBeNull();
+        }
+        await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var launchScope = launchProvider.CreateAsyncScope())
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var launched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        launched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        launched.WorktreeBaseSha.ShouldBe(scenario switch
+        {
+            "auto" => bSha,
+            "task" => aSha,
+            _ => masterSha,
+        });
+        launched.WorktreeBaseTaskId.ShouldBe(scenario switch
+        {
+            "auto" => b.Id,
+            "task" => a.Id,
+            _ => null,
+        });
+    }
+
+    [Test]
     [Timeout(60_000)]
     public async Task T0442_V14_divergent_create_refuses_and_both_recovery_modes_work(CancellationToken ct)
     {
