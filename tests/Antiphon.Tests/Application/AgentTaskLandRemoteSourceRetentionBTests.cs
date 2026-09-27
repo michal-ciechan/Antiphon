@@ -62,16 +62,11 @@ public sealed class AgentTaskLandRemoteSourceRetentionBTests
         }
         if (family == "V09")
         {
-            var pushed = false;
-            h.Fixture.Git.BeforeCommand = (_, args) =>
+            h.Fixture.Git.AfterCommand = async (_, args, result) =>
             {
-                if (args[0] == "push") pushed = true;
-                if (pushed && args[0] == "ls-remote" && args.Contains(h.Fixture.TargetRef))
-                {
-                    fired = true;
-                    return Task.FromResult<LandingGitResult?>(new(0, h.Fixture.SeedSha + "\t" + h.Fixture.TargetRef + "\n", ""));
-                }
-                return Task.FromResult<LandingGitResult?>(null);
+                if (fired || args[0] != "push" || !result.Succeeded) return;
+                fired = true;
+                await h.Fixture.RequiredAsync(h.Fixture.Remote, "update-ref", h.Fixture.TargetRef, h.Fixture.SeedSha);
             };
         }
         if (family == "V10")
@@ -151,7 +146,7 @@ public sealed class AgentTaskLandRemoteSourceRetentionBTests
                     op.ShouldBeNull();
                     await using (var db = h.CreateContext())
                         (await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId))
-                            .HoldReasonCode.ShouldBe(family == "V14" ? "repository_or_source_writer" : "repository_lease_held");
+                            .HoldReasonCode.ShouldBe(family == "V14" ? "repository_or_source_writer" : "repository_mutation_lease_busy");
                     break;
                 case "V15":
                     op.ShouldNotBeNull().Phase.ShouldBe(LandPhase.PushStarted);
