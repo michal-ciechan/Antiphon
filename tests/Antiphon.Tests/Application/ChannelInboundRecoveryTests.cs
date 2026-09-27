@@ -459,7 +459,7 @@ public sealed class ChannelInboundRecoveryTests
         var refusal = new StartLockRefusal();
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
-            ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 150, timeout: 5),
+            ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000, timeout: 5),
             AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureDbContext = options => options.AddInterceptors(refusal),
         });
@@ -499,6 +499,7 @@ public sealed class ChannelInboundRecoveryTests
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, h.SessionId.ToString("D")));
         }
         await bridge.DrainPendingAsync(Ct);
+        await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
         await WaitForAsync(async () =>
         {
             await using var db = Db(schema.ConnectionString);
@@ -517,6 +518,7 @@ public sealed class ChannelInboundRecoveryTests
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == firstOwner.Body)).ShouldBe(1);
         }
         await bridge.DrainPendingAsync(Ct);
+        await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
         await WaitForAsync(async () =>
         {
             await using var db = Db(schema.ConnectionString);
