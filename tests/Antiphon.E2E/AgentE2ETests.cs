@@ -55,11 +55,18 @@ public class AgentE2ETests
 
             await page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "New Agent" }).ClickAsync();
             var createDialog = page.GetByRole(AriaRole.Dialog);
-            await createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Name" }).FillAsync(agentName);
-            await createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Working directory" }).FillAsync(workingDirectory);
+            await Expect(createDialog.GetByLabel("Runner profile")).ToHaveValueAsync("e2e-raw (Raw) · default");
+            var nameInput = createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Name" });
+            var directoryInput = createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Working directory" });
+            await nameInput.FillAsync(agentName);
+            await directoryInput.FillAsync(workingDirectory);
             await createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Details" }).FillAsync("Created through the agents E2E flow.");
+            await Expect(nameInput).ToHaveValueAsync(agentName);
+            await Expect(directoryInput).ToHaveValueAsync(workingDirectory);
+            var createButton = createDialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Create" });
+            await Expect(createButton).ToBeEnabledAsync();
             var createResponse = await page.RunAndWaitForResponseAsync(
-                () => createDialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Create" }).ClickAsync(),
+                () => createButton.ClickAsync(),
                 apiResponse => apiResponse.Url.EndsWith("/api/agents", StringComparison.Ordinal)
                     && apiResponse.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
             if (createResponse.Status >= 300)
