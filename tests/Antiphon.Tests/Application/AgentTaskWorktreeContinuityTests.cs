@@ -190,6 +190,96 @@ public class AgentTaskWorktreeContinuityTests
             $"{DelegationGitFacts.ResolveBase(retry)}..HEAD")).StdOut.Trim().ShouldBe(initialCount);
     }
 
+    [Test]
+    [Arguments("uncontained_sibling")]
+    [Arguments("uncertain_sibling")]
+    [Arguments("inspection_failure")]
+    [Timeout(180_000)]
+    public async Task T0442_V31_land_retains_distinct_sibling_diagnostics(string scenario, CancellationToken ct)
+    {
+        foreach (var residue in new[] { false, true })
+            await RunLandDiagnosticAsync(scenario, residue, ct);
+    }
+
+    private static async Task RunLandDiagnosticAsync(string scenario, bool residue, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-land-diagnostic");
+        using var remote = new TemporaryDirectory("c442-land-diagnostic-origin");
+        (await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare")).Ok.ShouldBeTrue();
+        await AgentTaskLandStageOutcomeTests.SeedBuildableAsync(repo);
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = AgentTaskDispatchBaseGuardTests.CreateContext(schema);
+        var card = await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-0442");
+        var (land, worktrees) = AgentTaskLandStageOutcomeTests.CreateLand(db, repo);
+        var task = await AgentTaskLandStageOutcomeTests.SeedSucceededWorktreeAsync(
+            db, worktrees, repo, card.Id);
+        var sibling = await AgentTaskDispatchBaseGuardTests.SeedKeptSiblingAsync(
+            db, repo, card.Id, scenario == "uncertain_sibling" ? "L" : "X", startRef: "master");
+        if (scenario == "uncertain_sibling")
+        {
+            var left = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
+            await repo.GitAsync("checkout", "-b", "right-R", "master");
+            await repo.CommitFileAsync("right.txt", "R\n");
+            var right = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+            await repo.GitAsync("checkout", sibling.WorktreeBranch!);
+            await repo.GitAsync("merge", "--no-ff", "right-R", "-m", "join");
+            await repo.GitAsync("checkout", "master");
+            await repo.GitAsync("cherry-pick", left);
+            await repo.GitAsync("cherry-pick", right);
+            await repo.GitAsync("push", "origin", "master");
+        }
+        else if (scenario == "inspection_failure")
+        {
+            sibling.RepoPath = Path.Combine(repo.WorktreeRoot, "removed-original");
+            sibling.WorktreePath = Path.Combine(repo.WorktreeRoot, "removed-checkout");
+        }
+        await db.SaveChangesAsync(ct);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "B.txt"), "B\n", ct);
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "B.txt")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "B")).Ok.ShouldBeTrue();
+        if (residue)
+            (await ScratchGitRepo.GitInAsync(repo.Path, "worktree", "lock", task.WorktreePath!))
+                .Ok.ShouldBeTrue();
+        try
+        {
+            await AgentTaskLandStageOutcomeTests.RequestHeadAsync(land, task);
+            (await land.RunAsync(task.Id, null, ct)).ShouldBe(LandRunResult.Complete);
+            db.ChangeTracker.Clear();
+            var events = await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == task.Id).ToListAsync(ct);
+            var terminal = events.Single(e => e.Type == (residue
+                ? AgentTaskEventType.LandedWithResidue : AgentTaskEventType.Landed));
+            var warnings = events.Where(e => e.Type == AgentTaskEventType.Warning)
+                .Select(e => e.Detail).ToArray();
+            var token = $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}";
+            if (scenario == "uncontained_sibling")
+            {
+                terminal.Detail.ShouldContain(token);
+                warnings.ShouldContain(w => w.Contains(sibling.WorktreeBranch!, StringComparison.Ordinal));
+            }
+            else
+            {
+                terminal.Detail.ShouldNotContain("unlanded-sibling=");
+                warnings.ShouldContain(w => w.Contains("unknown", StringComparison.OrdinalIgnoreCase)
+                    && w.Contains(sibling.WorktreeBranch!, StringComparison.Ordinal));
+            }
+            (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:B.txt"))
+                .StdOut.ShouldBe("B\n");
+        }
+        finally
+        {
+            if (residue)
+            {
+                (await ScratchGitRepo.GitInAsync(repo.Path, "worktree", "unlock", task.WorktreePath!))
+                    .Ok.ShouldBeTrue();
+                (await ScratchGitRepo.GitInAsync(repo.Path, "worktree", "remove", "--force", task.WorktreePath!))
+                    .Ok.ShouldBeTrue();
+            }
+        }
+    }
+
     private sealed class TemporaryDirectory : IDisposable
     {
         public string Path { get; } = Directory.CreateTempSubdirectory("c442-origin").FullName;

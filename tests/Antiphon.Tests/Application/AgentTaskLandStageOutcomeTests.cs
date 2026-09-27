@@ -544,7 +544,7 @@ public class AgentTaskLandStageOutcomeTests
 
     [Test]
     [Timeout(180_000)]
-    public async Task T0442_V31_merge_uncertainty_warns_without_stranded_marker()
+    public async Task retained_merge_uncertainty_warns_without_stranded_marker()
     {
         using var repo = new ScratchGitRepo("c442-land-merge-unknown");
         await repo.CommitFileAsync("README.md", "M\n");
@@ -595,7 +595,7 @@ public class AgentTaskLandStageOutcomeTests
         return (AgentTaskLandService.UnlandedMarker(siblings), warnings);
     }
 
-    private static async Task<AgentTask> SeedSucceededWorktreeAsync(
+    internal static async Task<AgentTask> SeedSucceededWorktreeAsync(
         AppDbContext db, DelegationWorktreeService worktrees, ScratchGitRepo repo, Guid? cardId = null)
     {
         var id = Guid.NewGuid();
