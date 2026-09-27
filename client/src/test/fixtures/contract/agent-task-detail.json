@@ -52,7 +52,13 @@
     "projectName": "gym-stat",
     "boardId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3",
     "boardName": "gym-stat board",
-    "scopeSource": "Task"
+    "scopeSource": "Task",
+    "requiredPlatform": "Any",
+    "runnerId": "desktop",
+    "requirementSource": "Default",
+    "observedPlatform": null,
+    "runnerDefaultsRevision": null,
+    "runnerSelectionSource": null
   },
   "goal": "Rewrite the Windows install section.",
   "result": "Rewrote \u0022## Windows install\u0022 in docs/setup.md \u2014 34 lines changed, every command now pwsh 7.\n\nOne decision is yours: should the old cmd examples be deleted, or kept alongside?",

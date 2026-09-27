@@ -54,7 +54,13 @@
       "projectName": "Antiphon",
       "boardId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1",
       "boardName": "Antiphon board",
-      "scopeSource": "Task"
+      "scopeSource": "Task",
+      "requiredPlatform": "Any",
+      "runnerId": "desktop",
+      "requirementSource": "Default",
+      "observedPlatform": null,
+      "runnerDefaultsRevision": null,
+      "runnerSelectionSource": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000002",
@@ -109,7 +115,13 @@
       "projectName": "Antiphon",
       "boardId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1",
       "boardName": "Antiphon board",
-      "scopeSource": "Card"
+      "scopeSource": "Card",
+      "requiredPlatform": "Any",
+      "runnerId": "desktop",
+      "requirementSource": "Default",
+      "observedPlatform": null,
+      "runnerDefaultsRevision": null,
+      "runnerSelectionSource": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000004",
@@ -164,7 +176,13 @@
       "projectName": "gym-stat",
       "boardId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3",
       "boardName": "gym-stat board",
-      "scopeSource": "Task"
+      "scopeSource": "Task",
+      "requiredPlatform": "Any",
+      "runnerId": "desktop",
+      "requirementSource": "Default",
+      "observedPlatform": null,
+      "runnerDefaultsRevision": null,
+      "runnerSelectionSource": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000005",
@@ -219,7 +237,13 @@
       "projectName": null,
       "boardId": null,
       "boardName": null,
-      "scopeSource": "None"
+      "scopeSource": "None",
+      "requiredPlatform": "Any",
+      "runnerId": "desktop",
+      "requirementSource": "Default",
+      "observedPlatform": null,
+      "runnerDefaultsRevision": null,
+      "runnerSelectionSource": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000003",
@@ -274,7 +298,13 @@
       "projectName": "Antiphon",
       "boardId": null,
       "boardName": null,
-      "scopeSource": "Task"
+      "scopeSource": "Task",
+      "requiredPlatform": "Any",
+      "runnerId": "desktop",
+      "requirementSource": "Default",
+      "observedPlatform": null,
+      "runnerDefaultsRevision": null,
+      "runnerSelectionSource": null
     }
   ],
   "excluded": {
