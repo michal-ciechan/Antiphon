@@ -6657,12 +6657,12 @@ public sealed class AgentTaskDispatcher
         if (busy)
             return ReuseOutcome.WaitForAgent;
 
+        if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
+            return ReuseOutcome.Expired;
         WarnIfStandingInheritedEnvDiffers(claimed, standing, now);
 
         claimed.AgentName = standing.Name;
         claimed.AgentSessionId = session;
-        if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
-            return ReuseOutcome.Expired;
         if (adoptLegacyGeneration && claimed.SpecialistSessionId is { } oldSession)
         {
             _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -6707,6 +6707,7 @@ public sealed class AgentTaskDispatcher
     private bool CanAdoptLegacyCheckGeneration(AgentTask task, Agent standing, DateTime now) =>
         task.Role == StandingSpecialistSeatPolicy.Role
         && task.SpecialistInputPolicyJson is null
+        && task.SpecialistSessionStartedAt is not null
         && task.AgentId == standing.Id
         && string.Equals(standing.Slug, CheckInterpreterProvisioner.Slug(_settings), StringComparison.OrdinalIgnoreCase)
         && standing.AlwaysOn
