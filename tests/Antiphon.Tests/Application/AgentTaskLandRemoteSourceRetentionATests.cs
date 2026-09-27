@@ -118,7 +118,9 @@ public sealed class AgentTaskLandRemoteSourceRetentionATests
                 op.LastReason.ShouldBe("push_rejected");
                 op.RemoteConfirmedAt.ShouldBeNull();
                 op.VerifiedSourceSha.ShouldNotBeNull();
-                h.Fixture.Git.Trace.ShouldContain(a => a[0] == "push" && a.Contains(h.Fixture.TargetRef));
+                h.Fixture.Git.Trace.Any(a => a[0] == "push" &&
+                    a.Any(part => part.EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal)))
+                    .ShouldBeTrue("the real rejected push must name the target refspec");
                 break;
         }
         if (family is "V03" or "V05") fired.ShouldBeTrue("the family-specific fault must fire");

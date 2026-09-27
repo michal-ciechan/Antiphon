@@ -387,16 +387,21 @@ public sealed class RepositoryMutationLeaseTests
         await File.WriteAllTextAsync(worker, """
             $ErrorActionPreference = 'Stop'
             $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
+            $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease crash worker', $true)
             $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
             $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
                 param($context, $name)
                 $path = $resolver.ResolveAssemblyToPath($name)
+                if ($null -eq $path) {
+                    $candidate = [IO.Path]::Combine($assemblyDirectory, $name.Name + '.dll')
+                    if ([IO.File]::Exists($candidate)) { $path = $candidate }
+                }
                 if ($null -eq $path) { return $null }
                 return $context.LoadFromAssemblyPath($path)
             }.GetNewClosure()
-            [Runtime.Loader.AssemblyLoadContext]::Default.add_Resolving($resolveDependency)
-            [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
-            $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
+            $loadContext.add_Resolving($resolveDependency)
+            $server = $loadContext.LoadFromAssemblyPath($args[0])
+            $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true))
             $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
             $result = $operation.GetAwaiter().GetResult()
             if (-not $result.Succeeded) { throw ('fixture_' + $result.Diagnostic) }
@@ -452,17 +457,24 @@ public sealed class RepositoryMutationLeaseTests
             var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
             await File.WriteAllTextAsync(recoveryWorker, """
                 $ErrorActionPreference = 'Stop'
+                $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
+                $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease recovery worker', $true)
                 $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
                 $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
                     param($context, $name)
                     $path = $resolver.ResolveAssemblyToPath($name)
+                    if ($null -eq $path) {
+                        $candidate = [IO.Path]::Combine($assemblyDirectory, $name.Name + '.dll')
+                        if ([IO.File]::Exists($candidate)) { $path = $candidate }
+                    }
                     if ($null -eq $path) { return $null }
                     return $context.LoadFromAssemblyPath($path)
                 }.GetNewClosure()
-                [Runtime.Loader.AssemblyLoadContext]::Default.add_Resolving($resolveDependency)
-                [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
-                $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
-                $leases = [Antiphon.Server.Infrastructure.Git.RepositoryMutationLease]::new($git)
+                $loadContext.add_Resolving($resolveDependency)
+                $server = $loadContext.LoadFromAssemblyPath($args[0])
+                $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true))
+                $leaseType = $server.GetType('Antiphon.Server.Infrastructure.Git.RepositoryMutationLease', $true)
+                $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null))
                 foreach ($repository in @($args[1], $args[2])) {
                     $lease = $leases.TryAcquireAsync($repository, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
                     if ($null -ne $lease) { $lease.DisposeAsync().GetAwaiter().GetResult(); exit 10 }
