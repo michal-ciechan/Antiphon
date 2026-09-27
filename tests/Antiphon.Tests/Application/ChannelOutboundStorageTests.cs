@@ -222,6 +222,79 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
+    [Arguments("parent_path")]
+    [Arguments("absolute_path")]
+    [Arguments("backslash_path")]
+    [Arguments("stored_file_traversal")]
+    [Arguments("case_collision")]
+    [Arguments("zip_entry_differs")]
+    public async Task Source_zip_manifest_rejects_unsafe_or_ambiguous_members(string fault)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-zip-path-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+        var bytes = "# Valid source\n"u8.ToArray();
+        var entries = new Dictionary<string, byte[]>
+        {
+            ["docs/source.md"] = bytes,
+            ["docs/other.md"] = bytes,
+            ["../escape.md"] = bytes,
+            ["/absolute.md"] = bytes,
+            ["..\\escape.md"] = bytes,
+            ["docs/A.md"] = bytes,
+            ["docs/a.md"] = bytes,
+        };
+        byte[] zipBytes;
+        using (var zipStream = new MemoryStream())
+        {
+            using (var zip = new System.IO.Compression.ZipArchive(zipStream,
+                       System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var (path, content) in entries)
+                {
+                    await using var entry = zip.CreateEntry(path).Open();
+                    await entry.WriteAsync(content);
+                }
+            }
+            zipBytes = zipStream.ToArray();
+        }
+        var reply = new ChannelReply
+        {
+            Channel = "slack", ConversationId = "C1",
+            Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                Name = "source.zip", Mime = "application/zip", Content = zipBytes }],
+        };
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        DeliverableBundleService.SourceMember Member(string original, string? entry = null,
+            string stored = "source.zip") => new(original, stored, entry ?? original, bytes.Length, hash);
+        string Json(params DeliverableBundleService.SourceMember[] members) => JsonSerializer.Serialize(
+            new DeliverableBundleService.SourceManifest(1, true, members, []),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        try
+        {
+            var valid = await store.StageAsync(Guid.NewGuid(), reply, CancellationToken.None,
+                Json(Member("docs/source.md")));
+            var staged = Path.Combine(Path.GetDirectoryName(valid.RequestPath)!, "input", "source-001.md");
+            (await File.ReadAllBytesAsync(staged)).ShouldBe(bytes);
+
+            var invalid = fault switch
+            {
+                "parent_path" => Json(Member("../escape.md")),
+                "absolute_path" => Json(Member("/absolute.md")),
+                "backslash_path" => Json(Member("..\\escape.md")),
+                "stored_file_traversal" => Json(Member("docs/source.md", stored: "../source.zip")),
+                "case_collision" => Json(Member("docs/A.md"), Member("docs/a.md")),
+                "zip_entry_differs" => Json(Member("docs/source.md", "docs/other.md")),
+                _ => throw new ArgumentOutOfRangeException(nameof(fault), fault, null),
+            };
+            var id = Guid.NewGuid();
+            await Should.ThrowAsync<InvalidDataException>(() => store.StageAsync(id, reply,
+                CancellationToken.None, invalid));
+            Directory.Exists(Path.Combine(root, id.ToString("N"))).ShouldBeFalse();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Test]
     public async Task Worker_created_sealed_reply_cannot_bypass_manifest_validation_on_recovery()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-forged-seal-" + Guid.NewGuid().ToString("N"));
