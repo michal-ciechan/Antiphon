@@ -27,14 +27,17 @@ internal static class Card0452LandingCases
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
-    public static async Task InstallRejectingTargetHookAsync(LandingSafetyHarness h)
+    public static async Task<string> InstallRejectingTargetHookAsync(LandingSafetyHarness h)
     {
-        var hooks = Path.Combine(h.Fixture.Root, "target-hooks");
+        var hooks = Path.Combine(h.Fixture.Remote, "hooks");
         Directory.CreateDirectory(hooks);
         var hook = Path.Combine(hooks, "pre-receive");
-        await File.WriteAllTextAsync(hook, "#!/bin/sh\nwhile read old new ref; do\n  if [ \"$ref\" = 'refs/heads/master' ]; then exit 1; fi\ndone\nexit 0\n");
+        var marker = Path.Combine(hooks, "rejected.marker");
+        await File.WriteAllTextAsync(hook, "#!/bin/sh\nwhile read old new ref; do\n  if [ \"$ref\" = 'refs/heads/master' ]; then printf fired > hooks/rejected.marker; exit 1; fi\ndone\nexit 0\n");
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        await h.Fixture.RequiredAsync(h.Fixture.Remote, "config", "core.hooksPath", hooks);
         h.Fixture.Git.HooksPathOverride = hooks;
+        return marker;
     }
 }

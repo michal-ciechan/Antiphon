@@ -68,7 +68,7 @@ public sealed class AgentTaskLandRemoteSourceRetentionDTests
         (await h.RunAsync()).ShouldBe(LandRunResult.Held);
         await using var db = h.CreateContext();
         (await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId))
-            .HoldReasonCode.ShouldBe("repository_lease_held");
+            .HoldReasonCode.ShouldBe("repository_mutation_lease_busy");
         (await h.OperationAsync()).ShouldBeNull();
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
     }
@@ -101,18 +101,32 @@ public sealed class AgentTaskLandRemoteSourceRetentionDTests
         var other = Path.Combine(h.Fixture.Root, "second-endpoint.git");
         await h.Fixture.RequiredAsync(h.Fixture.Root, "clone", "--bare", h.Fixture.Remote, other);
         (await h.Fixture.RequiredAsync(other, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(h.Fixture.SeedSha);
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "config", "--add", "remote.origin.pushurl", h.Fixture.Remote);
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "config", "--add", "remote.origin.pushurl", other);
+        var fired = false;
+        h.Fixture.Git.BeforeCommand = async (_, args) =>
+        {
+            if (!fired && args[0] == "symbolic-ref" && args.Contains(h.Fixture.TargetRef))
+            {
+                fired = true;
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "config", "--add", "remote.origin.pushurl", h.Fixture.Remote);
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "config", "--add", "remote.origin.pushurl", other);
+            }
+            return null;
+        };
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
+        fired.ShouldBeTrue("the source must resolve before the target endpoint becomes ambiguous");
         var op = await h.OperationAsync();
         (op?.RemoteConfirmedAt).ShouldBeNull();
         h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push");
         await using (var db = h.CreateContext())
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
-            (request.SourceRefusalReason ?? op?.LastReason ?? "").ShouldContain("ambiguous_push_endpoint");
+            request.SourceRefusalReason.ShouldBe("landing_io_error");
+            request.SourceDiagnosticExceptionType.ShouldBe("IOException");
         }
+        var endpoints = await h.Fixture.RequiredAsync(h.Fixture.Repository, "remote", "get-url", "--push", "--all", "origin");
+        endpoints.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2);
+        h.Fixture.Git.BeforeCommand = null;
         (await h.Fixture.RequiredAsync(other, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(h.Fixture.SeedSha);
         var observer = new LandingGitFixture.FixtureGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId);
         var fetched = await observer.RunAsync(h.Fixture.Observer,

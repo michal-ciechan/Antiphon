@@ -27,6 +27,7 @@ public sealed class AgentTaskLandRemoteSourceRetentionATests
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await Card0452LandingCases.AssertSeededRemoteSourceAsync(h);
+        string? rejectMarker = null;
         switch (family)
         {
             case "V01":
@@ -56,11 +57,11 @@ public sealed class AgentTaskLandRemoteSourceRetentionATests
             case "V07":
                 var source = await h.AddSourceAsync();
                 await h.Fixture.RequiredAsync(h.Fixture.Repository, "merge", "--ff-only", source);
-                await Card0452LandingCases.InstallRejectingTargetHookAsync(h);
+                rejectMarker = await Card0452LandingCases.InstallRejectingTargetHookAsync(h);
                 break;
             case "V08":
                 await h.AddSourceAsync();
-                await Card0452LandingCases.InstallRejectingTargetHookAsync(h);
+                rejectMarker = await Card0452LandingCases.InstallRejectingTargetHookAsync(h);
                 break;
         }
         var fired = false;
@@ -112,6 +113,7 @@ public sealed class AgentTaskLandRemoteSourceRetentionATests
                 break;
             case "V07":
             case "V08":
+                File.Exists(rejectMarker).ShouldBeTrue("the real target pre-receive hook must reject the push");
                 op.ShouldNotBeNull();
                 op.LastReason.ShouldBe("push_rejected");
                 op.RemoteConfirmedAt.ShouldBeNull();
