@@ -670,6 +670,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         var expected = await h.AddSourceAsync();
+        h.Git.SetRemoteSource(expected);
         h.Fault.Phase = LandPhase.Verified;
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
