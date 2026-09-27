@@ -24,6 +24,7 @@ public sealed class BoardService
     private readonly CardsSettings _cards;
     private readonly ILogger<BoardService>? _logger;
     private readonly SessionStateStore? _states;
+    private readonly PipelineResolution? _pipelineResolution;
 
     public BoardService(
         AppDbContext db,
@@ -33,7 +34,8 @@ public sealed class BoardService
         ILogger<BoardService>? logger = null,
         IOptions<CardsSettings>? cards = null,
         CardTaskFileService? cardFiles = null,
-        SessionStateStore? states = null)
+        SessionStateStore? states = null,
+        PipelineResolution? pipelineResolution = null)
     {
         _db = db;
         _cardFiles = cardFiles;
@@ -43,6 +45,7 @@ public sealed class BoardService
         _logger = logger;
         _cards = cards?.Value ?? new CardsSettings();
         _states = states;
+        _pipelineResolution = pipelineResolution;
     }
 
     public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(CancellationToken ct) =>
@@ -87,7 +90,10 @@ public sealed class BoardService
         Guid id, bool includeArchived, bool summary, CancellationToken ct)
     {
         var board = await LoadBoardAsync(id, ct);
-        var detail = ToDetailDto(board, includeArchived);
+        var detail = ToDetailDto(board, includeArchived) with
+        {
+            Pipeline = await (_pipelineResolution ?? new PipelineResolution(_db)).ForBoardAsync(board, ct)
+        };
         if (summary)
             return ToSummaryBoardDto(detail, _cards.SummaryPreviewChars);
 
@@ -127,6 +133,23 @@ public sealed class BoardService
                 c.MaxConcurrentSessions,
                 []))
             .ToList();
+    }
+
+    public async Task<BoardDetailDto> SetPipelineAsync(Guid id, Guid? definitionId, CancellationToken ct)
+    {
+        var board = await _db.Boards.FirstOrDefaultAsync(b => b.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Board), id);
+        if (definitionId is { } selected)
+        {
+            var definition = await _db.PipelineDefinitions.FirstOrDefaultAsync(d => d.Id == selected, ct)
+                ?? throw new NotFoundException(nameof(PipelineDefinition), selected);
+            if (definition.ArchivedAt is not null)
+                throw new ConflictException($"Pipeline definition '{definition.Name}' is archived.", "pipeline_definition_archived");
+        }
+        board.PipelineDefinitionId = definitionId;
+        board.UpdatedAt = _timeProvider.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+        return await GetByIdAsync(id, ct);
     }
 
     public async Task<BoardDetailDto> CreateAsync(CreateBoardRequest request, CancellationToken ct)
@@ -310,7 +333,7 @@ public sealed class BoardService
             board.UpdatedAt,
             board.ArchivedAt,
             board.ArchivedReason,
-            board.ArchivedBy) { SyncCardFiles = board.SyncCardFiles };
+            board.ArchivedBy) { SyncCardFiles = board.SyncCardFiles, PipelineDefinitionId = board.PipelineDefinitionId };
     }
 
     internal static BoardSummaryDto ToSummaryDto(Board board) =>

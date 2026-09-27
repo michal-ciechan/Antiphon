@@ -9,6 +9,10 @@ API); nothing here replaces that.
 
 For process logs, Hangfire history, server2 container output, deployment-evidence gaps and
 transcript retention, see the authoritative [log-source inventory](logs.md).
+
+Use `GET /api/pipeline-definitions` to list shared stage pipelines and
+`scripts/pipeline-definition.ps1` to inspect, clone, revise, or select one for a board or project.
+Board and project detail responses expose the effective pipeline and its source.
 For desktop Postgres query totals, use the
 [pg_stat_statements query and reset commands](logs.md#desktop-postgres-query-statistics).
 

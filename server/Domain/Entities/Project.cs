@@ -9,6 +9,8 @@ public class Project
     public Antiphon.Server.Domain.Enums.RepositoryVisibility RepositoryVisibility { get; set; } = Antiphon.Server.Domain.Enums.RepositoryVisibility.Unknown;
 
     public Guid Id { get; set; }
+    public Guid? DefaultPipelineDefinitionId { get; set; }
+    public PipelineDefinition? DefaultPipelineDefinition { get; set; }
     public string Name { get; set; } = string.Empty;
     public string GitRepositoryUrl { get; set; } = string.Empty;
     public string? LocalRepositoryPath { get; set; }

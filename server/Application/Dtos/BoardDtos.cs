@@ -37,6 +37,8 @@ public sealed record BoardDetailDto(
     string? ArchivedBy = null)
 {
     public bool SyncCardFiles { get; init; }
+    public Guid? PipelineDefinitionId { get; init; }
+    public PipelineResolutionDto? Pipeline { get; init; }
 }
 
 public sealed record BoardColumnDto(

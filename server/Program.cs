@@ -480,6 +480,8 @@ try
     builder.Services.AddSingleton<OperatorShutdownCoordinator>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
+    builder.Services.AddScoped<PipelineDefinitionService>();
+    builder.Services.AddScoped<PipelineResolution>();
     builder.Services.AddSingleton<OrchestratorWorkspaceFactGatherer>();
     builder.Services.AddScoped<OrchestratorWorkspaceWarningService>();
     builder.Services.AddScoped<ProjectSetupService>();
@@ -1005,6 +1007,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // API endpoints
     app.MapSettingsEndpoints();
     app.MapProjectEndpoints();
+    app.MapPipelineDefinitionEndpoints();
     app.MapApiKeyEndpoints();
     app.MapDelegationCapabilityEndpoints();
     app.MapBoardEndpoints();

@@ -903,3 +903,21 @@ All figures estimated unless marked measured. Build into a producer-owned `--pro
 | Total | **130 min** (band 115-185), build included | **215 min** (band 150-240); ~150 min wall with B sharded |
 
 Total verification floor = build (14 min, inside the rows) + V/R 130 min + PC 215 min ≈ **345 min** unsharded, ≈ 280 min with B sharded. Savings against "full suite per group" (4 × 25.5 min `Antiphon.Tests` + 4 × 35 min E2E ≈ 240 min of V/R) ≈ 110 min, from class-scoped V/R in A / B / C and one full run only in D, the only group that deletes across the tree. No group has a zero PC floor: each changes a server-enforced or user-visible invariant.
+
+### Checkpoints
+
+Group A's final ordinary verification manifest. Each row uses a fresh result directory; CP-1 owns the isolated `Antiphon.Tests` build and CP-2..CP-9 and CP-11 reuse it. CP-10 builds the browser project separately after rebuilding `client/dist`. CP-11 requires the Windows `cmd.exe` fixture and is reported as a platform gap on Linux rather than being credited as green. The focused authoring and red-first runs before this committed manifest are unlisted diagnostics, recorded in the Code report.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c558a/` | unit-lane | `/*/*/*/*[Category=Unit]` | V-A1, V-A7, V-A7b, V-A16, V-A18, R-A-unit | whole Unit lane, 0 failed; report skips | 1 | 5 |
+| CP-2 | all | CP-1 | migration | `/*/*/PipelineDefinitionMigrationTests/*` | V-A1..V-A6 | all named migration results, 0 failed | 1 | 8 |
+| CP-3 | all | CP-1 | definitions | `/*/*/(PipelineDefinitionServiceTests*)\|(PipelineResolutionTests*)/*` | V-A8..V-A12 | both classes, 0 failed | 2 | 8 |
+| CP-4 | all | CP-1 | seeder | `/*/*/DatabaseSeederTests/*` | V-A13 | all seeder results, 0 failed | 1 | 6 |
+| CP-5 | all | CP-1 | http | `/*/*/PipelineDefinitionEndpointTests/*` | V-A14 | all endpoint results, 0 failed | 1 | 6 |
+| CP-6 | all | CP-1 | script | `/*/*/PipelineDefinitionScriptTests/*` | V-A15 | all seven script operations, 0 failed | 7 | 5 |
+| CP-7 | all | CP-1 | queue-and-board | `/*/*/(AgentServiceIntegrationTests*)\|(BoardServiceIntegrationTests*)/*` | V-A17, R-A-board | both full classes, 0 failed | 2 | 12 |
+| CP-8 | all | CP-1 | persistence-and-home | `/*/*/(KanbanPersistenceTests*)\|(ProjectDeletionTests*)\|(HomeTaskServiceIntegrationTests*)/*` | V-A19, R-A-persistence | all three classes, 0 failed | 3 | 12 |
+| CP-9 | all | CP-1 | downgrade-regression | `/*/*/(CommitOnSettleMigrationTests*)\|(AgentTaskInternalDecisionMigrationTests*)\|(StandingSpecialistRoutingMigrationTests*)/*` | R-A-migrations | all three classes, 0 failed | 3 | 9 |
+| CP-10 | all | `tests/Antiphon.E2E -> bin-c558e2e/` | browser | `/*/*/AgentE2ETests/*` | R-A-browser | all named browser results, 0 failed | 1 | 20 |
+| CP-11 | all | CP-1 | windows-agent-control | `/*/*/AgentControlServiceIntegrationTests/*` | R-A-agent-control | whole class on Windows with cmd.exe fixture, 0 failed | 1 | 15 |

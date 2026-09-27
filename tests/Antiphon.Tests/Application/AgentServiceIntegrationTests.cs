@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.FileSystem;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -579,7 +580,7 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
-    public async Task DeleteAsync_removes_agent_unassigns_cards_and_drops_runs()
+    public async Task DeleteAsync_removes_agent_and_unassigns_cards_but_keeps_card_run()
     {
         await using var db = CreateContext();
         var graph = CreateGraph();
@@ -592,6 +593,18 @@ public class AgentServiceIntegrationTests
             new CreateAgentRequest(UniqueAgentName("Doomed Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
             CancellationToken.None);
         await service.AssignCardAsync(agent.Id, new AssignAgentCardRequest(graph.CardA.Id), CancellationToken.None);
+        await DatabaseSeeder.SeedPipelineDefinitionsAsync(db, PipelineDefinitions.StandardPipeline, CancellationToken.None);
+        var definition = await db.PipelineDefinitions.Include(d => d.ActiveRevision)
+            .SingleAsync(d => d.Id == PipelineDefinitions.StandardPipelineId);
+        var run = new CardWorkflowRunFactory(db, TimeProvider.System)
+            .CreateFromRevision(graph.CardA, definition, definition.ActiveRevision!);
+        var firstStageId = run.CurrentStageId;
+        run.CurrentStageId = null;
+        db.CardWorkflowRuns.Add(run);
+        await db.SaveChangesAsync();
+        run.CurrentStageId = firstStageId;
+        graph.CardA.ActiveWorkflowRunId = run.Id;
+        await db.SaveChangesAsync();
         eventBus.Clear();
 
         await service.DeleteAsync(agent.Id, CancellationToken.None);
@@ -601,8 +614,8 @@ public class AgentServiceIntegrationTests
         var card = await verify.Cards.SingleAsync(c => c.Id == graph.CardA.Id);
         card.AssignedAgentId.ShouldBeNull();
         card.AgentQueuePosition.ShouldBeNull();
-        card.ActiveWorkflowRunId.ShouldBeNull();
-        (await verify.CardWorkflowRuns.AnyAsync(r => r.AgentId == agent.Id)).ShouldBeFalse();
+        card.ActiveWorkflowRunId.ShouldBe(run.Id);
+        (await verify.CardWorkflowRuns.AnyAsync(r => r.Id == run.Id)).ShouldBeTrue();
         eventBus.PublishedEvents.Any(e => e.EventName == "AgentChanged").ShouldBeTrue();
         eventBus.PublishedEvents
             .Where(e => e.EventName == "CardChanged")
@@ -702,7 +715,7 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
-    public async Task AssignCardAsync_assigns_card_to_next_queue_position_and_snapshots_default_workflow()
+    public async Task AssignCardAsync_assigns_card_to_next_queue_position_and_creates_no_run()
     {
         await using var db = CreateContext();
         var graph = CreateGraph();
@@ -722,8 +735,8 @@ public class AgentServiceIntegrationTests
 
         detail.Queue.Single().CardId.ShouldBe(graph.CardA.Id);
         detail.Queue.Single().QueuePosition.ShouldBe(1);
-        detail.Queue.Single().WorkflowStatus.ShouldBe(CardWorkflowRunStatus.Queued);
-        detail.Queue.Single().CurrentStageName.ShouldBe("Implement");
+        detail.Queue.Single().WorkflowStatus.ShouldBeNull();
+        detail.Queue.Single().CurrentStageName.ShouldBeNull();
 
         await using var verify = CreateContext();
         var storedCard = await verify.Cards
@@ -732,19 +745,8 @@ public class AgentServiceIntegrationTests
             .SingleAsync(c => c.Id == graph.CardA.Id);
         storedCard.AssignedAgentId.ShouldBe(agent.Id);
         storedCard.AgentQueuePosition.ShouldBe(1);
-        storedCard.ActiveWorkflowRunId.ShouldNotBeNull();
-        storedCard.ActiveWorkflowRun!.CurrentStageId.ShouldNotBeNull();
-        storedCard.ActiveWorkflowRun.CurrentStage!.Name.ShouldBe("Implement");
-        storedCard.ActiveWorkflowRun.WorkflowDefinitionSnapshot.ShouldContain("name: One Shot");
-        storedCard.ActiveWorkflowRun.Stages
-            .OrderBy(s => s.StageOrder)
-            .Select(s => s.Name)
-            .ShouldBe(["Implement", "Human Review"]);
-        WorkflowDefinitionParser
-            .ParseYamlDefinition(storedCard.ActiveWorkflowRun.WorkflowDefinitionSnapshot)
-            .Stages
-            .Select(s => s.Name)
-            .ShouldBe(["Implement", "Human Review"]);
+        storedCard.ActiveWorkflowRunId.ShouldBeNull();
+        (await verify.CardWorkflowRuns.CountAsync(r => r.CardId == graph.CardA.Id)).ShouldBe(0);
         eventBus.PublishedEvents.Any(e => e.EventName == "AgentQueueChanged").ShouldBeTrue();
         eventBus.PublishedEvents.Any(e => e.EventName == "CardChanged").ShouldBeTrue();
     }
@@ -847,7 +849,7 @@ public class AgentServiceIntegrationTests
         storedCard.AgentQueuePosition.ShouldBeNull();
         storedCard.ActiveWorkflowRunId.ShouldBeNull();
         shiftedCard.AgentQueuePosition.ShouldBe(1);
-        (await verify.CardWorkflowRuns.CountAsync(r => r.CardId == graph.CardA.Id)).ShouldBe(1);
+        (await verify.CardWorkflowRuns.CountAsync(r => r.CardId == graph.CardA.Id)).ShouldBe(0);
         eventBus.PublishedEvents.Any(e => e.EventName == "AgentQueueChanged").ShouldBeTrue();
         eventBus.PublishedEvents
             .Where(e => e.EventName == "CardChanged")

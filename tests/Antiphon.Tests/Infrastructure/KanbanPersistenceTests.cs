@@ -1,6 +1,8 @@
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -83,6 +85,7 @@ public class KanbanPersistenceTests
         await using var db = CreateContext();
         var graph = CreateKanbanGraph();
         var now = DateTime.UtcNow;
+        var revisionId = await SeedPipelineAsync(db);
 
         var template = new WorkflowTemplate
         {
@@ -123,10 +126,9 @@ public class KanbanPersistenceTests
         {
             Id = Guid.NewGuid(),
             CardId = graph.Card.Id,
-            AgentId = agent.Id,
-            WorkflowTemplateId = template.Id,
+            PipelineDefinitionId = PipelineDefinitions.StandardPipelineId,
+            PipelineDefinitionRevisionId = revisionId,
             WorkflowName = "One Shot",
-            WorkflowDefinitionSnapshot = template.YamlDefinition,
             Status = CardWorkflowRunStatus.Queued,
             CreatedAt = now,
             UpdatedAt = now
@@ -137,9 +139,10 @@ public class KanbanPersistenceTests
             Id = Guid.NewGuid(),
             CardWorkflowRunId = run.Id,
             StageOrder = 0,
-            Name = "Implement",
-            ExecutorType = "agent",
-            GateRequired = false,
+            Name = "Code",
+            Role = AgentTaskRole.Code,
+            BundleKey = "stage-code",
+            AllowedNextJson = "[\"review\",\"code\",\"decide\"]",
             Status = CardWorkflowStageStatus.Pending,
             CreatedAt = now,
             UpdatedAt = now
@@ -166,7 +169,8 @@ public class KanbanPersistenceTests
         stored.AssignedAgent!.Name.ShouldBe("Frontend Claude");
         stored.AgentQueuePosition.ShouldBe(1);
         stored.ActiveWorkflowRun!.WorkflowName.ShouldBe("One Shot");
-        stored.ActiveWorkflowRun.Stages.Single().Name.ShouldBe("Implement");
+        stored.ActiveWorkflowRun.Stages.Single().Name.ShouldBe("Code");
+        stored.ActiveWorkflowRun.Stages.Single().Role.ShouldBe(AgentTaskRole.Code);
     }
 
     [Test]
@@ -176,6 +180,7 @@ public class KanbanPersistenceTests
         var graphA = CreateKanbanGraph();
         var graphB = CreateKanbanGraph();
         var now = DateTime.UtcNow;
+        var revisionId = await SeedPipelineAsync(db);
 
         var agent = new Agent
         {
@@ -194,9 +199,9 @@ public class KanbanPersistenceTests
         {
             Id = Guid.NewGuid(),
             CardId = graphB.Card.Id,
-            AgentId = agent.Id,
+            PipelineDefinitionId = PipelineDefinitions.StandardPipelineId,
+            PipelineDefinitionRevisionId = revisionId,
             WorkflowName = "Card B Run",
-            WorkflowDefinitionSnapshot = "name: Card B Run",
             Status = CardWorkflowRunStatus.Queued,
             CreatedAt = now,
             UpdatedAt = now
@@ -220,6 +225,7 @@ public class KanbanPersistenceTests
         var graphA = CreateKanbanGraph();
         var graphB = CreateKanbanGraph();
         var now = DateTime.UtcNow;
+        var revisionId = await SeedPipelineAsync(db);
 
         var agent = new Agent
         {
@@ -238,9 +244,9 @@ public class KanbanPersistenceTests
         {
             Id = Guid.NewGuid(),
             CardId = graphA.Card.Id,
-            AgentId = agent.Id,
+            PipelineDefinitionId = PipelineDefinitions.StandardPipelineId,
+            PipelineDefinitionRevisionId = revisionId,
             WorkflowName = "Card A Run",
-            WorkflowDefinitionSnapshot = "name: Card A Run",
             Status = CardWorkflowRunStatus.Running,
             CreatedAt = now,
             UpdatedAt = now
@@ -250,9 +256,9 @@ public class KanbanPersistenceTests
         {
             Id = Guid.NewGuid(),
             CardId = graphB.Card.Id,
-            AgentId = agent.Id,
+            PipelineDefinitionId = PipelineDefinitions.StandardPipelineId,
+            PipelineDefinitionRevisionId = revisionId,
             WorkflowName = "Card B Run",
-            WorkflowDefinitionSnapshot = "name: Card B Run",
             Status = CardWorkflowRunStatus.Running,
             CreatedAt = now,
             UpdatedAt = now
@@ -263,9 +269,10 @@ public class KanbanPersistenceTests
             Id = Guid.NewGuid(),
             CardWorkflowRunId = runB.Id,
             StageOrder = 0,
-            Name = "Run B Stage",
-            ExecutorType = "agent",
-            GateRequired = false,
+            Name = "Code",
+            Role = AgentTaskRole.Code,
+            BundleKey = "stage-code",
+            AllowedNextJson = "[\"review\"]",
             Status = CardWorkflowStageStatus.Running,
             CreatedAt = now,
             UpdatedAt = now
@@ -315,6 +322,13 @@ public class KanbanPersistenceTests
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    private static async Task<Guid> SeedPipelineAsync(AppDbContext db)
+    {
+        await DatabaseSeeder.SeedPipelineDefinitionsAsync(db, PipelineDefinitions.StandardPipeline, CancellationToken.None);
+        return (await db.PipelineDefinitions.SingleAsync(d => d.Id == PipelineDefinitions.StandardPipelineId))
+            .ActiveRevisionId!.Value;
+    }
 
     private static KanbanGraph CreateKanbanGraph()
     {
