@@ -217,7 +217,6 @@ public class DeliverableBundleServiceTests
         var settings = new DeliverablesSettings
         {
             Enabled = false,
-            BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-no-browser", "msedge.exe"),
         };
 
         await CreateService(settings).TryBuildAsync(
@@ -229,11 +228,7 @@ public class DeliverableBundleServiceTests
 
     private static DeliverableBundleService CreateService(DeliverablesSettings? settings = null)
     {
-        settings ??= new DeliverablesSettings
-        {
-            BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-no-browser", "msedge.exe"),
-            RenderTimeoutSeconds = 2,
-        };
+        settings ??= new DeliverablesSettings();
         var git = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance);
         return new DeliverableBundleService(
             git, Options.Create(settings),

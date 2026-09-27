@@ -9,13 +9,6 @@ public sealed class DeliverablesSettings
 
     public bool Enabled { get; set; } = true;
 
-    /// <summary>
-    /// Absolute path to a Chromium-family browser. Null or empty auto-detects Edge, then Chrome.
-    /// </summary>
-    public string? BrowserPath { get; set; }
-
-    public int RenderTimeoutSeconds { get; set; } = 20;
-
     /// <summary>Copy source <c>.md</c> files individually at or below this count; otherwise zip.</summary>
     public int MaxSourceFilesInline { get; set; } = 5;
 

@@ -290,9 +290,7 @@ internal sealed class C544World : IAsyncDisposable
         services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
         services.AddSingleton(Options.Create(new DeliverablesSettings
         {
-            BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
         }));
-        services.AddSingleton<MarkdownPdfRenderer>();
         services.AddSingleton<DeliverableBundleService>();
         services.AddSingleton<IInterimVerificationReadinessReader>(Readiness);
         services.AddScoped<InterimVerificationPolicy>();

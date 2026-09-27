@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
-using Antiphon.Server.Application.Settings;
 using Markdig;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace Antiphon.Server.Application.Services;
+namespace Antiphon.MarkdownPdf;
 
 /// <summary>
 /// CARD-0337: Markdig → self-contained HTML → headless Edge/Chrome <c>--print-to-pdf</c>.
@@ -38,14 +38,14 @@ public sealed class MarkdownPdfRenderer
             "Google", "Chrome", "Application", "chrome.exe"),
     ];
 
-    private readonly DeliverablesSettings _settings;
+    private readonly MarkdownPdfToolSettings _settings;
     private readonly ILogger<MarkdownPdfRenderer> _logger;
 
     /// <summary>Test seam: a hang that is cancelled by the render timeout. Production is null.</summary>
     internal Func<CancellationToken, Task>? TestHang { get; set; }
 
     public MarkdownPdfRenderer(
-        IOptions<DeliverablesSettings> settings,
+        IOptions<MarkdownPdfToolSettings> settings,
         ILogger<MarkdownPdfRenderer> logger)
     {
         _settings = settings.Value;
@@ -61,7 +61,7 @@ public sealed class MarkdownPdfRenderer
         int DurationMs);
 
     /// <summary>
-    /// A configured <see cref="DeliverablesSettings.BrowserPath"/> is exclusive: if it is set
+    /// A configured <see cref="MarkdownPdfToolSettings.BrowserPath"/> is exclusive: if it is set
     /// and missing, we do not fall through to Edge/Chrome (the operator named a specific binary).
     /// Null/empty auto-detects Edge, then Chrome.
     /// </summary>
@@ -144,7 +144,7 @@ public sealed class MarkdownPdfRenderer
         {
             var missing = string.IsNullOrWhiteSpace(_settings.BrowserPath)
                 ? "no Edge/Chrome found in default locations"
-                : $"browser not found at Deliverables:BrowserPath ({_settings.BrowserPath})";
+                : $"browser not found at --browser-path ({_settings.BrowserPath})";
             return new PdfRenderResult(false, missing, missing, 0);
         }
 
@@ -155,6 +155,9 @@ public sealed class MarkdownPdfRenderer
         var started = Stopwatch.StartNew();
         try
         {
+            // A zero-exit browser must produce this invocation's output, not a previous file.
+            if (File.Exists(pdfPath))
+                File.Delete(pdfPath);
             await File.WriteAllTextAsync(htmlPath, html, ct);
             var args = BuildArguments(pdfPath, htmlPath);
             var run = await RunBrowserAsync(browser, args, timeout, ct);

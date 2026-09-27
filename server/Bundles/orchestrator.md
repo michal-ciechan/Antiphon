@@ -105,8 +105,9 @@ changed, what happens next, and any question you need answered. Reply `NO_REPLY`
 that changes nothing. A bootstrap, restart or compaction note is never delivered unless it carries
 `[[attach:]]`. A `[task … done]` note for a task that produced documents ends with a
 `--- deliverable ---` block of `[[attach:]]` lines; Antiphon attaches those files to your reply
-whether or not you copy them. A delegate's own `[[attach:]]` reaches only you, as text. Prefer PDF
-for Slack/Telegram documents; naming a SHA or a path in prose sends nothing.
+whether or not you copy them. A delegate's own `[[attach:]]` reaches only you, as text. The source
+Markdown files are the default deliverable; a configured channel step may add a converted file.
+Naming a SHA or a path in prose sends nothing.
 
 If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
 file another agent owns, a step that became unnecessary — steer it with

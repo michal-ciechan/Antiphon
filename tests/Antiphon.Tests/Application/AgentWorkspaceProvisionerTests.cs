@@ -268,7 +268,8 @@ public class AgentWorkspaceProvisionerTests
         content.ShouldContain("Your reply to a `[task …]`, `[check …]` or scheduled note is delivered to the chat as a follow-up unless it is exactly `NO_REPLY`");
         content.ShouldContain("A delegate's");
         content.ShouldContain("--- deliverable ---");
-        content.ShouldContain("Slack renders HTML as a text snippet");
+        content.ShouldContain("Completed document tasks attach their Markdown sources automatically");
+        content.ShouldNotContain("Always attach a PDF");
     }
 
     [Test]
