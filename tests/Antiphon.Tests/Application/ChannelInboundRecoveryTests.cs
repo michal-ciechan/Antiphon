@@ -528,17 +528,18 @@ public sealed class ChannelInboundRecoveryTests
         var rows = await delivered.ChannelInbounds.AsNoTracking()
             .Where(i => native.Contains(i.NativeMessageId)).OrderBy(i => i.AcceptanceSequence).ToListAsync();
         rows.Select(i => i.NativeMessageId).ShouldBe(native);
-        var owners = await delivered.SessionQueuedMessages.AsNoTracking()
-            .Where(q => q.SourceChannelInboundId == rows[0].Id || q.SourceChannelInboundId == rows[64].Id)
-            .OrderBy(q => q.CreatedAt).ToListAsync();
-        owners.Count.ShouldBe(2);
-        owners[0].Body.ShouldContain("ordered line 00 DISTINCT TAIL");
-        owners[0].Body.ShouldContain("ordered line 63 DISTINCT TAIL");
-        owners[1].Body.ShouldContain("ordered line 64 DISTINCT TAIL");
-        owners[1].Body.ShouldContain("ordered line 69 DISTINCT TAIL");
-        foreach (var owner in owners)
-            (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
-                && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        var firstOwner = await delivered.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == rows[0].Id);
+        var laterOwner = await delivered.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == rows[64].Id);
+        rows.Take(64).ShouldAllBe(i => i.QueueMessageId == firstOwner.Id);
+        rows.Skip(64).ShouldAllBe(i => i.QueueMessageId == laterOwner.Id);
+        var prompts = await delivered.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Text == firstOwner.Body || t.Text == laterOwner.Body))
+            .OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync();
+        prompts.ShouldBe(new[] { firstOwner.Body, laterOwner.Body },
+            "complete recipient UserPrompt rows must follow acceptance order");
     }
 
     [Test]
