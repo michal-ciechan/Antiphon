@@ -14,6 +14,154 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 public class TerminalScreenTests
 {
+	private static void AssertAllCuts(string input, Action<TerminalScreen> expected,
+		int cols = 20, int rows = 5, string seed = "")
+	{
+		for (var cut = 1; cut < input.Length; cut++)
+		{
+			var screen = new TerminalScreen(cols, rows);
+			screen.Feed(seed);
+			screen.Feed(input[..cut]);
+			screen.Feed("");
+			screen.Feed(input[cut..]);
+			expected(screen);
+		}
+	}
+
+	[Test]
+	public void C464_Csi_is_atomic_at_every_boundary()
+	{
+		var input = "AB\x1b[3;5HZ";
+		AssertAllCuts(input, s =>
+		{
+			s.GetRow(0).ShouldBe("AB");
+			s.GetRow(2).ShouldBe("    Z");
+			s.CursorRow.ShouldBe(2);
+			s.CursorCol.ShouldBe(5);
+		});
+		var prefix = new TerminalScreen(20, 5);
+		prefix.Feed("AB\x1b[3;5");
+		prefix.GetRow(0).ShouldBe("AB");
+		prefix.CursorRow.ShouldBe(0);
+		prefix.CursorCol.ShouldBe(2);
+		foreach (var final in "ABCDEFGHfdJKLMP@STrXm")
+		{
+			var vector = $"\x1b[1{final}Z";
+			var whole = new TerminalScreen(20, 5);
+			whole.Feed("AB\r\nCD");
+			whole.Feed(vector);
+			AssertAllCuts(vector, s =>
+			{
+				s.GetRows().ShouldBe(whole.GetRows(), $"CSI {final}");
+				s.CursorRow.ShouldBe(whole.CursorRow, $"CSI {final}");
+				s.CursorCol.ShouldBe(whole.CursorCol, $"CSI {final}");
+			}, seed: "AB\r\nCD");
+		}
+		AssertAllCuts("A\x1b[?2JZ", s => { s.GetRow(0).ShouldBe("AZ"); s.CursorCol.ShouldBe(2); });
+		AssertAllCuts("A\x1b[1 qZ", s => s.GetRow(0).ShouldBe("AZ"));
+		AssertAllCuts("A\x1b[;0mZ", s => s.GetRow(0).ShouldBe("AZ"));
+		AssertAllCuts("\x1b[2;3r\x1b[3;1H\nZ", s =>
+		{
+			s.GetRow(0).ShouldBe("T");
+			s.GetRow(4).ShouldBe("B");
+		}, seed: "T\x1b[5;1HB");
+	}
+
+	[Test]
+	public void C464_Control_strings_end_only_at_their_terminator()
+	{
+		foreach (var vector in new[] { "A\x1b]0;hidden\x07Z", "A\x1b]0;hidden\x1b\\Z",
+			"A\x1b]0;hidden\x1b\x1b\\Z", "A\x1b]0;hidden\x1bQ\x1b\\Z",
+			"A\x1bPsecret\x07still-secret\x1b\\Z" }.Concat(
+			"PX^_".Select(c => $"A\x1b{c}hidden\x1b\\Z")))
+		{
+			AssertAllCuts(vector, s =>
+			{
+				s.GetRow(0).ShouldBe("AZ", vector);
+				s.CursorRow.ShouldBe(0);
+				s.CursorCol.ShouldBe(2);
+			});
+			for (var cut = 2; cut < vector.Length - 1; cut++)
+			{
+				var s = new TerminalScreen(20, 5);
+				s.Feed(vector[..cut]);
+				s.GetRow(0).ShouldBe("A", $"hidden prefix at {cut}: {vector}");
+			}
+		}
+	}
+
+	[Test]
+	public void C464_Esc_and_charset_carry_across_reads()
+	{
+		foreach (var designation in "()*+")
+			AssertAllCuts($"A\x1b{designation}BZ", s =>
+			{ s.GetRow(0).ShouldBe("AZ"); s.CursorCol.ShouldBe(2); });
+		foreach (var simple in new[] { "7", "8", "=", ">", "\\" })
+			AssertAllCuts($"A\x1b{simple}Z", s => s.GetRow(0).ShouldBe("AZ"));
+		AssertAllCuts("\x1bMZ", s =>
+		{ s.GetRow(1).ShouldBe("Z"); s.CursorRow.ShouldBe(1); }, seed: "\x1b[3;1H");
+		var unfinished = new TerminalScreen(20, 5);
+		unfinished.Feed("A\x1b");
+		unfinished.Feed("");
+		unfinished.GetRow(0).ShouldBe("A");
+	}
+
+	[Test]
+	public void C464_Invalid_controls_recover_without_swallowing_text()
+	{
+		foreach (var vector in new[] { "A\x1b[42zTAIL", "A\x1b[12\x18Z", "A\x1b[12\x1aZ",
+			"AB\x1b[12\x1b[1;1HZ", "A\x1b[" + new string('9', 256) + "HZ",
+			"A\x1b[1;2;3;4;5;6;7;8;9;10mZ" })
+		{
+			var expected = vector.Contains("TAIL") ? "ATAIL" : vector.StartsWith("AB") ? "ZB" : "AZ";
+			AssertAllCuts(vector, s =>
+			{
+				s.GetRow(0).ShouldBe(expected, vector);
+				s.CursorRow.ShouldBe(0);
+				s.CursorCol.ShouldBe(expected == "ZB" ? 1 : expected.Length);
+			});
+		}
+	}
+
+	[Test]
+	public void C464_Unfinished_controls_are_hidden_and_instance_local()
+	{
+		foreach (var (prefix, suffix) in new[] { ("\x1b", "Z"), ("\x1b[", "1mZ"),
+			("\x1b[12;", "1mZ"), ("\x1b]0;secret", "\x07Z"),
+			("\x1b]0;secret\x1b", "\\Z"), ("\x1bPsecret\x1b", "\\Z"), ("\x1b(", "BZ") })
+		{
+			var old = new TerminalScreen(20, 5);
+			old.Feed("A" + prefix);
+			old.Feed("");
+			old.GetRow(0).ShouldBe("A");
+			old.CursorCol.ShouldBe(1);
+			var fresh = new TerminalScreen(20, 5);
+			fresh.Feed("B");
+			fresh.GetRow(0).ShouldBe("B");
+			old.Feed(suffix);
+			old.GetRow(0).ShouldBe("AZ");
+		}
+	}
+
+	[Test]
+	public void C464_Control_state_is_bounded()
+	{
+		foreach (var (start, payload, end) in new[] { ("\x1b]", 'x', "\x07Z"),
+			("\x1bP", 'x', "\x1b\\Z"), ("\x1b[", '9', "HZ") })
+		{
+			var screen = new TerminalScreen(20, 5);
+			var piece = new string(payload, 2048);
+			screen.Feed("A" + start);
+			screen.Feed(piece);
+			var before = GC.GetAllocatedBytesForCurrentThread();
+			for (var i = 0; i < 4096; i++) screen.Feed(piece);
+			var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+			allocated.ShouldBeLessThan(1024 * 1024, start);
+			screen.GetRow(0).ShouldBe("A");
+			screen.Feed(end);
+			screen.GetRow(0).ShouldBe("AZ");
+		}
+	}
 	// ── Helpers ─────────────────────────────────────────────────────────────────
 
 	private static TerminalScreen S(int cols = 40, int rows = 10) => new(cols, rows);
