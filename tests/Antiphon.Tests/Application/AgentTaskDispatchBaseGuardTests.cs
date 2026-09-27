@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -27,6 +28,47 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public partial class AgentTaskDispatchBaseGuardTests
 {
+    [Test]
+    [Timeout(60_000)]
+    public async Task T0442_V14_divergent_create_refuses_and_both_recovery_modes_work(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-divergent-create");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var a = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        var x = await SeedKeptSiblingAsync(db, repo, card.Id, "X", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var before = await db.AgentTasks.CountAsync(t => t.CardId == card.Id, ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        var request = new CreateAgentTaskRequest("Build CARD-0442", Title: "CARD-0442 code",
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            Card: card.Id.ToString("D"));
+        var caller = new AgentTaskService.Caller(null, null, repo.Path);
+        var conflict = await Should.ThrowAsync<ConflictException>(() => service.CreateAsync(request, caller, ct));
+        conflict.Code.ShouldBe("worktree_base_ambiguous");
+        conflict.Message.ShouldContain(DelegationReportFormatter.Short(a.Id));
+        conflict.Message.ShouldContain(DelegationReportFormatter.Short(x.Id));
+        conflict.Message.ShouldContain("-BaseTask");
+        conflict.Message.ShouldContain("-FreshWorktree");
+        (await db.AgentTasks.CountAsync(t => t.CardId == card.Id, ct)).ShouldBe(before);
+
+        var selected = await service.CreateAsync(request with
+        {
+            WorktreeBaseTask = DelegationReportFormatter.Short(a.Id),
+        }, caller, ct);
+        selected.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        selected.WorktreeBase.SourceTaskId.ShouldBe(a.Id);
+        var fresh = await service.CreateAsync(request with { FreshWorktree = true }, caller, ct);
+        fresh.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+        fresh.WorktreeBase.CandidateWarnings.ShouldContain(w => w.Contains(a.WorktreeBranch!, StringComparison.Ordinal));
+        fresh.WorktreeBase.CandidateWarnings.ShouldContain(w => w.Contains(x.WorktreeBranch!, StringComparison.Ordinal));
+    }
+
     [Test]
     [Timeout(60_000)]
     public async Task T0442_V10_empty_card_preview_names_explicit_destination(CancellationToken ct)
