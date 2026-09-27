@@ -401,7 +401,7 @@ public sealed class RepositoryMutationLeaseTests
             }.GetNewClosure()
             $loadContext.add_Resolving($resolveDependency)
             $server = $loadContext.LoadFromAssemblyPath($args[0])
-            $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true))
+            $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
             $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
             $result = $operation.GetAwaiter().GetResult()
             if (-not $result.Succeeded) { throw ('fixture_' + $result.Diagnostic) }
@@ -472,7 +472,7 @@ public sealed class RepositoryMutationLeaseTests
                 }.GetNewClosure()
                 $loadContext.add_Resolving($resolveDependency)
                 $server = $loadContext.LoadFromAssemblyPath($args[0])
-                $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true))
+                $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
                 $leaseType = $server.GetType('Antiphon.Server.Infrastructure.Git.RepositoryMutationLease', $true)
                 $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null))
                 foreach ($repository in @($args[1], $args[2])) {
