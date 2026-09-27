@@ -11,6 +11,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Antiphon.Tests" />
     <InternalsVisibleTo Include="Antiphon.E2E" />
+    <InternalsVisibleTo Include="Antiphon.ChannelOutbound.Probe" />
   </ItemGroup>
 
   <ItemGroup>

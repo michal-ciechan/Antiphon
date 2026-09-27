@@ -55,6 +55,7 @@
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
     <!-- CARD-0545: the independent nightly watchdog runs in-process against fakes at its four boundaries. -->
@@ -80,6 +81,18 @@
       <CustodyChildOutput Include="$(_CustodyChildOutputDir)*" />
     </ItemGroup>
     <Copy SourceFiles="@(CustodyChildOutput)" DestinationFolder="$(OutDir)custody-child/" />
+  </Target>
+
+  <Target Name="CopyChannelOutboundProbe" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_ChannelOutboundProbeTarget" />
+    </MSBuild>
+    <PropertyGroup><_ChannelOutboundProbeDir>@(_ChannelOutboundProbeTarget->'%(RootDir)%(Directory)')</_ChannelOutboundProbeDir></PropertyGroup>
+    <ItemGroup><ChannelOutboundProbeOutput Include="$(_ChannelOutboundProbeDir)**\*" /></ItemGroup>
+    <Copy SourceFiles="@(ChannelOutboundProbeOutput)"
+          DestinationFiles="@(ChannelOutboundProbeOutput->'$(OutDir)channel-outbound-probe\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="CopyFakeClaude" AfterTargets="Build">

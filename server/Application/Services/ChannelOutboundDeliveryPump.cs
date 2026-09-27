@@ -27,6 +27,11 @@ public sealed class ChannelOutboundDeliveryPump
     private readonly ILogger<ChannelOutboundDeliveryPump> _logger;
     private readonly Guid _owner = Guid.NewGuid();
 
+    // Test-only, per-instance stop point. Production leaves this null. The callback runs
+    // only after the named durable write has completed, so a killed probe cannot rely
+    // on in-memory state when recovery starts in a new process.
+    internal Func<string, Guid, CancellationToken, Task>? ProbeBarrierAsync { get; set; }
+
     public ChannelOutboundDeliveryPump(AppDbContext db, OutboundConversionTaskRunner runner,
         IChannelOutboundFileStore files, IAntiphonMessagingProducer producer,
         IOptions<AntiphonMessagingOptions> messaging, TimeProvider clock,
@@ -254,6 +259,8 @@ public sealed class ChannelOutboundDeliveryPump
         delivery.State = ChannelOutboundDeliveryState.Publishing;
         delivery.Version++;
         await _db.SaveChangesAsync(ct);
+        if (ProbeBarrierAsync is { } publishingBarrier)
+            await publishingBarrier("publishing-committed", delivery.Id, ct);
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             delivery.PublicationAttempts++;
@@ -288,6 +295,9 @@ public sealed class ChannelOutboundDeliveryPump
             }
         }
 
+        if (ProbeBarrierAsync is { } acceptedBarrier)
+            await acceptedBarrier("producer-accepted", delivery.Id, ct);
+
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         delivery.State = ChannelOutboundDeliveryState.Published;
         delivery.PublishedAt = UtcNow();
@@ -303,6 +313,8 @@ public sealed class ChannelOutboundDeliveryPump
         await StampCompleteSourceAsync(delivery, reply, ct);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        if (ProbeBarrierAsync is { } publishedBarrier)
+            await publishedBarrier("published-committed", delivery.Id, ct);
     }
 
     private async Task<bool> RevalidateAsync(ChannelOutboundDelivery delivery,
