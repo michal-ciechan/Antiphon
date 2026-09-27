@@ -54,7 +54,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     private string _address = "";
     private bool _hostSuspended;
 
-    public async Task InitializeAsync(bool busy = false, string cut = "none", bool dispatch = false)
+    public async Task InitializeAsync(bool busy = false, string cut = "none", bool dispatch = false, string completionForm = "raw")
     {
         OperatingSystem.IsWindows().ShouldBeTrue();
         ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
@@ -81,7 +81,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         await GitAsync(Source, "push", "origin", "HEAD:refs/heads/c467-source");
         if (!_shared)
         {
-            _app = new AntiphonAppFixture { LandDelivery = new(Root, cut), UsePrebuiltFrontend = true, DiagnosticsDirectory = Path.Combine(Root, "server-logs") };
+            _app = new AntiphonAppFixture { LandDelivery = new(Root, cut, completionForm), UsePrebuiltFrontend = true, DiagnosticsDirectory = Path.Combine(Root, "server-logs") };
             await _app.InitializeAsync();
         }
         _app.EnsureSessionRunnerReachable();
@@ -161,11 +161,16 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             return args[0] == "push" || args.Contains("remove");
         });
 
-    public async Task<Guid> RequestAsync(bool initial = true)
+    public async Task<Guid> RequestAsync(bool initial = true, string? expectedSha = null, Guid? reviewEvidenceId = null)
     {
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"),
-                     "-Land", TaskId.ToString(), "-ExpectedSourceSha", SourceSha }) start.ArgumentList.Add(arg);
+                     "-Land", TaskId.ToString(), "-ExpectedSourceSha", expectedSha ?? SourceSha }) start.ArgumentList.Add(arg);
+        if (reviewEvidenceId is Guid evidence)
+        {
+            start.ArgumentList.Add("-ReviewEvidenceId");
+            start.ArgumentList.Add(evidence.ToString("D"));
+        }
         start.Environment["ANTIPHON_API"] = _address; start.Environment["ANTIPHON_TASK_TOKEN"] = _token;
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
@@ -202,7 +207,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     }
 
     public async Task<AgentTaskLandNotification> ReceiptAsync(LandNotificationKind kind = LandNotificationKind.Outcome,
-        Guid? requestId = null, Guid? notificationId = null)
+        Guid? requestId = null, Guid? notificationId = null, int seconds = 60)
     {
         AgentTaskLandNotification? result = null;
         await UntilProtocolAsync(async () => {
@@ -210,7 +215,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId)
                 && (notificationId == null || n.Id == notificationId));
             return result is not null;
-        }, "complete native Land receipt");
+        }, "complete native Land receipt", seconds);
         await using var observer = CreateContext();
         var row = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == result!.QueueMessageId);
         var prompt = await observer.TranscriptEntries.SingleAsync(p => p.AgentSessionId == CallerId && p.Sequence == result!.ConfirmingPromptSequence);
