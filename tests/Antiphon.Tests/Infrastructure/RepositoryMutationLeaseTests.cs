@@ -474,6 +474,7 @@ public sealed class RepositoryMutationLeaseTests
                 [IO.File]::WriteAllText($RecordPath, ($record | ConvertTo-Json -Compress))
                 [IO.File]::Copy($RecordPath, $Snapshot)
                 & $RecoveryScript -Repository $Repository -Execute -ConfirmDescendantsExited
+                exit $LASTEXITCODE
                 """);
             var liveRecoveryOutput = await RunChildAsync("pwsh", ["-NoProfile", "-File", liveRecoveryWorker, recordPath,
                 child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), liveSnapshot,
