@@ -513,10 +513,10 @@ public sealed class ChannelInboundRecoveryTests
                 && i.QueueMessageId != null)).ShouldBe(0, "later rows must wait behind the failed page");
             var headId = await firstPage.ChannelInbounds.Where(i => i.NativeMessageId == native[0])
                 .Select(i => i.Id).SingleAsync();
-            var firstOwner = await firstPage.SessionQueuedMessages.AsNoTracking()
+            var pageOwner = await firstPage.SessionQueuedMessages.AsNoTracking()
                 .SingleAsync(q => q.SourceChannelInboundId == headId);
             (await firstPage.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
-                && t.Kind == TranscriptKinds.UserPrompt && t.Text == firstOwner.Body)).ShouldBe(1);
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == pageOwner.Body)).ShouldBe(1);
         }
         await bridge.DrainPendingAsync(Ct);
         await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
@@ -538,8 +538,7 @@ public sealed class ChannelInboundRecoveryTests
             .Where(t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt
                 && (t.Text == firstOwner.Body || t.Text == laterOwner.Body))
             .OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync();
-        prompts.ShouldBe(new[] { firstOwner.Body, laterOwner.Body },
-            "complete recipient UserPrompt rows must follow acceptance order");
+        prompts.ShouldBe(new[] { firstOwner.Body, laterOwner.Body });
     }
 
     [Test]
