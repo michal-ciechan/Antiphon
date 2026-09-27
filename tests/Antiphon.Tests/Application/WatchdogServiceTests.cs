@@ -34,11 +34,13 @@ public class WatchdogServiceTests
             ("captured", "old (Y/n)\n" + C566Menu, AgentKind.ClaudeCode, true),
             ("ansi", C566Menu.Replace("Dangerous", "\u001b[31mDangerous\u001b[0m"), AgentKind.ClaudeCode, true),
             ("unrelated", C566Menu.Replace("Dangerous rm operation on possibly-empty variable path:", "Approve command:"), AgentKind.ClaudeCode, false),
+            ("changed heading", C566Menu.Replace("possibly-empty variable path", "file path"), AgentKind.ClaudeCode, false),
             ("missing question", C566Menu.Replace("Do you want to proceed?", "Continue?"), AgentKind.ClaudeCode, false),
             ("reversed", C566Menu.Replace("1. Yes", "1. No").Replace("2. No", "2. Yes"), AgentKind.ClaudeCode, false),
             ("partial", C566Menu.Replace("  2. No", ""), AgentKind.ClaudeCode, false),
             ("extra choice", C566Menu.Replace("Esc to cancel", "  3. Maybe\nEsc to cancel"), AgentKind.ClaudeCode, false),
             ("history", C566Menu + "\n❯ ", AgentKind.ClaudeCode, false),
+            ("quoted", "Here is an example:\n```\n" + C566Menu + "\n```", AgentKind.ClaudeCode, false),
             ("provider", C566Menu, AgentKind.Raw, false),
         };
         foreach (var row in cases)
@@ -49,7 +51,23 @@ public class WatchdogServiceTests
             fixture.Adapter.Inputs.ShouldBe(row.Expected ? ["2"] : [], row.Name);
             fixture.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded")
                 .ShouldBe(row.Expected ? 1 : 0, row.Name);
+            if (row.Expected)
+            {
+                var audit = fixture.Bus.PublishedEvents.Single(e => e.EventName == "WatchdogAutoResponded");
+                audit.Group.ShouldBe(AgentSessionGroups.Session(fixture.Session.Id));
+                var payload = System.Text.Json.JsonSerializer.Serialize(audit.Payload);
+                payload.ShouldContain($"\"sessionId\":\"{fixture.Session.Id}\"");
+                payload.ShouldContain("\"ruleName\":\"unsafe-rm-refusal\"");
+            }
         }
+        await using var rawOnly = await C566Fixture.CreateAsync(string.Empty);
+        rawOnly.Adapter.Emit("old (Y/n)\n" + C566Menu);
+        (await rawOnly.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        rawOnly.Adapter.Inputs.ShouldBeEmpty();
+        await using var unreadable = await C566Fixture.CreateAsync(C566Menu);
+        unreadable.Adapter.ThrowOnRenderedSnapshot = true;
+        (await unreadable.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        unreadable.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
@@ -74,6 +92,20 @@ public class WatchdogServiceTests
         await using var rendered = await C566Fixture.CreateAsync(C566Menu.Replace("❯ 1. Yes", "❯ typed 1\n  1. Yes"));
         (await rendered.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
         rendered.Adapter.Inputs.ShouldBeEmpty();
+        rendered.Adapter.RenderedScreenOverride = C566Menu;
+        (await rendered.Service.ScanAsync(CancellationToken.None)).ShouldBe(0, "one ghost empty frame cannot release a rendered answer");
+        rendered.Adapter.RenderedScreenOverride = C566Menu.Replace("❯ 1. Yes", "❯ typed 1\n  1. Yes");
+        (await rendered.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        rendered.Clock.Advance(TimeSpan.FromMinutes(5));
+        rendered.Adapter.RenderedScreenOverride = C566Menu;
+        (await rendered.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        (await rendered.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        rendered.Adapter.Inputs.ShouldBe(["2"]);
+        rendered.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded").ShouldBe(1);
+
+        await using var partial = await C566Fixture.CreateAsync(C566Menu.Replace("  2. No", "  2. N"));
+        (await partial.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        partial.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
@@ -89,6 +121,31 @@ public class WatchdogServiceTests
         (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
         fixture.Adapter.Inputs.ShouldBe(["2", "2"]);
         fixture.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded").ShouldBe(2);
+
+        await using var early = await C566Fixture.CreateAsync(C566Menu);
+        (await early.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        early.Adapter.RenderedScreenOverride = "idle";
+        (await early.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        early.Adapter.RenderedScreenOverride = C566Menu;
+        (await early.Service.ScanAsync(CancellationToken.None)).ShouldBe(0, "a new episode inside cooldown is still suppressed");
+        early.Clock.Advance(TimeSpan.FromSeconds(2));
+        (await early.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        early.Adapter.Inputs.ShouldBe(["2", "2"]);
+
+        await using var shared = await C566Fixture.CreateAsync(C566Menu);
+        (await shared.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        var second = NewSession(shared.Session.Card!);
+        second.AgentKind = AgentKind.ClaudeCode;
+        shared.Db.AgentSessions.Add(second);
+        await shared.Db.SaveChangesAsync();
+        var secondAdapter = new FakeAgentProtocolAdapter
+        {
+            RenderedScreenOverride = C566Menu, EchoTypedInputToScreen = false
+        };
+        shared.Runtime.Register(second.Id, secondAdapter);
+        (await shared.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        shared.Adapter.Inputs.ShouldBe(["2"]);
+        secondAdapter.Inputs.ShouldBe(["2"]);
     }
 
     [Test]
@@ -146,6 +203,79 @@ public class WatchdogServiceTests
             .ToListAsync();
         prompts.Count(t => t.Text == note.Body).ShouldBe(1);
         parentAdapter.Inputs.ShouldContain("\r");
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed))
+            .ShouldBe(1);
+        fixture.Adapter.Inputs.ShouldBe(["2"]);
+        (await verify.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.Session.Id)).Status
+            .ShouldBe(SessionStatus.Running);
+
+        foreach (var variant in new[] { "audit failure", "raw send failure", "binding moved", "already terminal" })
+        {
+            var caseHarness = OverdueSweepHarness.Create();
+            await using var caseProvider = caseHarness.Provider;
+            await using var caseFixture = await C566Fixture.CreateAsync(C566Menu, dispatcher: caseHarness.Dispatcher);
+            var caseTaskId = Guid.NewGuid();
+            caseFixture.Db.AgentTasks.Add(new AgentTask
+            {
+                Id = caseTaskId, RootTaskId = caseTaskId, Title = "unsafe cleanup " + variant,
+                Goal = "run tests", Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.Frontier,
+                Workspace = WorkspaceMode.Worktree, WorkingDirectory = caseFixture.Root,
+                AgentSessionId = caseFixture.Session.Id, Status = AgentTaskStatus.Working,
+                Attempt = 1, ReplyTo = AgentTaskReplyTo.None,
+                CreatedAt = DateTime.UtcNow, DispatchedAt = DateTime.UtcNow
+            });
+            await caseFixture.Db.SaveChangesAsync();
+            if (variant == "audit failure")
+                caseFixture.Bus.ThrowOnceOnEvent = "WatchdogAutoResponded";
+            if (variant == "raw send failure")
+                caseFixture.Adapter.ThrowOnSend = new InvalidOperationException("transport refused the key");
+            if (variant is "binding moved" or "already terminal")
+            {
+                var rebound = NewSession(caseFixture.Session.Card!);
+                rebound.AgentKind = AgentKind.ClaudeCode;
+                caseFixture.Db.AgentSessions.Add(rebound);
+                await caseFixture.Db.SaveChangesAsync();
+                caseFixture.Adapter.BeforeInput = async (_, _) =>
+                {
+                    await using var changing = CreateContext();
+                    var row = await changing.AgentTasks.SingleAsync(t => t.Id == caseTaskId);
+                    if (variant == "binding moved")
+                        row.AgentSessionId = rebound.Id;
+                    else
+                    {
+                        row.Status = AgentTaskStatus.Succeeded;
+                        row.CompletedAt = DateTime.UtcNow;
+                    }
+                    await changing.SaveChangesAsync();
+                };
+            }
+
+            var count = await caseFixture.Service.ScanAsync(CancellationToken.None);
+            await using var caseVerify = CreateContext();
+            var caseSaved = await caseVerify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == caseTaskId);
+            if (variant == "audit failure")
+            {
+                count.ShouldBe(1);
+                caseFixture.Adapter.Inputs.ShouldBe(["2"]);
+                caseSaved.Status.ShouldBe(AgentTaskStatus.Failed);
+                caseSaved.FailureReason.ShouldContain("watchdog selected No");
+            }
+            else if (variant == "raw send failure")
+            {
+                count.ShouldBe(0);
+                caseFixture.Adapter.Inputs.ShouldBeEmpty();
+                caseSaved.Status.ShouldBe(AgentTaskStatus.Working);
+            }
+            else
+            {
+                count.ShouldBe(1);
+                caseFixture.Adapter.Inputs.ShouldBe(["2"]);
+                caseSaved.Status.ShouldBe(variant == "binding moved" ? AgentTaskStatus.Working : AgentTaskStatus.Succeeded);
+                caseSaved.FailureReason.ShouldBeNull();
+            }
+            caseHarness.Stopper.Killed.ShouldBeEmpty();
+        }
     }
     [Test]
     public void Watchdog_matches_known_prompt_patterns()

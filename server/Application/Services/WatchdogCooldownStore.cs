@@ -5,6 +5,21 @@ namespace Antiphon.Server.Application.Services;
 public sealed class WatchdogCooldownStore
 {
     private readonly ConcurrentDictionary<WatchdogCooldownKey, WatchdogCooldownState> _lastResponses = new();
+    private readonly ConcurrentDictionary<Guid, int> _unsafeAnswerHolds = new();
+
+    // A single empty redraw can follow a frame with a typed answer. Require two consecutive
+    // complete empty modal observations before a rendered-only answer hold is released.
+    public void HoldUnsafeAnswer(Guid sessionId) => _unsafeAnswerHolds[sessionId] = 0;
+
+    public bool ConfirmUnsafeAnswerCleared(Guid sessionId)
+    {
+        if (!_unsafeAnswerHolds.ContainsKey(sessionId))
+            return true;
+        if (_unsafeAnswerHolds.AddOrUpdate(sessionId, 1, (_, count) => count + 1) < 2)
+            return false;
+        _unsafeAnswerHolds.TryRemove(sessionId, out _);
+        return true;
+    }
 
     public bool TryRecord(Guid sessionId, string ruleName, DateTime utcNow, TimeSpan cooldown)
     {
