@@ -347,6 +347,12 @@ public class AgentTaskLandDeliveryE2ETests
             await f.ReleaseBoundaryAsync(ReviewBarrier(cut));
         }
         var receipt = await f.WaitForReviewReceiptAsync();
+        if (cut == "queue-inserted-before-outbox-link")
+        {
+            receipt.Note.QueueMessageId.ShouldBe(f.HeldReviewQueueId);
+            await using var db = f.CreateContext();
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == receipt.Note.Id)).ShouldBe(1);
+        }
         if (cut == "prompt-before-verdict")
             receipt.WireText.ShouldContain(receipt.EvidenceId.ToString("N"));
         if (cut == "idle-lost-wakeup")
