@@ -68,6 +68,7 @@ services:
       SessionRunner__BuildSlots__MaxConcurrent: "4"
       SessionRunner__BuildSlots__MaxCpuCount: "6"
       SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"
+      ANTIPHON_BUILD_SLOTS_URL: http://build-slots:8080/build-slots
       # CARD-0718: indexed keys bind the two volumes the Hosts page stats.
       SessionRunner__HostStats__Volumes__0: /work
       SessionRunner__HostStats__Volumes__1: /state
@@ -135,7 +136,35 @@ services:
     depends_on:
       state-init:
         condition: service_completed_successfully
+    networks:
+      - default
+      - antiphon-build-slots
     # No published port. The container phones home.
+
+  build-slots:
+    profiles: [broker]
+    image: antiphon-server2/session-testing:${BUILD_SLOTS_SHA12:?BUILD_SLOTS_SHA12 is required}
+    user: "1654:1654"
+    working_dir: /app
+    entrypoint: ["dotnet", "Antiphon.SessionRunner.dll"]
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      SessionRunner__BuildSlotsOnly: "true"
+      SessionRunner__BuildSlots__MaxConcurrent: "4"
+      SessionRunner__BuildSlots__MaxCpuCount: "6"
+      SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"
+      SessionRunner__BuildSlots__HolderLiveness: renew
+      SessionRunner__BuildSlots__RenewGraceSeconds: "90"
+      SessionRunner__BuildSlots__RenewEverySeconds: "20"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/build-slots"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    networks:
+      - antiphon-build-slots
 
 secrets:
   antiphon-deploy-key:
@@ -147,3 +176,8 @@ volumes:
   work:
   runner-state:
   dind-data:
+
+networks:
+  antiphon-build-slots:
+    external: true
+    name: antiphon-build-slots

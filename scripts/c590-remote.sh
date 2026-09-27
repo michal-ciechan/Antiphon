@@ -894,7 +894,10 @@ case_handoff() {
 # =============================================================================================
 
 SERVER2_COMPOSE="$CHECKOUT/docker-compose.server2-runner.yml"
+SERVER2_TEMP_COMPOSE="$CHECKOUT/docker-compose.server2-runner.temp.yml"
 SERVER2_ENV="$SERVER2_ROOT/secrets/stack.env"
+SERVER2_TEMP_ENV="$SERVER2_ROOT/secrets/stack.temp.env"
+TEMP_PROJECT="antiphon-runner-temp"
 DEPLOY_KEY="$SERVER2_ROOT/secrets/deploy_key"
 PHONE_HOME_SECRET="$SERVER2_ROOT/secrets/phone-home"
 # CARD-0628 D-1: the Claude setup-token file. The desktop bridge streams it from the vault over SSH
@@ -941,9 +944,51 @@ compose_host() {
     RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     SOURCE_SHA12="$sha12" \
+    BUILD_SLOTS_SHA12="$(broker_sha12)" \
     SOURCE_REVISION="$SHA" \
     COMPOSE_PROJECT_NAME="$HOST_PROJECT" \
     docker compose -p "$HOST_PROJECT" -f "$SERVER2_COMPOSE" "$@"
+}
+
+broker_sha12() {
+    local pinned
+    pinned="$(stack_env_value BUILD_SLOTS_SHA12)"
+    printf '%s' "${pinned:-${SHA:0:12}}"
+}
+
+compose_temp() {
+    ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
+    PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
+    CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
+    RUNNER_GIT_IDENTITY_FILE="$GIT_IDENTITY_PATH" \
+    RUNNER_CODEX_HOME_DIR="$CODEX_HOME_PATH" \
+    PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
+    SOURCE_SHA12="${SHA:0:12}" \
+    SOURCE_REVISION="$SHA" \
+    BUILD_SLOTS_SHA12="$(broker_sha12)" \
+    RUNNER_GROK_STORE_DIR="${RUNNER_GROK_STORE_DIR:-}" \
+    docker compose -p "$TEMP_PROJECT" -f "$SERVER2_COMPOSE" -f "$SERVER2_TEMP_COMPOSE" \
+        --env-file "$SERVER2_TEMP_ENV" "$@"
+}
+
+ensure_build_slots_broker() {
+    if ! docker network inspect antiphon-build-slots >/dev/null 2>&1; then
+        docker network create antiphon-build-slots >> "$CASE_DIR/command.log" 2>&1 \
+            || write_result false BuildSlotsNetworkFailed 2
+    fi
+    if [ -z "$(stack_env_value BUILD_SLOTS_SHA12)" ]; then
+        printf 'BUILD_SLOTS_SHA12=%s\n' "${SHA:0:12}" >> "$SERVER2_ENV"
+    fi
+    compose_host --profile broker up -d --no-build build-slots >> "$CASE_DIR/command.log" 2>&1 \
+        || write_result false BuildSlotsBrokerFailed 2
+    local broker i
+    broker="$(compose_host --profile broker ps -q build-slots)"
+    if [ -z "$broker" ]; then write_result false BuildSlotsBrokerFailed 2; fi
+    for i in $(seq 1 30); do
+        if docker inspect -f '{{.State.Health.Status}}' "$broker" 2>/dev/null | grep -qx healthy; then return; fi
+        sleep 5
+    done
+    write_result false BuildSlotsBrokerUnhealthy 2
 }
 
 runner_container() {
@@ -991,11 +1036,20 @@ retire_c590_leftovers() {
 # project's own repository names, so it can never reach am-service, windmill, gym-stat or any
 # other neighbour, and `prune` stays forbidden here as everywhere.
 retire_superseded_server2_images() {
-    local keep="$1" image
+    local keep="$1" image temp_keep broker_keep live_temp_image live_broker_image
+    temp_keep="$(sed -n 's/^SOURCE_SHA12=//p' "$SERVER2_TEMP_ENV" 2>/dev/null | head -n 1)"
+    broker_keep="$(broker_sha12)"
+    live_temp_image="$(docker ps --filter "label=com.docker.compose.project=$TEMP_PROJECT" --filter 'label=com.docker.compose.service=session-runner' --format '{{.Image}}' | head -n 1)"
+    live_broker_image="$(docker ps --filter "label=com.docker.compose.project=$HOST_PROJECT" --filter 'label=com.docker.compose.service=build-slots' --format '{{.Image}}' | head -n 1)"
     for image in $(docker images --format '{{.Repository}}:{{.Tag}}' \
         | grep -E '^antiphon-server2/(server|session-testing):' || true); do
         if [ "$image" = "antiphon-server2/server:$keep" ] \
-            || [ "$image" = "antiphon-server2/session-testing:$keep" ]; then
+            || [ "$image" = "antiphon-server2/session-testing:$keep" ] \
+            || [ "$image" = "antiphon-server2/server:$temp_keep" ] \
+            || [ "$image" = "antiphon-server2/session-testing:$temp_keep" ] \
+            || [ "$image" = "antiphon-server2/session-testing:$broker_keep" ] \
+            || [ "$image" = "$live_temp_image" ] \
+            || [ "$image" = "$live_broker_image" ]; then
             continue
         fi
         printf 'retiring image %s\n' "$image" >> "$CASE_DIR/retired.txt"
@@ -1122,9 +1176,12 @@ verify_runner_git_identity() {
 # with. Only an absent or empty destination is cloned into (git itself refuses a non-empty one);
 # anything else is left untouched for verify_runner_checkout to judge by name.
 seed_runner_checkout() {
-    compose_host run --rm --no-deps -T state-init >> "$CASE_DIR/command.log" 2>&1 \
+    local project="${1:-$HOST_PROJECT}"
+    local compose=compose_host
+    if [ "$project" = "$TEMP_PROJECT" ]; then compose=compose_temp; fi
+    "$compose" run --rm --no-deps -T state-init >> "$CASE_DIR/command.log" 2>&1 \
         || write_result false StateInitFailed 2
-    compose_host run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 \
+    "$compose" run --rm --no-deps -T --user 1654:1654 -e GIT_TERMINAL_PROMPT=0 \
         --entrypoint /bin/sh session-runner -c '
             repo="${PhoneHome__RunnerRepository:-$1}"
             if [ -e "$repo/.git" ]; then echo "present path=$repo"; exit 0; fi
@@ -1184,10 +1241,7 @@ verify_runner_checkout() {
         > "$CASE_DIR/runner-checkout.txt"
 }
 
-case_deploy_parent() {
-    require_lane host
-    ensure_checkout
-
+ensure_runner_boot_files() {
     # --- D-8: both secrets are generated on server2 and never leave it. ---
     umask 077
     mkdir -p "$SERVER2_ROOT/secrets"
@@ -1227,8 +1281,27 @@ case_deploy_parent() {
     ensure_runner_git_identity
     # CARD-0660: before state-init runs (checkout seed, below) or the runner binds it.
     ensure_runner_codex_home
+}
+
+build_server2_images() {
+    docker build -f "$CHECKOUT/docker/session-runner-grok/Dockerfile" --target session-testing \
+        --build-arg "SOURCE_REVISION=$SHA" \
+        -t "antiphon-server2/session-testing:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
+        || write_result false RunnerBuildFailed 2
+    docker build -f "$CHECKOUT/Dockerfile" --build-arg "SOURCE_REVISION=$SHA" \
+        -t "antiphon-server2/server:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
+        || write_result false StateInitBuildFailed 2
+}
+
+case_deploy_parent() {
+    require_lane host
+    ensure_checkout
+    ensure_runner_boot_files
 
     retire_c590_leftovers
+
+    local pinned_broker_sha12
+    pinned_broker_sha12="$(broker_sha12)"
 
     cat > "$SERVER2_ENV" <<EOF
 COMPOSE_PROJECT_NAME=$HOST_PROJECT
@@ -1242,20 +1315,16 @@ RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH
 RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH
 RUNNER_GIT_USER_NAME=$RUNNER_GIT_USER_NAME
 RUNNER_GIT_USER_EMAIL=$RUNNER_GIT_USER_EMAIL
+BUILD_SLOTS_SHA12=$pinned_broker_sha12
 EOF
 
-    docker build -f "$CHECKOUT/docker/session-runner-grok/Dockerfile" --target session-testing \
-        --build-arg "SOURCE_REVISION=$SHA" \
-        -t "antiphon-server2/session-testing:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
-        || write_result false RunnerBuildFailed 2
-    docker build -f "$CHECKOUT/Dockerfile" --build-arg "SOURCE_REVISION=$SHA" \
-        -t "antiphon-server2/server:${SHA:0:12}" "$CHECKOUT" >> "$CASE_DIR/build.log" 2>&1 \
-        || write_result false StateInitBuildFailed 2
+    build_server2_images
+    ensure_build_slots_broker
 
     # CARD-0631 D-10: a fresh work volume gets its checkout before the runner exists.
     seed_runner_checkout
 
-    compose_host up -d --no-build --remove-orphans >> "$CASE_DIR/command.log" 2>&1 || {
+    compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || {
         compose_host logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
         write_result false HostComposeFailed 2
     }
@@ -1380,6 +1449,128 @@ EOF
 
     # Dispatch eligibility is recorded, not asserted: CP-6a is what turns production on.
     curl -fsS "${C604_SERVER_ORIGIN:?}/api/session-runners/server2/status" > "$CASE_DIR/status.json" 2>&1 || true
+    write_result true '' 0
+}
+
+case_deploy_temp_runner() {
+    require_lane host
+    ensure_checkout
+    ensure_runner_boot_files
+    if [ ! -s "$SERVER2_ENV" ]; then write_result false ParentStackMissing 2; fi
+
+    local mount free_kb grok_dir container parent i phone_home_secret_path phone_home_since phone_home_failures
+    mount="$(docker volume inspect -f '{{.Mountpoint}}' antiphon-runner_runner-state 2>> "$CASE_DIR/command.log")" \
+        || write_result false ParentRunnerStateMissing 2
+    grok_dir="$mount/grok"
+    if ! sudo -n test -d "$grok_dir"; then write_result false GrokStoreMissing 2; fi
+    free_kb="$(sudo -n df -Pk "$mount" 2>> "$CASE_DIR/command.log" | awk 'NR==2 {print $4}')" \
+        || write_result false NestedStoreDiskUnavailable 2
+    if [[ ! "$free_kb" =~ ^[0-9]+$ ]] || [ "$free_kb" -lt 20971520 ]; then
+        write_result false NestedStoreDiskLow 2
+    fi
+    RUNNER_GROK_STORE_DIR="$grok_dir"
+    build_server2_images
+    ensure_build_slots_broker
+
+    cat > "$SERVER2_TEMP_ENV" <<EOF
+COMPOSE_PROJECT_NAME=$TEMP_PROJECT
+SOURCE_REVISION=$SHA
+SOURCE_SHA12=${SHA:0:12}
+PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
+ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
+PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
+CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
+RUNNER_GIT_IDENTITY_FILE=$GIT_IDENTITY_PATH
+RUNNER_CODEX_HOME_DIR=$CODEX_HOME_PATH
+RUNNER_GROK_STORE_DIR=$RUNNER_GROK_STORE_DIR
+BUILD_SLOTS_SHA12=$(broker_sha12)
+EOF
+    seed_runner_checkout "$TEMP_PROJECT"
+    compose_temp up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || {
+        compose_temp logs --no-color --tail 120 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false TempComposeFailed 2
+    }
+    container="$(compose_temp ps -q session-runner)"
+    if [ -z "$container" ]; then write_result false TempRunnerNotStarted 2; fi
+    printf '%s\n' "$container" > "$CASE_DIR/temp-container.txt"
+    for i in $(seq 1 60); do
+        if docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null | grep -qx healthy; then break; fi
+        sleep 5
+    done
+    if ! docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null | grep -qx healthy; then
+        compose_temp logs --no-color --tail 200 >> "$CASE_DIR/command.log" 2>&1 || true
+        write_result false TempRunnerUnhealthy 2
+    fi
+    docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$container" > "$CASE_DIR/restart-policy.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/restart-policy.txt")" != no ]; then
+        write_result false TempRunnerRestartPolicy 2
+    fi
+    docker inspect -f '{{.HostConfig.Privileged}}' "$container" > "$CASE_DIR/privileged.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/privileged.txt")" != true ]; then
+        write_result false NotPrivileged 2
+    fi
+    docker inspect -f '{{range .Mounts}}{{println .Source .Destination}}{{end}}' "$container" > "$CASE_DIR/mounts.txt"
+    if grep -q 'docker\.sock' "$CASE_DIR/mounts.txt"; then
+        write_result false HostSocketMounted 2
+    fi
+    compose_temp ps --services > "$CASE_DIR/services.txt" 2>&1 || true
+    if [ ! -s "$CASE_DIR/services.txt" ] || grep -qE '^(antiphon|postgres)$' "$CASE_DIR/services.txt"; then
+        write_result false UnexpectedStandingService 2
+    fi
+    docker exec "$container" curl -fsS http://127.0.0.1:8080/health > "$CASE_DIR/health.txt" 2>&1 \
+        || write_result false TempRunnerUnhealthy 2
+    docker exec "$container" printenv PhoneHome__SecretPath > "$CASE_DIR/phone-home-secret-path.txt" 2>/dev/null || true
+    phone_home_secret_path="$(tr -d '[:space:]' < "$CASE_DIR/phone-home-secret-path.txt")"
+    if [ -z "$phone_home_secret_path" ]; then write_result false PhoneHomeSecretPathUnset 2; fi
+    if ! docker exec -u 1654:1654 "$container" head -c 1 "$phone_home_secret_path" >/dev/null 2>> "$CASE_DIR/command.log"; then
+        write_result false PhoneHomeSecretUnreadable 2
+    fi
+    printf 'true\n' > "$CASE_DIR/phone-home-readable.txt"
+
+    curl -sS -o "$CASE_DIR/register-probe.json" -w '%{http_code}' -X POST \
+        "${C604_SERVER_ORIGIN:?}/api/session-runners/register" -H 'Content-Type: application/json' \
+        -d '{"protocolVersion":1,"runnerId":"probe","processBootId":"00000000-0000-0000-0000-000000000001","runnerStoreId":"00000000-0000-0000-0000-000000000002","platform":"linux","capacity":1}' \
+        > "$CASE_DIR/register-probe-code.txt" 2>> "$CASE_DIR/command.log" || true
+    if grep -q 'phone_home_disabled' "$CASE_DIR/register-probe.json" 2>/dev/null; then
+        printf 'disabled\n' > "$CASE_DIR/phone-home-server-state.txt"
+    else
+        printf 'enabled\n' > "$CASE_DIR/phone-home-server-state.txt"
+    fi
+    phone_home_since="$(date -u +%Y-%m-%dT%H:%M:%S)"
+    sleep 45
+    docker logs --since "$phone_home_since" "$container" > "$CASE_DIR/phone-home-window.log" 2>&1 || true
+    scrub_file "$CASE_DIR/phone-home-window.log"
+    phone_home_failures="$(grep -cE 'Phone-home registration failed|Phone-home connection ended; reconnecting|UnauthorizedAccessException|PhoneHomeSecretUnreadable' "$CASE_DIR/phone-home-window.log" || true)"
+    printf '%s\n' "${phone_home_failures:-0}" > "$CASE_DIR/phone-home-failures.txt"
+    if [ "${phone_home_failures:-0}" -ge 2 ] \
+        && [ "$(tr -d '[:space:]' < "$CASE_DIR/phone-home-server-state.txt")" != disabled ]; then
+        write_result false PhoneHomeUnreachable 2
+    fi
+    verify_runner_git_identity "$container" /
+    verify_runner_checkout "$container"
+    docker exec "$container" docker info --format '{{.Name}}' > "$CASE_DIR/daemon-name.txt" 2>&1 \
+        || write_result false NestedDaemonUnavailable 2
+    docker exec "$container" hostname > "$CASE_DIR/runner-hostname.txt"
+    if [ "$(cat "$CASE_DIR/daemon-name.txt")" != "$(cat "$CASE_DIR/runner-hostname.txt")" ]; then
+        write_result false SiblingDaemonRefused 2
+    fi
+    docker exec "$container" docker run --rm busybox true >> "$CASE_DIR/command.log" 2>&1 \
+        || write_result false NestedDockerRunFailed 2
+    parent="$(compose_host ps -q session-runner)"
+    if [ -z "$parent" ]; then write_result false ParentRunnerNotStarted 2; fi
+    { printf 'server2='; docker exec "$parent" cat /proc/sys/net/bridge/bridge-nf-call-iptables;
+      printf 'server2-temp='; docker exec "$container" cat /proc/sys/net/bridge/bridge-nf-call-iptables; } \
+        > "$CASE_DIR/bridge-nf.txt" 2>> "$CASE_DIR/command.log" || write_result false BridgeNfProbeFailed 2
+    write_result true '' 0
+}
+
+case_retire_temp_runner() {
+    require_lane host
+    if [ -z "${C590_TEMP_RETIRED_AT:-}" ]; then write_result false TempRunnerNotRetired 2; fi
+    if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
+    RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+    compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || write_result false TempComposeDownFailed 2
+    printf 'down retiredAt=%s\n' "$C590_TEMP_RETIRED_AT" > "$CASE_DIR/temp-down.txt"
     write_result true '' 0
 }
 
@@ -1620,6 +1811,8 @@ case "$CASE" in
     test-context-engine) context_probe "$CHECKOUT/docker/tests/Dockerfile.dockerignore" test-probe tests/Shared/TestClassificationMetadata.cs ;;
     server2-independent-handoff) case_handoff ;;
     deploy-parent) case_deploy_parent ;;
+    deploy-temp-runner) case_deploy_temp_runner ;;
+    retire-temp-runner) case_retire_temp_runner ;;
     custody-containment) case_custody_containment ;;
     nested-residue) case_nested_residue ;;
     persistent-restart) case_persistent_restart ;;

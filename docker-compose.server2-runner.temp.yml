@@ -1,0 +1,12 @@
+# CARD-0727 D-15: a second project gives the temp runner its own work, state and nested store.
+services:
+  session-runner:
+    restart: "no"
+    environment:
+      PhoneHome__RunnerId: server2-temp
+      ANTIPHON_BUILD_SLOTS_URL: http://build-slots:8080/build-slots
+    networks:
+      - default
+      - antiphon-build-slots
+    volumes:
+      - ${RUNNER_GROK_STORE_DIR:?RUNNER_GROK_STORE_DIR is required}:/state/grok

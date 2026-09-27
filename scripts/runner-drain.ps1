@@ -4,6 +4,7 @@
 #   runner-drain.ps1 status [-RunnerId server2]
 #   runner-drain.ps1 drain  -Reason "why" [-RunnerId server2] [-RedirectTo server2-temp] [-RetireWhenIdle]
 #   runner-drain.ps1 clear  -Reason "why" [-RunnerId server2]
+#   runner-drain.ps1 retire -Reason "why" -Confirm <runnerId> [-RunnerId server2]
 #
 # drain and clear send the operator token from the owner-only file the server creates at
 # startup (default %LOCALAPPDATA%\Antiphon\operator-token; override with
@@ -12,7 +13,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('status', 'drain', 'clear')]
+    [ValidateSet('status', 'drain', 'clear', 'retire')]
     [string]$Verb,
 
     [string]$RunnerId = 'server2',
@@ -21,7 +22,9 @@ param(
 
     [string]$RedirectTo,
 
-    [switch]$RetireWhenIdle
+    [switch]$RetireWhenIdle,
+
+    [string]$Confirm
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,5 +128,13 @@ switch ($Verb) {
         Add-OperatorToken
         $body = @{ reason = $Reason }
         Invoke-RunnerApi -Method Post -Path "/api/session-runners/$runnerPath/drain/clear" -Body $body
+    }
+    'retire' {
+        if ([string]::IsNullOrWhiteSpace($Reason)) { throw 'retire requires -Reason' }
+        if ([string]::IsNullOrWhiteSpace($Confirm) -or $Confirm -ne $RunnerId) {
+            throw 'retire requires -Confirm equal to -RunnerId'
+        }
+        Add-OperatorToken
+        Invoke-RunnerApi -Method Post -Path "/api/session-runners/$runnerPath/retire" -Body @{ reason = $Reason; confirmRunnerId = $Confirm }
     }
 }

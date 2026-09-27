@@ -187,6 +187,27 @@ switch ($Case) {
         }
         Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
     }
+    'deploy-temp-runner' {
+        if (-not [bool]$m.deployKeyPresent) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'DeployKeyMissing' -ExitCode 2
+        }
+        if (-not [bool]$m.phoneHomeSecretPresent) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'PhoneHomeSecretMissing' -ExitCode 2
+        }
+        if ([double]$m.nestedStoreFreeGb -lt 20) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'NestedStoreDiskLow' -ExitCode 2
+        }
+        if ([string]$m.daemonName -ne [string]$m.runnerHostname) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'SiblingDaemonRefused' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
+    'retire-temp-runner' {
+        if (-not [string]$m.tempRetiredAt) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'TempRunnerNotRetired' -ExitCode 2
+        }
+        Write-C590Result -EvidenceRoot $root -Accepted $true -ExitCode 0
+    }
     'session-nested-stack' {
         # The session cases launch through the PRODUCTION server, so a runner that is not
         # dispatch-eligible must refuse here rather than leave a session queued forever.

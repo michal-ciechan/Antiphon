@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/runner-operator-token.ps1')
 
 $api = $env:ANTIPHON_API
 if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
@@ -33,16 +34,7 @@ if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
 }
 
 function Add-OperatorToken {
-    $path = $env:ANTIPHON_OPERATOR_TOKEN_FILE
-    if ([string]::IsNullOrWhiteSpace($path)) {
-        $path = Join-Path (Join-Path $env:LOCALAPPDATA 'Antiphon') 'operator-token'
-    }
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Operator token file not found at $path. The server creates it at startup; run this as the account the server runs under."
-    }
-    $token = (Get-Content -LiteralPath $path -Raw).Trim()
-    if ([string]::IsNullOrEmpty($token)) { throw "Operator token file at $path is empty." }
-    $headers['X-Antiphon-Operator-Token'] = $token
+    $headers['X-Antiphon-Operator-Token'] = Get-RunnerOperatorToken
 }
 
 function Invoke-RunnerApi {
