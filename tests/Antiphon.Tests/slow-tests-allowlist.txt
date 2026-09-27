@@ -183,3 +183,5 @@ Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
 Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
 # CARD-0442: downgrade/upgrade of isolated PostgreSQL task rows.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests
+# CARD-0442: real delegate.ps1 POST and service-backed worktree preview.
+Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests
