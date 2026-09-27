@@ -149,6 +149,13 @@ public class PipelineGlanceE2ETests
                 DispatchedAt = status == AgentTaskStatus.Working ? now.AddHours(-1) : null,
             });
         }
+        db.RoutingPins.Add(new RoutingPin
+        {
+            Id = Guid.NewGuid(), Role = AgentTaskRole.Review,
+            Provenance = RoutingPinProvenance.Human, Strength = RoutingPinStrength.Required,
+            NotBefore = now.AddDays(1), Reason = "keep the browser fixture queued",
+            CreatedAt = now, UpdatedAt = now,
+        });
         await db.SaveChangesAsync();
         return (boardId, ids, taskId);
     }
