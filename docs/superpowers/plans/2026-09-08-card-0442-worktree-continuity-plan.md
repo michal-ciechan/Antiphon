@@ -749,7 +749,7 @@ are TUnit invocations, not assertion counts. PCs remain for post-land SourceLand
 | CP-13 | all | CP-1 | land-stage-retained | `/*/*/AgentTaskLandStageOutcomeTests/*` | R-11, R-12 | full class, 0 failed | 14 | 4 |
 | CP-14 | all | CP-1 | pipeline-retained | `/*/*/AgentTaskPipelineStatusTests/*` | R-9, R-11 | full class, 0 failed | 19 | 3 |
 | CP-15 | all | CP-1 | script-kind-retained | `/*/*/DelegateScriptKindTests/*` | R-6, R-11, R-14 | full class, 0 failed | 38 | 3 |
-| CP-16 | all | CP-1 | script-capability-retained | `/*/*/DelegateScriptCapabilityTests/*` | R-3, R-11 | full class, 0 failed | 6 | 2 |
+| CP-16 | all | CP-1 | script-capability-retained | `/*/*/DelegateScriptCapabilityTests/*` | R-3, R-11 | 1 portable case and 5 Windows DPAPI cases when supported, 0 failed | 1 | 2 |
 | CP-17 | all | CP-1 | capability-retained | `/*/*/DelegationCapabilityTests/*` | R-3, R-11 | full class, 0 failed | 20 | 3 |
 | CP-18 | all | CP-1 | delegation-di-retained | `/*/*/DelegationTestServicesTests/*` | R-11 | full class, 0 failed | 5 | 2 |
 | CP-19 | all | CP-1 | delegation-census-retained | `/*/*/DelegationHarnessCensusTests/*` | R-11 | full class, 0 failed | 7 | 2 |

@@ -405,7 +405,8 @@ public class DelegationCapabilityTests
         Goal: "Do the thing.",
         Kind: AgentTaskKind.Worker,
         Role: AgentTaskRole.Docs,
-        WorkingDirectory: directory);
+        WorkingDirectory: directory,
+        Workspace: WorkspaceMode.Shared);
 
     private static async Task SeedHoldAsync(AppDbContext db, AgentKind kind, string alias)
     {
