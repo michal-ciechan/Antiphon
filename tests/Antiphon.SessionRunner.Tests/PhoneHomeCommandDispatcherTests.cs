@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Hosting;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -10,6 +11,55 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Unit")]
 public class PhoneHomeCommandDispatcherTests
 {
+    [Test]
+    public async Task Retire_refuses_while_sessions_are_owned_unless_forced()
+    {
+        var runtime = new RecordingRuntime { Owned = 1 };
+        var dispatcher = Dispatcher(runtime);
+        var refused = await dispatcher.DispatchAsync(Retire(false), CancellationToken.None);
+        refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RunnerBusy);
+        refused.ErrorDetail.ShouldContain("1");
+        runtime.KillAllCalls.ShouldBe(0);
+
+        var forced = await dispatcher.DispatchAsync(Retire(true), CancellationToken.None);
+        forced.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        forced.Payload!.Value.Deserialize<RunnerRetireResult>(PhoneHomeFraming.Json)!.KilledSessions.ShouldBe(1);
+        runtime.KillAllCalls.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Retire_reply_is_written_before_the_host_stops()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 0, 0, 0, TimeSpan.Zero));
+        var lifetime = new RecordingLifetime(clock);
+        var dispatcher = new PhoneHomeCommandDispatcher(new RecordingRuntime(), new PhoneHomeSettings(),
+            lifetime: lifetime, time: clock);
+        var reply = await dispatcher.DispatchAsync(Retire(false), CancellationToken.None);
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var writtenAt = clock.GetUtcNow();
+        dispatcher.NotifyRetireReplyWritten();
+        clock.Advance(TimeSpan.FromMilliseconds(249));
+        lifetime.StopCount.ShouldBe(0);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await Task.Yield();
+        lifetime.StopCount.ShouldBe(1);
+        lifetime.StoppedAt.ShouldBeGreaterThanOrEqualTo(writtenAt);
+    }
+
+    private static PhoneHomeFrame Retire(bool force) =>
+        new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Retire,
+            JsonSerializer.SerializeToElement(new RunnerRetireRequest(force, "upgrade"), PhoneHomeFraming.Json));
+
+    private sealed class RecordingLifetime(TimeProvider clock) : IHostApplicationLifetime
+    {
+        public int StopCount { get; private set; }
+        public DateTimeOffset StoppedAt { get; private set; }
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => CancellationToken.None;
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() { StopCount++; StoppedAt = clock.GetUtcNow(); }
+    }
     [Test]
     public async Task Unsupported_operation_or_launch_never_enters_runtime()
     {
@@ -1174,6 +1224,14 @@ public class PhoneHomeCommandDispatcherTests
     private sealed class RecordingRuntime : IPhoneHomeRuntimeSurface
     {
         public int Owned { get; set; }
+        public int KillAllCalls { get; private set; }
+        public Task<int> KillAllAsync(TimeSpan timeout, CancellationToken ct)
+        {
+            KillAllCalls++;
+            var killed = Owned;
+            Owned = 0;
+            return Task.FromResult(killed);
+        }
         public List<string> Mutations { get; } = [];
         public List<RunnerLaunchRequest> Started { get; } = [];
 

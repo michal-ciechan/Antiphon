@@ -26,6 +26,7 @@ public static class PhoneHomeProtocol
 public static class PhoneHomeCloseReasons
 {
     public const string ServerStopping = "server_stopping";
+    public const string Retiring = "retiring";
 }
 
 public enum PhoneHomeOperation
@@ -85,12 +86,19 @@ public enum PhoneHomeOperation
     /// </summary>
     LaunchPlatformConstrained = 26,
 
+    /// <summary>CARD-0727: stop this runner after an acknowledged idle or forced retire.</summary>
+    Retire = 27,
+
     /// <summary>CARD-0718. Latest host sample and rollups. An old runner answers unsupported.</summary>
     HostStats = 29,
 
     /// <summary>CARD-0718. One metric's series over a named window.</summary>
     HostStatsSeries = 30,
 }
+
+public sealed record RunnerRetireRequest(bool Force, string Reason);
+
+public sealed record RunnerRetireResult(Guid ProcessBootId, int KilledSessions, DateTime StoppingAtUtc);
 
 /// <summary>CARD-0718. Body for <see cref="PhoneHomeOperation.HostStatsSeries"/>.</summary>
 public sealed record PhoneHomeHostSeriesRequest(string Metric, string Window);

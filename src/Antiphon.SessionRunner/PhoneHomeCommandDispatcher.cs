@@ -51,6 +51,8 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly PhoneHomeSettings _settings;
     private readonly IProviderAuthProbe? _authProbe;
     private readonly IHostStatsSource? _hostStats;
+    private readonly IHostApplicationLifetime? _lifetime;
+    private readonly TimeProvider _time;
     private readonly object _mutationGate = new();
     private readonly ILogger _logger;
     private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
@@ -58,12 +60,15 @@ public sealed class PhoneHomeCommandDispatcher
 
     public PhoneHomeCommandDispatcher(
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
-        ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null)
+        ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null,
+        IHostApplicationLifetime? lifetime = null, TimeProvider? time = null)
     {
         _runtime = runtime;
         _settings = settings;
         _authProbe = authProbe;
         _hostStats = hostStats;
+        _lifetime = lifetime;
+        _time = time ?? TimeProvider.System;
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _launchGenerations = new PhoneHomeLaunchGenerationStore(settings.LaunchGenerationsPath);
     }
@@ -73,6 +78,8 @@ public sealed class PhoneHomeCommandDispatcher
     /// can carry it. One source, so a registration can never disagree with a later probe.
     /// </summary>
     public RunnerCapabilitiesDto Capabilities() => _runtime.Capabilities();
+
+    public void NotifyRetireReplyWritten() { }
 
     private RunnerWorkspaceService Workspace() =>
         _workspace ??= new RunnerWorkspaceService(_settings.RunnerRepository, _settings.AllowedCwd);
