@@ -542,6 +542,183 @@ public sealed class ChannelInboundRecoveryTests
     }
 
     [Test]
+    [Arguments("timeout")]
+    [Arguments("herdr")]
+    [Arguments("capacity")]
+    public async Task C767_ParkedPage_ResumesOldestCompletePromptsBeforeLaterRows(string cause)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000, timeout: 1),
+            AlwaysOn = true, PreserveDatabaseOnDispose = true,
+        });
+        InstallTranscriptReceipt(h);
+        var chat = await h.BindChannelAsync();
+        var native = await SeedOrderedPageAsync(schema.ConnectionString, h.AgentId, chat, h.Now, cause);
+        await using (var park = Db(schema.ConnectionString))
+        {
+            await park.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u =>
+                u.SetProperty(s => s.Status, cause == "herdr" ? SessionStatus.Running :
+                    cause == "timeout" ? SessionStatus.Starting : SessionStatus.Stopped));
+            if (cause == "herdr")
+                park.AgentSupervisionStates.Add(new AgentSupervisionState
+                {
+                    AgentId = h.AgentId, HerdrFailureHeldAt = h.Now.AddMinutes(-1),
+                    HerdrConsecutiveFailures = 3,
+                });
+            if (cause == "capacity")
+                foreach (var kind in new[] { AgentKind.Raw, AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex })
+                    park.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+                    {
+                        Id = Guid.NewGuid(), Kind = kind, ModelAlias = ModelAlias.KindWide,
+                        Source = ModelAvailabilitySource.Manual, HitAt = h.Now.AddMinutes(-1),
+                        Reason = "ordered page capacity hold",
+                    });
+            await park.SaveChangesAsync();
+        }
+        var clock = new BridgeWakeClock();
+        var bridge = Bridge(h, clock);
+        if (cause == "timeout")
+        {
+            var waiting = bridge.DrainPendingAsync(Ct);
+            await clock.PollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromSeconds(90));
+            await waiting.WaitAsync(TimeSpan.FromSeconds(20));
+        }
+        else
+            await bridge.DrainPendingAsync(Ct);
+        await using (var pending = Db(schema.ConnectionString))
+            (await pending.ChannelInbounds.CountAsync(i => native.Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(0);
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            await revive.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await revive.AgentSupervisionStates.Where(s => s.AgentId == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.HerdrFailureHeldAt, (DateTime?)null));
+            await revive.ModelAvailabilityHolds.ExecuteDeleteAsync();
+        }
+        await AssertOrderedPageDeliveryAsync(bridge, h, schema.ConnectionString, native);
+    }
+
+    [Test]
+    public async Task C767_CompetingBridge_MultiPageClaimMissResumesOldestCompletePrompts()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new StartLockGate();
+        await using var first = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(debounce: 10000, timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        InstallTranscriptReceipt(first);
+        var chat = await first.BindChannelAsync();
+        var native = await SeedOrderedPageAsync(schema.ConnectionString, first.AgentId, chat, first.Now, "claim");
+        await using (var stop = Db(schema.ConnectionString))
+        {
+            await stop.AgentSessions.Where(s => s.Id == first.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await stop.Agents.Where(a => a.Id == first.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+        }
+        await using var second = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AttachAgentId = first.AgentId,
+            AttachSessionId = first.SessionId, Bridge = Settings(debounce: 10000, timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        gate.Arm(first.AgentId);
+        var winner = Bridge(first).DrainPendingAsync(Ct);
+        Task? loser = null;
+        try
+        {
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            loser = Bridge(second).DrainPendingAsync(Ct);
+            await loser.WaitAsync(TimeSpan.FromSeconds(10));
+            gate.Entries.ShouldBe(1);
+            await using var pending = Db(schema.ConnectionString);
+            (await pending.ChannelInbounds.CountAsync(i => native.Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(0);
+        }
+        finally
+        {
+            gate.Release.TrySetResult();
+            await winner.WaitAsync(TimeSpan.FromSeconds(10));
+            if (loser is not null) await loser.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            await revive.AgentSessions.Where(s => s.Id == first.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await revive.Agents.Where(a => a.Id == first.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, first.SessionId.ToString("D")));
+        }
+        await AssertOrderedPageDeliveryAsync(Bridge(second), first, schema.ConnectionString, native);
+        gate.Entries.ShouldBe(1);
+    }
+
+    private static async Task<string[]> SeedOrderedPageAsync(string connectionString, Guid agentId,
+        string chat, DateTime acceptedAt, string cause)
+    {
+        var native = Enumerable.Range(0, 70).Select(i => $"{cause}-ordered-{i:D2}-{Guid.NewGuid():N}").ToArray();
+        await using var seed = Db(connectionString);
+        var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat).Select(c => c.Id).SingleAsync();
+        foreach (var (id, index) in native.Select((id, index) => (id, index)))
+        {
+            seed.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                NativeMessageId = id, AgentId = agentId, ChatChannelId = channelId,
+                EnvelopeJson = JsonSerializer.Serialize(Message(chat, id,
+                    $"ordered line {index:D2} DISTINCT TAIL"), Antiphon.Messaging.MessagingJson.Options),
+                AcceptedAt = acceptedAt,
+            });
+            await seed.SaveChangesAsync();
+        }
+        return native;
+    }
+
+    private static async Task AssertOrderedPageDeliveryAsync(ChannelBridgeService bridge,
+        BridgeQueueHarness h, string connectionString, string[] native)
+    {
+        await bridge.DrainPendingAsync(Ct);
+        await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
+        await using (var firstPage = Db(connectionString))
+        {
+            (await firstPage.ChannelInbounds.CountAsync(i => native.Take(64).Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(64, "the oldest page must queue first");
+            (await firstPage.ChannelInbounds.CountAsync(i => native.Skip(64).Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(0, "later rows must wait behind the oldest page");
+        }
+        await bridge.DrainPendingAsync(Ct);
+        await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
+        await h.Queue.OnTurnEndAsync(h.SessionId, Ct);
+        await using var delivered = Db(connectionString);
+        var rows = await delivered.ChannelInbounds.AsNoTracking()
+            .Where(i => native.Contains(i.NativeMessageId)).OrderBy(i => i.AcceptanceSequence).ToListAsync();
+        rows.Select(i => i.NativeMessageId).ShouldBe(native);
+        rows.ShouldAllBe(i => i.QueueMessageId != null);
+        var firstOwner = await delivered.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == rows[0].Id);
+        var laterOwner = await delivered.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == rows[64].Id);
+        rows.Take(64).ShouldAllBe(i => i.QueueMessageId == firstOwner.Id);
+        rows.Skip(64).ShouldAllBe(i => i.QueueMessageId == laterOwner.Id);
+        var prompts = await delivered.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Text == firstOwner.Body || t.Text == laterOwner.Body))
+            .OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync();
+        prompts.ShouldBe(new[] { firstOwner.Body, laterOwner.Body });
+        firstOwner.Body.IndexOf("ordered line 00 DISTINCT TAIL", StringComparison.Ordinal)
+            .ShouldBeLessThan(firstOwner.Body.IndexOf("ordered line 63 DISTINCT TAIL", StringComparison.Ordinal));
+        laterOwner.Body.IndexOf("ordered line 64 DISTINCT TAIL", StringComparison.Ordinal)
+            .ShouldBeLessThan(laterOwner.Body.IndexOf("ordered line 69 DISTINCT TAIL", StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task C767_AgentHeadPaging_WrapsPastHeldAgents()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
