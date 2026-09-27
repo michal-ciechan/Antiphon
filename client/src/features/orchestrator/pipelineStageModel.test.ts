@@ -15,6 +15,7 @@ import {
   compactAlias,
   compactElapsed,
   compactQueueReason,
+  candidateRows,
   fleetStrip,
   idleLine,
   isPipelineEmpty,
@@ -37,6 +38,7 @@ function pipeline(overrides: Partial<AgentTaskPipelineDto> = {}): AgentTaskPipel
     maxConcurrentTasks: 6,
     inFlightAgainstCap: 2,
     stages: [],
+    investigateBacklog: { total: 0, items: [] },
     ...overrides,
   }
 }
@@ -139,6 +141,7 @@ function ready(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPip
     routingPin: null,
     sourceRole: 'Plan',
     handoff: null,
+    rank: 7,
     ...overrides,
   }
 }
@@ -155,6 +158,9 @@ const ROLES: AgentTaskRole[] = [
   'Test',
   'Deploy',
   'Merge',
+  'Investigate',
+  'TestDesign',
+  'Mutation',
 ]
 
 function fleet(filled: Partial<Record<AgentTaskRole, AgentTaskPipelineStageDto>>): AgentTaskPipelineDto {
@@ -463,4 +469,46 @@ it('C470 mutation rows retain label counts and target', () => {
   expect(rowTarget({ kind: 'ready', row: readyRow })).toEqual({ to: '/plans?file=docs%2Fsuperpowers%2Fplans%2F2026-09-02-card-0031-project-status-view-plan.md&task=plan-31' })
   expect(rowTarget({ kind: 'inFlight', taskId: 'mutation-task' })).toEqual({ drawer: 'mutation-task' })
   expect(visibleStages(pipeline({ stages: [stage({ role: 'Mutation' })] })).idleCount).toBe(1)
+})
+
+const candidates = [
+  { cardId: 'card-z', boardId: 'board-2', identifier: 'CARD-0002', title: 'Zulu', rank: 4, position: 2 },
+  { cardId: 'card-a', boardId: 'board-1', identifier: 'CARD-0002', title: 'Alpha', rank: 4, position: null },
+]
+
+it('C557 candidates prevent an empty pipeline', () => {
+  expect(isPipelineEmpty(fleet({}))).toBe(true)
+  expect(isPipelineEmpty({ ...fleet({}), investigateBacklog: { total: 2, items: candidates } })).toBe(false)
+})
+
+it('C557 candidates show only Investigate and adjust idle count', () => {
+  const base = fleet({})
+  const glance = { ...base, investigateBacklog: { total: 2, items: candidates } }
+  expect(visibleStages(glance).shown.map((s) => s.role)).toEqual(['Investigate'])
+  expect(visibleStages(glance).idleCount).toBe(base.stages.length - 1)
+})
+
+it('C557 candidates do not inflate task counts', () => {
+  const investigate = stage({ role: 'Investigate', ready: [ready()], queued: [queued()] })
+  const glance = { ...fleet({ Investigate: investigate }), investigateBacklog: { total: 7, items: candidates } }
+  expect(stageCounts(investigate)).toEqual({ inFlight: 0, recommended: 1, queued: 1, blocked: 0, ready: 1 })
+  expect(stageCountLine(investigate)).toBe('1 queued · 1 ready')
+  expect(glance.inFlightAgainstCap).toBe(2)
+})
+
+it('C557 candidate targets include board and card', () => {
+  const rows = candidateRows({ ...fleet({}), investigateBacklog: { total: 2, items: candidates } })
+  expect(rows.map((r) => r.key)).toEqual(['candidate:card-z', 'candidate:card-a'])
+  expect(rows.map((r) => r.target)).toEqual([
+    { to: '/boards/board-2?card=card-z' },
+    { to: '/boards/board-1?card=card-a' },
+  ])
+})
+
+it('C557 returned candidate and ready order is preserved', () => {
+  const dto = { ...fleet({}), investigateBacklog: { total: 2, items: candidates } }
+  expect(candidateRows(dto).map((r) => r.title)).toEqual(['Zulu', 'Alpha'])
+  const rowZ = ready({ card: { id: 'z', identifier: 'CARD-0002', title: 'Zulu' }, rank: 4 })
+  const rowA = ready({ card: { id: 'a', identifier: 'CARD-0001', title: 'Alpha' }, rank: 4 })
+  expect(stageRows(stage({ ready: [rowZ, rowA] }), NOW, dto).map((r) => r.title)).toEqual(['Zulu', 'Alpha'])
 })

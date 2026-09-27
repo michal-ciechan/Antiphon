@@ -15,7 +15,7 @@ import { displayIdentifier } from '../../shared/cardIdentifier'
 import { citationHead, formatClockTime } from '../home/workLineFormat'
 import { STATUS_COLOR, tierAlias } from '../delegations/taskVisuals'
 
-export type PipelineRowKind = 'inFlight' | 'blocked' | 'queued' | 'ready'
+export type PipelineRowKind = 'inFlight' | 'blocked' | 'queued' | 'ready' | 'candidate'
 
 export interface PipelineRowView {
   key: string
@@ -82,6 +82,7 @@ const KIND_WORD: Record<PipelineRowKind, string> = {
   blocked: 'blocked',
   queued: 'queued',
   ready: 'ready',
+  candidate: 'Backlog candidate',
 }
 
 const KIND_COLOR: Record<PipelineRowKind, string> = {
@@ -89,6 +90,7 @@ const KIND_COLOR: Record<PipelineRowKind, string> = {
   blocked: STATUS_COLOR.Blocked,
   queued: STATUS_COLOR.Queued,
   ready: STATUS_COLOR.Succeeded,
+  candidate: STATUS_COLOR.Queued,
 }
 
 function stageHasRows(stage: AgentTaskPipelineStageDto): boolean {
@@ -101,7 +103,9 @@ function stageHasRows(stage: AgentTaskPipelineStageDto): boolean {
 }
 
 export function visibleStages(dto: AgentTaskPipelineDto): VisibleStages {
-  const shown = dto.stages.filter(stageHasRows)
+  const shown = dto.stages.filter(
+    (stage) => stageHasRows(stage) || (stage.role === 'Investigate' && dto.investigateBacklog.total > 0),
+  )
   return { shown, idleCount: dto.stages.length - shown.length }
 }
 
@@ -332,6 +336,20 @@ export function stageRows(
   return [...inFlight, ...blocked, ...queued, ...ready]
 }
 
+/** Backlog candidates are separate from task rows and retain the server's ranked order. */
+export function candidateRows(dto: AgentTaskPipelineDto): PipelineRowView[] {
+  return dto.investigateBacklog.items.map((item) =>
+    viewFor(
+      'candidate',
+      `candidate:${item.cardId}`,
+      item,
+      item.title,
+      `rank ${item.rank}`,
+      { to: `/boards/${item.boardId}?card=${item.cardId}` },
+    ),
+  )
+}
+
 export function fleetStrip(
   dto: AgentTaskPipelineDto,
   formatTime: (iso: string) => string = formatClockTime,
@@ -342,7 +360,7 @@ export function fleetStrip(
 }
 
 export function isPipelineEmpty(dto: AgentTaskPipelineDto): boolean {
-  return visibleStages(dto).shown.length === 0
+  return dto.investigateBacklog.total === 0 && dto.stages.every((stage) => !stageHasRows(stage))
 }
 
 export function idleLine(idleCount: number): string {

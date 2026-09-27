@@ -32,6 +32,9 @@ const ROLES: AgentTaskRole[] = [
   'Test',
   'Deploy',
   'Merge',
+  'Investigate',
+  'TestDesign',
+  'Mutation',
 ]
 
 function stage(overrides: Partial<AgentTaskPipelineStageDto> = {}): AgentTaskPipelineStageDto {
@@ -107,6 +110,7 @@ function ready(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPip
     routingPin: null,
     sourceRole: 'Plan',
     handoff: null,
+    rank: 7,
     ...overrides,
   }
 }
@@ -144,6 +148,7 @@ function liveDto(): AgentTaskPipelineDto {
     maxConcurrentTasks: 6,
     inFlightAgainstCap: 1,
     stages: ROLES.map((role) => filled[role] ?? stage({ role, recommendedInFlight: role === 'Custom' ? null : 1 })),
+    investigateBacklog: { total: 0, items: [] },
   }
 }
 
@@ -162,6 +167,19 @@ function emptyDto(): AgentTaskPipelineDto {
       ready: [],
     })),
   }
+}
+
+const candidates = Array.from({ length: 5 }, (_, i) => ({
+  cardId: `candidate-${i + 1}`,
+  boardId: i === 1 ? 'board-b' : 'board-a',
+  identifier: i === 1 ? 'CARD-0001' : `CARD-${String(i + 1).padStart(4, '0')}`,
+  title: `Candidate ${i + 1}`,
+  rank: i + 4,
+  position: i + 1,
+}))
+
+function candidateDto(): AgentTaskPipelineDto {
+  return { ...emptyDto(), investigateBacklog: { total: 7, items: candidates } }
 }
 
 function summary(overrides: Partial<AgentTaskSummaryDto> = {}): AgentTaskSummaryDto {
@@ -248,8 +266,9 @@ describe('PipelineStagesPanel', () => {
 
   it('C470 shows mutation ready running and cap', async () => {
     const dto = liveDto()
-    dto.stages.push(stage({ role: 'Mutation', inFlight: [inFlight({ taskId: 'mutation-task' })], inFlightCount: 1,
-      ready: [ready({ sourceRole: 'Code' })] }))
+    dto.stages = dto.stages.map((item) => item.role === 'Mutation'
+      ? stage({ role: 'Mutation', inFlight: [inFlight({ taskId: 'mutation-task' })], inFlightCount: 1,
+        ready: [ready({ sourceRole: 'Code' })] }) : item)
     servePipeline(dto)
     renderWithProviders(<PipelineStagesPanel />)
     const row = await screen.findByTestId('pipeline-stage-Mutation')
@@ -269,7 +288,7 @@ describe('PipelineStagesPanel', () => {
     expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('pin: grok-4.7')
     expect(screen.getByTestId('pipeline-stage-Deploy')).toHaveTextContent('Deploy')
     expect(screen.queryByTestId('pipeline-stage-Review')).not.toBeInTheDocument()
-    expect(screen.getByTestId('pipeline-idle')).toHaveTextContent('8 idle stages')
+    expect(screen.getByTestId('pipeline-idle')).toHaveTextContent('11 idle stages')
 
     const fly = screen.getByTestId(`pipeline-row-${FLY_ID}`)
     expect(fly).toHaveTextContent('#301')
@@ -346,5 +365,74 @@ describe('PipelineStagesPanel', () => {
     expect(readyRow).toHaveTextContent('ready 3h')
     expect(readyRow).toHaveAttribute('aria-label', 'Open #31 — ready')
     expect(screen.queryByTestId('pipeline-stage-Code')).not.toBeInTheDocument()
+  })
+
+  it('C557 candidate only panel shows top five and total', async () => {
+    servePipeline(candidateDto())
+    renderWithProviders(<PipelineStagesPanel />)
+    const investigate = await screen.findByTestId('pipeline-stage-Investigate')
+    expect(investigate).toHaveTextContent('Backlog candidates')
+    expect(investigate).toHaveTextContent('7 total · top 5')
+    expect(investigate).toHaveTextContent('Ranked by card priority; dispatch is a decision')
+    expect(screen.queryByTestId('pipeline-empty')).not.toBeInTheDocument()
+    expect(candidates.map((candidate) => screen.getByTestId(`pipeline-row-candidate:${candidate.cardId}`).textContent))
+      .toEqual(candidates.map((candidate) => expect.stringContaining(`rank ${candidate.rank}`)))
+    expect(screen.getByTestId('pipeline-idle')).toHaveTextContent('13 idle stages')
+  })
+
+  it('C557 candidate links are board scoped', async () => {
+    servePipeline(candidateDto())
+    renderWithProviders(<PipelineStagesPanel />)
+    const first = await screen.findByTestId('pipeline-row-candidate:candidate-1')
+    const second = screen.getByTestId('pipeline-row-candidate:candidate-2')
+    expect(first).toHaveAttribute('href', '/boards/board-a?card=candidate-1')
+    expect(second).toHaveAttribute('href', '/boards/board-b?card=candidate-2')
+    await userEvent.click(second)
+    await waitFor(() => expect(window.location.pathname + window.location.search)
+      .toBe('/boards/board-b?card=candidate-2'))
+    expect(window.location.search).not.toContain('task=')
+  })
+
+  it('C557 combined glance keeps candidates and formal work separate', async () => {
+    const dto = liveDto()
+    dto.investigateBacklog = { total: 7, items: candidates }
+    dto.stages = dto.stages.map((item) => item.role === 'Investigate'
+      ? stage({ role: 'Investigate', ready: [ready({ card: { id: 'formal', identifier: 'CARD-9000', title: 'Formal ready' } })] })
+      : item.role === 'Mutation'
+        ? stage({ role: 'Mutation', blocked: [blocked({ taskId: 'mutation-block' })] })
+        : item)
+    let pipelineRequests = 0
+    let backlogRequests = 0
+    server.use(
+      http.get('/api/agent-tasks/pipeline', () => { pipelineRequests++; return HttpResponse.json(dto) }),
+      http.get('/api/cards', () => { backlogRequests++; return HttpResponse.json([]) }),
+    )
+    renderWithProviders(<PipelineStagesPanel />)
+    const investigate = await screen.findByTestId('pipeline-stage-Investigate')
+    expect(investigate).toHaveTextContent('Backlog candidates')
+    expect(investigate).toHaveTextContent('1 ready')
+    expect(screen.getByTestId('pipeline-row-ready:formal')).toHaveAttribute('href', expect.stringContaining('/plans?'))
+    expect(screen.getByTestId('pipeline-stage-Plan')).toBeInTheDocument()
+    expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('1 queued · 1 ready')
+    expect(screen.getByTestId('pipeline-stage-Mutation')).toHaveTextContent('1 blocked')
+    expect(screen.getByTestId('pipeline-strip')).toHaveTextContent('1 of 6 slots')
+    expect(pipelineRequests).toBe(1)
+    expect(backlogRequests).toBe(0)
+  })
+
+  it('C557 zero candidates preserves empty idle and error states', async () => {
+    servePipeline(emptyDto())
+    const view = renderWithProviders(<PipelineStagesPanel />)
+    expect(await screen.findByTestId('pipeline-empty')).toHaveTextContent('Nothing in the pipeline.')
+    view.unmount()
+    servePipeline(liveDto())
+    const withTasks = renderWithProviders(<PipelineStagesPanel />)
+    expect(await screen.findByTestId('pipeline-stage-Code')).toBeInTheDocument()
+    expect(screen.queryByText('Backlog candidates')).not.toBeInTheDocument()
+    withTasks.unmount()
+    servePipeline(500)
+    renderWithProviders(<PipelineStagesPanel />)
+    expect(await screen.findByText("Couldn't load the pipeline — retrying.")).toBeInTheDocument()
+    expect(screen.queryByText('0 total')).not.toBeInTheDocument()
   })
 })

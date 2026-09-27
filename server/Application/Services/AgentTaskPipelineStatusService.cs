@@ -92,8 +92,38 @@ public sealed class AgentTaskPipelineStatusService
             ? new Dictionary<Guid, CardRow>()
             : await _db.Cards.AsNoTracking()
                 .Where(c => cardIds.Contains(c.Id))
-                .Select(c => new CardRow(c.Id, c.Identifier, c.Title, c.Status, c.ArchivedAt))
+                .Select(c => new CardRow(c.Id, c.BoardId, c.Identifier, c.Title, c.Status,
+                    c.ArchivedAt, c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt))
                 .ToDictionaryAsync(c => c.Id, ct);
+
+        // This is a narrow, uncapped fleet read. The card-list route caps by UpdatedAt and can
+        // omit the highest-ranked work. Stage history is already materialized for this snapshot.
+        var backlogCards = await _db.Cards.AsNoTracking()
+            .Where(c => c.Status == CardStatus.Backlog && c.ArchivedAt == null
+                && c.Board.ArchivedAt == null && !c.BoardColumn.IsTerminal
+                && c.OwnerSessionId == null)
+            .Select(c => new BacklogRow(c.Id, c.BoardId, c.Identifier, c.Title,
+                c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt, c.LabelsJson))
+            .ToListAsync(ct);
+        var startedCardIds = boundStages
+            .Where(t => t.CardId is not null && t.Status is
+                AgentTaskStatus.Queued or AgentTaskStatus.Dispatched or AgentTaskStatus.Working
+                or AgentTaskStatus.Blocked or AgentTaskStatus.Succeeded)
+            .Select(t => t.CardId!.Value)
+            .ToHashSet();
+        var candidates = backlogCards
+            .Where(c => !startedCardIds.Contains(c.Id)
+                && !BoardService.ParseLabels(c.LabelsJson).Contains("post-land-verification", StringComparer.Ordinal))
+            .OrderBy(c => CardRanking.OrderKey(c.Importance, c.Urgency, c.DueAt,
+                c.Position, c.CreatedAt, asOf))
+            .ThenBy(c => c.BoardId)
+            .ThenBy(c => c.Id)
+            .ToList();
+        var investigateBacklog = new AgentTaskPipelineBacklogDto(
+            candidates.Count,
+            candidates.Take(5).Select(c => new AgentTaskPipelineBacklogItemDto(
+                c.Id, c.BoardId, c.Identifier, c.Title,
+                CardRanking.Rank(c.Importance, c.Urgency, c.DueAt, asOf), c.Position)).ToList());
 
         // CARD-0305, read-only: the pins that the NEXT dispatch in each stage would resolve
         // through. Expiry is filtered rather than cleared — this projection never writes, so a
@@ -109,7 +139,7 @@ public sealed class AgentTaskPipelineStatusService
             .Where(p => p.CardId != null)
             .ToDictionary(p => (p.CardId!.Value, p.Role));
 
-        var ready = BuildReady(boundStages, cards, stagePins, cardPins);
+        var ready = BuildReady(boundStages, cards, stagePins, cardPins, asOf);
 
         var inFlightRows = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
@@ -167,7 +197,8 @@ public sealed class AgentTaskPipelineStatusService
             RecommendationsAreAdvisory: true,
             _settings.MaxConcurrentTasks,
             inFlightRows.Count,
-            stages);
+            stages,
+            investigateBacklog);
     }
 
     internal static bool IsVerifiedPlanDeliverable(string? path)
@@ -210,7 +241,8 @@ public sealed class AgentTaskPipelineStatusService
         List<TaskRow> boundStages,
         Dictionary<Guid, CardRow> cards,
         Dictionary<AgentTaskRole, RoutingPin> stagePins,
-        Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins)
+        Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins,
+        DateTime asOf)
     {
         var ready = new List<(AgentTaskRole Target, AgentTaskPipelineReadyDto Row)>();
         foreach (var group in boundStages
@@ -266,7 +298,8 @@ public sealed class AgentTaskPipelineStatusService
                     picked.Source.DeliverableRef,
                     picked.Source.Role,
                     picked.Source.NextHandoff,
-                    pin is null ? null : RoutingPinService.ToRef(pin, card.Identifier))));
+                    pin is null ? null : RoutingPinService.ToRef(pin, card.Identifier),
+                    CardRanking.Rank(card.Importance, card.Urgency, card.DueAt, asOf))));
             }
         }
 
@@ -275,8 +308,15 @@ public sealed class AgentTaskPipelineStatusService
             .ToDictionary(
                 g => g.Key,
                 g => g.Select(x => x.Row)
-                    .OrderBy(r => r.ReadySince)
-                    .ThenBy(r => r.Card.Identifier, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(r =>
+                    {
+                        var card = cards[r.Card.Id];
+                        return CardRanking.OrderKey(card.Importance, card.Urgency,
+                            card.DueAt, card.Position, card.CreatedAt, asOf);
+                    })
+                    .ThenBy(r => r.ReadySince)
+                    .ThenBy(r => cards[r.Card.Id].BoardId)
+                    .ThenBy(r => r.Card.Id)
                     .ToList());
     }
 
@@ -525,5 +565,12 @@ public sealed class AgentTaskPipelineStatusService
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 
     private sealed record CardRow(
-        Guid Id, string Identifier, string Title, CardStatus Status, DateTime? ArchivedAt);
+        Guid Id, Guid BoardId, string Identifier, string Title, CardStatus Status,
+        DateTime? ArchivedAt, CardImportance Importance, CardUrgency Urgency,
+        DateTime? DueAt, int? Position, DateTime CreatedAt);
+
+    private sealed record BacklogRow(
+        Guid Id, Guid BoardId, string Identifier, string Title,
+        CardImportance Importance, CardUrgency Urgency, DateTime? DueAt,
+        int? Position, DateTime CreatedAt, string LabelsJson);
 }

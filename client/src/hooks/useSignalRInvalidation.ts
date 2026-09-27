@@ -80,6 +80,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       // delegated-task events. This makes the decision chip and panel update on the next paint.
       ['attention'],
       ['homeTasks'],
+      ['agentTasks', 'pipeline'],
     ],
   },
   {

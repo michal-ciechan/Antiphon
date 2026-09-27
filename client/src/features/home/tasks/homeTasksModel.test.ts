@@ -291,6 +291,7 @@ function pipeline(overrides: Partial<AgentTaskPipelineDto> = {}): AgentTaskPipel
     maxConcurrentTasks: 6,
     inFlightAgainstCap: 6,
     stages: [],
+    investigateBacklog: { total: 0, items: [] },
     ...overrides,
   }
 }
@@ -361,6 +362,7 @@ function readyRow(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTask
     deliverablePath: 'docs/superpowers/plans/example.md',
     deliverableRef: 'abc',
     routingPin: null,
+    rank: 10,
     ...overrides,
   }
 }

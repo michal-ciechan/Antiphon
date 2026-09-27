@@ -12,6 +12,7 @@ function calmPipeline(dto: AgentTaskPipelineDto): AgentTaskPipelineDto {
   return {
     ...dto,
     inFlightAgainstCap: 0,
+    investigateBacklog: { total: 0, items: [] },
     stages: dto.stages.map((stage) => ({
       ...stage,
       inFlightCount: 0,
@@ -71,6 +72,20 @@ export const Live: Story = {
 /** The same contract DTO with every collection emptied — calm is a designed state. */
 export const Calm: Story = {
   decorators: [withPipeline(calmPipeline(pipeline))],
+  render: () => (
+    <Box maw={390} mx="auto">
+      <PipelineStagesPanel />
+    </Box>
+  ),
+  globals: { viewport: { value: 'iphone12' } },
+}
+
+/** A fresh Backlog queue without a delegated task yet. */
+export const CandidatesOnly: Story = {
+  decorators: [withPipeline({
+    ...calmPipeline(pipeline),
+    investigateBacklog: pipeline.investigateBacklog,
+  })],
   render: () => (
     <Box maw={390} mx="auto">
       <PipelineStagesPanel />

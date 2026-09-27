@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 /// not collide with other suites writing the shared Postgres container.
 /// </summary>
 [Category("Integration")]
-public class AgentTaskPipelineStatusTests
+public partial class AgentTaskPipelineStatusTests
 {
     [Test]
     [Arguments(LandPublicationOutcome.Landed, false)]
@@ -88,6 +88,8 @@ public class AgentTaskPipelineStatusTests
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
         dto.MaxConcurrentTasks.ShouldBe(2);
         dto.InFlightAgainstCap.ShouldBe(0);
+        dto.InvestigateBacklog.Total.ShouldBe(0);
+        dto.InvestigateBacklog.Items.ShouldBeEmpty();
         dto.Stages.Select(s => s.Role).ShouldBe([
             AgentTaskRole.Custom, AgentTaskRole.Plan, AgentTaskRole.Code, AgentTaskRole.Review,
             AgentTaskRole.Debug, AgentTaskRole.Coverage, AgentTaskRole.Docs, AgentTaskRole.Commit,
@@ -595,7 +597,7 @@ public class AgentTaskPipelineStatusTests
     }
 
     [Test]
-    public async Task collections_sort_by_created_then_id_and_ready_by_since_then_identifier()
+    public async Task collections_sort_by_created_then_id_and_ready_by_card_priority()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
@@ -607,6 +609,9 @@ public class AgentTaskPipelineStatusTests
             dispatchedAt: t0.AddHours(1), createdAt: t0.AddHours(1), title: "newer");
         var cardB = await SeedCardAsync(db, CardStatus.Review, "CARD-9602");
         var cardA = await SeedCardAsync(db, CardStatus.Review, "CARD-9601");
+        cardB.Importance = CardImportance.Critical;
+        cardA.Importance = CardImportance.Low;
+        await db.SaveChangesAsync();
         await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
             title: "plan b", cardId: cardB.Id, completedAt: t0.AddMinutes(10), createdAt: t0,
             deliverablePath: "docs/superpowers/plans/b.md");
@@ -618,7 +623,7 @@ public class AgentTaskPipelineStatusTests
         dto.Stages.Single(s => s.Role == AgentTaskRole.Review).InFlight.Select(t => t.TaskId)
             .ShouldBe([older.Id, newer.Id]);
         dto.Stages.Single(s => s.Role == AgentTaskRole.Code).Ready.Select(r => r.Card.Identifier)
-            .ShouldBe(["CARD-9601", "CARD-9602"]);
+            .ShouldBe(["CARD-9602", "CARD-9601"]);
     }
 
     [Test]
@@ -775,7 +780,7 @@ public class AgentTaskPipelineStatusTests
     }
 
     private static AgentTaskPipelineStatusService CreateService(
-        AppDbContext db, DelegationSettings? settings = null)
+        AppDbContext db, DelegationSettings? settings = null, TimeProvider? time = null)
     {
         var resolved = settings ?? new DelegationSettings();
         var options = Options.Create(resolved);
@@ -783,7 +788,7 @@ public class AgentTaskPipelineStatusTests
             db,
             options,
             new AreaMapLoader(options, NullLogger<AreaMapLoader>.Instance),
-            TimeProvider.System);
+            time ?? TimeProvider.System);
     }
 
     private static AppDbContext CreateContext(IsolatedTestSchema schema) =>
@@ -965,6 +970,7 @@ public class AgentTaskPipelineEndpointTests
         json.ShouldContain("\"maxConcurrentTasks\"");
         json.ShouldContain("\"inFlightAgainstCap\"");
         json.ShouldContain("\"stages\"");
+        json.ShouldContain("\"investigateBacklog\"");
         json.ShouldContain("\"recommendedInFlight\"");
         json.ShouldContain("\"inFlightCount\"");
         json.ShouldContain("\"atOrAboveRecommendation\"");
@@ -975,6 +981,8 @@ public class AgentTaskPipelineEndpointTests
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
         dto.MaxConcurrentTasks.ShouldBe(2);
         dto.InFlightAgainstCap.ShouldBe(0);
+        dto.InvestigateBacklog.Total.ShouldBe(0);
+        dto.InvestigateBacklog.Items.ShouldBeEmpty();
         dto.Stages.Count.ShouldBe(14);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Distill);
@@ -1029,5 +1037,101 @@ public class AgentTaskPipelineEndpointTests
         using var client = _factory.CreateClient();
         (await client.GetAsync("/api/agent-tasks/summary")).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await client.GetAsync("/api/agent-tasks")).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task C557_pipeline_includes_ranked_backlog_contract()
+    {
+        var now = new DateTime(2026, 9, 27, 12, 0, 0, DateTimeKind.Utc);
+        var projectId = Guid.NewGuid();
+        var boardIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var cardIds = Enumerable.Range(0, 7).Select(_ => Guid.NewGuid()).ToArray();
+        var readyId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Projects.Add(new Project
+            {
+                Id = projectId, Name = "pipeline endpoint", GitRepositoryUrl = "https://example.test/pipeline.git",
+                CreatedAt = now, UpdatedAt = now,
+            });
+            foreach (var (boardId, index) in boardIds.Select((id, i) => (id, i)))
+            {
+                db.Boards.Add(new Board
+                {
+                    Id = boardId, ProjectId = projectId, Name = $"Board {index}", CreatedAt = now, UpdatedAt = now,
+                });
+                db.BoardColumns.Add(new BoardColumn
+                {
+                    Id = Guid.NewGuid(), BoardId = boardId, StateKey = "backlog", Name = "Backlog",
+                    ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now,
+                });
+            }
+            await db.SaveChangesAsync();
+            var columns = await db.BoardColumns.Where(c => boardIds.Contains(c.BoardId))
+                .ToDictionaryAsync(c => c.BoardId, c => c.Id);
+            for (var i = 0; i < cardIds.Length; i++)
+            {
+                var boardId = boardIds[i % 2];
+                db.Cards.Add(new Card
+                {
+                    Id = cardIds[i], BoardId = boardId, BoardColumnId = columns[boardId],
+                    Identifier = $"CARD-{i + 1:0000}", Title = $"Candidate {i + 1}",
+                    Status = CardStatus.Backlog, Importance = i == 0 ? CardImportance.Critical : CardImportance.Normal,
+                    Position = i + 1, CreatedAt = now.AddDays(-20), UpdatedAt = now,
+                });
+            }
+            db.Cards.Add(new Card
+            {
+                Id = readyId, BoardId = boardIds[0], BoardColumnId = columns[boardIds[0]],
+                Identifier = "CARD-9000", Title = "Ready source", Status = CardStatus.Review,
+                Importance = CardImportance.High, CreatedAt = now.AddDays(-20), UpdatedAt = now,
+            });
+            var taskId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId, RootTaskId = taskId, Title = "ready source", Goal = "ready source",
+                Role = AgentTaskRole.Plan, Status = AgentTaskStatus.Succeeded,
+                CardId = readyId, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = "/tmp/c557", CreatedAt = now.AddDays(-2),
+                DispatchedAt = now.AddDays(-2), CompletedAt = now.AddDays(-1),
+                NextStage = PipelineHandoffKind.Code,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateClient();
+        var json = await client.GetStringAsync("/api/agent-tasks/pipeline");
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        root.GetProperty("recommendationsAreAdvisory").GetBoolean().ShouldBeTrue();
+        var backlog = root.GetProperty("investigateBacklog");
+        backlog.GetProperty("total").GetInt32().ShouldBe(7);
+        var items = backlog.GetProperty("items").EnumerateArray().ToArray();
+        items.Length.ShouldBe(5);
+        items.Select(item => item.GetProperty("cardId").GetGuid())
+            .ShouldBe(cardIds.Take(5));
+        for (var i = 0; i < items.Length; i++)
+        {
+            items[i].GetProperty("boardId").GetGuid().ShouldBe(boardIds[i % 2]);
+            items[i].GetProperty("identifier").GetString().ShouldBe($"CARD-{i + 1:0000}");
+            items[i].GetProperty("title").GetString().ShouldBe($"Candidate {i + 1}");
+            items[i].GetProperty("rank").GetInt32().ShouldBe(i == 0 ? 4 : 10);
+            items[i].GetProperty("position").GetInt32().ShouldBe(i + 1);
+        }
+        var stages = root.GetProperty("stages").EnumerateArray().ToArray();
+        stages.Length.ShouldBe(14);
+        var code = stages.Single(s => s.GetProperty("role").GetString() == "Code");
+        code.GetProperty("ready").EnumerateArray().Single().GetProperty("rank").GetInt32().ShouldBe(7);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await db.Cards.CountAsync(c => cardIds.Contains(c.Id))).ShouldBe(7);
+            (await db.Cards.CountAsync(c => cardIds.Contains(c.Id) && c.Status == CardStatus.Backlog)).ShouldBe(7);
+        }
+        await _factory.ResetAsync();
+        using var empty = JsonDocument.Parse(await client.GetStringAsync("/api/agent-tasks/pipeline"));
+        empty.RootElement.GetProperty("investigateBacklog").GetProperty("total").GetInt32().ShouldBe(0);
+        empty.RootElement.GetProperty("investigateBacklog").GetProperty("items").GetArrayLength().ShouldBe(0);
     }
 }

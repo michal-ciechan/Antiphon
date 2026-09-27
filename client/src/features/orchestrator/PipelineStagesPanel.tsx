@@ -7,6 +7,7 @@ import { InlineSkeleton } from '../../shared/SkeletonLayouts'
 import { TaskDrawer } from '../delegations/TaskDrawer'
 import {
   STAGE_LABEL,
+  candidateRows,
   fleetStrip,
   idleLine,
   isPipelineEmpty,
@@ -78,6 +79,7 @@ export function PipelineStagesPanel() {
         <Stack gap="sm" mt={4}>
           {shown.map((stage) => {
             const rows = stageRows(stage, now, data)
+            const backlog = stage.role === 'Investigate' ? candidateRows(data) : []
             const pin = stagePinLabel(stage)
             const counts = stageCountLine(stage)
             return (
@@ -99,14 +101,33 @@ export function PipelineStagesPanel() {
                     </Text>
                   ) : null}
                 </Group>
-                <Paper withBorder radius="md" px="xs">
-                  {rows.map((row, index) => (
-                    <Fragment key={row.key}>
-                      {index > 0 && <Divider />}
-                      <PipelineRow row={row} onOpen={setTask} />
-                    </Fragment>
-                  ))}
-                </Paper>
+                {backlog.length > 0 ? (
+                  <Stack gap={4} mb={rows.length > 0 ? 'xs' : 0}>
+                    <Group justify="space-between" px={4} gap="xs">
+                      <Text size="xs" fw={600}>Backlog candidates</Text>
+                      <Text size="xs" c="dimmed">{data.investigateBacklog.total} total · top {backlog.length}</Text>
+                    </Group>
+                    <Paper withBorder radius="md" px="xs">
+                      {backlog.map((row, index) => (
+                        <Fragment key={row.key}>
+                          {index > 0 && <Divider />}
+                          <PipelineRow row={row} onOpen={setTask} />
+                        </Fragment>
+                      ))}
+                    </Paper>
+                    <Text size="xs" c="dimmed" px={4}>Ranked by card priority; dispatch is a decision</Text>
+                  </Stack>
+                ) : null}
+                {rows.length > 0 ? (
+                  <Paper withBorder radius="md" px="xs">
+                    {rows.map((row, index) => (
+                      <Fragment key={row.key}>
+                        {index > 0 && <Divider />}
+                        <PipelineRow row={row} onOpen={setTask} />
+                      </Fragment>
+                    ))}
+                  </Paper>
+                ) : null}
               </Box>
             )
           })}

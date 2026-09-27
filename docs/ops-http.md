@@ -148,6 +148,12 @@ $board = (Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -
 # the purpose-built occupancy read: in-flight / queued / blocked / ready rows per stage (CARD-0304);
 # GET /api/agent-tasks/summary `byStatus` is the fleet-wide cross-check on the same column
 Invoke-RestMethod "$api/api/agent-tasks/pipeline" -Headers $h
+
+# One fleet-wide glance: `investigateBacklog.total/items` gives the first five ranked fresh
+# Backlog candidates; `stages` retains formal in-flight, queued, blocked and ready work.
+# Candidate links need both boardId and cardId because CARD-nnnn is board-scoped.
+# The rank/position/due/created order is advisory; inspect a candidate's thread for
+# cross-card landed coverage, WIP and scope before deciding to dispatch.
 # CARD-0738: preview open tasks whose card is already closed. apply defaults to false.
 Invoke-RestMethod -Method POST "$api/api/agent-tasks/closed-card-sweep" -ContentType application/json -Body '{"apply":false}'
 

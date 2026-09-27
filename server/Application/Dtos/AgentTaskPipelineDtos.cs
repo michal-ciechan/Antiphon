@@ -16,7 +16,21 @@ public sealed record AgentTaskPipelineDto(
     /// active-task query.
     /// </summary>
     int InFlightAgainstCap,
-    IReadOnlyList<AgentTaskPipelineStageDto> Stages);
+    IReadOnlyList<AgentTaskPipelineStageDto> Stages,
+    AgentTaskPipelineBacklogDto InvestigateBacklog);
+
+/// <summary>Fresh Backlog work, ranked for an advisory Investigate glance.</summary>
+public sealed record AgentTaskPipelineBacklogDto(
+    int Total,
+    IReadOnlyList<AgentTaskPipelineBacklogItemDto> Items);
+
+public sealed record AgentTaskPipelineBacklogItemDto(
+    Guid CardId,
+    Guid BoardId,
+    string Identifier,
+    string Title,
+    int Rank,
+    int? Position);
 
 public sealed record AgentTaskPipelineStageDto(
     AgentTaskRole Role,
@@ -94,4 +108,5 @@ public sealed record AgentTaskPipelineReadyDto(
     /// card's own pin for that role when it has one, else the stage-wide pin. Null when
     /// neither exists.
     /// </summary>
-    RoutingPinRefDto? RoutingPin = null);
+    RoutingPinRefDto? RoutingPin = null,
+    int Rank = 13);

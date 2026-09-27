@@ -550,6 +550,21 @@ export interface AgentTaskPipelineReadyDto {
   sourceRole?: AgentTaskRole
   /** CARD-0146 S4. The source task's handoff line. Null on the legacy Plan→Code bridge. */
   handoff?: string | null
+  rank: number
+}
+
+export interface AgentTaskPipelineBacklogItemDto {
+  cardId: string
+  boardId: string
+  identifier: string
+  title: string
+  rank: number
+  position: number | null
+}
+
+export interface AgentTaskPipelineBacklogDto {
+  total: number
+  items: AgentTaskPipelineBacklogItemDto[]
 }
 
 export interface AgentTaskPipelineStageDto {
@@ -570,6 +585,7 @@ export interface AgentTaskPipelineDto {
   maxConcurrentTasks: number
   inFlightAgainstCap: number
   stages: AgentTaskPipelineStageDto[]
+  investigateBacklog: AgentTaskPipelineBacklogDto
 }
 
 export interface CreateAgentTaskRequest {

@@ -551,7 +551,10 @@ public class ContractSnapshotTests
     [Test]
     public async Task Pipeline_status_contract()
     {
-        var app = await SharedApp.GetAsync();
+        var app = new AntiphonAppFixture();
+        await app.InitializeAsync();
+        try
+        {
         const string cwd = @"C:\src\antiphon-pipeline";
         var t0 = new DateTime(2026, 2, 3, 9, 0, 0, DateTimeKind.Utc);
 
@@ -564,7 +567,12 @@ public class ContractSnapshotTests
         await SnapshotPipelineAsync(
             app,
             new HashSet<Guid> { PipelineHolderTaskId, PipelineQueuedTaskId, PipelinePlanTaskId, PipelineBlockedTaskId },
-            new HashSet<Guid> { PipelineReadyCardId });
+            PipelineCandidateCardIds.Append(PipelineReadyCardId).ToHashSet());
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
     }
 
     /// <summary>
@@ -613,6 +621,8 @@ public class ContractSnapshotTests
     private static readonly Guid PipelineProjectId = Guid.Parse("dddddddd-0000-0000-0000-000000000021");
     private static readonly Guid PipelineBoardId = Guid.Parse("dddddddd-0000-0000-0000-000000000022");
     private static readonly Guid PipelineReadyCardId = Guid.Parse("dddddddd-0000-0000-0000-000000000023");
+    private static readonly Guid[] PipelineCandidateCardIds = Enumerable.Range(40, 7)
+        .Select(n => Guid.Parse($"dddddddd-0000-0000-0000-{n:000000000000}")).ToArray();
     private static readonly Guid BacklogAntiphonProjectId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000001");
     private static readonly Guid BacklogAntiphonBoardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000002");
     private static readonly Guid BacklogGymProjectId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000003");
@@ -773,6 +783,14 @@ public class ContractSnapshotTests
                 CreatedAt = t0,
                 UpdatedAt = t0,
             });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = Guid.Parse("dddddddd-0000-0000-0000-000000000032"),
+                BoardId = PipelineBoardId,
+                StateKey = "backlog", Name = "Backlog", ColumnOrder = 1,
+                CardStatus = Server.Domain.Enums.CardStatus.Backlog,
+                CreatedAt = t0, UpdatedAt = t0,
+            });
             await db.SaveChangesAsync();
         }
 
@@ -780,6 +798,9 @@ public class ContractSnapshotTests
             .Where(c => c.BoardId == PipelineBoardId && c.CardStatus == Server.Domain.Enums.CardStatus.Review)
             .Select(c => c.Id)
             .SingleAsync();
+        var backlogColumnId = await db.BoardColumns
+            .Where(c => c.BoardId == PipelineBoardId && c.CardStatus == Server.Domain.Enums.CardStatus.Backlog)
+            .Select(c => c.Id).SingleAsync();
 
         db.Cards.Add(new Card
         {
@@ -793,6 +814,28 @@ public class ContractSnapshotTests
             CreatedAt = t0.AddDays(-3),
             UpdatedAt = t0.AddDays(-3),
         });
+        var rankings = new (CardImportance Importance, CardUrgency Urgency)[]
+        {
+            (CardImportance.Critical, CardUrgency.Normal),
+            (CardImportance.Normal, CardUrgency.Now),
+            (CardImportance.Low, CardUrgency.Now),
+            (CardImportance.Normal, CardUrgency.Normal),
+            (CardImportance.Low, CardUrgency.Normal),
+            (CardImportance.Low, CardUrgency.Normal),
+            (CardImportance.Low, CardUrgency.Normal),
+        };
+        for (var i = 0; i < PipelineCandidateCardIds.Length; i++)
+        {
+            db.Cards.Add(new Card
+            {
+                Id = PipelineCandidateCardIds[i], BoardId = PipelineBoardId,
+                BoardColumnId = backlogColumnId,
+                Identifier = $"CARD-{100 + i:0000}", Title = $"Pipeline candidate {i + 1}",
+                Status = Server.Domain.Enums.CardStatus.Backlog,
+                Importance = rankings[i].Importance, Urgency = rankings[i].Urgency,
+                Position = i + 1, CreatedAt = t0.AddDays(-20), UpdatedAt = t0.AddDays(-20),
+            });
+        }
         await db.SaveChangesAsync();
 
         db.AgentTasks.AddRange(
@@ -1196,6 +1239,11 @@ public class ContractSnapshotTests
         var response = await app.HttpClient.GetAsync("/api/agent-tasks/pipeline");
         response.EnsureSuccessStatusCode();
         var node = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        var backlog = node["investigateBacklog"]!;
+        backlog["total"]!.GetValue<int>().ShouldBe(7);
+        backlog["items"]!.AsArray().Count.ShouldBe(5);
+        FilterPipelineRows(backlog["items"]!.AsArray(), keepCardIds, idKey: "cardId");
+        backlog["items"]!.AsArray().Count.ShouldBe(5);
         node["asOf"] = "2026-02-03T09:00:00Z";
 
         var keptInFlight = 0;

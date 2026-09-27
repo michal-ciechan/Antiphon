@@ -373,6 +373,7 @@ describe('TaskCard', () => {
       maxConcurrentTasks: 6,
       inFlightAgainstCap: 6,
       stages: [],
+      investigateBacklog: { total: 0, items: [] },
       ...overrides,
     }
   }
@@ -436,6 +437,7 @@ describe('TaskCard', () => {
       deliverablePath: 'docs/superpowers/plans/example.md',
       deliverableRef: 'abc',
       routingPin: null,
+      rank: 10,
       ...overrides,
     }
   }
