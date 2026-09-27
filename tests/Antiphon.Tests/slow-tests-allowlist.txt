@@ -161,3 +161,8 @@ Antiphon.Tests.Application.SessionStateProjectionTests
 Antiphon.Tests.Application.SessionStateCommitTests
 # CARD-0701: real PostgreSQL startup, retention and concurrent load contracts.
 Antiphon.Tests.Application.SessionStateWarmupTests
+
+# CARD-0452: real Git source containment and pinned publication acceptance.
+Antiphon.Tests.Application.AgentTaskLandLocalContainmentTests
+# CARD-0452: real repository child journal recovery and crash evidence.
+Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
