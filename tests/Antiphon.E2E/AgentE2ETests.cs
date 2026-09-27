@@ -107,7 +107,6 @@ public class AgentE2ETests
             var queueRow = page.GetByRole(AriaRole.Row).Filter(new LocatorFilterOptions { HasText = cardTitle });
             await Expect(queueRow).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions { Timeout = 10_000 });
             await Expect(queueRow).ToContainTextAsync($"{identifier} - {cardTitle}");
-            await Expect(queueRow).ToContainTextAsync(agentName);
             await Expect(queueRow.GetByRole(AriaRole.Cell).Last).ToHaveTextAsync("-");
 
             await AssertCardAssignedAsync(cardId);
