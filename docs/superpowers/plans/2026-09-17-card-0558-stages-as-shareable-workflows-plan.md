@@ -921,3 +921,12 @@ Group A's final ordinary verification manifest. Each row uses a fresh result dir
 | CP-9 | all | CP-1 | downgrade-regression | `/*/*/(CommitOnSettleMigrationTests*)\|(AgentTaskInternalDecisionMigrationTests*)\|(StandingSpecialistRoutingMigrationTests*)/*` | R-A-migrations | all three classes, 0 failed | 3 | 9 |
 | CP-10 | all | `tests/Antiphon.E2E -> bin-c558e2e/` | browser | `/*/*/AgentE2ETests/*` | R-A-browser | all named browser results, 0 failed | 1 | 15 |
 | CP-11 | all | CP-1 | windows-agent-control | `/*/*/AgentControlServiceIntegrationTests/*` | R-A-agent-control | whole class on Windows with cmd.exe fixture, 0 failed | 1 | 15 |
+
+### Final verification
+
+Recorded 2026-09-27 21:16 UTC. Final Review `ed926edd` (Final profile v1, Full scope)
+judged source commit `ee5e5b68937371a39bd6c48b46229f3e38d4dc96` clean: all 11
+checkpoint dispositions, CP-1 through CP-11, were green. CP-1's Unit lane recorded
+3,446 passed, 1 inherited flaky failure, and 2 skipped. CP-11 passed 33/33 on Windows
+with a real `cmd.exe` fixture. Every positive control remains pending for method-scoped
+SourceLanding Mutation; neither this Final round nor nightly green discharges one.
