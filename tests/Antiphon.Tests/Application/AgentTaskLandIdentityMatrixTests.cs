@@ -81,7 +81,8 @@ public sealed class AgentTaskLandIdentityMatrixTests
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
-        using var markerLock = variant == "inaccessible-git"
+        await h.RequestAsync();
+        using var markerLock = variant == "inaccessible-git" && OperatingSystem.IsWindows()
             ? new FileStream(Path.Combine(h.Fixture.Source, ".git"), FileMode.Open, FileAccess.Read, FileShare.None) : null;
         if (variant == "malformed-git")
         {
@@ -89,8 +90,12 @@ public sealed class AgentTaskLandIdentityMatrixTests
             File.SetAttributes(marker, FileAttributes.Normal); // Git marks this fixture-owned file hidden on Windows.
             await File.WriteAllTextAsync(marker, "not a git directory\n");
         }
-        h.Fixture.Git.BeforeCommand = (_, args) =>
+        h.Fixture.Git.BeforeCommand = (path, args) =>
         {
+            if (variant == "inaccessible-git" && !OperatingSystem.IsWindows()
+                && Path.GetFullPath(path) == Path.GetFullPath(h.Fixture.Source)
+                && args[0] == "rev-parse" && args.Contains("--absolute-git-dir"))
+                return Task.FromResult<LandingGitResult?>(new(128, "", "fixture-owned git directory is unreadable"));
             if (args.Contains("worktree") && args.Contains("list"))
             {
                 if (variant == "registration-error") return Task.FromResult<LandingGitResult?>(new(128, "", "query error"));
