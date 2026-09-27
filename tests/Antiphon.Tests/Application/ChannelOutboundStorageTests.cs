@@ -65,6 +65,77 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
+    public async Task Exactly_fourteen_mebibytes_of_original_bytes_can_be_staged()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-raw-cap-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+        try
+        {
+            var bytes = new byte[14 * 1024 * 1024];
+            Random.Shared.NextBytes(bytes);
+            var reply = new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Content = bytes }],
+            };
+            var snapshot = await store.StageAsync(Guid.NewGuid(), reply, CancellationToken.None);
+            var restored = await store.ReadReplyAsync(snapshot.ReplyPath, snapshot.ReplySha256,
+                CancellationToken.None);
+            restored.Attachments.ShouldHaveSingleItem().Content.ShouldBe(bytes);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public async Task Serialized_limit_counts_unicode_metadata_and_base64_at_exact_boundary()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-wire-cap-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+        var id = Guid.NewGuid();
+        using var raw = JsonDocument.Parse("""{"parse_mode":"MarkdownV2","note":"zażółć ✨"}""");
+        var originalBytes = new byte[] { 0, 1, 2, 255 };
+        var addition = new byte[] { 37, 80, 68, 70, 45, 49, 46, 55, 10 };
+        try
+        {
+            var reply = new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", ReplyHandle = "C1|wątek-✨",
+                Text = "Polski tekst ✨", RawOverrides = raw.RootElement.Clone(),
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "źródło.md", Mime = "text/markdown", Caption = "oryginał ✨",
+                    Content = originalBytes, Source = "/never/read/from/source.md" }],
+            };
+            var snapshot = await store.StageAsync(id, reply, CancellationToken.None);
+            await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, "combined.pdf"), addition);
+            await File.WriteAllTextAsync(Path.Combine(snapshot.OutputDirectory, "manifest.json"),
+                JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = id, disposition = "converted",
+                    replacementText = "Gotowe ✨",
+                    files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                        mime = "application/pdf", length = addition.Length,
+                        sha256 = Convert.ToHexString(SHA256.HashData(addition)).ToLowerInvariant() } },
+                }));
+            var expected = reply with { Text = "Gotowe ✨", Attachments =
+                [.. reply.Attachments, new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "combined.pdf", Mime = "application/pdf", Content = addition }] };
+            var wireLength = JsonSerializer.SerializeToUtf8Bytes(expected, MessagingJson.Options).Length;
+            await Should.ThrowAsync<InvalidDataException>(() => store.ValidateAndSealAsync(id,
+                snapshot.ReplyPath, snapshot.ReplySha256, wireLength - 1, CancellationToken.None));
+            var sealedReply = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, wireLength, CancellationToken.None);
+            var actual = await store.ReadReplyAsync(sealedReply.ReplyPath,
+                sealedReply.ReplySha256, CancellationToken.None);
+            JsonSerializer.SerializeToUtf8Bytes(actual, MessagingJson.Options).Length.ShouldBe(wireLength);
+            actual.Attachments[0].Content.ShouldBe(originalBytes);
+            actual.Attachments[1].Content.ShouldBe(addition);
+            actual.ReplyHandle.ShouldBe("C1|wątek-✨");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Test]
     public async Task Converted_files_are_sealed_with_original_sources_and_frozen_routing()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-seal-" + Guid.NewGuid().ToString("N"));
