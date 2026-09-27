@@ -14,6 +14,68 @@ namespace Antiphon.Tests.Application;
 public sealed partial class AgentTaskLandPublicationTests
 {
     [Test]
+    public async Task C494_LostPushAckReconcilesRealTargetBeforeSourceChecks()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fixture.Git.AfterCommand = (_, args, result) =>
+        {
+            if (args[0] == "push" && result.Succeeded)
+            {
+                h.Fault.Matches = op => op.Phase == LandPhase.PushStarted
+                    && op.ChildOperation is null && op.PushExitCode is null;
+                h.Fault.AfterCommit = true;
+            }
+            return Task.CompletedTask;
+        };
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        var intent = (await h.OperationAsync()).ShouldNotBeNull();
+        intent.Phase.ShouldBe(LandPhase.PushStarted);
+        intent.ChildOperation.ShouldBeNull();
+        intent.RemoteConfirmedAt.ShouldBeNull();
+        var p = intent.VerifiedSourceSha.ShouldNotBeNull();
+        var read = new LandingGitFixture.FixtureGit(Path.Combine(h.Fixture.Root, "home"), h.Fixture.TaskId);
+        var observedRef = "refs/antiphon-observer/target/" + Guid.NewGuid().ToString("N");
+        (await read.RunAsync(h.Fixture.Observer, ["fetch", "--no-tags", h.Fixture.Remote,
+            h.Fixture.TargetRef + ":" + observedRef], CancellationToken.None)).Succeeded.ShouldBeTrue();
+        (await read.RunAsync(h.Fixture.Observer, ["rev-parse", "--verify", observedRef], CancellationToken.None))
+            .Output.Trim().ShouldBe(p);
+
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "valuable-later.txt"), "keep later work\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", "valuable-later.txt");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "later source");
+        var c = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        h.Fault.Matches = null;
+        h.Fault.AfterCommit = false;
+        h.Fixture.Git.AfterCommand = null;
+        await h.RestartServicesAsync();
+        var rechecks = h.Fixture.Git.Trace.Count(a => a[0] == "ls-remote" && a.Contains(h.Fixture.SourceRef));
+        var targetPushes = h.Fixture.Git.Trace.Count(a => a[0] == "push" && a[^1].EndsWith(":" + h.Fixture.TargetRef));
+        await h.RunAsync();
+        var landed = (await h.OperationAsync()).ShouldNotBeNull();
+        landed.Id.ShouldBe(intent.Id);
+        landed.VerifiedSourceSha.ShouldBe(p);
+        new AgentTaskLandingState().HasPublication(landed).ShouldBeTrue();
+        landed.ObservedRemoteTargetSha.ShouldBe(p);
+        landed.ConfirmationMethod.ShouldBe("push-endpoint-read-fetch-ancestry");
+        h.Fixture.Git.Trace.Count(a => a[0] == "ls-remote" && a.Contains(h.Fixture.SourceRef)).ShouldBe(rechecks);
+        h.Fixture.Git.Trace.Count(a => a[0] == "push" && a[^1].EndsWith(":" + h.Fixture.TargetRef)).ShouldBe(targetPushes);
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        File.Exists(Path.Combine(h.Fixture.Source, "valuable-later.txt")).ShouldBeTrue();
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(c);
+        (await read.RunAsync(h.Fixture.Observer, ["fetch", "--no-tags", h.Fixture.Remote,
+            h.Fixture.TargetRef + ":" + observedRef], CancellationToken.None)).Succeeded.ShouldBeTrue();
+        (await read.RunAsync(h.Fixture.Observer, ["merge-base", "--is-ancestor", p, observedRef], CancellationToken.None))
+            .Succeeded.ShouldBeTrue();
+        await using var db = h.CreateContext();
+        (await db.AgentTaskEvents.SingleAsync(e => e.LandingOperationId == intent.Id && e.IsLandTerminal))
+            .Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+    }
+
+    [Test]
     [Arguments("non-ff-before-push")]
     [Arguments("rewrite-after-push")]
     [Arguments("destination-before-push")]
