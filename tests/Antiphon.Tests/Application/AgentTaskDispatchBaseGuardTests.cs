@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -404,6 +405,97 @@ public partial class AgentTaskDispatchBaseGuardTests
         after.WorktreePath.ShouldBeNull();
         after.WorktreeBranch.ShouldBeNull();
         after.AgentSessionId.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("deadline")]
+    [Arguments("candidate_cap")]
+    [Arguments("pending_land_budget")]
+    [Timeout(120_000)]
+    public async Task T0442_V30_incomplete_dispatch_inspection_keeps_safe_base_and_land_hold(
+        string scenario, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v30");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var a = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var request = new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            Card: card.Id.ToString("D"));
+        AgentTaskCreatedDto created;
+        await using (var createProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = createProvider.CreateAsyncScope())
+            created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(request, new AgentTaskService.Caller(null, null, repo.Path), ct);
+        created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        AgentTask? b = null;
+        if (scenario != "deadline")
+            b = await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: "master");
+        if (scenario == "pending_land_budget")
+        {
+            a.LandRequestedAt = DateTime.UtcNow;
+            await SeedPendingSiblingLandAsync(db, repo, a);
+        }
+        await db.SaveChangesAsync(ct);
+
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        ILandingGit? git = scenario == "deadline" ? new CandidateDeadlineGit(clock, a.WorktreeBranch!) : null;
+        await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
+            git: git, clock: scenario == "deadline" ? clock : null,
+            maxCandidates: scenario == "deadline" ? null : 1))
+        await using (var scope = launchProvider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        if (scenario == "pending_land_budget")
+        {
+            result.Status.ShouldBe(AgentTaskStatus.Queued);
+            result.WorktreePath.ShouldBeNull();
+            var pending = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == a.CurrentLandRequestId, ct);
+            pending.IsPending = false;
+            pending.State = LandRequestState.Completed;
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = a.Id, Type = AgentTaskEventType.Landed,
+                Detail = "fixture completed", At = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(ct);
+            await using (var resumeProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
+                maxCandidates: 1))
+            await using (var scope = resumeProvider.CreateAsyncScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            db.ChangeTracker.Clear();
+            result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+            result.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            result.WorktreeBaseTaskId.ShouldBe(b!.Id);
+            return;
+        }
+
+        result.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        result.WorktreeBaseTaskId.ShouldBeNull();
+        result.WorktreeBaseSha.ShouldBe((await repo.GitReadAsync("rev-parse", "master")).Trim());
+        result.WorktreeBasePreviewJson.ShouldContain(a.Id.ToString("D"));
+        var warnings = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == created.Id && i.WarningKey == "worktree-base-preview-changed")
+            .ToListAsync(ct);
+        warnings.Count.ShouldBe(1);
+        warnings[0].Detail.ShouldContain(scenario == "deadline" ? "inspection_timeout" : "candidate_limit");
+        result.FailureReason.ShouldBeNull();
+    }
+
+    private sealed class CandidateDeadlineGit(FakeTimeProvider clock, string branch) : LandingGit
+    {
+        public override async Task<LandingGitResult> RunAsync(string repository,
+            IReadOnlyList<string> args, CancellationToken ct)
+        {
+            if (args is ["rev-parse", "--verify", "--quiet", var reference]
+                && reference == $"refs/heads/{branch}^{{commit}}")
+                clock.Advance(TimeSpan.FromSeconds(2));
+            return await base.RunAsync(repository, args, ct);
+        }
     }
 
     [Test]
@@ -1404,7 +1496,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor? interceptor = null,
         LandDeliveryBoundary? boundary = null,
         ILandingGit? git = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        int? maxCandidates = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -1444,6 +1537,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             WorktreeBasePath = worktreeBase,
             WorktreeAddTimeoutSeconds = 180,
             DefaultBranch = defaultBranch,
+            WorktreeBaseMaxCandidates = maxCandidates ?? 16,
         });
         services.AddSingleton<CompletionNoteFlushQueue>();
         services.AddSingleton<LandDeliveryBoundary>(boundary ?? new LandDeliveryBoundary());
