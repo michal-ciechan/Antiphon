@@ -295,6 +295,53 @@ public partial class AgentTaskDispatchBaseGuardTests
         git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "merge-base", "--is-ancestor", before[a.WorktreeBranch!], before[b.WorktreeBranch!] }));
     }
 
+    [Test]
+    public async Task C559_UnresolvableTipStillWarns()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var sibling = await w.AddAsync();
+        await w.Db.SaveChangesAsync();
+        var git = new UnresolvableSiblingTipGit(sibling.WorktreeBranch!);
+        await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot, git: git);
+        await using var scope = provider.CreateAsyncScope();
+
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+
+        git.Commands.ShouldContain(args => args.SequenceEqual(new[]
+            { "show-ref", "--verify", "--quiet", $"refs/heads/{sibling.WorktreeBranch}" }));
+        git.FailedTipProbes.ShouldBe(1);
+        await using var check = w.Fresh();
+        (await check.AgentTasks.SingleAsync(t => t.Id == w.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var intent = (await check.AgentTaskDispatchWarningIntents
+            .Where(i => i.TaskId == w.Task.Id).ToListAsync()).ShouldHaveSingleItem();
+        intent.WarningKey.ShouldBe(DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
+        intent.Detail.ShouldContain(sibling.WorktreeBranch!);
+        intent.Detail.ShouldContain("unknown");
+        intent.Detail.ShouldContain("Land " + DelegationReportFormatter.Short(sibling.Id));
+
+        await MaterializeAndDeliverAsync(scope.ServiceProvider, w.Task.Id, default);
+        var warning = await check.AgentTaskEvents.SingleAsync(e => e.Id == intent.Id);
+        warning.Type.ShouldBe(AgentTaskEventType.Warning);
+        warning.Detail.ShouldBe(intent.Detail);
+    }
+
+    private sealed class UnresolvableSiblingTipGit(string branch) : LandingGit
+    {
+        public List<string[]> Commands { get; } = [];
+        public int FailedTipProbes { get; private set; }
+
+        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            Commands.Add(arguments.ToArray());
+            if (arguments.SequenceEqual(new[] { "rev-parse", "--verify", "--quiet", $"refs/heads/{branch}^{{commit}}" }))
+            {
+                FailedTipProbes++;
+                return Task.FromResult(new LandingGitResult(128, "", "injected sibling tip failure"));
+            }
+            return base.RunAsync(repository, arguments, ct);
+        }
+    }
+
     private sealed class MovingSiblingGit(HashSet<string> branches) : LandingGit
     {
         public List<string[]> Commands { get; } = [];
