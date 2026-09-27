@@ -201,7 +201,7 @@ public sealed class BuildSlotBrokerTests
     {
         var f = new Fixture(maxConcurrent: 1, holderLiveness: "renew", renewGraceSeconds: 90);
         var grant = f.Granted(f.Request(101, "remote"));
-        grant.RenewEverySeconds.ShouldBe(30);
+        grant.RenewEverySeconds.ShouldBe(20);
         f.Liveness.Kill(101);
         f.Time.Advance(TimeSpan.FromSeconds(89));
         f.Broker.Sweep().ShouldBe(0);

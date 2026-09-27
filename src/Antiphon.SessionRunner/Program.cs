@@ -33,6 +33,19 @@ builder.Host.UseSerilog((ctx, lc) =>
             retainedFileTimeLimit: TimeSpan.FromDays(14));
 });
 
+// The shared server2 broker is a bare HTTP budget service. Keep this branch ahead of every
+// session, phone-home and pty registration and ahead of the adoption sweep below.
+if (builder.Configuration.GetValue<bool>("SessionRunner:BuildSlotsOnly"))
+{
+    builder.Services.AddHealthChecks();
+    builder.Services.AddBuildSlotBroker(builder.Configuration);
+    var brokerApp = builder.Build();
+    brokerApp.MapHealthChecks("/health");
+    brokerApp.MapBuildSlotRoutes();
+    brokerApp.Run();
+    return;
+}
+
 builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
 builder.Services.Configure<PhoneHomeSettings>(builder.Configuration.GetSection("PhoneHome"));
 builder.Services.PostConfigure<PhoneHomeSettings>(settings =>

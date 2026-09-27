@@ -34,7 +34,7 @@ public sealed class BuildSlotSettings
 
     public string HolderLiveness { get; set; } = "pid";
     public int RenewGraceSeconds { get; set; } = 90;
-    public int RenewEverySeconds { get; set; } = 30;
+    public int RenewEverySeconds { get; set; } = 20;
 
     public void Validate()
     {
