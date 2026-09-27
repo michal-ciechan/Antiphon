@@ -346,7 +346,7 @@ public class DelegationCapabilityTests
     }
 
     [Test]
-    public async Task capability_create_Kind_Codex_succeeds_under_Claude_kind_wide_hold()
+    public async Task capability_create_Kind_Grok_succeeds_under_Claude_kind_wide_hold()
     {
         await using var h = await Harness.CreateAsync();
         await SeedHoldAsync(h.Db, AgentKind.ClaudeCode, ModelAlias.KindWide);
@@ -354,12 +354,16 @@ public class DelegationCapabilityTests
         var caller = await h.Tasks.AuthenticateAsync(issued.Token, CancellationToken.None);
 
         var created = await h.Tasks.CreateAsync(
-            Worker(h.FirstRoot) with { AgentKind = AgentKind.Codex, Goal = "codex under hold" },
+            Worker(h.FirstRoot) with
+            {
+                AgentKind = AgentKind.Grok, Goal = "grok under hold",
+                AllowUnauthenticatedProvider = true,
+            },
             caller,
             CancellationToken.None);
 
-        created.AgentKind.ShouldBe(AgentKind.Codex);
-        (await h.Db.AgentTasks.SingleAsync(t => t.Id == created.Id)).AgentKind.ShouldBe(AgentKind.Codex);
+        created.AgentKind.ShouldBe(AgentKind.Grok);
+        (await h.Db.AgentTasks.SingleAsync(t => t.Id == created.Id)).AgentKind.ShouldBe(AgentKind.Grok);
     }
 
     [Test]
