@@ -115,7 +115,18 @@ public sealed class TaskPlatformDispatchTests
                 stored.Status.ShouldBe(AgentTaskStatus.Dispatched, kind + ": " + stored.FailureReason);
                 stored.RunnerId.ShouldBeNull();
                 stored.AgentKind.ShouldBe(kind);
-                desktop.Sink.Specs.ShouldHaveSingleItem().RequiredPlatform.ShouldBe("windows");
+                var spec = desktop.Sink.Specs.ShouldHaveSingleItem();
+                spec.RequiredPlatform.ShouldBe("windows");
+                if (kind == AgentKind.Grok)
+                {
+                    spec.GrokRulesPayload.ShouldNotBeNull();
+                    var session = await read.AgentSessions.SingleAsync(s => s.Id == stored.AgentSessionId);
+                    var refresh = new GrokRulesRefreshService(
+                        desktop.Provider.GetRequiredService<IServiceScopeFactory>(),
+                        TimeProvider.System, Options.Create(new GrokRulesSettings()));
+                    await refresh.QueueLaunchBriefAsync(read, session,
+                        desktop.Provider.GetRequiredService<SessionMessageQueueService>(), CancellationToken.None);
+                }
                 (await read.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == taskId)).ShouldBe(1);
             }
             finally { await desktop.Provider.DisposeAsync(); }
