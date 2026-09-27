@@ -1,0 +1,158 @@
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Antiphon.Messaging;
+using Antiphon.Server.Infrastructure.Files;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+[Category("Unit")]
+public sealed class OutboundConversionManifestTests
+{
+    [Test]
+    [Arguments("missing_json")]
+    [Arguments("malformed_json")]
+    [Arguments("wrong_version")]
+    [Arguments("wrong_delivery_id")]
+    [Arguments("missing_disposition")]
+    [Arguments("invalid_disposition")]
+    [Arguments("missing_files")]
+    [Arguments("too_many_descriptors")]
+    [Arguments("duplicate_name")]
+    [Arguments("case_colliding_name")]
+    [Arguments("missing_file")]
+    [Arguments("wrong_length")]
+    [Arguments("wrong_hash")]
+    [Arguments("absolute_path")]
+    [Arguments("parent_path")]
+    [Arguments("backslash_path")]
+    [Arguments("sibling_prefix_path")]
+    [Arguments("route_channel")]
+    [Arguments("route_conversation_id")]
+    [Arguments("route_reply_handle")]
+    [Arguments("route_reply_to_message_id")]
+    [Arguments("route_kind")]
+    [Arguments("route_raw_overrides")]
+    [Arguments("route_source_task_id")]
+    [Arguments("route_project")]
+    [Arguments("route_policy")]
+    public async Task Invalid_output_is_rejected_with_a_valid_adjacent_control(string fault)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-manifest-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+        var id = Guid.NewGuid();
+        try
+        {
+            var snapshot = await store.StageAsync(id, new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", ReplyHandle = "C1|thread-1",
+                Text = "original",
+            }, CancellationToken.None);
+            var pdf = new byte[] { 37, 80, 68, 70, 45, 49, 46, 55, 10 };
+            await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, "combined.pdf"), pdf);
+            var manifestPath = Path.Combine(snapshot.OutputDirectory, "manifest.json");
+            var file = new JsonObject
+            {
+                ["path"] = "combined.pdf", ["name"] = "combined.pdf",
+                ["mime"] = "application/pdf", ["length"] = pdf.Length,
+                ["sha256"] = Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant(),
+            };
+            var manifest = new JsonObject
+            {
+                ["version"] = 1, ["deliveryId"] = id.ToString(),
+                ["disposition"] = "converted", ["replacementText"] = "converted",
+                ["files"] = new JsonArray(file),
+            };
+            await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+            var valid = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            var original = await store.ReadReplyAsync(valid.ReplyPath, valid.ReplySha256,
+                CancellationToken.None);
+            original.ReplyHandle.ShouldBe("C1|thread-1");
+            original.Attachments.ShouldHaveSingleItem().Content.ShouldBe(pdf);
+            // The positive control has proven the route. Rejection must now come from
+            // the changed field, not from a mismatch with an existing sealed copy.
+            File.Delete(valid.ReplyPath);
+
+            switch (fault)
+            {
+                case "missing_json": File.Delete(manifestPath); break;
+                case "malformed_json": await File.WriteAllTextAsync(manifestPath, "{"); break;
+                case "wrong_version": manifest["version"] = 2; break;
+                case "wrong_delivery_id": manifest["deliveryId"] = Guid.NewGuid().ToString(); break;
+                case "missing_disposition": manifest.Remove("disposition"); break;
+                case "invalid_disposition": manifest["disposition"] = "sent"; break;
+                case "missing_files": manifest.Remove("files"); break;
+                case "too_many_descriptors":
+                    for (var i = 0; i < 16; i++)
+                    {
+                        var name = $"extra-{i:D2}.pdf";
+                        await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, name), pdf);
+                        var extra = (JsonObject)file.DeepClone();
+                        extra["path"] = name;
+                        extra["name"] = name;
+                        manifest["files"]!.AsArray().Add(extra);
+                    }
+                    break;
+                case "duplicate_name":
+                    await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, "second.pdf"), pdf);
+                    var duplicate = (JsonObject)file.DeepClone();
+                    duplicate["path"] = "second.pdf";
+                    manifest["files"]!.AsArray().Add(duplicate);
+                    break;
+                case "case_colliding_name":
+                    await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, "second.pdf"), pdf);
+                    var caseCollision = (JsonObject)file.DeepClone();
+                    caseCollision["path"] = "second.pdf";
+                    caseCollision["name"] = "COMBINED.PDF";
+                    manifest["files"]!.AsArray().Add(caseCollision);
+                    break;
+                case "missing_file": file["path"] = "absent.pdf"; break;
+                case "wrong_length": file["length"] = pdf.Length + 1; break;
+                case "wrong_hash": file["sha256"] = new string('0', 64); break;
+                case "absolute_path":
+                    await File.WriteAllBytesAsync(Path.Combine(root, "elsewhere.pdf"), pdf);
+                    file["path"] = Path.GetFullPath(Path.Combine(root, "elsewhere.pdf"));
+                    break;
+                case "parent_path":
+                    await File.WriteAllBytesAsync(Path.Combine(Path.GetDirectoryName(snapshot.OutputDirectory)!,
+                        "elsewhere.pdf"), pdf);
+                    file["path"] = "../elsewhere.pdf";
+                    break;
+                case "backslash_path":
+                    await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory,
+                        "..\\elsewhere.pdf"), pdf);
+                    file["path"] = "..\\elsewhere.pdf";
+                    break;
+                case "sibling_prefix_path":
+                    var sibling = Path.Combine(Path.GetDirectoryName(snapshot.OutputDirectory)!,
+                        "output-elsewhere");
+                    Directory.CreateDirectory(sibling);
+                    await File.WriteAllBytesAsync(Path.Combine(sibling, "file.pdf"), pdf);
+                    file["path"] = "../output-elsewhere/file.pdf";
+                    break;
+                case "route_channel": manifest["channel"] = "attacker"; break;
+                case "route_conversation_id": manifest["conversationId"] = "C2"; break;
+                case "route_reply_handle": manifest["replyHandle"] = "C2|thread-2"; break;
+                case "route_reply_to_message_id": manifest["replyToMessageId"] = "root"; break;
+                case "route_kind": manifest["kind"] = "control"; break;
+                case "route_raw_overrides": manifest["rawOverrides"] = new JsonObject(); break;
+                case "route_source_task_id": manifest["sourceTaskId"] = Guid.NewGuid().ToString(); break;
+                case "route_project": manifest["projectId"] = Guid.NewGuid().ToString(); break;
+                case "route_policy": manifest["policy"] = "bypass"; break;
+                default: throw new ArgumentOutOfRangeException(nameof(fault), fault, null);
+            }
+            if (fault is not ("missing_json" or "malformed_json"))
+                await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+            var invalid = () => store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            if (fault == "missing_json") await Should.ThrowAsync<FileNotFoundException>(invalid);
+            else if (fault == "malformed_json") await Should.ThrowAsync<JsonException>(invalid);
+            else await Should.ThrowAsync<InvalidDataException>(invalid);
+            File.Exists(valid.ReplyPath).ShouldBeFalse();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+}
