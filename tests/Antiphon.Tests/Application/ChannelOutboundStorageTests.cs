@@ -171,6 +171,24 @@ public sealed class ChannelOutboundStorageTests
             await Should.ThrowAsync<InvalidDataException>(() => store.ValidateAndSealAsync(id,
                 snapshot.ReplyPath, snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None));
             File.Exists(Path.Combine(root, id.ToString("N"), "sealed-reply.json")).ShouldBeFalse();
+
+            if (!OperatingSystem.IsWindows())
+            {
+                var sibling = Path.Combine(Path.GetDirectoryName(snapshot.OutputDirectory)!, "OUTPUT");
+                Directory.CreateDirectory(sibling);
+                var foreign = new byte[] { 1, 2, 3 };
+                await File.WriteAllBytesAsync(Path.Combine(sibling, "foreign.pdf"), foreign);
+                await File.WriteAllTextAsync(Path.Combine(snapshot.OutputDirectory, "manifest.json"),
+                    JsonSerializer.Serialize(new
+                    {
+                        version = 1, deliveryId = id, disposition = "converted",
+                        files = new[] { new { path = "../OUTPUT/foreign.pdf", name = "foreign.pdf",
+                            mime = "application/pdf", length = foreign.Length,
+                            sha256 = Convert.ToHexString(SHA256.HashData(foreign)).ToLowerInvariant() } },
+                    }));
+                await Should.ThrowAsync<InvalidDataException>(() => store.ValidateAndSealAsync(id,
+                    snapshot.ReplyPath, snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None));
+            }
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }

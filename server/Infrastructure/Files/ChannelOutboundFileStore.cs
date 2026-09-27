@@ -249,6 +249,8 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
         long rawBytes = attachments.Sum(a => (long)(a.Content?.Length ?? 0));
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var file in manifest.Files)
         {
             if (file.Path is null || file.Name is null || file.Mime is null || file.Sha256 is null
@@ -263,14 +265,14 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
                 throw new InvalidDataException("A converted file descriptor is invalid.");
             var path = Path.GetFullPath(Path.Combine(outputRoot, file.Path));
             if (!path.StartsWith(Path.GetFullPath(outputRoot) + Path.DirectorySeparatorChar,
-                    StringComparison.OrdinalIgnoreCase))
+                    pathComparison))
                 throw new InvalidDataException("A converted file escapes its output directory.");
             for (var parent = Path.GetDirectoryName(path); parent is not null
                  && parent.Length >= outputRoot.Length; parent = Path.GetDirectoryName(parent))
             {
                 if (Directory.Exists(parent) && File.GetAttributes(parent).HasFlag(FileAttributes.ReparsePoint))
                     throw new InvalidDataException("A converted file uses a linked directory.");
-                if (string.Equals(parent, outputRoot, StringComparison.OrdinalIgnoreCase)) break;
+                if (string.Equals(parent, outputRoot, pathComparison)) break;
             }
             if (!File.Exists(path) || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)
                 || new FileInfo(path).Length != file.Length || rawBytes + file.Length > MaxRawAttachmentBytes)

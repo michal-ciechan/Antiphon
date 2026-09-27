@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Antiphon.Messaging;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -6,6 +7,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -15,6 +17,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[NotInParallel]
 public sealed class ChannelOutboundPolicyTests
 {
     [Test]
@@ -32,6 +35,7 @@ public sealed class ChannelOutboundPolicyTests
         var profile = new ChannelOutboundProfile
         {
             ProjectId = projectId, AgentId = converterId, PromptFile = "convert.md",
+            Trigger = ChannelOutboundTrigger.EveryAgentReply,
         };
         var settings = Options.Create(new ChannelOutboundSettings
         {
@@ -82,6 +86,31 @@ public sealed class ChannelOutboundPolicyTests
                 new UpdateChatChannelRequest(OutboundAgentProfile: "pdf-project"), CancellationToken.None);
             (await service.UpdateAsync(channelId, new UpdateChatChannelRequest(UnbindAgent: true),
                 CancellationToken.None)).OutboundAgentProfile.ShouldBeNull();
+
+            await service.UpdateAsync(channelId,
+                new UpdateChatChannelRequest(AgentId: inboundId, OutboundAgentProfile: "pdf-project"),
+                CancellationToken.None);
+            await db.Agents.Where(a => a.Id == converterId).ExecuteDeleteAsync();
+            var producer = new FakeAntiphonMessagingClient();
+            var outbound = new ChannelOutboundService(db,
+                new ChannelOutboundFileStore(Path.Combine(directory, "outbound")), producer,
+                settings, TimeProvider.System);
+            var reply = new ChannelReply { Channel = "fake", ConversationId = channelId.ToString("N"),
+                Text = "source text" };
+            var source = new ChannelOutboundSource(Guid.NewGuid(), 1, 2, 3, "main", []);
+            (await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source,
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            var degraded = await db.ChannelOutboundDeliveries.SingleAsync(d => d.ChannelId == channelId);
+            degraded.State.ShouldBe(Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState.Ready);
+            degraded.ConversionOutcome.ShouldBe("Fallback");
+            producer.SentReplies.ShouldBeEmpty();
+
+            await db.ChannelOutboundDeliveries.Where(d => d.Id == degraded.Id).ExecuteDeleteAsync();
+            settings.Value.Profiles.Clear();
+            (await outbound.SendAsync(reply with { Text = "new source-only message" },
+                ChannelOutboundOrigin.AgentReply, source with { PromptSequence = 4 },
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
+            producer.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("new source-only message");
         }
         finally
         {
@@ -120,5 +149,14 @@ public sealed class ChannelOutboundPolicyTests
         profile.MaxPending = 8;
         profile.PromptFile = "../escape.md";
         validator.Validate(null, settings).Succeeded.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Text_only_conversion_failure_does_not_claim_source_attachments()
+    {
+        var text = ChannelOutboundService.AnnotateFallback("original answer", false);
+        text.ShouldContain("original answer");
+        text.ShouldContain("original reply sent");
+        text.ShouldNotContain("files attached");
     }
 }

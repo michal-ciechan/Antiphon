@@ -54,6 +54,29 @@ source or source manifest; `EveryAgentReply` runs for every agent reply. Server-
 notices and proactive sends always publish directly. Clearing the binding restores the direct
 source path for new replies.
 
+For a project-local PDF worker, put `channel-outbound-pdf.md` in that worker's workspace and
+configure a named profile with placeholders replaced by the approved project and worker ids:
+
+```json
+{
+  "ChannelOutbound": {
+    "Profiles": {
+      "project-pdf": {
+        "ProjectId": "<project-guid>",
+        "AgentId": "<dedicated-worker-guid>",
+        "PromptFile": "channel-outbound-pdf.md",
+        "Trigger": "MarkdownSources",
+        "TimeoutSeconds": 120,
+        "MaxPending": 8
+      }
+    }
+  }
+}
+```
+
+Then PATCH only the intended conversation with `{"outboundAgentProfile":"project-pdf"}`.
+Keep other conversations unbound unless their owners explicitly select the profile.
+
 The delivery record owns publication while conversion runs. A queued reply has not yet been
 published; the normal correlation and source-delivery timestamps are saved only after Kafka
 accepts the final `ChannelReply`. The payload retains the inbound conversation and native reply

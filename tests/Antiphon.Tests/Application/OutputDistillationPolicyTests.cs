@@ -71,4 +71,13 @@ public class OutputDistillationPolicyTests
         task.Role = AgentTaskRole.Review; task.ReplyTo = AgentTaskReplyTo.None;
         AgentReportPolicy.ShouldStore(task, new()).ShouldBeFalse();
     }
+
+    [Test]
+    public void Outbound_conversion_never_requests_distillation_even_with_a_session_reply_target()
+    {
+        var task = Target(new string('x', 5500));
+        task.OutboundDeliveryId = Guid.NewGuid();
+        OutputDistillationService.ShouldRequest(task,
+            new DelegationSettings { OutputDistillerEnabled = true }).ShouldBeFalse();
+    }
 }

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "title": "Synthetic four-source conversion",
+  "documents": [
+    { "path": "docs/features/001-kalshi-ref-data-downloader/01-requirements.md", "file": "requirements.md" },
+    { "path": "docs/features/001-kalshi-ref-data-downloader/03-design.md", "file": "design.md" },
+    { "path": "docs/features/001-kalshi-ref-data-downloader/04-external-api.md", "file": "external-api.md" },
+    { "path": "docs/features/001c-kalshi-current-first-snapshots/04-external-api.md", "file": "current-snapshots.md" }
+  ]
+}

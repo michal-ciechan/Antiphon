@@ -27,6 +27,11 @@ public sealed class OutboundConversionTaskRunner
         if (converter.Board?.ProjectId != delivery.ProjectId || converter.IsPoolDelegate
             || converter.AlwaysOn || !AgentTaskService.DelegatableKinds.Contains(converter.Kind))
             throw new InvalidOperationException("The pinned conversion agent is unavailable for this project.");
+        if (string.IsNullOrWhiteSpace(converter.WorkingDirectory)
+            || !Directory.Exists(converter.WorkingDirectory)
+            || File.GetAttributes(converter.WorkingDirectory).HasFlag(FileAttributes.ReparsePoint)
+            || await _db.ChatChannels.AnyAsync(c => c.AgentId == converter.Id, ct))
+            throw new InvalidOperationException("The pinned conversion workspace or channel role is unavailable.");
         var requestPath = Path.Combine(Path.GetDirectoryName(delivery.InputPath)!, "request.json");
         if (!File.Exists(requestPath))
             throw new InvalidDataException("The frozen conversion request is missing.");

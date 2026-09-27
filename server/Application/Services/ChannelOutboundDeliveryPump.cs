@@ -1,7 +1,11 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
+using Confluent.Kafka;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -18,6 +22,7 @@ public sealed class ChannelOutboundDeliveryPump
     private readonly IChannelOutboundFileStore _files;
     private readonly IAntiphonMessagingProducer _producer;
     private readonly AntiphonMessagingOptions _messaging;
+    private readonly ChannelOutboundSettings _outboundSettings;
     private readonly TimeProvider _clock;
     private readonly ILogger<ChannelOutboundDeliveryPump> _logger;
     private readonly Guid _owner = Guid.NewGuid();
@@ -25,13 +30,15 @@ public sealed class ChannelOutboundDeliveryPump
     public ChannelOutboundDeliveryPump(AppDbContext db, OutboundConversionTaskRunner runner,
         IChannelOutboundFileStore files, IAntiphonMessagingProducer producer,
         IOptions<AntiphonMessagingOptions> messaging, TimeProvider clock,
-        ILogger<ChannelOutboundDeliveryPump> logger)
+        ILogger<ChannelOutboundDeliveryPump> logger,
+        IOptions<ChannelOutboundSettings>? outboundSettings = null)
     {
         _db = db;
         _runner = runner;
         _files = files;
         _producer = producer;
         _messaging = messaging.Value;
+        _outboundSettings = outboundSettings?.Value ?? new ChannelOutboundSettings();
         _clock = clock;
         _logger = logger;
     }
@@ -135,25 +142,47 @@ public sealed class ChannelOutboundDeliveryPump
             await _db.SaveChangesAsync(ct);
             return;
         }
-        if (await _db.ChannelOutboundDeliveries.CountAsync(d =>
-                d.State == ChannelOutboundDeliveryState.Converting, ct) >= 2
-            || await _db.ChannelOutboundDeliveries.AnyAsync(d =>
-                d.State == ChannelOutboundDeliveryState.Converting
-                && d.ConverterAgentId == delivery.ConverterAgentId, ct)
-            || await _db.AgentTasks.AnyAsync(t => t.OutboundDeliveryId != null
-                && t.AgentId == delivery.ConverterAgentId
-                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct))
-            return;
+        // The shared connection owns this lock across the runner's task-creation
+        // transaction. Two server instances therefore cannot both observe a free seat.
+        var lockKey = BitConverter.ToInt64(SHA256.HashData(
+            Encoding.UTF8.GetBytes("channel-outbound:global-conversion")), 0);
+        await _db.Database.OpenConnectionAsync(ct);
+        var locked = false;
         try
         {
-            await _runner.CreateAsync(delivery, ct);
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_lock({lockKey})", ct);
+            locked = true;
+            if (await _db.ChannelOutboundDeliveries.CountAsync(d =>
+                    d.State == ChannelOutboundDeliveryState.Converting, ct) >= 2
+                || await _db.ChannelOutboundDeliveries.AnyAsync(d =>
+                    d.State == ChannelOutboundDeliveryState.Converting
+                    && d.ConverterAgentId == delivery.ConverterAgentId, ct)
+                || await _db.AgentTasks.AnyAsync(t => t.OutboundDeliveryId != null
+                    && t.AgentId == delivery.ConverterAgentId
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct))
+                return;
+            try
+            {
+                await _runner.CreateAsync(delivery, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _db.ChangeTracker.Clear();
+                var current = await _db.ChannelOutboundDeliveries.SingleAsync(d => d.Id == delivery.Id, ct);
+                Fallback(current, "Conversion worker unavailable: " + Bound(ex.Message));
+                await _db.SaveChangesAsync(ct);
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            _db.ChangeTracker.Clear();
-            var current = await _db.ChannelOutboundDeliveries.SingleAsync(d => d.Id == delivery.Id, ct);
-            Fallback(current, "Conversion worker unavailable: " + Bound(ex.Message));
-            await _db.SaveChangesAsync(ct);
+            try
+            {
+                if (locked)
+                    await _db.Database.ExecuteSqlInterpolatedAsync(
+                        $"SELECT pg_advisory_unlock({lockKey})", CancellationToken.None);
+            }
+            finally { await _db.Database.CloseConnectionAsync(); }
         }
     }
 
@@ -211,7 +240,8 @@ public sealed class ChannelOutboundDeliveryPump
         var reply = await _files.ReadReplyAsync(delivery.OutputPath ?? delivery.InputPath,
             delivery.OutputSha256 ?? delivery.InputSha256, ct);
         if (delivery.ConversionOutcome is "Fallback" or "Expired" or "QueueOverflow")
-            reply = reply with { Text = ChannelOutboundService.AnnotateFallback(reply.Text) };
+            reply = reply with { Text = ChannelOutboundService.AnnotateFallback(reply.Text,
+                reply.Attachments.Count > 0) };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(reply, global::Antiphon.Messaging.MessagingJson.Options);
         if (bytes.Length > _messaging.MaxMessageBytes)
         {
@@ -222,20 +252,40 @@ public sealed class ChannelOutboundDeliveryPump
             return;
         }
         delivery.State = ChannelOutboundDeliveryState.Publishing;
-        delivery.PublicationAttempts++;
         delivery.Version++;
         await _db.SaveChangesAsync(ct);
-        try
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            await _producer.SendAsync(reply, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            delivery.State = ChannelOutboundDeliveryState.PublishUncertain;
-            delivery.FailureReason = "Broker acceptance unknown: " + Bound(ex.Message);
+            delivery.PublicationAttempts++;
             delivery.Version++;
-            await _db.SaveChangesAsync(CancellationToken.None);
-            return;
+            await _db.SaveChangesAsync(ct);
+            try
+            {
+                await _producer.SendAsync(reply, ct);
+                break;
+            }
+            catch (ProduceException<string, string> ex)
+                when (ex.Error.Code == ErrorCode.Local_QueueFull)
+            {
+                if (attempt == 3)
+                {
+                    delivery.State = ChannelOutboundDeliveryState.Failed;
+                    delivery.FailureReason = "Broker queue refused the sealed reply three times: "
+                        + Bound(ex.Message);
+                    delivery.Version++;
+                    await _db.SaveChangesAsync(CancellationToken.None);
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt), ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                delivery.State = ChannelOutboundDeliveryState.PublishUncertain;
+                delivery.FailureReason = "Broker acceptance unknown: " + Bound(ex.Message);
+                delivery.Version++;
+                await _db.SaveChangesAsync(CancellationToken.None);
+                return;
+            }
         }
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -278,7 +328,11 @@ public sealed class ChannelOutboundDeliveryPump
             await _db.SaveChangesAsync(ct);
             return false;
         }
-        if (delivery.ProfileName.Length > 0 && channel.OutboundAgentProfile != delivery.ProfileName
+        if (delivery.ProfileName.Length > 0
+            && (channel.OutboundAgentProfile != delivery.ProfileName
+                || !_outboundSettings.Profiles.TryGetValue(delivery.ProfileName, out var activeProfile)
+                || activeProfile.AgentId != delivery.ConverterAgentId
+                || activeProfile.ProjectId != delivery.ProjectId)
             && delivery.ConversionOutcome != "Revoked")
         {
             delivery.OutputPath = null;
