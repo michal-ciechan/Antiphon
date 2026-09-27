@@ -323,8 +323,8 @@ public sealed class RepositoryChildRecoveryTests
     private static async Task<long> ReadScriptStartTicksAsync(int processId)
     {
         var read = await RunProcessAsync("pwsh", ["-NoProfile", "-Command",
-            "[Diagnostics.Process]::GetProcessById([int]$args[0]).StartTime.ToUniversalTime().Ticks",
-            processId.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+            "[Diagnostics.Process]::GetProcessById([int]$env:ANTIPHON_C452_READ_PID).StartTime.ToUniversalTime().Ticks"],
+            new Dictionary<string, string> { ["ANTIPHON_C452_READ_PID"] = processId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
         read.Exit.ShouldBe(0, read.Error);
         return long.Parse(read.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture);
     }
