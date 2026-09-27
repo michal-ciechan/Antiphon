@@ -31,23 +31,38 @@ public sealed class TaskPlatformDispatchTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
-        var taskId = await SeedAsync(schema, workspace.Path, "desktop", RequiredPlatform.Any);
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        var rows = new List<(Guid Id, string? Host, RequiredPlatform Platform, AgentModelLevel Level)>();
+        foreach (var host in new string?[] { null, "local", "desktop", " Local ", "DESKTOP" })
+        foreach (var platform in new[] { RequiredPlatform.Any, RequiredPlatform.Windows })
+        foreach (var level in Enum.GetValues<AgentModelLevel>())
         {
+            var taskId = await SeedAsync(schema, workspace.Path, host ?? "desktop", platform);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.RunnerId = host;
             task.AgentKind = AgentKind.Codex;
+            task.ModelLevel = level;
             await db.SaveChangesAsync();
+            rows.Add((taskId, host, platform, level));
         }
         var (dispatcher, sink) = CreateDispatcher(schema, new HoldingDirectory());
         await dispatcher.TickAsync(CancellationToken.None);
         await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
-        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
-        stored.FailureReason.ShouldContain("codex_desktop_unqualified");
-        stored.AgentKind.ShouldBe(AgentKind.Codex);
-        stored.AgentSessionId.ShouldBeNull();
+        foreach (var row in rows)
+        {
+            var stored = await read.AgentTasks.SingleAsync(t => t.Id == row.Id);
+            stored.Status.ShouldBe(AgentTaskStatus.Blocked, row.ToString());
+            stored.FailureReason.ShouldContain("codex_desktop_unqualified");
+            stored.AgentKind.ShouldBe(AgentKind.Codex);
+            stored.RunnerId.ShouldBe(row.Host);
+            stored.RequiredPlatform.ShouldBe(row.Platform);
+            stored.ModelLevel.ShouldBe(row.Level);
+            stored.AgentSessionId.ShouldBeNull();
+            (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == row.Id && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
+        }
         sink.Inputs.ShouldBeEmpty();
-        (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
+        (await read.AgentSessions.CountAsync()).ShouldBe(0);
+        (await read.SessionQueuedMessages.CountAsync()).ShouldBe(0);
     }
 
     [Test]

@@ -373,7 +373,8 @@ internal sealed class DefaultRunnerKit
 
     public AppDbContext Context() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
 
-    public AgentTaskService Service(AppDbContext db, RunnerDefaultSettingsService? runnerDefaults = null) => new(
+    public AgentTaskService Service(AppDbContext db, RunnerDefaultSettingsService? runnerDefaults = null,
+        bool withRouting = false) => new(
         db,
         new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
         Options.Create(Settings),
@@ -381,6 +382,13 @@ internal sealed class DefaultRunnerKit
         new RecordingSessionStopper(),
         TimeProvider.System,
         NullLogger<AgentTaskService>.Instance,
+        modelAvailability: withRouting
+            ? new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance) : null,
+        routingPins: withRouting
+            ? new RoutingPinService(db, TimeProvider.System, NullLogger<RoutingPinService>.Instance) : null,
+        complexityRouting: withRouting
+            ? new ComplexityRoutingService(db, Options.Create(Settings), TimeProvider.System,
+                new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance)) : null,
         registrySettings: Registry is null ? null : Options.Create(Registry),
         phoneHome: new PhoneHomeLaunchPolicy(Options.Create(PhoneHome)),
         runners: RealDirectory ?? (WithDirectory ? Directory : null),

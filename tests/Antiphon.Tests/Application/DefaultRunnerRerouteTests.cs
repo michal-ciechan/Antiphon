@@ -37,24 +37,35 @@ public sealed class DefaultRunnerRerouteTests
         using var workspace = new TempWorkspace();
         var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
             (AgentKind.Codex, AgentModelLevel.Frontier));
-        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Queued);
-        await using (var db = CreateContext(schema))
+        foreach (var status in new[] { AgentTaskStatus.Queued, AgentTaskStatus.Blocked })
         {
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
-            task.RunnerId = null;
-            await db.SaveChangesAsync();
+            var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, status,
+                runnerId: null);
+            await using var beforeDb = CreateContext(schema);
+            var before = await beforeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            await using var rerouteDb = CreateContext(schema);
+            var refused = await Should.ThrowAsync<ConflictException>(() => TaskService(rerouteDb, workspace.Path)
+                .RerouteAsync(taskId, AgentKind.Codex, AgentModelLevel.Frontier, CancellationToken.None));
+            refused.Code.ShouldBe("codex_desktop_unqualified");
+            refused.Message.ShouldContain("Windows Codex startup not qualified");
+            await using var verify = CreateContext(schema);
+            var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            stored.Status.ShouldBe(before.Status);
+            stored.FailureReason.ShouldBe(before.FailureReason);
+            stored.ConcurrencyToken.ShouldBe(before.ConcurrencyToken);
+            stored.AgentKind.ShouldBe(before.AgentKind);
+            stored.ModelLevel.ShouldBe(before.ModelLevel);
+            stored.Complexity.ShouldBe(before.Complexity);
+            stored.RoutingPinId.ShouldBe(before.RoutingPinId);
+            stored.ExplicitAgentKind.ShouldBe(before.ExplicitAgentKind);
+            stored.ExplicitModelLevel.ShouldBe(before.ExplicitModelLevel);
+            stored.RequiredPlatform.ShouldBe(before.RequiredPlatform);
+            stored.RequirementSource.ShouldBe(before.RequirementSource);
+            stored.RunnerDefaultsRevision.ShouldBe(before.RunnerDefaultsRevision);
+            stored.RunnerId.ShouldBe(before.RunnerId);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId)).ShouldBe(0);
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId)).ShouldBe(0);
         }
-        await using var rerouteDb = CreateContext(schema);
-        var refused = await Should.ThrowAsync<ConflictException>(() => TaskService(rerouteDb, workspace.Path)
-            .RerouteAsync(taskId, AgentKind.Codex, AgentModelLevel.Frontier, CancellationToken.None));
-        refused.Code.ShouldBe("codex_desktop_unqualified");
-        refused.Message.ShouldContain("Windows Codex startup not qualified");
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
-        stored.RoutingPinId.ShouldBe(pin.Id);
-        stored.RunnerId.ShouldBeNull();
-        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId)).ShouldBe(0);
     }
 
     [Test]
