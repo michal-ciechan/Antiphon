@@ -369,10 +369,26 @@ public sealed class ChannelOutboundDeliveryPump
         }
         if (manifest?.Complete != true)
             return;
-        var attached = reply.Attachments.Select(a => a.Source).Where(s => s is not null)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (DeliverableBundleService.ListAttachableFiles(task).All(attached.Contains))
+        if (HasCompleteSourceAttachments(task, manifest, reply.Attachments))
             task.DeliverableDeliveredAt = delivery.PublishedAt;
+    }
+
+    internal static bool HasCompleteSourceAttachments(AgentTask task,
+        DeliverableBundleService.SourceManifest manifest,
+        IReadOnlyList<OutboundAttachment> attachments)
+    {
+        if (manifest.Sources is not { Count: > 0 })
+            return false;
+        var required = manifest.Sources.Select(s => s.StoredFile)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var files = DeliverableBundleService.ListAttachableFiles(task);
+        if (files.Count != required.Length)
+            return false;
+        var attached = attachments.Where(a => a.Source is not null && a.Content is not null)
+            .Select(a => a.Source!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return files.All(attached.Contains)
+            && required.All(name => files.Any(path =>
+                string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static void Fallback(ChannelOutboundDelivery delivery, string reason)
