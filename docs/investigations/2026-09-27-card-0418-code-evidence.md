@@ -65,6 +65,8 @@ The Markdig renderer and browser invocation now live in `tools/Antiphon.Markdown
 | CP-S4-manifest-oracles | same 26 named rows with stronger oracle | 26 | 26 | 0 | 0 | `.antiphon/c0418-final/CP-S4-manifest-oracles-20260927-214057-59ce/run.trx` | Each row first accepted a valid adjacent output, removed its seal, then refused its own malformed field or route. |
 | CP-S4-manifest-route-red | same 26 rows with `UnknownFields` guard temporarily removed | 26 | 17 | 9 | 0 | `.antiphon/c0418-final/CP-S4-manifest-route-red-20260927-214249-e247/run.trx` | The nine prohibited top-level route fields passed validation and failed the test; the other 17 rows stayed green. Guard restored. This is a local guard check, not a PC discharge. |
 | CP-S4-manifest-restored | same 26 rows after guard restoration | 26 | 26 | 0 | 0 | `.antiphon/c0418-final/CP-S4-manifest-restored-20260927-214438-09a3/run.trx` | All named malformed-output and route cases passed again on restored code. |
+| CP-S3-migration | full `ChannelOutboundMigrationTests` class | 1 | 1 | 0 | 0 | `.antiphon/c0418-final/CP-S3-migration-20260927-214806-9d15/run.trx` | Private PostgreSQL downgrade, legacy row insertion, upgrade, null defaults, historical task/reply handle preservation and real unique constraints. |
+| CP-S6-contract | full `ChannelOutboundContractTests` class | 2 | 2 | 0 | 0 | `.antiphon/c0418-final/CP-S6-contract-20260927-215103-d632/run.trx` | Server/tool dependency graph, source defaults/instructions, attention enum ordinals and EF nullable/unique/FK model assertions. |
 
 The plan predates the `### Checkpoints` manifest requirement and has no table. These explicitly unlisted runs exercise the Final verification profile and use `scripts/run-checkpoint.ps1` with a build slot and `UseAppHost=false`; each fresh build uses isolated `bin-c0418-storage/` output. This is an execution-contract gap to resolve before final verification.
 
@@ -79,7 +81,7 @@ The client production `npm --prefix client run build` exited 0 under a host buil
 | Plan IDs | Status |
 |---|---|
 | V-1 through V-3; R-1, R-2 | Partial: source slice has direct and integration evidence; full fixture matrices, cross-project cases and completeness stamping remain pending. |
-| V-19 through V-21; R-12 | V-20 local real-browser artifact passed with independent text/page/visual checks. V-19 Unix process-tree timeout/cancellation and zero-exit no/empty/stale output passed; Windows cleanup remains. V-21 migration/structural checks remain pending. |
+| V-19 through V-21; R-12 | V-20 local real-browser artifact passed with independent text/page/visual checks. V-19 Unix process-tree timeout/cancellation and zero-exit no/empty/stale output passed; Windows cleanup remains. V-21 private upgrade and structural checks passed; fresh DI without installed tool and legacy-key warning require separate assertions. |
 | V-5, V-9, V-10, V-12 through V-14, V-16, V-18; R-3, R-5, R-6, R-8, R-10 | Partial local policy/storage/worker/publication assertions, including 26 invalid-output data rows and a nine-row guard red check. Full dispatch, deadlines, fault and recovery matrices remain pending. |
 | V-4, V-6 through V-8, V-11, V-13, V-15, V-17, V-22 through V-24; R-4, R-7, R-9, R-11, R-13, R-14 | Partial: full messaging class regressions and one real outbound broker payload test passed; full server-to-gateway four-source E2E, budget edges, refusal/deadline matrices and hard crash cuts remain pending. |
 | V-25 | Pending actual mav-ref migration, authorization and native Slack receipt. |
