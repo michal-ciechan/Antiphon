@@ -71,7 +71,7 @@ public class TerminalScreenTests
 	[Test]
 	public void C464_Control_strings_end_only_at_their_terminator()
 	{
-		foreach (var vector in new[] { "A\x1b]0;hidden\x07Z", "A\x1b]0;hidden\x1b\\Z",
+		foreach (var vector in new[] { "A\x1b]0;hidden\x07Z", "A\x1b]0;hidden\x1b\x07Z", "A\x1b]0;hidden\x1b\\Z",
 			"A\x1b]0;hidden\x1b\x1b\\Z", "A\x1b]0;hidden\x1bQ\x1b\\Z",
 			"A\x1bPsecret\x07still-secret\x1b\\Z" }.Concat(
 			"PX^_".Select(c => $"A\x1b{c}hidden\x1b\\Z")))

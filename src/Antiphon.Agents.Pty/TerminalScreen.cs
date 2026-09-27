@@ -101,7 +101,7 @@ public sealed class TerminalScreen
 					else if (c == '\x1b') _state = ParseState.OscEscape;
 					break;
 				case ParseState.OscEscape:
-					_state = c == '\\' ? ParseState.Ground : c == '\x1b' ? ParseState.OscEscape : ParseState.Osc;
+					_state = c is '\\' or '\x07' ? ParseState.Ground : c == '\x1b' ? ParseState.OscEscape : ParseState.Osc;
 					break;
 				case ParseState.String:
 					if (c == '\x1b') _state = ParseState.StringEscape;
