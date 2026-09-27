@@ -1187,7 +1187,7 @@ public class AppDbContext : DbContext
             entity.Property(s => s.StageOrder).IsRequired();
             entity.Property(s => s.Name).IsRequired().HasMaxLength(200);
             entity.Property(s => s.Role).IsRequired();
-            entity.Property(s => s.BundleKey).IsRequired().HasMaxLength(200);
+            entity.Property(s => s.BundleKey).IsRequired().HasMaxLength(100);
             entity.Property(s => s.AllowedNextJson).IsRequired().HasColumnType("jsonb");
             entity.Property(s => s.Status).IsRequired();
             entity.Property(s => s.ResultSummary).HasMaxLength(4000);
