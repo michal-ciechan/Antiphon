@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -124,6 +125,60 @@ public class ProjectDeletionTests
             (await verify.BoardColumns.AnyAsync(c => c.BoardId == board.Id)).ShouldBeFalse();
             (await verify.Cards.AnyAsync(c => c.Id == card.Id)).ShouldBeFalse();
             (await verify.AgentSessions.AnyAsync(s => s.Id == session.Id)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Force_delete_removes_card_workflow_runs_and_stages()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = await SeedProjectAsync(tempRoot);
+            await using var harness = BuildHarness();
+            var board = await harness.Boards.CreateAsync(
+                new CreateBoardRequest(project.Id, "Delivery"), CancellationToken.None);
+            var card = await SeedCardAsync(board, "CARD-1", CardStatus.InProgress);
+            var now = DateTime.UtcNow;
+            var runId = Guid.NewGuid();
+            var stageId = Guid.NewGuid();
+            await using (var seed = CreateContext())
+            {
+                await DatabaseSeeder.SeedPipelineDefinitionsAsync(
+                    seed, PipelineDefinitions.StandardPipeline, CancellationToken.None);
+                var revisionId = (await seed.PipelineDefinitions.SingleAsync(
+                    d => d.Id == PipelineDefinitions.StandardPipelineId)).ActiveRevisionId!.Value;
+                seed.CardWorkflowRuns.Add(new CardWorkflowRun
+                {
+                    Id = runId, CardId = card.Id,
+                    PipelineDefinitionId = PipelineDefinitions.StandardPipelineId,
+                    PipelineDefinitionRevisionId = revisionId,
+                    WorkflowName = PipelineDefinitions.StandardPipelineName,
+                    Status = CardWorkflowRunStatus.Running,
+                    CreatedAt = now, UpdatedAt = now
+                });
+                seed.CardWorkflowStages.Add(new CardWorkflowStage
+                {
+                    Id = stageId, CardWorkflowRunId = runId, StageOrder = 0,
+                    Name = "Code", Role = AgentTaskRole.Code, BundleKey = "stage-code",
+                    AllowedNextJson = "[\"review\"]", CreatedAt = now, UpdatedAt = now
+                });
+                await seed.SaveChangesAsync();
+                await seed.Cards.Where(c => c.Id == card.Id)
+                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.ActiveWorkflowRunId, runId));
+                await seed.CardWorkflowRuns.Where(r => r.Id == runId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(r => r.CurrentStageId, stageId));
+            }
+
+            await harness.Projects.DeleteAsync(project.Id, force: true, CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.CardWorkflowRuns.AnyAsync(r => r.Id == runId)).ShouldBeFalse();
+            (await verify.CardWorkflowStages.AnyAsync(s => s.Id == stageId)).ShouldBeFalse();
         }
         finally
         {
@@ -608,6 +663,13 @@ public class ProjectDeletionTests
             .ExecuteUpdateAsync(u => u
                 .SetProperty(a => a.CurrentCardId, (Guid?)null)
                 .SetProperty(a => a.BoardId, (Guid?)null));
+
+        var runIds = await db.CardWorkflowRuns.Where(r => cardIds.Contains(r.CardId))
+            .Select(r => r.Id).ToListAsync();
+        await db.CardWorkflowRuns.Where(r => runIds.Contains(r.Id))
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.CurrentStageId, (Guid?)null));
+        await db.CardWorkflowStages.Where(s => runIds.Contains(s.CardWorkflowRunId)).ExecuteDeleteAsync();
+        await db.CardWorkflowRuns.Where(r => runIds.Contains(r.Id)).ExecuteDeleteAsync();
 
         await db.AgentSessions.Where(s => s.CardId != null && cardIds.Contains(s.CardId.Value)).ExecuteDeleteAsync();
         await db.Cards.Where(c => cardIds.Contains(c.Id)).ExecuteDeleteAsync();

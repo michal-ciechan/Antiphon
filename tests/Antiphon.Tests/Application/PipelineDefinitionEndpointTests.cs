@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Data;
@@ -58,6 +59,20 @@ public sealed class PipelineDefinitionEndpointTests(AntiphonWebAppFactory factor
     }
 
     [Test]
+    [Arguments("null", "pipeline_stages_invalid")]
+    [Arguments("{\"role\":\"Code\",\"bundleKey\":null,\"allowedNext\":[\"review\"]}", "pipeline_stage_bundle_not_stage")]
+    [Arguments("{\"role\":\"Code\",\"bundleKey\":\"stage-code\",\"allowedNext\":null}", "pipeline_stage_next_invalid")]
+    public async Task Post_rejects_null_stage_fields_with_422(string stage, string code)
+    {
+        using var client = factory.CreateClient();
+        var json = "{\"name\":\"Invalid null stage\",\"description\":\"\",\"stages\":[" + stage + "]}";
+        using var response = await client.PostAsync("/api/pipeline-definitions",
+            new StringContent(json, Encoding.UTF8, "application/json"));
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity, await response.Content.ReadAsStringAsync());
+        (await response.Content.ReadAsStringAsync()).ShouldContain(code);
+    }
+
+    [Test]
     public async Task Revisions_clone_archive_unarchive_round_trip()
     {
         using var client = factory.CreateClient();
@@ -80,7 +95,8 @@ public sealed class PipelineDefinitionEndpointTests(AntiphonWebAppFactory factor
             .StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await client.PostAsJsonAsync($"/api/pipeline-definitions/{id}/archive", new { reason = "old" }))
             .StatusCode.ShouldBe(HttpStatusCode.NoContent);
-        (await client.GetStringAsync($"/api/pipeline-definitions/{id}")).ShouldContain("archivedAt");
+        using var archived = JsonDocument.Parse(await client.GetStringAsync($"/api/pipeline-definitions/{id}"));
+        archived.RootElement.GetProperty("archivedAt").GetDateTime().ShouldBeGreaterThan(DateTime.MinValue);
         (await client.PostAsync($"/api/pipeline-definitions/{id}/unarchive", null))
             .StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }

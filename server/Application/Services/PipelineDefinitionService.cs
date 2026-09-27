@@ -146,6 +146,8 @@ public sealed class PipelineDefinitionService(AppDbContext db, TimeProvider time
     {
         if (stages is null || stages.Count == 0)
             throw new ValidationException("stages", "At least one stage is required.", "pipeline_stages_empty");
+        if (stages.Any(stage => stage is null))
+            throw new ValidationException("stages", "Every stage must be an object.", "pipeline_stages_invalid");
         var roles = stages.Select(s => s.Role).ToHashSet();
         if (roles.Count != stages.Count)
             throw new ValidationException("stages", "Each role may appear once.", "pipeline_stage_role_duplicate");
@@ -153,10 +155,12 @@ public sealed class PipelineDefinitionService(AppDbContext db, TimeProvider time
         {
             if (!AgentTaskRoles.IsStage(stage.Role))
                 throw new ValidationException("stages", $"{stage.Role} is not a pipeline stage.", "pipeline_stage_role_not_stage");
-            if (!stage.BundleKey.StartsWith("stage-", StringComparison.Ordinal))
+            if (stage.BundleKey is null || !stage.BundleKey.StartsWith("stage-", StringComparison.Ordinal))
                 throw new ValidationException("stages", $"{stage.BundleKey} is not a stage bundle.", "pipeline_stage_bundle_not_stage");
             if (!InstructionBundles.IsStageBundleKey(stage.BundleKey))
                 throw new ValidationException("stages", $"{stage.BundleKey} is unknown.", "pipeline_stage_bundle_unknown");
+            if (stage.AllowedNext is null)
+                throw new ValidationException("stages", "Allowed next stages are required.", "pipeline_stage_next_invalid");
             foreach (var raw in stage.AllowedNext)
             {
                 var parsed = PipelineHandoff.TryParse($"--- next stage ---\nnext: {raw}\n");

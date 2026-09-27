@@ -122,7 +122,7 @@ public sealed class PipelineDefinitionMigrationTests
         db.CardWorkflowRuns.Add(NewRun(cardId, revisionId, CardWorkflowRunStatus.Queued));
         await db.SaveChangesAsync();
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
-        var target = migrations[^2];
+        var target = BeforePipelineDefinitions(migrations);
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(target);
         (await db.Database.SqlQueryRaw<int>("SELECT COUNT(*)::int AS \"Value\" FROM \"CardWorkflowRuns\"").SingleAsync()).ShouldBe(0);
@@ -160,6 +160,29 @@ public sealed class PipelineDefinitionMigrationTests
             case "DefinitionId": revision.DefinitionId = Guid.NewGuid(); break;
         }
         await Should.ThrowAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+    }
+
+    [Test]
+    public async Task Run_revision_cannot_change_after_insert()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var cardId = await SeedCardAsync(db);
+        await DatabaseSeeder.SeedPipelineDefinitionsAsync(db, PipelineDefinitions.StandardPipeline, CancellationToken.None);
+        var revisionId = (await db.PipelineDefinitions.SingleAsync(d => d.Id == PipelineDefinitions.StandardPipelineId)).ActiveRevisionId!.Value;
+        var run = NewRun(cardId, revisionId, CardWorkflowRunStatus.Queued);
+        db.CardWorkflowRuns.Add(run);
+        await db.SaveChangesAsync();
+
+        run.PipelineDefinitionRevisionId = Guid.NewGuid();
+        await Should.ThrowAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+    }
+
+    private static string BeforePipelineDefinitions(IReadOnlyList<string> migrations)
+    {
+        var index = Enumerable.Range(0, migrations.Count).Single(i =>
+            migrations[i].EndsWith("_AddPipelineDefinitions", StringComparison.Ordinal));
+        return migrations[index - 1];
     }
 
     private static CardWorkflowRun NewRun(Guid cardId, Guid revisionId, CardWorkflowRunStatus status) => new()
@@ -209,7 +232,7 @@ public sealed class PipelineDefinitionMigrationTests
             db.Add(agent); db.Add(template);
             await db.SaveChangesAsync();
             var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
-            await db.GetService<IMigrator>().MigrateAsync(migrations[^2]);
+            await db.GetService<IMigrator>().MigrateAsync(BeforePipelineDefinitions(migrations));
             var first = Guid.NewGuid();
             var second = Guid.NewGuid();
             await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"CardWorkflowRuns\" (\"Id\",\"CardId\",\"AgentId\",\"WorkflowTemplateId\",\"WorkflowName\",\"WorkflowDefinitionSnapshot\",\"Status\",\"CreatedAt\",\"UpdatedAt\") VALUES ({first},{cardId},{agent.Id},{template.Id},'legacy','name: legacy',0,{now},{now}),({second},{cardId},{agent.Id},NULL,'legacy 2','name: legacy',0,{now},{now})");
