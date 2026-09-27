@@ -96,13 +96,34 @@ public class WatchdogServiceTests
         var harness = OverdueSweepHarness.Create();
         await using var dispatcherProvider = harness.Provider;
         await using var fixture = await C566Fixture.CreateAsync(C566Menu, dispatcher: harness.Dispatcher);
+        var parent = NewSession(fixture.Session.Card!);
+        parent.AgentKind = AgentKind.ClaudeCode;
+        fixture.Db.AgentSessions.Add(parent);
+        await fixture.Db.SaveChangesAsync();
+        await C566SeedEntryAsync(parent.Id, 1, TranscriptKinds.UserPrompt, "dispatch delegate");
+        await C566SeedEntryAsync(parent.Id, 2, TranscriptKinds.AssistantText, "Dispatched.");
+        await C566SeedEntryAsync(parent.Id, 3, TranscriptKinds.TurnEnd, null);
+        var parentAdapter = new FakeAgentProtocolAdapter
+        {
+            ClaudeComposerChrome = true,
+            OnSubmitted = async body =>
+            {
+                await using var parentDb = CreateContext();
+                var seq = (await parentDb.TranscriptEntries
+                    .Where(t => t.AgentSessionId == parent.Id).MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+                await C566SeedEntryAsync(parent.Id, seq, TranscriptKinds.UserPrompt, body);
+                await C566SeedEntryAsync(parent.Id, seq + 1, TranscriptKinds.TurnEnd, null);
+            }
+        };
+        harness.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent.Id, parentAdapter);
+        var taskId = Guid.NewGuid();
         var task = new AgentTask
         {
-            Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "unsafe cleanup",
+            Id = taskId, RootTaskId = taskId, Title = "unsafe cleanup",
             Goal = "run tests", Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.Frontier,
             Workspace = WorkspaceMode.Worktree, WorkingDirectory = fixture.Root,
             AgentSessionId = fixture.Session.Id, Status = AgentTaskStatus.Working,
-            Attempt = 1, ReplyTo = AgentTaskReplyTo.None,
+            Attempt = 1, ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = parent.Id,
             CreatedAt = DateTime.UtcNow, DispatchedAt = DateTime.UtcNow
         };
         fixture.Db.AgentTasks.Add(task);
@@ -115,6 +136,15 @@ public class WatchdogServiceTests
         saved.FailureReason.ShouldContain("watchdog selected No");
         saved.FailureReason.ShouldContain(fixture.Session.Id.ToString());
         fixture.Adapter.Inputs.ShouldBe(["2"]);
+        harness.Stopper.Killed.ShouldBeEmpty();
+        var note = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == task.Id);
+        note.ConversationKey.ShouldBe($"task:{task.RootTaskId:N}");
+        note.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(saved.FailureReason!));
+        var prompts = await verify.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == parent.Id && t.Kind == TranscriptKinds.UserPrompt)
+            .ToListAsync();
+        prompts.Count(t => t.Text == note.Body).ShouldBe(1);
+        parentAdapter.Inputs.ShouldContain("\r");
     }
     [Test]
     public void Watchdog_matches_known_prompt_patterns()
@@ -452,6 +482,19 @@ public class WatchdogServiceTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
+    private static async Task C566SeedEntryAsync(Guid sessionId, long sequence, string kind, string? body)
+    {
+        await using var db = CreateContext();
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence,
+            Kind = kind, Text = body, CreatedAt = DateTime.UtcNow,
+            Timestamp = DateTime.UtcNow,
+            StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null
+        });
+        await db.SaveChangesAsync();
+    }
+
     private static ServiceProvider BuildProvider(string tempRoot, MockEventBus eventBus)
     {
         var services = new ServiceCollection();
@@ -590,6 +633,13 @@ public class WatchdogServiceTests
         var boardIds = await db.Boards.Where(b => projectIds.Contains(b.ProjectId)).Select(b => b.Id).ToListAsync();
         var cardIds = await db.Cards.Where(c => boardIds.Contains(c.BoardId)).Select(c => c.Id).ToListAsync();
         var sessionIds = await db.AgentSessions.Where(s => s.CardId != null && cardIds.Contains(s.CardId.Value)).Select(s => s.Id).ToListAsync();
+        var taskIds = await db.AgentTasks.Where(t => t.AgentSessionId != null && sessionIds.Contains(t.AgentSessionId.Value))
+            .Select(t => t.Id).ToListAsync();
+        await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId) ||
+            (m.SourceTaskId != null && taskIds.Contains(m.SourceTaskId.Value))).ExecuteDeleteAsync();
+        await db.AgentTaskEvents.Where(e => taskIds.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+        await db.AgentTasks.Where(t => taskIds.Contains(t.Id)).ExecuteDeleteAsync();
+        await db.TranscriptEntries.Where(e => sessionIds.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
         await db.Cards
             .Where(c => cardIds.Contains(c.Id))
             .ExecuteUpdateAsync(updates => updates.SetProperty(c => c.OwnerSessionId, (Guid?)null));

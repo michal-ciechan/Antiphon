@@ -26,7 +26,7 @@ public sealed class WatchdogMatcher
             return false;
 
         var question = lines.Length - 4;
-        var bash = Array.FindLastIndex(lines, 0, question, line => line.Trim() == "Bash command");
+        var bash = Array.FindLastIndex(lines, question - 1, question, line => line.Trim() == "Bash command");
         if (bash < 0 || question - bash > 12)
             return false;
 
