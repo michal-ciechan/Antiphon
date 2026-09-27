@@ -60,6 +60,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
         (await PostDrainAsync(disconnected, RollingRunnerSettings.Server2Temp,
             new DrainBody("retire temp", RollingRunnerSettings.Server2, true), token: true))
             .StatusCode.ShouldBe(HttpStatusCode.OK);
+        disconnected.RunnerDirectory.Disconnect(
+            disconnected.RunnerDirectory.SnapshotLive(RollingRunnerSettings.Server2Temp)!, "transport_abort");
         disconnected.PeerB.Socket.Abort();
         (await PostRetireAsync(disconnected, RollingRunnerSettings.Server2Temp, "lost runner",
             RollingRunnerSettings.Server2Temp, token: true)).StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -85,12 +87,11 @@ public sealed partial class PhoneHomeRollingRunnerTests
     [Timeout(180_000)]
     public async Task Rolling_upgrade_moves_new_launches_to_server2_temp_keeps_server2_reachable_and_retires_server2_temp_when_idle()
     {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var world = await RollingWorld.StartAsync(new RollingOptions
         {
-            Clock = clock,
             ConfigureSettings = settings => settings.LeaseSeconds = 3600,
         });
+        var clock = (FakeTimeProvider)world.HostClock;
         (await PostDrainAsync(world, RollingRunnerSettings.Server2,
             new DrainBody("upgrade old", RollingRunnerSettings.Server2Temp), token: true))
             .StatusCode.ShouldBe(HttpStatusCode.OK);

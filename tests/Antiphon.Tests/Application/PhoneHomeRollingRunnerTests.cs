@@ -110,6 +110,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
         public Guid SessionA { get; }
         public Guid StoreA { get; }
         public Guid StoreB { get; }
+        public TimeProvider HostClock { get; }
         public PhoneHomeRunnerDirectory RunnerDirectory => Host.Directory;
         public SessionMessageQueueService Queue => Harness.Queue;
 
@@ -122,6 +123,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
             Guid sessionA,
             Guid storeA,
             Guid storeB,
+            TimeProvider hostClock,
             string root)
         {
             Host = host;
@@ -132,6 +134,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
             SessionA = sessionA;
             StoreA = storeA;
             StoreB = storeB;
+            HostClock = hostClock;
             _root = root;
         }
 
@@ -208,7 +211,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
             var liveA = host.Directory.SnapshotLive(RollingRunnerSettings.Server2)!;
             liveA.NoteSessionLive(sessionA, started, liveA.BeginInventoryRead());
 
-            var world = new RollingWorld(host, peerA, peerB, harness, schema, sessionA, storeA, storeB, root);
+            var world = new RollingWorld(host, peerA, peerB, harness, schema, sessionA, storeA, storeB, clock, root);
             world.Configured = configured;
             world.Script(peerA);
             world.Script(peerB);

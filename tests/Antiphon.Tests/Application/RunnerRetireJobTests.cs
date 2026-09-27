@@ -100,6 +100,7 @@ public sealed class RunnerRetireJobTests
     {
         await using var f = await Fixture.StartAsync(leaseSeconds: 90);
         await f.SeedDrainAsync();
+        f.Host.Directory.Disconnect(f.Host.Directory.SnapshotLive(RollingRunnerSettings.Server2Temp)!, "transport_abort");
         f.Peer.Socket.Abort();
         f.Clock.Advance(TimeSpan.FromSeconds(89));
         await f.Job.RunAsync(CancellationToken.None);
@@ -114,6 +115,7 @@ public sealed class RunnerRetireJobTests
         await using var bound = await Fixture.StartAsync(leaseSeconds: 90);
         await bound.SeedDrainAsync();
         await bound.SeedSessionAsync(SessionStatus.Running);
+        bound.Host.Directory.Disconnect(bound.Host.Directory.SnapshotLive(RollingRunnerSettings.Server2Temp)!, "transport_abort");
         bound.Peer.Socket.Abort();
         bound.Clock.Advance(TimeSpan.FromSeconds(90));
         await bound.Job.RunAsync(CancellationToken.None);
