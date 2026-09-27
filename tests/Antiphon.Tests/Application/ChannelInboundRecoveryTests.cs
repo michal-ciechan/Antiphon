@@ -16,6 +16,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -28,10 +29,10 @@ public sealed class ChannelInboundRecoveryTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
 
-    private static ChannelBridgeService Bridge(BridgeQueueHarness h) => new(
+    private static ChannelBridgeService Bridge(BridgeQueueHarness h, TimeProvider? bridgeClock = null) => new(
         h.Messaging, h.Queue, h.Provider.GetRequiredService<ChannelInboundDebouncer>(), h.EventBus,
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
-        h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(), h.Clock,
+        h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(), bridgeClock ?? h.Clock,
         NullLogger<ChannelBridgeService>.Instance,
         h.Provider.GetRequiredService<ChannelInboundWakeSignal>());
 
@@ -77,6 +78,159 @@ public sealed class ChannelInboundRecoveryTests
             await Task.Delay(25);
         }
         (await predicate()).ShouldBeTrue("durable handoff did not complete before the diagnostic deadline");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(64)]
+    public async Task C767_HealthyAgent_ReceivesBeforeFailedWakeDeadline(int earlierMessages)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 90),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        var failingChat = await h.BindChannelAsync();
+        var healthyChat = await h.BindChannelAsync();
+        var healthyWorkspace = Path.Combine(h.TempRoot, "healthy");
+        Directory.CreateDirectory(healthyWorkspace);
+        await using var agentScope = h.Provider.CreateAsyncScope();
+        var healthy = await agentScope.ServiceProvider.GetRequiredService<AgentService>()
+            .CreateAsync(new CreateAgentRequest("Healthy channel recipient", healthyWorkspace), Ct);
+        var healthySession = Guid.NewGuid();
+        await using (var setup = Db(schema.ConnectionString))
+        {
+            await setup.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
+            setup.AgentSessions.Add(new AgentSession
+            {
+                Id = healthySession, AgentKind = AgentKind.ClaudeCode, DefinitionName = "fake",
+                Status = SessionStatus.Running, Cwd = healthyWorkspace,
+                CreatedAt = h.Now, StartedAt = h.Now, LastSeenAt = h.Now,
+            });
+            await setup.SaveChangesAsync();
+            await setup.Agents.Where(a => a.Id == healthy.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(a => a.AlwaysOn, false)
+                .SetProperty(a => a.PersistentSessionId, healthySession.ToString("D")));
+            await setup.ChatChannels.Where(c => c.ExternalId == healthyChat)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.AgentId, healthy.Id));
+            var channels = await setup.ChatChannels.AsNoTracking()
+                .Where(c => c.ExternalId == failingChat || c.ExternalId == healthyChat)
+                .ToDictionaryAsync(c => c.ExternalId, c => c.Id);
+            for (var index = 0; index < earlierMessages; index++)
+            {
+                var native = $"failing-{index:D2}-{Guid.NewGuid():N}";
+                setup.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = failingChat,
+                    NativeMessageId = native, AgentId = h.AgentId,
+                    ChatChannelId = channels[failingChat],
+                    EnvelopeJson = JsonSerializer.Serialize(Message(failingChat, native, $"failed body {index}"),
+                        Antiphon.Messaging.MessagingJson.Options),
+                    AcceptedAt = h.Now,
+                });
+            }
+            await setup.SaveChangesAsync();
+            var healthyNative = $"healthy-{Guid.NewGuid():N}";
+            setup.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = "telegram", ConversationId = healthyChat,
+                NativeMessageId = healthyNative, AgentId = healthy.Id,
+                ChatChannelId = channels[healthyChat],
+                EnvelopeJson = JsonSerializer.Serialize(Message(healthyChat, healthyNative,
+                    "healthy complete body " + new string('b', 220) + " DISTINCT HEALTHY TAIL"),
+                    Antiphon.Messaging.MessagingJson.Options),
+                AcceptedAt = h.Now,
+            });
+            await setup.SaveChangesAsync();
+            var firstHealthy = await setup.ChannelInbounds.Where(i => i.NativeMessageId == healthyNative)
+                .Select(i => i.AcceptanceSequence).SingleAsync();
+            (await setup.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId
+                && i.AcceptanceSequence < firstHealthy)).ShouldBe(earlierMessages);
+        }
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn",
+            sessionId: healthySession);
+        var receipt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var healthyAdapter = new FakeAgentProtocolAdapter();
+        healthyAdapter.OnSubmitted = async submitted =>
+        {
+            await using var db = Db(schema.ConnectionString);
+            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == healthySession)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+            var record = new SessionRunnerTranscriptEvent(healthySession, sequence, TranscriptKinds.UserPrompt,
+                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                null, null, null, null, null);
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(healthySession, [record], sequence));
+            await h.Runtime.SyncTranscriptAsync(healthySession, Ct);
+            if (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == healthySession
+                && t.Sequence == sequence && t.Kind == TranscriptKinds.UserPrompt && t.Text == submitted))
+                receipt.TrySetResult(submitted);
+        };
+        h.Runtime.Register(healthySession, healthyAdapter);
+        var clock = new BridgeWakeClock();
+        var bridge = Bridge(h, clock);
+        using var drainCts = new CancellationTokenSource();
+        var drain = bridge.DrainPendingAsync(drainCts.Token);
+        string submittedBody;
+        try
+        {
+            await clock.PollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var observed = await Task.WhenAny(receipt.Task, Task.Delay(TimeSpan.FromSeconds(8)));
+            observed.ShouldBe(receipt.Task, "healthy recipient lacks a complete UserPrompt before the failing wake deadline");
+            submittedBody = await receipt.Task;
+            drain.IsCompleted.ShouldBeFalse();
+            clock.GetUtcNow().ShouldBe(clock.Start);
+            await using var beforeDeadline = Db(schema.ConnectionString);
+            (await beforeDeadline.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == "ChannelWakeTimeout")).ShouldBe(0);
+            var owner = await beforeDeadline.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.AgentSessionId == healthySession && q.SourceChannelInboundId != null);
+            submittedBody.ShouldBe(owner.Body);
+            submittedBody.ShouldContain($"[antiphon-channel:{owner.Id:N}]");
+            submittedBody.ShouldContain("DISTINCT HEALTHY TAIL");
+            submittedBody.ShouldContain(healthyChat);
+            (await beforeDeadline.TranscriptEntries.CountAsync(t => t.AgentSessionId == healthySession
+                && t.Kind == TranscriptKinds.UserPrompt && t.Sequence > 1 && t.Text == owner.Body)).ShouldBe(1);
+            h.Adapter.SentInput.ShouldBeEmpty();
+        }
+        finally
+        {
+            if (receipt.Task.IsCompletedSuccessfully)
+            {
+                clock.Advance(TimeSpan.FromSeconds(90));
+                await drain.WaitAsync(TimeSpan.FromSeconds(20));
+            }
+            else
+            {
+                await drainCts.CancelAsync();
+                try { await drain.WaitAsync(TimeSpan.FromSeconds(20)); }
+                catch (OperationCanceledException) { }
+            }
+        }
+        await using var afterDeadline = Db(schema.ConnectionString);
+        (await afterDeadline.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId
+            && i.QueueMessageId == null && i.WakeTimeoutIncidentAt != null)).ShouldBe(earlierMessages);
+        (await afterDeadline.TranscriptEntries.CountAsync(t => t.AgentSessionId == healthySession
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == submittedBody)).ShouldBe(1);
+    }
+
+    private sealed class BridgeWakeClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _clock = new(DateTimeOffset.UtcNow);
+        public DateTimeOffset Start => _clock.GetUtcNow() - _advanced;
+        private TimeSpan _advanced;
+        public TaskCompletionSource PollRegistered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
+        public override long GetTimestamp() => _clock.GetTimestamp();
+        public override long TimestampFrequency => _clock.TimestampFrequency;
+        public override ITimer CreateTimer(TimerCallback callback, object? state,
+            TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime == TimeSpan.FromSeconds(2)) PollRegistered.TrySetResult();
+            return _clock.CreateTimer(callback, state, dueTime, period);
+        }
+        public void Advance(TimeSpan amount) { _advanced += amount; _clock.Advance(amount); }
     }
 
     [Test]
