@@ -81,6 +81,26 @@ public class AgentTaskWorktreeContinuityTests
         child.WorktreeBaseTaskId.ShouldBe(source.Id);
         child.MergeTargetRef.ShouldBe(scenario == "explicit_master" ? "master" : null);
         if (scenario == "inherited_parent") child.ParentTaskId.ShouldBe(parent!.Id);
+        var dispatchEvent = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e =>
+            e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Dispatched
+                && e.Detail.StartsWith("Worktree created"), ct);
+        dispatchEvent.Detail.ShouldContain(DelegationReportFormatter.Short(source.Id));
+        dispatchEvent.Detail.ShouldContain(source.WorktreeBranch!);
+        dispatchEvent.Detail.ShouldContain(sourceSha);
+        var brief = DelegationReportFormatter.BuildBrief(child, new DelegationSettings());
+        brief.ShouldContain($"Worktree source: task {DelegationReportFormatter.Short(source.Id)}");
+        brief.ShouldContain(sourceSha);
+        brief.ShouldContain("Landing target: master");
+        await using (var detailProvider = AgentTaskDispatchBaseGuardTests.CreateProvider(
+            schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = detailProvider.CreateAsyncScope())
+        {
+            var detail = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .GetAsync(child.Id, ct);
+            detail.WorktreeBaseSha.ShouldBe(sourceSha);
+            detail.WorktreeBaseTaskId.ShouldBe(source.Id);
+            detail.MergeTargetRef.ShouldBe(child.MergeTargetRef);
+        }
         (await ScratchGitRepo.GitInAsync(child.WorktreePath!, "rev-parse", "HEAD"))
             .StdOut.Trim().ShouldBe(sourceSha);
         File.Exists(Path.Combine(child.WorktreePath!, markerName)).ShouldBeTrue();
