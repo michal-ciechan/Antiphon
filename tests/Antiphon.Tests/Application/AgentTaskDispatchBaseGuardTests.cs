@@ -164,6 +164,123 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
+    [Arguments("all_contained")]
+    [Arguments("still_divergent")]
+    [Arguments("landed_merge")]
+    [Arguments("landed_residue_merge")]
+    [Timeout(120_000)]
+    public async Task T0442_V21_completed_land_releases_hold_and_rechecks_remaining_tips(
+        string scenario, CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v21");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var source = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        AgentTask? other = null;
+        AgentTask? b = null;
+        AgentTask? tail = null;
+        if (scenario is "all_contained" or "still_divergent")
+        {
+            other = await SeedKeptSiblingAsync(db, repo, card.Id, "X", startRef: "master");
+            if (scenario == "still_divergent")
+            {
+                b = await SeedKeptSiblingAsync(db, repo, card.Id, "B", startRef: source.WorktreeBranch);
+                tail = await SeedKeptSiblingAsync(db, repo, card.Id, "Y", startRef: other.WorktreeBranch);
+            }
+        }
+        else
+        {
+            var right = await SeedKeptSiblingAsync(db, repo, card.Id, "R", startRef: "master");
+            db.AgentTasks.Remove(right);
+            await repo.GitAsync("checkout", source.WorktreeBranch!);
+            await repo.GitAsync("merge", "--no-ff", right.WorktreeBranch!, "-m", "merge fixture");
+            await repo.GitAsync("checkout", "master");
+            await repo.CommitFileAsync("target.txt", "T\n");
+            if (scenario == "landed_residue_merge")
+                other = await SeedKeptSiblingAsync(db, repo, card.Id, "remaining", startRef: "master");
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = source.Id,
+                Type = scenario == "landed_merge"
+                    ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue,
+                Detail = "fixture completion", At = DateTime.UtcNow,
+            });
+        }
+        source.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        await SeedPendingSiblingLandAsync(db, repo, source);
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(), AgentTaskId = source.Id,
+            Type = AgentTaskEventType.LandRequested, Detail = "historic request",
+            At = DateTime.UtcNow.AddMinutes(-1),
+        });
+        await db.SaveChangesAsync(ct);
+        var request = new CreateAgentTaskRequest("Continue", Title: "CARD-0442 Code",
+            Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+            Card: card.Id.ToString("D"));
+        AgentTaskCreatedDto created;
+        await using (var previewProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var previewScope = previewProvider.CreateAsyncScope())
+            created = await previewScope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(request, new AgentTaskService.Caller(null, null, repo.Path), ct);
+        if (scenario is "landed_merge" or "landed_residue_merge")
+        {
+            var completedRequest = await db.AgentTaskLandRequests.SingleAsync(
+                r => r.Id == source.CurrentLandRequestId, ct);
+            completedRequest.IsPending = false;
+            completedRequest.State = LandRequestState.Completed;
+            await db.SaveChangesAsync(ct);
+            created.WorktreeBase!.Decision.ShouldBe(other is null
+                ? CardWorktreeBaseDecision.Target : CardWorktreeBaseDecision.Continue);
+        }
+        else
+            created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
+
+        if (scenario is "all_contained" or "still_divergent")
+        {
+            await repo.GitAsync("merge", "--no-ff", source.WorktreeBranch!, "-m", "integrate A");
+            if (scenario == "all_contained")
+                await repo.GitAsync("merge", "--no-ff", other!.WorktreeBranch!, "-m", "integrate X");
+            source.LandRequestedAt = null;
+            var landRequest = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == source.CurrentLandRequestId, ct);
+            landRequest.IsPending = false;
+            landRequest.State = LandRequestState.Completed;
+            await db.SaveChangesAsync(ct);
+        }
+        await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var launchScope = launchProvider.CreateAsyncScope())
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        db.ChangeTracker.Clear();
+        var result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        if (scenario == "still_divergent")
+        {
+            result.Status.ShouldBe(AgentTaskStatus.Blocked);
+            result.FailureReason.ShouldContain("worktree_base_ambiguous");
+            result.WorktreePath.ShouldBeNull();
+            await repo.GitAsync("merge", "--no-ff", tail!.WorktreeBranch!, "-m", "integrate Y");
+            // B is still on the other chain and must also be integrated before Retry.
+            await repo.GitAsync("merge", "--no-ff", b!.WorktreeBranch!, "-m", "integrate B");
+            await using (var retryProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+            await using (var retryScope = retryProvider.CreateAsyncScope())
+                await retryScope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                    .RetryAsync(created.Id, ct);
+            await using (var resumedProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+            await using (var resumedScope = resumedProvider.CreateAsyncScope())
+                await resumedScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            db.ChangeTracker.Clear();
+            result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        }
+        result.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        result.WorktreePath.ShouldNotBeNull();
+        result.WorktreeBaseTaskId.ShouldBe(scenario == "landed_residue_merge" ? other!.Id : null);
+        if (scenario is "landed_merge" or "landed_residue_merge")
+            (await db.AgentTaskEvents.AsNoTracking().CountAsync(e =>
+                e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+    }
+
+    [Test]
     [Arguments("auto_diverges")]
     [Arguments("task_deleted")]
     [Arguments("task_dirty")]
