@@ -6,6 +6,10 @@ Source: full live CARD-0442, id `d181aef8-47ff-41bc-882b-1707d9ca9fe7`.
 Code inspected at `ccb48b2ca88f96e8845ac2d6e818ec2cb6a8a4b3`.
 Amended after full design review `057585a3` (B-1/B-2, S-1/S-2/S-3); Plan and the existing
 TestDesign below are updated together. Amendment baseline: `3b7efe32` (includes `45b91a9b`).
+Implementation clarification, 2026-09-27: CARD-0508 subsequently changed the null-target
+fallback to the configured default branch when it resolves to a commit, with repository HEAD
+only when that probe fails. This newer shipped rule supersedes the HEAD assertions below;
+CARD-0442 preserves it. Explicit merge targets still take precedence.
 
 ## Outcome and scope
 
@@ -65,7 +69,7 @@ an agent, reuse a process, bypass a land hold, or grant access to another reposi
 `-BaseTask` explicitly chooses one same-card/same-Git-repository source when histories diverge.
 It must have the same effective landing destination (null means the existing explicit-land
 default `master` for this comparison). A mismatch is 422, not implicit rebinding.
-`-FreshWorktree` chooses the pre-change `MergeTargetRef ?? HEAD` behavior, with an immediate
+`-FreshWorktree` chooses the current CARD-0508 target/default-branch fallback, with an immediate
 warning listing any omitted same-card work. Neither accepts an arbitrary ref/path.
 Reject combination with `-OnAgent` so its Shared rewrite cannot silently discard the request.
 `AgentTaskService` resolves a child's destination as `parent.WorktreeBranch ?? parent.MergeTargetRef`:
@@ -437,7 +441,7 @@ asserts the relevant reason/branch identity, not just a nonzero exit or an excep
 | V-7 / R | Unsafe checkout; `tracked_unstaged`, `staged`, `untracked`, `merge_in_progress`, `rebase_in_progress` (5) | integration / `T0442_V07` | Auto excludes with precise warning; explicit Task refuses 422. Commit/clean ordinary changes or finish/abort the scratch merge/rebase, then the same branch becomes eligible. Preserve file bytes/index and in-progress state during every refused observation. |
 | V-8 / R | Availability; `unregistered_local_branch`, `missing_original_directory`, `missing_local_branch`, `remote_only`, `git_error` (5) | integration / `T0442_V08` | First two continue A using a verified surviving common repository/local branch. Missing-local and remote-only cases retain a kept task record but offer warned fallback; explicit Task refuses. Inject a strict Git observation error separately from missing-ref: Auto says inspection unknown/fallback, Task refuses, neither claims no prior work. Remote-only fixture has objects and `refs/remotes/origin/<branch>` but no `refs/heads/<branch>`; no implicit fetch/remote substitution. |
 | V-9 / R | Eligible tip plus excluded work; `excluded_contained`, `excluded_divergent` (2) | integration / `T0442_V09` | B remains Auto's source. An excluded row at committed A is not falsely advertised as missing committed work; an excluded X is named with its reason and SHA. If dirty working files exist, any dirty-files warning must not claim those bytes were inherited merely because the committed tip is contained. |
-| V-10 / R | Legacy fallback; `no_card_auto`, `bound_no_candidates`, `fresh_target` (3) | integration / `T0442_V10` | Put repository HEAD on a scratch `topic` branch ahead of master. With null destination, fallback is topic HEAD, not master/origin/master; source provenance is null. Fresh with eligible A names A as intentionally omitted. Within each case, repeat with explicit `release` destination: start at release and retain that field. Auto with no card makes no sibling inventory query. |
+| V-10 / R | CARD-0508 fallback; `no_card_auto`, `bound_no_candidates`, `fresh_target` (3) | integration / `T0442_V10` | Put repository HEAD on a scratch `topic` branch ahead of master. With null destination and a resolvable configured `master`, fallback is master, not topic HEAD or origin/master; source provenance is null. Fresh with eligible A names A as intentionally omitted. Within each case, repeat with explicit `release` destination: start at release and retain that field. Auto with no card makes no sibling inventory query. |
 | V-11 / A | Invalid overrides; `both_flags`, `shared`, `readonly`, `onagent_task`, `onagent_fresh`, `task_without_card` (6) | integration / `T0442_V11` | Real create refuses 422 before a runnable row or worktree. Exercise the OnAgent cases with a live prior agent so the existing Shared rewrite cannot discard the flag. Error names the invalid combination; explicit Task is never silently changed to Auto. |
 | V-12 / A | Explicit boundaries; `cross_card`, `cross_board`, `nested_repo`, `separate_clone`, `destination_mismatch` (5) | integration / `T0442_V12` | Authorized caller cannot use BaseTask to cross card/common-repo/destination boundaries; 422, no new task/source mutation. Destination mismatch fixture uses source `release` and requested `master`; also show null and explicit `master` compare equal in its accepted control. Parent/root/card/session routing fields are unchanged by accepted selection. |
 | V-13 / A | Source identifier; `full_guid`, `unique_short`, `missing`, `ambiguous_short` (4) | integration / `T0442_V13` | Full and unique 8-hex short IDs resolve to the same persisted GUID. Missing ID is the existing 404; seed two same-prefix GUIDs for existing 409 ambiguity. No arbitrary ref/path interpretation. Refused responses cannot expose an unauthorized card's candidates. |
@@ -620,7 +624,7 @@ are no subsequent relevant edits.
 | PC-35 | Replace create ambiguity's code with generic `conflict`. | V14 fails exact JSON `worktree_base_ambiguous` even though status remains 409. V16 independently pins script handling of the correct coded response. |
 | PC-36 | Change equal-tip grouping key from full SHA to task ID formatted as a string. | V02 `equal_tip_completion`/`equal_tip_id_tie`: identical content is no longer one source snapshot; required no-conflict/deterministic source assertions fail. |
 | PC-37 | Reverse the final task-ID ordering used only to label equal tips with equal completion times. | V02 `equal_tip_id_tie`: exact expected task GUID changes in both row insertion orders. |
-| PC-38 | Disable explicit Target/Fresh selection so it falls through to Auto. | V10 `fresh_target`: eligible A is inherited instead of the independent topic HEAD/explicit release fallback, or source provenance ceases being null. |
+| PC-38 | Disable explicit Target/Fresh selection so it falls through to Auto. | V10 `fresh_target`: eligible A is inherited instead of the independent configured master/explicit release fallback, or source provenance ceases being null. |
 
 For PC-25, keep every other gate satisfied and retain the valid caller control. A red status
 alone without proof of the forbidden source access does not validate the custody assertion.
