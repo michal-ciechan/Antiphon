@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -57,12 +58,90 @@ public sealed class TimeoutTests
     }
 
     [Test]
-    [Timeout(180_000)]
-    public async Task windows_row_timeout_kills_the_breakaway_grandchild(CancellationToken cancellationToken)
+    [Timeout(60_000)]
+    public async Task windows_quick_row_finishes_beside_a_slow_row(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
         {
-            Skip.Test("Windows Job Object kill covers a grandchild whose parent has exited.");
+            Skip.Test("Concurrent Windows row processes must not inherit each other's stdout pipes.");
+            return;
+        }
+
+        var driver = new ProcessDriver();
+        var directory = CheckpointFixtures.TempDir();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var slow = Task.Run(() => driver.RunAsync(new DriverRequest("ping.exe", ["-n", "20", "127.0.0.1"], directory), stop.Token), CancellationToken.None);
+        var quick = Enumerable.Range(0, 8).Select(_ => Task.Run(
+            () => driver.RunAsync(new DriverRequest("cmd.exe", ["/d", "/c", "echo", "quick-ok"], directory), stop.Token),
+            CancellationToken.None)).ToArray();
+        try
+        {
+            var finished = await Task.WhenAll(quick).WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+            foreach (var result in finished)
+            {
+                result.ExitCode.ShouldBe(0, result.Stderr);
+                result.Stdout.ShouldContain("quick-ok");
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await Task.WhenAll(quick.Cast<Task>().Append(slow)).WaitAsync(TimeSpan.FromSeconds(15), CancellationToken.None); }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
+        }
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task windows_row_arguments_round_trip_intact(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("Windows row arguments are delivered by ProcessStartInfo.ArgumentList.");
+            return;
+        }
+
+        var directory = CheckpointFixtures.TempDir();
+        var exe = CompileEchoExe(directory);
+        string[] expected = [@"C:\a b\", "second", "q\"x", "a\\\"b c", ""];
+        var result = await new ProcessDriver().RunAsync(
+            new DriverRequest(exe, expected, directory), cancellationToken);
+        result.ExitCode.ShouldBe(0, result.Stderr);
+        var lines = result.Stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        lines[0].ShouldBe("count=5");
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(expected[i]));
+            lines[i + 1].ShouldBe(i + "=" + encoded, expected[i]);
+        }
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    public async Task windows_chatty_row_drains_interleaved_stdout_and_stderr(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("Windows row pipes must drain a large interleaved stdout and stderr.");
+            return;
+        }
+
+        var directory = CheckpointFixtures.TempDir();
+        var exe = CompileEchoExe(directory);
+        var result = await new ProcessDriver().RunAsync(
+            new DriverRequest(exe, ["--chatter"], directory), cancellationToken);
+        result.ExitCode.ShouldBe(0, result.Stderr);
+        result.Stdout.Length.ShouldBeGreaterThan(9_000_000);
+        result.Stderr.Length.ShouldBeGreaterThan(2_000_000);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task windows_row_timeout_kills_the_start_b_grandchild(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("The descendant sweep kills a start /b grandchild on Windows.");
             return;
         }
 
@@ -123,6 +202,69 @@ public sealed class TimeoutTests
             .Where(pid => pid > 0 && pid != Environment.ProcessId)
             .Distinct()
             .ToArray();
+    }
+
+    private static string CompileEchoExe(string directory)
+    {
+        var source = Path.Combine(directory, "echo-args.cs");
+        var exe = Path.Combine(directory, "echo-args.exe");
+        File.WriteAllText(source, """
+            using System;
+            public class EchoArgs {
+              public static void Main(string[] args) {
+                if (args.Length == 1 && args[0] == "--chatter") {
+                  byte[] line = new byte[1024];
+                  for (int i = 0; i < 1023; i++) line[i] = (byte)'x';
+                  line[1023] = (byte)'\n';
+                  byte[] err = new byte[1024];
+                  for (int i = 0; i < 1023; i++) err[i] = (byte)'e';
+                  err[1023] = (byte)'\n';
+                  var stdout = Console.OpenStandardOutput();
+                  var stderr = Console.OpenStandardError();
+                  int outLeft = 10240;
+                  int errLeft = 2560;
+                  while (outLeft > 0 || errLeft > 0) {
+                    if (outLeft > 0) { stdout.Write(line, 0, line.Length); outLeft--; }
+                    if (errLeft > 0) { stderr.Write(err, 0, err.Length); errLeft--; }
+                  }
+                  stdout.Flush();
+                  stderr.Flush();
+                  return;
+                }
+                Console.WriteLine("count=" + args.Length);
+                for (int i = 0; i < args.Length; i++) {
+                  byte[] bytes = System.Text.Encoding.Unicode.GetBytes(args[i]);
+                  Console.WriteLine(i.ToString() + "=" + Convert.ToBase64String(bytes));
+                }
+              }
+            }
+            """);
+        var start = new ProcessStartInfo("powershell.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = directory,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add("Add-Type -TypeDefinition (Get-Content -Raw -LiteralPath '.\\echo-args.cs') -OutputAssembly '.\\echo-args.exe' -OutputType ConsoleApplication");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("powershell did not start");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(60_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            throw new TimeoutException("echo helper compile timed out");
+        }
+
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        stdoutTask.GetAwaiter().GetResult();
+        process.ExitCode.ShouldBe(0, stderr);
+        File.Exists(exe).ShouldBeTrue(stderr);
+        return exe;
     }
 
     [Test]
