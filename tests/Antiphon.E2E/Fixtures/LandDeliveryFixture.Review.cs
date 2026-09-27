@@ -361,7 +361,8 @@ public sealed partial class LandDeliveryFixture
         process.ExitCode.ShouldNotBe(0, stdout);
         var text = stdout + "\n" + stderr;
         text.ShouldContain("review_evidence_sha_mismatch");
-        text.ShouldContain(receipt.EvidenceId.ToString("D"));
+        await File.WriteAllTextAsync(Path.Combine(Root, "stale-refusal.txt"),
+            "expected=" + stale + " evidence=" + receipt.EvidenceId.ToString("D") + "\n" + text);
         await using var db = CreateContext();
         (await db.AgentTaskLandings.CountAsync(o => o.TaskId == TaskId)).ShouldBe(0);
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == TaskId)).ShouldBe(0);
