@@ -18,6 +18,7 @@ namespace Antiphon.Server.Api.Endpoints;
 public sealed record RunnerDrainRequest(string? Reason, string? RedirectTo = null, bool RetireWhenIdle = false);
 
 public sealed record RunnerDrainClearRequest(string? Reason);
+public sealed record RunnerRetireOperatorRequest(string? Reason, string? ConfirmRunnerId);
 
 public static class SessionRunnerEndpoints
 {
@@ -92,6 +93,26 @@ public static class SessionRunnerEndpoints
             }
 
             await drains.ClearAsync(runnerId, body.Reason, updatedByTaskId, ct);
+            return Results.Ok();
+        }).WithTags("SessionRunners");
+
+        app.MapPost("/api/session-runners/{runnerId}/retire", async (
+            HttpContext http,
+            string runnerId,
+            RunnerRetireOperatorRequest body,
+            PhoneHomeRunnerDirectory directory,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            TimeProvider clock,
+            CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Retiring a runner requires the operator token.");
+            var reason = body.Reason?.Trim() ?? "";
+            if (body.ConfirmRunnerId != runnerId || reason.Length is < 1 or > RunnerStateService.MaxReasonLength)
+                throw new BadRequestException("Confirm the runner id and provide a reason of 1 to 200 characters.");
+            var db = http.RequestServices.GetRequiredService<AppDbContext>();
+            var logger = http.RequestServices.GetRequiredService<ILogger<RunnerRetireService>>();
+            await new RunnerRetireService(db, directory, settings.Value, clock, logger)
+                .ForceAsync(runnerId, reason, ct);
             return Results.Ok();
         }).WithTags("SessionRunners");
 

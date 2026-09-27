@@ -622,7 +622,6 @@ public enum AgentIncidentKind
     /// names the runner, the session and the required reason.
     /// </summary>
     RunnerSlotForceReleased = 74,
-    RunnerForceRetired = 75,
 
     /// <summary>
     /// CARD-0653: a force-release was saved before the runner call. <c>FailureReason</c> is
@@ -638,4 +637,7 @@ public enum AgentIncidentKind
     /// process lived on. Error; one per (agent, session).
     /// </summary>
     DelegateReleaseUnresolved = 76,
+
+    /// <summary>CARD-0727: an operator forced a draining runner to retire. Warning.</summary>
+    RunnerForceRetired = 77,
 }

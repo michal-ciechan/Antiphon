@@ -35,6 +35,16 @@ internal static class HangfireConfiguration
         manager.Trigger(RunnerSlotReconcileJob.RecurringJobId);
     }
 
+    public static void AddOrUpdateRunnerRetireJob(
+        IRecurringJobManager manager, PhoneHomeRunnerSettings settings)
+    {
+        manager.AddOrUpdate<RunnerRetireJob>(
+            RunnerRetireJob.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            settings.RunnerRetireCron,
+            new RecurringJobOptions());
+    }
+
     public static void AddOrUpdateWorktreeResidueJob(
         IRecurringJobManager manager, WorktreeResidueSettings settings)
     {

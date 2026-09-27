@@ -290,6 +290,12 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("Operator:TokenPath (alias PhoneHomeRunner:OperatorTokenPath) must be an absolute path.");
         if (string.IsNullOrWhiteSpace(options.SlotReconcileCron))
             failures.Add("PhoneHomeRunner:SlotReconcileCron must be set when enabled.");
+        if (string.IsNullOrWhiteSpace(options.RunnerRetireCron))
+            failures.Add("PhoneHomeRunner:RunnerRetireCron must be set when enabled.");
+        if (options.RetireMinDrainSeconds < 1)
+            failures.Add("PhoneHomeRunner:RetireMinDrainSeconds must be positive.");
+        if (options.RetireIdleSeconds < 1)
+            failures.Add("PhoneHomeRunner:RetireIdleSeconds must be positive.");
         try { options.Limits.Validate("PhoneHomeRunner:Limits"); }
         catch (InvalidOperationException ex) { failures.Add(ex.Message); }
     }

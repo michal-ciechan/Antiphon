@@ -528,6 +528,7 @@ try
     builder.Services.AddScoped<WorktreeResidueSweepService>();
     builder.Services.AddScoped<WorktreeResidueJob>();
     builder.Services.AddScoped<RunnerSlotReconcileJob>();
+    builder.Services.AddScoped<RunnerRetireJob>();
     builder.Services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
     builder.Services.AddScoped<IRetirementCommandJournal, RetirementCommandJournal>();
     builder.Services.AddScoped<WorkspaceUseAdmission>();
@@ -974,7 +975,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
             // CARD-0653: finish pending slot-release intents at startup and on a schedule.
             var phoneHome = scope.ServiceProvider.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value;
             if (phoneHome.Enabled)
+            {
                 HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob(recurringJobManager, phoneHome);
+                HangfireConfiguration.AddOrUpdateRunnerRetireJob(recurringJobManager, phoneHome);
+            }
         }
 
         // CARD-0653: create the operator token now so scripts/runner-slots.ps1 can read it before
