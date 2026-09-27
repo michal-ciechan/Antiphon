@@ -15,6 +15,7 @@ namespace Antiphon.E2E.Fixtures;
 public sealed partial class LandDeliveryFixture
 {
     public Guid ReviewTaskId { get; private set; }
+    public Guid HeldReviewQueueId { get; private set; }
     public string ReviewReportText { get; private set; } = "";
 
     public sealed record ReviewReceipt(
@@ -225,8 +226,13 @@ public sealed partial class LandDeliveryFixture
         var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceLandNotificationId == note.Id);
         if (cut == "queue-inserted-before-outbox-link")
         {
-            note.QueueMessageId.ShouldBeNull();
+            // The producer is held after the keyed insert commits and before it saves the link.
+            // A concurrent reconcile may already have repaired QueueMessageId to that same row.
+            if (note.QueueMessageId is Guid linked)
+                linked.ShouldBe(queued.Id);
             queued.DeliveryAttempts.ShouldBe(0);
+            note.ConfirmedAt.ShouldBeNull();
+            HeldReviewQueueId = queued.Id;
             return;
         }
 
