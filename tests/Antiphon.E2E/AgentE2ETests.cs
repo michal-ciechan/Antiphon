@@ -58,8 +58,10 @@ public class AgentE2ETests
             await Expect(createDialog.GetByLabel("Runner profile")).ToHaveValueAsync("e2e-raw (Raw) · default");
             var nameInput = createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Name" });
             var directoryInput = createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Working directory" });
-            await nameInput.FillAsync(agentName);
-            await directoryInput.FillAsync(workingDirectory);
+            await nameInput.ClickAsync();
+            await nameInput.PressSequentiallyAsync(agentName);
+            await directoryInput.ClickAsync();
+            await directoryInput.PressSequentiallyAsync(workingDirectory);
             await createDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Details" }).FillAsync("Created through the agents E2E flow.");
             await Expect(nameInput).ToHaveValueAsync(agentName);
             await Expect(directoryInput).ToHaveValueAsync(workingDirectory);
