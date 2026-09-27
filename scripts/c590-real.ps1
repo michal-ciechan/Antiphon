@@ -273,7 +273,7 @@ function Invoke-C590LiveCase {
     $tempRetiredAt = ''
     if ($Case -eq 'retire-temp-runner') {
         if ($names -contains 'tempRetiredAt' -and $Manifest.tempRetiredAt) { $tempRetiredAt = [string]$Manifest.tempRetiredAt }
-        if ($tempRetiredAt -and $tempRetiredAt -notmatch '^[0-9TZ:.-]{10,40}$') { throw 'tempRetiredAt rejected' }
+        if ($tempRetiredAt -and $tempRetiredAt -notmatch '^[0-9TZ:+.-]{10,40}$') { throw 'tempRetiredAt rejected' }
     }
     try {
         if ($Case -eq 'deploy-parent') {

@@ -1500,6 +1500,22 @@ EOF
         compose_temp logs --no-color --tail 200 >> "$CASE_DIR/command.log" 2>&1 || true
         write_result false TempRunnerUnhealthy 2
     fi
+    docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$container" > "$CASE_DIR/restart-policy.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/restart-policy.txt")" != no ]; then
+        write_result false TempRunnerRestartPolicy 2
+    fi
+    docker inspect -f '{{.HostConfig.Privileged}}' "$container" > "$CASE_DIR/privileged.txt"
+    if [ "$(tr -d '[:space:]' < "$CASE_DIR/privileged.txt")" != true ]; then
+        write_result false NotPrivileged 2
+    fi
+    docker inspect -f '{{range .Mounts}}{{println .Source .Destination}}{{end}}' "$container" > "$CASE_DIR/mounts.txt"
+    if grep -q 'docker\.sock' "$CASE_DIR/mounts.txt"; then
+        write_result false HostSocketMounted 2
+    fi
+    compose_temp ps --services > "$CASE_DIR/services.txt" 2>&1 || true
+    if [ ! -s "$CASE_DIR/services.txt" ] || grep -qE '^(antiphon|postgres)$' "$CASE_DIR/services.txt"; then
+        write_result false UnexpectedStandingService 2
+    fi
     docker exec "$container" curl -fsS http://127.0.0.1:8080/health > "$CASE_DIR/health.txt" 2>&1 \
         || write_result false TempRunnerUnhealthy 2
     docker exec "$container" printenv PhoneHome__SecretPath > "$CASE_DIR/phone-home-secret-path.txt" 2>/dev/null || true

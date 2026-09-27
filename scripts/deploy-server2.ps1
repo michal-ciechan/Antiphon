@@ -23,7 +23,7 @@ if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
 }
 # Resolve before a case runs. Never print this value, headers, or an exception request object.
 try { $headers['X-Antiphon-Operator-Token'] = Get-RunnerOperatorToken }
-catch { Write-Error 'OperatorTokenMissing: the owner-only token file is absent or empty.'; exit 2 }
+catch { [Console]::Error.WriteLine('OperatorTokenMissing: the owner-only token file is absent or empty.'); exit 2 }
 
 $Sha = $Sha.ToLowerInvariant()
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -34,6 +34,14 @@ New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
 function Invoke-RunnerRequest {
     param([string]$Method, [string]$RunnerId, [string]$Suffix = '', $Body = $null)
     $path = '/api/session-runners/' + [uri]::EscapeDataString($RunnerId) + $Suffix
+    if ($env:C727_TEST_HTTP_STUB) {
+        $bodyJson = if ($null -eq $Body) { '' } else { $Body | ConvertTo-Json -Compress }
+        $raw = & pwsh -NoProfile -File $env:C727_TEST_HTTP_STUB -Method $Method -RunnerId $RunnerId -Suffix $Suffix -BodyJson $bodyJson
+        if ($LASTEXITCODE -ne 0) { throw "RunnerApiUnavailable $RunnerId$Suffix" }
+        if ([string]$raw -eq '__404__') { return $null }
+        if ([string]::IsNullOrWhiteSpace([string]$raw)) { return $null }
+        return ([string]$raw | ConvertFrom-Json)
+    }
     $args = @{ Method = $Method; Uri = ($api + $path); Headers = $headers; SkipHttpErrorCheck = $true }
     if ($null -ne $Body) {
         $args['ContentType'] = 'application/json'
@@ -57,11 +65,14 @@ function Get-RunnerStatus {
 function Wait-RunnerStatus {
     param([string]$RunnerId, [scriptblock]$Ready, [int]$Minutes, [string]$Diagnosis)
     $deadline = [datetime]::UtcNow.AddMinutes($Minutes)
+    $pollMs = 30000
+    if ($env:C727_TEST_WAIT_MS) { $deadline = [datetime]::UtcNow.AddMilliseconds([int]$env:C727_TEST_WAIT_MS) }
+    if ($env:C727_TEST_POLL_MS) { $pollMs = [int]$env:C727_TEST_POLL_MS }
     do {
         $status = Get-RunnerStatus -RunnerId $RunnerId
         if ($null -ne $status -and (& $Ready $status)) { return $status }
         if ([datetime]::UtcNow -ge $deadline) { throw $Diagnosis }
-        Start-Sleep -Seconds 30
+        Start-Sleep -Milliseconds $pollMs
     } while ($true)
 }
 
@@ -76,7 +87,8 @@ function Invoke-HostCase {
     if ($TempRetiredAt) { $manifest.tempRetiredAt = $TempRetiredAt }
     $manifestPath = Join-Path $evidenceRoot ("$Case.manifest.json")
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
-    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'verify-docker-stack.ps1') -Case $Case -Manifest $manifestPath
+    $verifier = if ($env:C727_TEST_VERIFY_STUB) { $env:C727_TEST_VERIFY_STUB } else { Join-Path $PSScriptRoot 'verify-docker-stack.ps1' }
+    & pwsh -NoProfile -File $verifier -Case $Case -Manifest $manifestPath
     if ($LASTEXITCODE -ne 0) { throw "HostCaseFailed $Case exit=$LASTEXITCODE" }
 }
 
@@ -91,7 +103,7 @@ function Invoke-Phase {
                 }
                 Invoke-HostCase -Case 'deploy-temp-runner'
             }
-            [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes 5 -Diagnosis 'TempRunnerNotAcceptingNewWork' -Ready {
+            [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes 5 -Diagnosis 'TempRunnerNotEligible' -Ready {
                 param($s) $s.acceptingNewWork -eq $true -and [string]$s.buildVersion -eq $Sha
             })
         }
@@ -169,6 +181,6 @@ try {
     exit 0
 }
 catch {
-    Write-Error ("Rolling deploy stopped: " + $_.Exception.Message)
+    [Console]::Error.WriteLine("Rolling deploy stopped: " + $_.Exception.Message)
     exit 2
 }
