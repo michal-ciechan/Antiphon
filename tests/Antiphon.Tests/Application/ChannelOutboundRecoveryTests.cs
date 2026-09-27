@@ -25,10 +25,12 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundRecoveryTests
 {
     [Test]
+    [Arguments("before-conversion-observation", ChannelOutboundDeliveryState.Published, 1)]
+    [Arguments("ready-committed", ChannelOutboundDeliveryState.Published, 1)]
     [Arguments("publishing-committed", ChannelOutboundDeliveryState.PublishUncertain, 0)]
     [Arguments("producer-accepted", ChannelOutboundDeliveryState.PublishUncertain, 1)]
     [Arguments("published-committed", ChannelOutboundDeliveryState.Published, 1)]
-    public async Task Process_death_after_publication_commit_recovers_from_fresh_process(
+    public async Task Process_death_recovers_settled_worker_and_publication_boundaries(
         string barrier, ChannelOutboundDeliveryState expectedState, int expectedAcceptances)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-crash-" + Guid.NewGuid().ToString("N"));
@@ -47,6 +49,21 @@ public sealed class ChannelOutboundRecoveryTests
             Channel = "fake", ConversationId = channelId.ToString("N"),
             ReplyHandle = "thread-1", Text = "crash-frozen-source",
         }, CancellationToken.None);
+        var hasSettledWorker = barrier is "before-conversion-observation" or "ready-committed";
+        var workerTaskId = Guid.NewGuid();
+        if (hasSettledWorker)
+        {
+            var pdf = "%PDF-1.4 crash-boundary"u8.ToArray();
+            var output = frozen.OutputDirectory;
+            await File.WriteAllBytesAsync(Path.Combine(output, "combined.pdf"), pdf);
+            await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(new
+            {
+                version = 1, deliveryId, disposition = "converted",
+                files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                    mime = "application/pdf", length = pdf.Length,
+                    sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pdf)).ToLowerInvariant() } },
+            }));
+        }
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
         {
             db.Projects.Add(new Project { Id = projectId, Name = "crash-" + projectId.ToString("N"),
@@ -58,16 +75,32 @@ public sealed class ChannelOutboundRecoveryTests
             db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
                 ExternalId = channelId.ToString("N"), AgentId = agentId,
                 CreatedAt = now, UpdatedAt = now });
-            db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            var delivery = new ChannelOutboundDelivery
             {
                 Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
                 ProjectId = projectId, InboundAgentId = agentId, SourceSessionId = Guid.NewGuid(),
                 SendKind = "main", ProfileName = "", PromptRevision = new string('a', 64),
                 InputPath = frozen.ReplyPath, InputSha256 = frozen.ReplySha256,
-                Trigger = "Passthrough", State = ChannelOutboundDeliveryState.Ready,
-                CreatedAt = now, DeadlineAt = now.AddMinutes(2),
-            });
+                Trigger = "Passthrough", State = hasSettledWorker
+                    ? ChannelOutboundDeliveryState.Converting : ChannelOutboundDeliveryState.Ready,
+                ConversionTaskId = null,
+                CreatedAt = now, DeadlineAt = now.AddMinutes(hasSettledWorker ? 10 : 2),
+            };
+            db.ChannelOutboundDeliveries.Add(delivery);
             await db.SaveChangesAsync();
+            if (hasSettledWorker)
+            {
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = workerTaskId, RootTaskId = workerTaskId, ProjectId = projectId,
+                    AgentId = agentId, Title = "Crash probe worker", Goal = "Write output manifest",
+                    WorkingDirectory = root, RepoPath = root, Status = AgentTaskStatus.Succeeded,
+                    OutboundDeliveryId = deliveryId, CreatedAt = now, CompletedAt = now,
+                });
+                await db.SaveChangesAsync();
+                delivery.ConversionTaskId = workerTaskId;
+                await db.SaveChangesAsync();
+            }
         }
 
         var configPath = Path.Combine(root, "probe.json");
@@ -129,6 +162,9 @@ public sealed class ChannelOutboundRecoveryTests
                     Antiphon.Messaging.MessagingJson.Options)!;
                 reply.ReplyHandle.ShouldBe("thread-1");
                 reply.Text.ShouldBe("crash-frozen-source");
+                reply.Attachments.Count.ShouldBe(hasSettledWorker ? 1 : 0);
+                if (hasSettledWorker)
+                    reply.Attachments[0].Content.ShouldBe("%PDF-1.4 crash-boundary"u8.ToArray());
             }
             (await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
                 .LastReplyAt.HasValue.ShouldBe(expectedState == ChannelOutboundDeliveryState.Published);

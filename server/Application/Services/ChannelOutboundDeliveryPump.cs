@@ -105,7 +105,11 @@ public sealed class ChannelOutboundDeliveryPump
                 return;
             }
             if (delivery.State == ChannelOutboundDeliveryState.Converting)
+            {
+                if (ProbeBarrierAsync is { } observationBarrier)
+                    await observationBarrier("before-conversion-observation", delivery.Id, ct);
                 await ObserveConversionAsync(delivery, ct);
+            }
             if (delivery.State == ChannelOutboundDeliveryState.Ready)
                 await PublishReadyAsync(delivery, ct);
         }
@@ -224,6 +228,8 @@ public sealed class ChannelOutboundDeliveryPump
             delivery.State = ChannelOutboundDeliveryState.Ready;
             delivery.Version++;
             await _db.SaveChangesAsync(ct);
+            if (ProbeBarrierAsync is { } readyBarrier)
+                await readyBarrier("ready-committed", delivery.Id, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
