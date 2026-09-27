@@ -335,8 +335,8 @@ public sealed class RepositoryChildRecoveryTests
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
         root.ShouldNotBeNull();
-        var arguments = new[] { "-NoProfile", "-File",
-            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options };
+        string[] arguments = ["-NoProfile", "-File",
+            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options];
         var result = await RunProcessAsync("pwsh", arguments, environment);
         if (OperatingSystem.IsWindows())
         {
