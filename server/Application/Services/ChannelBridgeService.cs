@@ -264,7 +264,7 @@ public sealed class ChannelBridgeService : BackgroundService
                 {
                     // A failed wake or claim miss must revisit this agent's oldest
                     // pending member before selecting a newer acceptance sequence.
-                    if (acquired && !advanced)
+                    if (!advanced)
                     {
                         await _drainGate.WaitAsync(CancellationToken.None);
                         try { _lastMemberScanSequence[batch.AgentId] = 0; }

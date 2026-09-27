@@ -475,6 +475,7 @@ public sealed class ChannelInboundRecoveryTests
             var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat)
                 .Select(c => c.Id).SingleAsync();
             foreach (var (id, index) in native.Select((id, index) => (id, index)))
+            {
                 seed.ChannelInbounds.Add(new ChannelInbound
                 {
                     Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
@@ -482,8 +483,12 @@ public sealed class ChannelInboundRecoveryTests
                     EnvelopeJson = JsonSerializer.Serialize(Message(chat, id, $"ordered line {index:D2} DISTINCT TAIL"),
                         Antiphon.Messaging.MessagingJson.Options), AcceptedAt = h.Now,
                 });
-            await seed.SaveChangesAsync();
+                await seed.SaveChangesAsync();
+            }
         }
+        await using (var accepted = Db(schema.ConnectionString))
+            (await accepted.ChannelInbounds.AsNoTracking().Where(i => native.Contains(i.NativeMessageId))
+                .OrderBy(i => i.AcceptanceSequence).Select(i => i.NativeMessageId).ToArrayAsync()).ShouldBe(native);
         refusal.Arm(h.AgentId);
         var bridge = Bridge(h);
         await bridge.DrainPendingAsync(Ct);
@@ -500,14 +505,10 @@ public sealed class ChannelInboundRecoveryTests
         }
         await bridge.DrainPendingAsync(Ct);
         await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
-        await WaitForAsync(async () =>
-        {
-            await using var db = Db(schema.ConnectionString);
-            return await db.ChannelInbounds.CountAsync(i => native.Take(64).Contains(i.NativeMessageId)
-                && i.QueueMessageId != null) == 64;
-        });
         await using (var firstPage = Db(schema.ConnectionString))
         {
+            (await firstPage.ChannelInbounds.CountAsync(i => native.Take(64).Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(64, "the oldest page must queue on the first retry");
             (await firstPage.ChannelInbounds.CountAsync(i => native.Skip(64).Contains(i.NativeMessageId)
                 && i.QueueMessageId != null)).ShouldBe(0, "later rows must wait behind the failed page");
             var headId = await firstPage.ChannelInbounds.Where(i => i.NativeMessageId == native[0])
@@ -519,12 +520,9 @@ public sealed class ChannelInboundRecoveryTests
         }
         await bridge.DrainPendingAsync(Ct);
         await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
-        await WaitForAsync(async () =>
-        {
-            await using var db = Db(schema.ConnectionString);
-            return await db.ChannelInbounds.CountAsync(i => native.Contains(i.NativeMessageId)
-                && i.QueueMessageId != null) == 70;
-        });
+        await using (var complete = Db(schema.ConnectionString))
+            (await complete.ChannelInbounds.CountAsync(i => native.Contains(i.NativeMessageId)
+                && i.QueueMessageId != null)).ShouldBe(70);
         await h.Queue.OnTurnEndAsync(h.SessionId, Ct);
         await using var delivered = Db(schema.ConnectionString);
         var rows = await delivered.ChannelInbounds.AsNoTracking()
