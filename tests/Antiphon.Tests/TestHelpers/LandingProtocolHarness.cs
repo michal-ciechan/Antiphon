@@ -298,20 +298,40 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         public Func<DbContext, Task>? OnTransactionStarted { get; set; }
         private bool _armed;
         internal bool AwaitingCommit { get; set; }
+
+        /// <summary>Lets a later arrangement arm again. Clearing the matchers alone leaves <see cref="Triggered"/> set.</summary>
+        public void Rearm()
+        {
+            Triggered = false;
+            _armed = false;
+            AwaitingCommit = false;
+        }
+
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
+            var context = data.Context!;
+            // A named checkpoint owns the row when a transaction cut is also set. TerminalCut alone
+            // still matches a terminal event, which is what the settlement-fault tests arm.
             _armed = !Triggered && (RequestResolution is { } resolution
-                ? data.Context!.ChangeTracker.Entries<AgentTaskLandRequest>()
+                ? context.ChangeTracker.Entries<AgentTaskLandRequest>()
                     .Any(e => e.State != EntityState.Unchanged && e.Entity.SourceResolutionState == resolution)
+                : Phase is not null || Matches is not null
+                ? context.ChangeTracker.Entries<AgentTaskLanding>()
+                    .Any(e => e.State != EntityState.Unchanged
+                        && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true))
                 : TerminalCut is not null
-                ? data.Context!.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.State == EntityState.Added && (EventKind is null ? e.Entity.IsLandTerminal : e.Entity.Type == EventKind))
-                : data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
-                .Any(e => e.State != EntityState.Unchanged
-                    && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true)));
-            if (_armed && (TerminalCut == "before-save" || TerminalCut is null && !AfterCommit && !AfterSave && RequestResolution is null
-                || RequestResolution is not null && !AfterCommit && !AfterSave)) { Triggered = true; throw new InjectedSaveFailure(); }
+                ? context.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.State == EntityState.Added && (EventKind is null ? e.Entity.IsLandTerminal : e.Entity.Type == EventKind))
+                : false);
+            if (_armed && ThrowsBeforeSave()) { Triggered = true; throw new InjectedSaveFailure(); }
             return ValueTask.FromResult(result);
+        }
+
+        private bool ThrowsBeforeSave()
+        {
+            if (TerminalCut == "before-save") return true;
+            if (TerminalCut is not null) return false;
+            return !AfterCommit && !AfterSave;
         }
         public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
         {

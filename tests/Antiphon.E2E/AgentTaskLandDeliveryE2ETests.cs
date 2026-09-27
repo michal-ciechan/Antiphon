@@ -443,7 +443,11 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C488_ApprovalQueueInsertCrashReusesRow() => await C467_V26_HardCrashAfterQueueInsertReusesRow();
 
     [Test]
-    public async Task C488_ApprovalReceiptSaveFailureNeverRetypes() => await C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt();
+    public async Task C488_ApprovalReceiptSaveFailureNeverRetypes()
+    {
+        await C467_V30_ReceiptSaveFailureNeverRetypes("receipt");
+        await C467_V30_ReceiptSaveFailureNeverRetypes("verdict");
+    }
 
     [Test]
     public async Task C488_ApprovalPollingCannotConfirm() => await C467_V32_StatusPollingCannotDischargeUnreceivedOutcome("busy");
