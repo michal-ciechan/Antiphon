@@ -350,6 +350,7 @@ public sealed class RepositoryChildRecoveryTests
             [IO.File]::WriteAllText($env:ANTIPHON_C452_RECORD, ($record | ConvertTo-Json -Compress))
             [IO.File]::Copy($env:ANTIPHON_C452_RECORD, $env:ANTIPHON_C452_SNAPSHOT)
             & $env:ANTIPHON_C452_SCRIPT -Repository $env:ANTIPHON_C452_REPOSITORY -Execute -ConfirmDescendantsExited
+            exit $LASTEXITCODE
             """;
         var wrapper = Path.Combine(Path.GetDirectoryName(snapshot)!, "alive-recover.ps1");
         await File.WriteAllTextAsync(wrapper, command);
