@@ -5,9 +5,10 @@ High launch, hold, profile, and client surfaces already name `gpt-6-sol`. The in
 Claude Code 2.1.280 and codex-cli 0.156.1. Live one-turn probes on 2026-09-27 confirmed
 `--model opus` used `claude-opus-5-5` and `codex exec --ephemeral -m gpt-6-sol` succeeded.
 
-There is no `gpt-6-terra` in the investigated catalog. Keep Medium at `gpt-5.6-terra` because
-replacing Terra with Luna 6 changes the family and the intended Medium rung. This verification
-round updates stale explanatory text only; no test case is added or changed.
+There is no `gpt-6-terra` in the investigated catalog. This round keeps Medium at
+`gpt-5.6-terra`; replacing Terra with Luna 6 changes the model family, and that choice still
+needs an explicit operator decision. This verification round updates stale explanatory text
+only; no test case is added or changed.
 
 ## Verification design
 
@@ -21,7 +22,7 @@ The positive controls stay pending for method-scoped SourceLanding Mutation.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c611-final/` | unit | `/*/*/*/*[Category=Unit]` | V-1 | >= 1500 executed, 0 failed | 1500 | 6 |
 | CP-2 | S1 | `CP-1` | application | `/*/Antiphon.Tests.Application/(CodexDelegateDispatchTests*)\|(ModelAvailabilityTests*)\|(NamedCodexAgentLaunchTests*)\|(PinnedProfileLaunchSpecTests*)\|(ComplexityRoutingWalkTests*)\|(DelegationRetryEventKindTests*)/*` | V-2 | CodexDelegateDispatchTests,ModelAvailabilityTests,NamedCodexAgentLaunchTests,PinnedProfileLaunchSpecTests,ComplexityRoutingWalkTests,DelegationRetryEventKindTests; 0 failed | 6 | 20 |
-| CP-3 | S1 | `CP-1` | agent-tui | `/*/Antiphon.Tests.AgentTui/(AgentTuiLaunchResolverTests*)\|(AgentTuiProfileServiceTests*)/*` | V-2 | AgentTuiLaunchResolverTests,AgentTuiProfileServiceTests; 0 failed | 2 | 20 |
+| CP-3 | S1 | `CP-1` | agent-tui | `/*/*/(AgentTuiLaunchResolverTests*)\|(AgentTuiProfileServiceTests*)/*` | V-2 | AgentTuiLaunchResolverTests,AgentTuiProfileServiceTests; 0 failed | 2 | 20 |
 
 ### Cost
 
@@ -37,10 +38,13 @@ The build passed with `UseAppHost=false`. CP-1 ran 3,408 Unit tests: 3,407 passe
 34 were skipped. The failure was the brief's standing timing flake,
 `ResilienceBudgetTests.Narrower_parent_deadlines_win` (12.4 s versus a 12 s limit).
 CP-2 ran 57 affected application integration tests: 47 passed and 10 failed. Six failures
-explicitly require Windows `cmd.exe`, absent on this Linux host; three Codex dispatch tests
-reported blocked or missing dispatch evidence, and one pinned-profile test found no matching
-row. Their Linux cause is unresolved; this run does not claim those classes green. CP-3 ran
-14 AgentTui integration tests, all passed. No row was rerun merely to erase a failure.
+explicitly require Windows `cmd.exe`, absent on this Linux host. The other four (three Codex
+dispatch tests and one pinned-profile test) are inherited from already-landed CARD-0772:
+runner-less Codex is refused before claim with `codex_desktop_unqualified`. The reviewer
+bisected them to the merge-base and confirmed they fail on every OS. CARD-0783 tracks updates
+to those four stale tests. This run does not claim those classes green. CP-3 selected 14
+`AgentTuiLaunchResolverTests` results, all passed, but missed `AgentTuiProfileServiceTests`
+because its namespace is `Antiphon.Tests`; the roster check exited 3, so CP-3 was red.
 
 The two live CLI probes passed. The checkpoint failures leave the ordinary verification round
 red, and method-scoped SourceLanding Mutation positive controls remain pending.

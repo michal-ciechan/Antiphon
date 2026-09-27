@@ -244,10 +244,11 @@ Three things worth knowing about that table:
   0.155.1 → 0.156.1; `gpt-6-sol` is catalog priority 2 and `gpt-5.6-sol` dropped to 4).
   `gpt-6-sol`'s catalog includes `high` reasoning; its own default is `medium`, so the launch
   still sets effort from the tier. `gpt-5.6-sol` stays a selectable profile model and is only
-  gone from the ladder new dispatches resolve through. The Medium rung stays `gpt-5.6-terra`:
-  `gpt-6-terra` does not exist, and `gpt-6-luna` would change the model family rather than update
-  Terra. A live `codex exec --ephemeral -m gpt-6-sol` probe succeeded on this Linux host with
-  codex-cli 0.156.1 on 2026-09-27.
+  gone from the ladder new dispatches resolve through. The Medium rung stays `gpt-5.6-terra`
+  for CARD-0611: `gpt-6-terra` does not exist, and `gpt-6-luna` would change the model family
+  rather than update Terra. Whether to replace Terra with `gpt-6-luna` remains open pending an
+  explicit operator decision. A live `codex exec --ephemeral -m gpt-6-sol` probe succeeded on
+  this Linux host with codex-cli 0.156.1 on 2026-09-27.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately
