@@ -144,6 +144,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 await db.SaveChangesAsync(ct);
                 var created = await db.SessionQueuedMessages.AsNoTracking()
                     .SingleAsync(m => m.Id == note.QueueMessageId, ct);
+                if (boundary is not null)
+                    await boundary.ReachedAsync("queue-committed-before-wakeup", note.TaskId, created.Id, ct);
                 if (Actionable(created, MaxAttempts()) && boundary?.DropWakeup("completion", note.Id) != true)
                     flushes.TryEnqueue(session);
             }

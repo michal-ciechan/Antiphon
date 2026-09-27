@@ -746,6 +746,10 @@ public sealed partial class SessionMessageQueueService
             if (stampCompletion && sourceTaskId is Guid completionTaskId)
                 await CompletionNoteStamp.ApplyAsync(db, completionTaskId, contentDigest, now, ct);
 
+            if (sourceLandNotificationId is not null
+                && scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } beforeCommit)
+                await beforeCommit.ReachedAsync("queue-before-commit", sourceTaskId ?? Guid.Empty, sourceLandNotificationId.Value, ct);
+
             if (completionTx is not null)
                 await completionTx.CommitAsync(ct);
 

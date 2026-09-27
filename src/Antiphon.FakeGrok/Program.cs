@@ -61,6 +61,9 @@ internal static class Program
     private static bool _turnInFlight;
     private static string? _inFlightPromptId;
     private static string? _landBusyPromptId;
+    private static string? _reportHoldDir;
+    private static string? _reportHoldSession;
+    private static string? _reportHoldUser;
     private static bool _questionOpen;
     private static string? _questionToolCallId;
     private static string? _questionText;
@@ -366,6 +369,18 @@ internal static class Program
                 Write("Worked for 1.7s\r\n" + IdleTitle);
             }
 
+            var reportHold = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_REPORT_HOLD");
+            if (_reportHoldUser is not null && reportHold is { Length: > 0 } && File.Exists(reportHold + ".release"))
+            {
+                var assistantPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_ASSISTANT_FILE");
+                var assistant = "REPORT-HOLD-MISSING";
+                if (!string.IsNullOrWhiteSpace(assistantPath) && File.Exists(assistantPath))
+                    assistant = File.ReadAllText(assistantPath);
+                AppendAssistantCompletion(_reportHoldDir!, _reportHoldSession!, assistant);
+                _reportHoldUser = null;
+                Write(assistant + "\r\nWorked for 1.7s\r\n" + IdleTitle);
+            }
+
             List<(long AtMs, byte[] Bytes)>? drained = null;
             lock (gate)
             {
@@ -607,6 +622,18 @@ internal static class Program
             return;
         }
 
+        var reportHoldPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_REPORT_HOLD");
+        if (reportHoldPath is { Length: > 0 } && text.Contains("[antiphon-task:", StringComparison.Ordinal))
+        {
+            AppendUserChunkOnly(sessionDir, sessionId, text);
+            _reportHoldDir = sessionDir;
+            _reportHoldSession = sessionId;
+            _reportHoldUser = text;
+            File.WriteAllText(reportHoldPath + ".held", sessionId);
+            write("REPORT-HOLD\r\n");
+            return;
+        }
+
         if ((NoReplyEnabled && _apiTurnCount == NoReplyOnTurn)
             || Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NO_TASK_REPLY") == "1")
         {
@@ -837,6 +864,60 @@ internal static class Program
             }));
             File.AppendAllText(Path.Combine(sessionDir, "chat_history.jsonl"),
                 JsonSerializer.Serialize(new { role = "user", content = user }) + "\n");
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    /// <summary>
+    /// Completes a report-hold turn. The user chunk was written when the prompt arrived;
+    /// this appends only the assistant text and <c>turn_completed</c>.
+    /// </summary>
+    private static void AppendAssistantCompletion(string sessionDir, string sessionId, string assistant)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var promptId = Guid.NewGuid().ToString("D");
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "agent_message_chunk",
+                        content = new { type = "text", text = assistant }
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "turn_completed",
+                        prompt_id = promptId,
+                        stop_reason = "end_turn",
+                        usage = BuildTurnUsage()
+                    },
+                    _meta = Meta()
+                }
+            }));
+            File.AppendAllText(Path.Combine(sessionDir, "chat_history.jsonl"),
+                JsonSerializer.Serialize(new { role = "assistant", content = assistant }) + "\n");
         }
         catch
         {
