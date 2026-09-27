@@ -53,7 +53,7 @@ public sealed class AgentTaskLandRemoteSourceRetentionDTests
         await Card0452LandingCases.AssertRemoteSourceAndPushSafetyAsync(h);
         await h.RestartServicesAsync();
         await h.SweepAsync();
-        if (family == "V35") await RunScopedResidueAsync(h);
+        if (family == "V35") await Card0452LandingCases.RunScopedResidueAsync(h);
         await Card0452LandingCases.AssertRemoteSourceAndPushSafetyAsync(h);
     }
 
@@ -248,14 +248,4 @@ public sealed class AgentTaskLandRemoteSourceRetentionDTests
         (await File.ReadAllTextAsync(sentinel)).ShouldBe("protected settings\n");
     }
 
-    private static async Task RunScopedResidueAsync(LandingSafetyHarness h)
-    {
-        await using var db = h.CreateContext();
-        var sweep = new WorktreeResidueSweepService(db, h.Services.GetRequiredService<IWorktreeManager>(),
-            Options.Create(new WorktreeResidueSettings { Execute = true, MinSettledMinutes = 0 }),
-            Options.Create(new GitSettings { WorktreeBasePath = Path.Combine(h.Fixture.Root, "trees") }),
-            h.Clock, NullLogger<WorktreeResidueSweepService>.Instance);
-        await sweep.PreviewAsync(null, null, CancellationToken.None);
-        await sweep.RunAsync(CancellationToken.None);
-    }
 }

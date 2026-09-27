@@ -49,8 +49,8 @@ public sealed class AgentTaskLandRemoteSourceRetentionCTests
         await Card0452LandingCases.AssertRemoteSourceAndPushSafetyAsync(h);
         await h.RestartServicesAsync();
         await h.SweepAsync();
-        if (family is "V18" or "V19" or "V20" or "V24" or "V27")
-            await RunScopedResidueAsync(h);
+        if (family is "V18" or "V19" or "V20" or "V25" or "V27")
+            await Card0452LandingCases.RunScopedResidueAsync(h);
         await Card0452LandingCases.AssertRemoteSourceAndPushSafetyAsync(h);
     }
 
@@ -184,7 +184,7 @@ public sealed class AgentTaskLandRemoteSourceRetentionCTests
             });
             await db.SaveChangesAsync();
         }
-        await RunScopedResidueAsync(h);
+        await Card0452LandingCases.RunScopedResidueAsync(h);
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         (await File.ReadAllTextAsync(opaque)).ShouldBe("opaque legacy bytes\n");
         (await h.OperationAsync()).ShouldBeNull();
@@ -232,14 +232,4 @@ public sealed class AgentTaskLandRemoteSourceRetentionCTests
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
     }
 
-    private static async Task RunScopedResidueAsync(LandingSafetyHarness h)
-    {
-        await using var db = h.CreateContext();
-        var settings = new WorktreeResidueSettings { Execute = true, MinSettledMinutes = 0 };
-        var sweep = new WorktreeResidueSweepService(db, h.Services.GetRequiredService<IWorktreeManager>(),
-            Options.Create(settings), Options.Create(new GitSettings { WorktreeBasePath = Path.Combine(h.Fixture.Root, "trees") }),
-            h.Clock, NullLogger<WorktreeResidueSweepService>.Instance);
-        await sweep.PreviewAsync(null, null, CancellationToken.None);
-        await sweep.RunAsync(CancellationToken.None);
-    }
 }
