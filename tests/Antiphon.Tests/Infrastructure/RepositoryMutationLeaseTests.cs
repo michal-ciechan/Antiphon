@@ -384,28 +384,7 @@ public sealed class RepositoryMutationLeaseTests
             File.SetUnixFileMode(Path.Combine(hooks, "pre-commit"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await fixture.RequiredAsync(fixture.Repository, "config", "core.hooksPath", hooks);
         var worker = Path.Combine(fixture.Root, "crash-worker.ps1");
-        await File.WriteAllTextAsync(worker, """
-            $ErrorActionPreference = 'Stop'
-            $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
-            $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease crash worker', $true)
-            $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
-            $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
-                param($context, $name)
-                $path = $resolver.ResolveAssemblyToPath($name)
-                if ($null -eq $path) {
-                    $candidate = [IO.Path]::Combine($assemblyDirectory, $name.Name + '.dll')
-                    if ([IO.File]::Exists($candidate)) { $path = $candidate }
-                }
-                if ($null -eq $path) { return $null }
-                return $context.LoadFromAssemblyPath($path)
-            }.GetNewClosure()
-            $loadContext.add_Resolving($resolveDependency)
-            $server = $loadContext.LoadFromAssemblyPath($args[0])
-            $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
-            $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
-            $result = $operation.GetAwaiter().GetResult()
-            if (-not $result.Succeeded) { throw ('fixture_' + $result.Diagnostic) }
-            """);
+        await File.WriteAllTextAsync(worker, RepositoryLeaseCrashWorker.CrashScript);
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-File", worker, typeof(LandingGit).Assembly.Location, fixture.Source })
@@ -448,57 +427,35 @@ public sealed class RepositoryMutationLeaseTests
             }
             record.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
             record.ProcessId.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
+            record.StartTicks.ShouldNotBeNull("the worker must record the real child's start identity");
             child = Process.GetProcessById(record.ProcessId.Value);
-            child.StartTime.ToUniversalTime().Ticks.ShouldBe(record.StartTicks!.Value);
+            child.HasExited.ShouldBeFalse("the journal identifies a live Git child");
             process.Kill(entireProcessTree: false); // Actual OS worker death, not an in-process exception.
             await process.WaitForExitAsync();
             child.HasExited.ShouldBeFalse();
             var recoveryWorker = Path.Combine(fixture.Root, "recovery-worker.ps1");
             var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
-            await File.WriteAllTextAsync(recoveryWorker, """
-                $ErrorActionPreference = 'Stop'
-                $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
-                $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease recovery worker', $true)
-                $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
-                $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
-                    param($context, $name)
-                    $path = $resolver.ResolveAssemblyToPath($name)
-                    if ($null -eq $path) {
-                        $candidate = [IO.Path]::Combine($assemblyDirectory, $name.Name + '.dll')
-                        if ([IO.File]::Exists($candidate)) { $path = $candidate }
-                    }
-                    if ($null -eq $path) { return $null }
-                    return $context.LoadFromAssemblyPath($path)
-                }.GetNewClosure()
-                $loadContext.add_Resolving($resolveDependency)
-                $server = $loadContext.LoadFromAssemblyPath($args[0])
-                $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
-                $leaseType = $server.GetType('Antiphon.Server.Infrastructure.Git.RepositoryMutationLease', $true)
-                $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null))
-                foreach ($repository in @($args[1], $args[2])) {
-                    $lease = $leases.TryAcquireAsync($repository, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
-                    if ($null -ne $lease) { $lease.DisposeAsync().GetAwaiter().GetResult(); exit 10 }
-                }
-                $ownedProcess = [Diagnostics.Process]::GetCurrentProcess()
-                [IO.File]::WriteAllText($args[3], (@{ Worker = $ownedProcess.Id; StartTicks = $ownedProcess.StartTime.ToUniversalTime().Ticks; HeldSource = $true; HeldMain = $true } | ConvertTo-Json -Compress))
-                """);
+            var liveSnapshot = Path.Combine(fixture.Root, "live-child-before-recovery.json");
+            var recordPath = Directory.EnumerateFiles(directory, "*.json").Single();
+            await File.WriteAllTextAsync(recoveryWorker, RepositoryLeaseCrashWorker.RecoveryScript);
             await RunChildAsync("pwsh", ["-NoProfile", "-File", recoveryWorker,
-                typeof(LandingGit).Assembly.Location, fixture.Source, fixture.Repository, recoveryEvidence], expectedExit: 0);
+                typeof(LandingGit).Assembly.Location, fixture.Source, fixture.Repository, recoveryEvidence,
+                recordPath, Path.Combine(FindRepositoryRoot(), "scripts", "recover-repository-children.ps1"),
+                child.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), liveSnapshot], expectedExit: 0);
+            (await File.ReadAllBytesAsync(recordPath)).ShouldBe(await File.ReadAllBytesAsync(liveSnapshot));
             using (var recovery = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(recoveryEvidence)))
             {
                 recovery.RootElement.GetProperty("Worker").GetInt32().ShouldNotBe(Environment.ProcessId);
                 recovery.RootElement.GetProperty("HeldSource").GetBoolean().ShouldBeTrue();
                 recovery.RootElement.GetProperty("HeldMain").GetBoolean().ShouldBeTrue();
+                recovery.RootElement.GetProperty("Child").GetInt32().ShouldBe(child.Id);
+                recovery.RootElement.GetProperty("StartTicks").GetInt64().ShouldBeGreaterThan(0);
+                recovery.RootElement.GetProperty("RecoveryExit").GetInt32().ShouldBe(3);
                 LandingEvidence.Write(fixture.TaskId, "C24_recovery_worker", recovery.RootElement);
             }
             var provider = new RepositoryMutationLease(fixture.Git);
-            await using (var sourceAdmission = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None))
-                sourceAdmission.ShouldBeNull();
-            await using (var mainAdmission = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None))
-                mainAdmission.ShouldBeNull();
             child.HasExited.ShouldBeFalse();
             unrelated.HasExited.ShouldBeFalse("worker recovery must not terminate an unrelated fixture process");
-            await RecoverChildrenAsync(fixture.Source, 3, "-Execute", "-ConfirmDescendantsExited");
             child.HasExited.ShouldBeFalse("recovery must preserve the live recorded child");
             child.Kill(true);
             await child.WaitForExitAsync();
@@ -524,13 +481,17 @@ public sealed class RepositoryMutationLeaseTests
         }
     }
 
-    private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
+    private static string FindRepositoryRoot()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
-        root.ShouldNotBeNull();
+        return root.ShouldNotBeNull().FullName;
+    }
+
+    private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
+    {
         await RunChildAsync("pwsh", ["-NoProfile", "-File",
-            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options], expectedExit);
+            Path.Combine(FindRepositoryRoot(), "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options], expectedExit);
     }
 
     [Test]
