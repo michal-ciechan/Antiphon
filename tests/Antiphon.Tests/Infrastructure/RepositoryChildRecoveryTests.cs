@@ -351,7 +351,9 @@ public sealed class RepositoryChildRecoveryTests
             [IO.File]::Copy($env:ANTIPHON_C452_RECORD, $env:ANTIPHON_C452_SNAPSHOT)
             & $env:ANTIPHON_C452_SCRIPT -Repository $env:ANTIPHON_C452_REPOSITORY -Execute -ConfirmDescendantsExited
             """;
-        var result = await RunProcessAsync("pwsh", ["-NoProfile", "-Command", command],
+        var wrapper = Path.Combine(Path.GetDirectoryName(snapshot)!, "alive-recover.ps1");
+        await File.WriteAllTextAsync(wrapper, command);
+        var result = await RunProcessAsync("pwsh", ["-NoProfile", "-File", wrapper],
             new Dictionary<string, string> {
                 ["ANTIPHON_C452_RECORD"] = record, ["ANTIPHON_C452_SNAPSHOT"] = snapshot,
                 ["ANTIPHON_C452_SCRIPT"] = script, ["ANTIPHON_C452_REPOSITORY"] = repository,
