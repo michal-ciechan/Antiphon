@@ -159,6 +159,16 @@ runtime or raise the dependency timeout based on that text alone.
 ## Post-land server activation (CARD-0495)
 
 A land confirms publication, not that this machine is running the new server.
+After any terminal card move or close, including one made through the UI/API or a
+tracker, verify deployment as an operator step. The card move and task settlement
+can succeed while the running service remains stale. Use the updated canonical
+checkout's intended landed commit (`HEAD` or `origin/master`), never a remote
+worktree's HEAD, to compare with `GET /api/version` and probe the changed feature.
+For runner or fake-gateway changes, run
+`pwsh -File scripts/check-daemon-build.ps1` from that canonical checkout, restart
+or redeploy only the affected service when indicated, and recheck its reported
+build. A failed or unavailable probe leaves activation unverified; it does not
+undo the card move.
 Before relying on newly landed server behavior:
 
 1. Record the landing receipt's verified commit (post-rebase identity).

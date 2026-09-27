@@ -462,6 +462,12 @@ function Write-TaskSettlementLine {
     }
 }
 
+function Write-DeploymentVerificationPrompt {
+    Write-Output 'deployment not verified: card move and task settlement succeeded; service activation is still unverified.'
+    Write-Output 'From the updated canonical checkout, compare the running GET /api/version SHA with the intended landed commit (canonical HEAD or origin/master), then probe the changed feature.'
+    Write-Output 'For runner/fake-gateway changes, run pwsh -File scripts/check-daemon-build.ps1 there; restart or redeploy only the affected service using docs/apphost-runbook.md, then recheck its build.'
+}
+
 function Write-TrackerPushLine {
     param($Push)
     if ($null -eq $Push) { return }
@@ -709,6 +715,7 @@ switch ($Verb) {
         Write-Output ("moved to    {0}" -f $target.name)
         Write-TrackerPushLine $result.trackerPush
         Write-TaskSettlementLine $result.taskSettlement
+        if ($target.isTerminal) { Write-DeploymentVerificationPrompt }
         if ($result.spawnedSessionId) {
             Write-Output ("started     session {0}" -f $result.spawnedSessionId)
         }

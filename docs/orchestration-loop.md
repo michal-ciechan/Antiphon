@@ -148,6 +148,14 @@ full HEAD as `-ExpectedServerSha`, then confirm the reported SHA and a direct
 capability/feature probe. Do not treat `/health`, a runner SHA, a pushed branch, or
 a succeeded delegate as activation evidence. Use the landing receipt's post-rebase
 identity, not an assumption that the Code worktree SHA survived landing unchanged.
+On every terminal card move or close, including UI/API moves and tracker closes that
+bypass `card.ps1`, perform this activation check as an operator step. A successful
+card move and task settlement do not verify deployment. Compare the running
+`GET /api/version` SHA with the intended landed commit from the updated canonical
+checkout (`HEAD` or `origin/master`), and probe the changed feature. For runner or
+fake-gateway changes, run `pwsh -File scripts/check-daemon-build.ps1` from that
+checkout, restart or redeploy only the affected service when indicated, and recheck
+its reported build. A remote worktree's own HEAD is not a deployment target.
 An already-running descendant build is sufficient when local ancestry can be
 established and the required feature/capability is present; unknown/unrelated build
 history cannot establish activation. Record desired and observed full SHAs in the
