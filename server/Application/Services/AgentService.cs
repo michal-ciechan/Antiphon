@@ -1105,7 +1105,8 @@ public sealed class AgentService
         // both sides instead of depending on this process's Path.DirectorySeparatorChar.
         var normalized = workingDirectory.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
         return await _db.Projects.FirstOrDefaultAsync(
-            p => p.LocalRepositoryPath.Replace("\\", "/").ToLower() == normalized,
+            p => p.LocalRepositoryPath != null
+                && p.LocalRepositoryPath.Replace("\\", "/").ToLower() == normalized,
             ct);
     }
 
