@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -28,6 +29,261 @@ namespace Antiphon.Tests.Application;
 public sealed class DefaultRunnerRerouteTests
 {
     private const string Runner = "server2";
+
+    [Test]
+    public async Task C772_Explicit_desktop_codex_reroute_preserves_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Codex, AgentModelLevel.Frontier));
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Queued);
+        await using (var db = CreateContext(schema))
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.RunnerId = null;
+            await db.SaveChangesAsync();
+        }
+        await using var rerouteDb = CreateContext(schema);
+        var refused = await Should.ThrowAsync<ConflictException>(() => TaskService(rerouteDb, workspace.Path)
+            .RerouteAsync(taskId, AgentKind.Codex, AgentModelLevel.Frontier, CancellationToken.None));
+        refused.Code.ShouldBe("codex_desktop_unqualified");
+        refused.Message.ShouldContain("Windows Codex startup not qualified");
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        stored.RoutingPinId.ShouldBe(pin.Id);
+        stored.RunnerId.ShouldBeNull();
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C772_Queued_walk_to_desktop_codex_blocks()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+        await SeedHoldAsync(schema, "fable");
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Queued,
+            runnerId: null);
+        var result = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+        result.BlockedRoutingExhausted.ShouldBeGreaterThan(0);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        AssertDesktopCodexBlocked(stored, pin.Id);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(0);
+        (await verify.AgentSessions.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C772_Blocked_resume_to_desktop_codex_stays_blocked()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+        await SeedHoldAsync(schema, "fable");
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Blocked,
+            runnerId: null);
+        var result = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+        result.ResumedRoutingBlocked.ShouldBe(0);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        AssertDesktopCodexBlocked(stored, pin.Id);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C772_Usage_wall_to_desktop_codex_blocks()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+        await SeedHoldAsync(schema, "fable");
+        var sessionId = Guid.NewGuid();
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Working,
+            sessionId: sessionId, runnerId: null);
+        await using var db = CreateContext(schema);
+        var stopper = new RecordingSessionStopper();
+        var decision = await TaskService(db, workspace.Path, stopper).RerouteOnWallAsync(
+            await db.AgentTasks.SingleAsync(t => t.Id == taskId), "fable", "usage wall", false, CancellationToken.None);
+        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Blocked);
+        stopper.Killed.ShouldBe([sessionId]);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        AssertDesktopCodexBlocked(stored, pin.Id);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
+            .ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C772_Allowed_kind_changes_preserve_host()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        foreach (var (runner, next) in new (string?, AgentKind)[]
+                 { (Runner, AgentKind.Codex), (null, AgentKind.Grok) })
+        {
+            var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
+                runnerId: runner);
+            await using var db = CreateContext(schema);
+            var summary = await TaskService(db, workspace.Path).RerouteAsync(
+                taskId, next, AgentModelLevel.High, CancellationToken.None);
+            summary.AgentKind.ShouldBe(next);
+            await using var verify = CreateContext(schema);
+            var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            stored.RunnerId.ShouldBe(runner);
+            stored.Status.ShouldBe(AgentTaskStatus.Queued);
+        }
+    }
+
+    private static void AssertDesktopCodexBlocked(AgentTask task, Guid pinId)
+    {
+        task.Status.ShouldBe(AgentTaskStatus.Blocked);
+        task.FailureReason.ShouldNotBeNull().ShouldStartWith(ComplexityRoutingService.RoutingExhaustedPrefix);
+        task.FailureReason.ShouldContain("codex_desktop_unqualified");
+        task.FailureReason.ShouldContain("Windows Codex startup not qualified");
+        task.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        task.RunnerId.ShouldBeNull();
+        task.RoutingPinId.ShouldBe(pinId);
+        task.AgentSessionId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C772_Desktop_codex_block_and_parent_note_commit_together()
+    {
+        foreach (var cut in new[] { BlockNoteCut.CrashAfterSave, BlockNoteCut.EnqueueFails })
+        {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var parent = await BridgeQueueHarness.CreateAsync(new()
+            { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+            using var workspace = new TempWorkspace();
+            var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
+                kind: AgentKind.Codex, parentSessionId: parent.SessionId, runnerId: null);
+            var fault = new BlockNoteFault(cut, taskId, parent.SessionId);
+            try
+            {
+                await CreateDispatcher(schema, eligible: false, interceptors: [fault]).Dispatcher.TickAsync(CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is SimulatedCutException || ex.InnerException is SimulatedCutException) { }
+            fault.Fired.ShouldBeTrue();
+            await using (var read = CreateContext(schema))
+            {
+                var stored = await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                var notes = await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId);
+                var events = await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked);
+                if (cut == BlockNoteCut.CrashAfterSave)
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Blocked);
+                    notes.ShouldBe(1);
+                    events.ShouldBe(1);
+                }
+                else
+                {
+                    stored.Status.ShouldBe(AgentTaskStatus.Queued);
+                    notes.ShouldBe(0);
+                    events.ShouldBe(0);
+                }
+            }
+            await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+            await AssertParentReceiptAsync(schema, parent, taskId);
+        }
+    }
+
+    [Test]
+    public async Task C772_Repeated_desktop_codex_block_is_idempotent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        using var workspace = new TempWorkspace();
+        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+        await SeedHoldAsync(schema, "fable");
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Blocked,
+            parentSessionId: parent.SessionId, runnerId: null);
+        for (var i = 0; i < 3; i++)
+            await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+        await using var read = CreateContext(schema);
+        AssertDesktopCodexBlocked(await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId), pin.Id);
+        (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
+        (await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId)).ShouldBe(1);
+        (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C772_Desktop_codex_block_note_reaches_parent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        using var workspace = new TempWorkspace();
+        await parent.InsertTurnAsync("prior question", "prior answer");
+        await parent.MarkWorkingAsync();
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
+            kind: AgentKind.Codex, parentSessionId: parent.SessionId, runnerId: null);
+        await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+        parent.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
+        await AssertParentReceiptAsync(schema, parent, taskId);
+    }
+
+    [Test]
+    public async Task C772_Desktop_codex_block_note_recovers_after_restart()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        using var workspace = new TempWorkspace();
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, null, AgentTaskStatus.Queued,
+            kind: AgentKind.Codex, parentSessionId: parent.SessionId, runnerId: null);
+        var fault = new BlockNoteFault(BlockNoteCut.CrashAfterSave, taskId, parent.SessionId);
+        try
+        {
+            await CreateDispatcher(schema, eligible: false, interceptors: [fault]).Dispatcher.TickAsync(CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is SimulatedCutException || ex.InnerException is SimulatedCutException) { }
+        fault.Fired.ShouldBeTrue();
+        await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
+        await AssertParentReceiptAsync(schema, parent, taskId);
+    }
+
+    [Test]
+    public async Task C772_Usage_wall_note_reaches_parent()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        using var workspace = new TempWorkspace();
+        var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
+        await SeedHoldAsync(schema, "fable");
+        var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Working,
+            sessionId: Guid.NewGuid(), parentSessionId: parent.SessionId, runnerId: null);
+        await using var db = CreateContext(schema);
+        var decision = await TaskService(db, workspace.Path).RerouteOnWallAsync(
+            await db.AgentTasks.SingleAsync(t => t.Id == taskId), "fable", "usage wall", false, CancellationToken.None);
+        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Blocked);
+        await AssertParentReceiptAsync(schema, parent, taskId);
+    }
+
+    private static async Task AssertParentReceiptAsync(IsolatedTestSchema schema, BridgeQueueHarness parent, Guid taskId)
+    {
+        await parent.Queue.FlushIfIdleAsync(parent.SessionId, CancellationToken.None);
+        var submitted = parent.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        submitted.ShouldContain("codex_desktop_unqualified");
+        submitted.ShouldContain(DelegationReportFormatter.Short(taskId));
+        await using var read = CreateContext(schema);
+        var note = await read.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId);
+        note.AgentSessionId.ShouldBe(parent.SessionId);
+        note.Body.ShouldBe(submitted);
+        note.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+    }
 
     [Test]
     public async Task Explicit_incompatible_reroute_is_refused_without_mutation()
@@ -364,7 +620,8 @@ public sealed class DefaultRunnerRerouteTests
         AgentTaskStatus status,
         AgentKind kind = AgentKind.ClaudeCode,
         Guid? sessionId = null,
-        Guid? parentSessionId = null)
+        Guid? parentSessionId = null,
+        string? runnerId = Runner)
     {
         var id = Guid.NewGuid();
         await using var db = CreateContext(schema);
@@ -380,7 +637,7 @@ public sealed class DefaultRunnerRerouteTests
             RoutingPinId = routingPinId,
             Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = directory,
-            RunnerId = Runner,
+            RunnerId = runnerId,
             Status = status,
             AgentSessionId = sessionId,
             ParentSessionId = parentSessionId,

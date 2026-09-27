@@ -27,6 +27,117 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskPlatformDispatchTests
 {
     [Test]
+    public async Task C772_Legacy_desktop_codex_blocks_before_claim()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var taskId = await SeedAsync(schema, workspace.Path, "desktop", RequiredPlatform.Any);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.AgentKind = AgentKind.Codex;
+            await db.SaveChangesAsync();
+        }
+        var (dispatcher, sink) = CreateDispatcher(schema, new HoldingDirectory());
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
+        stored.FailureReason.ShouldContain("codex_desktop_unqualified");
+        stored.AgentKind.ShouldBe(AgentKind.Codex);
+        stored.AgentSessionId.ShouldBeNull();
+        sink.Inputs.ShouldBeEmpty();
+        (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C772_Allowed_hosts_and_kinds_still_dispatch()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync(platform: "linux", capabilities: Caps("linux"));
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.WorkspaceMirror => new PhoneHomeFrame(PhoneHomeFrameKind.Result,
+                frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse("/work/worktrees/c772-remote"), PhoneHomeFraming.Json)),
+            PhoneHomeOperation.ProviderAuth => new PhoneHomeFrame(PhoneHomeFrameKind.Result,
+                frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new RunnerProviderAuthDto("codex", true, "test", null,
+                    DateTimeOffset.UtcNow, null), PhoneHomeFraming.Json)),
+            _ => null,
+        };
+        using var workspace = new TempWorkspace();
+        var remoteId = await SeedAsync(schema, workspace.Path, host.AllowedRunnerId, RequiredPlatform.Linux);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == remoteId);
+            task.AgentKind = AgentKind.Codex;
+            await db.SaveChangesAsync();
+        }
+        var world = CreateDispatcher(schema, host);
+        try
+        {
+            await world.Dispatcher.TickAsync(CancellationToken.None);
+            await world.Preparer.WhenIdleAsync();
+            await world.Dispatcher.TickAsync(CancellationToken.None);
+            await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var stored = await read.AgentTasks.SingleAsync(t => t.Id == remoteId);
+            stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
+            stored.AgentKind.ShouldBe(AgentKind.Codex);
+            stored.RunnerId.ShouldBe(host.AllowedRunnerId);
+            world.Sink.Specs.ShouldHaveSingleItem().RequiredPlatform.ShouldBe("linux");
+            (await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == remoteId)).ShouldBe(1);
+        }
+        finally { await world.Provider.DisposeAsync(); }
+    }
+
+    [Test]
+    public async Task C772_Desktop_codex_existing_session_receives_no_brief()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var taskId = await SeedAsync(schema, workspace.Path, "local", RequiredPlatform.Any);
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, DefinitionName = "codex", AgentKind = AgentKind.Codex,
+                Status = SessionStatus.Running, Cwd = workspace.Path, Cols = 80, Rows = 24,
+                CreatedAt = now, StartedAt = now, LastSeenAt = now,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, Name = "c772-codex", Slug = "c772-codex", Details = "warm",
+                WorkingDirectory = workspace.Path, Status = AgentStatus.Idle, Kind = AgentKind.Codex,
+                ModelLevel = AgentModelLevel.Medium, PersistentSessionId = sessionId.ToString("D"),
+                CreatedAt = now, UpdatedAt = now,
+            });
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.AgentKind = AgentKind.Codex;
+            task.AgentId = agentId;
+            task.Workspace = WorkspaceMode.Shared;
+            await db.SaveChangesAsync();
+        }
+        var world = CreateDispatcher(schema, new HoldingDirectory());
+        try
+        {
+            await world.Dispatcher.TickAsync(CancellationToken.None);
+            await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            (await read.AgentTasks.SingleAsync(t => t.Id == taskId)).Status.ShouldBe(AgentTaskStatus.Blocked);
+            (await read.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+            (await read.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
+            (await read.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
+            world.Sink.Specs.ShouldBeEmpty();
+        }
+        finally { await world.Provider.DisposeAsync(); }
+    }
+
+    [Test]
     public async Task Reconnect_platform_change_blocks_launch()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -300,11 +411,11 @@ public sealed class TaskPlatformDispatchTests
         return id;
     }
 
-    private static (AgentTaskDispatcher Dispatcher, RecordingSink Sink) CreateDispatcher(
+    private static DispatchWorld CreateDispatcher(
         IsolatedTestSchema schema, PhoneHomeTestHost host) =>
         CreateDispatcher(schema, host.Directory, host.AllowedRunnerId);
 
-    private static (AgentTaskDispatcher Dispatcher, RecordingSink Sink) CreateDispatcher(
+    private static DispatchWorld CreateDispatcher(
         IsolatedTestSchema schema, ISessionRunnerDirectory directory, string allowedRunnerId = "server2")
     {
         var sink = new RecordingSink();
@@ -325,6 +436,8 @@ public sealed class TaskPlatformDispatchTests
         {
             s.DefaultDefinition = "claude";
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            s.Definitions["grok"] = new AgentDefinition { Kind = "Grok", Exe = "grok" };
+            s.Definitions["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex" };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
@@ -350,14 +463,29 @@ public sealed class TaskPlatformDispatchTests
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         var provider = services.BuildServiceProvider();
-        return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), sink);
+        return new DispatchWorld(provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+            sink, provider.GetRequiredService<RemoteWorkspacePreparer>(), provider);
+    }
+
+    private sealed record DispatchWorld(AgentTaskDispatcher Dispatcher, RecordingSink Sink,
+        RemoteWorkspacePreparer Preparer, ServiceProvider Provider)
+    {
+        public void Deconstruct(out AgentTaskDispatcher dispatcher, out RecordingSink sink)
+        {
+            dispatcher = Dispatcher;
+            sink = Sink;
+        }
     }
 
     private sealed class RecordingSink : IAgentTaskLaunchSink
     {
         public List<string> Inputs { get; } = [];
-        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
+        public List<AgentLaunchSpec> Specs { get; } = [];
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+        {
             Inputs.Add(spec.RequiredPlatform ?? "");
+            Specs.Add(spec);
+        }
     }
 
     private sealed class FlippingDirectory : ISessionRunnerDirectory

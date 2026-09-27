@@ -127,19 +127,16 @@ public sealed class DefaultRunnerCreateTests
             kit.Directory.ResolveCalls.ShouldBeEmpty(row + ": an explicit desktop request never asks the runner");
         }
 
-        // Still an explicit desktop request for shapes the runner cannot express: it does not trip
-        // the remote-only guards (Shared, Codex) and adds no warning.
+        // A Shared Codex desktop request reaches the final placement refusal too.
         var sharedKit = DefaultRunnerKit.Create(schema.ConnectionString, defaultRunnerId: "server2");
         await using var sharedDb = sharedKit.Context();
-        var shared = await sharedKit.Service(sharedDb).CreateAsync(
+        var beforeShared = await sharedKit.TaskCountAsync();
+        var refusedShared = await Should.ThrowAsync<ConflictException>(() => sharedKit.Service(sharedDb).CreateAsync(
             new CreateAgentTaskRequest("c659 local shared codex", Role: AgentTaskRole.Code, AgentKind: AgentKind.Codex,
                 Workspace: WorkspaceMode.Shared, RunnerId: "local"),
-            sharedKit.Caller, CancellationToken.None);
-        var sharedSaved = await sharedKit.ReadAsync(shared.Id);
-        sharedSaved.Task.RunnerId.ShouldBeNull();
-        sharedSaved.Task.Workspace.ShouldBe(WorkspaceMode.Shared);
-        sharedSaved.Task.AgentKind.ShouldBe(AgentKind.Codex);
-        sharedSaved.Created.ShouldContain("reason=local_requested", Case.Sensitive);
+            sharedKit.Caller, CancellationToken.None));
+        refusedShared.Code.ShouldBe("codex_desktop_unqualified");
+        (await sharedKit.TaskCountAsync()).ShouldBe(beforeShared);
     }
 
     [Test]
