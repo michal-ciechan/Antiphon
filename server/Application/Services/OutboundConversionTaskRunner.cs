@@ -12,6 +12,8 @@ public sealed class OutboundConversionTaskRunner
     private readonly AppDbContext _db;
     private readonly AgentTaskService _tasks;
 
+    internal Func<string, Guid, CancellationToken, Task>? ProbeBarrierAsync { get; set; }
+
     public OutboundConversionTaskRunner(AppDbContext db, AgentTaskService tasks)
     {
         _db = db;
@@ -69,6 +71,8 @@ public sealed class OutboundConversionTaskRunner
         delivery.Version++;
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        if (ProbeBarrierAsync is { } taskBarrier)
+            await taskBarrier("conversion-task-committed", delivery.Id, ct);
         return task.Id;
     }
 }

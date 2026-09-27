@@ -30,6 +30,8 @@ public sealed class ChannelOutboundService
     private readonly ChannelOutboundSettings _settings;
     private readonly TimeProvider _clock;
 
+    internal Func<string, Guid, CancellationToken, Task>? ProbeBarrierAsync { get; set; }
+
     public ChannelOutboundService(AppDbContext db, IChannelOutboundFileStore files,
         IAntiphonMessagingProducer producer, IOptions<ChannelOutboundSettings> settings,
         TimeProvider clock)
@@ -181,6 +183,8 @@ public sealed class ChannelOutboundService
             }
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+            if (ProbeBarrierAsync is { } admissionBarrier)
+                await admissionBarrier("admission-committed", id, ct);
         }
         catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException
                 { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })

@@ -25,6 +25,166 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundRecoveryTests
 {
     [Test]
+    [Arguments("input-temporary-partial")]
+    [Arguments("input-temporary-complete")]
+    [Arguments("admission-committed")]
+    [Arguments("conversion-task-committed")]
+    public async Task Process_death_preserves_admission_and_one_queued_conversion_task(string cut)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-admission-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert the frozen Markdown source.");
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var storeRoot = Path.Combine(root, "store");
+        var evidencePath = Path.Combine(root, "accepted.bin");
+        var markerPath = Path.Combine(root, "barrier");
+        var configPath = Path.Combine(root, "probe.json");
+        var probeDll = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
+            "Antiphon.ChannelOutbound.Probe.dll");
+        File.Exists(probeDll).ShouldBeTrue();
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
+        {
+            db.Projects.Add(new Project { Id = projectId, Name = "admission-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "admission",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.AddRange(
+                new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                    Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = root },
+                new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                OutboundAgentProfile = "crash-pdf", CreatedAt = now, UpdatedAt = now });
+            db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "admission",
+                Cwd = root, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = correlationId, AgentSessionId = sessionId, Body = "send sources",
+                Sequence = 1, Origin = QueuedMessageOrigin.Channel,
+                Status = QueuedMessageStatus.Sent, ConversationKey = "fake:" + channelId.ToString("N"),
+                CreatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        async Task WriteConfigAsync(string mode, string? barrier, Guid deliveryId = default,
+            int clockOffsetSeconds = 0, bool allowPublication = false)
+        {
+            await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new
+            {
+                ConnectionString = isolated.ConnectionString, StoreRoot = storeRoot,
+                DeliveryId = deliveryId, EvidencePath = evidencePath, MarkerPath = markerPath,
+                Barrier = barrier, ClockOffsetSeconds = clockOffsetSeconds, Mode = mode,
+                WorkspaceRoot = root, ProjectId = projectId, ConverterAgentId = converterId,
+                ChannelId = channelId, SessionId = sessionId, CorrelationId = correlationId,
+                AllowPublication = allowPublication,
+            }));
+        }
+
+        async Task RunToExitAsync(string mode, Guid deliveryId = default, int offset = 0)
+        {
+            await WriteConfigAsync(mode, null, deliveryId, offset,
+                allowPublication: mode == "prepare" && offset > 0);
+            using var probe = StartProbe(probeDll, configPath);
+            using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await probe.WaitForExitAsync(watchdog.Token);
+            probe.ExitCode.ShouldBe(0);
+        }
+
+        async Task<Guid> ReadDeliveryIdAsync()
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+            return (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync()).Id;
+        }
+
+        Process? child = null;
+        try
+        {
+            if (cut == "conversion-task-committed")
+                await RunToExitAsync("admit");
+            var acceptedId = cut == "conversion-task-committed" ? await ReadDeliveryIdAsync() : Guid.Empty;
+            await WriteConfigAsync(cut == "conversion-task-committed" ? "prepare" : "admit",
+                cut, acceptedId);
+            child = StartProbe(probeDll, configPath);
+            var childPid = child.Id;
+            var childStarted = child.StartTime;
+            using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                while (!File.Exists(markerPath))
+                {
+                    child.HasExited.ShouldBeFalse("probe exited before its admission/task barrier");
+                    await Task.Delay(25, watchdog.Token);
+                }
+            child.Id.ShouldBe(childPid);
+            child.StartTime.ShouldBe(childStarted);
+            child.Kill(entireProcessTree: true);
+            using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                await child.WaitForExitAsync(watchdog.Token);
+            child.Dispose();
+            child = null;
+
+            await using (var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
+            {
+                var count = await verify.ChannelOutboundDeliveries.CountAsync();
+                count.ShouldBe(cut.StartsWith("input-temporary-", StringComparison.Ordinal) ? 0 : 1);
+                (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                    .ChannelOutboundDeliveryId.HasValue.ShouldBe(count == 1);
+                (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId != null))
+                    .ShouldBe(cut == "conversion-task-committed" ? 1 : 0);
+            }
+            if (cut.StartsWith("input-temporary-", StringComparison.Ordinal))
+                Directory.GetDirectories(storeRoot, ".stage-*", SearchOption.TopDirectoryOnly)
+                    .Length.ShouldBe(1);
+            if (cut == "input-temporary-partial")
+            {
+                var staged = Directory.GetDirectories(storeRoot, ".stage-*", SearchOption.TopDirectoryOnly).Single();
+                File.Exists(Path.Combine(staged, "input", "attachment-001.md")).ShouldBeTrue();
+                File.Exists(Path.Combine(staged, "request.json")).ShouldBeFalse();
+                File.Exists(Path.Combine(staged, "reply.json")).ShouldBeFalse();
+            }
+            File.Exists(evidencePath).ShouldBeFalse();
+
+            if (cut != "conversion-task-committed")
+                await RunToExitAsync("admit");
+            acceptedId = await ReadDeliveryIdAsync();
+            await RunToExitAsync("prepare", acceptedId,
+                cut == "conversion-task-committed" ? 301 : 0);
+            await using var final = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+            var intent = await final.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
+            intent.Id.ShouldBe(acceptedId);
+            intent.State.ShouldBe(cut == "conversion-task-committed"
+                ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.Converting);
+            (await final.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId == acceptedId))
+                .ShouldBe(1);
+            (await final.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                .ChannelOutboundDeliveryId.ShouldBe(acceptedId);
+            var frozen = await new ChannelOutboundFileStore(storeRoot).ReadReplyAsync(
+                intent.InputPath, intent.InputSha256, CancellationToken.None);
+            frozen.ReplyHandle.ShouldBe("thread-1");
+            frozen.Attachments.ShouldHaveSingleItem().Content.ShouldBe("# crash source"u8.ToArray());
+            File.Exists(evidencePath).ShouldBe(cut == "conversion-task-committed");
+        }
+        finally
+        {
+            if (child is not null)
+            {
+                if (!child.HasExited) child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync();
+                child.Dispose();
+            }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     [Arguments("before-conversion-observation", ChannelOutboundDeliveryState.Published, 1)]
     [Arguments("ready-committed", ChannelOutboundDeliveryState.Published, 1)]
     [Arguments("publishing-committed", ChannelOutboundDeliveryState.PublishUncertain, 0)]

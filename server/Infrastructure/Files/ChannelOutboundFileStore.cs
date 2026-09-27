@@ -15,6 +15,8 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
     private const long MaxExpandedSourceBytes = 64L * 1024 * 1024;
     private readonly string _root;
 
+    internal Func<string, Guid, CancellationToken, Task>? ProbeBarrierAsync { get; set; }
+
     public ChannelOutboundFileStore(IHostEnvironment host)
         : this(Path.Combine(host.ContentRootPath, ".antiphon", "outbound")) { }
 
@@ -61,6 +63,8 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
                     localName = $"attachment-{i + 1:D3}{extension}";
                     fileHash = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
                     await File.WriteAllBytesAsync(Path.Combine(input, localName), content, ct);
+                    if (ProbeBarrierAsync is { } partialBarrier)
+                        await partialBarrier("input-temporary-partial", deliveryId, ct);
                 }
                 files.Add(new { attachment.Name, attachment.Mime, attachment.Kind,
                     Length = attachment.Content?.Length, Sha256 = fileHash, LocalName = localName });
@@ -86,6 +90,8 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
             await File.WriteAllBytesAsync(Path.Combine(temporary, "reply.json"), replyBytes, ct);
             await File.WriteAllBytesAsync(Path.Combine(temporary, "request.json"),
                 JsonSerializer.SerializeToUtf8Bytes(request, new JsonSerializerOptions(JsonSerializerDefaults.Web)), ct);
+            if (ProbeBarrierAsync is { } temporaryBarrier)
+                await temporaryBarrier("input-temporary-complete", deliveryId, ct);
             Directory.Move(temporary, final);
             return new ChannelOutboundSnapshot(Path.Combine(final, "reply.json"), hash,
                 Path.Combine(final, "request.json"), Path.Combine(final, "output"));
