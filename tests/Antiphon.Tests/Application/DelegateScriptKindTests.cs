@@ -27,26 +27,30 @@ public sealed class DelegateScriptKindTests
     [Arguments("omitted")]
     [Arguments("base_task")]
     [Arguments("fresh")]
-    [Arguments("workspace_base")]
     [Arguments("both_flags")]
     [Arguments("shared")]
     [Arguments("readonly")]
     [Arguments("onagent_task")]
     [Arguments("onagent_fresh")]
+    [Arguments("ambiguous_response")]
     public async Task T0442_V16_worktree_base_payload_and_validation(string mode)
     {
-        using var server = new StubApi();
+        using var server = mode == "ambiguous_response"
+            ? new StubApi(createJson:
+                """{"title":"Conflict","status":409,"code":"worktree_base_ambiguous","detail":"worktree_base_ambiguous: tasks aaaaaaaa on feat/card-task-aaaaaaaa @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa and bbbbbbbb on feat/card-task-bbbbbbbb @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; choose -BaseTask or -FreshWorktree."}""",
+                createStatusCode: 409)
+            : new StubApi();
         var args = new List<string> { "-Role", "Code", "-Goal", "build it", "-Card", "CARD-0442" };
         switch (mode)
         {
-            case "base_task": args.AddRange(["-BaseTask", "1234abcd"]); break;
-            case "fresh": args.Add("-FreshWorktree"); break;
-            case "workspace_base": args.AddRange(["-Workspace", "Worktree", "-BaseTask", "1234abcd"]); break;
+            case "base_task": args.AddRange(["-Worktree", "-BaseTask", "1234abcd"]); break;
+            case "fresh": args.AddRange(["-Worktree", "-FreshWorktree"]); break;
             case "both_flags": args.AddRange(["-BaseTask", "1234abcd", "-FreshWorktree"]); break;
             case "shared": args.AddRange(["-Shared", "-BaseTask", "1234abcd"]); break;
             case "readonly": args.AddRange(["-ReadOnly", "-FreshWorktree"]); break;
             case "onagent_task": args.AddRange(["-OnAgent", "1234abcd", "-BaseTask", "1234abcd"]); break;
             case "onagent_fresh": args.AddRange(["-OnAgent", "1234abcd", "-FreshWorktree"]); break;
+            case "ambiguous_response": args.Add("-Worktree"); break;
         }
 
         var run = await RunDelegateAsync(server, [.. args]);
@@ -57,16 +61,36 @@ public sealed class DelegateScriptKindTests
             server.RequestCount.ShouldBe(0);
             return;
         }
+        if (mode == "ambiguous_response")
+        {
+            run.ExitCode.ShouldNotBe(0);
+            server.RequestCount.ShouldBe(1);
+            run.Output.ShouldContain("worktree_base_ambiguous");
+            run.Output.ShouldContain("aaaaaaaa");
+            run.Output.ShouldContain("bbbbbbbb");
+            run.Output.ShouldContain("-BaseTask");
+            run.Output.ShouldContain("-FreshWorktree");
+            return;
+        }
         run.ExitCode.ShouldBe(0, run.Output);
         server.RequestCount.ShouldBe(1);
         var body = server.LastBody!.RootElement;
         var hasBase = body.TryGetProperty("worktreeBaseTask", out var baseTask);
         var hasFresh = body.TryGetProperty("freshWorktree", out var fresh);
-        hasBase.ShouldBe(mode is "base_task" or "workspace_base");
+        hasBase.ShouldBe(mode == "base_task");
         hasFresh.ShouldBe(mode == "fresh");
         if (hasBase) baseTask.GetString().ShouldBe("1234abcd");
         if (hasFresh) fresh.GetBoolean().ShouldBeTrue();
-        if (mode == "workspace_base") body.GetProperty("workspace").GetString().ShouldBe("Worktree");
+        if (mode == "base_task")
+        {
+            body.GetProperty("workspace").GetString().ShouldBe("Worktree");
+            var workspaceRun = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "build it",
+                "-Card", "CARD-0442", "-Workspace", "Worktree", "-BaseTask", "1234abcd");
+            workspaceRun.ExitCode.ShouldBe(0, workspaceRun.Output);
+            server.RequestCount.ShouldBe(2);
+            server.LastBody!.RootElement.GetProperty("workspace").GetString().ShouldBe("Worktree");
+            server.LastBody.RootElement.GetProperty("worktreeBaseTask").GetString().ShouldBe("1234abcd");
+        }
     }
 
     [Test]
@@ -650,14 +674,17 @@ public sealed class DelegateScriptKindTests
         private readonly string _agentKind;
         private readonly Mode _mode;
         private readonly string? _createJson;
+        private readonly int _createStatusCode;
 
         public enum Mode { Create, WorktreeHealth, WorktreeHealthEmpty }
 
-        public StubApi(string agentKind = "ClaudeCode", Mode mode = Mode.Create, string? createJson = null)
+        public StubApi(string agentKind = "ClaudeCode", Mode mode = Mode.Create,
+            string? createJson = null, int createStatusCode = 201)
         {
             _agentKind = agentKind;
             _mode = mode;
             _createJson = createJson;
+            _createStatusCode = createStatusCode;
             BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
             _pump = Task.Run(PumpAsync);
         }
@@ -716,7 +743,7 @@ public sealed class DelegateScriptKindTests
                         {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
                          "status":"Queued","modelLevel":"High","warning":null,"agentKind":"{{_agentKind}}"}
                         """);
-                    context.Response.StatusCode = 201;
+                    context.Response.StatusCode = _createStatusCode;
                 }
 
                 context.Response.ContentType = "application/json";

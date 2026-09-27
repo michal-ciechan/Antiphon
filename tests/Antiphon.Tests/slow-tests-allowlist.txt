@@ -181,3 +181,5 @@ Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
 Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
 # CARD-0442: real create admission and source-boundary fixtures.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
+# CARD-0442: downgrade/upgrade of isolated PostgreSQL task rows.
+Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests
