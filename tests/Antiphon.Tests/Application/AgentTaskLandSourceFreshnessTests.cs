@@ -1,11 +1,16 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -80,11 +85,30 @@ public sealed class AgentTaskLandSourceFreshnessTests
     public async Task C488_DetachedFollowUpPublishesReviewedFix()
     {
         await using var h = new LandingSafetyHarness();
+        var recording = ConfigureRealVerifier(h);
         await h.InitializeAsync();
+        var library = Path.Combine(h.Fixture.Source, "src", "FreshnessProbe");
+        var tests = Path.Combine(h.Fixture.Source, "tests", "Antiphon.Tests");
+        Directory.CreateDirectory(library);
+        Directory.CreateDirectory(tests);
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "FreshnessProbe.slnx"),
+            "<Solution><Project Path=\"src/FreshnessProbe/FreshnessProbe.csproj\" /><Project Path=\"tests/Antiphon.Tests/Antiphon.Tests.csproj\" /></Solution>\n");
+        await File.WriteAllTextAsync(Path.Combine(library, "FreshnessProbe.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>\n");
+        await File.WriteAllTextAsync(Path.Combine(library, "FreshnessDecision.cs"),
+            "public static class FreshnessDecision { public static bool ApprovedFixIsPresent() => false; }\n");
+        await File.WriteAllTextAsync(Path.Combine(tests, "Antiphon.Tests.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsTestProject>true</IsTestProject><EnableMicrosoftTestingPlatformRunner>true</EnableMicrosoftTestingPlatformRunner></PropertyGroup><ItemGroup><PackageReference Include=\"TUnit\" Version=\"1.44.0\" /><ProjectReference Include=\"../../src/FreshnessProbe/FreshnessProbe.csproj\" /></ItemGroup></Project>\n");
+        await File.WriteAllTextAsync(Path.Combine(tests, "FreshnessProbeTests.cs"),
+            "using TUnit.Core; public sealed class FreshnessProbeTests { [Test] public void ApprovedFixIsPresent() { if (!FreshnessDecision.ApprovedFixIsPresent()) throw new Exception(\"approved behavior absent\"); if (File.ReadAllText(\"nonce.txt\") != \"unique-b-fix\\n\") throw new Exception(\"B nonce absent\"); if (File.ReadAllText(\"target.txt\") != \"independent target content\\n\") throw new Exception(\"T content absent\"); } }\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "buildable A with false behavior");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
         var original = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
         var detached = Path.Combine(h.Fixture.Root, "trees", "follow-up");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", detached, original);
-        await File.WriteAllTextAsync(Path.Combine(detached, "FreshnessDecision.cs"), "public static class FreshnessDecision { public static bool ApprovedFixIsPresent() => true; }\n");
+        await File.WriteAllTextAsync(Path.Combine(detached, "src", "FreshnessProbe", "FreshnessDecision.cs"),
+            "public static class FreshnessDecision { public static bool ApprovedFixIsPresent() => true; }\n");
         await File.WriteAllTextAsync(Path.Combine(detached, "nonce.txt"), "unique-b-fix\n");
         await h.Fixture.RequiredAsync(detached, "add", ".");
         await h.Fixture.RequiredAsync(detached, "commit", "-m", "reviewed fix B");
@@ -98,10 +122,14 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await observer.RunAsync(h.Fixture.Observer, ["rev-parse", "--verify", observedRef], CancellationToken.None))
             .Output.Trim().ShouldBe(b);
 
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "target T");
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Repository, "target.txt"), "independent target content\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", "target.txt");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "target T");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+        var t = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim();
 
-        var queued = await h.RequestAsync(expectedSourceSha: b);
+        const string filter = "/*/*/FreshnessProbeTests/ApprovedFixIsPresent";
+        var queued = await h.RequestAsync(filter: filter, expectedSourceSha: b);
         queued.Status.ShouldBe("queued");
         await using (var db = h.CreateContext())
         {
@@ -120,6 +148,11 @@ public sealed class AgentTaskLandSourceFreshnessTests
         op.VerifiedSourceSha.ShouldNotBeNull();
         op.VerifiedSourceSha.ShouldNotBe(b);
         op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        recording.Invocations.Count.ShouldBe(1);
+        recording.Invocations[0].Filter.ShouldBe(filter);
+        recording.Invocations[0].Worktree.ShouldBe(op.LandWorktreePath);
+        recording.Invocations[0].Head.ShouldBe(op.VerifiedSourceSha);
+        AssertFreshProbeReport(recording.Invocations[0].ArtifactsPath);
         var remoteB = await observer.RunAsync(h.Fixture.Remote, ["rev-parse", "--verify", h.Fixture.SourceRef + "^{commit}"], CancellationToken.None);
         remoteB.Output.Trim().ShouldBe(b);
         var targetObserved = "refs/antiphon-observer/target/" + Guid.NewGuid().ToString("N");
@@ -128,6 +161,19 @@ public sealed class AgentTaskLandSourceFreshnessTests
         var show = await observer.RunAsync(h.Fixture.Observer, ["show", targetObserved + ":nonce.txt"], CancellationToken.None);
         show.Succeeded.ShouldBeTrue();
         show.Output.ShouldContain("unique-b-fix");
+        (await observer.RunAsync(h.Fixture.Observer, ["merge-base", "--is-ancestor", b, targetObserved], CancellationToken.None))
+            .Succeeded.ShouldBeTrue();
+        (await observer.RunAsync(h.Fixture.Observer, ["merge-base", "--is-ancestor", t, targetObserved], CancellationToken.None))
+            .Succeeded.ShouldBeTrue();
+        (await observer.RunAsync(h.Fixture.Observer, ["reset", "--hard", targetObserved], CancellationToken.None))
+            .Succeeded.ShouldBeTrue();
+        var targetVerifier = new LandingVerifier(buildSlots: recording.BuildSlots);
+        var targetArtifacts = Path.Combine(h.Fixture.Root, "target-verifier-artifacts");
+        var targetCheck = await targetVerifier.VerifyAsync(h.Fixture.Observer, filter,
+            new(h.Fixture.TaskId, op.Id, queued.RequestId, targetArtifacts), CancellationToken.None);
+        targetCheck.Passed.ShouldBeTrue(targetCheck.Description);
+        AssertFreshProbeReport(targetArtifacts);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(original);
     }
 
     [Test]
@@ -947,5 +993,65 @@ public sealed class AgentTaskLandSourceFreshnessTests
         op.LastReason.ShouldBe("source_remote_changed");
         new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
         h.Git.SourceRemoteRechecks.ShouldBe(recheck);
+    }
+
+    private static RecordingRealVerifier ConfigureRealVerifier(LandingSafetyHarness h)
+    {
+        var recorder = new RecordingRealVerifier(h.Fixture.Git, h.Fixture.Root);
+        h.ConfigureServices = services =>
+        {
+            services.RemoveAll<ILandingVerifier>();
+            services.AddHttpClient();
+            var slotsUrl = Environment.GetEnvironmentVariable("ANTIPHON_BUILD_SLOTS_URL")
+                ?? "http://127.0.0.1:8080/build-slots";
+            var baseUrl = new Uri(slotsUrl).GetLeftPart(UriPartial.Authority);
+            services.AddSingleton(sp => new SessionRunnerHttpClient(new HttpClient(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                Options.Create(new SessionRunnerSettings { BaseUrl = baseUrl })));
+            services.AddSingleton<IBuildSlotGate>(sp => new SessionRunnerBuildSlotGate(
+                sp.GetRequiredService<SessionRunnerHttpClient>(), TimeProvider.System,
+                Options.Create(new LandingSettings())));
+            services.AddSingleton<ILandingVerifier>(sp =>
+            {
+                recorder.BuildSlots = sp.GetRequiredService<IBuildSlotGate>();
+                recorder.Inner = new LandingVerifier(buildSlots: recorder.BuildSlots);
+                return recorder;
+            });
+        };
+        return recorder;
+    }
+
+    private static void AssertFreshProbeReport(string artifactsPath)
+    {
+        var reports = Directory.GetFiles(artifactsPath, "landing-verification.trx", SearchOption.AllDirectories);
+        reports.Length.ShouldBe(1);
+        var xml = System.Xml.Linq.XDocument.Load(reports[0]);
+        var counters = xml.Descendants().Single(e => e.Name.LocalName == "Counters");
+        counters.Attribute("executed")?.Value.ShouldBe("1");
+        counters.Attribute("passed")?.Value.ShouldBe("1");
+        counters.Attribute("failed")?.Value.ShouldBe("0");
+        xml.Descendants().ShouldContain(e => e.Name.LocalName == "TestMethod"
+            && e.Attribute("name")?.Value == "ApprovedFixIsPresent"
+            && e.Attribute("className")?.Value.Contains("FreshnessProbeTests") == true);
+    }
+
+    private sealed class RecordingRealVerifier(ILandingGit git, string root) : ILandingVerifier
+    {
+        public IBuildSlotGate BuildSlots { get; set; } = null!;
+        public LandingVerifier Inner { get; set; } = null!;
+        public List<(string Worktree, string? Filter, string Head, string ArtifactsPath)> Invocations { get; } = [];
+
+        public Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct) =>
+            VerifyAsync(worktree, filter, new(Guid.Empty, Guid.Empty, null), ct);
+
+        public async Task<LandingVerification> VerifyAsync(string worktree, string? filter,
+            LandingVerificationCorrelation correlation, CancellationToken ct)
+        {
+            var head = await git.RunAsync(worktree, ["rev-parse", "--verify", "HEAD"], ct);
+            head.Succeeded.ShouldBeTrue();
+            var artifacts = Path.Combine(root, "verify-artifacts", Guid.NewGuid().ToString("N"));
+            Invocations.Add((worktree, filter, head.Output.Trim(), artifacts));
+            return await Inner.VerifyAsync(worktree, filter, correlation with { ArtifactsPath = artifacts }, ct);
+        }
     }
 }
