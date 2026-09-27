@@ -124,7 +124,13 @@ public sealed partial class PhoneHomeRollingRunnerTests
 
         var job = new RunnerRetireJob(world.Host.App.Services.GetRequiredService<IServiceScopeFactory>(),
             world.RunnerDirectory, Options.Create(world.Configured), clock, NullLogger<RunnerRetireJob>.Instance);
-        clock.Advance(TimeSpan.FromSeconds(60));
+        // The HTTP drain host stamps its row with wall time; align the job's fake clock to it.
+        await using (var db = world.NewDb())
+        {
+            var drainedAt = await db.SessionRunnerStates.Where(s => s.RunnerId == RollingRunnerSettings.Server2Temp)
+                .Select(s => s.DrainedAt).SingleAsync();
+            clock.SetUtcNow(drainedAt!.Value.AddSeconds(60));
+        }
         await job.RunAsync(CancellationToken.None);
         world.PeerB.Retires.ShouldBeEmpty();
         clock.Advance(TimeSpan.FromSeconds(120));
