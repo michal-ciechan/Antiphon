@@ -74,6 +74,7 @@ public sealed class TaskPlatformDispatchTests
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == remoteId);
             task.AgentKind = AgentKind.Codex;
+            task.Role = AgentTaskRole.Custom;
             await db.SaveChangesAsync();
         }
         var world = CreateDispatcher(schema, host);
