@@ -255,12 +255,13 @@ public sealed class ChannelInboundRecoveryTests
         public override ITimer CreateTimer(TimerCallback callback, object? state,
             TimeSpan dueTime, TimeSpan period)
         {
+            var timer = _clock.CreateTimer(callback, state, dueTime, period);
             if (dueTime == TimeSpan.FromSeconds(2))
             {
                 PollRegistered.TrySetResult();
                 if (Interlocked.Increment(ref _polls) >= 2) SecondPollRegistered.TrySetResult();
             }
-            return _clock.CreateTimer(callback, state, dueTime, period);
+            return timer;
         }
         public void Advance(TimeSpan amount) { _advanced += amount; _clock.Advance(amount); }
     }
@@ -674,7 +675,7 @@ public sealed class ChannelInboundRecoveryTests
                 Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
                 NativeMessageId = id, AgentId = agentId, ChatChannelId = channelId,
                 EnvelopeJson = JsonSerializer.Serialize(Message(chat, id,
-                    $"ordered line {index:D2} DISTINCT TAIL"), Antiphon.Messaging.MessagingJson.Options),
+                    $"m{index:D2}"), Antiphon.Messaging.MessagingJson.Options),
                 AcceptedAt = acceptedAt,
             });
             await seed.SaveChangesAsync();
@@ -713,10 +714,10 @@ public sealed class ChannelInboundRecoveryTests
                 && (t.Text == firstOwner.Body || t.Text == laterOwner.Body))
             .OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync();
         prompts.ShouldBe(new[] { firstOwner.Body, laterOwner.Body });
-        firstOwner.Body.IndexOf("ordered line 00 DISTINCT TAIL", StringComparison.Ordinal)
-            .ShouldBeLessThan(firstOwner.Body.IndexOf("ordered line 63 DISTINCT TAIL", StringComparison.Ordinal));
-        laterOwner.Body.IndexOf("ordered line 64 DISTINCT TAIL", StringComparison.Ordinal)
-            .ShouldBeLessThan(laterOwner.Body.IndexOf("ordered line 69 DISTINCT TAIL", StringComparison.Ordinal));
+        firstOwner.Body.IndexOf("m00", StringComparison.Ordinal)
+            .ShouldBeLessThan(firstOwner.Body.IndexOf("m63", StringComparison.Ordinal));
+        laterOwner.Body.IndexOf("m64", StringComparison.Ordinal)
+            .ShouldBeLessThan(laterOwner.Body.IndexOf("m69", StringComparison.Ordinal));
     }
 
     [Test]
