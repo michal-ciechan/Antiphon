@@ -37,6 +37,10 @@ public sealed class PipelineDefinitionMigrationShapeTests
             up.OfType<AddColumnOperation>().ShouldContain(o => o.Table == "CardWorkflowRuns" && o.Name == name && !o.IsNullable);
         up.OfType<AddColumnOperation>().ShouldContain(o => o.Table == "CardWorkflowStages" && o.Name == "AllowedNextJson"
             && o.ColumnType == "jsonb" && !o.IsNullable);
+        up.OfType<AddColumnOperation>().ShouldContain(o => o.Table == "CardWorkflowStages" && o.Name == "Role"
+            && !o.IsNullable);
+        up.OfType<AddColumnOperation>().ShouldContain(o => o.Table == "CardWorkflowStages" && o.Name == "BundleKey"
+            && o.ColumnType == "character varying(100)" && o.MaxLength == 100 && !o.IsNullable);
         up.OfType<AddColumnOperation>().ShouldContain(o => o.Table == "AgentTasks" && o.Name == "CardWorkflowStageId" && o.IsNullable);
         up.OfType<CreateIndexOperation>().ShouldContain(o => o.Name == "IX_CardWorkflowRuns_CardId_Open"
             && o.IsUnique && o.Filter == "\"Status\" IN (0, 1)");
@@ -57,6 +61,11 @@ public sealed class PipelineDefinitionMigrationTests
         (await fixture.Db.CardWorkflowStages.CountAsync()).ShouldBe(0);
         (await fixture.Db.Cards.AnyAsync(c => c.Id == fixture.CardId)).ShouldBeTrue();
         (await fixture.Db.Agents.AnyAsync(a => a.Id == fixture.AgentId)).ShouldBeTrue();
+        var runColumns = await fixture.Db.Database.SqlQueryRaw<string>(
+            "SELECT column_name || '=' || is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'CardWorkflowRuns'")
+            .ToListAsync();
+        runColumns.ShouldContain("PipelineDefinitionRevisionId=NO");
+        runColumns.Any(c => c.StartsWith("AgentId=", StringComparison.Ordinal)).ShouldBeFalse();
         (await fixture.Db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
         fixture.Db.Database.HasPendingModelChanges().ShouldBeFalse();
     }
@@ -117,6 +126,17 @@ public sealed class PipelineDefinitionMigrationTests
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(target);
         (await db.Database.SqlQueryRaw<int>("SELECT COUNT(*)::int AS \"Value\" FROM \"CardWorkflowRuns\"").SingleAsync()).ShouldBe(0);
+        var runColumns = await db.Database.SqlQueryRaw<string>(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'CardWorkflowRuns'")
+            .ToListAsync();
+        runColumns.ShouldContain("AgentId");
+        runColumns.ShouldContain("WorkflowDefinitionSnapshot");
+        (await db.Database.SqlQueryRaw<int>(
+            "SELECT COUNT(*)::int AS \"Value\" FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'PipelineDefinitions'")
+            .SingleAsync()).ShouldBe(0);
+        (await db.Database.SqlQueryRaw<int>(
+            "SELECT COUNT(*)::int AS \"Value\" FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'AgentTasks' AND column_name = 'CardWorkflowStageId'")
+            .SingleAsync()).ShouldBe(0);
         await migrator.MigrateAsync();
         (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
         db.Database.HasPendingModelChanges().ShouldBeFalse();

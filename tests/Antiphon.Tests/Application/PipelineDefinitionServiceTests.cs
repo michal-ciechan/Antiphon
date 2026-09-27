@@ -50,16 +50,27 @@ public sealed class PipelineDefinitionServiceTests
     }
 
     [Test]
-    public async Task Create_accepts_valid_shapes_and_rejects_bad_or_taken_names()
+    [Arguments("code")]
+    [Arguments("review-loop")]
+    [Arguments("review-terminal")]
+    [Arguments("standard")]
+    public async Task Create_accepts_valid_shapes_and_rejects_bad_or_taken_names(string shape)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = Context(schema);
         var service = new PipelineDefinitionService(db, TimeProvider.System);
-        var created = await service.CreateAsync(new("Mine", "description", [Code()]), CancellationToken.None);
+        IReadOnlyList<PipelineStageSpec> stages = shape switch
+        {
+            "review-loop" => [new(AgentTaskRole.Review, "stage-review", ["review"])],
+            "review-terminal" => [new(AgentTaskRole.Review, "stage-review", ["land", "decide", "none"])],
+            "standard" => PipelineDefinitions.StandardPipeline,
+            _ => [Code()]
+        };
+        var created = await service.CreateAsync(new("Mine", "description", stages), CancellationToken.None);
         created.Source.ShouldBe(PipelineDefinitionSource.Custom);
         created.ActiveRevision!.RevisionNumber.ShouldBe(1);
         created.ActiveRevisionId.ShouldBe(created.ActiveRevision.Id);
-        created.ActiveRevision.Stages.Single().Role.ShouldBe(AgentTaskRole.Code);
+        created.ActiveRevision.Stages.Select(s => s.Role).ShouldBe(stages.Select(s => s.Role));
         (await Should.ThrowAsync<ConflictException>(() => service.CreateAsync(
             new("Mine", "", [Code()]), CancellationToken.None))).Code.ShouldBe("pipeline_definition_name_taken");
         foreach (var name in new[] { "", new string('x', 201) })
@@ -83,8 +94,12 @@ public sealed class PipelineDefinitionServiceTests
         var clone = await service.CloneAsync(PipelineDefinitions.StandardPipelineId, "Mine", CancellationToken.None);
         var builtin = await service.GetAsync(PipelineDefinitions.StandardPipelineId, CancellationToken.None);
         clone.Source.ShouldBe(PipelineDefinitionSource.Custom);
+        clone.Id.ShouldNotBe(builtin.Id);
+        clone.ActiveRevision!.RevisionNumber.ShouldBe(1);
         clone.ActiveRevision!.ContentHash.ShouldBe(builtin.ActiveRevision!.ContentHash);
         clone.ActiveRevision.Stages.Select(s => s.Role).ShouldBe(builtin.ActiveRevision.Stages.Select(s => s.Role));
+        (await db.PipelineDefinitionRevisions.SingleAsync(r => r.Id == clone.ActiveRevisionId)).StagesJson
+            .ShouldBe((await db.PipelineDefinitionRevisions.SingleAsync(r => r.Id == builtin.ActiveRevisionId)).StagesJson);
     }
 
     [Test]
@@ -107,6 +122,8 @@ public sealed class PipelineDefinitionServiceTests
         (await Should.ThrowAsync<ValidationException>(() => service.AddRevisionAsync(created.Id,
             new([Code()], new string('x', 401)), CancellationToken.None)))
             .Code.ShouldBe("pipeline_revision_note_too_long");
+        (await service.GetAsync(created.Id, CancellationToken.None)).ActiveRevisionId
+            .ShouldBe(revised.ActiveRevisionId);
     }
 
     [Test]

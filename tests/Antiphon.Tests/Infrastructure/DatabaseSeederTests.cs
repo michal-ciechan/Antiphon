@@ -19,6 +19,20 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class DatabaseSeederTests
 {
     [Test]
+    public async Task Concurrent_pipeline_seeders_share_one_fixed_definition_and_revision()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var first = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        await using var second = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        await Task.WhenAll(
+            DatabaseSeeder.SeedPipelineDefinitionsAsync(first, PipelineDefinitions.StandardPipeline, CancellationToken.None),
+            DatabaseSeeder.SeedPipelineDefinitionsAsync(second, PipelineDefinitions.StandardPipeline, CancellationToken.None));
+        first.ChangeTracker.Clear();
+        (await first.PipelineDefinitions.CountAsync(d => d.Id == PipelineDefinitions.StandardPipelineId)).ShouldBe(1);
+        (await first.PipelineDefinitionRevisions.CountAsync(r => r.DefinitionId == PipelineDefinitions.StandardPipelineId)).ShouldBe(1);
+    }
+
+    [Test]
     public async Task Pipeline_seed_inserts_the_built_in_once_and_appends_a_revision_only_when_the_constant_hash_changes()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();

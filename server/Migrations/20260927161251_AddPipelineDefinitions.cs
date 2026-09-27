@@ -79,8 +79,8 @@ namespace Antiphon.Server.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "BundleKey",
                 table: "CardWorkflowStages",
-                type: "character varying(200)",
-                maxLength: 200,
+                type: "character varying(100)",
+                maxLength: 100,
                 nullable: false,
                 defaultValue: "");
 
