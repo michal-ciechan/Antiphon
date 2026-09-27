@@ -10,7 +10,7 @@ Branch: `feat/card-task-4d9c7019` (continued from `feat/card-task-ae40541f`). Th
 
 ## Optional renderer slice
 
-The Markdig renderer and browser invocation now live in `tools/Antiphon.MarkdownPdf`, with a manifest-in/PDF-out command and no server project dependency. Server registration, direct Markdig package and universal PDF prompt wording were removed. `dotnet publish` succeeded into `.antiphon/test-output/card-0418/tool-published/` with no server or messaging DLL in that output. The tool's real-browser artifact and process-tree cleanup checks remain pending on a host with a browser.
+The Markdig renderer and browser invocation now live in `tools/Antiphon.MarkdownPdf`, with a manifest-in/PDF-out command and no server project dependency. Server registration, direct Markdig package and universal PDF prompt wording were removed. `dotnet publish` succeeded in the previous S2 worktree with no server or messaging DLL in that output. A real Chromium/Poppler container in this worktree now rendered and independently inspected the synthetic four-source PDF; process-tree cleanup checks remain pending.
 
 ## Channel binding and delivery slice
 
@@ -39,18 +39,42 @@ The Markdig renderer and browser invocation now live in `tools/Antiphon.Markdown
 | CP-S4-storage-final | `/*/*/ChannelOutboundStorageTests/*` | 5 | 5 | 0 | 0 | `.antiphon/c0418-storage/CP-S4-storage-final-20260927-201803-a06c/run.trx` | Frozen bytes, bounded input, manifest zip extraction, sealed output and forbidden routing field. |
 | CP-S5-worker | `/*/*/ChannelOutboundDeliveryTests/*` | 1 | 1 | 0 | 0 | `.antiphon/c0418-delivery/CP-S5-worker-20260927-201431-42aa/run.trx` | Real ordinary task creation/link, two ordered intents, frozen handles and deferred stamps. Later revocation and retry assertions were added after this run and still need rerun. |
 | S3/S5 client | `ChannelsPage.test.tsx attentionVisuals.test.ts` | 25 | 25 | 0 | 0 | `logs/client-tests.log` | Profile selector/clear and attention visuals. |
+| CP-S3-S5-retry | outbound policy/storage/delivery/endpoint/recovery classes | 10 | 10 | 0 | 0 | `.antiphon/c0418-final/CP-S3-S5-retry-20260927-203501-84bf/run.trx` | Frozen route, sealed files, endpoints, recovery and ordered publication. |
+| CP-S5-dispatch-attention | `ChannelReplyDurabilityTests`, `AttentionServiceTests`, `OutputDistillationPolicyTests` | 214 | 214 | 0 | 0 | `.antiphon/c0418-final/CP-S5-dispatch-attention-20260927-203717-7f55/run.trx` | Full affected classes; inbound Slack thread and delivery attention included. |
+| CP-S3-S5-capacity | outbound delivery/recovery classes | 3 | 3 | 0 | 0 | `.antiphon/c0418-final/CP-S3-S5-capacity-20260927-204041-653d/run.trx` | Simultaneous admissions obey `MaxPending=1`. |
+| CP-S3-S6-integration | source settlement, follow-up, machine turn, bridge, channel service/identity and instruction classes | 451 | 451 | 0 | 0 | `.antiphon/c0418-final/CP-S3-S6-integration-20260927-204505-4b16/run.trx` | All eight named full classes in the filter passed. |
+| CP-S3-S6-unit | whole Unit category | 3410 | 3407 | 3 | 33 | `.antiphon/c0418-final/CP-S3-S6-unit-20260927-205524-ad33/run.trx` | Two obsolete universal-PDF preamble assertions corrected after this run; the third is `HttpResilienceRegistrationTests.Runner_list_and_git_connectivity_keep_their_short_deadlines` at 18s versus a 15s wall threshold during host contention. Final rerun pending. |
+| CP-S3-S6-final-focused | channel preamble and outbound policy/storage/delivery/endpoint/recovery classes | 26 | 26 | 0 | 0 | `.antiphon/c0418-final/CP-S3-S6-final-focused-20260927-210044-ee5e/run.trx` | Corrected preamble assertions and text-only fallback passed; later publication-retry code needs its own run. |
+| CP-S5-publish-retry-red | recovery class after new retry test | 2 | 0 | 2 | 0 | `.antiphon/c0418-final/CP-S5-publish-retry-20260927-210416-774b/run.trx` | Concurrent pump tests in the shared store consumed one another's rows; classes were made serial. |
+| CP-S5-publish-retry-rerun | full recovery class | 2 | 2 | 0 | 0 | `.antiphon/c0418-final/CP-S5-publish-retry-rerun-20260927-210654-c8db/run.trx` | Definite local queue refusal retries sealed bytes twice then succeeds, exhausts at three, or leaves ambiguous send uncertain. |
+| CP-S3-S6-unit-final | whole Unit category | 3410 | 3410 | 0 | 33 | `.antiphon/c0418-final/CP-S3-S6-unit-final-20260927-210927-bd1c/run.trx` | Clean rerun after preamble assertion updates and without the prior wall-time fluctuation. |
+| CP-S3-S6-affected-final | outbound, reply durability, attention, deadline and pinned-kind full classes | 268 | 263 | 5 | 0 | `.antiphon/c0418-final/CP-S3-S6-affected-final-20260927-211233-be2b/run.trx` | Two repeatable inherited pinned-Codex failures, one pinned shared-store cleanup race, one transient endpoint DB startup error and one attention query-count fluctuation. |
+| CP-S6-attention-query-isolated | exact attention query-count method | 1 | 1 | 0 | 0 | `.antiphon/c0418-final/CP-S6-attention-query-isolated-20260927-211507-91a6/run.trx` | The broad-run query-count failure did not reproduce alone. |
+| CP-S6-endpoint-isolated | full outbound endpoint class | 1 | 1 | 0 | 0 | `.antiphon/c0418-final/CP-S6-endpoint-isolated-20260927-211558-9184/run.trx` | The broad-run DB startup failure did not reproduce alone. |
+| CP-S6-pinned-isolated | full pinned-kind class | 4 | 2 | 2 | 0 | `.antiphon/c0418-final/CP-S6-pinned-isolated-20260927-211657-96df/run.trx` | T3/T4 passed; T1/T2 refused desktop Codex. |
+| CP-pinned-baseline | same full class at untouched S2 commit `f76c9f1762f2426b05d6d066b84b757635acc1d1` | 4 | 2 | 2 | 0 | `.antiphon/c0418-baseline/CP-pinned-baseline-20260927-211822-dd69/run.trx` | Identical T1/T2 `codex_desktop_unqualified` failures prove they predate this channel change. Disposable baseline worktree removed after keeping TRX. |
+| CP-S6-messaging | full gateway, Slack, Telegram and monitor classes | 120 | 120 | 0 | 0 | `.antiphon/c0418-final/CP-S6-messaging-20260927-212141-74e1/run.trx` | All eight named messaging classes in the filter passed; no production broker traffic. |
+| CP-S3-S6-outbound-final | full outbound policy, endpoint, storage, delivery and recovery classes | 13 | 13 | 0 | 0 | `.antiphon/c0418-final/CP-S3-S6-outbound-final-20260927-212255-d794/run.trx` | All current outbound methods passed together on the final code. |
+| CP-S4-deadline-final | full task, overdue, specialist and distillation deadline classes | 67 | 67 | 0 | 0 | `.antiphon/c0418-final/CP-S4-deadline-final-20260927-212345-a761/run.trx` | All four named deadline classes passed separately from the inherited pinned-Codex class. |
+| CP-S5-broker-payload | `KafkaOutboundPayloadTests.Validated_reply_bytes_and_frozen_thread_cross_the_real_broker` | 1 | 1 | 0 | 0 | `.antiphon/c0418-final/CP-S5-broker-payload-20260927-212627-8116/run.trx` | Disposable Redpanda accepted the actual `ChannelReply` JSON, conversation key, frozen thread and inline source bytes. |
 
-The plan predates the `### Checkpoints` manifest requirement and has no table. These runs used `scripts/run-checkpoint.ps1` with a build slot and `UseAppHost=false`; the final two rows used the same isolated `bin-c0418/` build. This is an execution-contract gap to resolve before final verification.
+The plan predates the `### Checkpoints` manifest requirement and has no table. These explicitly unlisted runs exercise the Final verification profile and use `scripts/run-checkpoint.ps1` with a build slot and `UseAppHost=false`; each fresh build uses isolated `bin-c0418-storage/` output. This is an execution-contract gap to resolve before final verification.
+
+### Real browser PDF artifact (V-20)
+
+The ignored local fixture is `.antiphon/test-output/card-0418/v20/`, copied byte-for-byte from the committed four-source specimen under `tests/Antiphon.Tests/Fixtures/Card0418/`. The command `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c0418-v20-final -- .antiphon/test-output/card-0418/browser/run-v20.sh` exited 0. The script hashes the four inputs before and after, invokes the standalone tool against Chromium inside an isolated Docker image, extracts text with Poppler, checks all ordered headings and final body sentinels, checks Polish Unicode and one distinct start per page, and renders four page PNGs. `pdfinfo` reports four pages. I inspected all four images: text, Unicode sparkle, tables, code and end sentinels are visible without clipping. The artifact is `.antiphon/test-output/card-0418/v20/output/combined.pdf` (SHA-256 `5e6aaaf18d0e9b5f057ea351b517fd243ce15520495c1ebdfb88e9cbdf27a806`), with `extracted.txt`, `pdfinfo.txt` and `page-1.png` through `page-4.png` beside it. This is a local synthetic specimen, not a mav-ref or native Slack receipt.
+
+The client production `npm --prefix client run build` exited 0 under a host build slot. The scoped channel/attention Vitest run remains 25/25; no client code changed after that run.
 
 ## Coverage status
 
 | Plan IDs | Status |
 |---|---|
 | V-1 through V-3; R-1, R-2 | Partial: source slice has direct and integration evidence; full fixture matrices, cross-project cases and completeness stamping remain pending. |
-| V-19 through V-21; R-12 | Partial: tool CLI/renderer and instruction tests; real PDF open/page oracle and process-tree behavior pending. |
+| V-19 through V-21; R-12 | V-20 local real-browser artifact passed with independent text/page/visual checks. V-19 process-tree cleanup and V-21 migration/structural checks remain pending. |
 | V-5, V-9, V-10, V-12, V-14, V-16, V-18; R-3, R-5, R-6, R-8, R-10 | Partial local policy/storage/worker/publication assertions only. Named endpoint, concurrency, full dispatch, deadlines, fault and recovery matrices remain pending. |
-| V-4, V-6 through V-8, V-11, V-13, V-15, V-17, V-22 through V-24; R-4, R-7, R-9, R-11, R-13, R-14 | Pending full isolated and regression evidence. |
+| V-4, V-6 through V-8, V-11, V-13, V-15, V-17, V-22 through V-24; R-4, R-7, R-9, R-11, R-13, R-14 | Partial: full messaging class regressions and one real outbound broker payload test passed; full server-to-gateway four-source E2E, budget edges, refusal/deadline matrices and hard crash cuts remain pending. |
 | V-25 | Pending actual mav-ref migration, authorization and native Slack receipt. |
 | PC-1 through PC-30 | Pending method-scoped SourceLanding Mutation; the budget red above is a local guard check, not a PC discharge. |
 
-The whole Unit lane, final named integrations, real-browser renderer, hard crash cuts, isolated broker/gateway path and manual acceptance have not run. No live destination or shared stack was changed. The V-25 mav-ref migration remains pending a deployment and authorized native Slack receipt.
+The whole Unit lane passed on its corrected rerun; some named integrations passed but the full Final list has not completed. Hard crash cuts, isolated broker/gateway path and manual live acceptance remain pending. No live destination or shared stack was changed. The V-25 mav-ref migration remains pending a deployment and authorized native Slack receipt.

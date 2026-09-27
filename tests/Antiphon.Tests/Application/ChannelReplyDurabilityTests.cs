@@ -1,4 +1,5 @@
 using Antiphon.Messaging;
+using System.Text.Json;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -258,6 +259,49 @@ public class ChannelReplyDurabilityTests
         (await afterRestart.PendingCountAsync(h.SessionId)).ShouldBe(0);
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull(
             "the row is the correlation, so the row is what records that it was answered");
+    }
+
+    [Test]
+    public async Task A_pending_reply_uses_its_inbound_Slack_thread_after_catalog_moves_on()
+    {
+        await using var h = await CreateHarnessAsync();
+        var conversationId = await h.BindChannelAsync();
+        const string prompt = "[Slack] answer thread one";
+        var correlationId = await h.SeedChannelCorrelationAsync(prompt, $"slack:{conversationId}");
+        await using (var db = CreateContext())
+        {
+            var channel = await db.ChatChannels.SingleAsync(c => c.ExternalId == conversationId);
+            channel.Provider = "slack";
+            channel.ReplyHandle = conversationId + "|thread-two";
+            var inboundId = Guid.NewGuid();
+            var inbound = new ChannelMessage
+            {
+                Id = inboundId.ToString("N"), Channel = "slack", ChannelMessageId = "message-one",
+                Conversation = new Conversation { Id = conversationId, Kind = ConversationKind.Direct },
+                Author = new Participant { Id = "human" }, Timestamp = DateTimeOffset.UtcNow,
+                ReplyHandle = conversationId + "|thread-one",
+                Raw = JsonDocument.Parse("{}").RootElement.Clone(),
+            };
+            db.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = inboundId, Provider = "slack", ConversationId = conversationId,
+                NativeMessageId = "message-one", AgentId = h.AgentId,
+                ChatChannelId = channel.Id, QueueMessageId = correlationId,
+                EnvelopeJson = JsonSerializer.Serialize(inbound,
+                    global::Antiphon.Messaging.MessagingJson.Options),
+                AcceptedAt = DateTime.UtcNow,
+            });
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == correlationId))
+                .SourceChannelInboundId = inboundId;
+            await db.SaveChangesAsync();
+        }
+        await h.InsertTurnAsync(prompt, "answer for the first thread");
+
+        await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var sent = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        sent.ReplyHandle.ShouldBe(conversationId + "|thread-one");
+        sent.Text.ShouldBe("answer for the first thread");
     }
 
     // The other half of durability, and the reason the settle marker is a column rather than nothing:

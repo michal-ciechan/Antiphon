@@ -44,6 +44,46 @@ namespace Antiphon.Tests.Application;
 public partial class AttentionServiceTests
 {
     [Test]
+    public async Task Outbound_delivery_states_have_truthful_attention()
+    {
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        db.ChatChannels.Add(new ChatChannel
+        {
+            Id = channelId, Provider = "fake", ExternalId = channelId.ToString("N"),
+            CreatedAt = now, UpdatedAt = now,
+        });
+        db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+        {
+            Id = deliveryId, SourceKey = new string('a', 64), ChannelId = channelId,
+            ProjectId = Guid.NewGuid(), SourceSessionId = Guid.NewGuid(),
+            SendKind = "main", PromptRevision = new string('b', 64),
+            InputPath = "frozen", InputSha256 = new string('c', 64),
+            State = ChannelOutboundDeliveryState.PublishUncertain,
+            FailureReason = "Broker acceptance unknown", CreatedAt = now, DeadlineAt = now,
+        });
+        await db.SaveChangesAsync();
+        try
+        {
+            await using var projectionDb = CreateContext();
+            var row = (await BuildService(new FakeRunnerClient(), db: projectionDb)
+                    .GetAsync(CancellationToken.None)).Items
+                .Single(i => i.ConditionKey == $"channel-outbound:{deliveryId:N}");
+            row.Kind.ShouldBe(AttentionKind.ChannelOutboundDelivery);
+            row.Severity.ShouldBe(AlertSeverity.Critical);
+            row.Evidence.ShouldContain(deliveryId.ToString("D"));
+            row.Headline.ShouldContain("Broker acceptance unknown");
+        }
+        finally
+        {
+            await db.ChannelOutboundDeliveries.Where(d => d.Id == deliveryId).ExecuteDeleteAsync();
+            await db.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task A_needs_decision_card_is_a_critical_row_whose_evidence_is_the_move_reason()
     {
         await using var scenario = new Scenario();

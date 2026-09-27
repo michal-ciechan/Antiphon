@@ -287,9 +287,11 @@ public sealed class ChatChannelService
             return false;
         try
         {
-            var root = Path.GetFullPath(agent.WorkingDirectory);
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(agent.WorkingDirectory));
             var candidate = Path.GetFullPath(Path.Combine(root, relative));
-            if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            var pathComparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, pathComparison))
                 return false;
             if (!Directory.Exists(root) || File.GetAttributes(root).HasFlag(FileAttributes.ReparsePoint))
                 return false;

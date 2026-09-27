@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
@@ -17,8 +19,80 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[NotInParallel]
 public sealed class ChannelOutboundDeliveryTests
 {
+    [Test]
+    public async Task Concurrent_admission_respects_max_pending_per_channel()
+    {
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-limit-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert sources.");
+        var options = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["limited"] = new()
+                {
+                    ProjectId = projectId, AgentId = converterId, PromptFile = "convert.md",
+                    Trigger = ChannelOutboundTrigger.EveryAgentReply, MaxPending = 1,
+                },
+            },
+        });
+        await using var seed = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var now = DateTime.UtcNow;
+        seed.Projects.Add(new Project { Id = projectId, Name = "outbound-" + projectId.ToString("N"),
+            CreatedAt = now, UpdatedAt = now });
+        seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "limit",
+            CreatedAt = now, UpdatedAt = now });
+        seed.Agents.AddRange(
+            new Agent { Id = inboundId, Name = "inbound", Slug = "inbound-" + inboundId.ToString("N"),
+                BoardId = boardId, WorkingDirectory = root },
+            new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
+                BoardId = boardId, WorkingDirectory = root });
+        seed.ChatChannels.Add(new ChatChannel
+        {
+            Id = channelId, Provider = "slack", ExternalId = channelId.ToString("N"),
+            AgentId = inboundId, OutboundAgentProfile = "limited", CreatedAt = now, UpdatedAt = now,
+        });
+        await seed.SaveChangesAsync();
+        try
+        {
+            async Task SendOneAsync(int sequence)
+            {
+                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+                var service = new ChannelOutboundService(db, new ChannelOutboundFileStore(
+                    Path.Combine(root, "outbound")), new FakeAntiphonMessagingClient(), options,
+                    TimeProvider.System);
+                var reply = new ChannelReply { Channel = "slack",
+                    ConversationId = channelId.ToString("N"), Text = "reply " + sequence };
+                (await service.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+                    new ChannelOutboundSource(Guid.NewGuid(), sequence, 1, 2, "main", []),
+                    CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            }
+            await Task.WhenAll(SendOneAsync(1), SendOneAsync(2));
+            var deliveries = await seed.ChannelOutboundDeliveries.AsNoTracking()
+                .Where(d => d.ChannelId == channelId).ToListAsync();
+            deliveries.Count.ShouldBe(2);
+            deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Pending).ShouldBe(1);
+            deliveries.Count(d => d.ConversionOutcome == "QueueOverflow").ShouldBe(1);
+        }
+        finally
+        {
+            await seed.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId).ExecuteDeleteAsync();
+            await seed.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
+            await seed.Agents.Where(a => a.Id == inboundId || a.Id == converterId).ExecuteDeleteAsync();
+            await seed.Boards.Where(b => b.Id == boardId).ExecuteDeleteAsync();
+            await seed.Projects.Where(p => p.Id == projectId).ExecuteDeleteAsync();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public async Task Deferred_intent_freezes_route_and_only_publication_stamps_correlation()
     {
@@ -121,20 +195,33 @@ public sealed class ChannelOutboundDeliveryTests
             conversionTask.ReplyTo.ShouldBe(AgentTaskReplyTo.None);
             conversionTask.MaxAttempts.ShouldBe(1);
             conversionTask.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
-            intent.State = ChannelOutboundDeliveryState.Ready;
-            intent.ConversionOutcome = "Fallback";
+            var outputDir = Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "output");
+            var pdf = new byte[] { 37, 80, 68, 70, 45, 49, 46, 55, 10 };
+            await File.WriteAllBytesAsync(Path.Combine(outputDir, "combined.pdf"), pdf);
+            await File.WriteAllTextAsync(Path.Combine(outputDir, "manifest.json"),
+                JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = intent.Id, disposition = "converted",
+                    replacementText = "converted answer",
+                    files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                        mime = "application/pdf", length = pdf.Length,
+                        sha256 = Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant() } },
+                }));
+            conversionTask.Status = AgentTaskStatus.Succeeded;
+            conversionTask.CompletedAt = DateTime.UtcNow;
             later.State = ChannelOutboundDeliveryState.Ready;
             later.ConversionOutcome = "Passthrough";
             await verify.SaveChangesAsync();
 
             var pump = new ChannelOutboundDeliveryPump(verify, null!, files, producer,
                 Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
-                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, options);
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
             producer.SentReplies.Count.ShouldBe(2);
             var sent = producer.SentReplies[0];
             sent.ReplyHandle.ShouldBe("thread-1");
-            sent.Text.ShouldContain("Conversion unavailable; source files attached.");
+            sent.Text.ShouldBe("converted answer");
+            sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(pdf);
             producer.SentReplies[1].ReplyHandle.ShouldBe("thread-2");
             producer.SentReplies[1].Text.ShouldBe("second answer");
             (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == intent.Id))
@@ -148,7 +235,8 @@ public sealed class ChannelOutboundDeliveryTests
                 .ShouldBe(ChannelOutboundSendOutcome.Deferred);
             var revoked = await verify.ChannelOutboundDeliveries
                 .SingleAsync(d => d.ChannelId == channelId && d.PromptSequence == 3);
-            channel.OutboundAgentProfile = null;
+            (await verify.ChatChannels.SingleAsync(c => c.Id == channelId))
+                .OutboundAgentProfile = null;
             revoked.State = ChannelOutboundDeliveryState.Ready;
             revoked.ConversionOutcome = "Converted";
             revoked.OutputPath = "obsolete-worker-output";

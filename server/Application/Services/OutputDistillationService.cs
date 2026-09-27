@@ -55,7 +55,7 @@ public sealed class OutputDistillationService
     {
         if (!settings.OutputDistillerEnabled)
             return false;
-        return AgentReportPolicy.IsTarget(task);
+        return task.OutboundDeliveryId is null && AgentReportPolicy.IsTarget(task);
     }
 
     // Compatibility front door for direct callers: admission is now, not after provisioning.

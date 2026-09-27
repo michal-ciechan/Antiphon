@@ -76,10 +76,11 @@ public sealed class ChannelOutboundService
             .SingleOrDefaultAsync(c => c.Provider == reply.Channel && c.ExternalId == reply.ConversationId, ct);
         var profileName = channel?.OutboundAgentProfile;
         ChannelOutboundProfile? profile = null;
-        if (profileName is not null)
+        string? unavailable = null;
+        if (profileName is not null && _settings.Profiles.TryGetValue(profileName, out profile))
         {
-            await ChatChannelService.ValidateOutboundBindingAsync(_db, _settings, channel!, ct);
-            profile = _settings.Profiles[profileName];
+            try { await ChatChannelService.ValidateOutboundBindingAsync(_db, _settings, channel!, ct); }
+            catch (ValidationException ex) { unavailable = ex.Message; }
         }
 
         var qualifies = profile is not null && (profile.Trigger == ChannelOutboundTrigger.EveryAgentReply
@@ -105,17 +106,17 @@ public sealed class ChannelOutboundService
         }
 
         var now = _clock.GetUtcNow().UtcDateTime;
-        var pending = profile is null ? 0 : await _db.ChannelOutboundDeliveries.CountAsync(d =>
-            d.ChannelId == channel.Id && d.State == ChannelOutboundDeliveryState.Pending, ct);
-        var overflow = profile is not null && pending >= profile.MaxPending;
         var id = Guid.NewGuid();
         var sourceManifest = await ReadSourceManifestAsync(source.SourceTaskId, ct);
         var snapshot = await _files.StageAsync(id, reply, ct, sourceManifest);
-        var converter = profile is null ? null
-            : await _db.Agents.AsNoTracking().SingleAsync(a => a.Id == profile.AgentId, ct);
-        var promptPath = profile is null || converter is null ? null
+        var converter = profile is null || unavailable is not null ? null
+            : await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == profile.AgentId, ct);
+        var promptPath = profile is null || converter is null || unavailable is not null ? null
             : ChatChannelService.TryGetPromptPath(converter, profile.PromptFile, out var path) ? path : null;
-        var promptText = promptPath is null ? "" : await File.ReadAllTextAsync(promptPath, ct);
+        string promptText;
+        try { promptText = promptPath is null ? "" : await File.ReadAllTextAsync(promptPath, ct); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { unavailable = ex.Message; promptText = ""; }
         var promptRevision = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(promptText)))
             .ToLowerInvariant();
         var projectId = profile?.ProjectId ?? await _db.Agents.Where(a => a.Id == channel.AgentId)
@@ -133,15 +134,43 @@ public sealed class ChannelOutboundService
             Trigger = qualifies ? profile!.Trigger.ToString() : "Passthrough",
             MaxPending = profile?.MaxPending ?? 0,
             InputPath = snapshot.ReplyPath, InputSha256 = snapshot.ReplySha256,
-            State = qualifies && !overflow ? ChannelOutboundDeliveryState.Pending : ChannelOutboundDeliveryState.Ready,
-            ConversionOutcome = overflow ? "QueueOverflow" : qualifies ? null : "Passthrough",
-            FailureReason = overflow ? "Conversion queue full; original files retained." : null,
+            State = ChannelOutboundDeliveryState.Ready,
+            ConversionOutcome = unavailable is not null ? "Fallback"
+                : qualifies ? null : "Passthrough",
+            FailureReason = unavailable is not null ? "Conversion unavailable: " + Bound(unavailable)
+                : null,
             CreatedAt = now, DeadlineAt = now.AddSeconds(profile?.TimeoutSeconds ?? 120),
         };
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         try
         {
+            // Serialize admission per destination so MaxPending remains a hard bound when
+            // independent dispatchers accept replies at the same time.
+            var lockBytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+                "channel-outbound:" + channel.Id.ToString("N")));
+            var lockKey = BitConverter.ToInt64(lockBytes, 0);
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({lockKey})", ct);
+            var winner = await _db.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleOrDefaultAsync(d => d.SourceKey == key, ct);
+            if (winner is not null)
+            {
+                VerifySamePayload(winner, reply);
+                await transaction.CommitAsync(ct);
+                return winner.State == ChannelOutboundDeliveryState.Published
+                    ? ChannelOutboundSendOutcome.Published : ChannelOutboundSendOutcome.Deferred;
+            }
+            var pending = profile is null ? 0 : await _db.ChannelOutboundDeliveries.CountAsync(d =>
+                d.ChannelId == channel.Id && d.State == ChannelOutboundDeliveryState.Pending, ct);
+            var overflow = qualifies && profile is not null && pending >= profile.MaxPending;
+            delivery.State = qualifies && !overflow && unavailable is null
+                ? ChannelOutboundDeliveryState.Pending : ChannelOutboundDeliveryState.Ready;
+            if (overflow)
+            {
+                delivery.ConversionOutcome = "QueueOverflow";
+                delivery.FailureReason = "Conversion queue full; original files retained.";
+            }
             _db.ChannelOutboundDeliveries.Add(delivery);
             foreach (var correlationId in source.CorrelationIds)
             {
@@ -240,8 +269,13 @@ public sealed class ChannelOutboundService
             throw new InvalidOperationException("The source window was replayed with different outbound content.");
     }
 
-    public static string AnnotateFallback(string? text) =>
-        string.IsNullOrWhiteSpace(text)
-            ? "Conversion unavailable; source files attached."
-            : text + "\n\nConversion unavailable; source files attached.";
+    private static string Bound(string value) => value.Length <= 450 ? value : value[..450];
+
+    public static string AnnotateFallback(string? text, bool hasAttachments)
+    {
+        var note = hasAttachments
+            ? "Conversion unavailable; original attachments retained."
+            : "Conversion unavailable; original reply sent.";
+        return string.IsNullOrWhiteSpace(text) ? note : text + "\n\n" + note;
+    }
 }
