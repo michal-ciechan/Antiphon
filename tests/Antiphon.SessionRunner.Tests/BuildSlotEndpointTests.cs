@@ -128,17 +128,21 @@ public sealed class BuildSlotEndpointTests
         Directory.CreateDirectory(logs);
         var start = new ProcessStartInfo("dotnet")
         {
+            WorkingDirectory = logs,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (var arg in new[] { runnerDll, "--urls", "http://127.0.0.1:0", "--SessionRunner:BuildSlotsOnly", "true", "--Serilog:LogPath", logs })
+        foreach (var arg in new[] { runnerDll, "--urls", "http://127.0.0.1:0", "--SessionRunner:BuildSlotsOnly", "true",
+                     "--SessionRunner:SessionLogPath", logs, "--Serilog:LogPath", logs })
             start.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = start };
         var listening = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = new System.Collections.Concurrent.ConcurrentQueue<string>();
         void Capture(string? line)
         {
             if (line is null) return;
+            output.Enqueue(line);
             var match = Regex.Match(line, @"Now listening on:\s+(http://127\.0\.0\.1:\d+)");
             if (match.Success) listening.TrySetResult(new Uri(match.Groups[1].Value));
         }
@@ -149,7 +153,9 @@ public sealed class BuildSlotEndpointTests
             process.Start().ShouldBeTrue();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            var address = await listening.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Uri address;
+            try { address = await listening.Task.WaitAsync(TimeSpan.FromSeconds(30)); }
+            catch (TimeoutException ex) { throw new TimeoutException(string.Join("\n", output.TakeLast(20)), ex); }
             address.Port.ShouldNotBe(17204);
             using var http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
             (await http.GetAsync("/health")).StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -164,6 +170,7 @@ public sealed class BuildSlotEndpointTests
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
             }
+            Directory.Delete(logs, recursive: true);
         }
     }
 
