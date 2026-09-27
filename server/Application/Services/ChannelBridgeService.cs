@@ -42,6 +42,7 @@ public sealed class ChannelBridgeService : BackgroundService
     private readonly ChannelInboundWakeSignal _wakeSignal;
     private readonly ConcurrentDictionary<Guid, byte> _buffered = new();
     private readonly SemaphoreSlim _drainGate = new(1, 1);
+    private readonly Dictionary<Guid, long> _lastMemberScanSequence = [];
     private long _lastInboundScanSequence;
     private int _completedDrainIterations;
 
@@ -194,6 +195,7 @@ public sealed class ChannelBridgeService : BackgroundService
 
     internal async Task DrainPendingAsync(CancellationToken ct)
     {
+        List<AgentBatch> batches;
         await _drainGate.WaitAsync(ct);
         try
         {
@@ -201,30 +203,66 @@ public sealed class ChannelBridgeService : BackgroundService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var pending = db.ChannelInbounds.AsNoTracking()
                 .Where(i => i.AgentId != null && i.QueueMessageId == null && i.EnvelopeJson != null);
-            var page = await pending.Where(i => i.AcceptanceSequence > _lastInboundScanSequence)
-                .OrderBy(i => i.AcceptanceSequence).Take(64)
-                .Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+            // Page agent heads, not raw rows: 64 messages for one stalled agent must
+            // still leave room to select a later healthy recipient in this pass.
+            var heads = pending.GroupBy(i => i.AgentId!.Value)
+                .Select(group => new { AgentId = group.Key, Head = group.Min(i => i.AcceptanceSequence) });
+            var page = await heads.Where(head => head.Head > _lastInboundScanSequence)
+                .OrderBy(head => head.Head).Take(64).ToListAsync(ct);
             if (page.Count == 0 && _lastInboundScanSequence != 0)
             {
-                // A Running signal after a held scan must retry the first page now,
-                // instead of waiting for another timer tick just to wrap the cursor.
                 _lastInboundScanSequence = 0;
-                page = await pending.OrderBy(i => i.AcceptanceSequence).Take(64)
-                    .Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+                page = await heads.OrderBy(head => head.Head).Take(64).ToListAsync(ct);
             }
-            foreach (var inbound in page)
+            batches = new List<AgentBatch>(page.Count);
+            foreach (var head in page)
             {
-                try { await ProcessInboundAsync(inbound.Id, ct); }
+                // A separate member cursor lets the 65th pending row of one agent
+                // receive its timeout disposition on the next pass even when the
+                // first 64 remain pending. Durable rows, not this cursor, own work.
+                _lastMemberScanSequence.TryGetValue(head.AgentId, out var after);
+                var members = await pending.Where(i => i.AgentId == head.AgentId
+                        && i.AcceptanceSequence > after)
+                    .OrderBy(i => i.AcceptanceSequence).Take(64)
+                    .Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+                if (members.Count == 0 && after != 0)
+                {
+                    _lastMemberScanSequence[head.AgentId] = 0;
+                    members = await pending.Where(i => i.AgentId == head.AgentId)
+                        .OrderBy(i => i.AcceptanceSequence).Take(64)
+                        .Select(i => new { i.Id, i.AcceptanceSequence }).ToListAsync(ct);
+                }
+                if (members.Count > 0)
+                {
+                    _lastMemberScanSequence[head.AgentId] = members[^1].AcceptanceSequence;
+                    batches.Add(new AgentBatch(head.AgentId, members.Select(i => i.Id).ToArray()));
+                }
+                _lastInboundScanSequence = head.Head;
+            }
+        }
+        finally { _drainGate.Release(); }
+
+        // The advisory claim excludes another bridge instance for this agent. This
+        // semaphore only bounds local pressure; no shared gate covers wake or queue I/O.
+        using (var capacity = new SemaphoreSlim(4, 4))
+        {
+            await Task.WhenAll(batches.Select(async batch =>
+            {
+                await capacity.WaitAsync(ct);
+                try { await ProcessAgentGroupAsync(batch.AgentId, batch.InboundIds, direct: false, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "Pending channel inbound {InboundId} remains for a later scan", inbound.Id);
+                    _logger.LogWarning(ex, "Pending channel inbounds for agent {AgentId} remain for a later scan", batch.AgentId);
                 }
-                _lastInboundScanSequence = inbound.AcceptanceSequence;
-            }
+                finally { capacity.Release(); }
+            }));
+        }
 
-            // A crash or uncertain terminal write after queue ownership must not strand a
-            // Channel row on a non-AlwaysOn agent. The queue keeps its original attempt floor
-            // and performs receipt/cap checks before any new input.
+        // A crash or uncertain terminal write after queue ownership must not strand a
+        // Channel row on a non-AlwaysOn agent. This sweep is independent of wake I/O.
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var ownedSessions = await db.SessionQueuedMessages.AsNoTracking()
                 .Where(q => q.SourceChannelInboundId != null
                     && q.Status == QueuedMessageStatus.Pending
@@ -234,8 +272,9 @@ public sealed class ChannelBridgeService : BackgroundService
             foreach (var sessionId in ownedSessions)
                 await _queue.FlushSessionAsync(sessionId, ct);
         }
-        finally { _drainGate.Release(); }
     }
+
+    private sealed record AgentBatch(Guid AgentId, Guid[] InboundIds);
 
     private async Task ProcessInboundAsync(Guid inboundId, CancellationToken ct)
     {
@@ -243,53 +282,98 @@ public sealed class ChannelBridgeService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var inbound = await db.ChannelInbounds.AsNoTracking().SingleOrDefaultAsync(i => i.Id == inboundId, ct);
         if (inbound?.EnvelopeJson is null || inbound.QueueMessageId is not null
-            || inbound.AgentId is not Guid agentId || inbound.ChatChannelId is not Guid channelId)
+            || inbound.AgentId is not Guid agentId)
             return;
+        await ProcessAgentGroupAsync(agentId, [inboundId], direct: true, ct);
+    }
+
+    private async Task ProcessAgentGroupAsync(Guid agentId, IReadOnlyList<Guid> inboundIds,
+        bool direct, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var claim = await AgentWakeClaim.TryAcquireAsync(db, agentId, ct);
         if (claim is null)
             return; // another bridge instance owns this agent; its lease ends with its DB connection
-        inbound = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inboundId, ct);
-        if (inbound.QueueMessageId is not null)
+        var inbounds = await db.ChannelInbounds.AsNoTracking()
+            .Where(i => inboundIds.Contains(i.Id) && i.AgentId == agentId
+                && i.EnvelopeJson != null && i.QueueMessageId == null && i.ChatChannelId != null)
+            .OrderBy(i => i.AcceptanceSequence).ToListAsync(ct);
+        if (inbounds.Count == 0)
             return;
-        var message = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson, Antiphon.Messaging.MessagingJson.Options)!;
-        var channel = await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId, ct);
         Guid? sessionId;
         try { sessionId = await EnsureAgentSessionAsync(agentId, ct); }
         catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
         {
-            await RecordWakeIncidentAsync(inboundId, agentId, "HerdrSupervisionHeld", ex.Message, ct);
-            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
+            foreach (var inbound in inbounds)
+                await ApplyWakeDispositionAsync(inbound, agentId, "HerdrSupervisionHeld", ex, direct, ct);
             return;
         }
         catch (ModelDisabledException ex)
         {
-            await NotifyHeldAgentInboundAsync(channel, message, agentId, ex, ct);
-            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
+            foreach (var inbound in inbounds)
+                await ApplyWakeDispositionAsync(inbound, agentId, "ProviderCapacity", ex, direct, ct);
             return;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Channel inbound {InboundId} remains pending after wake refusal", inboundId);
+            _logger.LogWarning(ex, "Channel inbounds for agent {AgentId} remain pending after wake refusal", agentId);
             return;
         }
         if (sessionId is not Guid liveSessionId)
         {
-            await RecordWakeIncidentAsync(inboundId, agentId, "ChannelWakeTimeout",
-                "Agent session did not reach Running before the wake deadline", ct);
-            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
+            foreach (var inbound in inbounds)
+                await ApplyWakeDispositionAsync(inbound, agentId, "ChannelWakeTimeout", null, direct, ct);
             return;
         }
-        if (!_buffered.TryAdd(inboundId, 0))
-            return;
+        foreach (var inbound in inbounds)
+        {
+            var message = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson!, Antiphon.Messaging.MessagingJson.Options)!;
+            var channel = await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == inbound.ChatChannelId, ct);
+            if (!_buffered.TryAdd(inbound.Id, 0))
+                continue;
+            try
+            {
+                await _debouncer.AddAsync(message,
+                    batch => FlushLaneAsync(channel, agentId, liveSessionId, batch), ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && !direct)
+            {
+                _buffered.TryRemove(inbound.Id, out _);
+                _logger.LogWarning(ex, "Pending channel inbound {InboundId} remains for a later scan", inbound.Id);
+            }
+            catch
+            {
+                _buffered.TryRemove(inbound.Id, out _);
+                throw;
+            }
+        }
+    }
+
+    private async Task ApplyWakeDispositionAsync(ChannelInbound inbound, Guid agentId,
+        string reason, Exception? error, bool direct, CancellationToken ct)
+    {
         try
         {
-            await _debouncer.AddAsync(message,
-                batch => FlushLaneAsync(channel, agentId, liveSessionId, batch), ct);
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var channel = await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == inbound.ChatChannelId, ct);
+            if (error is ModelDisabledException disabled)
+            {
+                var message = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson!,
+                    Antiphon.Messaging.MessagingJson.Options)!;
+                await NotifyHeldAgentInboundAsync(channel, message, agentId, disabled, ct);
+            }
+            else
+            {
+                await RecordWakeIncidentAsync(inbound.Id, agentId, reason,
+                    error?.Message ?? "Agent session did not reach Running before the wake deadline", ct);
+            }
+            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException && !direct)
         {
-            _buffered.TryRemove(inboundId, out _);
-            throw;
+            _logger.LogWarning(ex, "Wake disposition for channel inbound {InboundId} remains pending", inbound.Id);
         }
     }
 
