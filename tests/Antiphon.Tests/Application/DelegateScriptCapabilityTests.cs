@@ -137,6 +137,8 @@ public sealed class DelegateScriptCapabilityTests
 
     private static void WriteBlob(string store, string name, string token)
     {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("The capability store uses Windows DPAPI.");
         Directory.CreateDirectory(store);
         var path = Path.Combine(store, name + ".dpapi");
         var protectedBytes = ProtectedData.Protect(

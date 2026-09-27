@@ -179,6 +179,8 @@ Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
 
 # CARD-0442: real Git ancestry and isolated PostgreSQL candidate selection.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
+# CARD-0442: real create, dispatch and land against scratch Git and isolated PostgreSQL.
+Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests
 # CARD-0442: real create admission and source-boundary fixtures.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
 # CARD-0442: downgrade/upgrade of isolated PostgreSQL task rows.
