@@ -57,6 +57,7 @@ function serve(items: AttentionItemDto[]) {
         maxConcurrentTasks: 6,
         inFlightAgainstCap: 0,
         stages: [],
+        investigateBacklog: { total: 0, items: [] },
       }),
     ),
     http.get('/api/boards', () => HttpResponse.json([])),
