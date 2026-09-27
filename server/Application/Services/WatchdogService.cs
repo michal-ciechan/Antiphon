@@ -68,13 +68,24 @@ public sealed class WatchdogService
             if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
                 continue;
 
+            if (string.IsNullOrWhiteSpace(snapshot.RenderedScreen)
+                && _matcher.IsUnsafeRmApprovalCandidate(snapshot.Buffer))
+                continue;
+
             // A numeric modal is never eligible for a generic yes/Enter rule found in earlier
             // screen text. Only the complete active Claude warning and an empty answer can act.
             if (_matcher.IsUnsafeRmApprovalCandidate(snapshot.RenderedScreen))
             {
                 if (session.AgentKind != AgentKind.ClaudeCode
-                    || !_matcher.IsActiveUnsafeRmApproval(snapshot.RenderedScreen)
                     || _runtime.HasPendingTerminalInput(sessionId))
+                    continue;
+
+                if (!_matcher.IsActiveUnsafeRmApproval(snapshot.RenderedScreen))
+                {
+                    _cooldowns.HoldUnsafeAnswer(sessionId);
+                    continue;
+                }
+                if (!_cooldowns.ConfirmUnsafeAnswerCleared(sessionId))
                     continue;
 
                 _cooldowns.ClearActiveExcept(sessionId, WatchdogMatcher.UnsafeRmRefusalRule);
