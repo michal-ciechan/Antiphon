@@ -2,6 +2,9 @@ using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Microsoft.EntityFrameworkCore;
@@ -12,29 +15,74 @@ using Microsoft.Extensions.Options;
 // external runner is loaded by this crash probe.
 if (args.Length != 1 || !File.Exists(args[0])) return 2;
 var config = JsonSerializer.Deserialize<ProbeConfig>(await File.ReadAllTextAsync(args[0]));
-if (config is null || config.DeliveryId == Guid.Empty) return 2;
+if (config is null || config.DeliveryId == Guid.Empty && config.Mode != "admit") return 2;
 try
 {
     await using var db = new AppDbContext(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<AppDbContext>()
         .UseNpgsql(config.ConnectionString).Options);
-    var producer = new EvidenceProducer(config.EvidencePath);
-    var pump = new ChannelOutboundDeliveryPump(db, null!,
-        new ChannelOutboundFileStore(config.StoreRoot), producer,
-        Options.Create(new AntiphonMessagingOptions()), new ProbeClock(config.ClockOffsetSeconds),
-        NullLogger<ChannelOutboundDeliveryPump>.Instance);
-    if (config.Barrier is not null)
-        pump.ProbeBarrierAsync = async (point, id, ct) =>
+    Func<string, Guid, CancellationToken, Task> barrier = async (point, id, ct) =>
+    {
+        if (point != config.Barrier || (config.DeliveryId != Guid.Empty && id != config.DeliveryId)) return;
+        await using (var stream = new FileStream(config.MarkerPath, FileMode.CreateNew,
+                         FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough))
         {
-            if (point != config.Barrier || id != config.DeliveryId) return;
-            await using (var stream = new FileStream(config.MarkerPath, FileMode.CreateNew,
-                             FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough))
+            await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(point), ct);
+            stream.Flush(flushToDisk: true);
+        }
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+    };
+    var files = new ChannelOutboundFileStore(config.StoreRoot);
+    if (config.Barrier is not null) files.ProbeBarrierAsync = barrier;
+    var clock = new ProbeClock(config.ClockOffsetSeconds);
+    var profiles = Options.Create(new ChannelOutboundSettings
+    {
+        Profiles = new Dictionary<string, ChannelOutboundProfile>
+        {
+            ["crash-pdf"] = new()
             {
-                await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(point), ct);
-                stream.Flush(flushToDisk: true);
-            }
-            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
-        };
-    await pump.TickAsync(CancellationToken.None);
+                ProjectId = config.ProjectId, AgentId = config.ConverterAgentId,
+                PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.MarkdownSources,
+            },
+        },
+    });
+    if (config.Mode == "admit")
+    {
+        var service = new ChannelOutboundService(db, files, new RefusingProducer(), profiles, clock);
+        if (config.Barrier is not null) service.ProbeBarrierAsync = barrier;
+        await service.SendAsync(new ChannelReply
+        {
+            Channel = "fake", ConversationId = config.ChannelId.ToString("N"),
+            ReplyHandle = "thread-1", Text = "admission-frozen-source",
+            Attachments = [new OutboundAttachment
+            {
+                Kind = AttachmentKind.File, Name = "source.md", Mime = "text/markdown",
+                Content = "# crash source"u8.ToArray(),
+            }],
+        }, ChannelOutboundOrigin.AgentReply,
+            new ChannelOutboundSource(config.SessionId, 1, 2, 3, "main", [config.CorrelationId]),
+            CancellationToken.None);
+    }
+    else
+    {
+        OutboundConversionTaskRunner? runner = null;
+        if (config.Mode == "prepare")
+        {
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new DelegationSettings { AllowedRoots = [config.WorkspaceRoot] }),
+                new ProbeEventBus(), new RefusingSessionStopper(), clock,
+                NullLogger<AgentTaskService>.Instance);
+            runner = new OutboundConversionTaskRunner(db, tasks);
+            if (config.Barrier is not null) runner.ProbeBarrierAsync = barrier;
+        }
+        var pump = new ChannelOutboundDeliveryPump(db, runner!, files,
+            config.Mode == "prepare" && !config.AllowPublication
+                ? new RefusingProducer() : new EvidenceProducer(config.EvidencePath),
+            Options.Create(new AntiphonMessagingOptions()), clock,
+            NullLogger<ChannelOutboundDeliveryPump>.Instance, profiles);
+        if (config.Barrier is not null) pump.ProbeBarrierAsync = barrier;
+        await pump.TickAsync(CancellationToken.None);
+    }
     return 0;
 }
 catch (Exception ex)
@@ -48,7 +96,10 @@ catch (Exception ex)
 }
 
 internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Guid DeliveryId,
-    string EvidencePath, string MarkerPath, string? Barrier, int ClockOffsetSeconds);
+    string EvidencePath, string MarkerPath, string? Barrier, int ClockOffsetSeconds,
+    string? Mode = null, string WorkspaceRoot = "", Guid ProjectId = default,
+    Guid ConverterAgentId = default, Guid ChannelId = default, Guid SessionId = default,
+    Guid CorrelationId = default, bool AllowPublication = false);
 
 internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
 {
@@ -66,4 +117,26 @@ internal sealed class EvidenceProducer(string path) : IAntiphonMessagingProducer
         await stream.WriteAsync(bytes, cancellationToken);
         stream.Flush(flushToDisk: true);
     }
+}
+
+internal sealed class RefusingProducer : IAntiphonMessagingProducer
+{
+    public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Unexpected external publication from an admission/worker probe.");
+}
+
+internal sealed class ProbeEventBus : IEventBus
+{
+    public Task PublishToGroupAsync(string group, string eventName, object payload,
+        CancellationToken ct = default) => Task.CompletedTask;
+    public Task PublishToAllAsync(string eventName, object payload,
+        CancellationToken ct = default) => Task.CompletedTask;
+}
+
+internal sealed class RefusingSessionStopper : IDelegateSessionStopper
+{
+    public Task KillAsync(Guid sessionId, CancellationToken ct) =>
+        throw new InvalidOperationException("Unexpected external session stop from conversion probe.");
+    public Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct) =>
+        throw new InvalidOperationException("Unexpected external session stop from conversion probe.");
 }
