@@ -35,7 +35,6 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:3"] = "ANTIPHON_FAKE_ASSISTANT_FILE";
         if (string.Equals(CompletionForm, "Apply", StringComparison.Ordinal))
         {
-            settings["Delegation:OutputDistillerEnabled"] = "true";
             settings["Delegation:OutputDistillerMode"] = "Apply";
             settings["Delegation:OutputDistillerWaitSeconds"] = "2";
         }
@@ -48,7 +47,7 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         settings["AntiphonMessaging:BootstrapServers"] = "127.0.0.1:1";
         settings["Delegation:CheckInterpreterEnabled"] = "false";
         settings["Delegation:DiagnoseEnabled"] = "false";
-        settings["Delegation:OutputDistillerEnabled"] = "false";
+        settings["Delegation:OutputDistillerEnabled"] = string.Equals(CompletionForm, "Apply", StringComparison.Ordinal) ? "true" : "false";
         settings["Delegation:MaxTasksPerRoot"] = "1"; // Preserve the real conflict cap branch; never launch a model helper.
         settings["Supervision:DeliveryVerification:Enabled"] = "true";
         settings["Supervision:DeliveryVerification:TranscriptConfirmEnabled"] = "true";
