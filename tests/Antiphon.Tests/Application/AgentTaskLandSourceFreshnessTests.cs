@@ -235,8 +235,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(t);
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(a);
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(b);
-        h.Fixture.Git.Trace.ShouldNotContain(command => command[0] == "push"
-            && command[^1].EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal));
+        h.Fixture.Git.Trace.Any(command => command[0] == "push"
+            && command[^1].EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal)).ShouldBeFalse();
     }
 
     [Test]
