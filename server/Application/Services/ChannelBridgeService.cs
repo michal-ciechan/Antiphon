@@ -248,13 +248,30 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             await Task.WhenAll(batches.Select(async batch =>
             {
-                await capacity.WaitAsync(ct);
-                try { await ProcessAgentGroupAsync(batch.AgentId, batch.InboundIds, direct: false, ct); }
+                var acquired = false;
+                var advanced = false;
+                try
+                {
+                    await capacity.WaitAsync(ct);
+                    acquired = true;
+                    advanced = await ProcessAgentGroupAsync(batch.AgentId, batch.InboundIds, direct: false, ct);
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.LogWarning(ex, "Pending channel inbounds for agent {AgentId} remain for a later scan", batch.AgentId);
                 }
-                finally { capacity.Release(); }
+                finally
+                {
+                    // A failed wake or claim miss must revisit this agent's oldest
+                    // pending member before selecting a newer acceptance sequence.
+                    if (acquired && !advanced)
+                    {
+                        await _drainGate.WaitAsync(CancellationToken.None);
+                        try { _lastMemberScanSequence[batch.AgentId] = 0; }
+                        finally { _drainGate.Release(); }
+                    }
+                    if (acquired) capacity.Release();
+                }
             }));
         }
 
@@ -287,45 +304,46 @@ public sealed class ChannelBridgeService : BackgroundService
         await ProcessAgentGroupAsync(agentId, [inboundId], direct: true, ct);
     }
 
-    private async Task ProcessAgentGroupAsync(Guid agentId, IReadOnlyList<Guid> inboundIds,
+    private async Task<bool> ProcessAgentGroupAsync(Guid agentId, IReadOnlyList<Guid> inboundIds,
         bool direct, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var claim = await AgentWakeClaim.TryAcquireAsync(db, agentId, ct);
         if (claim is null)
-            return; // another bridge instance owns this agent; its lease ends with its DB connection
+            return false; // another bridge instance owns this agent; retry its oldest pending member
         var inbounds = await db.ChannelInbounds.AsNoTracking()
             .Where(i => inboundIds.Contains(i.Id) && i.AgentId == agentId
                 && i.EnvelopeJson != null && i.QueueMessageId == null && i.ChatChannelId != null)
             .OrderBy(i => i.AcceptanceSequence).ToListAsync(ct);
         if (inbounds.Count == 0)
-            return;
+            return true;
         Guid? sessionId;
         try { sessionId = await EnsureAgentSessionAsync(agentId, ct); }
         catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
         {
             foreach (var inbound in inbounds)
                 await ApplyWakeDispositionAsync(inbound, agentId, "HerdrSupervisionHeld", ex, direct, ct);
-            return;
+            return true;
         }
         catch (ModelDisabledException ex)
         {
             foreach (var inbound in inbounds)
                 await ApplyWakeDispositionAsync(inbound, agentId, "ProviderCapacity", ex, direct, ct);
-            return;
+            return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Channel inbounds for agent {AgentId} remain pending after wake refusal", agentId);
-            return;
+            return false;
         }
         if (sessionId is not Guid liveSessionId)
         {
             foreach (var inbound in inbounds)
                 await ApplyWakeDispositionAsync(inbound, agentId, "ChannelWakeTimeout", null, direct, ct);
-            return;
+            return true;
         }
+        var scheduled = true;
         foreach (var inbound in inbounds)
         {
             var message = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson!, Antiphon.Messaging.MessagingJson.Options)!;
@@ -341,6 +359,7 @@ public sealed class ChannelBridgeService : BackgroundService
             {
                 _buffered.TryRemove(inbound.Id, out _);
                 _logger.LogWarning(ex, "Pending channel inbound {InboundId} remains for a later scan", inbound.Id);
+                scheduled = false;
             }
             catch
             {
@@ -348,6 +367,7 @@ public sealed class ChannelBridgeService : BackgroundService
                 throw;
             }
         }
+        return scheduled;
     }
 
     private async Task ApplyWakeDispositionAsync(ChannelInbound inbound, Guid agentId,
