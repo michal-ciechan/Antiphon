@@ -166,10 +166,13 @@ Antiphon.Tests.Application.SessionStateWarmupTests
 Antiphon.Tests.Application.AgentTaskLandLocalContainmentTests
 # CARD-0452: real Git and PostgreSQL source-claim/admission races across landing modes.
 Antiphon.Tests.Application.AgentTaskLandActiveSourceClaimTests
-# CARD-0452: 32 real Git and PostgreSQL remote-source preservation refusals and recovery passes.
+# CARD-0452: V01-V08 real Git and PostgreSQL remote-source preservation refusals and recovery.
 Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionATests
+# CARD-0452: V09-V16 real push, checkpoint and lease recovery episodes.
 Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionBTests
+# CARD-0452: V17-V27 real cleanup and retirement recovery episodes.
 Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionCTests
+# CARD-0452: V28-V35 real journal, endpoint, verifier and cleanup recovery episodes.
 Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionDTests
 # CARD-0452: real repository child journal recovery and crash evidence.
 Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
