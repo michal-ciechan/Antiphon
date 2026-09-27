@@ -208,6 +208,76 @@ public class GitWorkspaceService
         return code == 0 ? stdout : null;
     }
 
+    /// <summary>Read a committed blob without decoding or normalizing its bytes.</summary>
+    public async Task<long?> GetContentLengthAtAsync(
+        string workingDirectory, string relativePath, string gitRef, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "cat-file", "-s",
+            $"{gitRef}:./{relativePath}");
+        return code == 0 && long.TryParse(stdout.Trim(), out var length) && length >= 0
+            ? length
+            : null;
+    }
+
+    /// <summary>Read a committed blob without decoding or normalizing its bytes.</summary>
+    public async Task<byte[]?> GetContentBytesAtAsync(
+        string workingDirectory, string relativePath, string gitRef, long maxBytes, CancellationToken ct)
+    {
+        Process? process = null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = _settings.ExecutableName,
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("show");
+            psi.ArgumentList.Add($"{gitRef}:./{relativePath}");
+            psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+            using var lease = await _gate.EnterAsync(ct);
+            process = Process.Start(psi);
+            if (process is null)
+                return null;
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)));
+            await using var output = new MemoryStream();
+            var error = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            var buffer = new byte[64 * 1024];
+            int read;
+            while ((read = await process.StandardOutput.BaseStream.ReadAsync(buffer, timeoutCts.Token)) != 0)
+            {
+                if (read > maxBytes - output.Length)
+                {
+                    TryKill(process);
+                    return null;
+                }
+                await output.WriteAsync(buffer.AsMemory(0, read), timeoutCts.Token);
+            }
+            await Task.WhenAll(error, process.WaitForExitAsync(timeoutCts.Token));
+            return process.ExitCode == 0 ? output.ToArray() : null;
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            if (ct.IsCancellationRequested)
+                throw;
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
+        {
+            TryKill(process);
+            return null;
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
     /// <summary>Unified diff of the file vs a base commit (default HEAD); null on failure/no repo.</summary>
     public async Task<string?> GetDiffAsync(
         string workingDirectory, string relativePath, CancellationToken ct, string baseRef = "HEAD")

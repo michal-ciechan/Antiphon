@@ -1,7 +1,7 @@
 namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
-/// CARD-0337: server-side document bundle (Markdown → PDF + sources) at task settlement.
+/// Settlement-time source document bundle settings.
 /// </summary>
 public sealed class DeliverablesSettings
 {
@@ -19,6 +19,6 @@ public sealed class DeliverablesSettings
     /// <summary>Copy source <c>.md</c> files individually at or below this count; otherwise zip.</summary>
     public int MaxSourceFilesInline { get; set; } = 5;
 
-    /// <summary>Beyond this many documents, skip the PDF and emit only the sources zip.</summary>
-    public int MaxDocuments { get; set; } = 40;
+    /// <summary>Maximum uncompressed bytes copied into one source bundle.</summary>
+    public long MaxTotalSourceBytes { get; set; } = 64L * 1024 * 1024;
 }

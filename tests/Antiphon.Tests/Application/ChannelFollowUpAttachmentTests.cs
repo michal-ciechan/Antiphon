@@ -583,7 +583,7 @@ public class ChannelFollowUpAttachmentTests
         var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 1, withPdf: true, pdfBytes: 15 * 1024 * 1024);
         var note = "[task big00001 done] spec";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
-        await h.InsertTurnAsync(note, "The spec.");
+        await h.InsertTurnAsync(note, $"The spec.\n[[attach: {files[0]}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         var followUp = h.Messaging.SentReplies[1];
@@ -603,10 +603,10 @@ public class ChannelFollowUpAttachmentTests
         await h.InsertTurnAsync(prompt, "Ack.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
-        var (taskId, _) = await SeedBundleTaskAsync(h, mdCount: 0, withPdf: true, pdfBytes: 15 * 1024 * 1024);
+        var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 0, withPdf: true, pdfBytes: 15 * 1024 * 1024);
         var note = "[task huge0001 done] spec";
         await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
-        await h.InsertTurnAsync(note, "The spec.");
+        await h.InsertTurnAsync(note, $"The spec.\n[[attach: {files[0]}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Messaging.SentReplies.Count.ShouldBe(2);
