@@ -622,6 +622,7 @@ public enum AgentIncidentKind
     /// names the runner, the session and the required reason.
     /// </summary>
     RunnerSlotForceReleased = 74,
+    RunnerForceRetired = 75,
 
     /// <summary>
     /// CARD-0653: a force-release was saved before the runner call. <c>FailureReason</c> is

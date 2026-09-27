@@ -112,6 +112,10 @@ public sealed class PhoneHomeRunnerSettings
     /// <summary>CARD-0653: how often pending slot-release intents are finished (audit only).</summary>
     public string SlotReconcileCron { get; set; } = "*/2 * * * *";
 
+    public string RunnerRetireCron { get; set; } = "* * * * *";
+    public int RetireMinDrainSeconds { get; set; } = 60;
+    public int RetireIdleSeconds { get; set; } = 120;
+
     public PhoneHomeLimits Limits { get; set; } = new();
 
     /// <summary>

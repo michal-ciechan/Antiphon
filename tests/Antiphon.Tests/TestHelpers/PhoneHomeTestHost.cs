@@ -360,6 +360,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
     public List<PhoneHomeFrame> Incoming { get; } = [];
     public List<PhoneHomeFrame> Launches { get; } = [];
     public List<PhoneHomeFrame> Inputs { get; } = [];
+    public List<RunnerRetireRequest> Retires { get; } = [];
     public bool AutoReply { get; set; } = true;
     public long Epoch { get; set; } = 1;
     public Func<PhoneHomeFrame, PhoneHomeFrame?>? Reply { get; set; }
@@ -455,6 +456,8 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                     Launches.Add(frame);
                 if (frame.Operation == PhoneHomeOperation.Input)
                     Inputs.Add(frame);
+                if (frame.Operation == PhoneHomeOperation.Retire && frame.Payload is { } retirement)
+                    Retires.Add(retirement.Deserialize<RunnerRetireRequest>(PhoneHomeFraming.Json)!);
                 if (frame.Operation is { } op)
                     _requestCounts.AddOrUpdate(op, 1, (_, n) => n + 1);
                 if (!AutoReply || (frame.Operation is { } silent && _silent.ContainsKey(silent)))
@@ -508,6 +511,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                 ReadSessionId(request), true, KillGenerationOutcomes.Killed, DateTime.UtcNow),
             PhoneHomeOperation.ConditionalInput => new RunnerConditionalInputResult(
                 ReadSessionId(request), ConditionalInputOutcomes.Written, DateTime.UtcNow, 1),
+            PhoneHomeOperation.Retire => new RunnerRetireResult(Guid.NewGuid(), 0, DateTime.UtcNow.AddMilliseconds(250)),
             _ => new { ok = true },
         };
         return new PhoneHomeFrame(
