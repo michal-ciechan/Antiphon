@@ -29,9 +29,9 @@ public sealed class AmServiceDeployReadinessTests
             red.CurlExits.ShouldBe(new[] { 7 }, red.Detail);
             red.SleepArguments.ShouldBeEmpty(red.Detail);
             red.LaterCalls.ShouldBe(0, red.Detail);
-            red.OuterError.ShouldContain("exit 7", red.Detail);
-            red.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: failed", red.Detail);
-            red.Journal.ShouldContain("inspect", red.Detail);
+            red.OuterError.ShouldContain("exit 7", Case.Sensitive, red.Detail);
+            red.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: failed", Case.Sensitive, red.Detail);
+            red.Journal.Contains("inspect").ShouldBeTrue(red.Detail);
             Console.WriteLine("C504 baseline: 1 expected failure, 1 curl exit 7, 0 sleeps");
         }
         finally { File.Delete(baseline); }
@@ -57,15 +57,15 @@ public sealed class AmServiceDeployReadinessTests
             run.SleepArguments.ShouldBe(Enumerable.Repeat("2", 4), run.Detail);
             AssertCurlArguments(run);
             run.LaterCalls.ShouldBe(0, run.Detail);
-            run.Journal.ShouldNotContain("migration", run.Detail);
-            run.Journal.ShouldNotContain("logs", run.Detail);
-            run.OuterError.ShouldContain("HTTP readiness was not confirmed", run.Detail);
-            run.OuterError.ShouldContain("/api/channels", run.Detail);
-            run.OuterError.ShouldContain("44", run.Detail);
-            run.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: failed", run.Detail);
-            run.ChildOutput.ShouldNotContain("REMOTE DEPLOY VERDICT: ok", run.Detail);
-            run.ChildOutput.ShouldNotContain(Body, run.Detail);
-            run.ChildOutput.ShouldNotContain("c504-response-must-not-leak", run.Detail);
+            run.Journal.Contains("migration").ShouldBeFalse(run.Detail);
+            run.Journal.Contains("logs").ShouldBeFalse(run.Detail);
+            run.OuterError.ShouldContain("HTTP readiness was not confirmed", Case.Sensitive, run.Detail);
+            run.OuterError.ShouldContain("/api/channels", Case.Sensitive, run.Detail);
+            run.OuterError.ShouldContain("44", Case.Sensitive, run.Detail);
+            run.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: failed", Case.Sensitive, run.Detail);
+            run.ChildOutput.ShouldNotContain("REMOTE DEPLOY VERDICT: ok", Case.Sensitive, run.Detail);
+            run.ChildOutput.ShouldNotContain(Body, Case.Sensitive, run.Detail);
+            run.ChildOutput.ShouldNotContain("c504-response-must-not-leak", Case.Sensitive, run.Detail);
             run.ShellOutput.ShouldBeEmpty(run.Detail);
         }
     }
@@ -110,7 +110,7 @@ public sealed class AmServiceDeployReadinessTests
         run.AdapterNames.ShouldBe(new[] { "telegram", "slack" }, run.Detail);
         run.LaterCalls.ShouldBeGreaterThan(0, run.Detail);
         run.OuterError.ShouldBeEmpty(run.Detail);
-        run.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: ok", run.Detail);
+        run.ChildOutput.ShouldContain("REMOTE DEPLOY VERDICT: ok", Case.Sensitive, run.Detail);
     }
 
     private static void AssertCurlArguments(Run run)
@@ -119,10 +119,10 @@ public sealed class AmServiceDeployReadinessTests
         starts.Length.ShouldBe(run.CurlExits.Length, run.Detail);
         foreach (var item in starts)
         {
-            item.ShouldContain("--connect-timeout 2", run.Detail);
-            item.ShouldContain("--max-time 3", run.Detail);
-            item.ShouldContain("-fsS", run.Detail);
-            item.ShouldContain(run.Endpoint, run.Detail);
+            item.ShouldContain("--connect-timeout 2", Case.Sensitive, run.Detail);
+            item.ShouldContain("--max-time 3", Case.Sensitive, run.Detail);
+            item.ShouldContain("-fsS", Case.Sensitive, run.Detail);
+            item.ShouldContain(run.Endpoint, Case.Sensitive, run.Detail);
         }
     }
 
@@ -264,7 +264,7 @@ public sealed class AmServiceDeployReadinessTests
                 output.ShouldNotContain("FAIL ", Case.Sensitive);
                 var result = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_directory, "result.json"))).RootElement;
                 var journal = File.Exists(JournalPath) ? File.ReadAllLines(JournalPath).ToList() : new List<string>();
-                journal.ShouldNotContain(x => x.StartsWith("unexpected-", StringComparison.Ordinal), output);
+                journal.Any(x => x.StartsWith("unexpected-", StringComparison.Ordinal)).ShouldBeFalse(output);
                 var shellOutput = result.GetProperty("shellOutput").EnumerateArray().Select(x => x.GetString()!).ToArray();
                 return new Run(result.GetProperty("shellExit").GetInt32(), shellOutput,
                     result.GetProperty("outerError").GetString()!, result.GetProperty("adapterNames").EnumerateArray().Select(x => x.GetString()!).ToArray(),
