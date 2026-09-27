@@ -19,6 +19,67 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    # Windows PowerShell 5.1 runs on .NET Framework, which has no ResolveLinkTarget.
+    # A directory handle gives the final path of a junction/symlink without trusting
+    # the journal's recorded path or a provider-specific Target property.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class AntiphonRecoveryFinalPath {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string name, uint access, uint share,
+        IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path,
+        uint capacity, uint flags);
+    public static string Resolve(string path) {
+        using (var handle = CreateFile(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            var buffer = new StringBuilder(32768);
+            var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0 || length >= buffer.Capacity)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var final = buffer.ToString();
+            if (final.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                return @"\\" + final.Substring(8);
+            if (final.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                return final.Substring(4);
+            return final;
+        }
+    }
+}
+'@
+}
+
+function Get-CanonicalDirectory([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    $current = $root
+    $parts = $full.Substring($root.Length).Split(
+        [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar),
+        [StringSplitOptions]::RemoveEmptyEntries)
+    foreach ($part in $parts) {
+        $current = [IO.Path]::Combine($current, $part)
+        $info = [IO.DirectoryInfo]::new($current)
+        if (-not $info.Exists) { throw 'Git common directory is missing or inaccessible.' }
+        if ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+                $current = [AntiphonRecoveryFinalPath]::Resolve($current)
+            } else {
+                $target = $info.ResolveLinkTarget($true)
+                if ($null -eq $target) { throw 'Git common directory alias cannot be resolved.' }
+                $current = $target.FullName
+            }
+        }
+    }
+    return [IO.Path]::GetFullPath($current).TrimEnd('\', '/')
+}
+
 function Get-ChildState($Record, [string]$Common) {
     if ($Record.SchemaVersion -ne 1 -or
         $null -eq $Record.ProcessId -or $Record.ProcessId -le 0 -or
@@ -49,7 +110,7 @@ $lease = $null
 try {
     $commonOutput = @(& git -C $Repository rev-parse --path-format=absolute --git-common-dir)
     if ($LASTEXITCODE -ne 0 -or $commonOutput.Count -ne 1) { throw 'Cannot resolve Git common directory.' }
-    $common = [IO.Path]::GetFullPath($commonOutput[0])
+    $common = Get-CanonicalDirectory $commonOutput[0]
     $admissionDirectory = Join-Path $common 'antiphon'
     [IO.Directory]::CreateDirectory($admissionDirectory) | Out-Null
     # Same exclusion as RepositoryMutationLease, including across linked worktrees.

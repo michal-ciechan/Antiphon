@@ -7,6 +7,9 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// <summary>Standing admission fence that survives the server's lease handle closing on death.</summary>
 internal sealed class RepositoryChildJournal
 {
+    // A worker-scoped crash barrier used by repository recovery tests. It observes the fully
+    // flushed temporary before the only replacement; normal server processes leave it null.
+    internal static Func<string, Task>? BeforeReplaceForTests { get; set; }
     private readonly string _path;
     private ChildRecord _record;
 
@@ -84,12 +87,17 @@ internal sealed class RepositoryChildJournal
 
     private async Task SaveAsync(CancellationToken ct)
     {
-        var temporary = _path + ".tmp";
-        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        // A pre-replace crash must not leave an unknown file in children: the process never
+        // started on the first save, and an update must retain its prior durable record.
+        var staging = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(_path)!)!, "children-staging");
+        Directory.CreateDirectory(staging);
+        var temporary = Path.Combine(staging, Guid.NewGuid().ToString("N") + ".tmp");
+        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             await JsonSerializer.SerializeAsync(stream, _record, cancellationToken: ct);
             stream.Flush(true);
         }
+        if (BeforeReplaceForTests is { } beforeReplace) await beforeReplace(temporary);
         File.Move(temporary, _path, true);
     }
 
