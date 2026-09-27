@@ -12,6 +12,8 @@ $script:C590LiveCases = @(
     # the only cases that change standing state there. Their entries in verify-docker-stack.ps1's
     # switch are the STUB boundaries; this roster is what routes a real run to the remote instead.
     'deploy-parent',
+    'deploy-temp-runner',
+    'retire-temp-runner',
     'nested-residue',
     'persistent-restart',
     'server2-independent-handoff',
@@ -268,6 +270,11 @@ function Invoke-C590LiveCase {
     if ($sha -notmatch '^[0-9a-f]{40}$') { throw 'source sha rejected' }
 
     $tokenCopied = $false
+    $tempRetiredAt = ''
+    if ($Case -eq 'retire-temp-runner') {
+        if ($names -contains 'tempRetiredAt' -and $Manifest.tempRetiredAt) { $tempRetiredAt = [string]$Manifest.tempRetiredAt }
+        if ($tempRetiredAt -and $tempRetiredAt -notmatch '^[0-9TZ:.-]{10,40}$') { throw 'tempRetiredAt rejected' }
+    }
     try {
         if ($Case -eq 'deploy-parent') {
             [void](Invoke-C628ClaudeTokenOnDeploy -Manifest $Manifest)
@@ -312,6 +319,7 @@ function Invoke-C590LiveCase {
             # phone-home shared secret is generated on server2 and never crosses this bridge.
             "export C604_BRANCH='$c604Branch'"
             "export C604_SERVER_ORIGIN='$c604Origin'"
+            "export C590_TEMP_RETIRED_AT='$tempRetiredAt'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '
         $code = Invoke-C590Ssh $remote
