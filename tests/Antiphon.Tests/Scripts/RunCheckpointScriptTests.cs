@@ -14,6 +14,34 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RunCheckpointScriptTests
 {
     [Test]
+    public Task C578_BuildLogVisibleBeforeExit() => RunC578CaseAsync(nameof(C578_BuildLogVisibleBeforeExit), 8,
+        "C578 Streaming build log exists before child start",
+        "C578 Streaming build streams readable while child and wrapper live",
+        "C578 Streaming held build has no completion or test run",
+        "C578 Streaming build completion records exit 0",
+        "C578 Streaming run log exists before child start",
+        "C578 Streaming run streams readable while child and wrapper live",
+        "C578 Streaming completed run has fresh green TRX",
+        "C578 Streaming owned processes exited");
+
+    [Test]
+    public Task C578_FailedBuildKeepsLogAndExit() => RunC578CaseAsync(nameof(C578_FailedBuildKeepsLogAndExit), 5,
+        "C578 FailedBuild retains stdout and stderr",
+        "C578 FailedBuild records actual exit 37 once",
+        "C578 FailedBuild returns checkpoint exit 2",
+        "C578 FailedBuild never invokes tests",
+        "C578 FailedBuild owned processes exited");
+
+    [Test]
+    public Task C578_NoSuccessReceiptForInterruptedBuild() => RunC578CaseAsync(nameof(C578_NoSuccessReceiptForInterruptedBuild), 6,
+        "C578 InterruptedBuild observed owned live child",
+        "C578 InterruptedBuild partial log survives interruption",
+        "C578 InterruptedBuild never records a completion marker",
+        "C578 InterruptedBuild never invokes tests or creates run results",
+        "C578 InterruptedBuild never reports green",
+        "C578 InterruptedBuild owned processes exited");
+
+    [Test]
     public Task C585_Green() => RunCaseAsync("C585_Green", 5,
         "C585 Green exit code 0",
         "C585 Green line reports build=ok and executed=3 passed=3 failed=0 skipped=0",
@@ -171,6 +199,9 @@ public sealed class RunCheckpointScriptTests
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C585", caseName, expectedRows, requiredRows);
+
+    private static Task RunC578CaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
+        ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C578", caseName, expectedRows, requiredRows);
 
     private static Task RunSlotCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-run-checkpoint.ps1", "C589", caseName, expectedRows, requiredRows);

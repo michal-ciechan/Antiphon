@@ -119,12 +119,13 @@ $cpuArguments = @()
 if ($null -ne $slot -and [int]$slot.MaxCpuCount -gt 0) { $cpuArguments = @('-maxcpucount:' + [int]$slot.MaxCpuCount) }
 
 function Invoke-Dotnet {
-    param([string[]]$Arguments)
+    param([string[]]$Arguments, [string]$Phase)
     # ProcessStartInfo.ArgumentList passes each token literally. The call operator
     # wildcard-scans a treenode filter (/*/*/Class/*) across /proc and /tmp before
     # the child starts: tens of seconds on a busy host, long enough for the script
     # harness's 300s budget to cancel a case that launches several children.
-    # Output is written to the host, not returned, so the exit code stays the value.
+    # A phase log is created before the child and flushed on each line. An exit
+    # receipt is written only after the child and both redirected streams finish.
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -137,15 +138,39 @@ function Invoke-Dotnet {
         $tokens = @($Arguments)
     }
     foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-    $stderrTask = $proc.StandardError.ReadToEndAsync()
-    $proc.WaitForExit()
-    $stdout = [string]$stdoutTask.Result
-    $stderr = [string]$stderrTask.Result
-    if (-not [string]::IsNullOrEmpty($stdout)) { Write-Host $stdout.TrimEnd("`r", "`n") }
-    if (-not [string]::IsNullOrEmpty($stderr)) { Write-Host $stderr.TrimEnd("`r", "`n") }
-    return $proc.ExitCode
+    $logPath = Join-Path $resultsDirectory ($Phase + '.log')
+    $stream = [System.IO.FileStream]::new($logPath, [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    $writer = [System.IO.StreamWriter]::new($stream)
+    $writer.AutoFlush = $true
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        try {
+            $stdoutTask = $proc.StandardOutput.ReadLineAsync()
+            $stderrTask = $proc.StandardError.ReadLineAsync()
+            while ($null -ne $stdoutTask -or $null -ne $stderrTask) {
+                $pending = [System.Collections.Generic.List[System.Threading.Tasks.Task]]::new()
+                if ($null -ne $stdoutTask) { $pending.Add($stdoutTask) }
+                if ($null -ne $stderrTask) { $pending.Add($stderrTask) }
+                $completed = [System.Threading.Tasks.Task]::WhenAny($pending.ToArray()).GetAwaiter().GetResult()
+                if ([object]::ReferenceEquals($completed, $stdoutTask)) {
+                    $line = $stdoutTask.GetAwaiter().GetResult()
+                    $stdoutTask = if ($null -eq $line) { $null } else { $proc.StandardOutput.ReadLineAsync() }
+                } else {
+                    $line = $stderrTask.GetAwaiter().GetResult()
+                    $stderrTask = if ($null -eq $line) { $null } else { $proc.StandardError.ReadLineAsync() }
+                }
+                if ($null -ne $line) {
+                    $writer.WriteLine($line)
+                    Write-Host $line
+                }
+            }
+            $proc.WaitForExit()
+            $exitCode = $proc.ExitCode
+            $writer.WriteLine(('DOTNET {0} EXIT CODE: {1}' -f $Phase, $exitCode))
+            return $exitCode
+        } finally { $proc.Dispose() }
+    } finally { $writer.Dispose() }
 }
 
 # (3)-(4) run under the slot; it is released however they end (the runner also reaps it if this
@@ -157,13 +182,13 @@ try {
     $buildState = 'reused'
     $buildExit = 0
     if (-not $NoBuild) {
-        $buildExit = Invoke-Dotnet (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
+        $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
         if ($buildExit -eq 0) { $buildState = 'ok' }
     }
 
     # (4) One filter, one fresh TRX.
     if ($buildExit -eq 0) {
-        $runExit = Invoke-Dotnet (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
+        $runExit = Invoke-Dotnet -Phase 'run' -Arguments (@('run', '--project', $Project, '--no-build', ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + @(
             '--', '--treenode-filter', $Filter, '--report-trx', '--report-trx-filename', 'run.trx',
             '--results-directory', $resultsDirectory))
     }

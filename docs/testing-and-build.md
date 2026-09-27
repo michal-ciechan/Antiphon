@@ -437,19 +437,43 @@ reason to reroute the Mutation to another runner or to the local lane -- the exe
 the runner whose store the reservation named.
 
 Each PC-n still needs red-then-green evidence: apply the planned mutation, observe the
-expected assertion failure, restore the fixed source, and observe green. Scope **both** runs
-to only that PC's specific test method with a precise filter, for example:
+expected assertion failure, restore the fixed source, and observe green. Scope **every** phase
+to only that PC's specific test method. Run a baseline before editing and give baseline,
+red and restored green separate output and results paths in the task's external verification
+evidence root. For a parameterized method, use its method prefix and a trailing wildcard;
+inspect the individual argument rows in that phase's fresh TRX. A literal parameter suffix
+can select zero tests even when the build completed successfully.
+
+Use the unchanged local `scripts/run-checkpoint.ps1` driver for each phase. In a SourceLanding
+snapshot, copy that driver and `scripts/lib/build-slot.ps1` to the external evidence root
+with the same relative `lib/` layout before mutating source. The driver runs in the snapshot
+working directory, so its test fixture still reads the source under test. For each phase,
+set the following values from that PC and invoke the driver once:
 
 ```powershell
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-pc/ -- --treenode-filter "/*/*/ClassName/ExactTestMethod"
+$phase = 'baseline' # then 'red', then 'green' after exact source restoration
+$methodName = 'ExactTestMethod'
+$methodFilter = $methodName + '*' # use the method prefix for parameterized rows
+$resultsRoot = Join-Path $evidenceRoot "pc1-$phase"
+pwsh -NoProfile -File $driver -Name "PC-1-$phase" `
+  -Project tests/Antiphon.Tests -OutputPath "bin-pc1-$phase/" `
+  -Filter "/*/*/ClassName/$methodFilter" -Expect "ClassName.$methodName" `
+  -MinExecuted 1 -ResultsRoot $resultsRoot
+$phaseExit = $LASTEXITCODE
 ```
 
+Await each complete driver and its owned child before editing source or starting another
+build in the same SourceLanding worktree. Inspect that phase's `build.log` completion
+receipt (`DOTNET build EXIT CODE: 0`), `run.log` receipt and fresh `run.trx` before
+accepting its verdict. A partial log without its exit receipt is an incomplete build,
+even if it contains ordinary compiler output. An actual failed build or missing TRX is
+driver exit **2**; an empty or wrong executed roster is exit **3**. Neither is a PC red.
+An intended red is driver exit **1** with the named assertion failure in the fresh TRX;
+baseline and restored green are exit **0** with the expected executed roster and nonzero
+count. Keep logs and results in the external evidence root, never committed source.
 The class-scoped verification guidance above is for regression verification, not individual
 PC cycles. For a batch, select only the exact methods for those PCs (separate method-filtered
-invocations are fine); never widen to a class, namespace or suite to combine them. Require
-executed method names and nonzero counters in fresh results, with the expected assertion
-failure for **each** PC in red and each method passing after restoration. Build failures,
-fixture errors and zero-test runs do not prove a positive control.
+invocations are fine); never widen to a class, namespace or suite to combine them.
 
 Batch genuinely independent mutations that touch **different files and methods** and cannot
 interfere with one another: apply them together, run their specific tests red, restore all,

@@ -541,7 +541,250 @@ function Test-C589_NoSlotSkips {
         -Name 'C589 NoSlotSkips builds with no -maxcpucount and reports slot=skipped' -Detail ('exit={0} build={1} {2}' -f $r.Exit, $build, $r.Text)
 }
 
-$script:C585ExpectedRows = 62 + 28
+# CARD-0578: this shim is intentionally separate from the silent C585 shim. Its entry
+# record is written by the child; the phase log and its receipt belong to the runner.
+$script:C578ShimBody = @'
+param()
+$phase = [string]$args[0]
+$root = $env:C578_ROOT
+$log = Join-Path $env:C578_PHASE_DIR ("$phase.log")
+$entry = Join-Path $root ("$phase.entry")
+$record = ('{0}|{1}|{2}' -f $PID, [System.Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks, (Test-Path -LiteralPath $log))
+[System.IO.File]::WriteAllText($entry, $record)
+[System.IO.File]::AppendAllText((Join-Path $root 'calls.log'), "$phase`n")
+[Console]::Out.WriteLine(('C578_{0}_STARTED_{1}' -f $phase.ToUpperInvariant(), $env:C578_NONCE))
+[Console]::Out.Flush()
+[Console]::Error.WriteLine(('C578_{0}_ERROR_{1}' -f $phase.ToUpperInvariant(), $env:C578_NONCE))
+[Console]::Error.Flush()
+[System.IO.File]::WriteAllText((Join-Path $root "$phase.ready"), 'ready')
+if ($env:C578_HOLD -eq 'both' -or ($env:C578_HOLD -eq 'build' -and $phase -eq 'build')) {
+    $release = Join-Path $root "$phase.release"
+    while (-not (Test-Path -LiteralPath $release)) { Start-Sleep -Milliseconds 25 }
+}
+if ($phase -eq 'run') {
+    $argv = @($args)
+    for ($i = 0; $i -lt $argv.Count - 1; $i++) {
+        if ($argv[$i] -eq '--results-directory') {
+            Copy-Item -LiteralPath $env:C578_GREEN_TRX -Destination (Join-Path $argv[$i + 1] 'run.trx') -Force
+            break
+        }
+    }
+}
+if ($phase -eq 'build' -and $env:C578_FAIL_BUILD -eq '1') { exit 37 }
+exit 0
+'@
+
+function New-C578Case {
+    param([string]$Name, [string]$Hold = '', [switch]$FailBuild)
+    $fx = New-C585Case -Name $Name
+    Set-Content -LiteralPath $fx.Shim -Value $script:C578ShimBody -Encoding ASCII
+    $fx | Add-Member NoteProperty Stamp 'c578-fixed'
+    $fx | Add-Member NoteProperty Nonce ([guid]::NewGuid().ToString('N'))
+    $fx | Add-Member NoteProperty Hold $Hold
+    $fx | Add-Member NoteProperty FailBuild ([bool]$FailBuild)
+    $fx | Add-Member NoteProperty PhaseDir (Join-Path $fx.ResultsRoot ('CP-1-' + $fx.Stamp))
+    return $fx
+}
+
+function Start-C578Runner {
+    param($Fx)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'pwsh'
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.WorkingDirectory = $script:RepoRoot
+    foreach ($token in @('-NoProfile', '-NonInteractive', '-File', $script:Runner,
+        '-Name', 'CP-1', '-Project', 'tests/Antiphon.Tests', '-OutputPath', 'bin-c578h/',
+        '-Filter', '/*/*/C585SampleTests/*', '-ResultsRoot', $Fx.ResultsRoot,
+        '-MinExecuted', '1', '-DotnetShim', $Fx.Shim)) { [void]$psi.ArgumentList.Add([string]$token) }
+    # The fake HTTP endpoint and the slot shim prevent contact with a live runner.
+    $psi.Environment['ANTIPHON_BUILD_SLOTS_URL'] = 'http://127.0.0.1:1/build-slots'
+    $psi.Environment['C589_SLOT_SHIM'] = $Fx.SlotShim
+    $psi.Environment['C589_SLOT_SCRIPT'] = 'granted'
+    $psi.Environment['C589_SLOT_LOG'] = (Join-Path $Fx.Root 'slot.log')
+    $psi.Environment['C585_STAMP'] = $Fx.Stamp
+    $psi.Environment['C578_ROOT'] = $Fx.Root
+    $psi.Environment['C578_PHASE_DIR'] = $Fx.PhaseDir
+    $psi.Environment['C578_NONCE'] = $Fx.Nonce
+    $psi.Environment['C578_HOLD'] = $Fx.Hold
+    $psi.Environment['C578_FAIL_BUILD'] = $(if ($Fx.FailBuild) { '1' } else { '0' })
+    $psi.Environment['C578_GREEN_TRX'] = $script:GreenTrx
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    return [pscustomobject]@{ Process = $proc; Out = $proc.StandardOutput.ReadToEndAsync(); Err = $proc.StandardError.ReadToEndAsync(); Children = @{} }
+}
+
+function Get-C578Child {
+    param($Run, $Fx, [string]$Phase)
+    $entry = Join-Path $Fx.Root "$Phase.entry"
+    if (-not (Test-Path -LiteralPath $entry)) { return $null }
+    $parts = ([System.IO.File]::ReadAllText($entry)).Split('|')
+    if ($parts.Count -ne 3) { return $null }
+    try {
+        $proc = [System.Diagnostics.Process]::GetProcessById([int]$parts[0])
+        # Linux exposes slightly different fractional StartTime ticks when read from
+        # inside and outside the process. The PID plus a one-second window owns it.
+        if ([math]::Abs($proc.StartTime.ToUniversalTime().Ticks - [long]$parts[1]) -gt [TimeSpan]::TicksPerSecond) { return $null }
+        $Run.Children[$Phase] = $proc
+        return [pscustomobject]@{ Process = $proc; LogAtEntry = ($parts[2] -eq 'True'); Pid = [int]$parts[0]; StartTicks = [long]$parts[1] }
+    } catch { return $null }
+}
+
+function Read-C578Log {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try { $reader = [System.IO.StreamReader]::new($stream); return $reader.ReadToEnd() }
+    finally { $reader.Dispose() }
+}
+
+function Wait-C578Ready {
+    param($Run, $Fx, [string]$Phase)
+    $deadline = (Get-Date).AddSeconds(10)
+    $ready = Join-Path $Fx.Root "$Phase.ready"
+    $entry = Join-Path $Fx.Root "$Phase.entry"
+    while ((Get-Date) -lt $deadline) {
+        $premature = $Run.Process.HasExited -or (($Phase -eq 'build') -and (Test-Path -LiteralPath (Join-Path $Fx.Root 'run.entry')))
+        if ($premature) { return [pscustomobject]@{ Ready = $false; Premature = $true; Child = (Get-C578Child $Run $Fx $Phase) } }
+        if ((Test-Path -LiteralPath $ready) -and (Test-Path -LiteralPath $entry)) {
+            $child = Get-C578Child $Run $Fx $Phase
+            if ($child) { return [pscustomobject]@{ Ready = $true; Premature = $false; Child = $child } }
+        }
+        Start-Sleep -Milliseconds 25
+    }
+    return [pscustomobject]@{ Ready = $false; Premature = $false; Child = (Get-C578Child $Run $Fx $Phase) }
+}
+
+function Wait-C578Exit {
+    param($Run, [int]$Seconds = 10)
+    if (-not $Run.Process.WaitForExit($Seconds * 1000)) { return $false }
+    $Run.Process.WaitForExit()
+    return $true
+}
+
+function Stop-C578Owned {
+    param($Run, [switch]$Interrupt)
+    # On interruption the wrapper dies first, so it cannot turn the child's kill
+    # into a legitimate completed failed-build receipt.
+    if ($Interrupt -and -not $Run.Process.HasExited) { $Run.Process.Kill(); [void]$Run.Process.WaitForExit(10000) }
+    foreach ($child in @($Run.Children.Values)) {
+        try {
+            if (-not $child.HasExited) { $child.Kill($true) }
+            [void]$child.WaitForExit(10000)
+        } catch [System.InvalidOperationException] { }
+    }
+    if (-not $Run.Process.HasExited) { $Run.Process.Kill($true); [void]$Run.Process.WaitForExit(10000) }
+    [void]$Run.Out.Result
+    [void]$Run.Err.Result
+    return ($Run.Process.HasExited -and @($Run.Children.Values | Where-Object { -not $_.HasExited }).Count -eq 0)
+}
+
+function Save-C578Evidence {
+    param($Fx, $Run, [string]$Observation)
+    $record = @("wrapperExit=$($Run.Process.ExitCode)", $Observation, "calls=$(Read-C578Log (Join-Path $Fx.Root 'calls.log'))",
+        "buildLog=$(Read-C578Log (Join-Path $Fx.PhaseDir 'build.log'))", "runLog=$(Read-C578Log (Join-Path $Fx.PhaseDir 'run.log'))") -join "`n"
+    Set-Content -LiteralPath (Join-Path $Fx.Root 'observation.txt') -Value $record
+    if ($env:C578_EVIDENCE_ROOT) {
+        $dest = Join-Path $env:C578_EVIDENCE_ROOT ([IO.Path]::GetFileName($Fx.Root))
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        Copy-Item -Path (Join-Path $Fx.Root '*') -Destination $dest -Recurse -Force
+    }
+}
+
+function Test-C578_BuildLogVisibleBeforeExit {
+    $fx = New-C578Case -Name 'c578-streaming' -Hold 'both'
+    $run = Start-C578Runner $fx
+    $observation = ''
+    try {
+        $build = Wait-C578Ready $run $fx 'build'
+        $buildLog = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
+        $observation += "buildReady=$($build.Ready) premature=$($build.Premature) pid=$($build.Child.Pid) live=$(-not $run.Process.HasExited)`n"
+        Assert-C487 -Cond ($build.Ready -and $build.Child.LogAtEntry) -Name 'C578 Streaming build log exists before child start' -Detail $observation
+        Assert-C487 -Cond ($build.Ready -and -not $build.Child.Process.HasExited -and -not $run.Process.HasExited -and
+            ($buildLog.Split("C578_BUILD_STARTED_$($fx.Nonce)").Count -eq 2) -and ($buildLog.Split("C578_BUILD_ERROR_$($fx.Nonce)").Count -eq 2)) `
+            -Name 'C578 Streaming build streams readable while child and wrapper live' -Detail $buildLog
+        Assert-C487 -Cond ($build.Ready -and -not $build.Premature -and $buildLog -notmatch 'DOTNET build EXIT CODE:' -and
+            -not (Test-Path (Join-Path $fx.Root 'run.entry')) -and -not $run.Process.HasExited) `
+            -Name 'C578 Streaming held build has no completion or test run' -Detail $observation
+        Set-Content -LiteralPath (Join-Path $fx.Root 'build.release') -Value 'release'
+        $runReady = Wait-C578Ready $run $fx 'run'
+        $buildDone = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
+        Assert-C487 -Cond ($runReady.Ready -and $buildDone.Split('DOTNET build EXIT CODE: 0').Count -eq 2) `
+            -Name 'C578 Streaming build completion records exit 0' -Detail $buildDone
+        $runLog = Read-C578Log (Join-Path $fx.PhaseDir 'run.log')
+        $observation += "runReady=$($runReady.Ready) premature=$($runReady.Premature) pid=$($runReady.Child.Pid)`n"
+        Assert-C487 -Cond ($runReady.Ready -and $runReady.Child.LogAtEntry) -Name 'C578 Streaming run log exists before child start' -Detail $observation
+        Assert-C487 -Cond ($runReady.Ready -and -not $runReady.Child.Process.HasExited -and -not $run.Process.HasExited -and
+            $runLog.Split("C578_RUN_STARTED_$($fx.Nonce)").Count -eq 2 -and $runLog.Split("C578_RUN_ERROR_$($fx.Nonce)").Count -eq 2 -and
+            $runLog -notmatch 'DOTNET run EXIT CODE:') -Name 'C578 Streaming run streams readable while child and wrapper live' -Detail $runLog
+        Set-Content -LiteralPath (Join-Path $fx.Root 'run.release') -Value 'release'
+        $exited = Wait-C578Exit $run
+        $stdout = [string]$run.Out.Result + [string]$run.Err.Result
+        $runDone = Read-C578Log (Join-Path $fx.PhaseDir 'run.log')
+        Assert-C487 -Cond ($exited -and $run.Process.ExitCode -eq 0 -and (Test-Path (Join-Path $fx.PhaseDir 'run.trx')) -and
+            $runDone.Split('DOTNET run EXIT CODE: 0').Count -eq 2 -and $stdout -match 'executed=3 passed=3 failed=0 skipped=0' -and
+            $stdout.Contains("C578_BUILD_STARTED_$($fx.Nonce)") -and $stdout.Contains("C578_RUN_ERROR_$($fx.Nonce)")) `
+            -Name 'C578 Streaming completed run has fresh green TRX' -Detail $stdout
+    } finally {
+        $clean = Stop-C578Owned $run
+        Save-C578Evidence $fx $run $observation
+        Assert-C487 -Cond $clean -Name 'C578 Streaming owned processes exited'
+    }
+}
+
+function Test-C578_FailedBuildKeepsLogAndExit {
+    $fx = New-C578Case -Name 'c578-failed' -FailBuild
+    $run = Start-C578Runner $fx
+    try {
+        $ready = Wait-C578Ready $run $fx 'build'
+        $exited = Wait-C578Exit $run
+        $log = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
+        $stdout = [string]$run.Out.Result + [string]$run.Err.Result
+        Assert-C487 -Cond ($ready.Ready -and $log.Contains("C578_BUILD_STARTED_$($fx.Nonce)") -and $log.Contains("C578_BUILD_ERROR_$($fx.Nonce)")) `
+            -Name 'C578 FailedBuild retains stdout and stderr' -Detail $log
+        Assert-C487 -Cond ($log.Split('DOTNET build EXIT CODE: 37').Count -eq 2) -Name 'C578 FailedBuild records actual exit 37 once' -Detail $log
+        Assert-C487 -Cond ($exited -and $run.Process.ExitCode -eq 2 -and $stdout -match 'build=failed .*exit=37' -and $stdout -match 'CHECKPOINT CP-1 EXIT CODE: 2') `
+            -Name 'C578 FailedBuild returns checkpoint exit 2' -Detail $stdout
+        Assert-C487 -Cond (-not (Test-Path (Join-Path $fx.Root 'run.entry')) -and -not (Test-Path (Join-Path $fx.PhaseDir 'run.log')) -and
+            -not (Test-Path (Join-Path $fx.PhaseDir 'run.trx')) -and $stdout -notmatch 'CHECKPOINT CP-1 EXIT CODE: 0|^EXECUTED ') `
+            -Name 'C578 FailedBuild never invokes tests' -Detail $stdout
+    } finally {
+        $clean = Stop-C578Owned $run
+        Save-C578Evidence $fx $run "buildReady=$($ready.Ready) pid=$($ready.Child.Pid)"
+        Assert-C487 -Cond $clean -Name 'C578 FailedBuild owned processes exited'
+    }
+}
+
+function Test-C578_NoSuccessReceiptForInterruptedBuild {
+    $fx = New-C578Case -Name 'c578-interrupted' -Hold 'build'
+    $run = Start-C578Runner $fx
+    try {
+        $ready = Wait-C578Ready $run $fx 'build'
+        $before = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
+        $premature = $ready.Premature -or $run.Process.HasExited -or (Test-Path (Join-Path $fx.Root 'run.entry'))
+        Assert-C487 -Cond ($ready.Ready -and -not $ready.Child.Process.HasExited -and -not $run.Process.HasExited) `
+            -Name 'C578 InterruptedBuild observed owned live child' -Detail "ready=$($ready.Ready) premature=$premature pid=$($ready.Child.Pid)"
+        # The wrapper is deliberately stopped first. A child-first kill could produce a
+        # legitimate nonzero completed-build receipt and would test the wrong boundary.
+        $clean = Stop-C578Owned $run -Interrupt
+        $after = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
+        $stdout = [string]$run.Out.Result + [string]$run.Err.Result
+        Assert-C487 -Cond ((Test-Path (Join-Path $fx.PhaseDir 'build.log')) -and $after.Contains("C578_BUILD_STARTED_$($fx.Nonce)") -and
+            $after.Contains("C578_BUILD_ERROR_$($fx.Nonce)")) -Name 'C578 InterruptedBuild partial log survives interruption' -Detail $after
+        Assert-C487 -Cond ($before -notmatch 'DOTNET build EXIT CODE:' -and $after -notmatch 'DOTNET build EXIT CODE:') `
+            -Name 'C578 InterruptedBuild never records a completion marker' -Detail $after
+        Assert-C487 -Cond (-not (Test-Path (Join-Path $fx.Root 'run.entry')) -and -not (Test-Path (Join-Path $fx.PhaseDir 'run.log')) -and
+            -not (Test-Path (Join-Path $fx.PhaseDir 'run.trx'))) -Name 'C578 InterruptedBuild never invokes tests or creates run results'
+        Assert-C487 -Cond (-not $premature -and $stdout -notmatch 'build=ok|CHECKPOINT CP-1 EXIT CODE: 0') `
+            -Name 'C578 InterruptedBuild never reports green' -Detail $stdout
+    } finally {
+        $clean = Stop-C578Owned $run -Interrupt
+        Save-C578Evidence $fx $run "ready=$($ready.Ready) premature=$premature pid=$($ready.Child.Pid)"
+        Assert-C487 -Cond $clean -Name 'C578 InterruptedBuild owned processes exited'
+    }
+}
+
+$script:C585ExpectedRows = 62 + 28 + 19
 
 if (-not (Test-Path -LiteralPath $script:Runner)) { throw ('missing ' + $script:Runner) }
 
@@ -550,7 +793,7 @@ if ($Case) {
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
     & $fn
 } else {
-    foreach ($fn in @(Get-C487CaseFunctions -Prefix 'C585_') + @(Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
+    foreach ($fn in @(Get-C487CaseFunctions -Prefix 'C585_') + @(Get-C487CaseFunctions -Prefix 'C589_') + @(Get-C487CaseFunctions -Prefix 'C578_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-checkpoint-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { $script:C585ExpectedRows })
