@@ -47,6 +47,54 @@ public partial class WorktreeBaseSelectionTests
     }
 
     [Test]
+    [Arguments("persisted_coordinates")]
+    [Arguments("registered_missing_directory")]
+    public async Task T0442_V25_recorded_base_survives_adoption_and_registration_heal(string scenario)
+    {
+        using var repo = new ScratchGitRepo("c442-adopt-recorded");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await repo.GitAsync("checkout", "-b", "source-A");
+        await repo.CommitFileAsync("source.txt", "A\n");
+        var sourceSha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        var (service, _) = CreateService(repo,
+            new GitSettings { DefaultBranch = "master", WorktreeBasePath = repo.WorktreeRoot });
+        var first = NewTask(repo.Path);
+        first.MergeTargetRef = "source-A";
+        await service.CreateForTaskAsync(first, CancellationToken.None);
+        first.WorktreeBaseSha.ShouldBe(sourceSha);
+        await File.WriteAllTextAsync(Path.Combine(first.WorktreePath!, "task.txt"), "C\n");
+        (await ScratchGitRepo.GitInAsync(first.WorktreePath!, "add", "task.txt")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(first.WorktreePath!, "commit", "-m", "task C")).Ok.ShouldBeTrue();
+        var taskHead = (await ScratchGitRepo.GitInAsync(first.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
+        await repo.GitAsync("checkout", "-b", "sibling-X", "master");
+        await repo.CommitFileAsync("sibling.txt", "X\n");
+        await repo.GitAsync("checkout", "master");
+        if (scenario == "registered_missing_directory")
+            Directory.Delete(first.WorktreePath!, recursive: true);
+
+        var retry = NewTask(repo.Path);
+        retry.Id = first.Id;
+        retry.MergeTargetRef = first.MergeTargetRef;
+        retry.WorktreeBaseRef = first.WorktreeBaseRef;
+        retry.WorktreeBaseSha = first.WorktreeBaseSha;
+        retry.WorktreeBaseSource = first.WorktreeBaseSource;
+        retry.WorktreeBaseTaskId = first.WorktreeBaseTaskId;
+        retry.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Task;
+        retry.RequestedWorktreeBaseTaskId = Guid.NewGuid(); // stale selection cannot replace owned C.
+        await service.CreateForTaskAsync(retry, CancellationToken.None);
+
+        retry.WorktreePath.ShouldBe(first.WorktreePath);
+        retry.WorktreeBranch.ShouldBe(first.WorktreeBranch);
+        (await ScratchGitRepo.GitInAsync(retry.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(taskHead);
+        retry.WorktreeBaseRef.ShouldBe("source-A");
+        retry.WorktreeBaseSha.ShouldBe(sourceSha);
+        retry.WorktreeBaseSource.ShouldBe(first.WorktreeBaseSource);
+        retry.WorktreeBaseTaskId.ShouldBe(first.WorktreeBaseTaskId);
+    }
+
+    [Test]
     public async Task C508_UnresolvedDefaultRetainsName()
     {
         var first = "missing-" + Guid.NewGuid().ToString("N")[..8];
