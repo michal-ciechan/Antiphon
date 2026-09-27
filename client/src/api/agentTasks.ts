@@ -386,6 +386,12 @@ export interface AgentTaskDetailDto {
   deliverableRef?: string | null
   failureReason: string | null
   mergeTargetRef: string | null
+  requestedWorktreeBaseMode?: 'Auto' | 'Target' | 'Task'
+  requestedWorktreeBaseTaskId?: string | null
+  worktreeBaseTaskId?: string | null
+  worktreeBaseBranch?: string | null
+  worktreeBaseSha?: string | null
+  worktreeBasePreviewJson?: string | null
   events: AgentTaskEventDto[]
   /** CARD-0256. Machine-readable class of failureReason when one was assigned. */
   failureCode?: string | null
@@ -627,6 +633,8 @@ export interface CreateAgentTaskRequest {
   requiredPlatform?: 'Any' | 'Windows' | 'Linux' | null
   /** Omitted is automatic placement. desktop/local is the desktop. */
   runnerId?: string | null
+  worktreeBaseTask?: string | null
+  freshWorktree?: boolean
 }
 
 export interface AgentTaskCreatedDto {
@@ -651,6 +659,20 @@ export interface AgentTaskCreatedDto {
   runnerId?: string | null
   requirementSource?: string | null
   observedPlatform?: string | null
+  worktreeBase?: {
+    decision: 'Target' | 'Continue' | 'WaitForLand' | 'Ambiguous' | 'Unknown'
+    fallbackRef: string
+    sourceTaskId?: string | null
+    sourceBranch?: string | null
+    sourceSha?: string | null
+    warnings?: string[] | null
+    reason?: string | null
+    totalCandidates?: number
+    inspectedCandidates?: number
+    gitCommands?: number
+    landingTarget?: string | null
+    observedAt?: string | null
+  } | null
 }
 
 /** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */

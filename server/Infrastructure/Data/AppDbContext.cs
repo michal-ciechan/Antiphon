@@ -1926,6 +1926,11 @@ public class AppDbContext : DbContext
             entity.Property(t => t.WorktreeBaseRef).HasMaxLength(300);
             entity.Property(t => t.WorktreeBaseSource).IsRequired().HasDefaultValue(WorktreeBaseSource.Unset);
             entity.Property(t => t.WorktreeBaseTaskId).IsRequired(false);
+            entity.Property(t => t.RequestedWorktreeBaseMode)
+                .HasDefaultValue(RequestedWorktreeBaseMode.Auto).IsRequired();
+            entity.Property(t => t.RequestedWorktreeBaseTaskId).IsRequired(false);
+            entity.Property(t => t.WorktreeBaseBranch).HasMaxLength(300);
+            entity.Property(t => t.WorktreeBasePreviewJson).HasColumnType("text");
             // CARD-0499. Null on every pre-existing row: no backfill of baselines or source identity.
             entity.Property(t => t.RepairSourceTaskId).IsRequired(false);
             entity.Property(t => t.ProgressBaselineJson).HasColumnType("text");

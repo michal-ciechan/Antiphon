@@ -489,3 +489,6 @@ public enum WorktreeBaseSource
     DefaultBranch = 5,
     RepoHead = 6,
 }
+
+/// <summary>The caller's durable choice for a new card-bound Worktree.</summary>
+public enum RequestedWorktreeBaseMode { Auto = 0, Target = 1, Task = 2 }

@@ -85,6 +85,13 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$StartRef,
 
+    # CARD-0442. Select one same-card committed task tip, or deliberately start at the target.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$BaseTask,
+
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$FreshWorktree,
+
     # CARD-0544. Ordinary-verification round for Code/Review only. Omitted means Final, the full
     # affected sweep. Interim is an explicit repair round: the card's role policy must permit it,
     # and it needs -VerificationSubject (original landing owner), -VerificationBaselineOutcome (a
@@ -130,6 +137,11 @@ param(
     # still the explicit -Land path, never automatic. -Worktree, -Shared and -ReadOnly are exclusive.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$Worktree,
+
+    # Explicit workspace spelling for callers that form a parameter map.
+    [Parameter(ParameterSetName = 'Create')]
+    [ValidateSet('Worktree', 'Shared', 'ReadOnly')]
+    [string]$Workspace,
 
     # Run directly in the directory, opting OUT of the default worktree - for work that must see
     # live state in that checkout, or a directory that is not a git repository. For an orchestrator
@@ -956,8 +968,8 @@ switch ($PSCmdlet.ParameterSetName) {
 
         # CARD-0644 D-1: two workspace switches are ambiguous. Refused here, before any POST, rather
         # than letting the first one silently win.
-        if (@($Worktree, $Shared, $ReadOnly | Where-Object { $_ }).Count -gt 1) {
-            Write-Error 'workspace_switch_conflict: -Worktree, -Shared and -ReadOnly are exclusive; pass at most one.'
+        if (@($Worktree, $Shared, $ReadOnly, [bool]$Workspace | Where-Object { $_ }).Count -gt 1) {
+            Write-Error 'workspace_switch_conflict: -Worktree, -Shared, -ReadOnly and -Workspace are exclusive; pass at most one.'
             exit 2
         }
 
@@ -969,7 +981,8 @@ switch ($PSCmdlet.ParameterSetName) {
         # Workspace is sent only when chosen - omitted, the server applies its fresh default (a
         # Worktree for a fresh worker or sub-orchestrator; the pinned agent's own checkout for
         # -OnAgent / -Agent). Omission keeps a pin distinguishable from an explicit -Worktree.
-        if ($Worktree) { $body['workspace'] = 'Worktree' }
+        if ($Workspace) { $body['workspace'] = $Workspace }
+        elseif ($Worktree) { $body['workspace'] = 'Worktree' }
         elseif ($ReadOnly) { $body['workspace'] = 'ReadOnly' }
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
@@ -1011,8 +1024,8 @@ switch ($PSCmdlet.ParameterSetName) {
         # admit. The selector itself goes over VERBATIM - the server validates and refuses it, and
         # a value this script quietly trimmed would be a base the caller did not ask for.
         if ($PSBoundParameters.ContainsKey('StartRef')) {
-            if ($Shared -or $ReadOnly) {
-                Write-Error 'worktree_start_ref_mode: -StartRef cannot be combined with -Shared or -ReadOnly.'
+            if ($Shared -or $ReadOnly -or ($Workspace -and $Workspace -ne 'Worktree')) {
+                Write-Error 'worktree_start_ref_mode: -StartRef requires a Worktree.'
                 exit 2
             }
             if ($OnAgent -or -not [string]::IsNullOrWhiteSpace($Agent)) {
@@ -1026,6 +1039,24 @@ switch ($PSCmdlet.ParameterSetName) {
             $body['worktreeBaseRequestedRef'] = $StartRef
             # CARD-0644 D-5: the default fresh Worktree is what a start ref needs; say so on the wire.
             $body['workspace'] = 'Worktree'
+        }
+        if ($PSBoundParameters.ContainsKey('BaseTask') -or $FreshWorktree) {
+            if ($PSBoundParameters.ContainsKey('BaseTask') -and [string]::IsNullOrWhiteSpace($BaseTask)) {
+                Write-Error 'worktree_base_source_invalid: -BaseTask needs a task id or 8-character short id.'
+                exit 2
+            }
+            if ($PSBoundParameters.ContainsKey('BaseTask') -and $FreshWorktree) {
+                Write-Error 'worktree_base_mode: -BaseTask and -FreshWorktree are mutually exclusive.'
+                exit 2
+            }
+            if ($Shared -or $ReadOnly -or ($Workspace -and $Workspace -ne 'Worktree') -or $OnAgent -or $Agent -or $StartRef -or
+                $PSBoundParameters.ContainsKey('RepairSource') -or $PSBoundParameters.ContainsKey('SourceLanding')) {
+                Write-Error 'worktree_base_mode: a base override requires a fresh Worktree without -OnAgent, -Agent, -StartRef, -RepairSource or -SourceLanding.'
+                exit 2
+            }
+            $body['workspace'] = 'Worktree'
+            if ($PSBoundParameters.ContainsKey('BaseTask')) { $body['worktreeBaseTask'] = $BaseTask }
+            if ($FreshWorktree) { $body['freshWorktree'] = $true }
         }
         # CARD-0544: refused locally, before any POST, when the shape can never be admitted.
         $verificationFields = @('VerificationSubject', 'VerificationBaselineOutcome', 'VerificationSelectionFile') |
@@ -1156,6 +1187,25 @@ switch ($PSCmdlet.ParameterSetName) {
         else {
             Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
                     $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
+            if ($created.worktreeBase) {
+                $basePreview = $created.worktreeBase
+                $destination = if ($basePreview.landingTarget) { $basePreview.landingTarget } else { 'master' }
+                if ($basePreview.decision -eq 'Continue') {
+                    $sourceShort = ([string]$basePreview.sourceTaskId).Substring(0, 8)
+                    Write-Output ("  base preview: continues task {0} on {1} @ {2}; new isolated branch; landing target {3} (explicit land)" -f `
+                        $sourceShort, $basePreview.sourceBranch, $basePreview.sourceSha, $destination)
+                }
+                elseif ($basePreview.decision -eq 'WaitForLand') {
+                    Write-Output ("  base preview: waiting for same-card land ({0}); rechecked before launch" -f $basePreview.reason)
+                }
+                else {
+                    Write-Output ("  base preview: {0} at {1}; landing target {2}; reason {3}" -f `
+                        $basePreview.decision, $basePreview.fallbackRef, $destination, $basePreview.reason)
+                }
+                foreach ($baseWarning in @($basePreview.warnings)) {
+                    if ($baseWarning) { Write-Output ("WARNING: {0}" -f $baseWarning) }
+                }
+            }
             if ($created.requiredPlatform) {
                 $placed = if ($created.runnerId) { $created.runnerId } else { 'desktop' }
                 Write-Output ("  platform: {0} on {1}" -f $created.requiredPlatform, $placed)

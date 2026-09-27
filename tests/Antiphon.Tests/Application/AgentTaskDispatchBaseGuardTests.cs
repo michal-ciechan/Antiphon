@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -26,6 +27,89 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public partial class AgentTaskDispatchBaseGuardTests
 {
+    [Test]
+    [Timeout(60_000)]
+    public async Task T0442_V10_empty_card_preview_names_explicit_destination(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-empty-destination");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await repo.GitAsync("branch", "release");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var selection = await scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>()
+            .ResolveAsync(new AgentTask
+            {
+                Id = Guid.NewGuid(), CardId = Guid.NewGuid(), RepoPath = repo.Path,
+                Workspace = WorkspaceMode.Worktree, MergeTargetRef = "release",
+            }, ct);
+        selection.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+        selection.FallbackRef.ShouldBe("release");
+        selection.LandingTarget.ShouldBe("release");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task T0442_V08_missing_original_directory_uses_surviving_checkout(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-surviving-checkout");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var source = await SeedKeptSiblingAsync(db, repo, card.Id, "A");
+        source.RepoPath = Path.Combine(repo.Path, "removed-original");
+        source.WorktreePath = repo.Path;
+        await db.SaveChangesAsync(ct);
+        var sha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var selection = await scope.ServiceProvider.GetRequiredService<AgentTaskWorktreeBaseResolver>()
+            .ResolveAsync(new AgentTask
+            {
+                Id = Guid.NewGuid(), CardId = card.Id, RepoPath = repo.Path,
+                Workspace = WorkspaceMode.Worktree,
+            }, ct);
+        selection.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+        selection.SourceTaskId.ShouldBe(source.Id);
+        selection.SourceSha.ShouldBe(sha);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task T0442_V01_real_create_continues_clean_same_card_tip(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-create-continue");
+        await repo.CommitFileAsync("README.md", "M\n");
+        var target = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var source = await SeedKeptSiblingAsync(db, repo, card.Id, "A");
+        await db.SaveChangesAsync(ct);
+        var sourceSha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+            new CreateAgentTaskRequest("Review A", Title: "CARD-0442 review", Role: AgentTaskRole.Review,
+                Workspace: WorkspaceMode.Worktree, Card: card.Id.ToString("D")),
+            new AgentTaskService.Caller(null, null, repo.Path), ct);
+        created.CardId.ShouldBe(card.Id);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var next = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        next.WorktreePath.ShouldNotBeNull();
+        var actual = (await ScratchGitRepo.GitInAsync(next.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
+        actual.ShouldBe(sourceSha);
+        next.WorktreeBaseSha.ShouldBe(sourceSha);
+        next.MergeTargetRef.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "master")).Trim().ShouldBe(target);
+    }
+
     [Test]
     [Timeout(30_000)]
     public async Task a_sibling_land_in_flight_holds_until_the_base_contains_it(CancellationToken ct)
@@ -684,6 +768,8 @@ public partial class AgentTaskDispatchBaseGuardTests
             AgentKind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             Workspace = WorkspaceMode.Worktree,
+            // The pre-CARD-0442 guard fixtures assert the deliberate target-base path.
+            RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Target,
             WorkingDirectory = repoPath,
             RepoPath = repoPath,
             CardId = cardId,

@@ -865,8 +865,8 @@ public sealed class AgentTaskLandService
         siblings.Count == 0 ? null : $"unlanded-sibling={string.Join(",", siblings)}";
 
     /// <summary>
-    /// Same-card kept Worktree branches whose tip is not an ancestor of the rebased HEAD
-    /// (CARD-0215). Warn on a surviving uncontained branch; absence grants no landing authority.
+    /// Same-card kept Worktree branches whose committed work is proven absent from the rebased
+    /// HEAD. Merge ranges and failed observations are reported as unknown, never stranded.
     /// Internal so the stage-outcome component rows call it as a typed seam (CARD-0567).
     /// </summary>
     internal async Task<(IReadOnlyList<string> Siblings, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
@@ -893,21 +893,104 @@ public sealed class AgentTaskLandService
 
         var tokens = new List<string>();
         var warnings = new List<string>();
-        foreach (var sibling in siblings)
+        var siblingIds = siblings.Select(s => s.Id).ToArray();
+        var completedIds = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => siblingIds.Contains(e.AgentTaskId)
+                && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.LandedWithResidue))
+            .Select(e => e.AgentTaskId).Distinct().ToListAsync(ct);
+        var completed = completedIds.ToHashSet();
+        var pendingSiblings = siblings.Where(s => !completed.Contains(s.Id))
+            .OrderBy(s => s.Id).ToArray();
+        var candidateLimit = Math.Max(1, _gitSettings?.WorktreeBaseMaxCandidates ?? 16);
+        if (pendingSiblings.Length > candidateLimit)
+            warnings.Add($"{cardIdentifier}: sibling inspection incomplete: candidate_limit "
+                + $"({pendingSiblings.Length} total, {candidateLimit} inspected). Inspect remaining branches separately.");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _gitSettings?.WorktreeBaseInspectionTimeoutSeconds ?? 2)));
+        string? landingCommon = null;
+        if (_landingGit is not null)
         {
+            try { landingCommon = await _landingGit.CommonDirectoryAsync(rebasedHeadRepo, deadline.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                warnings.Add($"{cardIdentifier}: sibling inspection unknown (inspection_timeout).");
+                return ([], warnings);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                warnings.Add($"{cardIdentifier}: sibling repository inspection unknown ({ex.GetType().Name}).");
+                return ([], warnings);
+            }
+        }
+        foreach (var sibling in pendingSiblings.Take(candidateLimit))
+        {
+            if (deadline.IsCancellationRequested)
+            {
+                ct.ThrowIfCancellationRequested();
+                warnings.Add($"{cardIdentifier}: sibling inspection incomplete (inspection_timeout).");
+                break;
+            }
             var branch = sibling.WorktreeBranch!;
-            if (!DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.RepoPath)
-                && !DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.WorktreePath))
+            if (landingCommon is not null)
+            {
+                try
+                {
+                    var candidateRepository = sibling.RepoPath is { } original && Directory.Exists(original)
+                        ? original : sibling.WorktreePath ?? string.Empty;
+                    var candidateCommon = await _landingGit!.CommonDirectoryAsync(
+                        candidateRepository, deadline.Token);
+                    if (!string.Equals(landingCommon, candidateCommon,
+                            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                        continue;
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    warnings.Add($"{cardIdentifier}: sibling inspection incomplete (inspection_timeout).");
+                    break;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    warnings.Add($"{cardIdentifier}'s kept branch {branch} (task {DelegationReportFormatter.Short(sibling.Id)}) "
+                        + $"inspection unknown: repository identity ({ex.GetType().Name}).");
+                    continue;
+                }
+            }
+            else if (!DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.RepoPath)
+                     && !DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.WorktreePath))
                 continue;
-            if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
+            DelegationWorktreeService.CommitContainmentObservation observation;
+            try
+            {
+                if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, deadline.Token))
+                    continue;
+                observation = await _worktrees.ObserveContainmentAsync(
+                    rebasedHeadRepo, branch, verifiedSha ?? "HEAD", deadline.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                warnings.Add($"{cardIdentifier}: sibling inspection incomplete (inspection_timeout).");
+                break;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                warnings.Add($"{cardIdentifier}'s kept branch {branch} (task {DelegationReportFormatter.Short(sibling.Id)}) "
+                    + $"inspection unknown: {ex.GetType().Name}.");
                 continue;
-            if (await _worktrees.ContainsPatchesAsync(rebasedHeadRepo, branch, verifiedSha ?? "HEAD", ct))
+            }
+            if (observation.Result == DelegationWorktreeService.CommitContainment.Contained)
                 continue;
+
+            if (observation.Result == DelegationWorktreeService.CommitContainment.Unknown)
+            {
+                warnings.Add($"{cardIdentifier}'s kept branch {branch} (task {DelegationReportFormatter.Short(sibling.Id)}) "
+                    + $"inspection unknown: {observation.Reason}. Inspect before selecting another source.");
+                continue;
+            }
 
             var shortId = DelegationReportFormatter.Short(sibling.Id);
             tokens.Add($"{shortId}:{branch}");
             warnings.Add(
-                $"{cardIdentifier}'s kept branch {branch} (task {shortId}) is not an ancestor of the rebased HEAD.");
+                $"{cardIdentifier}'s kept branch {branch} (task {shortId}) has committed work absent from the rebased HEAD.");
         }
 
         return (tokens, warnings);
