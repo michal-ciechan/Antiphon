@@ -284,8 +284,12 @@ public class ClaudeEffortDismissalReplayTests
             var raw = Bytes(fixture);
             var prefixLength = Encoding.UTF8.GetByteCount(stream[..at]);
             screen.Feed(decoder.Decode(raw.AsSpan(0, prefixLength)));
-            for (var pos = prefixLength; pos < raw.Length; pos += 256)
-                pendingBytes.Enqueue(raw.AsSpan(pos, Math.Min(256, raw.Length - pos)).ToArray());
+            for (var pos = prefixLength; pos < raw.Length;)
+            {
+                var end = Math.Min(raw.Length, (pos / 256 + 1) * 256);
+                pendingBytes.Enqueue(raw.AsSpan(pos, end - pos).ToArray());
+                pos = end;
+            }
             pending = new Queue<string>();
         }
         else
@@ -302,7 +306,13 @@ public class ClaudeEffortDismissalReplayTests
             if (writes.Contains("\r"))
             {
                 postEnter++;
-                if (pendingBytes.Count > 0) screen.Feed(decoder.Decode(pendingBytes.Dequeue()));
+                if (mode == "bytes-256")
+                {
+                    // Several PTY reads can arrive between two resolver polls. Repaint the
+                    // complete dismissal burst through the incremental decoder before sampling;
+                    // R2 below checks each raw byte boundary independently.
+                    while (pendingBytes.Count > 0) screen.Feed(decoder.Decode(pendingBytes.Dequeue()));
+                }
                 else if (pending.Count > 0) screen.Feed(pending.Dequeue());
             }
             return Task.FromResult(screen.GetScreenText());

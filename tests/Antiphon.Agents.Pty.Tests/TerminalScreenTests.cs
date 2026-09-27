@@ -127,7 +127,7 @@ public class TerminalScreenTests
 	[Test]
 	public void C464_Unfinished_controls_are_hidden_and_instance_local()
 	{
-		foreach (var (prefix, suffix) in new[] { ("\x1b", "Z"), ("\x1b[", "1mZ"),
+		foreach (var (prefix, suffix) in new[] { ("\x1b", "7Z"), ("\x1b[", "1mZ"),
 			("\x1b[12;", "1mZ"), ("\x1b]0;secret", "\x07Z"),
 			("\x1b]0;secret\x1b", "\\Z"), ("\x1bPsecret\x1b", "\\Z"), ("\x1b(", "BZ") })
 		{

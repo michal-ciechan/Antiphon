@@ -128,7 +128,7 @@ public class PtyUtf8DecoderTests
         {
             foreach (var b in Encoding.UTF8.GetBytes("A─\x1b[2;3HZ")) await p.PushAsync([b]);
             await p.PushAsync(null);
-            p.Runner.SnapshotRow(0).ShouldBe("A");
+            p.Runner.SnapshotRow(0).ShouldBe("A─");
             p.Runner.SnapshotRow(1).ShouldBe("  Z");
         }
     }
