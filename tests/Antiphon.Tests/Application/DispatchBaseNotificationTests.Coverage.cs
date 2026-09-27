@@ -536,7 +536,20 @@ public partial class DispatchBaseNotificationTests
         var parent = Guid.NewGuid();
         await SeedParentSessionAsync(db, parent);
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parent);
-        if (reason == "sibling-hold") sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        if (reason == "sibling-hold")
+        {
+            sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+            var request = new AgentTaskLandRequest
+            {
+                Id = Guid.NewGuid(), TaskId = sibling.Id, RequestedAt = sibling.LandRequestedAt.Value,
+                LastEvaluatedAt = sibling.LandRequestedAt.Value,
+                LastProgressAt = sibling.LandRequestedAt.Value,
+                State = LandRequestState.Queued, IsPending = true,
+                ExpectedSourceSha = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim(),
+            };
+            db.AgentTaskLandRequests.Add(request);
+            sibling.CurrentLandRequestId = request.Id;
+        }
         if (reason == "invalid-ref") task.WorktreeBaseRequestedRef = "no-such-c508-ref";
         if (reason == "optional-expiry")
         {
