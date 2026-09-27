@@ -1,12 +1,19 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
+using System.Text.Json;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
@@ -230,6 +237,201 @@ public class AgentTaskWorktreeBaseCreateTests
         fresh.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
         fresh.WorktreeBase.CandidateWarnings.ShouldContain(w => w.Contains(maxima[0].WorktreeBranch!, StringComparison.Ordinal));
         fresh.WorktreeBase.CandidateWarnings.ShouldContain(w => w.Contains(maxima[1].WorktreeBranch!, StringComparison.Ordinal));
+    }
+
+    [Test]
+    [Arguments("revoked_capability")]
+    [Arguments("directory_denied")]
+    [Arguments("quota")]
+    [Arguments("provider_signin")]
+    [Arguments("concurrency")]
+    [Arguments("routing_pin")]
+    [Timeout(90_000)]
+    public async Task T0442_V17_existing_create_guards_precede_source_selection(string scenario)
+    {
+        using var repo = new ScratchGitRepo("c442-v17");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = AgentTaskDispatchBaseGuardTests.CreateContext(schema);
+        var card = await AgentTaskDispatchBaseGuardTests.SeedCardAsync(db, "CARD-0442");
+        var source = await AgentTaskDispatchBaseGuardTests.SeedKeptSiblingAsync(
+            db, repo, card.Id, "A", startRef: "master");
+        var sourceSha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+        var request = Request(card.Id) with
+        {
+            Goal = "V17 " + scenario,
+            WorktreeBaseTask = DelegationReportFormatter.Short(source.Id),
+        };
+        AgentTaskService.Caller caller = new(null, null, repo.Path);
+        string? token = null;
+        string? temporaryPath = null;
+        try
+        {
+            if (scenario == "revoked_capability")
+            {
+                token = Guid.NewGuid().ToString("N");
+                db.DelegationCapabilities.Add(new DelegationCapability
+                {
+                    Id = Guid.NewGuid(), Name = "revoked fixture",
+                    TokenHash = AgentTaskService.HashToken(token),
+                    RootsJson = JsonSerializer.Serialize(new[] { repo.Path }),
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1), RevokedAt = DateTime.UtcNow,
+                });
+            }
+            if (scenario == "directory_denied")
+            {
+                temporaryPath = Directory.CreateTempSubdirectory("c442-denied-root").FullName;
+                caller = new AgentTaskService.Caller(null, null, temporaryPath,
+                    CapabilityId: Guid.NewGuid(), CapabilityName: "narrow-root");
+                request = request with { WorkingDirectory = repo.Path };
+            }
+            if (scenario == "quota")
+            {
+                request = request with { AgentKind = AgentKind.Codex };
+                db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+                {
+                    Id = Guid.NewGuid(), Provider = AgentKind.Codex,
+                    SubscriptionKey = "Codex", PlanLabel = "fixture",
+                    RemainingPercent = 3, ResetsAt = DateTime.UtcNow.AddHours(36),
+                    ObservedAt = DateTime.UtcNow, AgentSessionId = Guid.NewGuid(),
+                    SourceCommand = "/status", ParseStatus = SubscriptionUsageParseStatus.Parsed,
+                    RawExcerpt = "seeded",
+                });
+            }
+            if (scenario == "provider_signin")
+            {
+                temporaryPath = Directory.CreateTempSubdirectory("c442-empty-grok-home").FullName;
+                request = request with { AgentKind = AgentKind.Grok };
+            }
+            if (scenario == "concurrency")
+            {
+                var occupantId = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = occupantId, RootTaskId = occupantId,
+                    Title = "occupied code", Goal = "occupied code",
+                    Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Shared,
+                    WorkingDirectory = repo.WorktreeRoot,
+                    Status = AgentTaskStatus.Working, CreatedAt = DateTime.UtcNow,
+                });
+            }
+            await db.SaveChangesAsync();
+            if (scenario == "routing_pin")
+            {
+                await new RoutingPinService(db, TimeProvider.System,
+                    NullLogger<RoutingPinService>.Instance).UpsertAsync(
+                        new PutRoutingPinRequest(AgentTaskRole.Code, Card: card.Identifier,
+                            Provenance: RoutingPinProvenance.Human,
+                            Strength: RoutingPinStrength.Required, AgentKind: AgentKind.Codex,
+                            Reason: "fixture required Codex"), null, CancellationToken.None);
+                request = request with { AgentKind = AgentKind.ClaudeCode };
+            }
+            var before = await db.AgentTasks.CountAsync();
+            var selectable = await new AgentTaskWorktreeBaseResolver(db, new LandingGit(),
+                Options.Create(new GitSettings { DefaultBranch = "master" })).ResolveAsync(
+                    new AgentTask
+                    {
+                        Id = Guid.NewGuid(), CardId = card.Id, RepoPath = repo.Path,
+                        Workspace = WorkspaceMode.Worktree,
+                        RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Task,
+                        RequestedWorktreeBaseTaskId = source.Id,
+                    }, CancellationToken.None);
+            selectable.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            selectable.SourceTaskId.ShouldBe(source.Id);
+            var inspection = new GuardCountingGit();
+            var service = CreateV17Service(db, repo, scenario, temporaryPath, inspection);
+            switch (scenario)
+            {
+                case "revoked_capability":
+                    (await Should.ThrowAsync<ForbiddenException>(() =>
+                        service.AuthenticateAsync(token, CancellationToken.None)))
+                        .Message.ShouldContain("revoked");
+                    break;
+                case "directory_denied":
+                    await Should.ThrowAsync<ValidationException>(() =>
+                        service.CreateAsync(request, caller, CancellationToken.None));
+                    break;
+                case "quota":
+                    (await Should.ThrowAsync<SubscriptionQuotaLowException>(() =>
+                        service.CreateAsync(request, caller, CancellationToken.None)))
+                        .Code.ShouldBe("subscription_quota_low");
+                    break;
+                case "provider_signin":
+                    (await Should.ThrowAsync<ProviderSignInRequiredException>(() =>
+                        service.CreateAsync(request, caller, CancellationToken.None)))
+                        .Code.ShouldBe("provider_sign_in_required");
+                    break;
+                case "concurrency":
+                    await Should.ThrowAsync<ConcurrencyLimitException>(() =>
+                        service.CreateAsync(request, caller, CancellationToken.None));
+                    break;
+                case "routing_pin":
+                    (await Should.ThrowAsync<RoutingPinConflictException>(() =>
+                        service.CreateAsync(request, caller, CancellationToken.None)))
+                        .Code.ShouldBe("routing_pin_conflict");
+                    break;
+            }
+            (await db.AgentTasks.CountAsync()).ShouldBe(before);
+            inspection.Calls.ShouldBe(0, "guard refusal must precede source Git inspection");
+            (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim().ShouldBe(sourceSha);
+            var worktreeList = (await ScratchGitRepo.GitInAsync(repo.Path,
+                "worktree", "list", "--porcelain")).StdOut;
+            worktreeList.Split("worktree ", StringSplitOptions.None).Length.ShouldBe(2);
+        }
+        finally
+        {
+            if (temporaryPath is not null)
+                Directory.Delete(temporaryPath, recursive: true);
+        }
+    }
+
+    private static AgentTaskService CreateV17Service(AppDbContext db, ScratchGitRepo repo,
+        string scenario, string? grokHome, ILandingGit inspection)
+    {
+        var settings = Options.Create(new DelegationSettings
+        {
+            AllowedRoots = [repo.Path], MaxOpenTasks = 1,
+            MaxTasksPerRoot = 40, MaxDepth = 5,
+        });
+        var registry = new AgentRegistrySettings();
+        if (scenario == "provider_signin")
+        {
+            registry.GrokCredentialProbeEnabled = true;
+            registry.Definitions["grok"] = new AgentDefinition
+            {
+                Kind = "Grok", Exe = "grok",
+                Env = new Dictionary<string, string> { ["GROK_HOME"] = grokHome! },
+            };
+        }
+        var quota = scenario == "quota"
+            ? new SubscriptionQuotaGate(new SubscriptionUsageReader(db, TimeProvider.System),
+                Options.Create(new SubscriptionQuotaGateSettings()), TimeProvider.System,
+                NullLogger<SubscriptionQuotaGate>.Instance)
+            : null;
+        var pins = scenario == "routing_pin"
+            ? new RoutingPinService(db, TimeProvider.System, NullLogger<RoutingPinService>.Instance)
+            : null;
+        var openGate = scenario == "concurrency" ? new DelegationOpenGate(db, settings) : null;
+        return new AgentTaskService(db,
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            settings, new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+            NullLogger<AgentTaskService>.Instance,
+            quotaGate: quota, routingPins: pins, registrySettings: Options.Create(registry),
+            openGate: openGate,
+            baseResolver: new AgentTaskWorktreeBaseResolver(db, inspection,
+                Options.Create(new GitSettings { DefaultBranch = "master" })));
+    }
+
+    private sealed class GuardCountingGit : LandingGit
+    {
+        public int Calls { get; private set; }
+
+        public override Task<LandingGitResult> RunAsync(string repository,
+            IReadOnlyList<string> args, CancellationToken ct)
+        {
+            Calls++;
+            return base.RunAsync(repository, args, ct);
+        }
     }
 
     private static CreateAgentTaskRequest Request(Guid? cardId) => new(
