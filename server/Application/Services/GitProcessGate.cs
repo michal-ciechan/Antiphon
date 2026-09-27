@@ -8,6 +8,7 @@ public sealed class GitProcessGate
 {
     private readonly SemaphoreSlim _semaphore;
     private int _inFlight;
+    private int _waiting;
     private int _started;
     private int _peakInFlight;
 
@@ -17,12 +18,15 @@ public sealed class GitProcessGate
     }
 
     public int InFlight => Volatile.Read(ref _inFlight);
+    public int Waiting => Volatile.Read(ref _waiting);
     public int Started => Volatile.Read(ref _started);
     public int PeakInFlight => Volatile.Read(ref _peakInFlight);
 
     public async ValueTask<IDisposable> EnterAsync(CancellationToken ct)
     {
-        await _semaphore.WaitAsync(ct);
+        Interlocked.Increment(ref _waiting);
+        try { await _semaphore.WaitAsync(ct); }
+        finally { Interlocked.Decrement(ref _waiting); }
         var inFlight = Interlocked.Increment(ref _inFlight);
         Interlocked.Increment(ref _started);
         UpdatePeak(inFlight);
