@@ -220,20 +220,24 @@ public sealed class AmServiceDeployReadinessTests
                 exec "$C504_REAL_SLEEP" "$@"
                 """);
             foreach (var name in new[] { "ssh", "scp" })
+            {
                 WriteWrapper(wrappers, name, "#!/bin/sh\nprintf 'unexpected-native-" + name + "\\n' >> \"$C504_JOURNAL\"\nexit 94\n");
+                if (OperatingSystem.IsWindows())
+                    File.WriteAllText(Path.Combine(wrappers, name + ".cmd"), "@echo off\r\nexit /b 94\r\n");
+            }
 
             var start = new ProcessStartInfo("pwsh") { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(Root, "scripts", "test-deploy-am-service.ps1"), "-ReadinessCase", caseName, "-FixtureDirectory", _directory, "-DeploymentScript", deploymentScript }) start.ArgumentList.Add(arg);
             start.Environment["PATH"] = wrappers + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
             start.Environment["C504_ENDPOINT"] = Endpoint;
-            start.Environment["C504_JOURNAL"] = JournalPath;
-            start.Environment["C504_MIGRATIONS"] = Path.Combine(_directory, "migrations.txt");
-            start.Environment["C504_COUNT"] = Path.Combine(_directory, "curl-count.txt");
-            start.Environment["C504_ACK"] = Path.Combine(_directory, "listen-ack.txt");
+            start.Environment["C504_JOURNAL"] = ToPosixPath(JournalPath);
+            start.Environment["C504_MIGRATIONS"] = ToPosixPath(Path.Combine(_directory, "migrations.txt"));
+            start.Environment["C504_COUNT"] = ToPosixPath(Path.Combine(_directory, "curl-count.txt"));
+            start.Environment["C504_ACK"] = ToPosixPath(Path.Combine(_directory, "listen-ack.txt"));
             start.Environment["C504_REFUSALS"] = _refusals.ToString();
             start.Environment["C504_MODE"] = _mode;
-            start.Environment["C504_REAL_CURL"] = FindProgram("curl");
-            start.Environment["C504_REAL_SLEEP"] = FindProgram("sleep");
+            start.Environment["C504_REAL_CURL"] = ToPosixPath(FindProgram("curl"));
+            start.Environment["C504_REAL_SLEEP"] = ToPosixPath(FindProgram("sleep"));
             start.Environment["C504_POSIX_FIXTURE"] = ToPosixPath(_directory);
             foreach (var key in start.Environment.Keys.Where(x => x.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) || x.Contains("SECRET", StringComparison.OrdinalIgnoreCase) || x.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase) || x.Contains("API_KEY", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
             using var child = Process.Start(start) ?? throw new InvalidOperationException("PowerShell did not start");
