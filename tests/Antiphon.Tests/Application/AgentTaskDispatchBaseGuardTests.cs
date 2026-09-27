@@ -756,7 +756,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             await notifier.ReconcileAsync(note.Id, ct);
     }
 
-    private static async Task<AgentTask> SeedKeptSiblingAsync(
+    internal static async Task<AgentTask> SeedKeptSiblingAsync(
         AppDbContext db, ScratchGitRepo repo, Guid cardId, string commitMessage,
         string? startRef = null, bool alias = false)
     {
@@ -853,7 +853,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         return lines.Length == 0 || Array.TrueForAll(lines, static line => line.StartsWith('-'));
     }
 
-    private static async Task<Card> SeedCardAsync(AppDbContext db, string identifier) =>
+    internal static async Task<Card> SeedCardAsync(AppDbContext db, string identifier) =>
         (await SeedCardWithProjectAsync(db, identifier)).Card;
 
     private static async Task<(Card Card, Project Project)> SeedCardWithProjectAsync(
@@ -939,7 +939,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         sibling.CurrentLandRequestId = request.Id;
     }
 
-    private static ServiceProvider CreateProvider(
+    internal static ServiceProvider CreateProvider(
         string connectionString,
         string worktreeBase,
         string defaultBranch = "master",
@@ -995,6 +995,6 @@ public partial class AgentTaskDispatchBaseGuardTests
         return services.BuildServiceProvider();
     }
 
-    private static AppDbContext CreateContext(IsolatedTestSchema schema) =>
+    internal static AppDbContext CreateContext(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 }
