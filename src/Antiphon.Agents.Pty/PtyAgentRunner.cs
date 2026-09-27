@@ -13,6 +13,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private IPtySession? _conn;
     private CancellationTokenSource? _readCts;
     private Task? _readTask;
+    private readonly PtyUtf8Decoder _decoder = new();
     private readonly StringBuilder _liveBuffer = new();
     private readonly object _bufferLock = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
@@ -35,6 +36,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private IPtyCustodyContainment? _containment;
     private PtyTerminationObservation? _linuxTermination;
     internal IPtyCustodyNative? CustodyNative { get; init; }
+    internal Action? ReadProcessedForTest { get; set; }
 
     /// <summary>
     /// CARD-0604 D-17 test seam: the Linux containment this runner should use for a tracked
@@ -241,22 +243,32 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     private async Task ReadLoopAsync(CancellationToken ct)
     {
         if (_conn is null) return;
+        await ReadStreamAsync(_conn.ReaderStream, ct);
+    }
+
+    // A scripted stream can drive the same production read/publish path without a child process.
+    internal Task ReadStreamForTestAsync(Stream stream, CancellationToken ct = default)
+    {
+        _screen = new TerminalScreen(120, 30);
+        return ReadStreamAsync(stream, ct);
+    }
+
+    private async Task ReadStreamAsync(Stream stream, CancellationToken ct)
+    {
         var buffer = new byte[4096];
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                int n = await _conn.ReaderStream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct);
-                if (n <= 0) break;
-                var chunk = Encoding.UTF8.GetString(buffer, 0, n);
-                Output.Add(chunk);
-                lock (_bufferLock)
+                int n = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct);
+                if (n <= 0)
                 {
-                    _liveBuffer.Append(chunk);
-                    _screen?.Feed(chunk);
+                    PublishDecoded(_decoder.Decode(ReadOnlySpan<byte>.Empty, flush: true));
+                    ReadProcessedForTest?.Invoke();
+                    break;
                 }
-                _audit?.RecordChunk(chunk);
-                OnData?.Invoke(chunk);
+                PublishDecoded(_decoder.Decode(buffer.AsSpan(0, n)));
+                ReadProcessedForTest?.Invoke();
             }
         }
         catch (OperationCanceledException ex)
@@ -268,6 +280,19 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         {
             if (_custody is not null) _custodyReadFailure = ex;
         }
+    }
+
+    private void PublishDecoded(string chunk)
+    {
+        if (chunk.Length == 0) return;
+        Output.Add(chunk);
+        lock (_bufferLock)
+        {
+            _liveBuffer.Append(chunk);
+            _screen?.Feed(chunk);
+        }
+        _audit?.RecordChunk(chunk);
+        OnData?.Invoke(chunk);
     }
 
     public async Task WriteAsync(string data, CancellationToken ct = default)

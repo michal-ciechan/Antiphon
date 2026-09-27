@@ -36,6 +36,15 @@ public sealed class TerminalScreen
 	private int _scrollTop;    // scroll region top (0-based, inclusive)
 	private int _scrollBottom; // scroll region bottom (0-based, inclusive)
 	private bool _pendingWrap; // deferred wrap: the last column is filled, the wrap is owed
+	private enum ParseState { Ground, Escape, Charset, Csi, Osc, OscEscape, String, StringEscape }
+	private ParseState _state;
+	private readonly int[] _csiParams = new int[8];
+	private int _csiCount;
+	private int _csiCurrent;
+	private bool _csiHasCurrent;
+	private bool _csiPrivate;
+	private bool _csiIntermediate;
+	private bool _csiInvalid;
 
 	public int Cols { get; }
 	public int Rows { get; }
@@ -70,31 +79,55 @@ public sealed class TerminalScreen
 	/// </summary>
 	public void Feed(string data)
 	{
-		var span = data.AsSpan();
-		int i = 0;
-		while (i < span.Length)
+		foreach (char c in data)
 		{
-			char c = span[i];
-			if (c == '\x1b')
+			switch (_state)
 			{
-				i = HandleEscape(span, i + 1);
+				case ParseState.Ground:
+					if (c == '\x1b') _state = ParseState.Escape;
+					else HandleGround(c);
+					break;
+				case ParseState.Escape:
+					HandleEscape(c);
+					break;
+				case ParseState.Charset:
+					_state = ParseState.Ground;
+					break;
+				case ParseState.Csi:
+					HandleCsi(c);
+					break;
+				case ParseState.Osc:
+					if (c == '\x07') _state = ParseState.Ground;
+					else if (c == '\x1b') _state = ParseState.OscEscape;
+					break;
+				case ParseState.OscEscape:
+					_state = c == '\\' ? ParseState.Ground : c == '\x1b' ? ParseState.OscEscape : ParseState.Osc;
+					break;
+				case ParseState.String:
+					if (c == '\x1b') _state = ParseState.StringEscape;
+					break;
+				case ParseState.StringEscape:
+					_state = c == '\\' ? ParseState.Ground : c == '\x1b' ? ParseState.StringEscape : ParseState.String;
+					break;
 			}
-			else switch (c)
+		}
+	}
+
+	private void HandleGround(char c)
+	{
+		switch (c)
 			{
 				case '\r':
 					_pendingWrap = false;
 					_cursorCol = 0;
-					i++;
 					break;
 				case '\n':
 					_pendingWrap = false;
 					LineFeed();
-					i++;
 					break;
 				case '\b':
 					_pendingWrap = false;
 					if (_cursorCol > 0) _cursorCol--;
-					i++;
 					break;
 				case '\t':
 				{
@@ -104,15 +137,12 @@ public sealed class TerminalScreen
 					_pendingWrap = false;
 					int next = Math.Min((_cursorCol / 8 + 1) * 8, Cols - 1);
 					while (_cursorCol < next) WriteChar(' ');
-					i++;
 					break;
 				}
 				default:
 					if (c >= ' ') WriteChar(c);
-					i++;
 					break;
 			}
-		}
 	}
 
 	/// <summary>
@@ -225,72 +255,71 @@ public sealed class TerminalScreen
 
 	// ── Escape sequence handling ────────────────────────────────────────────────
 
-	private int HandleEscape(ReadOnlySpan<char> data, int i)
+	private void HandleEscape(char c)
 	{
-		if (i >= data.Length) return i;
-		char next = data[i];
-		switch (next)
+		_state = ParseState.Ground;
+		switch (c)
 		{
-			case '[': return HandleCsi(data, i + 1);
-			case ']': return SkipOsc(data, i + 1);
-			case 'P': case 'X': case '^': case '_': return SkipUntilSt(data, i + 1);
-			case '7': // DECSC - save cursor (simplified: ignore)
-			case '8': // DECRC - restore cursor (simplified: ignore)
-				return i + 1;
-			case 'M': // RI - reverse index
+			case '[': ResetCsi(); _state = ParseState.Csi; break;
+			case ']': _state = ParseState.Osc; break;
+			case 'P': case 'X': case '^': case '_': _state = ParseState.String; break;
+			case '(': case ')': case '*': case '+': _state = ParseState.Charset; break;
+			case 'M':
 				if (_cursorRow == _scrollTop) ScrollDown();
 				else if (_cursorRow > 0) _cursorRow--;
-				return i + 1;
-			case '=': case '>': // alternate/normal keypad mode
-				return i + 1;
-			case '(': case ')': case '*': case '+': // character set
-				return i + 2 <= data.Length ? i + 2 : i + 1;
-			case '\\': // ST stray
-				return i + 1;
-			default:
-				// Two-char ESC sequence (e.g. ESC @ through ESC _)
-				return i + 1;
+				break;
+			case '\x1b': _state = ParseState.Escape; break;
 		}
 	}
 
-	private int HandleCsi(ReadOnlySpan<char> data, int i)
+	private void ResetCsi()
 	{
-		// Optional private/intermediate prefix
-		bool isPrivate = false;
-		if (i < data.Length && (data[i] == '?' || data[i] == '>' || data[i] == '<' || data[i] == '!'))
+		_csiCount = 0;
+		_csiCurrent = 0;
+		_csiHasCurrent = false;
+		_csiPrivate = false;
+		_csiIntermediate = false;
+		_csiInvalid = false;
+	}
+
+	private void AddCsiParameter()
+	{
+		if (_csiCount < _csiParams.Length)
+			_csiParams[_csiCount++] = _csiHasCurrent ? _csiCurrent : 0;
+		_csiCurrent = 0;
+		_csiHasCurrent = false;
+	}
+
+	private void HandleCsi(char c)
+	{
+		if (c == '\x18' || c == '\x1a') { _state = ParseState.Ground; return; }
+		if (c == '\x1b') { _state = ParseState.Escape; return; }
+		if (c is >= '0' and <= '9' && !_csiIntermediate)
 		{
-			isPrivate = data[i] == '?';
-			i++;
+			int digit = c - '0';
+			if (_csiCurrent > (int.MaxValue - digit) / 10) _csiInvalid = true;
+			else if (!_csiInvalid) _csiCurrent = _csiCurrent * 10 + digit;
+			_csiHasCurrent = true;
+			return;
 		}
-
-		// Parse numeric params separated by ';'
-		Span<int> ps = stackalloc int[8];
-		int psCount = 0;
-		int cur = 0;
-		bool hasCur = false;
-
-		while (i < data.Length)
+		if (c == ';' && !_csiIntermediate) { AddCsiParameter(); return; }
+		if (c is '?' or '>' or '<' or '!' && _csiCount == 0 && !_csiHasCurrent && !_csiIntermediate)
+		{ _csiPrivate = true; return; }
+		if (c is >= ' ' and <= '/') { _csiIntermediate = true; return; }
+		if (c is >= '@' and <= '~')
 		{
-			char c = data[i];
-			if (c >= '0' && c <= '9') { cur = cur * 10 + (c - '0'); hasCur = true; i++; }
-			else if (c == ';')
-			{
-				if (psCount < ps.Length) ps[psCount++] = hasCur ? cur : 0;
-				cur = 0; hasCur = false; i++;
-			}
-			else if (c >= ' ' && c <= '/') { i++; } // intermediate bytes
-			else break;
+			_state = ParseState.Ground;
+			if (_csiHasCurrent) AddCsiParameter();
+			if (!_csiPrivate && !_csiIntermediate && !_csiInvalid) ExecuteCsi(c);
+			return;
 		}
-		if (hasCur && psCount < ps.Length) ps[psCount++] = cur;
+		if (c < ' ') _state = ParseState.Ground;
+	}
 
-		if (i >= data.Length) return i;
-		char final = data[i];
-		i++;
-
-		if (isPrivate) return i; // private sequences (mouse, bracketed paste, etc.)
-
-		int p1 = psCount > 0 ? ps[0] : 0;
-		int p2 = psCount > 1 ? ps[1] : 0;
+	private void ExecuteCsi(char final)
+	{
+		int p1 = _csiCount > 0 ? _csiParams[0] : 0;
+		int p2 = _csiCount > 1 ? _csiParams[1] : 0;
 
 		// Every cursor-positioning move cancels a pending wrap: the cursor is being placed
 		// explicitly, so the owed wrap is void.  Erase (J K X), insert/delete (L M P @), scroll
@@ -418,27 +447,5 @@ public sealed class TerminalScreen
 			// All other CSI sequences (SGR, modes, reports, etc.) — skip.
 		}
 
-		return i;
-	}
-
-	private static int SkipOsc(ReadOnlySpan<char> data, int i)
-	{
-		while (i < data.Length)
-		{
-			if (data[i] == '\x07') return i + 1;
-			if (data[i] == '\x1b' && i + 1 < data.Length && data[i + 1] == '\\') return i + 2;
-			i++;
-		}
-		return i;
-	}
-
-	private static int SkipUntilSt(ReadOnlySpan<char> data, int i)
-	{
-		while (i < data.Length)
-		{
-			if (data[i] == '\x1b' && i + 1 < data.Length && data[i + 1] == '\\') return i + 2;
-			i++;
-		}
-		return i;
 	}
 }
