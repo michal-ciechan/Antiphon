@@ -816,8 +816,7 @@ public sealed class AgentService
 
         await StopLiveSessionBeforeDeleteAsync(agent, ct);
 
-        // Release the agent's hold on any cards and drop its workflow runs. CardWorkflowRun.AgentId
-        // uses Restrict, so the runs must be removed explicitly before the agent can be deleted.
+        // Pipeline runs belong to cards, not to the agent holding a queue position.
         var now = UtcNow();
         var assignedCards = await _db.Cards
             .Where(c => c.AssignedAgentId == id)
@@ -826,24 +825,13 @@ public sealed class AgentService
         {
             card.AssignedAgentId = null;
             card.AgentQueuePosition = null;
-            card.ActiveWorkflowRunId = null;
-            card.ActiveWorkflowRun = null;
             card.UpdatedAt = now;
             card.ConcurrencyToken = Guid.NewGuid();
         }
 
-        var runs = await _db.CardWorkflowRuns.Where(r => r.AgentId == id).ToListAsync(ct);
-
-        // Card<->CardWorkflowRun and CardWorkflowRun<->CardWorkflowStage reference each other, so
-        // deleting in one batch forms a cycle EF can't order. Null the back-references and persist
-        // that first, then delete the runs (their stages cascade) and the agent.
-        foreach (var run in runs)
-            run.CurrentStageId = null;
-
-        if (assignedCards.Count > 0 || runs.Count > 0)
+        if (assignedCards.Count > 0)
             await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
 
-        _db.CardWorkflowRuns.RemoveRange(runs);
         if (_pins is not null)
             await _pins.PreserveCleanupOnDeleteAsync(id, ct);
         _db.Agents.Remove(agent);
@@ -908,21 +896,12 @@ public sealed class AgentService
                 .MaxAsync(c => (int?)c.AgentQueuePosition, ct) ?? 0;
 
             var now = UtcNow();
-            var run = await _workflowRunFactory.CreateFromAgentDefaultAsync(card, agent, ct);
-            var currentStageId = run.CurrentStageId;
-            run.CurrentStageId = null;
-            _db.CardWorkflowRuns.Add(run);
-
             card.AssignedAgentId = agent.Id;
             card.AgentQueuePosition = nextPosition + 1;
-            card.ActiveWorkflowRun = run;
-            card.ActiveWorkflowRunId = run.Id;
             card.UpdatedAt = now;
             card.ConcurrencyToken = Guid.NewGuid();
 
             await SaveChangesOrConflictAsync($"Card '{card.Identifier}' was modified by another operation.", ct);
-            run.CurrentStageId = currentStageId;
-            await SaveChangesOrConflictAsync($"Card '{card.Identifier}' workflow was modified by another operation.", ct);
             await transaction.CommitAsync(ct);
 
             cardId = card.Id;
@@ -1011,8 +990,6 @@ public sealed class AgentService
             var now = UtcNow();
             removedCard.AssignedAgentId = null;
             removedCard.AgentQueuePosition = null;
-            removedCard.ActiveWorkflowRunId = null;
-            removedCard.ActiveWorkflowRun = null;
             removedCard.UpdatedAt = now;
             removedCard.ConcurrencyToken = Guid.NewGuid();
 

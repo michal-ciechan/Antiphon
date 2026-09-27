@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.ValueObjects;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Infrastructure.Data.Seeding;
@@ -49,6 +51,57 @@ public static class DatabaseSeeder
         await SeedDefaultProvidersAsync(db, cancellationToken);
         await SyncProviderConfigAsync(db, llmSettings, cancellationToken);
         await SeedDefaultModelRoutingAsync(db, cancellationToken);
+        await SeedPipelineDefinitionsAsync(db, PipelineDefinitions.StandardPipeline, cancellationToken);
+    }
+
+    public static async Task SeedPipelineDefinitionsAsync(
+        AppDbContext db, IReadOnlyList<PipelineStageSpec> stages, CancellationToken cancellationToken)
+    {
+        // Several startup hosts can seed the same database. Serialize the fixed-id lookup/insert
+        // before either host observes absence; the second sees the first host's committed row.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(558001)", cancellationToken);
+        var definition = await db.PipelineDefinitions
+            .Include(d => d.ActiveRevision)
+            .FirstOrDefaultAsync(d => d.Id == PipelineDefinitions.StandardPipelineId, cancellationToken);
+        var json = PipelineStagesJson.Serialise(stages);
+        var hash = PipelineStagesJson.ContentHash(json);
+        var now = DateTime.UtcNow;
+        if (definition is null)
+        {
+            definition = new PipelineDefinition
+            {
+                Id = PipelineDefinitions.StandardPipelineId,
+                Name = PipelineDefinitions.StandardPipelineName,
+                Description = "The six stage Antiphon delegation pipeline.",
+                Source = PipelineDefinitionSource.BuiltIn,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.PipelineDefinitions.Add(definition);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        if (definition.ActiveRevision?.ContentHash != hash)
+        {
+            var number = await db.PipelineDefinitionRevisions
+                .Where(r => r.DefinitionId == definition.Id)
+                .MaxAsync(r => (int?)r.RevisionNumber, cancellationToken) ?? 0;
+            var revision = new PipelineDefinitionRevision
+            {
+                Id = Guid.NewGuid(), DefinitionId = definition.Id, RevisionNumber = number + 1,
+                StagesJson = json, ContentHash = hash, ChangeNote = "Code-owned standard pipeline",
+                CreatedAt = now
+            };
+            db.PipelineDefinitionRevisions.Add(revision);
+            await db.SaveChangesAsync(cancellationToken);
+            definition.ActiveRevisionId = revision.Id;
+            definition.ActiveRevision = revision;
+            definition.UpdatedAt = now;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task SeedDefaultAdminAsync(AppDbContext db, CancellationToken cancellationToken)

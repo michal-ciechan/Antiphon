@@ -27,6 +27,7 @@ public class ProjectService
     private readonly SessionStateStore? _states;
     private readonly TimeProvider _time;
     private readonly IOptionsMonitor<ResilienceSettings>? _resilience;
+    private readonly PipelineResolution? _pipelineResolution;
 
     public ProjectService(
         AppDbContext db,
@@ -39,7 +40,8 @@ public class ProjectService
         IOptions<DelegationSettings>? delegation = null,
         SessionStateStore? states = null,
         TimeProvider? time = null,
-        IOptionsMonitor<ResilienceSettings>? resilience = null)
+        IOptionsMonitor<ResilienceSettings>? resilience = null,
+        PipelineResolution? pipelineResolution = null)
     {
         _db = db;
         _cardFiles = cardFiles;
@@ -52,6 +54,7 @@ public class ProjectService
         _states = states;
         _time = time ?? TimeProvider.System;
         _resilience = resilience;
+        _pipelineResolution = pipelineResolution;
     }
 
     public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken) =>
@@ -76,6 +79,23 @@ public class ProjectService
             ?? throw new NotFoundException(nameof(Project), id);
 
         return await WithWarningsAsync(project, false, cancellationToken);
+    }
+
+    public async Task<ProjectDto> SetPipelineAsync(Guid id, Guid? definitionId, CancellationToken ct)
+    {
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Project), id);
+        if (definitionId is { } selected)
+        {
+            var definition = await _db.PipelineDefinitions.FirstOrDefaultAsync(d => d.Id == selected, ct)
+                ?? throw new NotFoundException(nameof(PipelineDefinition), selected);
+            if (definition.ArchivedAt is not null)
+                throw new ConflictException($"Pipeline definition '{definition.Name}' is archived.", "pipeline_definition_archived");
+        }
+        project.DefaultPipelineDefinitionId = definitionId;
+        project.UpdatedAt = _time.GetUtcNow().UtcDateTime;
+        await _db.SaveChangesAsync(ct);
+        return await WithWarningsAsync(project, false, ct);
     }
 
     public async Task<ProjectDto> CreateAsync(
@@ -486,10 +506,14 @@ public class ProjectService
 
     private async Task<ProjectDto> WithWarningsAsync(Project project, bool install, CancellationToken ct)
     {
-        if (_cardFiles is null) return ToDto(project);
-        try { return ToDto(project) with { CardFileWarnings = await _cardFiles.ProjectWarningsAsync(project.Id, install, ct) }; }
+        var dto = ToDto(project) with
+        {
+            Pipeline = await (_pipelineResolution ?? new PipelineResolution(_db)).ForProjectAsync(project, ct)
+        };
+        if (_cardFiles is null) return dto;
+        try { return dto with { CardFileWarnings = await _cardFiles.ProjectWarningsAsync(project.Id, install, ct) }; }
         catch (OperationCanceledException) { throw; }
-        catch (Exception) { return ToDto(project) with { CardFileWarnings = [install ? "card_files_ignore_missing" : "status_unavailable"] }; }
+        catch (Exception) { return dto with { CardFileWarnings = [install ? "card_files_ignore_missing" : "status_unavailable"] }; }
     }
 
     private ProjectDto ToDto(Project entity) =>
@@ -512,6 +536,7 @@ public class ProjectService
             RepositoryVisibility = entity.RepositoryVisibility,
             CommitOnSettle = CommitOnSettlePolicyResolver.FormatProjectValue(entity.CommitOnSettle),
             EffectiveCommitOnSettle = entity.CommitOnSettle ?? _delegation.CommitOnSettle,
+            DefaultPipelineDefinitionId = entity.DefaultPipelineDefinitionId,
         };
 }
 

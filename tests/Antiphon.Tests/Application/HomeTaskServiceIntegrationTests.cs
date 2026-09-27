@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -590,13 +591,16 @@ public class HomeTaskServiceIntegrationTests
             };
             db.Agents.Add(agent);
 
+            await DatabaseSeeder.SeedPipelineDefinitionsAsync(db, PipelineDefinitions.StandardPipeline, CancellationToken.None);
+            var definition = await db.PipelineDefinitions
+                .SingleAsync(d => d.Id == PipelineDefinitions.StandardPipelineId);
             var run = new CardWorkflowRun
             {
                 Id = Guid.NewGuid(),
                 CardId = cardId,
-                AgentId = agent.Id,
+                PipelineDefinitionId = definition.Id,
+                PipelineDefinitionRevisionId = definition.ActiveRevisionId!.Value,
                 WorkflowName = "Home gate",
-                WorkflowDefinitionSnapshot = "name: home",
                 Status = status,
                 CreatedAt = Now,
                 UpdatedAt = Now,
@@ -610,7 +614,9 @@ public class HomeTaskServiceIntegrationTests
                 CardWorkflowRunId = run.Id,
                 StageOrder = 0,
                 Name = stageName,
-                ExecutorType = "agent",
+                Role = AgentTaskRole.Code,
+                BundleKey = "stage-code",
+                AllowedNextJson = "[\"review\"]",
                 Status = CardWorkflowStageStatus.WaitingForHumanReview,
                 CreatedAt = Now,
                 UpdatedAt = Now,

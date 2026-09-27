@@ -95,6 +95,10 @@ public static class ProjectEndpoints
             return Results.Ok(project);
         });
 
+        projects.MapPut("/{id:guid}/pipeline", async (Guid id,
+            PipelineDefinitionPointerRequest request, ProjectService service, CancellationToken ct) =>
+            Results.Ok(await service.SetPipelineAsync(id, request.PipelineDefinitionId, ct)));
+
         projects.MapGet("/{id:guid}/deletion-impact", async (
             Guid id,
             ProjectService service,

@@ -22,6 +22,8 @@ public record ProjectDto(
     public string? CommitOnSettle { get; init; }
     /// <summary>Resolved project-or-global switch. True means settlement will try to commit.</summary>
     public bool EffectiveCommitOnSettle { get; init; }
+    public Guid? DefaultPipelineDefinitionId { get; init; }
+    public PipelineResolutionDto? Pipeline { get; init; }
 }
 
 /// <summary>

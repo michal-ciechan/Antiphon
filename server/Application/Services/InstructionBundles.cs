@@ -150,6 +150,9 @@ public static class InstructionBundles
     /// </summary>
     public static bool Exists(string key) => All.ContainsKey(key);
 
+    public static bool IsStageBundleKey(string key) =>
+        key.StartsWith("stage-", StringComparison.Ordinal) && All.ContainsKey(key);
+
     /// <summary>
     /// A style bundle is chosen by <see cref="AgentReplyStyle"/>, never attached by hand.
     /// </summary>
