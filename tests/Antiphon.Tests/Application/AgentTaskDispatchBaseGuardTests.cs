@@ -579,7 +579,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task T0442_V14_divergent_create_refuses_and_both_recovery_modes_work(CancellationToken ct)
+    public async Task retained_divergent_create_refuses_and_both_recovery_modes_work(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c442-divergent-create");
         await repo.CommitFileAsync("README.md", "M\n");
@@ -620,7 +620,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task T0442_V10_empty_card_preview_names_explicit_destination(CancellationToken ct)
+    public async Task retained_empty_card_preview_names_explicit_destination(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c442-empty-destination");
         await repo.CommitFileAsync("README.md", "M\n");
@@ -641,7 +641,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task T0442_V08_missing_original_directory_uses_surviving_checkout(CancellationToken ct)
+    public async Task retained_missing_original_directory_uses_surviving_checkout(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c442-surviving-checkout");
         await repo.CommitFileAsync("README.md", "M\n");
@@ -669,7 +669,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task T0442_V01_real_create_continues_clean_same_card_tip(CancellationToken ct)
+    public async Task retained_real_create_continues_clean_same_card_tip(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c442-create-continue");
         await repo.CommitFileAsync("README.md", "M\n");

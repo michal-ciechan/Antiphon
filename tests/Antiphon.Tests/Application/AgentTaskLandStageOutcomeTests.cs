@@ -622,7 +622,7 @@ public class AgentTaskLandStageOutcomeTests
         return task;
     }
 
-    private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
+    internal static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
         AppDbContext db, ScratchGitRepo repo)
     {
         var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
@@ -651,7 +651,7 @@ public class AgentTaskLandStageOutcomeTests
         return (land, worktrees);
     }
 
-    private static async Task<LandRequestResult> RequestHeadAsync(AgentTaskLandService land, AgentTask task)
+    internal static async Task<LandRequestResult> RequestHeadAsync(AgentTaskLandService land, AgentTask task)
     {
         var sha = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
         var branch = task.WorktreeBranch!.StartsWith("refs/", StringComparison.Ordinal)
@@ -708,7 +708,7 @@ public class AgentTaskLandStageOutcomeTests
         return card;
     }
 
-    private static async Task SeedBuildableAsync(ScratchGitRepo repo)
+    internal static async Task SeedBuildableAsync(ScratchGitRepo repo)
     {
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "LandProbe.csproj"),
             """
