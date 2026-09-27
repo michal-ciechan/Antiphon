@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -20,6 +22,7 @@ public sealed class DataRetentionService
     private readonly ILogger<DataRetentionService> _logger;
     private readonly AuditService _auditService;
     private readonly SessionStateStore? _states;
+    private readonly DeliveryVerificationSettings _verification;
 
     public DataRetentionService(
         AppDbContext db,
@@ -28,7 +31,8 @@ public sealed class DataRetentionService
         TimeProvider timeProvider,
         ILogger<DataRetentionService> logger,
         AuditService auditService,
-        SessionStateStore? states = null)
+        SessionStateStore? states = null,
+        IOptions<DeliveryVerificationSettings>? verification = null)
     {
         _states = states;
         _db = db;
@@ -37,6 +41,7 @@ public sealed class DataRetentionService
         _timeProvider = timeProvider;
         _logger = logger;
         _auditService = auditService;
+        _verification = verification?.Value ?? new DeliveryVerificationSettings();
     }
 
     /// <summary>
@@ -52,6 +57,7 @@ public sealed class DataRetentionService
     {
         await PruneCheckCompactionRecoveriesAsync(ct);
         await RetainConfirmedPublicationIdentitiesAsync(ct);
+        await PruneChannelInboundPayloadsAsync(ct);
         var sessions = await PruneSessionsAsync(ct);
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
@@ -66,6 +72,94 @@ public sealed class DataRetentionService
         }
 
         return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords, usage);
+    }
+
+    /// <summary>
+    /// Clear only the serialized journal copy after a complete submitted recipient prompt has
+    /// survived its own grace window. Discovery reads identity metadata, never attachment bytes.
+    /// The identity row remains the broker replay tombstone.
+    /// </summary>
+    public async Task<int> PruneChannelInboundPayloadsAsync(CancellationToken ct)
+    {
+        if (_settings.ChannelInboundPayloadGraceHours <= 0)
+            return 0;
+
+        const int pageSize = 64;
+        var cutoff = UtcNow().AddHours(-_settings.ChannelInboundPayloadGraceHours);
+        var tolerance = TimeSpan.FromSeconds(
+            Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+        long cursor = 0;
+        var purged = 0;
+        var missingOwner = 0;
+        var missingPrompt = 0;
+        while (true)
+        {
+            var page = await _db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.EnvelopeJson != null && i.AcceptanceSequence > cursor)
+                .OrderBy(i => i.AcceptanceSequence)
+                .Select(i => new { i.Id, i.QueueMessageId, i.AcceptanceSequence })
+                .Take(pageSize).ToListAsync(ct);
+            if (page.Count == 0) break;
+            cursor = page[^1].AcceptanceSequence;
+            foreach (var candidate in page)
+            {
+                if (candidate.QueueMessageId is not Guid ownerId) continue;
+                var owner = await _db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(q => q.Id == ownerId, ct);
+                if (owner is null) { missingOwner++; continue; }
+                if (owner.Origin != QueuedMessageOrigin.Channel
+                    || owner.Status != QueuedMessageStatus.Sent
+                    || owner.DeliveryAttempts <= 0)
+                    continue;
+
+                // Sequence is the original attempt floor when present. Otherwise require the
+                // native timestamp relative to the original write (or legacy SentAt fallback).
+                long sequence = owner.LastDeliveryBaselineSequence ?? 0;
+                var confirmed = false;
+                var hasCompleteReceipt = false;
+                while (true)
+                {
+                    var prompts = await _db.TranscriptEntries.AsNoTracking()
+                        .Where(t => t.AgentSessionId == owner.AgentSessionId
+                            && t.Kind == TranscriptKinds.UserPrompt
+                            && t.Sequence > sequence)
+                        .OrderBy(t => t.Sequence).Take(pageSize).ToListAsync(ct);
+                    if (prompts.Count == 0) break;
+                    foreach (var prompt in prompts)
+                    {
+                        if (ChannelPromptCorrelation.Matches(owner, prompt, tolerance, out _))
+                        {
+                            hasCompleteReceipt = true;
+                            if (prompt.CreatedAt <= cutoff)
+                            {
+                                confirmed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (confirmed) break;
+                    sequence = prompts[^1].Sequence;
+                }
+                if (!confirmed)
+                {
+                    if (!hasCompleteReceipt)
+                        missingPrompt++;
+                    continue;
+                }
+                purged += await _db.ChannelInbounds
+                    .Where(i => i.Id == candidate.Id && i.EnvelopeJson != null
+                        && i.QueueMessageId == ownerId
+                        && _db.SessionQueuedMessages.Any(q => q.Id == ownerId
+                            && q.Origin == QueuedMessageOrigin.Channel
+                            && q.Status == QueuedMessageStatus.Sent))
+                    .ExecuteUpdateAsync(u => u.SetProperty(i => i.EnvelopeJson, (string?)null), ct);
+            }
+        }
+        if (purged > 0 || missingOwner > 0 || missingPrompt > 0)
+            _logger.LogInformation(
+                "Channel inbound payload retention cleared {Purged} envelope(s); {MissingOwner} mapped envelope(s) lacked an owner and {MissingPrompt} lacked a complete recipient UserPrompt",
+                purged, missingOwner, missingPrompt);
+        return purged;
     }
 
     /// <summary>
@@ -106,6 +200,8 @@ public sealed class DataRetentionService
                 && i.MaterializedAt == null && i.InitialState != LandNotificationState.NotRequired)
             && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id)
             && !_db.SessionQueuedMessages.Any(m => m.AgentSessionId == s.Id && m.DeferredFromRunAttemptId != null)
+            && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId != null
+                && _db.SessionQueuedMessages.Any(m => m.Id == i.QueueMessageId && m.AgentSessionId == s.Id))
             && !_db.RemoteControlModalEpisodes.Any(e => e.SessionId == s.Id && e.ResolvedAt == null));
 
         if (protectedIds.Count > 0)
@@ -158,7 +254,9 @@ public sealed class DataRetentionService
                 && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
                     && n.State != LandNotificationState.NotRequired)
                 && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
-                    && i.MaterializedAt == null && i.InitialState != LandNotificationState.NotRequired))
+                    && i.MaterializedAt == null && i.InitialState != LandNotificationState.NotRequired)
+                && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId != null
+                    && _db.SessionQueuedMessages.Any(m => m.Id == i.QueueMessageId && m.AgentSessionId == s.Id)))
             .Select(s => s.Id)
             .ToListAsync(ct);
         candidates = candidates.Where(id => !protectedIds.Contains(id)).ToList();
@@ -184,6 +282,9 @@ public sealed class DataRetentionService
             {
                 // Recheck under the ingest gate: a catch-up may have committed after discovery.
                 if (await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId && t.CreatedAt >= cutoff, ct))
+                    return 0;
+                if (await _db.ChannelInbounds.AnyAsync(i => i.EnvelopeJson != null && i.QueueMessageId != null
+                    && _db.SessionQueuedMessages.Any(m => m.Id == i.QueueMessageId && m.AgentSessionId == sessionId), ct))
                     return 0;
                 return await _db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync(ct);
             }, ct);
@@ -248,6 +349,7 @@ public sealed class DataRetentionService
                 && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
                     n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
                 && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null)
+                && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId == m.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == m.AgentSessionId || r.ResumeSessionId == m.AgentSessionId
                         || (r.OwningCheckTaskId != null && r.OwningCheckTaskId == m.SourceTaskId))))

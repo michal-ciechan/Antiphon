@@ -18,6 +18,9 @@ public sealed class ChannelBridgeSettings
     /// <summary>How long to wait for a bound agent's session to reach Running before enqueuing.</summary>
     public int AgentStartTimeoutSeconds { get; set; } = 90;
 
+    /// <summary>Age of an unowned inbound before a known supervision refusal raises a channel incident.</summary>
+    public int AgedHoldIncidentMinutes { get; set; } = 10;
+
     /// <summary>Extra settle time after a session we just started reports Running (TUI boot, MCP connect).</summary>
     public int AgentReadyDelaySeconds { get; set; } = 12;
 

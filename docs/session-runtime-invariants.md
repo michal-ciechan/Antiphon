@@ -90,6 +90,18 @@
   complete `UserPrompt` can confirm an earlier uncertain attempt. Offset commit, queue insertion,
   SentAt, screen redraw and Running status do not decide it.
 
+- **Channel journal payload retention follows a committed receipt (CARD-0768).** The retention
+  sweep clears `ChannelInbound.EnvelopeJson` only after a complete recipient `UserPrompt` past
+  the original attempt floor and 24 hours from that transcript row's server `CreatedAt`
+  (configurable; nonpositive disables). It runs before ordinary session, transcript and queue
+  pruning; direct prune calls preserve the last evidence while an inbound payload remains.
+  The provider/conversation/native identity row and queue mapping survive for broker replay.
+  An orphaned historical payload without proof stays intact and is counted without its content
+  being logged. Agent-inbox attachment files have a separate lifecycle. An unowned inbound held
+  by continuity, suspension or liveness gains one Critical pending-message incident per reason
+  at ten minutes from acceptance, with durable reason-specific stamps. The hold still refuses
+  session start and leaves the envelope pending.
+
 - **Accepted @mentions are durable queued input (CARD-0696).** The router allocates an occurrence
   ID; acceptance commits one `WhenIdle` row with origin `Mention` and freezes its target and body.
   Replaying that ID validates the destination/body and never resets an attempt. Separate identical

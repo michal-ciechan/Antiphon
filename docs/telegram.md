@@ -28,10 +28,19 @@ It keeps failed wakes pending and records a Critical `ChannelReplyLost` incident
 timeout. A queue row owns the formatted prompt through its `SourceChannelInboundId`; every
 debounced member records that same queue ID. Inbound attachments use the journal ID in their
 inbox filenames so a retry targets the same path. The journal retains the full envelope after
-handoff. A queue insert, Kafka acknowledgement, live screen or agent Running state is an
+handoff until retention finds a complete matching recipient `UserPrompt` beyond the original
+attempt floor and waits `Retention:ChannelInboundPayloadGraceHours` (default 24) from that
+transcript row's server `CreatedAt`. It then nulls only the serialized envelope, including inline
+attachment bytes. Native identity and queue mapping survive, so broker replay cannot enqueue the
+same message again. Separate agent-inbox attachment files remain for agent turns. A queue insert, Kafka acknowledgement, live screen or agent Running state is an
 acceptance/attempt signal. Only a complete matching recipient `UserPrompt` beyond the original
 attempt floor confirms delivery. The existing queue attempt cap and decision hold apply to
 uncertain terminal writes.
+Continuity, suspension and liveness wake refusals keep an unowned inbound pending. Once it has
+waited `ChannelBridge:AgedHoldIncidentMinutes` (default 10) from acceptance, each known reason
+raises one Critical `ChannelReplyLost` incident for that inbound; the reason-specific stamp
+survives restarts and incident-history pruning. Herdr, capacity and wake-timeout paths keep their
+existing incident policies.
 Capacity notices use the reply handle captured in that inbound envelope, even if the channel
 catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 

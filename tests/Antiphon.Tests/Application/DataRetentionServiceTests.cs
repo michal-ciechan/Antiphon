@@ -1,3 +1,5 @@
+using Antiphon.Messaging;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -5,9 +7,16 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using System.Collections;
+using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -26,6 +35,677 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class DataRetentionServiceTests
 {
+    [Test]
+    [Arguments(24)]
+    [Arguments(2)]
+    public async Task C768_ConfirmedPayloadExpiresAfterReceiptGrace(int graceHours)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var h = f.Harness;
+        var chat = await h.BindChannelAsync();
+        f.InstallTranscriptReceipt();
+        var bytes = new byte[] { 0, 31, 127, 255 };
+        var message = new ChannelMessage
+        {
+            Id = Guid.NewGuid().ToString("N"), Channel = "telegram",
+            ChannelMessageId = Guid.NewGuid().ToString("N"),
+            Conversation = new Conversation { Id = chat, Kind = ConversationKind.Group, Title = "Family" },
+            Author = new Participant { Id = "sender", DisplayName = "sender" },
+            Timestamp = DateTimeOffset.UtcNow,
+            Text = "attachment proof with distinctive text and recognizable tail",
+            ReplyHandle = "original reply handle",
+            Attachments = [new Attachment
+            {
+                Kind = AttachmentKind.File, ChannelRef = "proof-file", Name = "proof.bin",
+                Content = bytes,
+            }],
+            Raw = JsonDocument.Parse("{\"native\":\"metadata\"}").RootElement.Clone(),
+        };
+        await f.Bridge().HandleInboundAsync(message, CancellationToken.None);
+        await f.WaitForAsync(async () =>
+        {
+            await using var observed = f.Db();
+            var row = await observed.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.NativeMessageId == message.ChannelMessageId);
+            return row.QueueMessageId is Guid ownerId
+                && await observed.SessionQueuedMessages.AnyAsync(q => q.Id == ownerId
+                    && q.Status == QueuedMessageStatus.Sent)
+                && await observed.TranscriptEntries.AnyAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text != null
+                    && t.Text.Contains("recognizable tail"));
+        });
+        ChannelInbound before;
+        SessionQueuedMessage owner;
+        await using (var seed = f.Db())
+        {
+            before = await seed.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.NativeMessageId == message.ChannelMessageId);
+            owner = await seed.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.Id == before.QueueMessageId);
+            var restored = JsonSerializer.Deserialize<ChannelMessage>(before.EnvelopeJson!,
+                Antiphon.Messaging.MessagingJson.Options)!;
+            restored.Attachments.Single().Content.ShouldBe(bytes);
+            restored.Text.ShouldBe(message.Text);
+            restored.ReplyHandle.ShouldBe(message.ReplyHandle);
+            restored.Raw.GetProperty("native").GetString().ShouldBe("metadata");
+        }
+        var receiptAt = f.Clock.GetUtcNow().UtcDateTime.AddHours(-graceHours).AddMilliseconds(1);
+        await using (var age = f.Db())
+        {
+            await age.ChannelInbounds.Where(i => i.Id == before.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(i => i.AcceptedAt, receiptAt.AddDays(-3))
+                .SetProperty(i => i.TransferredAt, receiptAt.AddDays(-2)));
+            await age.SessionQueuedMessages.Where(q => q.Id == owner.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(q => q.CreatedAt, receiptAt.AddDays(-2))
+                .SetProperty(q => q.SentAt, receiptAt.AddDays(-2)));
+            await age.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.CreatedAt, receiptAt)
+                    .SetProperty(t => t.Text,
+                        graceHours == 2 ? owner.Body.ReplaceLineEndings(" ") : owner.Body));
+        }
+        var inbox = Path.Combine(h.TempRoot, "workspace", ".antiphon", "inbox");
+        var savedFile = Directory.GetFiles(inbox).Single();
+        File.ReadAllBytes(savedFile).ShouldBe(bytes);
+        var settings = new RetentionSettings
+        {
+            ChannelInboundPayloadGraceHours = graceHours,
+            SessionRetentionDays = 0, TranscriptRetentionDays = 0,
+            QueuedMessageRetentionDays = 0, TaskRetentionDays = 0,
+        };
+        await using var db = f.Db();
+        var service = new DataRetentionService(db, Options.Create(settings), Options.Create(new AuditSettings()),
+            f.Clock, NullLogger<DataRetentionService>.Instance,
+            new AuditService(db, Options.Create(new AuditSettings())));
+        await service.RunOnceAsync(CancellationToken.None);
+        (await db.ChannelInbounds.AsNoTracking().Where(i => i.Id == before.Id)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(before.EnvelopeJson);
+        f.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        (await service.PruneChannelInboundPayloadsAsync(CancellationToken.None)).ShouldBe(1);
+        var retained = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == before.Id);
+        retained.EnvelopeJson.ShouldBeNull();
+        retained.Id.ShouldBe(before.Id);
+        retained.Provider.ShouldBe(before.Provider);
+        retained.ConversationId.ShouldBe(before.ConversationId);
+        retained.NativeMessageId.ShouldBe(before.NativeMessageId);
+        retained.AgentId.ShouldBe(before.AgentId);
+        retained.ChatChannelId.ShouldBe(before.ChatChannelId);
+        retained.AcceptanceSequence.ShouldBe(before.AcceptanceSequence);
+        retained.AcceptedAt.ShouldBe(receiptAt.AddDays(-3));
+        retained.TransferredAt.ShouldBe(receiptAt.AddDays(-2));
+        retained.QueueMessageId.ShouldBe(before.QueueMessageId);
+        retained.WakeTimeoutIncidentAt.ShouldBe(before.WakeTimeoutIncidentAt);
+        retained.ContinuityHoldIncidentAt.ShouldBe(before.ContinuityHoldIncidentAt);
+        retained.SuspensionHoldIncidentAt.ShouldBe(before.SuspensionHoldIncidentAt);
+        retained.LivenessHoldIncidentAt.ShouldBe(before.LivenessHoldIncidentAt);
+        await using var restarted = f.Db();
+        var restartedService = new DataRetentionService(restarted, Options.Create(settings),
+            Options.Create(new AuditSettings()), f.Clock, NullLogger<DataRetentionService>.Instance,
+            new AuditService(restarted, Options.Create(new AuditSettings())));
+        (await restartedService.PruneChannelInboundPayloadsAsync(CancellationToken.None)).ShouldBe(0);
+        await restartedService.RunOnceAsync(CancellationToken.None);
+        File.ReadAllBytes(savedFile).ShouldBe(bytes);
+    }
+
+    [Test]
+    [Arguments("none")]
+    [Arguments("queued-user-prompt")]
+    [Arguments("assistant")]
+    [Arguments("tool-result")]
+    [Arguments("clipped-tail")]
+    [Arguments("different-tail")]
+    [Arguments("wrong-marker")]
+    [Arguments("partial-marker")]
+    public async Task C768_NonReceiptEvidenceRetainsPayload(string evidence)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var guarded = await f.SeedAsync(receipt: false);
+        var eligible = await f.SeedAsync();
+        if (evidence == "none")
+        {
+            await using var db = f.Db();
+            await db.SessionQueuedMessages.Where(q => q.Id == guarded.OwnerId)
+                .ExecuteUpdateAsync(u => u.SetProperty(q => q.DeliveryVerdict, DeliveryVerdict.Delivered));
+        }
+        else
+        {
+            var kind = evidence switch
+            {
+                "queued-user-prompt" => TranscriptKinds.QueuedUserPrompt,
+                "assistant" => TranscriptKinds.AssistantText,
+                "tool-result" => TranscriptKinds.ToolResult,
+                _ => TranscriptKinds.UserPrompt,
+            };
+            var text = evidence switch
+            {
+                "clipped-tail" => guarded.Body[..^12],
+                "different-tail" => guarded.Body.Replace("distinctive tail", "different tail"),
+                "wrong-marker" => guarded.Body.Replace(guarded.OwnerId.ToString("N"), Guid.NewGuid().ToString("N")),
+                "partial-marker" => guarded.Body.Replace("[antiphon-channel:", "[antiphon-chann"),
+                _ => guarded.Body,
+            };
+            await f.AddReceiptAsync(text, kind);
+        }
+        (await f.PruneAsync()).ShouldBe(1);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == guarded.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(guarded.Json);
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == eligible.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("unowned")]
+    [Arguments("pending")]
+    [Arguments("parked")]
+    [Arguments("canceled")]
+    [Arguments("non-channel")]
+    public async Task C768_UnownedOrIneligibleQueueRetainsPayload(string state)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var guarded = await f.SeedAsync(
+            mapped: state != "unowned",
+            status: state == "canceled" ? QueuedMessageStatus.Canceled
+                : state is "pending" or "parked" ? QueuedMessageStatus.Pending : QueuedMessageStatus.Sent,
+            origin: state == "non-channel" ? QueuedMessageOrigin.Ui : QueuedMessageOrigin.Channel);
+        if (state == "parked")
+        {
+            await using var db = f.Db();
+            await db.SessionQueuedMessages.Where(q => q.Id == guarded.OwnerId)
+                .ExecuteUpdateAsync(u => u.SetProperty(q => q.DeliveryAttempts, 3));
+        }
+        var eligible = await f.SeedAsync();
+        (await f.PruneAsync()).ShouldBe(1);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == guarded.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(guarded.Json);
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == eligible.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+        if (state != "unowned")
+            (await verify.SessionQueuedMessages.AsNoTracking().Where(q => q.Id == guarded.OwnerId)
+                .Select(q => q.Status).SingleAsync())
+                .ShouldBe(state == "canceled" ? QueuedMessageStatus.Canceled
+                    : state is "pending" or "parked" ? QueuedMessageStatus.Pending : QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    public async Task C768_DisabledPayloadRetentionKeepsEnvelopeAndOtherPassesRun(int graceHours)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var guarded = await f.SeedAsync();
+        var unrelatedId = Guid.NewGuid();
+        await using (var seed = f.Db())
+        {
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = unrelatedId, AgentSessionId = f.Harness.SessionId,
+                Body = "unrelated settled queue row", Origin = QueuedMessageOrigin.Ui,
+                Status = QueuedMessageStatus.Sent, CreatedAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3),
+                SentAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3),
+            });
+            await seed.SaveChangesAsync();
+        }
+        var settings = new RetentionSettings
+        {
+            ChannelInboundPayloadGraceHours = graceHours, SessionRetentionDays = 0,
+            TranscriptRetentionDays = 0, QueuedMessageRetentionDays = 1, TaskRetentionDays = 0,
+        };
+        await using var db = f.Db();
+        var audit = new AuditSettings { RetentionDays = 0 };
+        var service = new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+            f.Clock, NullLogger<DataRetentionService>.Instance, new AuditService(db, Options.Create(audit)));
+        await service.RunOnceAsync(CancellationToken.None);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == guarded.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(guarded.Json);
+        (await verify.SessionQueuedMessages.AnyAsync(q => q.Id == guarded.OwnerId)).ShouldBeTrue();
+        (await verify.SessionQueuedMessages.AnyAsync(q => q.Id == unrelatedId)).ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("wrong-session")]
+    [Arguments("sequence-equal")]
+    [Arguments("sequence-before")]
+    [Arguments("native-null")]
+    [Arguments("native-before-floor")]
+    public async Task C768_ReceiptMustBelongToRecipientAndOriginalAttempt(string condition)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var noSequence = condition.StartsWith("native", StringComparison.Ordinal);
+        var guarded = await f.SeedAsync(receipt: false,
+            baseline: noSequence ? null : condition == "sequence-before" ? 2 : condition == "sequence-equal" ? 1 : 0);
+        if (condition == "wrong-session")
+        {
+            var otherSession = await f.AddOtherSessionAsync();
+            await f.AddReceiptAsync(guarded.Body, sessionId: otherSession);
+        }
+        else if (noSequence)
+        {
+            await using var read = f.Db();
+            var started = (await read.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == guarded.OwnerId))
+                .LastDeliveryStartedAt!.Value;
+            await f.AddReceiptAsync(guarded.Body,
+                nativeAt: condition == "native-null" ? null : started.AddSeconds(-30).AddMilliseconds(-1),
+                nullNative: condition == "native-null");
+        }
+        else
+            await f.AddReceiptAsync(guarded.Body);
+        (await f.PruneAsync()).ShouldBe(0);
+        await using (var read = f.Db())
+            (await read.ChannelInbounds.AsNoTracking().Where(i => i.Id == guarded.InboundId)
+                .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(guarded.Json);
+
+        if (condition == "sequence-before")
+            await f.AddReceiptAsync("unrelated assistant", TranscriptKinds.AssistantText);
+        if (noSequence)
+        {
+            await using var read = f.Db();
+            var started = (await read.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == guarded.OwnerId))
+                .LastDeliveryStartedAt!.Value;
+            await f.AddReceiptAsync(guarded.Body, nativeAt: started.AddSeconds(-30));
+        }
+        else
+            await f.AddReceiptAsync(guarded.Body);
+        (await f.PruneAsync()).ShouldBe(1);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == guarded.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("uncertain")]
+    [Arguments("screen-only")]
+    public async Task C768_LateCompleteReceiptStartsItsOwnRetentionGrace(string verdict)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var retained = await f.SeedAsync(receipt: false,
+            status: verdict == "uncertain" ? QueuedMessageStatus.Pending : QueuedMessageStatus.Sent);
+        await using (var set = f.Db())
+            await set.SessionQueuedMessages.Where(q => q.Id == retained.OwnerId)
+                .ExecuteUpdateAsync(u => u.SetProperty(q => q.DeliveryVerdict,
+                    verdict == "uncertain" ? DeliveryVerdict.NoTranscriptRecord : DeliveryVerdict.Delivered));
+        (await f.PruneAsync()).ShouldBe(0);
+        var receiptAt = f.Clock.GetUtcNow().UtcDateTime.AddHours(-24).AddMilliseconds(1);
+        await f.AddReceiptAsync(retained.Body, createdAt: receiptAt);
+        await f.AddReceiptAsync(string.Empty, TranscriptKinds.TurnEnd, createdAt: receiptAt);
+        var sentBefore = f.Harness.Adapter.SubmittedBodies.Count;
+        if (verdict == "uncertain")
+        {
+            await f.Harness.Queue.OnTurnEndAsync(f.Harness.SessionId, CancellationToken.None);
+            await using var check = f.Db();
+            var owner = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == retained.OwnerId);
+            owner.Status.ShouldBe(QueuedMessageStatus.Sent);
+            owner.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        }
+        (await f.PruneAsync()).ShouldBe(0);
+        await using (var before = f.Db())
+            (await before.ChannelInbounds.AsNoTracking().Where(i => i.Id == retained.InboundId)
+                .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(retained.Json);
+        f.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        (await f.PruneAsync()).ShouldBe(1);
+        f.Harness.Adapter.SubmittedBodies.Count.ShouldBe(sentBefore);
+    }
+
+    [Test]
+    [Arguments("missing-owner")]
+    [Arguments("missing-transcript")]
+    public async Task C768_UnprovableHistoryRetainsBytesAndReportsOnlyCounts(string missing)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var orphan = await f.SeedAsync(receipt: false);
+        if (missing == "missing-owner")
+        {
+            await using var db = f.Db();
+            await db.SessionQueuedMessages.Where(q => q.Id == orphan.OwnerId).ExecuteDeleteAsync();
+        }
+        var eligible = await f.SeedAsync();
+        var logs = new C768CaptureLogger();
+        (await f.PruneAsync(logger: logs)).ShouldBe(1);
+        (await f.PruneAsync()).ShouldBe(0);
+        await using var verify = f.Db();
+        var remaining = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == orphan.InboundId);
+        remaining.EnvelopeJson.ShouldBe(orphan.Json);
+        remaining.QueueMessageId.ShouldBe(orphan.OwnerId);
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == eligible.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+        logs.Messages.ShouldContain(message => message.Contains(missing == "missing-owner"
+            ? "1 mapped envelope(s) lacked an owner" : "1 lacked a complete recipient UserPrompt"));
+        logs.Messages.ShouldNotContain(message => message.Contains(orphan.InboundId.ToString("N"), StringComparison.Ordinal)
+            || message.Contains(orphan.Json, StringComparison.Ordinal));
+    }
+
+    [Test]
+    [Arguments("inline")]
+    [Arguments("spill")]
+    public async Task C768_CompleteBatchReceiptPurgesEveryMappedMember(string transport)
+    {
+        await using var f = await C768Fixture.CreateAsync(debounceMs: 100_000);
+        var h = f.Harness;
+        var chat = await h.BindChannelAsync();
+        f.InstallTranscriptReceipt();
+        var nativeIds = new List<string>();
+        var bytesByNative = new Dictionary<string, byte[]>();
+        var bridge = f.Bridge();
+        for (var n = 0; n < 3; n++)
+        {
+            var native = Guid.NewGuid().ToString("N");
+            nativeIds.Add(native);
+            var bytes = new byte[] { (byte)n, 31, 127, 255 };
+            bytesByNative[native] = bytes;
+            var message = new ChannelMessage
+            {
+                Id = Guid.NewGuid().ToString("N"), Channel = "telegram", ChannelMessageId = native,
+                Conversation = new Conversation { Id = chat, Kind = ConversationKind.Group, Title = "Family" },
+                Author = new Participant { Id = "batch-sender", DisplayName = "batch-sender" },
+                Timestamp = DateTimeOffset.UtcNow,
+                Text = $"member {n} complete text "
+                    + (transport == "spill" ? new string('y', 3_000) : "short")
+                    + $" DISTINCT TAIL {n}",
+                ReplyHandle = "batch-reply-handle",
+                Raw = JsonDocument.Parse("{\"batch\":true}").RootElement.Clone(),
+                Attachments = [new Attachment
+                {
+                    Kind = AttachmentKind.File, ChannelRef = $"batch-file-{n}",
+                    Name = $"batch-{n}.bin", Content = bytes,
+                }],
+            };
+            await bridge.HandleInboundAsync(message, CancellationToken.None);
+        }
+        await h.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
+        await f.WaitForAsync(async () =>
+        {
+            await using var db = f.Db();
+            var mappings = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => nativeIds.Contains(i.NativeMessageId) && i.QueueMessageId != null)
+                .Select(i => i.QueueMessageId).ToListAsync();
+            return mappings.Count == 3 && mappings.Distinct().Count() == 1
+                && await db.SessionQueuedMessages.AnyAsync(q => q.Id == mappings[0]
+                    && q.Status == QueuedMessageStatus.Sent)
+                && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt);
+        });
+        Guid ownerId;
+        Guid memberToRemap;
+        string memberEnvelope;
+        string body;
+        string? spillPath = null;
+        await using (var db = f.Db())
+        {
+            var members = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => nativeIds.Contains(i.NativeMessageId)).ToListAsync();
+            members.Count.ShouldBe(3);
+            ownerId = members[0].QueueMessageId!.Value;
+            memberToRemap = members[^1].Id;
+            memberEnvelope = members[^1].EnvelopeJson!;
+            members.ShouldAllBe(i => i.QueueMessageId == ownerId);
+            foreach (var member in members)
+            {
+                var restored = JsonSerializer.Deserialize<ChannelMessage>(member.EnvelopeJson!,
+                    Antiphon.Messaging.MessagingJson.Options)!;
+                restored.Attachments.Single().Content.ShouldBe(bytesByNative[member.NativeMessageId]);
+            }
+            var owner = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownerId);
+            owner.SourceChannelInboundId.ShouldNotBeNull();
+            body = owner.Body;
+            if (transport == "spill")
+            {
+                ChannelPromptCorrelation.IsSpillPointer(body).ShouldBeTrue();
+                spillPath = TypedBodySpill.InboxAbsolutePath(Path.Combine(h.TempRoot, "workspace"),
+                    ownerId.ToString("D"));
+                File.Exists(spillPath).ShouldBeTrue();
+            }
+            else
+                foreach (var n in Enumerable.Range(0, 3)) body.ShouldContain($"DISTINCT TAIL {n}");
+            var receiptAt = f.Clock.GetUtcNow().UtcDateTime.AddHours(-24).AddMilliseconds(1);
+            await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == body)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.CreatedAt, receiptAt));
+        }
+        (await f.PruneAsync()).ShouldBe(0);
+        f.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        var clippedBody = body[..^13];
+        await using (var clip = f.Db())
+            await clip.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == body)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, clippedBody));
+        (await f.PruneAsync()).ShouldBe(0);
+        await using (var restore = f.Db())
+            await restore.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == clippedBody)
+                .ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, body));
+        var otherOwner = Guid.NewGuid();
+        await using (var remap = f.Db())
+        {
+            remap.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = otherOwner, AgentSessionId = h.SessionId,
+                Body = ChannelPromptCorrelation.Mark(otherOwner, "unconfirmed alternate owner tail"),
+                Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0,
+                CreatedAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-2),
+                SentAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-2),
+            });
+            await remap.SaveChangesAsync();
+            await remap.ChannelInbounds.Where(i => i.Id == memberToRemap)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.QueueMessageId, otherOwner));
+        }
+        (await f.PruneAsync()).ShouldBe(2);
+        await using (var remapped = f.Db())
+            (await remapped.ChannelInbounds.AsNoTracking().Where(i => i.Id == memberToRemap)
+                .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(memberEnvelope);
+        await using (var restoreMapping = f.Db())
+            await restoreMapping.ChannelInbounds.Where(i => i.Id == memberToRemap)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.QueueMessageId, ownerId));
+        (await f.PruneAsync()).ShouldBe(1);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().CountAsync(i => nativeIds.Contains(i.NativeMessageId)
+            && i.EnvelopeJson == null && i.QueueMessageId == ownerId)).ShouldBe(3);
+        (await verify.SessionQueuedMessages.AsNoTracking().CountAsync(q => q.Id == ownerId)).ShouldBe(1);
+        if (spillPath is not null) File.Exists(spillPath).ShouldBeTrue();
+    }
+
+    [Test]
+    [Arguments("session")]
+    [Arguments("transcript")]
+    [Arguments("queue")]
+    public async Task C768_PayloadProofSurvivesOrdinaryRetention(string pass)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var confirmedSession = await f.AddOtherSessionAsync();
+        var insideSession = await f.AddOtherSessionAsync();
+        var unconfirmedSession = await f.AddOtherSessionAsync();
+        var unrelatedSession = await f.AddOtherSessionAsync();
+        var confirmed = await f.SeedAsync(ownerSession: confirmedSession);
+        var inside = await f.SeedAsync(receipt: false, ownerSession: insideSession);
+        await f.AddReceiptAsync(inside.Body, sessionId: insideSession,
+            createdAt: f.Clock.GetUtcNow().UtcDateTime.AddHours(-36));
+        var unconfirmed = await f.SeedAsync(receipt: false, ownerSession: unconfirmedSession);
+        await f.AddReceiptAsync("unrelated incomplete history", sessionId: unconfirmedSession);
+        await f.AddReceiptAsync("unrelated ordinary transcript", sessionId: unrelatedSession);
+        var unrelatedQueue = Guid.NewGuid();
+        await using (var seed = f.Db())
+        {
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = unrelatedQueue, AgentSessionId = unrelatedSession,
+                Body = "unrelated ordinary queue", Origin = QueuedMessageOrigin.Ui,
+                Status = QueuedMessageStatus.Sent,
+                CreatedAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3),
+                SentAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3),
+            });
+            await seed.SaveChangesAsync();
+        }
+        var settings = new RetentionSettings
+        {
+            ChannelInboundPayloadGraceHours = 48,
+            SessionRetentionDays = pass == "session" ? 1 : 0,
+            TranscriptRetentionDays = pass == "transcript" ? 1 : 0,
+            QueuedMessageRetentionDays = pass == "queue" ? 1 : 0,
+            TaskRetentionDays = 0,
+        };
+        await using var db = f.Db();
+        var audit = new AuditSettings { RetentionDays = 0 };
+        var service = new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+            f.Clock, NullLogger<DataRetentionService>.Instance, new AuditService(db, Options.Create(audit)));
+        if (pass == "session") await service.PruneSessionsAsync(CancellationToken.None);
+        if (pass == "transcript") await service.PruneTranscriptsAsync(CancellationToken.None);
+        if (pass == "queue") await service.PruneQueuedMessagesAsync(CancellationToken.None);
+        await using (var protectedDb = f.Db())
+        {
+            (await protectedDb.SessionQueuedMessages.AnyAsync(q => q.Id == inside.OwnerId)).ShouldBeTrue();
+            (await protectedDb.SessionQueuedMessages.AnyAsync(q => q.Id == unconfirmed.OwnerId)).ShouldBeTrue();
+            if (pass == "transcript")
+                (await protectedDb.TranscriptEntries.AnyAsync(t => t.AgentSessionId == insideSession)).ShouldBeTrue();
+        }
+        await service.RunOnceAsync(CancellationToken.None);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == confirmed.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == inside.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(inside.Json);
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == unconfirmed.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(unconfirmed.Json);
+        (await verify.SessionQueuedMessages.AnyAsync(q => q.Id == inside.OwnerId)).ShouldBeTrue();
+        (await verify.SessionQueuedMessages.AnyAsync(q => q.Id == unconfirmed.OwnerId)).ShouldBeTrue();
+        if (pass == "session")
+        {
+            (await verify.AgentSessions.AnyAsync(s => s.Id == confirmedSession)).ShouldBeFalse();
+            (await verify.AgentSessions.AnyAsync(s => s.Id == unrelatedSession)).ShouldBeFalse();
+            (await verify.AgentSessions.AnyAsync(s => s.Id == insideSession)).ShouldBeTrue();
+        }
+        if (pass == "transcript")
+        {
+            (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == confirmedSession)).ShouldBeFalse();
+            (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == insideSession)).ShouldBeTrue();
+            (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == unrelatedSession)).ShouldBeFalse();
+        }
+        if (pass == "queue")
+        {
+            (await verify.SessionQueuedMessages.AnyAsync(q => q.Id == confirmed.OwnerId)).ShouldBeFalse();
+            (await verify.SessionQueuedMessages.AnyAsync(q => q.Id == unrelatedQueue)).ShouldBeFalse();
+        }
+        f.Clock.Advance(TimeSpan.FromHours(12));
+        await using var laterDb = f.Db();
+        var laterService = new DataRetentionService(laterDb, Options.Create(settings), Options.Create(audit),
+            f.Clock, NullLogger<DataRetentionService>.Instance, new AuditService(laterDb, Options.Create(audit)));
+        await laterService.RunOnceAsync(CancellationToken.None);
+        await using var later = f.Db();
+        (await later.ChannelInbounds.AsNoTracking().Where(i => i.Id == inside.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+        (await later.ChannelInbounds.AsNoTracking().Where(i => i.Id == unconfirmed.InboundId)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBe(unconfirmed.Json);
+        if (pass == "session") (await later.AgentSessions.AnyAsync(s => s.Id == insideSession)).ShouldBeFalse();
+        if (pass == "transcript") (await later.TranscriptEntries.AnyAsync(t => t.AgentSessionId == insideSession)).ShouldBeFalse();
+        if (pass == "queue") (await later.SessionQueuedMessages.AnyAsync(q => q.Id == inside.OwnerId)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C768_PayloadScanIsBoundedAndDoesNotStarveLaterCandidates()
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var pending = new List<Guid>();
+        var eligible = new List<Guid>();
+        var old = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3);
+        await using (var seed = f.Db())
+        {
+            for (var n = 0; n < 129; n++)
+            {
+                var id = Guid.NewGuid();
+                var ownerId = Guid.NewGuid();
+                var canPurge = n >= 64;
+                (canPurge ? eligible : pending).Add(id);
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = id, Provider = "telegram", ConversationId = id.ToString("N"),
+                    NativeMessageId = id.ToString("N"), AgentId = f.Harness.AgentId,
+                    EnvelopeJson = canPurge ? $"{{\"attachment\":\"{new string('A', 8192)}\"}}" : "{malformed legacy payload",
+                    QueueMessageId = canPurge ? ownerId : null, AcceptedAt = old,
+                });
+                if (!canPurge) continue;
+                var body = ChannelPromptCorrelation.Mark(ownerId, $"complete body {id:N} with distinctive tail");
+                seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = ownerId, SourceChannelInboundId = id, AgentSessionId = f.Harness.SessionId,
+                    Body = body, Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                    DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0,
+                    CreatedAt = old, SentAt = old.AddHours(1),
+                });
+                seed.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = f.Harness.SessionId,
+                    Sequence = n - 63, Kind = TranscriptKinds.UserPrompt,
+                    Text = body, Timestamp = old.AddHours(1), CreatedAt = old.AddHours(1),
+                });
+            }
+            await seed.SaveChangesAsync();
+        }
+        var probe = new C768ScanReaderProbe();
+        (await f.PruneAsync(interceptor: probe)).ShouldBe(65);
+        probe.CandidatePages.Count.ShouldBeGreaterThanOrEqualTo(3);
+        probe.CandidatePages.ShouldAllBe(page => page.Rows <= 64
+            && !page.Fields.Contains(nameof(ChannelInbound.EnvelopeJson)));
+        probe.ProofPages.ShouldAllBe(page => page.Rows <= 64);
+        (await f.PruneAsync()).ShouldBe(0);
+        await using var verify = f.Db();
+        (await verify.ChannelInbounds.AsNoTracking().CountAsync(i => eligible.Contains(i.Id)
+            && i.EnvelopeJson == null)).ShouldBe(65);
+        (await verify.ChannelInbounds.AsNoTracking().CountAsync(i => pending.Contains(i.Id)
+            && i.EnvelopeJson != null)).ShouldBe(64);
+    }
+
+    [Test]
+    [Arguments("same-mapping")]
+    [Arguments("mapping-changed")]
+    public async Task C768_PayloadPurgeIsConditionalAndAtMostOnce(string race)
+    {
+        await using var f = await C768Fixture.CreateAsync();
+        var retained = await f.SeedAsync();
+        var pause = new C768UpdatePause();
+        var first = f.PruneAsync(interceptor: pause);
+        await pause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var second = 0;
+        Guid? newOwnerId = null;
+        if (race == "same-mapping")
+            second = await f.PruneAsync();
+        else
+        {
+            newOwnerId = Guid.NewGuid();
+            await using var remap = f.Db();
+            remap.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = newOwnerId.Value, AgentSessionId = f.Harness.SessionId,
+                Body = ChannelPromptCorrelation.Mark(newOwnerId.Value, "new unconfirmed owner complete tail"),
+                Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0,
+                CreatedAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3),
+                SentAt = f.Clock.GetUtcNow().UtcDateTime.AddDays(-3),
+            });
+            await remap.SaveChangesAsync();
+            await remap.ChannelInbounds.Where(i => i.Id == retained.InboundId)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.QueueMessageId, newOwnerId));
+        }
+        pause.Release.TrySetResult(true);
+        var firstCount = await first;
+        (firstCount + second).ShouldBe(race == "same-mapping" ? 1 : 0);
+        (await f.PruneAsync()).ShouldBe(0);
+        await using (var verify = f.Db())
+        {
+            (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == retained.InboundId)
+                .Select(i => i.EnvelopeJson).SingleAsync())
+                .ShouldBe(race == "same-mapping" ? null : retained.Json);
+        }
+        if (newOwnerId is Guid id)
+        {
+            await using (var read = f.Db())
+            {
+                var body = await read.SessionQueuedMessages.Where(q => q.Id == id).Select(q => q.Body).SingleAsync();
+                await f.AddReceiptAsync(body);
+            }
+            (await f.PruneAsync()).ShouldBe(1);
+        }
+    }
     [Test]
     public async Task A_running_sessions_rows_survive_at_any_age()
     {
@@ -201,6 +881,36 @@ public class DataRetentionServiceTests
             var channelSettled = await SeedQueuedAsync(
                 sessionId, 6, QueuedMessageStatus.Sent, QueuedMessageOrigin.Channel, DaysAgo(40),
                 settledAt: DaysAgo(39));
+            var protectedInbound = Guid.NewGuid();
+            var protectedOwner = Guid.NewGuid();
+            var protectedBody = ChannelPromptCorrelation.Mark(protectedOwner,
+                "separate stale settled Channel owner with a complete receipt tail");
+            await using (var seed = CreateContext())
+            {
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = protectedInbound, Provider = "telegram", ConversationId = marker,
+                    NativeMessageId = protectedInbound.ToString("N"),
+                    QueueMessageId = protectedOwner, EnvelopeJson = "{\"attachment\":\"AAEf/251\"}",
+                    AcceptedAt = DaysAgo(40),
+                });
+                seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = protectedOwner, SourceChannelInboundId = protectedInbound,
+                    AgentSessionId = sessionId, Body = protectedBody,
+                    Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                    DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0,
+                    CreatedAt = DaysAgo(40), SentAt = DaysAgo(40),
+                    ChannelReplySettledAt = DaysAgo(39),
+                });
+                seed.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
+                    Kind = TranscriptKinds.UserPrompt, Text = protectedBody,
+                    Timestamp = DaysAgo(39), CreatedAt = DaysAgo(39),
+                });
+                await seed.SaveChangesAsync();
+            }
 
             await using var db = CreateContext();
             await CreateService(db).PruneQueuedMessagesAsync(CancellationToken.None);
@@ -211,6 +921,12 @@ public class DataRetentionServiceTests
             (await QueueExistsAsync(canceledOld)).ShouldBeFalse();
             (await QueueExistsAsync(channelUnsettled)).ShouldBeTrue("owed channel reply is never deleted");
             (await QueueExistsAsync(channelSettled)).ShouldBeFalse();
+            (await QueueExistsAsync(protectedOwner)).ShouldBeTrue("an unpurged journal payload protects its owner");
+            (await CreateService(db).PruneChannelInboundPayloadsAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            (await CreateService(db).PruneQueuedMessagesAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            (await QueueExistsAsync(protectedOwner)).ShouldBeFalse();
+            (await db.ChannelInbounds.AsNoTracking().Where(i => i.Id == protectedInbound)
+                .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
         }
         finally
         {
@@ -408,6 +1124,36 @@ public class DataRetentionServiceTests
             var transcriptId = await SeedTranscriptAsync(sessionId, 1, TranscriptKinds.UserPrompt, stale);
             var queuedId = await SeedQueuedAsync(
                 sessionId, 1, QueuedMessageStatus.Sent, QueuedMessageOrigin.Ui, stale);
+            var protectedSession = await SeedSessionAsync(marker, SessionStatus.Stopped, stale);
+            var protectedInbound = Guid.NewGuid();
+            var protectedOwner = Guid.NewGuid();
+            var protectedBody = ChannelPromptCorrelation.Mark(protectedOwner,
+                "separate stopped session complete channel receipt tail");
+            await using (var seed = CreateContext())
+            {
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = protectedInbound, Provider = "telegram", ConversationId = marker,
+                    NativeMessageId = protectedInbound.ToString("N"),
+                    QueueMessageId = protectedOwner, EnvelopeJson = "{\"attachment\":\"AAEf/251\"}",
+                    AcceptedAt = stale,
+                });
+                seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = protectedOwner, SourceChannelInboundId = protectedInbound,
+                    AgentSessionId = protectedSession, Body = protectedBody,
+                    Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                    DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0,
+                    CreatedAt = stale, SentAt = stale, ChannelReplySettledAt = stale,
+                });
+                seed.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = protectedSession,
+                    Sequence = 1, Kind = TranscriptKinds.UserPrompt, Text = protectedBody,
+                    Timestamp = stale, CreatedAt = stale,
+                });
+                await seed.SaveChangesAsync();
+            }
 
             await using var db = CreateContext();
             await CreateService(db).PruneSessionsAsync(CancellationToken.None);
@@ -415,6 +1161,17 @@ public class DataRetentionServiceTests
             (await SessionExistsAsync(sessionId)).ShouldBeFalse();
             (await ExistsAsync(transcriptId)).ShouldBeFalse();
             (await QueueExistsAsync(queuedId)).ShouldBeFalse();
+            (await SessionExistsAsync(protectedSession)).ShouldBeTrue();
+            (await QueueExistsAsync(protectedOwner)).ShouldBeTrue();
+            (await CreateService(db).PruneChannelInboundPayloadsAsync(CancellationToken.None))
+                .ShouldBeGreaterThan(0);
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+            (await SessionExistsAsync(protectedSession)).ShouldBeFalse();
+            (await QueueExistsAsync(protectedOwner)).ShouldBeFalse();
+            var tombstone = await db.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.Id == protectedInbound);
+            tombstone.NativeMessageId.ShouldBe(protectedInbound.ToString("N"));
+            tombstone.EnvelopeJson.ShouldBeNull();
         }
         finally
         {
@@ -1383,6 +2140,304 @@ public class DataRetentionServiceTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
+    private sealed class C768Fixture : IAsyncDisposable
+    {
+        private long _sequence;
+        public required IsolatedTestSchema Schema { get; init; }
+        public required BridgeQueueHarness Harness { get; init; }
+        public required FakeTimeProvider Clock { get; init; }
+        public string ConnectionString => Schema.ConnectionString;
+
+        public static async Task<C768Fixture> CreateAsync(int debounceMs = 0)
+        {
+            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            var harness = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
+                Bridge = new ChannelBridgeSettings
+                {
+                    Enabled = true, BatchingEnabled = true,
+                    DebounceWindowMs = debounceMs,
+                    DebounceMaxMs = Math.Max(2000, debounceMs * 2),
+                    AgentReadyDelaySeconds = 0,
+                },
+            });
+            return new C768Fixture
+            {
+                Schema = schema, Harness = harness,
+                Clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero)),
+            };
+        }
+
+        public AppDbContext Db(IInterceptor? interceptor = null)
+        {
+            var options = TestDbFixture.CreateDbContextOptions(ConnectionString);
+            return interceptor is null ? new AppDbContext(options)
+                : new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(options)
+                    .AddInterceptors(interceptor).Options);
+        }
+
+        public ChannelBridgeService Bridge() => new(
+            Harness.Messaging, Harness.Queue,
+            Harness.Provider.GetRequiredService<ChannelInboundDebouncer>(),
+            Harness.EventBus, Harness.Provider.GetRequiredService<IServiceScopeFactory>(),
+            Harness.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(),
+            Harness.Clock, NullLogger<ChannelBridgeService>.Instance,
+            Harness.Provider.GetRequiredService<ChannelInboundWakeSignal>());
+
+        public void InstallTranscriptReceipt()
+        {
+            var gate = new SemaphoreSlim(1, 1);
+            Harness.Adapter.OnSubmitted = async submitted =>
+            {
+                await gate.WaitAsync();
+                try
+                {
+                    await using var db = Db();
+                    var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == Harness.SessionId)
+                        .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+                    var record = new SessionRunnerTranscriptEvent(Harness.SessionId, sequence,
+                        TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("N"), null,
+                        DateTimeOffset.UtcNow, "user", submitted,
+                        null, null, null, null, null);
+                    Harness.Runner.SetTranscript(new SessionRunnerTranscriptDto(Harness.SessionId, [record], sequence));
+                    await Harness.Runtime.SyncTranscriptAsync(Harness.SessionId, CancellationToken.None);
+                }
+                finally { gate.Release(); }
+            };
+        }
+
+        public async Task WaitForAsync(Func<Task<bool>> predicate)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(8);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await predicate()) return;
+                await Task.Delay(25);
+            }
+            (await predicate()).ShouldBeTrue("the real channel delivery did not commit a complete prompt");
+        }
+
+        public async Task<(Guid InboundId, Guid OwnerId, string Body, string Json)> SeedAsync(
+            bool receipt = true, QueuedMessageStatus status = QueuedMessageStatus.Sent,
+            QueuedMessageOrigin origin = QueuedMessageOrigin.Channel, string? receiptKind = null,
+            string? receiptText = null, Guid? receiptSession = null,
+            DateTime? receiptTimestamp = null, long? baseline = 0, bool mapped = true,
+            Guid? ownerSession = null)
+        {
+            var id = Guid.NewGuid();
+            var owner = Guid.NewGuid();
+            var body = ChannelPromptCorrelation.Mark(owner, $"payload {id:N} complete distinctive tail");
+            var json = $"{{\"attachment\":\"AAEf/251\",\"sentinel\":\"{id:N}\"}}";
+            var old = Clock.GetUtcNow().UtcDateTime.AddDays(-3);
+            await using var db = Db();
+            db.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = id, Provider = "telegram", ConversationId = id.ToString("N"),
+                NativeMessageId = id.ToString("N"), AgentId = Harness.AgentId,
+                EnvelopeJson = json, QueueMessageId = mapped ? owner : null,
+                AcceptedAt = old, TransferredAt = mapped ? old.AddHours(1) : null,
+            });
+            if (mapped)
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = owner, SourceChannelInboundId = id, AgentSessionId = ownerSession ?? Harness.SessionId,
+                    Body = body, Origin = origin, Status = status,
+                    DeliveryAttempts = 1, LastDeliveryBaselineSequence = baseline,
+                    LastDeliveryStartedAt = old.AddHours(2), CreatedAt = old,
+                    SentAt = status == QueuedMessageStatus.Sent ? old.AddHours(3) : null,
+                    ChannelReplySettledAt = old.AddHours(4),
+                });
+            if (receipt)
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = receiptSession ?? ownerSession ?? Harness.SessionId,
+                    Sequence = Interlocked.Increment(ref _sequence),
+                    Kind = receiptKind ?? TranscriptKinds.UserPrompt,
+                    Text = receiptText ?? body, Timestamp = receiptTimestamp ?? old.AddHours(3),
+                    CreatedAt = Clock.GetUtcNow().UtcDateTime.AddDays(-2),
+                });
+            await db.SaveChangesAsync();
+            return (id, owner, body, json);
+        }
+
+        public async Task AddReceiptAsync(string text, string kind = TranscriptKinds.UserPrompt,
+            Guid? sessionId = null, DateTime? nativeAt = null, DateTime? createdAt = null,
+            bool nullNative = false)
+        {
+            await using var db = Db();
+            var target = sessionId ?? Harness.SessionId;
+            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == target)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = target, Sequence = sequence,
+                Kind = kind, Text = text,
+                Timestamp = nullNative ? null : nativeAt ?? Clock.GetUtcNow().UtcDateTime.AddDays(-2),
+                CreatedAt = createdAt ?? Clock.GetUtcNow().UtcDateTime.AddDays(-2),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task<Guid> AddOtherSessionAsync()
+        {
+            var id = Guid.NewGuid();
+            var old = Clock.GetUtcNow().UtcDateTime.AddDays(-3);
+            await using var db = Db();
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = id, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Stopped, Cwd = Path.Combine(Harness.TempRoot, id.ToString("N")),
+                Cols = 120, Rows = 30, CreatedAt = old, StartedAt = old,
+                LastSeenAt = old, EndedAt = old, ExitCode = 0,
+            });
+            await db.SaveChangesAsync();
+            return id;
+        }
+
+        public async Task<int> PruneAsync(int graceHours = 24, IInterceptor? interceptor = null,
+            ILogger<DataRetentionService>? logger = null)
+        {
+            await using var db = Db(interceptor);
+            var settings = new RetentionSettings
+            {
+                ChannelInboundPayloadGraceHours = graceHours,
+                SessionRetentionDays = 0, TranscriptRetentionDays = 0,
+                QueuedMessageRetentionDays = 0, TaskRetentionDays = 0,
+            };
+            var audit = new AuditSettings { RetentionDays = 0 };
+            var service = new DataRetentionService(db, Options.Create(settings), Options.Create(audit),
+                Clock, logger ?? NullLogger<DataRetentionService>.Instance,
+                new AuditService(db, Options.Create(audit)));
+            return await service.PruneChannelInboundPayloadsAsync(CancellationToken.None);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Harness.DisposeAsync();
+            await Schema.DisposeAsync();
+        }
+    }
+
+    private sealed class C768UpdatePause : DbCommandInterceptor
+    {
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("UPDATE \"ChannelInbounds\"", StringComparison.Ordinal))
+            {
+                Entered.TrySetResult(true);
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            return await base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    private sealed class C768CaptureLogger : ILogger<DataRetentionService>
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullLogger.Instance.BeginScope(state)!;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
+    }
+
+    private sealed class C768ScanReaderProbe : DbCommandInterceptor
+    {
+        internal sealed class Page(string[] fields)
+        {
+            public string[] Fields { get; } = fields;
+            public int Rows { get; set; }
+        }
+
+        public List<Page> CandidatePages { get; } = [];
+        public List<Page> ProofPages { get; } = [];
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            List<Page>? pages = command.CommandText.Contains("FROM \"ChannelInbounds\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("ORDER BY", StringComparison.Ordinal)
+                ? CandidatePages
+                : command.CommandText.Contains("FROM \"TranscriptEntries\"", StringComparison.Ordinal)
+                    && command.CommandText.Contains("ORDER BY", StringComparison.Ordinal)
+                    ? ProofPages : null;
+            if (pages is null) return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+            var fields = Enumerable.Range(0, result.FieldCount).Select(result.GetName).ToArray();
+            var page = new Page(fields);
+            pages.Add(page);
+            return ValueTask.FromResult<DbDataReader>(new C768CountingReader(result, page));
+        }
+    }
+
+    private sealed class C768CountingReader(DbDataReader inner, C768ScanReaderProbe.Page page) : DbDataReader
+    {
+        public override int Depth => inner.Depth;
+        public override int FieldCount => inner.FieldCount;
+        public override bool HasRows => inner.HasRows;
+        public override bool IsClosed => inner.IsClosed;
+        public override int RecordsAffected => inner.RecordsAffected;
+        public override object this[int ordinal] => inner[ordinal];
+        public override object this[string name] => inner[name];
+        public override bool GetBoolean(int ordinal) => inner.GetBoolean(ordinal);
+        public override byte GetByte(int ordinal) => inner.GetByte(ordinal);
+        public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length) =>
+            inner.GetBytes(ordinal, dataOffset, buffer, bufferOffset, length);
+        public override char GetChar(int ordinal) => inner.GetChar(ordinal);
+        public override long GetChars(int ordinal, long dataOffset, char[]? buffer, int bufferOffset, int length) =>
+            inner.GetChars(ordinal, dataOffset, buffer, bufferOffset, length);
+        public override string GetDataTypeName(int ordinal) => inner.GetDataTypeName(ordinal);
+        public override DateTime GetDateTime(int ordinal) => inner.GetDateTime(ordinal);
+        public override decimal GetDecimal(int ordinal) => inner.GetDecimal(ordinal);
+        public override double GetDouble(int ordinal) => inner.GetDouble(ordinal);
+        public override Type GetFieldType(int ordinal) => inner.GetFieldType(ordinal);
+        public override float GetFloat(int ordinal) => inner.GetFloat(ordinal);
+        public override Guid GetGuid(int ordinal) => inner.GetGuid(ordinal);
+        public override short GetInt16(int ordinal) => inner.GetInt16(ordinal);
+        public override int GetInt32(int ordinal) => inner.GetInt32(ordinal);
+        public override long GetInt64(int ordinal) => inner.GetInt64(ordinal);
+        public override string GetName(int ordinal) => inner.GetName(ordinal);
+        public override int GetOrdinal(string name) => inner.GetOrdinal(name);
+        public override string GetString(int ordinal) => inner.GetString(ordinal);
+        public override object GetValue(int ordinal) => inner.GetValue(ordinal);
+        public override int GetValues(object[] values) => inner.GetValues(values);
+        public override bool IsDBNull(int ordinal) => inner.IsDBNull(ordinal);
+        public override IEnumerator GetEnumerator() => ((IEnumerable)inner).GetEnumerator();
+        public override bool NextResult() => inner.NextResult();
+        public override Task<bool> NextResultAsync(CancellationToken cancellationToken) =>
+            inner.NextResultAsync(cancellationToken);
+        public override bool Read()
+        {
+            var found = inner.Read();
+            if (found) page.Rows++;
+            return found;
+        }
+        public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
+        {
+            var found = await inner.ReadAsync(cancellationToken);
+            if (found) page.Rows++;
+            return found;
+        }
+        public override Task<bool> IsDBNullAsync(int ordinal, CancellationToken cancellationToken) =>
+            inner.IsDBNullAsync(ordinal, cancellationToken);
+        public override Task<T> GetFieldValueAsync<T>(int ordinal, CancellationToken cancellationToken) =>
+            inner.GetFieldValueAsync<T>(ordinal, cancellationToken);
+        public override T GetFieldValue<T>(int ordinal) => inner.GetFieldValue<T>(ordinal);
+        public override void Close() => inner.Close();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+        public override ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
     private static DataRetentionService CreateService(
         AppDbContext db,
         RetentionSettings? settings = null,
@@ -1692,6 +2747,7 @@ public class DataRetentionServiceTests
     private static async Task CleanupAsync(string marker)
     {
         await using var db = CreateContext();
+        await db.ChannelInbounds.Where(i => i.ConversationId == marker).ExecuteDeleteAsync();
         var sessionIds = await db.AgentSessions
             .Where(s => s.Cwd.EndsWith(marker))
             .Select(s => s.Id)

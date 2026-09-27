@@ -16,4 +16,7 @@ public sealed class ChannelInbound
     public DateTime AcceptedAt { get; set; }
     public DateTime? TransferredAt { get; set; }
     public DateTime? WakeTimeoutIncidentAt { get; set; }
+    public DateTime? ContinuityHoldIncidentAt { get; set; }
+    public DateTime? SuspensionHoldIncidentAt { get; set; }
+    public DateTime? LivenessHoldIncidentAt { get; set; }
 }

@@ -326,6 +326,13 @@ public sealed class ChannelBridgeService : BackgroundService
                 await ApplyWakeDispositionAsync(inbound, agentId, "HerdrSupervisionHeld", ex, direct, ct);
             return true;
         }
+        catch (ConflictException ex) when (ex.Code == StandingContinuityState.HeldCode
+            || ex.Code == "standing_start_intent_revoked")
+        {
+            foreach (var inbound in inbounds)
+                await ApplyKnownHoldAsync(inbound, agentId, ex, direct, ct);
+            return true;
+        }
         catch (ModelDisabledException ex)
         {
             foreach (var inbound in inbounds)
@@ -407,6 +414,36 @@ public sealed class ChannelBridgeService : BackgroundService
         }
     }
 
+    private async Task ApplyKnownHoldAsync(ChannelInbound inbound, Guid agentId,
+        ConflictException refusal, bool direct, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var supervision = await db.AgentSupervisionStates.AsNoTracking()
+                .SingleOrDefaultAsync(s => s.AgentId == agentId, ct);
+            var reason = supervision?.Suspended == true ? "ChannelSuspended"
+                : supervision?.LivenessLatchedAt is not null ? "ChannelLivenessHeld"
+                : supervision?.ContinuityHeldAt is not null ? "ChannelContinuityHeld" : null;
+            if (reason is null)
+            {
+                _logger.LogWarning(refusal, "Channel inbound {InboundId} remains pending after a changed hold", inbound.Id);
+                return;
+            }
+            _logger.LogWarning(refusal, "Channel inbound {InboundId} remains pending on {HoldReason}",
+                inbound.Id, reason);
+            var channel = await db.ChatChannels.AsNoTracking()
+                .SingleAsync(c => c.Id == inbound.ChatChannelId, ct);
+            await RecordWakeIncidentAsync(inbound.Id, agentId, reason, refusal.Message, ct);
+            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && !direct)
+        {
+            _logger.LogWarning(ex, "Known hold for channel inbound {InboundId} remains pending", inbound.Id);
+        }
+    }
+
     private async Task RecordWakeIncidentAsync(Guid inboundId, Guid agentId,
         string reason, string detail, CancellationToken ct)
     {
@@ -417,6 +454,18 @@ public sealed class ChannelBridgeService : BackgroundService
             $"SELECT * FROM \"ChannelInbounds\" WHERE \"Id\" = {inboundId} FOR UPDATE").SingleAsync(ct);
         if (reason == "ChannelWakeTimeout" && inbound.WakeTimeoutIncidentAt is not null)
             return;
+        if (reason is "ChannelContinuityHeld" or "ChannelSuspended" or "ChannelLivenessHeld")
+        {
+            if (inbound.QueueMessageId is not null || inbound.EnvelopeJson is null)
+                return;
+            var threshold = TimeSpan.FromMinutes(Math.Max(0, _settings.AgedHoldIncidentMinutes));
+            if (_timeProvider.GetUtcNow().UtcDateTime - inbound.AcceptedAt < threshold)
+                return;
+            if (reason == "ChannelContinuityHeld" && inbound.ContinuityHoldIncidentAt is not null
+                || reason == "ChannelSuspended" && inbound.SuspensionHoldIncidentAt is not null
+                || reason == "ChannelLivenessHeld" && inbound.LivenessHoldIncidentAt is not null)
+                return;
+        }
         if (reason == "HerdrSupervisionHeld")
         {
             var heldAt = await db.AgentSupervisionStates.AsNoTracking()
@@ -434,6 +483,9 @@ public sealed class ChannelBridgeService : BackgroundService
             Message = ColumnText.Clip($"Inbound message {inbound.Provider}:{inbound.ConversationId}/{inbound.NativeMessageId} is pending and has not reached the agent: {detail}", AgentIncident.MessageMaxLength),
         });
         if (reason == "ChannelWakeTimeout") inbound.WakeTimeoutIncidentAt = now;
+        if (reason == "ChannelContinuityHeld") inbound.ContinuityHoldIncidentAt = now;
+        if (reason == "ChannelSuspended") inbound.SuspensionHoldIncidentAt = now;
+        if (reason == "ChannelLivenessHeld") inbound.LivenessHoldIncidentAt = now;
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
     }

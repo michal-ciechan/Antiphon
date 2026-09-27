@@ -8,6 +8,9 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class RetentionSettings
 {
+    /// <summary>Hours after a complete recipient UserPrompt before clearing the serialized inbound envelope. Nonpositive disables the pass.</summary>
+    public int ChannelInboundPayloadGraceHours { get; set; } = 24;
+
     public int TranscriptRetentionDays { get; set; } = 7;
 
     public int QueuedMessageRetentionDays { get; set; } = 30;

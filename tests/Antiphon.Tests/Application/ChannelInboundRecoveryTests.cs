@@ -32,6 +32,534 @@ public sealed class ChannelInboundRecoveryTests
 {
     private static readonly CancellationToken Ct = CancellationToken.None;
 
+    [Test]
+    [Arguments("continuity", "ChannelContinuityHeld")]
+    [Arguments("suspended", "ChannelSuspended")]
+    [Arguments("liveness", "ChannelLivenessHeld")]
+    public async Task C768_AgedHoldRaisesChannelIncidentAtThreshold(string hold, string reason)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        await using (var db = Db(schema.ConnectionString))
+        {
+            var state = await db.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == h.AgentId);
+            if (state is null) { state = new AgentSupervisionState { AgentId = h.AgentId }; db.AgentSupervisionStates.Add(state); }
+            state.ContinuityHeldAt = hold == "continuity" ? clock.GetUtcNow().UtcDateTime : null;
+            state.Suspended = hold == "suspended";
+            state.LivenessLatchedAt = hold == "liveness" ? clock.GetUtcNow().UtcDateTime : null;
+            await db.SaveChangesAsync();
+        }
+        var native = Guid.NewGuid().ToString("N");
+        await Bridge(h, clock).HandleInboundAsync(Message(chat, native, "pending hold body"), Ct);
+        clock.Advance(TimeSpan.FromMinutes(10).Subtract(TimeSpan.FromMilliseconds(1)));
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using (var before = Db(schema.ConnectionString))
+        {
+            (await before.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == reason)).ShouldBe(0);
+            C768Stamp(await before.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native),
+                hold).ShouldBeNull();
+        }
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using var verify = Db(schema.ConnectionString);
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.FailureReason == reason && i.Severity == AlertSeverity.Critical)).ShouldBe(1);
+        (await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native))
+            .QueueMessageId.ShouldBeNull();
+        C768Stamp(await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native),
+            hold).ShouldNotBeNull();
+        h.Adapter.SentInput.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("continuity")]
+    [Arguments("suspended")]
+    [Arguments("liveness")]
+    public async Task C768_HoldEpisodeDeduplicatesAcrossDrainsAndRestart(string initial)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        await SetC768HoldAsync(schema.ConnectionString, h.AgentId, initial, clock.GetUtcNow().UtcDateTime);
+        var firstNative = Guid.NewGuid().ToString("N");
+        await Bridge(h, clock).HandleInboundAsync(Message(chat, firstNative, "first pending native body"), Ct);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        var bridge = Bridge(h, clock);
+        await bridge.DrainPendingAsync(Ct);
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        var reason = C768Reason(initial);
+        await using (var db = Db(schema.ConnectionString))
+        {
+            (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == reason)).ShouldBe(1);
+            var inbound = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == firstNative);
+            C768Stamp(inbound, initial).ShouldNotBeNull();
+            await db.AgentIncidents.Where(i => i.AgentId == h.AgentId && i.FailureReason == reason)
+                .ExecuteDeleteAsync();
+        }
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using (var db = Db(schema.ConnectionString))
+            (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == reason)).ShouldBe(0);
+        var next = initial == "continuity" ? "suspended" : "continuity";
+        await SetC768HoldAsync(schema.ConnectionString, h.AgentId, next, clock.GetUtcNow().UtcDateTime);
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using (var db = Db(schema.ConnectionString))
+            (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == C768Reason(next))).ShouldBe(1);
+        await SetC768HoldAsync(schema.ConnectionString, h.AgentId, initial, clock.GetUtcNow().UtcDateTime);
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using (var db = Db(schema.ConnectionString))
+            (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == reason)).ShouldBe(0);
+        var secondNative = Guid.NewGuid().ToString("N");
+        await Bridge(h, clock).HandleInboundAsync(Message(chat, secondNative, "second pending native body"), Ct);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using var final = Db(schema.ConnectionString);
+        (await final.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.FailureReason == reason)).ShouldBe(1);
+        C768Stamp(await final.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == secondNative),
+            initial).ShouldNotBeNull();
+    }
+
+    private static string C768Reason(string hold) => hold switch
+    {
+        "continuity" => "ChannelContinuityHeld",
+        "suspended" => "ChannelSuspended",
+        "liveness" => "ChannelLivenessHeld",
+        _ => throw new ArgumentOutOfRangeException(nameof(hold)),
+    };
+
+    private static DateTime? C768Stamp(ChannelInbound inbound, string hold) => hold switch
+    {
+        "continuity" => inbound.ContinuityHoldIncidentAt,
+        "suspended" => inbound.SuspensionHoldIncidentAt,
+        "liveness" => inbound.LivenessHoldIncidentAt,
+        _ => throw new ArgumentOutOfRangeException(nameof(hold)),
+    };
+
+    private static async Task SetC768HoldAsync(string connection, Guid agentId, string hold, DateTime now)
+    {
+        await using var db = Db(connection);
+        var state = await db.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == agentId);
+        if (state is null) { state = new AgentSupervisionState { AgentId = agentId }; db.AgentSupervisionStates.Add(state); }
+        state.ContinuityHeldAt = hold == "continuity" ? now : null;
+        state.Suspended = hold == "suspended";
+        state.LivenessLatchedAt = hold == "liveness" ? now : null;
+        await db.SaveChangesAsync();
+    }
+
+    [Test]
+    [Arguments("continuity", "after-incident-write")]
+    [Arguments("continuity", "after-stamp-write")]
+    [Arguments("suspended", "after-incident-write")]
+    [Arguments("suspended", "after-stamp-write")]
+    [Arguments("liveness", "after-incident-write")]
+    [Arguments("liveness", "after-stamp-write")]
+    public async Task C768_HoldIncidentAndStampCommitAtomically(string hold, string cut)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var fault = new C768IncidentWriteFault(cut);
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(fault),
+        });
+        var chat = await h.BindChannelAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        await SetC768HoldAsync(schema.ConnectionString, h.AgentId, hold, clock.GetUtcNow().UtcDateTime);
+        var native = Guid.NewGuid().ToString("N");
+        await Bridge(h, clock).HandleInboundAsync(Message(chat, native, "atomic hold incident body"), Ct);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        fault.Arm();
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        fault.Fired.ShouldBeTrue("the injected failure must occur after a database write");
+        await using (var cutDb = Db(schema.ConnectionString))
+        {
+            (await cutDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == C768Reason(hold))).ShouldBe(0);
+            var row = await cutDb.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+            C768Stamp(row, hold).ShouldBeNull();
+            row.QueueMessageId.ShouldBeNull();
+            row.EnvelopeJson.ShouldContain("atomic hold incident body");
+        }
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        await using var repaired = Db(schema.ConnectionString);
+        (await repaired.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.FailureReason == C768Reason(hold))).ShouldBe(1);
+        C768Stamp(await repaired.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native),
+            hold).ShouldNotBeNull();
+    }
+
+    private sealed class C768IncidentWriteFault(string cut) : DbCommandInterceptor
+    {
+        private int _armed;
+        public bool Fired { get; private set; }
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        private void Check(DbCommand command)
+        {
+            var text = command.CommandText;
+            var target = cut == "after-incident-write" ? "AgentIncidents" : "ChannelInbounds";
+            if (!text.Contains(target, StringComparison.Ordinal)
+                || !text.Contains(cut == "after-incident-write" ? "INSERT" : "UPDATE", StringComparison.Ordinal)
+                || Interlocked.Exchange(ref _armed, 0) != 1)
+                return;
+            Fired = true;
+            throw new InvalidOperationException("synthetic post-write incident transaction failure");
+        }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            Check(command);
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<int> NonQueryExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, int result,
+            CancellationToken cancellationToken = default)
+        {
+            Check(command);
+            return base.NonQueryExecutedAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Test]
+    [Arguments("owned")]
+    [Arguments("unknown-refusal")]
+    public async Task C768_AgedHoldIgnoresOwnedAndUnknownRefusals(string caseName)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var fault = new C768UnknownWakeFault();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(fault),
+        });
+        var chat = await h.BindChannelAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var native = Guid.NewGuid().ToString("N");
+        InstallTranscriptReceipt(h);
+        if (caseName == "owned")
+        {
+            await Bridge(h, clock).HandleInboundAsync(Message(chat, native, "already owned complete tail"), Ct);
+            await using (var age = Db(schema.ConnectionString))
+                await age.ChannelInbounds.Where(i => i.NativeMessageId == native)
+                    .ExecuteUpdateAsync(u => u.SetProperty(i => i.AcceptedAt,
+                        clock.GetUtcNow().UtcDateTime.AddMinutes(-10)));
+            await SetC768HoldAsync(schema.ConnectionString, h.AgentId, "continuity", clock.GetUtcNow().UtcDateTime);
+        }
+        else
+        {
+            var message = Message(chat, native, "unknown transient refusal complete tail");
+            await using (var seed = Db(schema.ConnectionString))
+            {
+                var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat).Select(c => c.Id).SingleAsync();
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = message.Channel,
+                    ConversationId = message.Conversation.Id, NativeMessageId = native,
+                    EnvelopeJson = JsonSerializer.Serialize(message, Antiphon.Messaging.MessagingJson.Options),
+                    AgentId = h.AgentId, ChatChannelId = channelId,
+                    AcceptedAt = clock.GetUtcNow().UtcDateTime.AddMinutes(-10),
+                });
+                await seed.SaveChangesAsync();
+            }
+            fault.Arm();
+        }
+        await Bridge(h, clock).DrainPendingAsync(Ct);
+        if (caseName == "unknown-refusal") fault.Fired.ShouldBeTrue();
+        await using (var held = Db(schema.ConnectionString))
+        {
+            (await held.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && (i.FailureReason == "ChannelContinuityHeld" || i.FailureReason == "ChannelSuspended"
+                    || i.FailureReason == "ChannelLivenessHeld"))).ShouldBe(0);
+            var row = await held.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+            C768Stamp(row, "continuity").ShouldBeNull();
+            C768Stamp(row, "suspended").ShouldBeNull();
+            C768Stamp(row, "liveness").ShouldBeNull();
+            if (caseName == "owned") row.QueueMessageId.ShouldNotBeNull();
+            else row.QueueMessageId.ShouldBeNull();
+        }
+        if (caseName == "unknown-refusal")
+        {
+            await Bridge(h, clock).DrainPendingAsync(Ct);
+            await WaitForAsync(async () =>
+            {
+                await using var db = Db(schema.ConnectionString);
+                return await db.ChannelInbounds.AnyAsync(i => i.NativeMessageId == native && i.QueueMessageId != null);
+            });
+        }
+    }
+
+    private sealed class C768UnknownWakeFault : DbCommandInterceptor
+    {
+        private int _armed;
+        public bool Fired { get; private set; }
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("AgentSupervisionStates", StringComparison.Ordinal)
+                && Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                Fired = true;
+                throw new InvalidOperationException("synthetic unknown wake refusal");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Test]
+    [Arguments("queue-present")]
+    [Arguments("queue-pruned")]
+    public async Task C768_BrokerReplayAfterPayloadPurgeKeepsNativeIdentity(string queueState)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        Guid agentId;
+        Guid sessionId;
+        Guid inboundId;
+        Guid ownerId;
+        string chat;
+        string native;
+        string inbox;
+        var original = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            PreserveDatabaseOnDispose = true,
+        });
+        try
+        {
+            agentId = original.AgentId;
+            sessionId = original.SessionId;
+            chat = await original.BindChannelAsync();
+            native = Guid.NewGuid().ToString("N");
+            inbox = Path.Combine(original.TempRoot, "workspace", ".antiphon", "inbox");
+            InstallTranscriptReceipt(original);
+            var message = Message(chat, native, "original payload with a recognizable tail") with
+            {
+                ReplyHandle = "original-reply-handle",
+                Attachments = [new Attachment
+                {
+                    Kind = AttachmentKind.File, ChannelRef = "original-file",
+                    Name = "original.bin", Content = [0, 31, 127, 255],
+                }],
+            };
+            var hosted = Bridge(original);
+            await hosted.StartAsync(Ct);
+            original.Messaging.InjectInbound(message);
+            await WaitForAsync(() => Task.FromResult(original.Messaging.AcknowledgedCount == 1));
+            await WaitForAsync(async () =>
+            {
+                await using var db = Db(schema.ConnectionString);
+                var row = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+                return row.QueueMessageId is Guid id
+                    && await db.SessionQueuedMessages.AnyAsync(q => q.Id == id && q.Status == QueuedMessageStatus.Sent)
+                    && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId
+                        && t.Kind == TranscriptKinds.UserPrompt && t.Text != null
+                        && t.Text.Contains("original payload with a recognizable tail"));
+            });
+            await hosted.StopAsync(Ct);
+            await using (var db = Db(schema.ConnectionString))
+            {
+                var row = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+                inboundId = row.Id;
+                ownerId = row.QueueMessageId!.Value;
+                var receiptAt = DateTime.UtcNow.AddDays(-2);
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId
+                        && t.Kind == TranscriptKinds.UserPrompt && t.Text != null
+                        && t.Text.Contains("original payload with a recognizable tail"))
+                    .ExecuteUpdateAsync(u => u.SetProperty(t => t.CreatedAt, receiptAt));
+                await db.SessionQueuedMessages.Where(q => q.Id == ownerId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(q => q.CreatedAt, receiptAt.AddDays(-1))
+                        .SetProperty(q => q.ChannelReplySettledAt, receiptAt));
+                var now = new FakeTimeProvider(new DateTimeOffset(DateTime.UtcNow.AddHours(1)));
+                var retention = new DataRetentionService(db,
+                    Options.Create(new RetentionSettings
+                    {
+                        ChannelInboundPayloadGraceHours = 24,
+                        SessionRetentionDays = 0, TranscriptRetentionDays = 0,
+                        QueuedMessageRetentionDays = queueState == "queue-pruned" ? 1 : 0,
+                        TaskRetentionDays = 0,
+                    }),
+                    Options.Create(new AuditSettings { RetentionDays = 0 }), now,
+                    NullLogger<DataRetentionService>.Instance,
+                    new AuditService(db, Options.Create(new AuditSettings { RetentionDays = 0 })));
+                (await retention.PruneChannelInboundPayloadsAsync(Ct)).ShouldBe(1);
+                if (queueState == "queue-pruned")
+                    (await retention.PruneQueuedMessagesAsync(Ct)).ShouldBe(1);
+            }
+        }
+        finally { await original.DisposeAsync(); }
+
+        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AttachAgentId = agentId,
+            AttachSessionId = sessionId, Bridge = Settings(),
+            PreserveDatabaseOnDispose = true,
+        });
+        InstallTranscriptReceipt(recovered);
+        var newerNative = Guid.NewGuid().ToString("N");
+        var replayHost = Bridge(recovered);
+        await replayHost.StartAsync(Ct);
+        recovered.Messaging.InjectInbound(Message(chat, newerNative, "newer native message body"));
+        await WaitForAsync(() => Task.FromResult(recovered.Messaging.AcknowledgedCount == 1));
+        await WaitForAsync(async () =>
+        {
+            await using var db = Db(schema.ConnectionString);
+            return await db.ChannelInbounds.AnyAsync(i => i.NativeMessageId == newerNative && i.QueueMessageId != null);
+        });
+        var fileCount = Directory.Exists(inbox) ? Directory.GetFiles(inbox).Length : 0;
+        long catalogCount;
+        int ownerCount;
+        await using (var before = Db(schema.ConnectionString))
+        {
+            catalogCount = await before.ChatChannels.Where(c => c.ExternalId == chat)
+                .Select(c => c.MessageCount).SingleAsync();
+            ownerCount = await before.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId == inboundId);
+        }
+        var replay = Message(chat, native, "changed replay text must never reach the agent") with
+        {
+            ReplyHandle = "changed-reply-handle",
+            Attachments = [new Attachment
+            {
+                Kind = AttachmentKind.File, ChannelRef = "original-file", Name = "original.bin",
+                Content = [0, 31, 127, 255],
+            }],
+        };
+        recovered.Messaging.InjectInbound(replay);
+        await WaitForAsync(() => Task.FromResult(recovered.Messaging.AcknowledgedCount == 2));
+        await replayHost.StopAsync(Ct);
+        await using var verify = Db(schema.ConnectionString);
+        var retained = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == inboundId);
+        retained.Provider.ShouldBe("telegram");
+        retained.NativeMessageId.ShouldBe(native);
+        retained.QueueMessageId.ShouldBe(ownerId);
+        retained.EnvelopeJson.ShouldBeNull();
+        (await verify.ChannelInbounds.CountAsync(i => i.NativeMessageId == native)).ShouldBe(1);
+        (await verify.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId == inboundId)).ShouldBe(ownerCount);
+        (await verify.ChatChannels.Where(c => c.ExternalId == chat).Select(c => c.MessageCount).SingleAsync())
+            .ShouldBe(catalogCount);
+        (Directory.Exists(inbox) ? Directory.GetFiles(inbox).Length : 0).ShouldBe(fileCount);
+        recovered.Adapter.SubmittedBodies.ShouldNotContain(body => body.Contains("changed replay text"));
+        (await verify.ChannelInbounds.CountAsync(i => i.NativeMessageId == newerNative)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C768_HoldIncidentsUseExistingAttentionAndPaging()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            AlwaysOn = true, PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        InstallTranscriptReceipt(h);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var reasons = new[] { "continuity", "suspended", "liveness", "continuity" };
+        var natives = new List<string>();
+        foreach (var hold in reasons)
+        {
+            await SetC768HoldAsync(schema.ConnectionString, h.AgentId, hold, clock.GetUtcNow().UtcDateTime);
+            var native = Guid.NewGuid().ToString("N");
+            natives.Add(native);
+            await Bridge(h, clock).HandleInboundAsync(Message(chat, native, $"pending {hold} native {native}"), Ct);
+            clock.Advance(TimeSpan.FromMinutes(10));
+            await Bridge(h, clock).DrainPendingAsync(Ct);
+            await SetC768HoldAsync(schema.ConnectionString, h.AgentId, "none", clock.GetUtcNow().UtcDateTime);
+            await Bridge(h, clock).DrainPendingAsync(Ct);
+            await WaitForAsync(async () =>
+            {
+                await using var db = Db(schema.ConnectionString);
+                return await db.ChannelInbounds.AnyAsync(i => i.NativeMessageId == native && i.QueueMessageId != null);
+            });
+        }
+        var digestId = Guid.NewGuid();
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            seed.ChatChannels.Add(new ChatChannel
+            {
+                Id = digestId, Provider = "telegram", ExternalId = $"digest-{digestId:N}",
+                Kind = ChatChannelKind.Direct, Title = "Ops", Enabled = true, DigestEnabled = true,
+                CreatedAt = clock.GetUtcNow().UtcDateTime, UpdatedAt = clock.GetUtcNow().UtcDateTime,
+            });
+            await seed.SaveChangesAsync();
+        }
+        await using (var attentionDb = Db(schema.ConnectionString))
+        {
+            var attention = new AttentionService(attentionDb, h.Runner,
+                h.Provider.GetRequiredService<IOptions<SupervisionSettings>>(),
+                h.Provider.GetRequiredService<IOptions<DelegationSettings>>(),
+                clock, NullLogger<AttentionService>.Instance);
+            var rows = (await attention.GetAsync(Ct, includeProgressProbe: false)).Items
+                .Where(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == h.AgentId
+                    && i.Headline.Contains(nameof(AgentIncidentKind.ChannelReplyLost)))
+                .ToList();
+            rows.Count.ShouldBe(1);
+            rows[0].Headline.ShouldContain("4 x");
+            rows[0].Evidence.ShouldContain(natives[^1]);
+        }
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            seed.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(), AgentId = h.AgentId,
+                Kind = AgentIncidentKind.ChannelReplyLost, Severity = AlertSeverity.Critical,
+                FailureReason = IncidentPageNotifier.ProviderCapacityReason,
+                Message = "Provider capacity notice remains separate", CreatedAt = clock.GetUtcNow().UtcDateTime,
+            });
+            await seed.SaveChangesAsync();
+        }
+        var digest = new DigestSettings
+        {
+            WakeOnIncidentKinds = [AgentIncidentKind.ChannelReplyLost],
+            TimeZone = "Europe/London", PublicBaseUrl = "https://antiphon.example",
+        };
+        await using (var pageDb = Db(schema.ConnectionString))
+        {
+            var notifier = new IncidentPageNotifier(pageDb,
+                new ChatChannelService(pageDb, clock, h.Messaging), Options.Create(digest),
+                clock, NullLogger<IncidentPageNotifier>.Instance);
+            await notifier.SweepAsync(Ct);
+            await notifier.SweepAsync(Ct);
+        }
+        await using (var retryDb = Db(schema.ConnectionString))
+        {
+            var retry = new IncidentPageNotifier(retryDb,
+                new ChatChannelService(retryDb, clock, h.Messaging), Options.Create(digest),
+                clock, NullLogger<IncidentPageNotifier>.Instance);
+            await retry.SweepAsync(Ct);
+            (await retryDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason != IncidentPageNotifier.ProviderCapacityReason
+                && i.HumanNotifiedAt != null)).ShouldBe(4);
+            (await retryDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == IncidentPageNotifier.ProviderCapacityReason
+                && i.HumanNotifiedAt == null)).ShouldBe(1);
+        }
+        h.Messaging.SentReplies.Count.ShouldBe(4);
+    }
+
     private static ChannelBridgeService Bridge(BridgeQueueHarness h, TimeProvider? bridgeClock = null) => new(
         h.Messaging, h.Queue, h.Provider.GetRequiredService<ChannelInboundDebouncer>(), h.EventBus,
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
@@ -41,6 +569,15 @@ public sealed class ChannelInboundRecoveryTests
 
     private static AppDbContext Db(string connectionString) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
+
+    private static DataRetentionService Retention(AppDbContext db, TimeProvider clock) => new(
+        db, Options.Create(new RetentionSettings
+        {
+            SessionRetentionDays = 0, TranscriptRetentionDays = 0,
+            QueuedMessageRetentionDays = 0, TaskRetentionDays = 0,
+        }), Options.Create(new AuditSettings { RetentionDays = 0 }), clock,
+        NullLogger<DataRetentionService>.Instance,
+        new AuditService(db, Options.Create(new AuditSettings { RetentionDays = 0 })));
 
     private static ChannelMessage Message(string chat, string native, string body, string sender = "alice") => new()
     {
@@ -1402,6 +1939,14 @@ public sealed class ChannelInboundRecoveryTests
             i.Message.Contains("has not reached"))).ShouldBe(1);
         await Bridge(h).DrainPendingAsync(Ct);
         (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.FailureReason == "ChannelWakeTimeout")).ShouldBe(1);
+        (await Retention(verify, h.Clock).PruneChannelInboundPayloadsAsync(Ct)).ShouldBe(0);
+        var afterRetention = await verify.ChannelInbounds.AsNoTracking()
+            .SingleAsync(i => i.Id == inbound.Id);
+        afterRetention.NativeMessageId.ShouldBe(original.ChannelMessageId);
+        afterRetention.EnvelopeJson.ShouldBe(inbound.EnvelopeJson);
+        JsonSerializer.Deserialize<ChannelMessage>(afterRetention.EnvelopeJson!,
+            Antiphon.Messaging.MessagingJson.Options)!.Attachments.Single().Content
+            .ShouldBe(original.Attachments.Single().Content);
 
         await using var faultSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var incidentFault = new IncidentCommitFault();
@@ -1740,6 +2285,16 @@ public sealed class ChannelInboundRecoveryTests
             owner.Body.ShouldContain(firstSavedPath);
             (await recoveredOwner.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+            var journal = await recoveredOwner.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.Id == owner.SourceChannelInboundId);
+            (await Retention(recoveredOwner, h.Clock).PruneChannelInboundPayloadsAsync(Ct)).ShouldBe(0);
+            var afterGraceCheck = await recoveredOwner.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.Id == journal.Id);
+            afterGraceCheck.QueueMessageId.ShouldBe(owner.Id);
+            afterGraceCheck.EnvelopeJson.ShouldBe(journal.EnvelopeJson);
+            JsonSerializer.Deserialize<ChannelMessage>(afterGraceCheck.EnvelopeJson!,
+                Antiphon.Messaging.MessagingJson.Options)!.Attachments.Single().Content
+                .ShouldBe(faulted.Attachments.Single().Content);
         }
         await using (var batchSchema = await TestDbFixture.CreateIsolatedSchemaAsync())
         {
@@ -2061,6 +2616,10 @@ public sealed class ChannelInboundRecoveryTests
         (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId &&
             i.Kind == AgentIncidentKind.ChannelReplyLost && i.FailureReason == "HerdrSupervisionHeld" &&
             i.Severity == AlertSeverity.Critical)).ShouldBe(1);
+        await Bridge(h).DrainPendingAsync(Ct);
+        await Bridge(h).DrainPendingAsync(Ct);
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId &&
+            i.FailureReason == "HerdrSupervisionHeld")).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
         h.Messaging.SentReplies.ShouldBeEmpty();
 
@@ -2081,6 +2640,7 @@ public sealed class ChannelInboundRecoveryTests
         await db.AgentSessions.Where(s => s.Id == h.SessionId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
         var initialSessions = await db.AgentSessions.CountAsync(s => s.Cwd.StartsWith(h.TempRoot));
+        var youngClock = new FakeTimeProvider(new DateTimeOffset(DateTime.UtcNow));
         var state = await db.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == h.AgentId);
         if (state is null)
         {
@@ -2090,15 +2650,29 @@ public sealed class ChannelInboundRecoveryTests
         var names = new[] { "continuity", "suspended", "liveness" };
         foreach (var name in names)
         {
-            state.ContinuityHeldAt = name == "continuity" ? DateTime.UtcNow : null;
+            state.ContinuityHeldAt = name == "continuity" ? youngClock.GetUtcNow().UtcDateTime : null;
             state.Suspended = name == "suspended";
-            state.LivenessLatchedAt = name == "liveness" ? DateTime.UtcNow : null;
+            state.LivenessLatchedAt = name == "liveness" ? youngClock.GetUtcNow().UtcDateTime : null;
             await db.SaveChangesAsync();
             var native = $"{name}-{Guid.NewGuid():N}";
-            await Bridge(h).HandleInboundAsync(Message(chat, native, $"{name} full retained body"), Ct);
+            var expected = Message(chat, native, $"{name} full retained body") with
+            {
+                Attachments = [new Attachment
+                {
+                    Kind = AttachmentKind.File, ChannelRef = "young-hold-file",
+                    Name = "young.bin", Content = [0, 31, 127, 255],
+                }],
+            };
+            await Bridge(h, youngClock).HandleInboundAsync(expected, Ct);
             var retained = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
             retained.EnvelopeJson.ShouldContain($"{name} full retained body");
+            JsonSerializer.Deserialize<ChannelMessage>(retained.EnvelopeJson!,
+                Antiphon.Messaging.MessagingJson.Options)!.Attachments.Single().Content
+                .ShouldBe(expected.Attachments.Single().Content);
             retained.QueueMessageId.ShouldBeNull();
+            C768Stamp(retained, name).ShouldBeNull();
+            (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.FailureReason == C768Reason(name))).ShouldBe(0);
             (await db.AgentSessions.CountAsync(s => s.Cwd.StartsWith(h.TempRoot))).ShouldBe(initialSessions);
         }
         h.Adapter.SentInput.ShouldBeEmpty();
@@ -2551,6 +3125,57 @@ public sealed class ChannelInboundRecoveryTests
             wrongRecipient.Body, DateTimeOffset.UtcNow);
         await ObserveAsync(h.SessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
         await AssertLateConfirmedAsync(wrongRecipient.Id, wrongRecipient.Body, recipientFloor - 1);
+
+        // Journal-backed retention arm: the existing false receipt kinds above must also
+        // leave the saved native envelope intact until a complete recipient receipt ages out.
+        await h.MarkWorkingAsync();
+        var journalNative = Guid.NewGuid().ToString("N");
+        var journalMessage = Message(chat, journalNative, "journal-backed uncertain delivery DISTINCT TAIL") with
+        {
+            Attachments = [new Attachment
+            {
+                Kind = AttachmentKind.File, ChannelRef = "journal-file", Name = "journal.bin",
+                Content = [0, 31, 127, 255],
+            }],
+        };
+        await Bridge(h).HandleInboundAsync(journalMessage, Ct);
+        var journal = await verify.ChannelInbounds.AsNoTracking()
+            .SingleAsync(i => i.NativeMessageId == journalNative);
+        var journalOwner = await verify.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.Id == journal.QueueMessageId);
+        var journalBody = ChannelPromptCorrelation.OpeningMarker(journalOwner.Body) is null
+            ? ChannelPromptCorrelation.Mark(journalOwner.Id, journalOwner.Body) : journalOwner.Body;
+        var journalFloor = await verify.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+        await verify.SessionQueuedMessages.Where(q => q.Id == journalOwner.Id).ExecuteUpdateAsync(u => u
+            .SetProperty(q => q.Body, journalBody)
+            .SetProperty(q => q.Status, QueuedMessageStatus.Sent)
+            .SetProperty(q => q.DeliveryAttempts, 1)
+            .SetProperty(q => q.LastDeliveryBaselineSequence, journalFloor)
+            .SetProperty(q => q.SentAt, DateTime.UtcNow));
+        await ObserveAsync(h.SessionId, TranscriptKinds.QueuedUserPrompt, journalBody, DateTimeOffset.UtcNow);
+        await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt, journalBody[..^13] + "different tail",
+            DateTimeOffset.UtcNow);
+        (await Retention(verify, TimeProvider.System).PruneChannelInboundPayloadsAsync(Ct)).ShouldBe(0);
+        var beforeReceipt = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.Id == journal.Id);
+        beforeReceipt.EnvelopeJson.ShouldBe(journal.EnvelopeJson);
+        JsonSerializer.Deserialize<ChannelMessage>(beforeReceipt.EnvelopeJson!,
+            Antiphon.Messaging.MessagingJson.Options)!.Attachments.Single().Content
+            .ShouldBe(journalMessage.Attachments.Single().Content);
+        var completeSequence = await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt,
+            journalBody, DateTimeOffset.UtcNow);
+        var receiptAt = DateTime.UtcNow;
+        await verify.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId
+                && t.Sequence == completeSequence)
+            .ExecuteUpdateAsync(u => u.SetProperty(t => t.CreatedAt, receiptAt));
+        var retentionClock = new FakeTimeProvider(new DateTimeOffset(
+            receiptAt.AddHours(24).AddMilliseconds(-1)));
+        (await Retention(verify, retentionClock).PruneChannelInboundPayloadsAsync(Ct)).ShouldBe(0);
+        retentionClock.Advance(TimeSpan.FromMilliseconds(1));
+        (await Retention(verify, retentionClock).PruneChannelInboundPayloadsAsync(Ct)).ShouldBe(1);
+        (await verify.ChannelInbounds.AsNoTracking().Where(i => i.Id == journal.Id)
+            .Select(i => i.EnvelopeJson).SingleAsync()).ShouldBeNull();
+        h.Adapter.SentInput.ShouldBeEmpty();
 
     }
 
