@@ -140,7 +140,7 @@ public sealed class DefaultRunnerRoutingPolicy
         + "non-desktop runner satisfying the required platform.";
 
     public static bool IsDesktopCodex(string? runnerId, AgentKind kind) =>
-        kind == AgentKind.Codex && CanonicalRunnerId(runnerId) is null;
+        kind == AgentKind.Codex && RunnerRequestIntent.CanonicalRunnerId(runnerId) is null;
 
     /// <summary>
     /// CARD-0659 D-5. The one host/kind rule every post-create kind change shares: a task bound to
@@ -149,7 +149,7 @@ public sealed class DefaultRunnerRoutingPolicy
     /// The host itself never changes after create.
     /// </summary>
     public static bool IsHostKindCompatible(string? runnerId, AgentKind kind) =>
-        CanonicalRunnerId(runnerId) is null
+        RunnerRequestIntent.CanonicalRunnerId(runnerId) is null
             ? !IsDesktopCodex(runnerId, kind)
             : PhoneHomeLaunchPolicy.IsWorkerAdmittedKind(kind);
 
@@ -158,7 +158,7 @@ public sealed class DefaultRunnerRoutingPolicy
     /// remote kinds are Blocked before any claim, preparation, launch or input.
     /// </summary>
     public static bool IsHostKindAdmitted(string? runnerId, AgentKind kind) =>
-        CanonicalRunnerId(runnerId) is null
+        RunnerRequestIntent.CanonicalRunnerId(runnerId) is null
             ? !IsDesktopCodex(runnerId, kind)
             : PhoneHomeLaunchPolicy.IsExplicitRunnerTaskKind(kind);
 
