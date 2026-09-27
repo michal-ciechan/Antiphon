@@ -143,6 +143,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         var op = await h.OperationAsync();
         op.ShouldNotBeNull();
         op!.OriginalSourceSha.ShouldBe(b);
+        op.SourceLocalSha.ShouldBe(original);
         op.ReviewedSourceSha.ShouldBe(b);
         op.PreparationInputSha.ShouldBe(b);
         op.VerifiedSourceSha.ShouldNotBeNull($"reason={op.LastReason}; verifier={recording.LastResult?.Description}; calls={recording.Invocations.Count}");
@@ -173,7 +174,6 @@ public sealed class AgentTaskLandSourceFreshnessTests
             new(h.Fixture.TaskId, op.Id, queued.RequestId, targetArtifacts), CancellationToken.None);
         targetCheck.Passed.ShouldBeTrue(targetCheck.Description);
         AssertFreshProbeReport(targetArtifacts);
-        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(original);
     }
 
     [Test]
