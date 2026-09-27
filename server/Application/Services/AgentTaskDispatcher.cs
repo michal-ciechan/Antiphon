@@ -4273,7 +4273,7 @@ public sealed class AgentTaskDispatcher
         using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
             "dispatcher.claim-expiry", task.Id);
         if (!(AgentTaskRoles.IsOptionalWork(task)
-              || (task.Role == AgentTaskRole.Check && task.SpecialistInputPolicyJson is null))
+              || (task.Role == StandingSpecialistSeatPolicy.Role && task.SpecialistInputPolicyJson is null))
             || task.ExecutionDeadlineAt is not DateTime deadline
             || deadline > UtcNow()) return false;
         task.Status = AgentTaskStatus.Canceled;
@@ -6705,13 +6705,13 @@ public sealed class AgentTaskDispatcher
     }
 
     private bool CanAdoptLegacyCheckGeneration(AgentTask task, Agent standing, DateTime now) =>
-        task.Role == AgentTaskRole.Check
+        task.Role == StandingSpecialistSeatPolicy.Role
         && task.SpecialistInputPolicyJson is null
         && task.AgentId == standing.Id
         && string.Equals(standing.Slug, CheckInterpreterProvisioner.Slug(_settings), StringComparison.OrdinalIgnoreCase)
         && standing.AlwaysOn
         && !standing.IsPoolDelegate
-        && (standing.StandingSpecialistRole is null or AgentTaskRole.Check)
+        && (standing.StandingSpecialistRole is null or StandingSpecialistSeatPolicy.Role)
         && (standing.StandingSpecialistOwnerId is null || standing.StandingSpecialistOwnerId == standing.Id)
         && (task.ExecutionDeadlineAt is null || task.ExecutionDeadlineAt > now);
 
