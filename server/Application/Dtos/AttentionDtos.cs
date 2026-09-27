@@ -321,6 +321,9 @@ public enum AttentionKind
 
     /// <summary>A stale child-journal record fences repository mutation. Error.</summary>
     RepositoryChildJournalStale = 50,
+
+    /// <summary>An outbound agent reply is held, failed or has uncertain broker acceptance.</summary>
+    ChannelOutboundDelivery = 51,
 }
 
 /// <summary>

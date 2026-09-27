@@ -40,6 +40,10 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  ChannelOutboundDelivery: {
+    label: 'Outbound reply held', color: 'danger', icon: TbMailExclamation,
+    hint: 'An agent reply could not be published safely. Inspect the delivery and conversion task evidence.',
+  },
   RunnerUnavailable: {
     label: 'Runner unavailable', color: 'danger', icon: TbPlugConnectedX,
     hint: 'A phone-home runner has not been dispatch-eligible past the grace; its queued work waits.',

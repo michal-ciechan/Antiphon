@@ -45,6 +45,7 @@ public class AppDbContext : DbContext
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
+    public DbSet<ChannelOutboundDelivery> ChannelOutboundDeliveries => Set<ChannelOutboundDelivery>();
     public DbSet<ChannelInbound> ChannelInbounds => Set<ChannelInbound>();
     public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
@@ -271,6 +272,30 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ChannelOutboundDelivery>(entity =>
+        {
+            entity.ToTable("ChannelOutboundDeliveries");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.SourceKey).IsRequired().HasMaxLength(64);
+            entity.HasIndex(d => d.SourceKey).IsUnique();
+            entity.HasIndex(d => new { d.ChannelId, d.CreatedAt });
+            entity.HasIndex(d => new { d.State, d.LeaseUntil });
+            entity.Property(d => d.ProfileName).IsRequired().HasMaxLength(100);
+            entity.Property(d => d.PromptRevision).IsRequired().HasMaxLength(64);
+            entity.Property(d => d.PromptText).IsRequired().HasColumnType("text");
+            entity.Property(d => d.Trigger).IsRequired().HasMaxLength(32);
+            entity.Property(d => d.SendKind).IsRequired().HasMaxLength(32);
+            entity.Property(d => d.InputPath).IsRequired().HasMaxLength(2048);
+            entity.Property(d => d.InputSha256).IsRequired().HasMaxLength(64);
+            entity.Property(d => d.OutputPath).HasMaxLength(2048);
+            entity.Property(d => d.OutputSha256).HasMaxLength(64);
+            entity.Property(d => d.FailureReason).HasMaxLength(500);
+            entity.Property(d => d.Version).IsConcurrencyToken();
+            entity.Property(d => d.ConversionOutcome).HasMaxLength(32);
+            entity.HasOne(d => d.Channel).WithMany().HasForeignKey(d => d.ChannelId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ChannelInbound>(entity =>
@@ -1321,6 +1346,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<SessionQueuedMessage>(entity =>
         {
+            entity.HasOne<ChannelOutboundDelivery>().WithMany()
+                .HasForeignKey(m => m.ChannelOutboundDeliveryId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(m => m.ChannelOutboundDeliveryId);
             entity.HasIndex(m => m.SourceChannelInboundId).IsUnique()
                 .HasFilter("\"SourceChannelInboundId\" IS NOT NULL");
             entity.Property(m => m.PinRefreshKey).HasMaxLength(80);
@@ -1777,6 +1805,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AgentTask>(entity =>
         {
             entity.ToTable("AgentTasks");
+            entity.HasOne<ChannelOutboundDelivery>().WithMany()
+                .HasForeignKey(t => t.OutboundDeliveryId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(t => t.OutboundDeliveryId).IsUnique()
+                .HasFilter("\"OutboundDeliveryId\" IS NOT NULL");
             entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(t => t.SourceLandingOperationId).OnDelete(DeleteBehavior.Restrict);
             entity.Property(t => t.SourceLandingOperationId).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
             entity.Property(t => t.SourceLandingSha).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);

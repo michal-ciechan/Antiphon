@@ -60,6 +60,11 @@ Third-party / custom providers implement `IChannelAdapter` and host it with
 follow [`docs/messaging/build-your-own-gateway.md`](messaging/build-your-own-gateway.md).
 The wire contract is [`docs/messaging/contract/v1/CONTRACT.md`](messaging/contract/v1/CONTRACT.md).
 
+Optional per-channel outbound conversion runs in the Antiphon server before it publishes the
+ordinary `ChannelReply`. It creates no new Kafka topic, gateway callback or adapter contract.
+The gateway receives the original source bytes plus any validated additional files in the same
+message schema. See [channel outbound preparation](telegram.md#optional-outbound-agent-preparation-card-0418).
+
 ## Consumer identity and monitored deployments (CARD-0410)
 
 The Service profile defaults both `Kafka__AntiphonConsumerGroup` and

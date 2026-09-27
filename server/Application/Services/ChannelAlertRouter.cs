@@ -79,6 +79,7 @@ public sealed class AlertDigestFlusher
     private readonly AppDbContext _db;
     private readonly AlertThrottle _throttle;
     private readonly IAntiphonMessagingProducer _producer;
+    private readonly ChannelOutboundService? _outbound;
     private readonly AlertsSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AlertDigestFlusher> _logger;
@@ -89,11 +90,13 @@ public sealed class AlertDigestFlusher
         IAntiphonMessagingProducer producer,
         IOptions<AlertsSettings> settings,
         TimeProvider timeProvider,
-        ILogger<AlertDigestFlusher> logger)
+        ILogger<AlertDigestFlusher> logger,
+        ChannelOutboundService? outbound = null)
     {
         _db = db;
         _throttle = throttle;
         _producer = producer;
+        _outbound = outbound;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -118,14 +121,16 @@ public sealed class AlertDigestFlusher
             var text = Format(groups);
             try
             {
-                await _producer.SendAsync(
-                    new ChannelReply
+                var reply = new ChannelReply
                     {
                         Channel = sink.Provider,
                         ConversationId = sink.ExternalId,
                         Text = text,
-                    },
-                    ct);
+                    };
+                if (_outbound is null)
+                    await _producer.SendAsync(reply, ct);
+                else
+                    await _outbound.SendAsync(reply, ChannelOutboundOrigin.Control, source: null, ct);
                 sent++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

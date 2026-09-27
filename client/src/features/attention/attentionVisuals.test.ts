@@ -19,6 +19,7 @@ import {
  * in a hurry.
  */
 const ALL_KINDS: AttentionKind[] = [
+  'ChannelOutboundDelivery',
   'RunnerUnavailable',
   'RepositoryChildJournalStale',
   'LandHeld',

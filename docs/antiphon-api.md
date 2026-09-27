@@ -627,7 +627,9 @@ list/detail never include the raw token; issue/rotate return it once for `script
 ```
 GET    /api/channels/consumer                effective inbound consumer identity (group/topic/enabled/broker host-port allowlist)
 GET    /api/channels                         the catalog (rows appear on first inbound message)
-PATCH  /api/channels/{id}                    bind/unbind an agent, preamble, enable/disable
+GET    /api/channels/outbound-profiles       configured profile previews (project, worker, trigger, prompt revision, timeout)
+POST   /api/channels/outbound-deliveries/{id}/retry  explicit uncertain-publication retry; body {"acknowledgePossibleDuplicate":true}
+PATCH  /api/channels/{id}                    bind/unbind an agent, preamble, enable/disable, outboundAgentProfile (nullable clear)
 POST   /api/channels/{id}/send               proactive send — {"text": "..."}
 ```
 
@@ -635,6 +637,13 @@ POST   /api/channels/{id}/send               proactive send — {"text": "..."}
 anything inbound: it bypasses the alert throttle/digest path entirely and produces a `ChannelReply`
 straight onto `channels.outbound`. A disabled channel is `409 channel_disabled`. It was landed as
 pre-design groundwork on CARD-0171 and is unratified — treat it as present but provisional.
+
+`outboundAgentProfile` is an explicit per-channel selection. The named profile must pin a
+delegatable worker on the inbound agent's project and a prompt file inside its workspace. A
+selected agent reply is accepted as a durable outbound delivery first; it appears on the same
+`channels.outbound` topic only after optional conversion and validation. An omitted PATCH field
+leaves the binding alone; `null` clears it. The channel UI previews worker, trigger, deadline,
+prompt revision and the automatic metered invocation before a binding is saved.
 
 `ChatChannelDto` (`server/Application/Dtos/ChatChannelDtos.cs`): `lastMessageAt` / `lastAuthor` /
 `lastMessagePreview` are inbound only. `lastReplyAt` / `lastReplyPreview` are the last outbound

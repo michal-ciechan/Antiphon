@@ -33,6 +33,8 @@ public class SessionQueuedMessage
     public Guid Id { get; set; }
     /// <summary>Native inbound that owns this durable Channel prompt, unique across queue rows.</summary>
     public Guid? SourceChannelInboundId { get; set; }
+    /// <summary>The outbound intent that owns publication of this reply, until terminal settlement.</summary>
+    public Guid? ChannelOutboundDeliveryId { get; set; }
     public Guid AgentSessionId { get; set; }
 
     /// <summary>The text delivered into the agent's terminal (a carriage return is appended on send).</summary>
