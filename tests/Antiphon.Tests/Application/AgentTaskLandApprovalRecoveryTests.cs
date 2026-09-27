@@ -506,7 +506,8 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await h.RunAsync();
         await using var observer = h.CreateContext();
         var request = await observer.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId);
-        request.SourceRefusalReason.ShouldBe("legacy_review_binding_required");
+        var terminal = await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal);
+        terminal.Detail.ShouldContain("legacy_review_binding_required");
         (await observer.AgentTaskLandings.CountAsync(o => o.TaskId == h.Git.TaskId)).ShouldBe(0);
     }
 
@@ -550,7 +551,9 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         recovered.Phase.ShouldNotBe(LandPhase.Complete);
         request.ExpectedSourceSha.ShouldBeNull();
         recovered.ReviewedSourceSha.ShouldBeNull();
-        (request.SourceRefusalReason ?? recovered.LastReason).ShouldBe("legacy_review_binding_required");
+        (request.SourceRefusalReason ?? recovered.LastReason
+            ?? (await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal)).Detail)
+            .ShouldContain("legacy_review_binding_required");
     }
 
     [Test]
@@ -597,7 +600,8 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         var requestAfter = await observer.AgentTaskLandRequests.SingleAsync();
         stored.Id.ShouldBe(operationId);
         requestAfter.Id.ShouldBe(requestId);
-        requestAfter.SourceRefusalReason.ShouldBe("legacy_review_binding_required");
+        (await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal))
+            .Detail.ShouldContain("legacy_review_binding_required");
         requestAfter.LocalBeforeSha.ShouldBe(historicalLocal);
         requestAfter.RemoteSourceSha.ShouldBe(historicalRemote);
         requestAfter.CandidateSourceSha.ShouldBe(historicalCandidate);
@@ -825,7 +829,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
             {
                 h.Fault.Matches = op => op.Phase == LandPhase.PushStarted
                     && op.ChildOperation is null && op.PushExitCode is null;
-                h.Fault.AfterSave = true;
+                h.Fault.AfterCommit = true;
             }
             return Task.CompletedTask;
         };
@@ -849,7 +853,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         var remoteRechecks = h.Git.SourceRemoteRechecks;
         await h.RestartServicesAsync();
         h.Fault.Matches = null;
-        h.Fault.AfterSave = false;
+        h.Fault.AfterCommit = false;
         await h.RunAsync();
         var after = (await h.OperationAsync()).ShouldNotBeNull();
         after.Id.ShouldBe(op.Id);
@@ -933,7 +937,8 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         recovery.First(a => a.Contains("fetch"))[0].ShouldBe("fetch");
         await using var observer = h.CreateContext();
         var request = await observer.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId && r.Id == saved.ApprovalLandRequestId);
-        request.SourceRefusalReason.ShouldContain("Publication is unconfirmed. Inspect the saved target");
+        (await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal))
+            .Detail.ShouldContain("Publication is unconfirmed. Inspect the saved target");
     }
 
     [Test]
@@ -960,8 +965,8 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         h.Git.SourceHead.ShouldBe(moved);
         h.Git.Trace.Count(a => a.Contains("push")).ShouldBe(pushes);
         await using var observer = h.CreateContext();
-        (await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == saved.ApprovalLandRequestId))
-            .SourceRefusalReason.ShouldContain("Publication is unconfirmed. Inspect the saved target");
+        (await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal))
+            .Detail.ShouldContain("Publication is unconfirmed. Inspect the saved target");
     }
 
     [Test]

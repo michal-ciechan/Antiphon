@@ -167,6 +167,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 // payload. A moved source must not hide a publication that already happened.
                 if (op.Phase == LandPhase.PushStarted)
                 {
+                    RequireSourceSnapshot(op);
                     await RecheckApprovalAsync(op, request, ct, skipRecoverySourceFreshness: true);
                     await RecheckSourceIdentityAndPinsAsync(op, ct);
                     Require(GitObjectId.IsFull(op.VerifiedSourceSha), "verified_source_missing");
@@ -643,6 +644,18 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     {
         if (_state.HasPublication(op))
             return;
+        RequireSourceSnapshot(op);
+        var recheck = await git.RecheckSourceRemoteAsync(op.RepositoryPath, op.SourceFullRef, op.SourceRemoteSha!,
+            op.SourceRemoteFingerprint!, ct);
+        // A different endpoint is a different remote source, as the full observation always reported it.
+        Require(recheck.Reason != "source_remote_endpoint_changed", "source_remote_changed");
+        Require(recheck.Accepted, recheck.Reason ?? "source_remote_unreadable");
+        Require(recheck.Sha == op.SourceRemoteSha && recheck.Fingerprint == op.SourceRemoteFingerprint,
+            "source_remote_changed");
+    }
+
+    private static void RequireSourceSnapshot(AgentTaskLanding op)
+    {
         if (op.SchemaVersion is not (2 or 3) || op.SourceRemoteSha is null || op.SourceRemoteFingerprint is null
             || !GitObjectId.IsFull(op.ReviewedSourceSha) || op.ApprovalLandRequestId is null)
         {
@@ -651,13 +664,6 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 ? "legacy_review_binding_required"
                 : "source_resolution_required");
         }
-        var recheck = await git.RecheckSourceRemoteAsync(op.RepositoryPath, op.SourceFullRef, op.SourceRemoteSha,
-            op.SourceRemoteFingerprint, ct);
-        // A different endpoint is a different remote source, as the full observation always reported it.
-        Require(recheck.Reason != "source_remote_endpoint_changed", "source_remote_changed");
-        Require(recheck.Accepted, recheck.Reason ?? "source_remote_unreadable");
-        Require(recheck.Sha == op.SourceRemoteSha && recheck.Fingerprint == op.SourceRemoteFingerprint,
-            "source_remote_changed");
     }
 
     /// <summary>DB coordinates, recovery pins and one <c>show-ref</c> of the branch (I-1, I-2, I-8).</summary>
