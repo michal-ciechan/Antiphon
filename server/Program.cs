@@ -138,8 +138,11 @@ try
         sp.GetRequiredService<TimeProvider>()));
     builder.Services.AddSingleton<IHostStatsAntiphonCounters, HostStatsAntiphonCounters>();
     builder.Services.Configure<DiagnosticsSettings>(builder.Configuration.GetSection("Diagnostics"));
-    builder.Services.Configure<DeliverablesSettings>(
-        builder.Configuration.GetSection(DeliverablesSettings.SectionName));
+    builder.Services.AddOptions<DeliverablesSettings>()
+        .Bind(builder.Configuration.GetSection(DeliverablesSettings.SectionName))
+        .Validate(s => s.MaxTotalSourceBytes > 0 && s.MaxTotalSourceBytes <= 64L * 1024 * 1024,
+            "Deliverables:MaxTotalSourceBytes must be between 1 byte and 64 MiB.")
+        .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<AgentSessionSettings>, AgentSessionSettingsValidator>();
     builder.Services.AddOptions<AgentSessionSettings>()
         .Bind(builder.Configuration.GetSection("AgentSessions"))
@@ -860,6 +863,11 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         .WithMetrics(metrics => metrics.AddAntiphonResilienceMetrics());
 
     var app = builder.Build();
+
+    if (builder.Configuration["Deliverables:BrowserPath"] is not null
+        || builder.Configuration["Deliverables:RenderTimeoutSeconds"] is not null
+        || builder.Configuration["Deliverables:MaxDocuments"] is not null)
+        app.Logger.LogWarning("Legacy Deliverables renderer settings are ignored; settlement now bundles sources only.");
 
     // Arm the alert log tap (no-op unless Alerts:LogTap:Enabled).
     {

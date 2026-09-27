@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -19,7 +21,7 @@ namespace Antiphon.Tests.Application;
 public class DeliverableBundleServiceTests
 {
     [Test]
-    public async Task A_custom_role_report_naming_four_docs_copies_them_and_records_a_render_error_without_a_browser()
+    public async Task Default_settlement_preserves_sources_without_conversion()
     {
         using var workspace = new TempDir();
         WriteDocs(workspace.Path, "01-requirements.md", "02-design.md", "03-api.md", "04-test.md");
@@ -38,11 +40,11 @@ public class DeliverableBundleServiceTests
             Path.Combine(workspace.Path, ".antiphon", "deliverables", DelegationReportFormatter.Short(task.Id)));
         task.DeliverableFileCount.ShouldBe(4);
         task.DeliverablePdfPath.ShouldBeNull();
-        task.DeliverableRenderError.ShouldNotBeNull();
+        task.DeliverableRenderError.ShouldBeNull();
         Directory.GetFiles(task.DeliverableBundleDir, "*.md").Length.ShouldBe(4);
-        File.Exists(Path.Combine(task.DeliverableBundleDir, "render.log")).ShouldBeTrue();
+        File.Exists(Path.Combine(task.DeliverableBundleDir, "render.log")).ShouldBeFalse();
         DeliverableBundleService.ListAttachableFiles(task).Count.ShouldBe(4);
-        DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md, pdf failed");
+        DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md");
     }
 
     [Test]
@@ -83,6 +85,69 @@ public class DeliverableBundleServiceTests
         archive.Entries.Count.ShouldBe(6);
         archive.Entries.Select(e => e.FullName.Replace('\\', '/'))
             .ShouldContain("docs/features/001-kalshi-ref-data-downloader/01.md");
+    }
+
+    [Test]
+    public async Task Source_bytes_survive_inline_copy_and_manifest_records_them()
+    {
+        using var workspace = new TempDir();
+        var relative = "docs/features/one/unicode.md";
+        var source = Path.Combine(workspace.Path, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        var bytes = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("# Zażółć 😀\r\nlast  \r\n")).ToArray();
+        await File.WriteAllBytesAsync(source, bytes);
+        var task = NewTask(workspace.Path, AgentTaskRole.Docs, WorkspaceMode.Shared);
+
+        await CreateService().TryBuildAsync(task, $"`{relative}`", null, CancellationToken.None);
+
+        var copy = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
+        (await File.ReadAllBytesAsync(copy)).ShouldBe(bytes);
+        var manifest = await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!, "source-manifest.json"));
+        manifest.ShouldContain(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
+        manifest.ShouldContain(relative);
+    }
+
+    [Test]
+    public async Task Forty_one_sources_are_all_preserved_and_stale_files_are_not_implicit()
+    {
+        using var workspace = new TempDir();
+        var names = Enumerable.Range(1, 41).Select(i => $"{i:00}.md").ToArray();
+        WriteDocs(workspace.Path, names);
+        var task = NewTask(workspace.Path, AgentTaskRole.Docs, WorkspaceMode.Shared);
+        var report = string.Join(" ", names.Select(n => $"`docs/features/001-kalshi-ref-data-downloader/{n}`"));
+
+        await CreateService().TryBuildAsync(task, report, null, CancellationToken.None);
+
+        task.DeliverableFileCount.ShouldBe(41);
+        var zip = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
+        using (var archive = ZipFile.OpenRead(zip)) archive.Entries.Count.ShouldBe(41);
+        await File.WriteAllTextAsync(Path.Combine(task.DeliverableBundleDir!, "stale.pdf"), "stale");
+        await File.WriteAllTextAsync(Path.Combine(task.DeliverableBundleDir!, "unlisted.md"), "unlisted");
+        DeliverableBundleService.ListAttachableFiles(task).ShouldBe(new[] { zip });
+    }
+
+    [Test]
+    public async Task Source_budget_records_omitted_inputs_without_claiming_completeness()
+    {
+        using var workspace = new TempDir();
+        var root = Path.Combine(workspace.Path, "docs", "features", "budget");
+        Directory.CreateDirectory(root);
+        var exact = Path.Combine(root, "a.md");
+        await using (var stream = File.Create(exact)) stream.SetLength(64L * 1024 * 1024);
+        await File.WriteAllTextAsync(Path.Combine(root, "b.md"), "x");
+        var task = NewTask(workspace.Path, AgentTaskRole.Docs, WorkspaceMode.Shared);
+
+        await CreateService().TryBuildAsync(task,
+            "`docs/features/budget/a.md` `docs/features/budget/b.md`", null, CancellationToken.None);
+
+        task.DeliverableFileCount.ShouldBe(1);
+        var zip = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
+        using (var archive = ZipFile.OpenRead(zip))
+            archive.Entries.Select(e => e.FullName).ShouldBe(new[] { "docs/features/budget/a.md" });
+        var manifest = await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!, "source-manifest.json"));
+        manifest.ShouldContain("\"complete\": false");
+        manifest.ShouldContain("docs/features/budget/b.md");
+        DeliverableBundleService.FormatNoteBit(task).ShouldContain("sources incomplete");
     }
 
     [Test]
@@ -169,11 +234,9 @@ public class DeliverableBundleServiceTests
             BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-no-browser", "msedge.exe"),
             RenderTimeoutSeconds = 2,
         };
-        var renderer = new MarkdownPdfRenderer(
-            Options.Create(settings), NullLogger<MarkdownPdfRenderer>.Instance);
         var git = new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance);
         return new DeliverableBundleService(
-            renderer, git, Options.Create(settings), TimeProvider.System,
+            git, Options.Create(settings),
             NullLogger<DeliverableBundleService>.Instance);
     }
 
