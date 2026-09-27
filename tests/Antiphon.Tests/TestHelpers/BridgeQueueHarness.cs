@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -644,7 +645,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     // fake client or bypassing the runtime's production batch path.
     internal sealed class EmptyRunnerClient : ISessionRunnerClient
     {
-        private readonly Dictionary<Guid, SessionRunnerTranscriptDto> _transcripts = [];
+        private readonly ConcurrentDictionary<Guid, SessionRunnerTranscriptDto> _transcripts = new();
 
         public void SetTranscript(SessionRunnerTranscriptDto transcript) =>
             _transcripts[transcript.SessionId] = transcript;

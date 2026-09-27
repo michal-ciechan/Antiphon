@@ -1,5 +1,8 @@
 using System.Text.Json;
+using System.Data.Common;
+using System.Collections.Concurrent;
 using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -54,18 +57,28 @@ public sealed class ChannelInboundRecoveryTests
         AgentStartTimeoutSeconds = timeout, AgentReadyDelaySeconds = 0,
     };
 
-    private static void InstallTranscriptReceipt(BridgeQueueHarness h)
+    private static void InstallTranscriptReceipt(BridgeQueueHarness h) =>
+        InstallTranscriptReceipt(h, h.SessionId, h.Adapter);
+
+    private static void InstallTranscriptReceipt(BridgeQueueHarness h, Guid sessionId,
+        FakeAgentProtocolAdapter adapter)
     {
-        h.Adapter.OnSubmitted = async submitted =>
+        var syncGate = new SemaphoreSlim(1, 1);
+        adapter.OnSubmitted = async submitted =>
         {
-            await using var db = Db(h.ConnectionString);
-            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
-                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
-            var record = new SessionRunnerTranscriptEvent(h.SessionId, sequence, TranscriptKinds.UserPrompt,
-                Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
-                null, null, null, null, null);
-            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId, [record], sequence));
-            await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+            await syncGate.WaitAsync();
+            try
+            {
+                await using var db = Db(h.ConnectionString);
+                var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+                    .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+                var record = new SessionRunnerTranscriptEvent(sessionId, sequence, TranscriptKinds.UserPrompt,
+                    Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                    null, null, null, null, null);
+                h.Runner.SetTranscript(new SessionRunnerTranscriptDto(sessionId, [record], sequence));
+                await h.Runtime.SyncTranscriptAsync(sessionId, Ct);
+            }
+            finally { syncGate.Release(); }
         };
     }
 
@@ -189,9 +202,12 @@ public sealed class ChannelInboundRecoveryTests
             submittedBody.ShouldBe(owner.Body);
             submittedBody.ShouldContain($"[antiphon-channel:{owner.Id:N}]");
             submittedBody.ShouldContain("DISTINCT HEALTHY TAIL");
-            submittedBody.ShouldContain(healthyChat);
+            submittedBody.ShouldContain("Telegram direct message");
+            submittedBody.ShouldContain("alice");
             (await beforeDeadline.TranscriptEntries.CountAsync(t => t.AgentSessionId == healthySession
-                && t.Kind == TranscriptKinds.UserPrompt && t.Sequence > 1 && t.Text == owner.Body)).ShouldBe(1);
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > owner.LastDeliveryBaselineSequence
+                && t.Text == owner.Body)).ShouldBe(1);
             h.Adapter.SentInput.ShouldBeEmpty();
         }
         finally
@@ -231,6 +247,621 @@ public sealed class ChannelInboundRecoveryTests
             return _clock.CreateTimer(callback, state, dueTime, period);
         }
         public void Advance(TimeSpan amount) { _advanced += amount; _clock.Advance(amount); }
+    }
+
+    [Test]
+    public async Task C767_FailedAgent_WakesOncePerPass()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var refusal = new StartLockRefusal();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(refusal),
+        });
+        var chat = await h.BindChannelAsync();
+        var nativeIds = Enumerable.Range(0, 3).Select(i => $"wake-once-{i}-{Guid.NewGuid():N}").ToArray();
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            await seed.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await seed.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+            var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat)
+                .Select(c => c.Id).SingleAsync();
+            foreach (var native in nativeIds)
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                    NativeMessageId = native, AgentId = h.AgentId, ChatChannelId = channelId,
+                    EnvelopeJson = JsonSerializer.Serialize(Message(chat, native, native + " DISTINCT TAIL"),
+                        Antiphon.Messaging.MessagingJson.Options), AcceptedAt = h.Now,
+                });
+            await seed.SaveChangesAsync();
+        }
+        refusal.Arm(h.AgentId);
+        var bridge = Bridge(h);
+        await bridge.DrainPendingAsync(Ct);
+        refusal.Entries.ShouldBe(1, "one failed wake is allowed for an agent in one pass");
+        await using (var verify = Db(schema.ConnectionString))
+        {
+            var retained = await verify.ChannelInbounds.AsNoTracking()
+                .Where(i => nativeIds.Contains(i.NativeMessageId)).ToListAsync();
+            retained.Count.ShouldBe(3);
+            retained.ShouldAllBe(i => i.EnvelopeJson != null && i.QueueMessageId == null
+                && i.TransferredAt == null && i.AgentId == h.AgentId);
+            (await verify.SessionQueuedMessages.CountAsync(q => q.AgentSessionId == h.SessionId)).ShouldBe(0);
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+        }
+        await bridge.DrainPendingAsync(Ct);
+        refusal.Entries.ShouldBe(2, "a later pass may make one new wake attempt");
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            await revive.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await revive.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, h.SessionId.ToString("D")));
+        }
+        await bridge.DrainPendingAsync(Ct);
+        refusal.Entries.ShouldBe(2);
+        await using var delivered = Db(schema.ConnectionString);
+        var owners = await delivered.SessionQueuedMessages.AsNoTracking()
+            .Where(q => q.AgentSessionId == h.SessionId && q.SourceChannelInboundId != null)
+            .OrderBy(q => q.Sequence).ToListAsync();
+        owners.Count.ShouldBe(3);
+        foreach (var owner in owners)
+            (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(3);
+    }
+
+    private sealed class StartLockRefusal : DbCommandInterceptor
+    {
+        private Guid _target;
+        private int _armed;
+        private int _entries;
+        public int Entries => Volatile.Read(ref _entries);
+        public void Arm(Guid agentId) { _target = agentId; Volatile.Write(ref _armed, 1); }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) == 1
+                && command.CommandText.Contains("FROM \"Agents\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal)
+                && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == _target))
+            {
+                Interlocked.Increment(ref _entries);
+                throw new InvalidOperationException("synthetic channel start lock refusal");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Test]
+    public async Task C767_AgentHeadPaging_WrapsPastHeldAgents()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        InstallTranscriptReceipt(h);
+        var healthyChat = await h.BindChannelAsync();
+        var heldAgents = new List<(Guid AgentId, Guid SessionId, string Native)>();
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            for (var index = 0; index < 64; index++)
+            {
+                var agentId = Guid.NewGuid();
+                var native = $"held-head-{index:D2}-{Guid.NewGuid():N}";
+                var chat = $"held-chat-{index:D2}-{Guid.NewGuid():N}";
+                var directory = Path.Combine(h.TempRoot, $"held-{index:D2}");
+                Directory.CreateDirectory(directory);
+                seed.Agents.Add(new Agent
+                {
+                    Id = agentId, Name = $"Held {index}", Slug = $"held-{Guid.NewGuid():N}",
+                    WorkingDirectory = directory, AlwaysOn = false,
+                    CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                var channelId = Guid.NewGuid();
+                seed.ChatChannels.Add(new ChatChannel
+                {
+                    Id = channelId, Provider = "telegram", ExternalId = chat, ReplyHandle = chat,
+                    Kind = ChatChannelKind.Direct, AgentId = agentId, Enabled = true,
+                    CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                    NativeMessageId = native, AgentId = agentId, ChatChannelId = channelId,
+                    EnvelopeJson = JsonSerializer.Serialize(Message(chat, native, $"held {index} full body"),
+                        Antiphon.Messaging.MessagingJson.Options), AcceptedAt = h.Now,
+                });
+                heldAgents.Add((agentId, Guid.NewGuid(), native));
+            }
+            await seed.SaveChangesAsync();
+            var healthyChannelId = await seed.ChatChannels.Where(c => c.ExternalId == healthyChat)
+                .Select(c => c.Id).SingleAsync();
+            var healthyNative = $"healthy-after-heads-{Guid.NewGuid():N}";
+            seed.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = "telegram", ConversationId = healthyChat,
+                NativeMessageId = healthyNative, AgentId = h.AgentId, ChatChannelId = healthyChannelId,
+                EnvelopeJson = JsonSerializer.Serialize(Message(healthyChat, healthyNative,
+                    "healthy after held heads DISTINCT TAIL"), Antiphon.Messaging.MessagingJson.Options),
+                AcceptedAt = h.Now,
+            });
+            await seed.SaveChangesAsync();
+            var healthySequence = await seed.ChannelInbounds.Where(i => i.NativeMessageId == healthyNative)
+                .Select(i => i.AcceptanceSequence).SingleAsync();
+            (await seed.ChannelInbounds.CountAsync(i => i.AcceptanceSequence < healthySequence
+                && i.AgentId != h.AgentId)).ShouldBe(64);
+        }
+        await using var lockDb = Db(schema.ConnectionString);
+        await lockDb.Database.OpenConnectionAsync();
+        async Task SetLockAsync(Guid id, bool acquire)
+        {
+            await using var command = lockDb.Database.GetDbConnection().CreateCommand();
+            command.CommandText = acquire ? "SELECT pg_advisory_lock(@key)" : "SELECT pg_advisory_unlock(@key)";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "key";
+            parameter.Value = BitConverter.ToInt64(id.ToByteArray(), 0);
+            command.Parameters.Add(parameter);
+            await command.ExecuteScalarAsync();
+        }
+        foreach (var held in heldAgents) await SetLockAsync(held.AgentId, true);
+        try
+        {
+            var bridge = Bridge(h);
+            await bridge.DrainPendingAsync(Ct);
+            await using (var first = Db(schema.ConnectionString))
+                (await first.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId
+                    && i.QueueMessageId != null)).ShouldBe(0);
+            await bridge.DrainPendingAsync(Ct);
+            await using (var second = Db(schema.ConnectionString))
+            {
+                var owner = await second.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(q => q.AgentSessionId == h.SessionId && q.SourceChannelInboundId != null);
+                (await second.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+                (await second.ChannelInbounds.CountAsync(i => heldAgents.Select(a => a.AgentId)
+                    .Contains(i.AgentId!.Value) && i.QueueMessageId == null)).ShouldBe(64);
+            }
+            var released = heldAgents[0];
+            await SetLockAsync(released.AgentId, false);
+            await using (var revive = Db(schema.ConnectionString))
+            {
+                revive.AgentSessions.Add(new AgentSession
+                {
+                    Id = released.SessionId, AgentKind = AgentKind.ClaudeCode,
+                    DefinitionName = "fake", Status = SessionStatus.Running,
+                    Cwd = Path.Combine(h.TempRoot, "held-00"),
+                    CreatedAt = h.Now, StartedAt = h.Now, LastSeenAt = h.Now,
+                });
+                await revive.SaveChangesAsync();
+                await revive.Agents.Where(a => a.Id == released.AgentId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId,
+                        released.SessionId.ToString("D")));
+            }
+            var adapter = new FakeAgentProtocolAdapter();
+            InstallTranscriptReceipt(h, released.SessionId, adapter);
+            h.Runtime.Register(released.SessionId, adapter);
+            await bridge.DrainPendingAsync(Ct);
+            await using var wrapped = Db(schema.ConnectionString);
+            var wrappedOwner = await wrapped.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.AgentSessionId == released.SessionId && q.SourceChannelInboundId != null);
+            (await wrapped.TranscriptEntries.CountAsync(t => t.AgentSessionId == released.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == wrappedOwner.Body)).ShouldBe(1);
+            (await wrapped.ChannelInbounds.CountAsync(i => i.NativeMessageId == released.Native
+                && i.QueueMessageId == wrappedOwner.Id)).ShouldBe(1);
+        }
+        finally
+        {
+            foreach (var held in heldAgents) await SetLockAsync(held.AgentId, false);
+            await lockDb.Database.CloseConnectionAsync();
+        }
+    }
+
+    [Test]
+    public async Task C767_MalformedDelivery_IsAcknowledgedAndNextMessageArrives()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        var chat = await h.BindChannelAsync();
+        var native = $"after-malformed-{Guid.NewGuid():N}";
+        var consumer = new TwoDeliveryConsumer(Message(chat, native, "valid after poison DISTINCT TAIL"));
+        var receipt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await using var db = Db(schema.ConnectionString);
+            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId,
+                [new SessionRunnerTranscriptEvent(h.SessionId, sequence, TranscriptKinds.UserPrompt,
+                    Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                    null, null, null, null, null)], sequence));
+            await h.Runtime.SyncTranscriptAsync(h.SessionId, Ct);
+            receipt.TrySetResult();
+        };
+        var bridge = new ChannelBridgeService(consumer, h.Queue,
+            h.Provider.GetRequiredService<ChannelInboundDebouncer>(), h.EventBus,
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(), h.Clock,
+            NullLogger<ChannelBridgeService>.Instance,
+            h.Provider.GetRequiredService<ChannelInboundWakeSignal>());
+        await bridge.StartAsync(Ct);
+        try
+        {
+            await receipt.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            consumer.Dispositions.ShouldBe(["malformed:synthetic null broker row", "accepted"]);
+            await using var verify = Db(schema.ConnectionString);
+            var inbound = await verify.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.NativeMessageId == native);
+            var owner = await verify.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+            owner.Body.ShouldContain("valid after poison DISTINCT TAIL");
+            (await verify.ChannelInbounds.CountAsync()).ShouldBe(1);
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        }
+        finally { await bridge.StopAsync(Ct); }
+    }
+
+    private sealed class TwoDeliveryConsumer(ChannelMessage valid) : IAntiphonMessagingConsumer
+    {
+        private readonly List<string> _dispositions = [];
+        public IReadOnlyList<string> Dispositions => _dispositions;
+        public async IAsyncEnumerable<ChannelMessage> ConsumeAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+        public async IAsyncEnumerable<InboundDelivery> ConsumeDeliveriesAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new InboundDelivery(null, "synthetic null broker row",
+                (disposition, _) => { _dispositions.Add(disposition); return Task.CompletedTask; });
+            yield return new InboundDelivery(valid, null,
+                (disposition, _) => { _dispositions.Add(disposition); return Task.CompletedTask; });
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    [Test]
+    public async Task C767_ConcurrentDrains_ClaimMissRecoversWithoutDuplicatePrompt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new StartLockGate();
+        await using var first = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        var chat = await first.BindChannelAsync();
+        var native = $"claim-miss-{Guid.NewGuid():N}";
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            await seed.AgentSessions.Where(s => s.Id == first.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await seed.Agents.Where(a => a.Id == first.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+            var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat)
+                .Select(c => c.Id).SingleAsync();
+            seed.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                NativeMessageId = native, AgentId = first.AgentId, ChatChannelId = channelId,
+                EnvelopeJson = JsonSerializer.Serialize(Message(chat, native,
+                    "claim miss complete body DISTINCT TAIL"), Antiphon.Messaging.MessagingJson.Options),
+                AcceptedAt = first.Now,
+            });
+            await seed.SaveChangesAsync();
+        }
+        await using var second = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AttachAgentId = first.AgentId,
+            AttachSessionId = first.SessionId, Bridge = Settings(timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        InstallTranscriptReceipt(second);
+        gate.Arm(first.AgentId);
+        var firstDrain = Bridge(first).DrainPendingAsync(Ct);
+        try
+        {
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Bridge(second).DrainPendingAsync(Ct);
+            gate.Entries.ShouldBe(1, "the competing bridge must miss the PostgreSQL agent claim");
+            await using (var pending = Db(schema.ConnectionString))
+                (await pending.ChannelInbounds.Where(i => i.NativeMessageId == native)
+                    .Select(i => i.QueueMessageId).SingleAsync()).ShouldBeNull();
+        }
+        finally
+        {
+            gate.Release.TrySetResult();
+            await firstDrain.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            await revive.AgentSessions.Where(s => s.Id == first.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await revive.Agents.Where(a => a.Id == first.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId,
+                    first.SessionId.ToString("D")));
+        }
+        await Bridge(second).DrainPendingAsync(Ct);
+        await using var delivered = Db(schema.ConnectionString);
+        var inbound = await delivered.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+        var owner = await delivered.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+        (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == first.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        (await delivered.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId == inbound.Id)).ShouldBe(1);
+        gate.Entries.ShouldBe(1);
+    }
+
+    private sealed class StartLockGate : DbCommandInterceptor
+    {
+        private Guid _target;
+        private int _entries;
+        public int Entries => Volatile.Read(ref _entries);
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool HoldForCancellation { get; set; }
+        public void Arm(Guid agentId) => _target = agentId;
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FROM \"Agents\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal)
+                && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == _target))
+            {
+                Interlocked.Increment(ref _entries);
+                Entered.TrySetResult();
+                if (HoldForCancellation)
+                {
+                    try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+                    catch (OperationCanceledException) { CancellationObserved.TrySetResult(); }
+                }
+                await Release.Task;
+                if (HoldForCancellation) throw new OperationCanceledException(cancellationToken);
+                throw new InvalidOperationException("synthetic gated start refusal");
+            }
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Test]
+    public async Task C767_Stop_AwaitsCancelledGroupsAndRestartRecovers()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new StartLockGate { HoldForCancellation = true };
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 90),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        var chat = await h.BindChannelAsync();
+        var native = $"stop-group-{Guid.NewGuid():N}";
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            await seed.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            await seed.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
+            var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat)
+                .Select(c => c.Id).SingleAsync();
+            seed.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                NativeMessageId = native, AgentId = h.AgentId, ChatChannelId = channelId,
+                EnvelopeJson = JsonSerializer.Serialize(Message(chat, native,
+                    "recover after stopped group DISTINCT TAIL"), Antiphon.Messaging.MessagingJson.Options),
+                AcceptedAt = h.Now,
+            });
+            await seed.SaveChangesAsync();
+        }
+        gate.Arm(h.AgentId);
+        var bridge = Bridge(h);
+        await bridge.StartAsync(Ct);
+        Task stop = Task.CompletedTask;
+        try
+        {
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            stop = bridge.StopAsync(Ct);
+            await gate.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            stop.IsCompleted.ShouldBeFalse("stop must await the canceled in-flight group");
+        }
+        finally { gate.Release.TrySetResult(); }
+        await stop.WaitAsync(TimeSpan.FromSeconds(10));
+        await using (var pending = Db(schema.ConnectionString))
+        {
+            (await pending.ChannelInbounds.Where(i => i.NativeMessageId == native)
+                .Select(i => i.QueueMessageId).SingleAsync()).ShouldBeNull();
+            (await pending.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+        }
+        await using var recovered = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AttachAgentId = h.AgentId,
+            AttachSessionId = h.SessionId, Bridge = Settings(),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+        });
+        InstallTranscriptReceipt(recovered);
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            await revive.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await revive.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId,
+                    h.SessionId.ToString("D")));
+        }
+        await Bridge(recovered).DrainPendingAsync(Ct);
+        await using var delivered = Db(schema.ConnectionString);
+        var inbound = await delivered.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
+        var owner = await delivered.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+        (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        gate.Entries.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C767_AgentConcurrency_IsBoundedAndAllGroupsAreAwaited()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new CountingStartGate();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
+            AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
+        });
+        var agents = new List<(Guid Id, Guid SessionId, string Native, string Directory)>();
+        await using (var seed = Db(schema.ConnectionString))
+        {
+            for (var index = 0; index < 5; index++)
+            {
+                var id = Guid.NewGuid();
+                var chat = $"bounded-chat-{index}-{Guid.NewGuid():N}";
+                var native = $"bounded-native-{index}-{Guid.NewGuid():N}";
+                var directory = Path.Combine(h.TempRoot, $"bounded-{index}");
+                Directory.CreateDirectory(directory);
+                seed.Agents.Add(new Agent
+                {
+                    Id = id, Name = $"Bounded {index}", Slug = $"bounded-{Guid.NewGuid():N}",
+                    WorkingDirectory = directory, AlwaysOn = false,
+                    CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                var channelId = Guid.NewGuid();
+                seed.ChatChannels.Add(new ChatChannel
+                {
+                    Id = channelId, Provider = "telegram", ExternalId = chat, ReplyHandle = chat,
+                    Kind = ChatChannelKind.Direct, AgentId = id, Enabled = true,
+                    CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                seed.ChannelInbounds.Add(new ChannelInbound
+                {
+                    Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
+                    NativeMessageId = native, AgentId = id, ChatChannelId = channelId,
+                    EnvelopeJson = JsonSerializer.Serialize(Message(chat, native,
+                        $"bounded complete body {index} DISTINCT TAIL"), Antiphon.Messaging.MessagingJson.Options),
+                    AcceptedAt = h.Now,
+                });
+                agents.Add((id, Guid.NewGuid(), native, directory));
+            }
+            await seed.SaveChangesAsync();
+        }
+        gate.Arm(agents.Select(a => a.Id));
+        var drain = Bridge(h).DrainPendingAsync(Ct);
+        try
+        {
+            await gate.FourEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            gate.Peak.ShouldBe(4);
+            gate.Entries.ShouldBe(4);
+            drain.IsCompleted.ShouldBeFalse();
+            gate.ReleaseOne();
+            await gate.FiveEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            gate.Peak.ShouldBe(4, "the fifth wake must wait for a group slot");
+        }
+        finally { gate.ReleaseAll(); }
+        await drain.WaitAsync(TimeSpan.FromSeconds(10));
+        gate.Entries.ShouldBe(5);
+        gate.Active.ShouldBe(0);
+        await using (var pending = Db(schema.ConnectionString))
+            (await pending.ChannelInbounds.CountAsync(i => agents.Select(a => a.Id)
+                .Contains(i.AgentId!.Value) && i.QueueMessageId == null)).ShouldBe(5);
+        await using (var revive = Db(schema.ConnectionString))
+        {
+            foreach (var agent in agents)
+                revive.AgentSessions.Add(new AgentSession
+                {
+                    Id = agent.SessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode,
+                    Status = SessionStatus.Running, Cwd = agent.Directory,
+                    CreatedAt = h.Now, StartedAt = h.Now, LastSeenAt = h.Now,
+                });
+            await revive.SaveChangesAsync();
+            foreach (var agent in agents)
+                await revive.Agents.Where(a => a.Id == agent.Id)
+                    .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId,
+                        agent.SessionId.ToString("D")));
+        }
+        foreach (var agent in agents)
+        {
+            var adapter = new FakeAgentProtocolAdapter();
+            InstallTranscriptReceipt(h, agent.SessionId, adapter);
+            h.Runtime.Register(agent.SessionId, adapter);
+        }
+        await Bridge(h).DrainPendingAsync(Ct);
+        await using var delivered = Db(schema.ConnectionString);
+        foreach (var agent in agents)
+        {
+            var inbound = await delivered.ChannelInbounds.AsNoTracking()
+                .SingleAsync(i => i.NativeMessageId == agent.Native);
+            var owner = await delivered.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+            (await delivered.TranscriptEntries.CountAsync(t => t.AgentSessionId == agent.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        }
+    }
+
+    private sealed class CountingStartGate : DbCommandInterceptor
+    {
+        private readonly ConcurrentQueue<TaskCompletionSource> _releases = new();
+        private HashSet<Guid> _targets = [];
+        private int _entries;
+        private int _active;
+        private int _peak;
+        private int _open;
+        public int Entries => Volatile.Read(ref _entries);
+        public int Active => Volatile.Read(ref _active);
+        public int Peak => Volatile.Read(ref _peak);
+        public TaskCompletionSource FourEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FiveEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Arm(IEnumerable<Guid> targets) => _targets = targets.ToHashSet();
+        public void ReleaseOne() { if (_releases.TryDequeue(out var release)) release.TrySetResult(); }
+        public void ReleaseAll()
+        {
+            Volatile.Write(ref _open, 1);
+            while (_releases.TryDequeue(out var release)) release.TrySetResult();
+        }
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FROM \"Agents\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal)
+                && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && _targets.Contains(id)))
+            {
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _releases.Enqueue(release);
+                if (Volatile.Read(ref _open) == 1) release.TrySetResult();
+                var active = Interlocked.Increment(ref _active);
+                var peak = Volatile.Read(ref _peak);
+                while (active > peak && Interlocked.CompareExchange(ref _peak, active, peak) != peak)
+                    peak = Volatile.Read(ref _peak);
+                var entries = Interlocked.Increment(ref _entries);
+                if (entries == 4) FourEntered.TrySetResult();
+                if (entries == 5) FiveEntered.TrySetResult();
+                try { await release.Task; }
+                finally { Interlocked.Decrement(ref _active); }
+                throw new InvalidOperationException("synthetic bounded start refusal");
+            }
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     [Test]
