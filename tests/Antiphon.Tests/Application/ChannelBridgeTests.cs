@@ -430,6 +430,17 @@ public class ChannelBridgeTests
     {
         await using var h = await HarnessAsync();
         await h.BindChannelAsync();
+        var runtime = h.Provider.GetRequiredService<AgentSessionRuntime>();
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await using var evidence = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var sequence = (await evidence.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+            await runtime.ObserveTranscriptAsync(new SessionRunnerTranscriptEvent(
+                h.SessionId, sequence, TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("N"),
+                null, DateTimeOffset.UtcNow, "user", submitted,
+                null, null, null, null, null), CancellationToken.None);
+        };
 
         var msg = TelegramText(h.ChatId, "ping", title: "Family");
         await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
@@ -437,6 +448,15 @@ public class ChannelBridgeTests
 
         h.Adapter.Inputs.Count(i => i.Contains("ping")).ShouldBe(1);
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var inbound = await db.ChannelInbounds.AsNoTracking()
+            .SingleAsync(i => i.Provider == msg.Channel && i.ConversationId == msg.Conversation.Id
+                && i.NativeMessageId == msg.ChannelMessageId);
+        var owner = await db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+        owner.Body.ShouldContain($"[antiphon-channel:{owner.Id:N}]");
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
     }
 
     // CARD-0119: a Slack DM's `D…` conversation id is stable for the life of the (user, bot-user)
