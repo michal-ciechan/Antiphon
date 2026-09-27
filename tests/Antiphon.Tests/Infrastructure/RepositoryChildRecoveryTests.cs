@@ -114,7 +114,8 @@ public sealed class RepositoryChildRecoveryTests
         try
         {
             if (state != "unknown")
-                await journal.StartedAsync(child.Id, child.StartTime.ToUniversalTime().Ticks + (state == "reused" ? 1 : 0), CancellationToken.None);
+                await journal.StartedAsync(child.Id, await ReadScriptStartTicksAsync(child.Id)
+                    + (state == "reused" ? TimeSpan.TicksPerSecond : 0), CancellationToken.None);
             var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
             if (state == "malformed") await File.WriteAllTextAsync(path, "invalid json");
             if (state == "torn") { File.Move(path, path + ".tmp"); path += ".tmp"; }
@@ -319,14 +320,30 @@ public sealed class RepositoryChildRecoveryTests
         return Process.Start(start)!;
     }
 
+    private static async Task<long> ReadScriptStartTicksAsync(int processId)
+    {
+        var read = await RunProcessAsync("pwsh", ["-NoProfile", "-Command",
+            "[Diagnostics.Process]::GetProcessById([int]$args[0]).StartTime.ToUniversalTime().Ticks",
+            processId.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+        read.Exit.ShouldBe(0, read.Error);
+        return long.Parse(read.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private static async Task<(int Exit, string Output, string Error)> RecoverAsync(string repository,
         IReadOnlyDictionary<string, string>? environment, params string[] options)
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
         root.ShouldNotBeNull();
-        return await RunProcessAsync("pwsh", ["-NoProfile", "-File",
-            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options], environment);
+        var arguments = new[] { "-NoProfile", "-File",
+            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options };
+        var result = await RunProcessAsync("pwsh", arguments, environment);
+        if (OperatingSystem.IsWindows())
+        {
+            var legacy = await RunProcessAsync("powershell.exe", arguments, environment);
+            legacy.Exit.ShouldBe(result.Exit, "Windows PowerShell 5.1 must make the same recovery decision");
+        }
+        return result;
     }
 
     private static async Task<string> CrashBeforeReplaceAsync(string repository, string cut, string readyRoot)
@@ -351,9 +368,16 @@ public sealed class RepositoryChildRecoveryTests
             using var evidence = JsonDocument.Parse(await File.ReadAllTextAsync(ready));
             evidence.RootElement.GetProperty("worker").GetInt32().ShouldBe(child.Id);
             var temporary = evidence.RootElement.GetProperty("temporary").GetString().ShouldNotBeNull();
+            var priorHash = evidence.RootElement.GetProperty("previousHash").GetString();
             File.Exists(temporary).ShouldBeTrue();
             child.Kill(entireProcessTree: false);
             await child.WaitForExitAsync();
+            if (priorHash is not null)
+            {
+                var common = await new LandingGit().CommonDirectoryAsync(repository, CancellationToken.None);
+                var record = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+                Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(record))).ShouldBe(priorHash);
+            }
             return temporary;
         }
         finally
