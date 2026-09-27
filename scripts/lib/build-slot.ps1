@@ -12,8 +12,8 @@
 #   Exit-AntiphonBuildSlot -Lease <result>       releases a granted lease (a no-op otherwise)
 #   Add-AntiphonMaxCpuCount -Command <tokens> -MaxCpuCount N
 #
-# The lease belongs to the calling process (its pid and start time): the runner reaps it when that
-# process dies, so a lease never outlives the command it guards.
+# A pid-mode lease belongs to the calling process. A renew-mode lease is kept alive by a thread
+# job while the foreground command runs; the broker cannot inspect pids in another container.
 #
 # Endpoint: ANTIPHON_BUILD_SLOTS_URL, else the production runner on this host (Windows
 # http://localhost:17204/build-slots, Linux http://127.0.0.1:8080/build-slots).
@@ -104,7 +104,19 @@ function Enter-AntiphonBuildSlot {
                 return [pscustomobject]@{ Outcome = 'unlimited'; LeaseId = $null; MaxCpuCount = $cpu; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = $null; Position = 0 }
             }
             Write-Host ('BUILD SLOT granted lease={0} waited={1}s maxcpucount={2}' -f $json.leaseId, [int]$elapsed, $cpu)
-            return [pscustomobject]@{ Outcome = 'granted'; LeaseId = [string]$json.leaseId; MaxCpuCount = $cpu; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = [Diagnostics.Stopwatch]::StartNew(); Position = 0 }
+            $renewer = $null
+            if ($null -ne $json.renewEverySeconds -and [int]$json.renewEverySeconds -gt 0) {
+                $renewer = Start-ThreadJob -ArgumentList $Endpoint, ([string]$json.leaseId), ([int]$json.renewEverySeconds), $PSCommandPath -ScriptBlock {
+                    param($url, $id, $interval, $library)
+                    . $library
+                    while ($true) {
+                        Start-Sleep -Seconds $interval
+                        $renewed = Invoke-AntiphonBuildSlotHttp -Method 'POST' -Uri ('{0}/{1}/renew' -f $url, $id)
+                        if ([int]$renewed.Status -eq 404) { break }
+                    }
+                }
+            }
+            return [pscustomobject]@{ Outcome = 'granted'; LeaseId = [string]$json.leaseId; MaxCpuCount = $cpu; WaitedSeconds = [int]$elapsed; Endpoint = $Endpoint; Held = [Diagnostics.Stopwatch]::StartNew(); Position = 0; RenewJob = $renewer }
         }
 
         if ($status -eq 409 -and ($type -eq 'build_slot_busy' -or $type -eq 'build_slot_memory_floor')) {
@@ -149,6 +161,11 @@ function Enter-AntiphonBuildSlot {
 function Exit-AntiphonBuildSlot {
     param($Lease)
     if ($null -eq $Lease -or $Lease.Outcome -ne 'granted' -or [string]::IsNullOrWhiteSpace([string]$Lease.LeaseId)) { return }
+    if ($Lease.PSObject.Properties['RenewJob'] -and $Lease.RenewJob) {
+        try { Stop-Job -Job $Lease.RenewJob -ErrorAction SilentlyContinue } finally {
+            Remove-Job -Job $Lease.RenewJob -Force -ErrorAction SilentlyContinue
+        }
+    }
     $held = 0
     if ($Lease.Held) { $held = [int]$Lease.Held.Elapsed.TotalSeconds }
     $answer = Invoke-AntiphonBuildSlotHttp -Method 'DELETE' -Uri ('{0}/{1}' -f $Lease.Endpoint, $Lease.LeaseId)
