@@ -343,6 +343,16 @@ public sealed class ChannelBridgeService : BackgroundService
                 await ApplyWakeDispositionAsync(inbound, agentId, "ChannelWakeTimeout", null, direct, ct);
             return true;
         }
+        if (!direct)
+        {
+            // The member cursor progresses incident coverage while an agent cannot wake.
+            // Those rows are still pending, so a successful wake must start again at the
+            // oldest durable member before scheduling any later selected page.
+            inbounds = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.AgentId == agentId && i.EnvelopeJson != null
+                    && i.QueueMessageId == null && i.ChatChannelId != null)
+                .OrderBy(i => i.AcceptanceSequence).Take(64).ToListAsync(ct);
+        }
         var scheduled = true;
         foreach (var inbound in inbounds)
         {
