@@ -203,13 +203,15 @@ public class ResilienceBudgetTests
         ResilienceTestHost.Stamp(first, ResilienceOperations.GitHubRepositories, budget);
         (await client.SendAsync(first)).StatusCode.ShouldBe(HttpStatusCode.OK);
         time.Advance(TimeSpan.FromSeconds(15));
+        budget.AttemptTimeout(settings).ShouldBe(TimeSpan.FromSeconds(5),
+            "the second page must inherit the original 20-second deadline");
         using var second = new HttpRequestMessage(HttpMethod.Get, "user/repos?page=2");
         ResilienceTestHost.Stamp(second, ResilienceOperations.GitHubRepositories, budget);
         await Should.ThrowAsync<TaskCanceledException>(() =>
             ResilienceTestHost.Pump(time, client.SendAsync(second), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(8)));
         var elapsed = time.GetUtcNow() - DateTimeOffset.Parse("2026-09-25T00:00:00Z");
         elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(20));
-        elapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(24));
+        budget.Expired.ShouldBeTrue();
         handler.Sends.ShouldBe(2);
     }
 
