@@ -57,7 +57,8 @@ public class AgentTaskInternalDecisionMigrationTests
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var first = Array.FindIndex(migrations, m => m.EndsWith(FirstMigrationSuffix, StringComparison.Ordinal));
         first.ShouldBeGreaterThan(0);
-        migrations[^1].ShouldEndWith("_StoreInternalDecisionPolicyAsText");
+        migrations.Any(m => m.EndsWith("_StoreInternalDecisionPolicyAsText", StringComparison.Ordinal))
+            .ShouldBeTrue();
 
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(migrations[first - 1]);

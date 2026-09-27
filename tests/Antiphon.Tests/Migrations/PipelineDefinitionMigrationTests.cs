@@ -15,10 +15,10 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Migrations;
 
-public sealed class PipelineDefinitionMigrationTests
+[Category("Unit")]
+public sealed class PipelineDefinitionMigrationShapeTests
 {
     [Test]
-    [Category("Unit")]
     public void AddPipelineDefinitions_operations_create_tables_repoint_runs_and_add_the_open_run_index()
     {
         var up = new AddPipelineDefinitions().UpOperations.ToList();
@@ -43,9 +43,12 @@ public sealed class PipelineDefinitionMigrationTests
         up.OfType<CreateIndexOperation>().ShouldContain(o => o.Name == "IX_CardWorkflowStages_RunId_Role" && o.IsUnique);
         new AddPipelineDefinitions().DownOperations[0].ShouldBeOfType<SqlOperation>();
     }
+}
 
+[Category("Integration")]
+public sealed class PipelineDefinitionMigrationTests
+{
     [Test]
-    [Category("Integration")]
     public async Task Up_deletes_every_legacy_run_and_stage_before_the_not_null_adds()
     {
         await using var fixture = await LegacyFixture.CreateAsync(linkCard: false);
@@ -59,7 +62,6 @@ public sealed class PipelineDefinitionMigrationTests
     }
 
     [Test]
-    [Category("Integration")]
     public async Task Up_nulls_a_card_pointer_at_a_deleted_legacy_run()
     {
         await using var fixture = await LegacyFixture.CreateAsync(linkCard: true);
@@ -69,7 +71,6 @@ public sealed class PipelineDefinitionMigrationTests
     }
 
     [Test]
-    [Category("Integration")]
     [Arguments(CardWorkflowRunStatus.Queued, CardWorkflowRunStatus.Queued, true)]
     [Arguments(CardWorkflowRunStatus.Queued, CardWorkflowRunStatus.Running, true)]
     [Arguments(CardWorkflowRunStatus.Running, CardWorkflowRunStatus.Running, true)]
@@ -102,7 +103,6 @@ public sealed class PipelineDefinitionMigrationTests
     }
 
     [Test]
-    [Category("Integration")]
     public async Task Down_removes_post_A_runs_then_restores_gen1_columns_and_Up_returns_to_head()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -123,7 +123,6 @@ public sealed class PipelineDefinitionMigrationTests
     }
 
     [Test]
-    [Category("Integration")]
     [Arguments("StagesJson")]
     [Arguments("RevisionNumber")]
     [Arguments("DefinitionId")]

@@ -919,5 +919,5 @@ Group A's final ordinary verification manifest. Each row uses a fresh result dir
 | CP-7 | all | CP-1 | queue-and-board | `/*/*/(AgentServiceIntegrationTests*)\|(BoardServiceIntegrationTests*)/*` | V-A17, R-A-board | both full classes, 0 failed | 2 | 12 |
 | CP-8 | all | CP-1 | persistence-and-home | `/*/*/(KanbanPersistenceTests*)\|(ProjectDeletionTests*)\|(HomeTaskServiceIntegrationTests*)/*` | V-A19, R-A-persistence | all three classes, 0 failed | 3 | 12 |
 | CP-9 | all | CP-1 | downgrade-regression | `/*/*/(CommitOnSettleMigrationTests*)\|(AgentTaskInternalDecisionMigrationTests*)\|(StandingSpecialistRoutingMigrationTests*)/*` | R-A-migrations | all three classes, 0 failed | 3 | 9 |
-| CP-10 | all | `tests/Antiphon.E2E -> bin-c558e2e/` | browser | `/*/*/AgentE2ETests/*` | R-A-browser | all named browser results, 0 failed | 1 | 20 |
+| CP-10 | all | `tests/Antiphon.E2E -> bin-c558e2e/` | browser | `/*/*/AgentE2ETests/*` | R-A-browser | all named browser results, 0 failed | 1 | 15 |
 | CP-11 | all | CP-1 | windows-agent-control | `/*/*/AgentControlServiceIntegrationTests/*` | R-A-agent-control | whole class on Windows with cmd.exe fixture, 0 failed | 1 | 15 |

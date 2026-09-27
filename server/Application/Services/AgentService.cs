@@ -1101,9 +1101,11 @@ public sealed class AgentService
 
     internal async Task<Project?> FindProjectForWorkingDirectoryAsync(string workingDirectory, CancellationToken ct)
     {
-        var normalized = DelegationWorkspaceResolver.NormalizeSeparators(workingDirectory).ToLowerInvariant();
+        // Project paths may have been stored on a different OS. Compare one separator style on
+        // both sides instead of depending on this process's Path.DirectorySeparatorChar.
+        var normalized = workingDirectory.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
         return await _db.Projects.FirstOrDefaultAsync(
-            p => p.LocalRepositoryPath.Replace("/", "\\").ToLower() == normalized,
+            p => p.LocalRepositoryPath.Replace("\\", "/").ToLower() == normalized,
             ct);
     }
 
