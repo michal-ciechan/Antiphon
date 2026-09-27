@@ -7,6 +7,11 @@
     Uses temporary Dockerfile fixtures and fake SSH/SCP runners only. It never contacts
     server2 or writes to a remote target. ASCII-only for Windows PowerShell 5.1.
 #>
+param([string]$ReadinessCase, [string]$FixtureDirectory, [string]$DeploymentScript)
+if ($ReadinessCase) {
+    & (Join-Path $PSScriptRoot 'test-deploy-am-service-readiness.ps1') -ReadinessCase $ReadinessCase -FixtureDirectory $FixtureDirectory -DeploymentScript $DeploymentScript
+    exit $LASTEXITCODE
+}
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'deploy-am-service.ps1')
 $script:passed = 0; $script:failed = 0; $script:failures = @()
@@ -143,7 +148,7 @@ try {
     Assert-True (-not $failureText.Contains('never-log-this')) 'remote seam failure diagnostics do not leak remote output' $failureText
 
     $script:commands.Clear(); $script:scpCalls.Clear(); $migrationOutput = @(Get-AmServiceMigrationIds (Join-Path $context 'Antiphon.Messaging.Service\Migrations'))
-    $successSsh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile"}'.Replace('\','')} }; if ($command -match 'curl -fsS') { return [pscustomobject]@{ExitCode=0;Output=(@('[{"channel":"telegram"},{"channel":"slack"}]'.Replace('\','')) + $migrationOutput)} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"State":"running"}'.Replace('\',''))} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
+    $successSsh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile"}'.Replace('\','')} }; if ($command -match 'http://localhost:18090/api/channels') { return [pscustomobject]@{ExitCode=0;Output=(@('[{"channel":"telegram"},{"channel":"slack"}]'.Replace('\','')) + $migrationOutput)} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"State":"running"}'.Replace('\',''))} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
     $successSsh = Add-MonitorFake $successSsh
     Reset-MonitorFake
     $success = Invoke-ExpectedDeployment $root $successSsh $scp $http
@@ -151,7 +156,7 @@ try {
     Assert-True (((($script:commands -join "`n") -match 'docker compose build messaging-service') -and (($script:commands -join "`n") -match 'docker compose up -d --no-deps messaging-service'))) 'remote seam issues fixed-target build and recreate sequence' ($script:commands -join ' | ')
     $cleanupWasRequested = (($script:commands -join "`n") -match "rm -f -- '/tmp/am-service-src-")
     Assert-True $cleanupWasRequested 'remote seam removes transient upload after handled deployment' ($script:commands -join ' | ')
-    $verificationCommand = @($script:commands | Where-Object { $_ -match 'curl -fsS' }) -join "`n"
+    $verificationCommand = @($script:commands | Where-Object { $_ -match 'http://localhost:18090/api/channels' }) -join "`n"
     Assert-True ($verificationCommand.Contains("cd '/home/mc/antiphon-messaging'")) 'technical verification uses the deployment Compose directory'
     $brokerCmds = @($script:commands | Where-Object { $_ -match 'rpk cluster info|rpk group describe' }) -join "`n"
     Assert-True ($brokerCmds -match 'docker compose exec -T redpanda rpk cluster info' -and $brokerCmds -match 'docker compose exec -T redpanda rpk group describe' -and $brokerCmds -notmatch 'docker compose exec -T am-redpanda') 'deploy broker probes use Compose service name redpanda' $brokerCmds
