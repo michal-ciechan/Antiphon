@@ -1065,7 +1065,7 @@ CARD-0550 Code execution manifest, added after the CARD-0585/CARD-0723 checkpoin
 | CP-5 | S1-S3 | CP-1 | post-land | `/*/*/PostLandMutationDeliveryTests/*` | V-1 | all listed, 0 failed | 1 | 5 | true |
 | CP-6 | S1-S3 | CP-1 | verification-round | `/*/*/VerificationRoundDeliveryTests/*` | V-1 | all listed, 0 failed | 1 | 7 | true |
 | CP-7 | S1-S3 | CP-1 | land-receipt | `/*/*/AgentTaskLandReceiptTests/*` | V-1 | all listed, 0 failed | 1 | 2 | true |
-| CP-8 | S1-S3 | `tests/Antiphon.E2E -> bin-c550/` | progress-probe | `/*/*/LandDeliveryFixtureProbeTests/*` | V-9 | all listed, 0 failed | 1 | 5 | true |
+| CP-8 | S1-S3 | `tests/Antiphon.E2E -> bin-c550e/` | progress-probe | `/*/*/LandDeliveryFixtureProbeTests/*` | V-9 | all listed, 0 failed | 1 | 5 | true |
 | CP-9 | S1-S3 | CP-8 | native-n1a | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V26_HardCrashAfterQueueInsertReusesRow*` | V-1,V-6 | all listed, 0 failed | 1 | 5 | true |
 | CP-10 | S1-S3 | CP-8 | native-n1b | `/*/*/AgentTaskLandDeliveryE2ETests/(C488_ApprovalDeliveryCrashMatrix*)\|(C488_ApprovalQueueInsertCrashReusesRow*)` | V-1,V-6 | all listed, 0 failed | 2 | 6 | true |
 | CP-11 | S1-S3 | CP-8 | native-n2 | `/*/*/AgentTaskLandDeliveryE2ETests/(C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput*)\|(C467_V28_LostFlushWakeupRecoversOnIdleCaller*)\|(C467_V31_EnqueueFailureRecoversAutomatically*)` | V-6 | all listed, 0 failed | 3 | 7 | true |
