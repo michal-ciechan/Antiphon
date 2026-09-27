@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Agents.Pty;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -157,10 +158,12 @@ public class SpecialistExecutionIdentityTests
     {
         await using var f = await Card0758Fixture.CreateAsync();
         await f.ChangeGenerationAsync("started");
-        Guid ownerId;
-        await using (var db = f.Db())
+        var ownerId = Guid.NewGuid();
+        var hookFired = false;
+        async Task AddCurrentOwner(AppDbContext _, CancellationToken ct)
         {
-            ownerId = Guid.NewGuid();
+            hookFired = true;
+            await using var db = f.Db();
             db.AgentTasks.Add(new AgentTask
             {
                 Id = ownerId, RootTaskId = ownerId, Title = "older owner", Goal = "older",
@@ -169,10 +172,11 @@ public class SpecialistExecutionIdentityTests
                 WorkingDirectory = Path.GetTempPath(), CreatedAt = DateTime.UtcNow.AddHours(-1),
                 DispatchedAt = DateTime.UtcNow.AddHours(-1),
             });
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(ct);
         }
         await using var bridge = await f.AttachBridgeAsync();
-        await f.TickAsync(bridge);
+        await f.TickAsync(bridge, AddCurrentOwner);
+        hookFired.ShouldBeTrue();
         await f.AssertQueuedAsync(bridge);
         await using (var db = f.Db())
             await db.AgentTasks.Where(t => t.Id == ownerId).ExecuteUpdateAsync(u =>
@@ -469,10 +473,21 @@ public class SpecialistExecutionIdentityTests
                 v.PostFailureConfirmGraceSeconds = 0;
                 v.PostEvidenceSettleMs = 0;
             },
-            ConfigureServices = services => services.AddSingleton(sp => new PtyDeliveryProfile(
-                sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PtyDeliveryProfile>.Instance,
-                Options.Create(Settings), backendOverride: "modern")),
+            ConfigureServices = services => services.AddSingleton(sp => SyntheticModernProfile(sp, Settings)),
         });
+
+        // These fixtures use an attached fake adapter: they certify the queue/receipt path, not a
+        // host pseudoconsole. Linux cannot load the Windows redistributable that gates production
+        // modern ceilings, so set only this fake profile's private cached verdict for the test.
+        internal static PtyDeliveryProfile SyntheticModernProfile(IServiceProvider sp, DelegationSettings settings)
+        {
+            var profile = new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<PtyDeliveryProfile>.Instance, Options.Create(settings), backendOverride: "modern");
+            typeof(PtyDeliveryProfile).GetField("_ceilings",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(profile, settings.CeilingsFor(PtyBackend.ModernConPty, "synthetic attached adapter"));
+            return profile;
+        }
 
         public (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) Dispatcher(BridgeQueueHarness bridge) =>
             AgentTaskStandingAgentDispatchTests.CreateHarness(connectionString: ConnectionString,

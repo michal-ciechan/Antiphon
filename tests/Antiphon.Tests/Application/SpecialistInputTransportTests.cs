@@ -90,9 +90,8 @@ public class SpecialistInputTransportTests
                 v.PostFailureConfirmGraceSeconds = 0;
                 v.PostEvidenceSettleMs = 0;
             },
-            ConfigureServices = services => services.AddSingleton(sp => new PtyDeliveryProfile(
-                sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PtyDeliveryProfile>.Instance,
-                Options.Create(settings), backendOverride: "modern")),
+            ConfigureServices = services => services.AddSingleton(sp =>
+                SpecialistExecutionIdentityTests.Card0758Fixture.SyntheticModernProfile(sp, settings)),
         });
         if (observable) await h.InsertTurnAsync("prior turn", "prior answer");
         return h;

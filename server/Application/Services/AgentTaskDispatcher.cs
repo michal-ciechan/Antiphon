@@ -4272,7 +4272,8 @@ public sealed class AgentTaskDispatcher
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
             "dispatcher.claim-expiry", task.Id);
-        if (!AgentTaskRoles.IsOptionalWork(task)
+        if (!(AgentTaskRoles.IsOptionalWork(task)
+              || (task.Role == AgentTaskRole.Check && task.SpecialistInputPolicyJson is null))
             || task.ExecutionDeadlineAt is not DateTime deadline
             || deadline > UtcNow()) return false;
         task.Status = AgentTaskStatus.Canceled;
@@ -6630,7 +6631,10 @@ public sealed class AgentTaskDispatcher
                 var generationChanged = session != expectedSession
                     || live?.StartedAt != claimed.SpecialistSessionStartedAt;
                 var profileChanged = live?.TuiProfileRevisionId != claimed.SpecialistProfileRevisionId;
-                if (profileChanged || (generationChanged && !CanAdoptLegacyCheckGeneration(claimed, standing, live, now)))
+                var canAdopt = generationChanged && CanAdoptLegacyCheckGeneration(claimed, standing, now);
+                if (canAdopt && !profileChanged && live?.Status != SessionStatus.Running)
+                    return ReuseOutcome.WaitForAgent;
+                if (profileChanged || (generationChanged && !canAdopt))
                     throw new SpecialistIdentityMismatchException(
                         $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} on '{standing.Name}' selected session "
                         + $"{expectedSession:D} at {claimed.SpecialistSessionStartedAt:O}; current session "
@@ -6700,7 +6704,7 @@ public sealed class AgentTaskDispatcher
         return ReuseOutcome.Reused;
     }
 
-    private bool CanAdoptLegacyCheckGeneration(AgentTask task, Agent standing, AgentSession? live, DateTime now) =>
+    private bool CanAdoptLegacyCheckGeneration(AgentTask task, Agent standing, DateTime now) =>
         task.Role == AgentTaskRole.Check
         && task.SpecialistInputPolicyJson is null
         && task.AgentId == standing.Id
@@ -6709,7 +6713,6 @@ public sealed class AgentTaskDispatcher
         && !standing.IsPoolDelegate
         && (standing.StandingSpecialistRole is null or AgentTaskRole.Check)
         && (standing.StandingSpecialistOwnerId is null || standing.StandingSpecialistOwnerId == standing.Id)
-        && live?.Status == SessionStatus.Running
         && (task.ExecutionDeadlineAt is null || task.ExecutionDeadlineAt > now);
 
     /// <summary>
