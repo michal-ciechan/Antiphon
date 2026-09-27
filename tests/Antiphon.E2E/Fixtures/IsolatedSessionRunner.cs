@@ -152,6 +152,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
         if (useDll) startInfo.ArgumentList.Add(runnerDll);
         startInfo.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
         startInfo.Environment["SessionRunner__SessionLogPath"] = Path.Combine(RunDirectory, "logs");
+        startInfo.Environment["SessionRunner__PtyHostDir"] = Path.Combine(RunDirectory, "pty-hosts");
         startInfo.Environment["SessionRunner__PtyHostLingerHours"] = "0.02";
         if (_modernPty) startInfo.Environment["SessionRunner__PtyBackend"] = "modern";
         startInfo.Environment["Serilog__LogPath"] = RunDirectory;
