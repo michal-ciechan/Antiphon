@@ -25,6 +25,7 @@ public partial class AgentTaskPipelineStatusTests
     private sealed class C557Seed(AppDbContext db)
     {
         private int _nextTask = 30000;
+        private readonly Dictionary<Guid, Guid> _columns = new();
         private readonly Project _project = new()
         {
             Id = C557Id(8000), Name = "pipeline-557", GitRepositoryUrl = "https://example.test/c557.git",
@@ -40,9 +41,11 @@ public partial class AgentTaskPipelineStatusTests
                 Id = boardId, ProjectId = _project.Id, Name = $"Board {number}",
                 ArchivedAt = archived ? C557Now : null, CreatedAt = C557Now, UpdatedAt = C557Now,
             });
+            var columnId = C557Id(2000 + number);
+            _columns.Add(boardId, columnId);
             db.BoardColumns.Add(new BoardColumn
             {
-                Id = C557Id(2000 + number), BoardId = boardId, StateKey = "backlog",
+                Id = columnId, BoardId = boardId, StateKey = "backlog",
                 Name = "Backlog", ColumnOrder = 0, CardStatus = CardStatus.Backlog,
                 IsTerminal = terminal, CreatedAt = C557Now, UpdatedAt = C557Now,
             });
@@ -58,7 +61,7 @@ public partial class AgentTaskPipelineStatusTests
             var card = new Card
             {
                 Id = C557Id(10000 + number), BoardId = boardId,
-                BoardColumnId = C557Id(2000 + int.Parse(boardId.ToString()[^12..]) - 1000),
+                BoardColumnId = _columns[boardId],
                 Identifier = identifier ?? $"CARD-{number:0000}", Title = $"Card {number}",
                 Description = "pipeline candidate", Status = status, Importance = importance,
                 Urgency = urgency, Position = position, DueAt = dueAt,
@@ -81,8 +84,8 @@ public partial class AgentTaskPipelineStatusTests
                 Id = id, RootTaskId = id, Role = role, Status = status,
                 Title = $"task {id}", Goal = "pipeline test", CardId = card?.Id,
                 Workspace = WorkspaceMode.Worktree, WorkingDirectory = "/tmp/c557",
-                CreatedAt = C557Now.AddDays(-2),
-                DispatchedAt = status is AgentTaskStatus.Queued ? null : C557Now.AddDays(-2),
+                CreatedAt = C557Now.AddDays(-5),
+                DispatchedAt = status is AgentTaskStatus.Queued ? null : C557Now.AddDays(-5),
                 CompletedAt = completedAt ?? (status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed
                     or AgentTaskStatus.Canceled ? C557Now.AddDays(-1) : null),
                 NextStage = next, NextHandoff = handoff, DeliverablePath = deliverable,
