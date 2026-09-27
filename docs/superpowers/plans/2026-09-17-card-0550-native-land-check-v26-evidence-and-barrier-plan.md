@@ -1051,3 +1051,34 @@ invocation instead of an impossible per-row split.
 Handoff checklist: bodies read (all touched tests and fixtures, plus the nearest fixture for each new
 file); guards=15, mapped=15, missing=0, duplicate PC mappings=0; every PC is a one-line compiling
 mutation with a named red assertion; Cost is numeric with measured/estimated labels; no placeholders.
+
+### Checkpoints
+
+CARD-0550 Code execution manifest, added after the CARD-0585/CARD-0723 checkpoint contract. All rows follow the committed S1-S3 source group. Native rows require the Windows ConPTY/FakeGrok fixture and a current `client/dist`; Linux execution records an environment refusal and leaves those rows pending Windows acceptance.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c550/` | unit | `/*/*/*/*[Category=Unit]` | V-5,V-8 | >= 2000 executed, 0 failed | 2000 | 7 | true |
+| CP-2 | S1-S3 | CP-1 | recovery | `/*/*/AgentTaskLandNotificationRecoveryTests/*` | V-2,V-4,V-7 | all listed, 0 failed | 1 | 5 | true |
+| CP-3 | S1-S3 | CP-1 | receipt-failure | `/*/*/ReceiptFailureDeliveryTests/*` | V-3 | all listed, 0 failed | 1 | 5 | true |
+| CP-4 | S1-S3 | CP-1 | reply-recovery | `/*/*/AgentTaskReplyC527RecoveryTests/*` | V-1,V-7 | all listed, 0 failed | 1 | 3 | true |
+| CP-5 | S1-S3 | CP-1 | post-land | `/*/*/PostLandMutationDeliveryTests/*` | V-1 | all listed, 0 failed | 1 | 5 | true |
+| CP-6 | S1-S3 | CP-1 | verification-round | `/*/*/VerificationRoundDeliveryTests/*` | V-1 | all listed, 0 failed | 1 | 7 | true |
+| CP-7 | S1-S3 | CP-1 | land-receipt | `/*/*/AgentTaskLandReceiptTests/*` | V-1 | all listed, 0 failed | 1 | 2 | true |
+| CP-8 | S1-S3 | `tests/Antiphon.E2E -> bin-c550/` | progress-probe | `/*/*/LandDeliveryFixtureProbeTests/*` | V-9 | all listed, 0 failed | 1 | 5 | true |
+| CP-9 | S1-S3 | CP-8 | native-n1a | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V26_HardCrashAfterQueueInsertReusesRow*` | V-1,V-6 | all listed, 0 failed | 1 | 5 | true |
+| CP-10 | S1-S3 | CP-8 | native-n1b | `/*/*/AgentTaskLandDeliveryE2ETests/(C488_ApprovalDeliveryCrashMatrix*)\|(C488_ApprovalQueueInsertCrashReusesRow*)` | V-1,V-6 | all listed, 0 failed | 2 | 6 | true |
+| CP-11 | S1-S3 | CP-8 | native-n2 | `/*/*/AgentTaskLandDeliveryE2ETests/(C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput*)\|(C467_V28_LostFlushWakeupRecoversOnIdleCaller*)\|(C467_V31_EnqueueFailureRecoversAutomatically*)` | V-6 | all listed, 0 failed | 3 | 7 | true |
+| CP-12 | S1-S3 | CP-8 | native-n3 | `/*/*/AgentTaskLandDeliveryE2ETests/(C467_V23_BusyCallerDoesNotBlockAnotherLand*)\|(C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt*)` | V-6 | all listed, 0 failed | 2 | 7 | true |
+| CP-13 | S1-S3 | CP-8 | native-n4 | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V24_BlockedWriterThenReleaseDeliversBothNotes*` | V-6 | all listed, 0 failed | 1 | 6 | true |
+| CP-14 | S1-S3 | CP-8 | native-n5 | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V30_ReceiptSaveFailureNeverRetypes*` | V-6 | all listed, 0 failed | 2 | 6 | true |
+| CP-15 | S1-S3 | CP-8 | native-n6 | `/*/*/AgentTaskLandDeliveryE2ETests/(C467_V27_LostRequestWakeupRecoversAtBoot*)\|(C488_ApprovalLostFlushRecovers*)` | V-6 | all listed, 0 failed | 2 | 6 | true |
+| CP-16 | S1-S3 | CP-8 | native-n7 | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V32_StatusPollingCannotDischargeUnreceivedOutcome*` | V-6 | all listed, 0 failed | 2 | 8 | true |
+| CP-17 | S1-S3 | CP-8 | native-n8 | `/*/*/AgentTaskLandDeliveryE2ETests/C467_V29_RealOutcomeProducerMatrix*` | V-6 | all listed, 0 failed | 6 | 15 | true |
+| CP-18 | S1-S3 | CP-8 | native-n9 | `/*/*/AgentTaskLandDeliveryE2ETests/(C498_FailureOutcomeReachesCaller*)\|(C488_ApprovalEnqueueFailureRecovers*)` | V-6 | all listed, 0 failed | 3 | 8 | true |
+| CP-19 | S1-S3 | CP-8 | native-n10 | `/*/*/AgentTaskLandDeliveryE2ETests/(C488_ApprovalOutcomeReceiptMatrix*)\|(C488_ReviewToLandReceiptMatrix*)\|(C488_ApprovalBusyCallerDoesNotBlock*)` | V-6 | all listed, 0 failed | 3 | 8 | true |
+| CP-20 | S1-S3 | CP-8 | native-n11 | `/*/*/AgentTaskLandDeliveryE2ETests/(C488_ReviewDeliveryCrashMatrix*)\|(C488_ReviewEvidenceCrashRecovers*)` | V-6 | all listed, 0 failed | 2 | 7 | true |
+| CP-21 | S1-S3 | CP-8 | native-n12 | `/*/*/AgentTaskLandDeliveryE2ETests/(C488_ApprovalReceiptSaveFailureNeverRetypes*)\|(C488_ApprovalPollingCannotConfirm*)` | V-6 | all listed, 0 failed | 2 | 7 | true |
+| CP-22 | S1-S3 | CP-8 | native-d1 | `/*/*/DispatchBaseWarningDeliveryE2ETests/(C540_CollapsedWarningsReachIdleCaller*)\|(C540_CollapsedWarningsWaitForBusyCaller*)\|(C540_ClaimCrashRecoversCollapsedWarnings*)\|(C540_ProjectionCrashRecoversOriginalPairs*)\|(C540_PreEnqueueCrashRecoversWarnings*)` | V-6 | all listed, 0 failed | 5 | 8 | true |
+| CP-23 | S1-S3 | CP-8 | native-d2 | `/*/*/DispatchBaseWarningDeliveryE2ETests/(C540_EnqueueFailureRetriesWarnings*)\|(C540_QueueInsertCrashReusesRows*)\|(C540_PreTypingCrashRecoversWarnings*)\|(C540_ReceiptCrashDoesNotRetype*)` | V-6 | all listed, 0 failed | 4 | 8 | true |
+| CP-24 | S1-S3 | CP-8 | native-d3 | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_PostPromptCrashDoesNotRetype*` | V-6 | all listed, 0 failed | 1 | 4 | true |

@@ -16,6 +16,7 @@
 ### Preserved Gotcha #20
 
 - **E2E browser tests serve `client/dist` — rebuild it or they mean nothing.** `UsePrebuiltFrontend = true` serves the last `npm run build` output, which nothing rebuilds automatically. A stale bundle made new UI tests fail for no visible reason (dist was a month old, 2026-08-08) and would let a test of *removed* UI keep passing. `AntiphonAppFixture.EnsureClientBundleIsCurrent` now hard-fails when any `client/src` file is newer than `client/dist/index.html`, naming the file — run `npm run build` in `client/`.
+- **Native Land delivery protocol waits use progress evidence** (CARD-0550). A protocol-bound wait has a 60-second quiet deadline that renews while `protocol-git-*.json` records grow, with a 600-second absolute cap. Its `wait-*.json` record names the evidence, elapsed time, before/after git counts, and whether it renewed. A timeout says `quiet 60s after <elapsed>s; progress <count>`; a stalled protocol still fails after 60 quiet seconds. Scan-count and clock waits keep their plain deadlines.
 
 ### Preserved Gotcha #21
 
