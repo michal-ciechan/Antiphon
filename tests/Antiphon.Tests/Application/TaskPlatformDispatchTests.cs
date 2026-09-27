@@ -89,9 +89,37 @@ public sealed class TaskPlatformDispatchTests
             stored.AgentKind.ShouldBe(AgentKind.Codex);
             stored.RunnerId.ShouldBe(host.AllowedRunnerId);
             world.Sink.Specs.ShouldHaveSingleItem().RequiredPlatform.ShouldBe("linux");
-            (await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == remoteId)).ShouldBe(1);
+            (await read.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == remoteId)).ShouldBe(1);
         }
         finally { await world.Provider.DisposeAsync(); }
+
+        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Grok })
+        {
+            await using var desktopSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            using var desktopWorkspace = new TempWorkspace();
+            var taskId = await SeedAsync(desktopSchema, desktopWorkspace.Path, "desktop", RequiredPlatform.Windows);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(desktopSchema.ConnectionString)))
+            {
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+                task.RunnerId = null;
+                task.AgentKind = kind;
+                task.Role = AgentTaskRole.Custom;
+                await db.SaveChangesAsync();
+            }
+            var desktop = CreateDispatcher(desktopSchema, new StableDesktopDirectory());
+            try
+            {
+                await desktop.Dispatcher.TickAsync(CancellationToken.None);
+                await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(desktopSchema.ConnectionString));
+                var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
+                stored.Status.ShouldBe(AgentTaskStatus.Dispatched, kind + ": " + stored.FailureReason);
+                stored.RunnerId.ShouldBeNull();
+                stored.AgentKind.ShouldBe(kind);
+                desktop.Sink.Specs.ShouldHaveSingleItem().RequiredPlatform.ShouldBe("windows");
+                (await read.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == taskId)).ShouldBe(1);
+            }
+            finally { await desktop.Provider.DisposeAsync(); }
+        }
     }
 
     [Test]
@@ -526,6 +554,24 @@ public sealed class TaskPlatformDispatchTests
                 new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
                     Features: [RunnerPlatformWire.Feature], Platform: "linux")));
         }
+        public ISessionRunnerClient Resolve(string? runnerId) => Local;
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerOwner?>(null);
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Missing.Instance);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("unused"));
+    }
+
+    private sealed class StableDesktopDirectory : ISessionRunnerDirectory
+    {
+        public ISessionRunnerClient Local { get; } = new PhoneHomeTestHost.RecordingLocalClient();
+        public IReadOnlyList<string> KnownRunnerIds => ["desktop"];
+        public Guid? GetLiveStoreId(string? runnerId) => null;
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) =>
+            Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(
+                "desktop", "Desktop", "windows", DateTimeOffset.UtcNow, true, true, false, 4,
+                Caps("windows")));
         public ISessionRunnerClient Resolve(string? runnerId) => Local;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult<SessionRunnerOwner?>(null);
