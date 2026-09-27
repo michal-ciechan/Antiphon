@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Server.Infrastructure.Git;
 
@@ -22,10 +23,11 @@ internal static class RepositoryJournalCrashWorker
             || request.Cut is not ("first" or "started" or "completed"))
             throw new InvalidOperationException("Unowned journal crash worker");
 
+        string? previousHash = null;
         async Task Pause(string temporary)
         {
             var marker = ready + ".tmp";
-            await File.WriteAllTextAsync(marker, JsonSerializer.Serialize(new { temporary, worker = Environment.ProcessId }));
+            await File.WriteAllTextAsync(marker, JsonSerializer.Serialize(new { temporary, worker = Environment.ProcessId, previousHash }));
             File.Move(marker, ready);
             await Task.Delay(Timeout.InfiniteTimeSpan);
         }
@@ -40,6 +42,7 @@ internal static class RepositoryJournalCrashWorker
             var journal = await RepositoryChildJournal.BeginAsync(repository, CancellationToken.None);
             if (request.Cut == "started")
             {
+                previousHash = await PriorHashAsync(repository);
                 RepositoryChildJournal.BeforeReplaceForTests = Pause;
                 await journal.StartedAsync(999999, DateTime.UtcNow.Ticks, CancellationToken.None);
             }
@@ -53,10 +56,18 @@ internal static class RepositoryJournalCrashWorker
                 await journal.StartedAsync(sleeper.Id, sleeper.StartTime.ToUniversalTime().Ticks, CancellationToken.None);
                 sleeper.Kill(entireProcessTree: true);
                 await sleeper.WaitForExitAsync();
+                previousHash = await PriorHashAsync(repository);
                 RepositoryChildJournal.BeforeReplaceForTests = Pause;
                 await journal.StartedAsync(sleeper.Id, startTicks: null, CancellationToken.None);
             }
         }
         throw new InvalidOperationException("Journal crash barrier did not fire");
+    }
+
+    private static async Task<string> PriorHashAsync(string repository)
+    {
+        var common = await new LandingGit().CommonDirectoryAsync(repository, CancellationToken.None);
+        var record = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+        return Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(record)));
     }
 }
