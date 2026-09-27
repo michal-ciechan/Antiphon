@@ -634,11 +634,12 @@ public sealed class ChannelInboundRecoveryTests
         InstallTranscriptReceipt(second);
         gate.Arm(first.AgentId);
         var winner = Bridge(first).DrainPendingAsync(Ct);
+        var competingBridge = Bridge(second);
         Task? loser = null;
         try
         {
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            loser = Bridge(second).DrainPendingAsync(Ct);
+            loser = competingBridge.DrainPendingAsync(Ct);
             await loser.WaitAsync(TimeSpan.FromSeconds(10));
             gate.Entries.ShouldBe(1);
             await using var pending = Db(schema.ConnectionString);
@@ -658,7 +659,7 @@ public sealed class ChannelInboundRecoveryTests
             await revive.Agents.Where(a => a.Id == first.AgentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, first.SessionId.ToString("D")));
         }
-        await AssertOrderedPageDeliveryAsync(Bridge(second), second, schema.ConnectionString, native);
+        await AssertOrderedPageDeliveryAsync(competingBridge, second, schema.ConnectionString, native);
         gate.Entries.ShouldBe(1);
     }
 
