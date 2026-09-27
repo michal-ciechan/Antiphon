@@ -74,6 +74,7 @@ public sealed class AgentTaskService
     private readonly StartRefAvailability? _startRefs;
     private readonly CompletionNoteFlushQueue? _completionNotes;
     private readonly RunnerDefaultSettingsService? _runnerDefaults;
+    private readonly AgentTaskWorktreeBaseResolver? _baseResolver;
     // CARD-0659 D-2. Built from the dependencies above, not injected: a harness without a
     // phone-home policy or directory simply never selects a runner.
     private readonly DefaultRunnerRoutingPolicy _defaultRunner;
@@ -113,8 +114,10 @@ public sealed class AgentTaskService
         StartRefAvailability? startRefs = null,
         AgentSessionRuntime? runtime = null,
         CompletionNoteFlushQueue? completionNotes = null,
-        RunnerDefaultSettingsService? runnerDefaults = null)
+        RunnerDefaultSettingsService? runnerDefaults = null,
+        AgentTaskWorktreeBaseResolver? baseResolver = null)
     {
+        _baseResolver = baseResolver;
         _startRefs = startRefs;
         _completionNotes = completionNotes;
         _runnerDefaults = runnerDefaults;
@@ -279,6 +282,22 @@ public sealed class AgentTaskService
         // authoritative structured bases (Repair, SourceLanding) and never moves an existing
         // checkout, so it needs a freshly requested Worktree of its own.
         var startRef = request.WorktreeBaseRequestedRef;
+        var explicitBaseTask = request.WorktreeBaseTask is not null;
+        if (explicitBaseTask && string.IsNullOrWhiteSpace(request.WorktreeBaseTask))
+            throw new ValidationException(nameof(request.WorktreeBaseTask),
+                "BaseTask must be a task id or 8-character short id.", "worktree_base_source_invalid");
+        if (explicitBaseTask && request.FreshWorktree)
+            throw new ValidationException(nameof(request.WorktreeBaseTask),
+                "BaseTask and FreshWorktree are mutually exclusive.", "worktree_base_mode");
+        if ((explicitBaseTask || request.FreshWorktree)
+            && (EffectiveRequestedWorkspace(request) != WorkspaceMode.Worktree
+                || request.AgentId is not null || !string.IsNullOrWhiteSpace(request.Agent)
+                || !string.IsNullOrWhiteSpace(request.FollowUpOnTask)
+                || request.RepairSourceTaskId is not null || request.SourceLandingOperationId is not null
+                || startRef is not null))
+            throw new ValidationException(nameof(request.WorktreeBaseTask),
+                "BaseTask or FreshWorktree requires a fresh Worktree without an agent pin, follow-up, StartRef, RepairSource or SourceLanding.",
+                "worktree_base_mode");
         if (startRef is not null)
         {
             RequireValidStartRef(startRef);
@@ -1365,6 +1384,8 @@ public sealed class AgentTaskService
             // retired Worktree tip into the same field; that SHA is derived after the public
             // StartRef conflict check, so a follow-up plus a caller StartRef still refuses.
             WorktreeBaseRequestedRef = continuationSha ?? startRef,
+            RequestedWorktreeBaseMode = explicitBaseTask ? RequestedWorktreeBaseMode.Task
+                : request.FreshWorktree ? RequestedWorktreeBaseMode.Target : RequestedWorktreeBaseMode.Auto,
         };
 
         if (storedPolicy is not null)
@@ -1406,6 +1427,7 @@ public sealed class AgentTaskService
             && !liveFollowUp;
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
+        CardWorktreeBaseSelection? basePreview = null;
         if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null)
         {
             gateTx = _db.Database.CurrentTransaction is null
@@ -1430,6 +1452,59 @@ public sealed class AgentTaskService
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
+            if (explicitBaseTask)
+            {
+                if (task.CardId is null)
+                    throw new ValidationException(nameof(request.WorktreeBaseTask),
+                        "BaseTask requires a bound card.", "worktree_base_card_required");
+                var sourceId = await ResolveTaskIdAsync(request.WorktreeBaseTask!, ct);
+                var source = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceId, ct);
+                // Refuse a foreign card or destination before observing its repository.
+                // The caller may know a task ID without having custody of its checkout.
+                if (source.CardId != task.CardId || source.Workspace != WorkspaceMode.Worktree
+                    || source.WorktreeBranch is null || task.RepoPath is null
+                    || !string.Equals(source.MergeTargetRef ?? "master", task.MergeTargetRef ?? "master", StringComparison.Ordinal))
+                    throw new ValidationException(nameof(request.WorktreeBaseTask),
+                        "BaseTask must name a same-card Worktree source in the same Git repository and with the same landing destination.",
+                        "worktree_base_source_invalid");
+                var sameCommon = false;
+                var sourceRepository = source.RepoPath is { } original && Directory.Exists(original)
+                    ? original : source.WorktreePath;
+                if (_landingGit is not null && sourceRepository is not null && task.RepoPath is not null)
+                {
+                    try
+                    {
+                        sameCommon = PathsEqual(
+                            await _landingGit.CommonDirectoryAsync(sourceRepository, ct),
+                            await _landingGit.CommonDirectoryAsync(task.RepoPath, ct));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    { sameCommon = false; }
+                }
+                if (!sameCommon)
+                    throw new ValidationException(nameof(request.WorktreeBaseTask),
+                        "BaseTask must name a same-card Worktree source in the same Git repository and with the same landing destination.",
+                        "worktree_base_source_invalid");
+                task.RequestedWorktreeBaseTaskId = sourceId;
+            }
+
+            basePreview = _baseResolver is null ? null
+                : await _baseResolver.ResolveAsync(task, ct);
+            if (basePreview?.Decision == CardWorktreeBaseDecision.Ambiguous)
+                throw new ConflictException(
+                    "Same-card worktree histories diverge: "
+                    + string.Join(" ", basePreview.CandidateWarnings)
+                    + " Choose -BaseTask or -FreshWorktree.",
+                    "worktree_base_ambiguous");
+            if (explicitBaseTask && basePreview?.Decision == CardWorktreeBaseDecision.Unknown)
+                throw new ValidationException(nameof(request.WorktreeBaseTask),
+                    $"Requested source cannot be validated: {basePreview.Reason}. {string.Join(" ", basePreview.CandidateWarnings)}",
+                    "worktree_base_source_invalid");
+            task.WorktreeBasePreviewJson = basePreview is null ? null : JsonSerializer.Serialize(new
+            {
+                observedAt = now,
+                decision = basePreview,
+            });
             // CARD-0544 D-5: the owner latch commits in the same transaction as this task, under
             // the owner row lock the land admission also takes, or neither exists.
             if (verificationAdmission is not null)
@@ -1535,7 +1610,8 @@ public sealed class AgentTaskService
             RequiredPlatform: task.RequiredPlatform,
             RunnerId: RunnerRequestIntent.DisplayRunnerId(task.RunnerId),
             RequirementSource: task.RequirementSource,
-            ObservedPlatform: task.ObservedPlatform);
+            ObservedPlatform: task.ObservedPlatform,
+            WorktreeBase: basePreview);
     }
 
     private async Task<(RequiredPlatform Requirement, RequirementSource Source)> ResolveRequirementAsync(
@@ -2436,7 +2512,11 @@ public sealed class AgentTaskService
             task.WorktreeBaseRequestedRef, task.WorktreeBaseRef, task.WorktreeBaseSource, task.WorktreeBaseTaskId,
             task.WorktreeBaseSha, Session: sessionDetail, CommitOnSettle: task.CommitOnSettle,
             CommitBaselineSha: task.CommitBaselineSha,
-            Verification: ToVerificationProfile(task));
+            Verification: ToVerificationProfile(task),
+            RequestedWorktreeBaseMode: task.RequestedWorktreeBaseMode,
+            RequestedWorktreeBaseTaskId: task.RequestedWorktreeBaseTaskId,
+            WorktreeBaseBranch: task.WorktreeBaseBranch,
+            WorktreeBasePreviewJson: task.WorktreeBasePreviewJson);
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>

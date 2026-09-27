@@ -168,24 +168,41 @@ public sealed class DelegationWorktreeService
         }
     }
 
-    /// <summary>
-    /// True when every commit on <paramref name="branch"/> is already present in
-    /// <paramref name="baseRef"/> by patch id (<c>git cherry</c>: empty output, or every line
-    /// prefixed <c>-</c>). A failed or invalid probe is never contained.
-    /// </summary>
-    public async Task<bool> ContainsPatchesAsync(
+    public enum CommitContainment { Contained, NotContained, Unknown }
+
+    public sealed record CommitContainmentObservation(CommitContainment Result, string? Reason = null);
+
+    /// <summary>Strict evidence about committed history; a merge or failed Git observation is unknown.</summary>
+    public async Task<CommitContainmentObservation> ObserveContainmentAsync(
         string repo, string branch, string baseRef, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(branch) || string.IsNullOrWhiteSpace(baseRef)
             || !Directory.Exists(repo))
-            return false;
+            return new(CommitContainment.Unknown, "missing_ref_or_repository");
+        var ancestor = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, baseRef);
+        if (ancestor.Ok) return new(CommitContainment.Contained);
+        if (ancestor.ExitCode != 1) return new(CommitContainment.Unknown, "ancestry_error");
+        // `git cherry` omits merge commits. An off-target merge can therefore report only
+        // equivalent linear patches while still carrying integration that was never landed.
+        var merges = await GitAsync(repo, ct, "rev-list", "--max-count=1", "--min-parents=2",
+            $"{baseRef}..{branch}");
+        if (!merges.Ok) return new(CommitContainment.Unknown, "merge_inspection_error");
+        if (!string.IsNullOrWhiteSpace(merges.StdOut))
+            return new(CommitContainment.Unknown, "merge_range");
         var result = await GitAsync(repo, ct, "cherry", baseRef, branch);
-        if (!result.Ok)
-            return false;
+        if (!result.Ok) return new(CommitContainment.Unknown, "cherry_error");
         var lines = result.StdOut.Replace("\r\n", "\n", StringComparison.Ordinal)
             .Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        return lines.Length == 0 || Array.TrueForAll(lines, static line => line.StartsWith('-'));
+        if (lines.Any(static line => !line.StartsWith('+') && !line.StartsWith('-')))
+            return new(CommitContainment.Unknown, "cherry_output_invalid");
+        return new(lines.Any(static line => line.StartsWith('+'))
+            ? CommitContainment.NotContained : CommitContainment.Contained);
     }
+
+    /// <summary>Compatibility predicate: only proven containment returns true.</summary>
+    public async Task<bool> ContainsPatchesAsync(
+        string repo, string branch, string baseRef, CancellationToken ct) =>
+        (await ObserveContainmentAsync(repo, branch, baseRef, ct)).Result == CommitContainment.Contained;
 
     /// <summary>
     /// Historical ancestry helper. Prefer <see cref="ContainsPatchesAsync"/>; this remains so
@@ -263,17 +280,21 @@ public sealed class DelegationWorktreeService
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
-    public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, CancellationToken ct, string? startAtSha = null)
+    public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, CancellationToken ct,
+        string? startAtSha = null, ResolvedBase? cardBase = null, Guid? cardBaseTaskId = null,
+        string? cardBaseBranch = null)
     {
         if (_leases is null || task.RepoPath is null)
             throw new ConflictException("repository_lease_required");
         await using var lease = await _leases.TryAcquireAsync(
             task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeProvision), ct);
         if (lease is null) throw new ConflictException("repository_busy");
-        return await CreateForTaskAsync(task, lease, ct, startAtSha);
+        return await CreateForTaskAsync(task, lease, ct, startAtSha, cardBase, cardBaseTaskId, cardBaseBranch);
     }
 
-    public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct, string? startAtSha = null)
+    public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, RepositoryLease lease,
+        CancellationToken ct, string? startAtSha = null, ResolvedBase? cardBase = null,
+        Guid? cardBaseTaskId = null, string? cardBaseBranch = null)
     {
         if (task.RepoPath is not { } repoPath)
             throw new ValidationException(nameof(task.RepoPath), "A worktree task needs a git repository.");
@@ -319,8 +340,24 @@ public sealed class DelegationWorktreeService
         }
 
         var alreadyRecorded = !string.IsNullOrWhiteSpace(task.WorktreeBaseRef);
+        // A retry owns its earlier checkout. Its recorded base is historical evidence and
+        // must not be replaced by a newer same-card selection or an expired source ref.
+        var adopted = (await _worktrees.ListAsync(repoPath, ct))
+            .FirstOrDefault(w => w.CardId == identifier && Directory.Exists(w.Path));
+        if (adopted is not null)
+        {
+            task.WorktreePath = adopted.Path;
+            task.WorktreeBranch = adopted.Branch;
+            // A crash before coordinates were persisted gives no trustworthy historic
+            // creation base. Keep it unknown instead of relabelling the current HEAD.
+            return alreadyRecorded
+                ? new WorktreeBaseDecision(
+                    new ResolvedBase(task.WorktreeBaseRef!, task.WorktreeBaseSource, null),
+                    NewlyRecorded: false)
+                : null;
+        }
         var probe = await ProbeConfiguredDefaultAsync(task, ct);
-        var resolved = WorktreeBaseResolver.Resolve(
+        var resolved = cardBase ?? WorktreeBaseResolver.Resolve(
             startAtSha, task.WorktreeBaseRequestedRef, task.MergeTargetRef, probe);
         var decision = new WorktreeBaseDecision(resolved, NewlyRecorded: !alreadyRecorded);
         var baseRef = resolved.Ref;
@@ -357,9 +394,14 @@ public sealed class DelegationWorktreeService
             task.WorktreeBaseRef = resolved.Ref;
             task.WorktreeBaseSource = resolved.Source;
             task.WorktreeBaseSha = head;
-            task.WorktreeBaseTaskId = resolved.Source == WorktreeBaseSource.Repair
-                ? task.RepairSourceTaskId
-                : null;
+            task.WorktreeBaseTaskId = resolved.Source switch
+            {
+                WorktreeBaseSource.Repair => task.RepairSourceTaskId,
+                WorktreeBaseSource.CardCurrent => cardBaseTaskId,
+                _ => null,
+            };
+            task.WorktreeBaseBranch = resolved.Source == WorktreeBaseSource.CardCurrent
+                ? cardBaseBranch : null;
         }
 
         _logger.LogInformation(

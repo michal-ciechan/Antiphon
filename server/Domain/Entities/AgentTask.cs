@@ -275,6 +275,14 @@ public class AgentTask
     /// </summary>
     public Guid? WorktreeBaseTaskId { get; set; }
 
+    /// <summary>Requested selection remains fixed through queueing and retry.</summary>
+    public RequestedWorktreeBaseMode RequestedWorktreeBaseMode { get; set; }
+    public Guid? RequestedWorktreeBaseTaskId { get; set; }
+    /// <summary>The source branch label at actual creation; the SHA remains WorktreeBaseSha.</summary>
+    public string? WorktreeBaseBranch { get; set; }
+    /// <summary>Bounded create-time advisory, retained to explain launch-time changes.</summary>
+    public string? WorktreeBasePreviewJson { get; set; }
+
     /// <summary>Advisory file lease — two Shared tasks with intersecting globs are serialised.</summary>
     public string? Scope { get; set; }
 

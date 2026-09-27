@@ -20,8 +20,55 @@ namespace Antiphon.Tests.Application;
 /// server would then resolve a kind from the role policy that the caller did not choose.</para>
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptKindTests
 {
+    [Test]
+    [Arguments("omitted")]
+    [Arguments("base_task")]
+    [Arguments("fresh")]
+    [Arguments("workspace_base")]
+    [Arguments("both_flags")]
+    [Arguments("shared")]
+    [Arguments("readonly")]
+    [Arguments("onagent_task")]
+    [Arguments("onagent_fresh")]
+    public async Task T0442_V16_worktree_base_payload_and_validation(string mode)
+    {
+        using var server = new StubApi();
+        var args = new List<string> { "-Role", "Code", "-Goal", "build it", "-Card", "CARD-0442" };
+        switch (mode)
+        {
+            case "base_task": args.AddRange(["-BaseTask", "1234abcd"]); break;
+            case "fresh": args.Add("-FreshWorktree"); break;
+            case "workspace_base": args.AddRange(["-Workspace", "Worktree", "-BaseTask", "1234abcd"]); break;
+            case "both_flags": args.AddRange(["-BaseTask", "1234abcd", "-FreshWorktree"]); break;
+            case "shared": args.AddRange(["-Shared", "-BaseTask", "1234abcd"]); break;
+            case "readonly": args.AddRange(["-ReadOnly", "-FreshWorktree"]); break;
+            case "onagent_task": args.AddRange(["-OnAgent", "1234abcd", "-BaseTask", "1234abcd"]); break;
+            case "onagent_fresh": args.AddRange(["-OnAgent", "1234abcd", "-FreshWorktree"]); break;
+        }
+
+        var run = await RunDelegateAsync(server, [.. args]);
+        var invalid = mode is "both_flags" or "shared" or "readonly" or "onagent_task" or "onagent_fresh";
+        if (invalid)
+        {
+            run.ExitCode.ShouldNotBe(0);
+            server.RequestCount.ShouldBe(0);
+            return;
+        }
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.RequestCount.ShouldBe(1);
+        var body = server.LastBody!.RootElement;
+        var hasBase = body.TryGetProperty("worktreeBaseTask", out var baseTask);
+        var hasFresh = body.TryGetProperty("freshWorktree", out var fresh);
+        hasBase.ShouldBe(mode is "base_task" or "workspace_base");
+        hasFresh.ShouldBe(mode == "fresh");
+        if (hasBase) baseTask.GetString().ShouldBe("1234abcd");
+        if (hasFresh) fresh.GetBoolean().ShouldBeTrue();
+        if (mode == "workspace_base") body.GetProperty("workspace").GetString().ShouldBe("Worktree");
+    }
+
     [Test]
     public async Task Kind_Grok_is_posted_as_agentKind()
     {
@@ -200,7 +247,8 @@ public sealed class DelegateScriptKindTests
             server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard", "-Kind", "Grok");
 
         run.ExitCode.ShouldNotBe(0);
-        run.Output.ShouldContain("never silently rerouted");
+        run.Output.ShouldContain("never silently");
+        run.Output.ShouldContain("rerouted");
         server.RequestCount.ShouldBe(0);
     }
 

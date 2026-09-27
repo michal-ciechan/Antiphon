@@ -140,6 +140,8 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Complexity Hard\|Medium\|Easy` | walk the (role, complexity) cell, falling back to the any-role chain (CARD-0090 / CARD-0332). Combined with `-Kind` or `-Level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `-RefuseIfExhausted` 409s instead. `-Reroute <id> -Kind … -Level …` is the explicit human pick |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
 | `-Worktree` | isolate a worker in a fresh git worktree; sourced Mutation never merges back |
+| `-BaseTask <id>` | start a fresh card-bound Worktree at that same-card task's clean committed tip; accepts a GUID or unique short ID and retains the ordinary landing destination |
+| `-FreshWorktree` | deliberately start at the target and omit unlanded same-card history; exclusive with `-BaseTask` |
 | `-SourceLanding <operation-guid>` | create only Worker/Mutation/Worktree at the confirmed operation's immutable L; distinct same-board companion and same project/repository required |
 | `-RepairSource <owner-guid>` | CARD-0499. Attribute this Code Worktree repair to the original Code/Worktree landing owner. Isolated branch at the owner's SHA; Land is refused (`repair_source_landing_owner_required`). No merge target unless you pass the owner's branch explicitly |
 | `-CleanupVerification <task-id>` | explicitly seal and clean a terminal sourced snapshot after all-attempt native custody and restoration checks; never publishes or kills |

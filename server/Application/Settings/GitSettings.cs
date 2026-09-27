@@ -38,4 +38,9 @@ public class GitSettings
     /// mtime is <c>stale</c>. Must be at least 30. Scripts mirror 300 as a constant.
     /// </summary>
     public int IndexLockStaleAfterSeconds { get; set; } = 300;
+
+    /// <summary>Shared monotonic inspection budget for one card-bound worktree base decision.</summary>
+    public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = 2;
+    public int WorktreeBaseMaxCandidates { get; set; } = 16;
+    public int WorktreeBaseMaxGitCommands { get; set; } = 128;
 }

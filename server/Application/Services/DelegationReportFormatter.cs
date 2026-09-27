@@ -206,6 +206,14 @@ public static class DelegationReportFormatter
             sb.AppendLine();
         }
 
+        if (task.WorktreeBaseSource == WorktreeBaseSource.CardCurrent
+            && task.WorktreeBaseTaskId is Guid sourceTaskId)
+        {
+            sb.AppendLine($"Worktree source: task {Short(sourceTaskId)} on {task.WorktreeBaseBranch} "
+                + $"at {task.WorktreeBaseSha}; this task has its own branch. "
+                + $"Landing target: {task.MergeTargetRef ?? "master"} (explicit land).").AppendLine();
+        }
+
         if (BuildHandoff(task) is { } handoff)
             sb.AppendLine(handoff).AppendLine();
 

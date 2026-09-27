@@ -217,7 +217,9 @@ public sealed record CreateAgentTaskRequest(
     /// <summary>
     /// CARD-0710. Omitted inherits the card or follow-up. Explicit Any resets to Any.
     /// </summary>
-    RequiredPlatform? RequiredPlatform = null);
+    RequiredPlatform? RequiredPlatform = null,
+    string? WorktreeBaseTask = null,
+    bool FreshWorktree = false);
 
 /// <summary>
 /// CARD-0544 D-3. A committed <c>docs/**/*.md</c> selection table: repository-relative path, full
@@ -443,7 +445,11 @@ public sealed record AgentTaskDetailDto(
     CommitOnSettlePolicy? CommitOnSettle = null,
     string? CommitBaselineSha = null,
     /// <summary>CARD-0544. Null for historical and non-Code/Review tasks (never shown as Full).</summary>
-    VerificationProfileDto? Verification = null);
+    VerificationProfileDto? Verification = null,
+    RequestedWorktreeBaseMode RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Auto,
+    Guid? RequestedWorktreeBaseTaskId = null,
+    string? WorktreeBaseBranch = null,
+    string? WorktreeBasePreviewJson = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(
@@ -579,7 +585,8 @@ public sealed record AgentTaskCreatedDto(
     /// <summary>Canonical display id. Null storage is <c>desktop</c>.</summary>
     string? RunnerId = null,
     RequirementSource RequirementSource = RequirementSource.Default,
-    string? ObservedPlatform = null);
+    string? ObservedPlatform = null,
+    Services.CardWorktreeBaseSelection? WorktreeBase = null);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

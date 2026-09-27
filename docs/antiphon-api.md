@@ -423,8 +423,15 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
 `ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `commitOnSettle` (`Never`/`Always`/`Agent`; omitted inherits project then `Delegation:CommitOnSettle`; `-NoCommit` sends Never), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`). `mergeTargetRef` is the landing target, never a
-worktree base. Detail records `worktreeBaseRequestedRef` (S4 create input; unused in this release),
-`worktreeBaseRef`, `worktreeBaseSource`, `worktreeBaseTaskId`, and `worktreeBaseSha`.
+worktree base. Fresh card-bound Worktrees default to `requestedWorktreeBaseMode: Auto`:
+creation returns `worktreeBase` with the observed decision, source task/branch/full SHA,
+warnings and inspection counts. `worktreeBaseTask` selects a same-card source task;
+`freshWorktree: true` requests the target base. The two overrides are exclusive. A
+divergent automatic choice is 409 `worktree_base_ambiguous`; an invalid requested source
+is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`,
+`requestedWorktreeBaseMode`, `requestedWorktreeBaseTaskId`, `worktreeBasePreviewJson`,
+`worktreeBaseRef`, `worktreeBaseSource`, `worktreeBaseTaskId`, `worktreeBaseBranch`, and
+`worktreeBaseSha`. Dispatch rechecks the selection before creating a distinct task branch.
 `AgentTaskLandNotifications` also carries `DispatchBase` notes with a null `RequestId`.
 
 `role` is `AgentTaskRole`. Dispatchable: `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`,

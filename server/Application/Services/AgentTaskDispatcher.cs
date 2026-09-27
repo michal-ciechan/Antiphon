@@ -104,6 +104,7 @@ public sealed class AgentTaskDispatcher
     // yields to this dispatcher, which is exactly the behaviour before the turnstile.
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly ILandingGit? _landingGit;
+    private readonly AgentTaskWorktreeBaseResolver? _baseResolver;
 
     /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
     internal AppDbContext Db => _db;
@@ -179,8 +180,10 @@ public sealed class AgentTaskDispatcher
         // CARD-0672 D-2: the dispatch-first turnstile. The git service resolves the waiter key
         // (the repository's common directory); without it the key is the full repository path.
         RepositoryLeaseWaiters? leaseWaiters = null,
-        ILandingGit? landingGit = null)
+        ILandingGit? landingGit = null,
+        AgentTaskWorktreeBaseResolver? baseResolver = null)
     {
+        _baseResolver = baseResolver;
         _leaseWaiters = leaseWaiters;
         _landingGit = landingGit;
         _sweepInFlight = sweepInFlight;
@@ -4549,9 +4552,48 @@ public sealed class AgentTaskDispatcher
         }
 
         WorktreeBaseDecision? baseDecision = null;
+        string? previewChangeWarning = null;
+        IReadOnlyList<string>? baseSelectionWarnings = null;
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
-            baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct, repairStartSha);
+            CardWorktreeBaseSelection? selected = null;
+            var ownBranch = claimed.WorktreeBranch
+                ?? $"feat/card-task-{DelegationReportFormatter.Short(claimed.Id)}";
+            var adopting = claimed.RepoPath is not null
+                && await _worktrees.KeptBranchExistsAsync(claimed.RepoPath, ownBranch, ct);
+            if (_baseResolver is not null && repairStartSha is null && !adopting
+                && (claimed.RequestedWorktreeBaseMode != RequestedWorktreeBaseMode.Target
+                    || claimed.WorktreeBasePreviewJson is not null))
+            {
+                selected = await _baseResolver.ResolveAsync(claimed, ct);
+                if (selected.Decision == CardWorktreeBaseDecision.WaitForLand)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return DispatchOneResult.NotClaimed;
+                }
+                if (selected.Decision == CardWorktreeBaseDecision.Ambiguous
+                    || selected.Decision == CardWorktreeBaseDecision.Unknown
+                        && claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task)
+                {
+                    await BlockAsync(claimed,
+                        $"{selected.Reason}: {string.Join(" ", selected.CandidateWarnings)} "
+                        + "Resolve histories then retry, or cancel and recreate with -BaseTask / -FreshWorktree.", ct);
+                    await transaction.CommitAsync(ct);
+                    await ReleaseTaskConsumersAsync(claimed);
+                    return DispatchOneResult.NotClaimed;
+                }
+            }
+            var cardBase = selected?.Decision == CardWorktreeBaseDecision.Continue
+                ? new ResolvedBase(selected.SourceSha!, WorktreeBaseSource.CardCurrent, null)
+                : null;
+            baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct,
+                repairStartSha, cardBase, selected?.SourceTaskId, selected?.SourceBranch);
+            if (selected is not null)
+            {
+                previewChangeWarning = DescribeBasePreviewChange(claimed.WorktreeBasePreviewJson, selected);
+                baseSelectionWarnings = selected.CandidateWarnings;
+            }
+            if (cardBase is not null) siblingObservation = null;
 
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN
@@ -4810,7 +4852,8 @@ public sealed class AgentTaskDispatcher
         {
             if (claimed.Workspace == WorkspaceMode.Worktree && claimed.SourceLandingOperationId is null)
             {
-                var drafts = BuildDispatchWarningDrafts(claimed, siblingObservation, baseDecision);
+                var drafts = BuildDispatchWarningDrafts(claimed, siblingObservation, baseDecision,
+                    previewChangeWarning, baseSelectionWarnings);
                 if (_dispatchWarnings is null)
                     throw new InvalidOperationException("DispatchBaseWarningIntentService is required to persist dispatch-base warnings.");
                 capturedIntents = await _dispatchWarnings.CaptureAsync(claimed, finalDispatch, drafts, ct);
@@ -4927,6 +4970,10 @@ public sealed class AgentTaskDispatcher
                 && claimed.WorktreeBaseRef is { } repairRef
                 && claimed.RepairSourceTaskId is Guid owner
             ? $" from {repairRef} (repair of {DelegationReportFormatter.Short(owner)})"
+            : claimed.WorktreeBaseSource == WorktreeBaseSource.CardCurrent
+                && claimed.WorktreeBaseTaskId is Guid sourceId
+                && claimed.WorktreeBaseSha is { } sourceSha
+                ? $" from task {DelegationReportFormatter.Short(sourceId)} on {claimed.WorktreeBaseBranch} @ {sourceSha}"
             : claimed.WorktreeBaseRef is { } baseRef
                 ? $" from {baseRef} ({claimed.WorktreeBaseSource})"
                 : "";
@@ -4934,10 +4981,34 @@ public sealed class AgentTaskDispatcher
         return $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}{from}{merge}{hook}";
     }
 
+    private static string? DescribeBasePreviewChange(string? previewJson, CardWorktreeBaseSelection actual)
+    {
+        if (previewJson is null) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(previewJson);
+            var before = document.RootElement.GetProperty("decision");
+            var oldDecision = (CardWorktreeBaseDecision)before.GetProperty("Decision").GetInt32();
+            var oldSha = before.GetProperty("SourceSha").ValueKind == JsonValueKind.String
+                ? before.GetProperty("SourceSha").GetString() : null;
+            if (oldDecision == actual.Decision && string.Equals(oldSha, actual.SourceSha, StringComparison.OrdinalIgnoreCase))
+                return null;
+            return $"Worktree base changed after create preview: {oldDecision} {oldSha ?? "target"} -> "
+                + $"{actual.Decision} {actual.SourceSha ?? actual.FallbackRef} ({actual.Reason ?? "Git/card state changed"}).";
+        }
+        catch (JsonException) { return "Worktree base preview could not be compared with launch; inspect task provenance."; }
+    }
+
     private static List<DispatchWarningDraft> BuildDispatchWarningDrafts(
-        AgentTask claimed, SiblingBaseGuard? observation, WorktreeBaseDecision? decision)
+        AgentTask claimed, SiblingBaseGuard? observation, WorktreeBaseDecision? decision,
+        string? previewChangeWarning = null, IReadOnlyList<string>? baseSelectionWarnings = null)
     {
         var drafts = new List<DispatchWarningDraft>();
+        if (previewChangeWarning is not null)
+            drafts.Add(new DispatchWarningDraft("worktree-base-preview-changed", previewChangeWarning));
+        if (baseSelectionWarnings is not null)
+            for (var i = 0; i < baseSelectionWarnings.Count; i++)
+                drafts.Add(new DispatchWarningDraft($"worktree-base-inspection-{i}", baseSelectionWarnings[i]));
         if (observation is not null)
         {
             foreach (var sibling in observation.Warnings)
