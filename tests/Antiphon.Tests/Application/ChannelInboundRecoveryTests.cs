@@ -715,10 +715,20 @@ public sealed class ChannelInboundRecoveryTests
                 && (t.Text == firstOwner.Body || t.Text == laterOwner.Body))
             .OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync();
         prompts.ShouldBe(new[] { firstOwner.Body, laterOwner.Body });
-        firstOwner.Body.IndexOf("m00", StringComparison.Ordinal)
-            .ShouldBeLessThan(firstOwner.Body.IndexOf("m63", StringComparison.Ordinal));
-        laterOwner.Body.IndexOf("m64", StringComparison.Ordinal)
-            .ShouldBeLessThan(laterOwner.Body.IndexOf("m69", StringComparison.Ordinal));
+        var previous = -1;
+        for (var index = 0; index < 64; index++)
+        {
+            var position = prompts[0].IndexOf($"m{index:D2}", StringComparison.Ordinal);
+            position.ShouldBeGreaterThan(previous, $"complete first UserPrompt must contain member {index} in order");
+            previous = position;
+        }
+        previous = -1;
+        for (var index = 64; index < 70; index++)
+        {
+            var position = prompts[1].IndexOf($"m{index:D2}", StringComparison.Ordinal);
+            position.ShouldBeGreaterThan(previous, $"complete later UserPrompt must contain member {index} in order");
+            previous = position;
+        }
     }
 
     [Test]
