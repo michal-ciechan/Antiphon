@@ -820,19 +820,26 @@ public sealed class CheckpointTaskOwnershipTests
         public Action<string>? OnAcquire { get; init; }
         public Func<CancellationToken, Task<SlotLease>>? Acquire { get; init; }
         public Func<CancellationToken, Task>? Release { get; init; }
-        public int Acquires { get; private set; }
-        public int Releases { get; private set; }
+        private int _acquires;
+        private int _releases;
+        public int Acquires => Volatile.Read(ref _acquires);
+        public int Releases => Volatile.Read(ref _releases);
         public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) => Task.FromResult(new SlotSession("enabled", 4));
         public async Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
         {
-            Acquires++;
+            Interlocked.Increment(ref _acquires);
             OnAcquire?.Invoke(label);
             if (Acquire is not null)
                 return await Acquire(cancellationToken);
             return new SlotLease
             {
                 State = "granted", MaxCpuCount = 4,
-                ReleaseAsync = async token => { if (Release is not null) await Release(token); Releases++; },
+                ReleaseAsync = async token =>
+                {
+                    if (Release is not null)
+                        await Release(token);
+                    Interlocked.Increment(ref _releases);
+                },
             };
         }
     }

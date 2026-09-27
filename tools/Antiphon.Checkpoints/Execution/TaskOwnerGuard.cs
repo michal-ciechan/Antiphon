@@ -3,7 +3,11 @@ using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
 
-/// <summary>Observes the task that owns a detached executor. The token is transport-only.</summary>
+/// <summary>
+/// Observes the task that owns a detached executor. The token is transport-only.
+/// After the uncertainty budget records owner-unverified, polling continues so a
+/// later definitive settlement still cancels running work.
+/// </summary>
 public sealed class TaskOwnerGuard : IDisposable
 {
     private readonly HttpClient _http;
@@ -68,13 +72,25 @@ public sealed class TaskOwnerGuard : IDisposable
         await _read.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_ended.IsCancellationRequested)
+            if (_settled.IsCancellationRequested)
+                return false;
+            if (_ended.IsCancellationRequested && Reason != "owner-unverified")
                 return false;
             if (string.IsNullOrWhiteSpace(_api) || string.IsNullOrWhiteSpace(_token)
                 || !Guid.TryParse(_taskId, out _))
             {
-                _log?.Invoke("owner read failed: missing task API, token, or valid task id");
-                End("owner-unverified");
+                Log("owner read failed: missing task API, token, or valid task id");
+                if (Reason != "owner-unverified")
+                    End("owner-unverified");
+                return false;
+            }
+            if (Reason == "owner-unverified")
+            {
+                var later = await ReadOnceAsync(cancellationToken).ConfigureAwait(false);
+                if (later.State == "owner-ended")
+                    End("owner-ended");
+                else if (later.Failure is not null)
+                    Log("owner read failed: " + later.Failure);
                 return false;
             }
             DateTimeOffset? firstFailure = null;
@@ -91,7 +107,7 @@ public sealed class TaskOwnerGuard : IDisposable
                     return false;
                 }
                 firstFailure ??= _now();
-                _log?.Invoke("owner read failed: " + result.Failure);
+                Log("owner read failed: " + result.Failure);
                 var remaining = _uncertaintyBudget - (_now() - firstFailure.Value);
                 if (remaining <= TimeSpan.Zero)
                 {
@@ -114,13 +130,31 @@ public sealed class TaskOwnerGuard : IDisposable
             return;
         try
         {
-            while (!_ended.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            while (!cancellationToken.IsCancellationRequested)
             {
+                if (_settled.IsCancellationRequested)
+                    return;
+                if (_ended.IsCancellationRequested && Reason != "owner-unverified")
+                    return;
                 await _delay(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
                 await EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _ended.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _settled.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void Log(string line)
+    {
+        try
+        {
+            _log?.Invoke(line);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
         {
         }
     }
@@ -182,16 +216,11 @@ public sealed class TaskOwnerGuard : IDisposable
     private void End(string reason)
     {
         Reason = reason;
-        try
-        {
-            _log?.Invoke(reason);
-        }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
-        {
-        }
-        if (reason == "owner-ended")
+        Log(reason);
+        if (reason == "owner-ended" && !_settled.IsCancellationRequested)
             _settled.Cancel();
-        _ended.Cancel();
+        if (!_ended.IsCancellationRequested)
+            _ended.Cancel();
     }
 
     public void Dispose()
