@@ -28,3 +28,19 @@ The positive controls stay pending for method-scoped SourceLanding Mutation.
 The ordinary checkpoint floor is 46 minutes including one isolated build. Live CLI probes are
 manual acceptance and are recorded above. No product test has changed, so red-first is not
 applicable to this documentation correction.
+
+## Execution result (2026-09-27)
+
+Checkpoint run `20260927-204059-1c55` is stored under
+`.antiphon/checkpoints/20260927-204059-1c55/report.md` at commit `2ab6bd37048300564c10a3e2da9f1f1e80602f63`.
+The build passed with `UseAppHost=false`. CP-1 ran 3,408 Unit tests: 3,407 passed and one failed;
+34 were skipped. The failure was the brief's standing timing flake,
+`ResilienceBudgetTests.Narrower_parent_deadlines_win` (12.4 s versus a 12 s limit).
+CP-2 ran 57 affected application integration tests: 47 passed and 10 failed. Six failures
+explicitly require Windows `cmd.exe`, absent on this Linux host; three Codex dispatch tests
+reported blocked or missing dispatch evidence, and one pinned-profile test found no matching
+row. Their Linux cause is unresolved; this run does not claim those classes green. CP-3 ran
+14 AgentTui integration tests, all passed. No row was rerun merely to erase a failure.
+
+The two live CLI probes passed. The checkpoint failures leave the ordinary verification round
+red, and method-scoped SourceLanding Mutation positive controls remain pending.
