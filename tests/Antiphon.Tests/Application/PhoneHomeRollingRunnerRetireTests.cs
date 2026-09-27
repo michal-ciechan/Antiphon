@@ -1,5 +1,6 @@
 using System.Net;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
