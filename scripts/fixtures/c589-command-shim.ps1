@@ -7,6 +7,7 @@ if ($env:C589_SLOT_SCRIPT -like 'deadline_*') {
     Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD_AT ' + [Diagnostics.Stopwatch]::GetTimestamp()) -Encoding ASCII
 }
 Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + (($argv) -join ' ')) -Encoding ASCII
+if ($env:C589_COMMAND_SLEEP_SECONDS) { Start-Sleep -Seconds ([int]$env:C589_COMMAND_SLEEP_SECONDS) }
 $code = 0
 if ($env:C589_COMMAND_EXIT) { $code = [int]$env:C589_COMMAND_EXIT }
 exit $code

@@ -67,6 +67,11 @@ public sealed class BuildSlotScriptTests
         "C589 WrapperAsciiOnly c589-slot-shim.ps1 is ASCII-only",
         "C589 WrapperAsciiOnly c589-command-shim.ps1 is ASCII-only");
 
+    [Test]
+    public Task Wrapper_renews_a_renew_mode_grant_while_the_command_runs() => RunCaseAsync("C589_WrapperRenews", 2,
+        "C589 WrapperRenews renews twice before release",
+        "C589 WrapperRenews pid grant has no renewals");
+
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C589", caseName, expectedRows, requiredRows);
 }

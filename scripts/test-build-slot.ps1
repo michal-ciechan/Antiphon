@@ -22,7 +22,8 @@ $script:SlotShim = Join-Path $here (Join-Path 'fixtures' 'c589-slot-shim.ps1')
 $script:CommandShim = Join-Path $here (Join-Path 'fixtures' 'c589-command-shim.ps1')
 $script:Lease = 'c5890000-0000-4000-8000-000000000001'
 $script:SeamNames = @('ANTIPHON_BUILD_SLOTS_URL', 'C589_SLOT_SHIM', 'C589_SLOT_LOG', 'C589_SLOT_SCRIPT',
-    'C589_SLOT_WAIT_SECONDS', 'C589_SLOT_GRACE_SECONDS', 'C589_SLOT_RETRY_MS', 'C589_COMMAND_SHIM', 'C589_COMMAND_EXIT')
+    'C589_SLOT_WAIT_SECONDS', 'C589_SLOT_GRACE_SECONDS', 'C589_SLOT_RETRY_MS', 'C589_COMMAND_SHIM', 'C589_COMMAND_EXIT',
+    'C589_COMMAND_SLEEP_SECONDS')
 
 function New-C589Case {
     param([string]$Name)
@@ -209,6 +210,24 @@ function Test-C589_WrapperAsciiOnly {
         $bytes = @([IO.File]::ReadAllBytes($path) | Where-Object { $_ -gt 127 })
         Assert-C487 -Cond ($bytes.Count -eq 0) -Name ('C589 WrapperAsciiOnly {0} is ASCII-only' -f (Split-Path -Leaf $path)) -Detail ([string]$bytes.Count)
     }
+}
+
+function Test-C589_WrapperRenews {
+    $fx = New-C589Case -Name 'wrapper-renew'
+    $env:C589_COMMAND_SLEEP_SECONDS = '3'
+    try { $r = Invoke-C589Wrapper -Fx $fx -SlotScript 'renew_granted' -WrapperArgs @('-Label', 'renew', '--', 'dotnet', 'build', 'tests/X') }
+    finally { Remove-Item Env:C589_COMMAND_SLEEP_SECONDS -ErrorAction SilentlyContinue }
+    $renew = @($r.Calls | Where-Object { $_ -like 'SLOT RENEW *' })
+    $deleteIndex = [Array]::FindIndex([string[]]$r.Calls, [Predicate[string]] { param($line) $line -like 'SLOT DELETE *' })
+    Assert-C487 -Cond ($r.Exit -eq 0 -and $renew.Count -ge 2 -and $deleteIndex -gt 0 -and @($r.Calls[0..($deleteIndex - 1)] | Where-Object { $_ -like 'SLOT RENEW *' }).Count -ge 2) `
+        -Name 'C589 WrapperRenews renews twice before release' -Detail ($r.Calls -join ' | ')
+
+    $pidFx = New-C589Case -Name 'wrapper-pid'
+    $env:C589_COMMAND_SLEEP_SECONDS = '3'
+    try { $pidResult = Invoke-C589Wrapper -Fx $pidFx -SlotScript 'granted' -WrapperArgs @('-Label', 'pid', '--', 'dotnet', 'build', 'tests/X') }
+    finally { Remove-Item Env:C589_COMMAND_SLEEP_SECONDS -ErrorAction SilentlyContinue }
+    Assert-C487 -Cond ($pidResult.Exit -eq 0 -and @($pidResult.Calls | Where-Object { $_ -like 'SLOT RENEW *' }).Count -eq 0) `
+        -Name 'C589 WrapperRenews pid grant has no renewals' -Detail ($pidResult.Calls -join ' | ')
 }
 
 $script:C589ExpectedRows = 7 + 12 + 2 + 3 + 4 + 2 + 5
