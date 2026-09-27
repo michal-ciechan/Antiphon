@@ -373,4 +373,39 @@ public sealed class ChannelOutboundStorageTests
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
+
+    [Test]
+    public async Task Complete_source_stamp_requires_every_manifested_attachment()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-stamp-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var first = Path.Combine(root, "first.md");
+            var second = Path.Combine(root, "second.md");
+            await File.WriteAllTextAsync(first, "# First");
+            await File.WriteAllTextAsync(second, "# Second");
+            var manifest = new DeliverableBundleService.SourceManifest(1, true,
+            [
+                new("docs/first.md", "first.md", null, 7, new string('a', 64)),
+                new("docs/second.md", "second.md", null, 8, new string('b', 64)),
+            ], []);
+            await File.WriteAllTextAsync(Path.Combine(root, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var task = new Antiphon.Server.Domain.Entities.AgentTask { DeliverableBundleDir = root };
+            var both = new[]
+            {
+                new OutboundAttachment { Kind = AttachmentKind.File, Name = "first.md", Source = first, Content = "# First"u8.ToArray() },
+                new OutboundAttachment { Kind = AttachmentKind.File, Name = "second.md", Source = second, Content = "# Second"u8.ToArray() },
+            };
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both).ShouldBeTrue();
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both[..1]).ShouldBeFalse();
+
+            File.Delete(second);
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both).ShouldBeFalse();
+            File.Delete(first);
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both).ShouldBeFalse();
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
 }
