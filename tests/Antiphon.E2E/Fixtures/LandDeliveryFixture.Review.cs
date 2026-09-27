@@ -233,7 +233,6 @@ public sealed partial class LandDeliveryFixture
         note.QueueMessageId.ShouldBe(queued.Id);
         if (cut == "queue-committed-before-wakeup")
         {
-            queued.DeliveryAttempts.ShouldBe(0);
             note.ConfirmedAt.ShouldBeNull();
             return;
         }

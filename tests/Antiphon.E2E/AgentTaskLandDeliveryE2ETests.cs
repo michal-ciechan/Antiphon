@@ -402,8 +402,9 @@ public class AgentTaskLandDeliveryE2ETests
         var receipt = await f.WaitForReviewReceiptAsync();
         receipt.ReviewedSha.ShouldBe(f.SourceSha);
         await using var db = f.CreateContext();
-        (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt
-            && p.Text != null && PromptSubmissionMatch.IsCompleteIn(receipt.WireText, p.Text))).ShouldBe(1);
+        var prompts = await db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == f.CallerId
+            && p.Kind == TranscriptKinds.UserPrompt && p.Text != null).ToListAsync();
+        prompts.Count(p => PromptSubmissionMatch.IsCompleteIn(receipt.WireText, p.Text!)).ShouldBe(1);
     }
 
     private static string ReviewCut(string cut) => cut switch
