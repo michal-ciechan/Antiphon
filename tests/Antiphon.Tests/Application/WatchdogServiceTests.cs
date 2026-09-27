@@ -20,6 +20,102 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("Watchdog")]
 public class WatchdogServiceTests
 {
+    private const string C566Menu = "Bash command\nrm -rf $R/$name\n"
+        + "│ Dangerous rm operation on possibly-empty variable path: $R/$name in `rm -rf\n"
+        + "│ $R/$name` (rewrite it as safe variables)\n"
+        + "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel · Tab to amend";
+
+    [Test]
+    public async Task C566_Unsafe_delete_refusal_requires_the_active_exact_menu()
+    {
+        var cases = new (string Name, string Screen, AgentKind Kind, bool Expected)[]
+        {
+            ("captured", "old (Y/n)\n" + C566Menu, AgentKind.ClaudeCode, true),
+            ("ansi", C566Menu.Replace("Dangerous", "\u001b[31mDangerous\u001b[0m"), AgentKind.ClaudeCode, true),
+            ("unrelated", C566Menu.Replace("Dangerous rm operation on possibly-empty variable path:", "Approve command:"), AgentKind.ClaudeCode, false),
+            ("missing question", C566Menu.Replace("Do you want to proceed?", "Continue?"), AgentKind.ClaudeCode, false),
+            ("reversed", C566Menu.Replace("1. Yes", "1. No").Replace("2. No", "2. Yes"), AgentKind.ClaudeCode, false),
+            ("partial", C566Menu.Replace("  2. No", ""), AgentKind.ClaudeCode, false),
+            ("extra choice", C566Menu.Replace("Esc to cancel", "  3. Maybe\nEsc to cancel"), AgentKind.ClaudeCode, false),
+            ("history", C566Menu + "\n❯ ", AgentKind.ClaudeCode, false),
+            ("provider", C566Menu, AgentKind.Raw, false),
+        };
+        foreach (var row in cases)
+        {
+            await using var fixture = await C566Fixture.CreateAsync(row.Screen, row.Kind);
+            var sent = await fixture.Service.ScanAsync(CancellationToken.None);
+            sent.ShouldBe(row.Expected ? 1 : 0, row.Name);
+            fixture.Adapter.Inputs.ShouldBe(row.Expected ? ["2"] : [], row.Name);
+            fixture.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded")
+                .ShouldBe(row.Expected ? 1 : 0, row.Name);
+        }
+    }
+
+    [Test]
+    public async Task C566_Unsafe_delete_refusal_preserves_a_pending_answer()
+    {
+        foreach (var answer in new[] { "1", "2", "custom" })
+        {
+            await using var fixture = await C566Fixture.CreateAsync("old (Y/n)\n" + C566Menu);
+            fixture.Adapter.EchoTypedInputToScreen = false;
+            await fixture.Runtime.SendInputAsync(fixture.Session.Id, answer, CancellationToken.None, trackManualTurn: false);
+            var before = fixture.Adapter.Inputs.ToArray();
+            (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+            fixture.Clock.Advance(TimeSpan.FromMinutes(5));
+            (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+            fixture.Adapter.Inputs.ShouldBe(before);
+            fixture.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded").ShouldBe(0);
+            await fixture.Runtime.SendInputAsync(fixture.Session.Id, new string('\b', answer.Length),
+                CancellationToken.None, trackManualTurn: false);
+            (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+            fixture.Adapter.Inputs.Last().ShouldBe("2");
+        }
+        await using var rendered = await C566Fixture.CreateAsync(C566Menu.Replace("❯ 1. Yes", "❯ typed 1\n  1. Yes"));
+        (await rendered.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        rendered.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C566_Unsafe_delete_refusal_sends_verified_no_once_per_episode()
+    {
+        await using var fixture = await C566Fixture.CreateAsync(C566Menu);
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        fixture.Clock.Advance(TimeSpan.FromMinutes(5));
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        fixture.Adapter.RenderedScreenOverride = "idle";
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(0);
+        fixture.Adapter.RenderedScreenOverride = C566Menu;
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        fixture.Adapter.Inputs.ShouldBe(["2", "2"]);
+        fixture.Bus.PublishedEvents.Count(e => e.EventName == "WatchdogAutoResponded").ShouldBe(2);
+    }
+
+    [Test]
+    public async Task C566_Auto_refused_delete_finishes_failed_with_reason_and_caller_receipt()
+    {
+        var harness = OverdueSweepHarness.Create();
+        await using var dispatcherProvider = harness.Provider;
+        await using var fixture = await C566Fixture.CreateAsync(C566Menu, dispatcher: harness.Dispatcher);
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "unsafe cleanup",
+            Goal = "run tests", Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Worktree, WorkingDirectory = fixture.Root,
+            AgentSessionId = fixture.Session.Id, Status = AgentTaskStatus.Working,
+            Attempt = 1, ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = DateTime.UtcNow, DispatchedAt = DateTime.UtcNow
+        };
+        fixture.Db.AgentTasks.Add(task);
+        await fixture.Db.SaveChangesAsync();
+        (await fixture.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
+        await using var verify = CreateContext();
+        var saved = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        saved.Status.ShouldBe(AgentTaskStatus.Failed);
+        saved.FailureReason.ShouldContain("Unsafe cleanup approval");
+        saved.FailureReason.ShouldContain("watchdog selected No");
+        saved.FailureReason.ShouldContain(fixture.Session.Id.ToString());
+        fixture.Adapter.Inputs.ShouldBe(["2"]);
+    }
     [Test]
     public void Watchdog_matches_known_prompt_patterns()
     {
@@ -296,6 +392,61 @@ public class WatchdogServiceTests
         {
             await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private sealed class C566Fixture : IAsyncDisposable
+    {
+        public required string Root { get; init; }
+        public required AppDbContext Db { get; init; }
+        public required AgentSession Session { get; init; }
+        public required FakeAgentProtocolAdapter Adapter { get; init; }
+        public required MockEventBus Bus { get; init; }
+        public required MutableTimeProvider Clock { get; init; }
+        public required ServiceProvider Provider { get; init; }
+        public required AgentSessionRuntime Runtime { get; init; }
+        public required WatchdogService Service { get; init; }
+
+        public static async Task<C566Fixture> CreateAsync(string rendered,
+            AgentKind kind = AgentKind.ClaudeCode, AgentTaskDispatcher? dispatcher = null)
+        {
+            var root = NewTempRoot();
+            var db = CreateContext();
+            var graph = NewGraph(root);
+            var session = NewSession(graph.Card);
+            session.AgentKind = kind;
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            db.AgentSessions.Add(session);
+            await db.SaveChangesAsync();
+            graph.Card.OwnerSessionId = session.Id;
+            await db.SaveChangesAsync();
+            var bus = new MockEventBus();
+            var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+            var provider = BuildProvider(root, bus);
+            var runtime = new AgentSessionRuntime(bus,
+                Options.Create(new AgentSessionSettings { SessionLogPath = Path.Combine(root, "session-logs") }),
+                provider.GetRequiredService<IServiceScopeFactory>(), clock,
+                NullLogger<AgentSessionRuntime>.Instance);
+            var adapter = new FakeAgentProtocolAdapter
+            {
+                RenderedScreenOverride = rendered,
+                EchoTypedInputToScreen = false // the measured modal consumes '2', not the composer
+            };
+            runtime.Register(session.Id, adapter);
+            var service = new WatchdogService(db, runtime, new WatchdogMatcher(),
+                new WatchdogCooldownStore(), bus, Options.Create(new WatchdogSettings { CooldownMs = 1_000 }),
+                clock, NullLogger<WatchdogService>.Instance, dispatcher);
+            return new C566Fixture { Root = root, Db = db, Session = session, Adapter = adapter,
+                Bus = bus, Clock = clock, Provider = provider, Runtime = runtime, Service = service };
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Db.DisposeAsync();
+            await Provider.DisposeAsync();
+            await CleanupProjectsByTempRootAsync(Root);
+            DeleteDirectoryBestEffort(Root);
         }
     }
 

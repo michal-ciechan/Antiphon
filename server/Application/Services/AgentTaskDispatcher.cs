@@ -2622,6 +2622,26 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
+    /// A watchdog-selected No interrupts the tool turn and removes its local-tool deadline.
+    /// Re-read the binding after the key send; a task that moved or settled during the send is
+    /// not ours to fail. This path deliberately leaves the live session with its standing/pool owner.
+    /// </summary>
+    internal async Task<bool> FailAutoRefusedUnsafeDeleteAsync(Guid expectedTaskId, Guid sessionId, CancellationToken ct)
+    {
+        _db.ChangeTracker.Clear();
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == expectedTaskId, ct);
+        if (task is null || task.AgentSessionId != sessionId
+            || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working))
+            return false;
+
+        var reason = $"Unsafe cleanup approval in session {sessionId}: watchdog selected No for "
+            + "a dangerous rm operation on a possibly-empty variable path. The task is Failed. "
+            + "The live session was not killed; inspect it before deciding whether to retry.";
+        await FailAndNotifyAsync(task, reason, "unsafe-rm-refusal", ct);
+        return true;
+    }
+
+    /// <summary>
     /// One task's pass through <see cref="FailOverdueTasksAsync"/>'s three gates. Returns true only
     /// when the task was actually failed.
     /// </summary>

@@ -20,6 +20,7 @@ public sealed class WatchdogService
     private readonly WatchdogSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<WatchdogService> _logger;
+    private readonly AgentTaskDispatcher? _dispatcher;
 
     public WatchdogService(
         AppDbContext db,
@@ -29,7 +30,8 @@ public sealed class WatchdogService
         IEventBus eventBus,
         IOptions<WatchdogSettings> settings,
         TimeProvider timeProvider,
-        ILogger<WatchdogService> logger)
+        ILogger<WatchdogService> logger,
+        AgentTaskDispatcher? dispatcher = null)
     {
         _db = db;
         _runtime = runtime;
@@ -39,6 +41,7 @@ public sealed class WatchdogService
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _dispatcher = dispatcher;
     }
 
     public async Task<int> ScanAsync(CancellationToken ct)
@@ -50,19 +53,68 @@ public sealed class WatchdogService
         if (liveSessionIds.Count == 0)
             return 0;
 
-        var activeSessionIds = await _db.AgentSessions
+        var activeSessions = await _db.AgentSessions
             .AsNoTracking()
             .Where(s => liveSessionIds.Contains(s.Id) && ActiveStatuses.Contains(s.Status))
-            .Select(s => s.Id)
+            .Select(s => new { s.Id, s.AgentKind })
             .ToListAsync(ct);
 
         var responded = 0;
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var cooldown = TimeSpan.FromMilliseconds(Math.Max(0, _settings.CooldownMs));
-        foreach (var sessionId in activeSessionIds)
+        foreach (var session in activeSessions)
         {
+            var sessionId = session.Id;
             if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
                 continue;
+
+            // A numeric modal is never eligible for a generic yes/Enter rule found in earlier
+            // screen text. Only the complete active Claude warning and an empty answer can act.
+            if (_matcher.IsUnsafeRmApprovalCandidate(snapshot.RenderedScreen))
+            {
+                if (session.AgentKind != AgentKind.ClaudeCode
+                    || !_matcher.IsActiveUnsafeRmApproval(snapshot.RenderedScreen)
+                    || _runtime.HasPendingTerminalInput(sessionId))
+                    continue;
+
+                _cooldowns.ClearActiveExcept(sessionId, WatchdogMatcher.UnsafeRmRefusalRule);
+                if (!_cooldowns.TryRecord(sessionId, WatchdogMatcher.UnsafeRmRefusalRule, now, cooldown))
+                    continue;
+
+                var boundTaskIds = await _db.AgentTasks.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId
+                        && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+                    .Select(t => t.Id).Take(2).ToListAsync(ct);
+                try
+                {
+                    // The measured Claude modal consumes one ASCII '2'. Enter would be a second
+                    // input into the interrupted composer and must never be sent here.
+                    await _runtime.SendModalKeyAsync(sessionId, "2", ct);
+                    responded++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Watchdog could not select No in session {SessionId}", sessionId);
+                    continue;
+                }
+
+                // The native interruption disarms the local-tool deadline. Once No was sent,
+                // fail the still-bound task through the ordinary non-killing caller-note path.
+                if (boundTaskIds.Count == 1 && _dispatcher is not null)
+                    await _dispatcher.FailAutoRefusedUnsafeDeleteAsync(boundTaskIds[0], sessionId, ct);
+
+                try
+                {
+                    await _eventBus.PublishToGroupAsync(AgentSessionGroups.Session(sessionId),
+                        "WatchdogAutoResponded",
+                        new { sessionId, ruleName = WatchdogMatcher.UnsafeRmRefusalRule }, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Watchdog refusal audit failed for session {SessionId}", sessionId);
+                }
+                continue;
+            }
 
             var screen = string.IsNullOrWhiteSpace(snapshot.RenderedScreen)
                 ? snapshot.Buffer

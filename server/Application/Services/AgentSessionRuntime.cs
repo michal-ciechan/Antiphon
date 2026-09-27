@@ -1470,6 +1470,21 @@ public sealed class AgentSessionRuntime
             TryStartManualTurnTracking(sessionId, sequenceBeforeInput);
     }
 
+    /// <summary>Unsubmitted human text owns the terminal; a modal key must never type over it.</summary>
+    public bool HasPendingTerminalInput(Guid sessionId) =>
+        _pendingInputs.TryGetValue(sessionId, out var pending) && pending.HasText;
+
+    /// <summary>
+    /// A numbered approval key is consumed by the provider modal, not by the composer. Do not
+    /// retain it as unfinished human text or create a manual turn from it.
+    /// </summary>
+    public Task SendModalKeyAsync(Guid sessionId, string key, CancellationToken ct)
+    {
+        if (_testAdapters.TryGetValue(sessionId, out var adapter))
+            return adapter.SendInputAsync(key, ct);
+        return _runnerClient.SendInputAsync(sessionId, key, ct);
+    }
+
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
     {
@@ -1873,6 +1888,15 @@ public sealed class AgentSessionRuntime
     {
         private readonly object _gate = new();
         private readonly StringBuilder _buffer = new();
+
+        public bool HasText
+        {
+            get
+            {
+                lock (_gate)
+                    return _buffer.Length > 0;
+            }
+        }
 
         public bool Append(string input)
         {
