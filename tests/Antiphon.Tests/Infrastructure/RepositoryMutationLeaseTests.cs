@@ -128,6 +128,8 @@ public sealed class RepositoryMutationLeaseTests
         var hooks = Path.Combine(fixture.Root, "cancel-hooks");
         Directory.CreateDirectory(hooks);
         await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nmkdir -p .antiphon\nprintf ready > .antiphon/owned-hook.ready\nsleep 90\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(Path.Combine(hooks, "pre-commit"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await fixture.RequiredAsync(fixture.Repository, "config", "core.hooksPath", hooks);
         await fixture.RequiredAsync(fixture.Repository, "config", "user.name", "Fixture");
         await fixture.RequiredAsync(fixture.Repository, "config", "user.email", "fixture@example.invalid");
@@ -378,10 +380,21 @@ public sealed class RepositoryMutationLeaseTests
         var hooks = Path.Combine(fixture.Root, "hooks");
         Directory.CreateDirectory(hooks);
         await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nsleep 90\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(Path.Combine(hooks, "pre-commit"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await fixture.RequiredAsync(fixture.Repository, "config", "core.hooksPath", hooks);
         var worker = Path.Combine(fixture.Root, "crash-worker.ps1");
         await File.WriteAllTextAsync(worker, """
             $ErrorActionPreference = 'Stop'
+            $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
+            $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
+            $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
+                param($context, $name)
+                $path = $resolver.ResolveAssemblyToPath($name)
+                if ($null -eq $path) { return $null }
+                return $context.LoadFromAssemblyPath($path)
+            }.GetNewClosure()
+            [Runtime.Loader.AssemblyLoadContext]::Default.add_Resolving($resolveDependency)
             [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
             $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
             $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
@@ -439,6 +452,14 @@ public sealed class RepositoryMutationLeaseTests
             var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
             await File.WriteAllTextAsync(recoveryWorker, """
                 $ErrorActionPreference = 'Stop'
+                $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
+                $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
+                    param($context, $name)
+                    $path = $resolver.ResolveAssemblyToPath($name)
+                    if ($null -eq $path) { return $null }
+                    return $context.LoadFromAssemblyPath($path)
+                }.GetNewClosure()
+                [Runtime.Loader.AssemblyLoadContext]::Default.add_Resolving($resolveDependency)
                 [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
                 $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
                 $leases = [Antiphon.Server.Infrastructure.Git.RepositoryMutationLease]::new($git)
