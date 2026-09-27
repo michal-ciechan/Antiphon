@@ -742,8 +742,8 @@ are TUnit invocations, not assertion counts. PCs remain for post-land SourceLand
 | CP-6 | all | CP-1 | script-payload-v | `/*/*/DelegateScriptKindTests/T0442_V16*` | V-16, R-6, R-14 | all 9 cases, 0 failed/skipped | 9 | 2 |
 | CP-7 | all | CP-1 | migration-v | `/*/*/AgentTaskWorktreeBaseMigrationTests/T0442_V18*` | V-18, R-11 | 1 case, 0 failed/skipped | 1 | 2 |
 | CP-8 | all | CP-1 | dispatch-v | `/*/*/AgentTaskDispatchBaseGuardTests/T0442_V*` | V-19, V-20, V-21, V-22, V-26, V-28, V-30, R-7, R-9, R-10 | all 24 cases, 0 failed/skipped | 24 | 6 |
-| CP-9 | all | CP-1 | worktree-create-v | `/*/*/DelegationWorktreeTests/T0442_V2*` | V-23, V-24, R-7 | both cases, 0 failed/skipped | 2 | 3 |
-| CP-10 | all | CP-1 | worktree-adopt-v | `/*/*/WorktreeBaseSelectionTests/T0442_V25*` | V-25, R-10 | all 3 cases, 0 failed/skipped | 3 | 3 |
+| CP-9 | all | CP-1 | worktree-v | `/*/*/DelegationWorktreeTests/T0442_V2*` | V-23, V-24, V-25, R-7, R-10 | all 5 cases, 0 failed/skipped | 5 | 3 |
+| CP-10 | all | CP-1 | default-branch-retained | `/*/*/WorktreeBaseSelectionTests/C508_*` | R-10, CARD-0508 | all 9 cases, 0 failed/skipped | 9 | 3 |
 | CP-11 | all | CP-1 | dispatch-retained | `/*/*/AgentTaskDispatchBaseGuardTests/*` | R-9, R-11 | full class, 0 failed | 15 | 4 |
 | CP-12 | all | CP-1 | worktree-retained | `/*/*/DelegationWorktreeTests/*` | R-1, R-7, R-10, R-11 | full class, 0 failed | 32 | 6 |
 | CP-13 | all | CP-1 | land-stage-retained | `/*/*/AgentTaskLandStageOutcomeTests/*` | R-11, R-12 | full class, 0 failed | 14 | 4 |
