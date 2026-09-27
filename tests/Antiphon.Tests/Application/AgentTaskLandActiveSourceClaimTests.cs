@@ -92,7 +92,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
             {
                 var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId);
                 task.Status.ShouldBe(AgentTaskStatus.Succeeded);
-                requestId = task.CurrentLandRequestId.ShouldNotBeNull().Value;
+                requestId = task.CurrentLandRequestId.ShouldNotBeNull();
                 attempt = task.LandAttempt;
             }
             var claimId = Guid.NewGuid();
