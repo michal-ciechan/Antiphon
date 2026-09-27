@@ -10,7 +10,7 @@ Branch: `feat/card-task-4d9c7019` (continued from `feat/card-task-ae40541f`). Th
 
 ## Optional renderer slice
 
-The Markdig renderer and browser invocation now live in `tools/Antiphon.MarkdownPdf`, with a manifest-in/PDF-out command and no server project dependency. Server registration, direct Markdig package and universal PDF prompt wording were removed. `dotnet publish` succeeded in the previous S2 worktree with no server or messaging DLL in that output. A real Chromium/Poppler container in this worktree now rendered and independently inspected the synthetic four-source PDF; process-tree cleanup checks remain pending.
+The Markdig renderer and browser invocation now live in `tools/Antiphon.MarkdownPdf`, with a manifest-in/PDF-out command and no server project dependency. Server registration, direct Markdig package and universal PDF prompt wording were removed. `dotnet publish` succeeded in the previous S2 worktree with no server or messaging DLL in that output. A real Chromium/Poppler container in this worktree rendered and independently inspected the synthetic four-source PDF. A Unix real-process fixture verified child cleanup on timeout and caller cancellation; the Windows child-process case remains pending.
 
 ## Channel binding and delivery slice
 
@@ -18,6 +18,7 @@ The Markdig renderer and browser invocation now live in `tools/Antiphon.Markdown
 - Agent replies with a selected profile stage a byte-frozen `ChannelReply` and source input before a unique durable intent and correlation link commit. Main, trailing and machine-turn sends use the same facade; control notices bypass conversion. The inbound envelope supplies the native reply handle when present, rather than the catalog's newer handle.
 - A periodic pump claims intents, starts a pinned ordinary Worker/Custom task, observes its normal settlement, validates a generic output manifest and publishes the sealed reply. Original sources remain attached. Fallback, revocation, channel hold and uncertain broker acceptance have distinct states. An uncertain send has an explicit acknowledged retry action; attention projects its delivery id, destination and conversion task.
 - Source zips are expanded from already attached bytes using the source manifest. Worker output cannot set routing fields and must fit the attachment and serialized bus budgets. The sample PDF worker prompt is `docs/samples/channel-outbound-pdf-agent.md`.
+- Recovery of an already written sealed reply recomputes the expected bytes from the frozen original and validated output manifest; a worker-created or edited sealed file cannot become publication authority.
 
 ## Executed evidence
 
@@ -57,6 +58,9 @@ The Markdig renderer and browser invocation now live in `tools/Antiphon.Markdown
 | CP-S3-S6-outbound-final | full outbound policy, endpoint, storage, delivery and recovery classes | 13 | 13 | 0 | 0 | `.antiphon/c0418-final/CP-S3-S6-outbound-final-20260927-212255-d794/run.trx` | All current outbound methods passed together on the final code. |
 | CP-S4-deadline-final | full task, overdue, specialist and distillation deadline classes | 67 | 67 | 0 | 0 | `.antiphon/c0418-final/CP-S4-deadline-final-20260927-212345-a761/run.trx` | All four named deadline classes passed separately from the inherited pinned-Codex class. |
 | CP-S5-broker-payload | `KafkaOutboundPayloadTests.Validated_reply_bytes_and_frozen_thread_cross_the_real_broker` | 1 | 1 | 0 | 0 | `.antiphon/c0418-final/CP-S5-broker-payload-20260927-212627-8116/run.trx` | Disposable Redpanda accepted the actual `ChannelReply` JSON, conversation key, frozen thread and inline source bytes. |
+| CP-S2-process-tree | full `MarkdownPdfRendererTests` class | 7 | 7 | 0 | 0 | `.antiphon/c0418-final/CP-S2-process-tree-20260927-213106-2c0a/run.trx` | Unix fake browser and its recorded child both stopped after timeout and caller cancellation. |
+| CP-S4-seal-recovery | full `ChannelOutboundStorageTests` class | 6 | 6 | 0 | 0 | `.antiphon/c0418-final/CP-S4-seal-recovery-20260927-213306-175c/run.trx` | Forged sealed reply was refused; valid output recovered idempotently with frozen routing. |
+| CP-S2-browser-negative | full `MarkdownPdfRendererTests` class | 8 | 8 | 0 | 0 | `.antiphon/c0418-final/CP-S2-browser-negative-20260927-213540-4904/run.trx` | A zero-exit browser with no PDF or an empty PDF failed; a stale preexisting PDF was removed before invocation. |
 
 The plan predates the `### Checkpoints` manifest requirement and has no table. These explicitly unlisted runs exercise the Final verification profile and use `scripts/run-checkpoint.ps1` with a build slot and `UseAppHost=false`; each fresh build uses isolated `bin-c0418-storage/` output. This is an execution-contract gap to resolve before final verification.
 
@@ -71,7 +75,7 @@ The client production `npm --prefix client run build` exited 0 under a host buil
 | Plan IDs | Status |
 |---|---|
 | V-1 through V-3; R-1, R-2 | Partial: source slice has direct and integration evidence; full fixture matrices, cross-project cases and completeness stamping remain pending. |
-| V-19 through V-21; R-12 | V-20 local real-browser artifact passed with independent text/page/visual checks. V-19 process-tree cleanup and V-21 migration/structural checks remain pending. |
+| V-19 through V-21; R-12 | V-20 local real-browser artifact passed with independent text/page/visual checks. V-19 Unix process-tree timeout/cancellation and zero-exit no/empty/stale output passed; Windows cleanup remains. V-21 migration/structural checks remain pending. |
 | V-5, V-9, V-10, V-12, V-14, V-16, V-18; R-3, R-5, R-6, R-8, R-10 | Partial local policy/storage/worker/publication assertions only. Named endpoint, concurrency, full dispatch, deadlines, fault and recovery matrices remain pending. |
 | V-4, V-6 through V-8, V-11, V-13, V-15, V-17, V-22 through V-24; R-4, R-7, R-9, R-11, R-13, R-14 | Partial: full messaging class regressions and one real outbound broker payload test passed; full server-to-gateway four-source E2E, budget edges, refusal/deadline matrices and hard crash cuts remain pending. |
 | V-25 | Pending actual mav-ref migration, authorization and native Slack receipt. |

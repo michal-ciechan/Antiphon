@@ -273,6 +273,18 @@ public sealed class MarkdownPdfRenderer
             TryKill(process);
             return new BrowserRun(-1, "", "timed out", TimedOut: true);
         }
+        finally
+        {
+            // A caller cancellation also owns the browser. Disposing Process alone does
+            // not stop it, and a timed-out browser must be reaped before we return.
+            if (!process.HasExited)
+                TryKill(process);
+            try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+            {
+                _logger.LogWarning(ex, "Browser process {ProcessId} did not exit after cancellation", process.Id);
+            }
+        }
     }
 
     private static void TryKill(Process process)

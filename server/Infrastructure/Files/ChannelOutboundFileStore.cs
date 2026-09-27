@@ -216,13 +216,6 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
         var jobRoot = Path.GetDirectoryName(replyPath)
             ?? throw new InvalidDataException("The outbound snapshot path is invalid.");
         var sealedPath = Path.Combine(jobRoot, "sealed-reply.json");
-        if (File.Exists(sealedPath))
-        {
-            var sealedBytes = await File.ReadAllBytesAsync(sealedPath, ct);
-            var sealedHash = Convert.ToHexString(SHA256.HashData(sealedBytes)).ToLowerInvariant();
-            return new ChannelOutboundSealed(sealedPath,
-                sealedHash, sealedHash == replySha256 ? "Unchanged" : "Converted");
-        }
 
         var outputRoot = Path.Combine(jobRoot, "output");
         var manifestPath = Path.Combine(outputRoot, "manifest.json");
@@ -298,12 +291,22 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
         var replyBytes = JsonSerializer.SerializeToUtf8Bytes(result, MessagingJson.Options);
         if (replyBytes.Length > maxMessageBytes)
             throw new InvalidDataException("The converted reply exceeds the messaging budget.");
+        var replyHash = Convert.ToHexString(SHA256.HashData(replyBytes)).ToLowerInvariant();
+        if (File.Exists(sealedPath))
+        {
+            // A crash may leave our completed copy before the Ready commit. A worker
+            // can also write beside output/, so an existing file is never authority.
+            var priorBytes = await File.ReadAllBytesAsync(sealedPath, ct);
+            if (!priorBytes.AsSpan().SequenceEqual(replyBytes))
+                throw new InvalidDataException("The existing sealed reply differs from validated output.");
+            return new ChannelOutboundSealed(sealedPath, replyHash,
+                manifest.Disposition == "converted" ? "Converted" : "Unchanged");
+        }
         var temporary = sealedPath + ".tmp-" + Guid.NewGuid().ToString("N");
         await File.WriteAllBytesAsync(temporary, replyBytes, ct);
         try { File.Move(temporary, sealedPath); }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
-        return new ChannelOutboundSealed(sealedPath,
-            Convert.ToHexString(SHA256.HashData(replyBytes)).ToLowerInvariant(),
+        return new ChannelOutboundSealed(sealedPath, replyHash,
             manifest.Disposition == "converted" ? "Converted" : "Unchanged");
     }
 }
