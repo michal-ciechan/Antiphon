@@ -11,11 +11,13 @@ public sealed class ScaledTimeProviderTests
     public async Task Speed_10_advances_ten_times_real_time()
     {
         var clock = new ScaledTimeProvider(10);
+        var real = Stopwatch.StartNew();
         var before = clock.GetUtcNow();
         await Task.Delay(100);
         var moved = (clock.GetUtcNow() - before).TotalSeconds;
-        moved.ShouldBeGreaterThanOrEqualTo(0.8);
-        moved.ShouldBeLessThanOrEqualTo(3.0);
+        real.Stop();
+        moved.ShouldBeGreaterThanOrEqualTo(real.Elapsed.TotalSeconds * 8);
+        moved.ShouldBeLessThanOrEqualTo(real.Elapsed.TotalSeconds * 12);
     }
 
     [Test]
