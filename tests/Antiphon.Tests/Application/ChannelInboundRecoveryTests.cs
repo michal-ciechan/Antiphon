@@ -1804,8 +1804,12 @@ public sealed class ChannelInboundRecoveryTests
             && i.Kind == AgentIncidentKind.ChannelReplyLost && i.Severity == AlertSeverity.Critical
             && i.FailureReason == "ProviderCapacity" && i.Message.Contains("pending"))).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
+        var firstIncidentAt = await verify.AgentIncidents.Where(i => i.AgentId == h.AgentId
+            && i.FailureReason == "ProviderCapacity").Select(i => i.CreatedAt).SingleAsync();
         await verify.ModelAvailabilityHolds.ExecuteDeleteAsync();
-        var secondEpisodeAt = firstEpisodeAt.AddMinutes(1);
+        ((ScaledTimeProvider)h.Clock).Advance(TimeSpan.FromMinutes(1));
+        var secondEpisodeAt = h.Now;
+        secondEpisodeAt.ShouldBeGreaterThan(firstIncidentAt);
         foreach (var kind in new[] { AgentKind.Raw, AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex })
             verify.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
