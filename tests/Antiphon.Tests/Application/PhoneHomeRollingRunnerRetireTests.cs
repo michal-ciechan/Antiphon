@@ -69,6 +69,10 @@ public sealed partial class PhoneHomeRollingRunnerTests
         await using var disconnectedDb = disconnected.NewDb();
         (await disconnectedDb.AgentSessions.SingleAsync(s => s.RunnerId == RollingRunnerSettings.Server2Temp))
             .Status.ShouldBe(SessionStatus.Failed);
+        var disconnectedState = await disconnectedDb.SessionRunnerStates.SingleAsync(
+            s => s.RunnerId == RollingRunnerSettings.Server2Temp);
+        disconnectedState.RetireReason.ShouldStartWith("forced:");
+        disconnectedState.RetiredAt.ShouldNotBeNull();
     }
 
     [Test]
