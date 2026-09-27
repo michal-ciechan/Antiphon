@@ -1030,9 +1030,9 @@ public sealed class AgentTaskLandSourceFreshnessTests
         counters.Attribute("executed")?.Value.ShouldBe("1");
         counters.Attribute("passed")?.Value.ShouldBe("1");
         counters.Attribute("failed")?.Value.ShouldBe("0");
-        xml.Descendants().ShouldContain(e => e.Name.LocalName == "TestMethod"
+        xml.Descendants().Any(e => e.Name.LocalName == "TestMethod"
             && e.Attribute("name")?.Value == "ApprovedFixIsPresent"
-            && e.Attribute("className")?.Value.Contains("FreshnessProbeTests") == true);
+            && e.Attribute("className")?.Value.Contains("FreshnessProbeTests") == true).ShouldBeTrue();
     }
 
     private sealed class RecordingRealVerifier(ILandingGit git, string root) : ILandingVerifier
