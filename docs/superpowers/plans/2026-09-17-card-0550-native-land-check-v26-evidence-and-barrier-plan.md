@@ -1061,7 +1061,7 @@ CARD-0550 Code execution manifest, added after the CARD-0585/CARD-0723 checkpoin
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c550/` | unit | `/*/*/*/*[Category=Unit]` | V-5,V-8 | >= 2000 executed, 0 failed | 2000 | 7 | true |
 | CP-2 | S1-S3 | CP-1 | recovery | `/*/*/AgentTaskLandNotificationRecoveryTests/*` | V-2,V-4,V-7 | all listed, 0 failed | 1 | 5 | true |
 | CP-3 | S1-S3 | CP-1 | receipt-failure | `/*/*/ReceiptFailureDeliveryTests/*` | V-3 | all listed, 0 failed | 1 | 5 | true |
-| CP-4 | S1-S3 | CP-1 | reply-recovery | `/*/*/AgentTaskReplyC527RecoveryTests/*` | V-1,V-7 | all listed, 0 failed | 1 | 3 | true |
+| CP-4 | S1-S3 | CP-1 | reply-recovery | `/*/*/AgentTaskReplyIntegrationTests/*` | V-1,V-7 | all listed, 0 failed | 1 | 3 | true |
 | CP-5 | S1-S3 | CP-1 | post-land | `/*/*/PostLandMutationDeliveryTests/*` | V-1 | all listed, 0 failed | 1 | 5 | true |
 | CP-6 | S1-S3 | CP-1 | verification-round | `/*/*/VerificationRoundDeliveryTests/*` | V-1 | all listed, 0 failed | 1 | 7 | true |
 | CP-7 | S1-S3 | CP-1 | land-receipt | `/*/*/AgentTaskLandReceiptTests/*` | V-1 | all listed, 0 failed | 1 | 2 | true |
