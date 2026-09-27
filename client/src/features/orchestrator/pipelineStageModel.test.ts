@@ -193,13 +193,13 @@ describe('visibleStages', () => {
     })
     const { shown, idleCount } = visibleStages(dto)
     expect(shown.map((item) => item.role)).toEqual(['Plan', 'Code', 'Deploy'])
-    expect(idleCount).toBe(8)
+    expect(idleCount).toBe(11)
   })
 
   it('treats a stage with any of the four collections as shown', () => {
     expect(visibleStages(fleet({ Docs: stage({ role: 'Docs', queued: [queued()] }) })).shown).toHaveLength(1)
     expect(visibleStages(fleet({})).shown).toHaveLength(0)
-    expect(visibleStages(fleet({})).idleCount).toBe(11)
+    expect(visibleStages(fleet({})).idleCount).toBe(14)
   })
 
   it('shows a Plan-only ready row — ready is not Code-only', () => {
