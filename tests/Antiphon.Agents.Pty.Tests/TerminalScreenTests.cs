@@ -12,6 +12,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// the character again.  TerminalScreen must keep the character that was written in
 /// the initial paint — producing the correct visible text.
 /// </summary>
+[Category("Unit")]
 public class TerminalScreenTests
 {
 	private static void AssertAllCuts(string input, Action<TerminalScreen> expected,
@@ -552,6 +553,16 @@ public class TerminalScreenTests
 			s.GetRow(r).ShouldBe(r == 1 ? "ABCDEFGHIJ" : "",
 				$"{name}: row {r} must be untouched — X must not have arrived there by wrapping");
 		}
+		var token = Csi(seq);
+		for (var cut = 1; cut < token.Length; cut++)
+		{
+			var split = S(10, 3);
+			split.Feed(CursorPos(2, 1) + "ABCDEFGHIJ" + token[..cut]);
+			split.Feed(token[cut..] + "X");
+			split.GetRows().ShouldBe(s.GetRows(), $"{name}: cut {cut}");
+			split.CursorRow.ShouldBe(s.CursorRow);
+			split.CursorCol.ShouldBe(s.CursorCol);
+		}
 	}
 
 	[Test]
@@ -587,6 +598,17 @@ public class TerminalScreenTests
 		s.Feed("X");
 		s.GetRow(0).ShouldBe(row0, $"{name}: row 0");
 		s.GetRow(1).ShouldBe(row1, $"{name}: row 1 — the wrap was still owed");
+		var token = Csi(seq);
+		for (var cut = 1; cut < token.Length; cut++)
+		{
+			var split = S(10, 3);
+			split.Feed("ABCDEFGHIJ" + token[..cut]);
+			split.Feed(token[cut..]);
+			split.CursorRow.ShouldBe(0, $"{name}: cut {cut}");
+			split.CursorCol.ShouldBe(9, $"{name}: cut {cut}");
+			split.Feed("X");
+			split.GetRows().ShouldBe(s.GetRows(), $"{name}: cut {cut}");
+		}
 	}
 
 	[Test]
@@ -614,6 +636,8 @@ public class TerminalScreenTests
 		var s = S();
 		s.Feed("\x1b]0;✳ antiphon\x07Hello");
 		s.GetRow(0).ShouldBe("Hello");
+		AssertAllCuts("\x1b]0;✳ antiphon\x07Hello", split =>
+		{ split.GetRow(0).ShouldBe("Hello"); split.CursorCol.ShouldBe(s.CursorCol); });
 	}
 
 	[Test]
@@ -622,5 +646,7 @@ public class TerminalScreenTests
 		var s = S();
 		s.Feed("\x1b[1;32mGreen\x1b[0m Normal");
 		s.GetRow(0).ShouldBe("Green Normal");
+		AssertAllCuts("\x1b[1;32mGreen\x1b[0m Normal", split =>
+		{ split.GetRow(0).ShouldBe("Green Normal"); split.CursorCol.ShouldBe(s.CursorCol); });
 	}
 }

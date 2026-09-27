@@ -17,8 +17,8 @@ namespace Antiphon.Agents.Pty.Tests;
 /// 120-column rules pushed the cursor a row too far, the dialog's erase-and-repaint left a ghost
 /// title behind, and the resolver's remnant gate blocked for its whole budget (CARD-0449).
 ///
-/// Every stream is replayed in three chunkings — one write, split per Ink frame, and escape-safe
-/// 256-char pieces — so the investigation's open question ("one atomic write or several
+/// Every stream is replayed in whole, frame, escape-safe, and raw-byte chunkings, so the
+/// investigation's open question ("one atomic write or several
 /// time-separated writes?") cannot decide whether the fix holds. Each test also asserts chunk
 /// invariance: the rendered grid must not depend on where the reads were cut.
 /// </summary>
@@ -96,10 +96,8 @@ public class ClaudeEffortDismissalReplayTests
 
     /// <summary>
     /// Successive 256-char pieces, each extended so it never ends inside an escape sequence.
-    /// The extension is not cosmetic: in every one of these fixtures a plain 256-byte cut lands
-    /// inside a CSI (and, undecoded, inside a UTF-8 multibyte character), and
-    /// <see cref="TerminalScreen.Feed"/> keeps no parser state between calls — a naive cut would
-    /// fail on the parser rather than on deferred wrap, which is a different card entirely.
+    /// Legacy escape-safe control for the deferred-wrap regression. Raw byte cuts below now
+    /// exercise the parser and the production UTF-8 decoder together.
     /// </summary>
     private static List<string> Pieces(string t, int size = 256)
     {
@@ -150,6 +148,23 @@ public class ClaudeEffortDismissalReplayTests
         return screen;
     }
 
+    private static TerminalScreen ReplayBytes(byte[] bytes, int size, int? cut = null)
+    {
+        var screen = new TerminalScreen(120, 30);
+        var decoder = new PtyUtf8Decoder();
+        if (cut is int k)
+        {
+            screen.Feed(decoder.Decode(bytes.AsSpan(0, k)));
+            screen.Feed("");
+            screen.Feed(decoder.Decode(bytes.AsSpan(k)));
+        }
+        else
+            for (var at = 0; at < bytes.Length; at += size)
+                screen.Feed(decoder.Decode(bytes.AsSpan(at, Math.Min(size, bytes.Length - at))));
+        screen.Feed(decoder.Decode(ReadOnlySpan<byte>.Empty, flush: true));
+        return screen;
+    }
+
     /// <summary>The dialog paint: for a dismissal stream, everything before the first erase.</summary>
     private static string DialogFrame(string text)
     {
@@ -162,6 +177,8 @@ public class ClaudeEffortDismissalReplayTests
         if (mode == "whole") return;
         actual.GetRows().ShouldBe(Replay(text, "whole").GetRows(),
             $"the rendered grid must not depend on read boundaries ({mode})");
+        actual.CursorRow.ShouldBe(Replay(text, "whole").CursorRow);
+        actual.CursorCol.ShouldBe(Replay(text, "whole").CursorCol);
     }
 
     // ── V-11: the dialog paint ──────────────────────────────────────────────────
@@ -171,10 +188,12 @@ public class ClaudeEffortDismissalReplayTests
     [Arguments("effort-dialog-9184ec6d.ansi", "whole"), Arguments("effort-dialog-9184ec6d.ansi", "frames"), Arguments("effort-dialog-9184ec6d.ansi", "pieces")]
     [Arguments("effort-dialog-2968433b.ansi", "whole"), Arguments("effort-dialog-2968433b.ansi", "frames"), Arguments("effort-dialog-2968433b.ansi", "pieces")]
     [Arguments("effort-dialog-787bfee2.ansi", "whole"), Arguments("effort-dialog-787bfee2.ansi", "frames"), Arguments("effort-dialog-787bfee2.ansi", "pieces")]
+    [Arguments(RealDismissal, "bytes-256"), Arguments("effort-dialog-9184ec6d.ansi", "bytes-256")]
+    [Arguments("effort-dialog-2968433b.ansi", "bytes-256"), Arguments("effort-dialog-787bfee2.ansi", "bytes-256")]
     public void Real_dialog_paints_directly_under_its_rule(string fixture, string mode)
     {
         var dialog = DialogFrame(Text(fixture));
-        var screen = Replay(dialog, mode);
+        var screen = mode == "bytes-256" ? ReplayBytes(Encoding.UTF8.GetBytes(dialog), 256) : Replay(dialog, mode);
         var rows = screen.GetRows();
 
         // The whole defect in one assertion: under an immediate wrap the 120-char rule line-feeds
@@ -200,10 +219,11 @@ public class ClaudeEffortDismissalReplayTests
     [Test]
     [Arguments(RealDismissal, "whole"), Arguments(RealDismissal, "frames"), Arguments(RealDismissal, "pieces")]
     [Arguments(ExcisedDismissal, "whole"), Arguments(ExcisedDismissal, "frames"), Arguments(ExcisedDismissal, "pieces")]
+    [Arguments(RealDismissal, "bytes-256"), Arguments(ExcisedDismissal, "bytes-256")]
     public void Real_dismissal_leaves_no_dialog_rows(string fixture, string mode)
     {
         var stream = Text(fixture);
-        var screen = Replay(stream, mode);
+        var screen = mode == "bytes-256" ? ReplayBytes(Bytes(fixture), 256) : Replay(stream, mode);
         var rows = screen.GetRows();
 
         rows[5].ShouldEndWith(" task-f418105f ─");
@@ -248,6 +268,7 @@ public class ClaudeEffortDismissalReplayTests
     [Test]
     [Arguments(RealDismissal, "whole"), Arguments(RealDismissal, "frames"), Arguments(RealDismissal, "pieces")]
     [Arguments(ExcisedDismissal, "whole"), Arguments(ExcisedDismissal, "frames"), Arguments(ExcisedDismissal, "pieces")]
+    [Arguments(RealDismissal, "bytes-256"), Arguments(ExcisedDismissal, "bytes-256")]
     public async Task Resolver_clears_a_replayed_dismissal(string fixture, string mode)
     {
         var stream = Text(fixture);
@@ -255,8 +276,23 @@ public class ClaudeEffortDismissalReplayTests
         at.ShouldBeGreaterThan(0, "the dismissal marker must be present");
 
         var screen = new TerminalScreen(120, 30);
-        screen.Feed(stream[..at]);
-        var pending = new Queue<string>(Chunks(stream[at..], mode));
+        var decoder = new PtyUtf8Decoder();
+        var pendingBytes = new Queue<byte[]>();
+        Queue<string> pending;
+        if (mode == "bytes-256")
+        {
+            var raw = Bytes(fixture);
+            var prefixLength = Encoding.UTF8.GetByteCount(stream[..at]);
+            screen.Feed(decoder.Decode(raw.AsSpan(0, prefixLength)));
+            for (var pos = prefixLength; pos < raw.Length; pos += 256)
+                pendingBytes.Enqueue(raw.AsSpan(pos, Math.Min(256, raw.Length - pos)).ToArray());
+            pending = new Queue<string>();
+        }
+        else
+        {
+            screen.Feed(stream[..at]);
+            pending = new Queue<string>(Chunks(stream[at..], mode));
+        }
         var writes = new List<string>();
         var postEnter = 0;
 
@@ -266,7 +302,8 @@ public class ClaudeEffortDismissalReplayTests
             if (writes.Contains("\r"))
             {
                 postEnter++;
-                if (pending.Count > 0) screen.Feed(pending.Dequeue());
+                if (pendingBytes.Count > 0) screen.Feed(decoder.Decode(pendingBytes.Dequeue()));
+                else if (pending.Count > 0) screen.Feed(pending.Dequeue());
             }
             return Task.FromResult(screen.GetScreenText());
         }
@@ -284,11 +321,63 @@ public class ClaudeEffortDismissalReplayTests
         Regex.IsMatch(result.Detail, @"\[polls=\d+ clear=2 last=\S+ composer=live\]")
             .ShouldBeTrue(result.Detail);
         pending.ShouldBeEmpty("every chunk must have been served");
+        pendingBytes.ShouldBeEmpty("every byte chunk must have been served");
+        if (mode == "bytes-256") screen.Feed(decoder.Decode(ReadOnlySpan<byte>.Empty, flush: true));
         if (fixture == RealDismissal && mode == "frames")
             postEnter.ShouldBeGreaterThanOrEqualTo(3, "the banner frame is not settled against the final one");
     }
 
     // ── V-21: the bytes ─────────────────────────────────────────────────────────
+
+    [Test]
+    public void C464_Real_fixture_is_invariant_at_every_byte_boundary()
+    {
+        var raw = Bytes(RealDismissal);
+        raw.Length.ShouldBe(3957);
+        (raw[256] & 0xC0).ShouldBe(0x80, "256 lands inside UTF-8");
+        raw[1023].ShouldBe((byte)0x1B);
+        raw[2559].ShouldBe((byte)0x1B);
+        raw[2047].ShouldBeInRange((byte)0x20, (byte)0x3F);
+        raw[3839].ShouldBeInRange((byte)0x20, (byte)0x3F);
+        var whole = ReplayBytes(raw, raw.Length);
+        var rows = whole.GetRows();
+        rows[5].ShouldEndWith(" task-f418105f ─");
+        rows[6].ShouldContain("Try \"how do I log an error?\"");
+        rows[7].ShouldBe(Rule);
+        rows[8].ShouldContain("◉ xhigh · /effort");
+        for (var row = 9; row < 30; row++) rows[row].ShouldBe("");
+        ClaudeEffortPrompt.HasRemnant(whole.GetScreenText()).ShouldBeFalse();
+        ClaudeEffortPrompt.Parse(whole.GetScreenText()).ShouldBeNull();
+        ClaudeScreen.ComposerIsLive(whole.GetScreenText()).ShouldBeTrue();
+        ClaudeEffortPrompt.CurrentEffort(whole.GetScreenText()).ShouldBe("xhigh");
+        whole.CursorRow.ShouldBe(6);
+        whole.CursorCol.ShouldBe(2);
+
+        for (var cut = 1; cut < raw.Length; cut++)
+        {
+            var split = ReplayBytes(raw, raw.Length, cut);
+            split.GetRows().ShouldBe(rows, $"real dismissal byte cut {cut}");
+            split.CursorRow.ShouldBe(6, $"cut {cut}");
+            split.CursorCol.ShouldBe(2, $"cut {cut}");
+            ClaudeEffortPrompt.HasRemnant(split.GetScreenText()).ShouldBeFalse($"cut {cut}");
+            ClaudeEffortPrompt.Parse(split.GetScreenText()).ShouldBeNull($"cut {cut}");
+            ClaudeScreen.ComposerIsLive(split.GetScreenText()).ShouldBeTrue($"cut {cut}");
+            ClaudeEffortPrompt.CurrentEffort(split.GetScreenText()).ShouldBe("xhigh", $"cut {cut}");
+        }
+        foreach (var fixture in new[] { RealDismissal, ExcisedDismissal,
+            "effort-dialog-9184ec6d.ansi", "effort-dialog-2968433b.ansi", "effort-dialog-787bfee2.ansi" })
+        {
+            var bytes = Bytes(fixture);
+            var reference = ReplayBytes(bytes, bytes.Length);
+            foreach (var stride in new[] { 1, 2, 3, 7, 256, 4096 })
+            {
+                var split = ReplayBytes(bytes, stride);
+                split.GetRows().ShouldBe(reference.GetRows(), $"{fixture}: stride {stride}");
+                split.CursorRow.ShouldBe(reference.CursorRow);
+                split.CursorCol.ShouldBe(reference.CursorCol);
+            }
+        }
+    }
 
     [Test]
     [Arguments(RealDismissal, 3957, "18c89534612034390d52a09b2e96093687b4be379f98a2d03684620f01ee9d4c")]
