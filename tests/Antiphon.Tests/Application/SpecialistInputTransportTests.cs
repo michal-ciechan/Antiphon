@@ -19,6 +19,65 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public class SpecialistInputTransportTests
 {
+    [Test]
+    [Arguments("idle")]
+    [Arguments("busy")]
+    [Arguments("reload")]
+    [Arguments("enqueue-fault")]
+    public async Task Card0758_rebound_legacy_Check_reaches_the_recipient(string boundary)
+    {
+        await using var f = await SpecialistExecutionIdentityTests.Card0758Fixture.CreateAsync();
+        await f.ChangeGenerationAsync("started");
+        await using var bridge = await f.AttachBridgeAsync();
+        if (boundary is "busy" or "reload")
+            await bridge.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "older working prompt",
+                timestamp: DateTime.UtcNow);
+        var fault = boundary == "enqueue-fault"
+            ? new Func<Guid, string, CancellationToken, Task>((_, _, _) =>
+                Task.FromException(new IOException("synthetic brief enqueue fault")))
+            : null;
+        await f.TickAsync(bridge, enqueueOverride: fault);
+        await using (var db = f.Db())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
+            row.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            row.SpecialistSessionId.ShouldBe(f.CurrentSessionId);
+            row.SpecialistSessionStartedAt.ShouldBe(f.CurrentStartedAt);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == row.Id
+                && e.Type == AgentTaskEventType.Warning)).ShouldBe(1);
+            var queue = await db.SessionQueuedMessages.Where(m => m.ExecutionTaskId == row.Id).ToListAsync();
+            queue.Count.ShouldBe(boundary == "enqueue-fault" ? 0 : 1);
+            if (boundary is "busy" or "reload")
+                queue.Single().Status.ShouldBe(QueuedMessageStatus.Pending);
+            if (boundary == "enqueue-fault")
+            {
+                bridge.Adapter.Inputs.ShouldBeEmpty();
+                (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId
+                    && i.SessionId == f.CurrentSessionId
+                    && i.Message.Contains("brief") && i.Message.Contains("was not queued"))).ShouldBe(1);
+            }
+        }
+        if (boundary == "enqueue-fault")
+        {
+            await f.TickAsync(bridge);
+            await using var db = f.Db();
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == f.Task.Id
+                && e.Type == AgentTaskEventType.Dispatched)).ShouldBe(1);
+            (await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == f.Task.Id)).ShouldBe(0);
+            return;
+        }
+        if (boundary is "busy" or "reload")
+        {
+            bridge.Adapter.Inputs.ShouldBeEmpty();
+            await bridge.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            var queue = boundary == "reload"
+                ? ActivatorUtilities.CreateInstance<SessionMessageQueueService>(bridge.Provider)
+                : bridge.Queue;
+            await queue.OnTurnEndAsync(f.CurrentSessionId, CancellationToken.None);
+        }
+        await f.AssertAdoptedAsync(bridge, f.Task);
+    }
+
     private static async Task<BridgeQueueHarness> HarnessAsync(bool observable = true)
     {
         var settings = new DelegationSettings { ModernPtyBriefInlineMaxBytes = 128, ModernPtySingleWriteMaxBytes = 128 };

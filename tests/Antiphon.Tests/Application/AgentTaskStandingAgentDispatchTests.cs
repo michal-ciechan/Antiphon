@@ -483,7 +483,8 @@ public class AgentTaskStandingAgentDispatchTests
     }
 
     internal static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
-        string? worktreeBasePath = null, string? connectionString = null)
+        string? worktreeBasePath = null, string? connectionString = null,
+        BridgeQueueHarness? bridge = null, DelegationSettings? delegation = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -493,7 +494,7 @@ public class AgentTaskStandingAgentDispatchTests
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
-        services.AddSingleton(Options.Create(new DelegationSettings
+        services.AddSingleton(Options.Create(delegation ?? new DelegationSettings
         {
             // The fixture database is shared across suites; leftover Dispatched/Working rows from
             // other tests must never eat this harness's dispatch budget.
@@ -519,6 +520,12 @@ public class AgentTaskStandingAgentDispatchTests
         services.AddSingleton<ISessionRunnerClient, BridgeQueueHarness.EmptyRunnerClient>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
+        if (bridge is not null)
+        {
+            services.AddSingleton(bridge.Runtime);
+            services.AddSingleton(bridge.Queue);
+            services.AddSingleton(bridge.Provider.GetRequiredService<PtyDeliveryProfile>());
+        }
         services.AddSingleton<IDelegateSessionStopper>(new RecordingSessionStopper());
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddDelegationWorktreeGraph(new GitSettings

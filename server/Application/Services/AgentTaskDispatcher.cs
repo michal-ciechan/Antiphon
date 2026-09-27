@@ -6608,6 +6608,7 @@ public sealed class AgentTaskDispatcher
                 + "kind so it runs on a fresh delegate.");
         }
 
+        var adoptLegacyGeneration = false;
         if (claimed.SpecialistModelAlias is { } expectedAlias)
         {
             if (claimed.SpecialistInputPolicyJson is not null
@@ -6624,13 +6625,18 @@ public sealed class AgentTaskDispatcher
                     $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} on '{standing.Name}' selected "
                     + $"{claimed.AgentKind}/{claimed.ModelLevel}/{expectedAlias}; current seat is "
                     + $"{standing.Kind}/{standing.ModelLevel}/{currentAlias}, live model {live?.EffectiveModelId ?? "unrecorded"}.");
-            if (claimed.SpecialistSessionId is { } expectedSession
-                && (session != expectedSession || live?.StartedAt != claimed.SpecialistSessionStartedAt
-                    || live?.TuiProfileRevisionId != claimed.SpecialistProfileRevisionId))
-                throw new SpecialistIdentityMismatchException(
-                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} on '{standing.Name}' selected session "
-                    + $"{expectedSession:D} at {claimed.SpecialistSessionStartedAt:O}; current session "
-                    + $"{session:D} at {live?.StartedAt:O} has a different execution generation/profile.");
+            if (claimed.SpecialistSessionId is { } expectedSession)
+            {
+                var generationChanged = session != expectedSession
+                    || live?.StartedAt != claimed.SpecialistSessionStartedAt;
+                var profileChanged = live?.TuiProfileRevisionId != claimed.SpecialistProfileRevisionId;
+                if (profileChanged || (generationChanged && !CanAdoptLegacyCheckGeneration(claimed, standing, live, now)))
+                    throw new SpecialistIdentityMismatchException(
+                        $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} on '{standing.Name}' selected session "
+                        + $"{expectedSession:D} at {claimed.SpecialistSessionStartedAt:O}; current session "
+                        + $"{session:D} at {live?.StartedAt:O} has a different execution generation/profile.");
+                adoptLegacyGeneration = generationChanged;
+            }
         }
 
         // One task at a time on the LIVE composer. A brief delivered while the agent is mid-task
@@ -6653,6 +6659,20 @@ public sealed class AgentTaskDispatcher
         claimed.AgentSessionId = session;
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
+        if (adoptLegacyGeneration && claimed.SpecialistSessionId is { } oldSession)
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = claimed.Id,
+                Type = AgentTaskEventType.Warning,
+                Detail = $"Legacy Check adopted standing session generation {oldSession:D} "
+                    + $"at {claimed.SpecialistSessionStartedAt:O} -> {session:D} at {live!.StartedAt:O}.",
+                At = now,
+            });
+            claimed.SpecialistSessionId = session;
+            claimed.SpecialistSessionStartedAt = live!.StartedAt;
+        }
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -6679,6 +6699,18 @@ public sealed class AgentTaskDispatcher
             DelegationReportFormatter.Short(claimed.Id), standing.Name, session);
         return ReuseOutcome.Reused;
     }
+
+    private bool CanAdoptLegacyCheckGeneration(AgentTask task, Agent standing, AgentSession? live, DateTime now) =>
+        task.Role == AgentTaskRole.Check
+        && task.SpecialistInputPolicyJson is null
+        && task.AgentId == standing.Id
+        && string.Equals(standing.Slug, CheckInterpreterProvisioner.Slug(_settings), StringComparison.OrdinalIgnoreCase)
+        && standing.AlwaysOn
+        && !standing.IsPoolDelegate
+        && (standing.StandingSpecialistRole is null or AgentTaskRole.Check)
+        && (standing.StandingSpecialistOwnerId is null || standing.StandingSpecialistOwnerId == standing.Id)
+        && live?.Status == SessionStatus.Running
+        && (task.ExecutionDeadlineAt is null || task.ExecutionDeadlineAt > now);
 
     /// <summary>
     /// The brief for a reused session — preceded, when the new work is UNRELATED to what the
