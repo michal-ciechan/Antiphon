@@ -383,35 +383,12 @@ public sealed class RepositoryMutationLeaseTests
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(Path.Combine(hooks, "pre-commit"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await fixture.RequiredAsync(fixture.Repository, "config", "core.hooksPath", hooks);
-        var worker = Path.Combine(fixture.Root, "crash-worker.ps1");
-        await File.WriteAllTextAsync(worker, """
-            $ErrorActionPreference = 'Stop'
-            $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
-            $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease crash worker', $true)
-            $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
-            $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
-                param($context, $name)
-                $path = $resolver.ResolveAssemblyToPath($name)
-                if ($null -eq $path) {
-                    $candidate = [IO.Path]::Combine($assemblyDirectory, $name.Name + '.dll')
-                    if ([IO.File]::Exists($candidate)) { $path = $candidate }
-                }
-                if ($null -eq $path) { return $null }
-                return $context.LoadFromAssemblyPath($path)
-            }.GetNewClosure()
-            $loadContext.add_Resolving($resolveDependency)
-            $server = $loadContext.LoadFromAssemblyPath($args[0])
-            $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
-            $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
-            $result = $operation.GetAwaiter().GetResult()
-            if (-not $result.Succeeded) { throw ('fixture_' + $result.Diagnostic) }
-            """);
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
+        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", worker, typeof(LandingGit).Assembly.Location, fixture.Source })
-            start.ArgumentList.Add(arg);
-        // This worker uses the real LandingGit, so it does not inherit FixtureGit's process
-        // overrides. Pin its identity and blocking hook instead of borrowing global Git config.
+        start.ArgumentList.Add(typeof(RepositoryMutationLeaseTests).Assembly.Location);
+        start.Environment[RepositoryLeaseCrashWorker.Marker] = System.Text.Json.JsonSerializer.Serialize(
+            new RepositoryLeaseCrashWorker.Request(fixture.Root, fixture.Source, fixture.Repository, null, "start"));
+        // The child uses real LandingGit, so pin its Git identity and blocking hook.
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(fixture.Root, "home", "empty-config");
         start.Environment["GIT_AUTHOR_NAME"] = "C448 Fixture";
@@ -481,37 +458,14 @@ public sealed class RepositoryMutationLeaseTests
                 Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), fixture.Source], expectedExit: 3);
             liveRecoveryOutput.ShouldContain("retained (alive):");
             (await File.ReadAllBytesAsync(recordPath)).ShouldBe(await File.ReadAllBytesAsync(liveSnapshot));
-            var recoveryWorker = Path.Combine(fixture.Root, "recovery-worker.ps1");
             var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
-            await File.WriteAllTextAsync(recoveryWorker, """
-                $ErrorActionPreference = 'Stop'
-                $assemblyDirectory = [IO.Path]::GetDirectoryName($args[0])
-                $loadContext = [Runtime.Loader.AssemblyLoadContext]::new('C448 lease recovery worker', $true)
-                $resolver = [Runtime.Loader.AssemblyDependencyResolver]::new($args[0])
-                $resolveDependency = [Func[Runtime.Loader.AssemblyLoadContext, Reflection.AssemblyName, Reflection.Assembly]] {
-                    param($context, $name)
-                    $path = $resolver.ResolveAssemblyToPath($name)
-                    if ($null -eq $path) {
-                        $candidate = [IO.Path]::Combine($assemblyDirectory, $name.Name + '.dll')
-                        if ([IO.File]::Exists($candidate)) { $path = $candidate }
-                    }
-                    if ($null -eq $path) { return $null }
-                    return $context.LoadFromAssemblyPath($path)
-                }.GetNewClosure()
-                $loadContext.add_Resolving($resolveDependency)
-                $server = $loadContext.LoadFromAssemblyPath($args[0])
-                $git = [Activator]::CreateInstance($server.GetType('Antiphon.Server.Infrastructure.Git.LandingGit', $true), [object[]]@($null))
-                $leaseType = $server.GetType('Antiphon.Server.Infrastructure.Git.RepositoryMutationLease', $true)
-                $leases = [Activator]::CreateInstance($leaseType, [object[]]@($git, $null))
-                foreach ($repository in @($args[1], $args[2])) {
-                    $lease = $leases.TryAcquireAsync($repository, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
-                    if ($null -ne $lease) { $lease.DisposeAsync().GetAwaiter().GetResult(); exit 10 }
-                }
-                $ownedProcess = [Diagnostics.Process]::GetCurrentProcess()
-                [IO.File]::WriteAllText($args[3], (@{ Worker = $ownedProcess.Id; StartTicks = $ownedProcess.StartTime.ToUniversalTime().Ticks; HeldSource = $true; HeldMain = $true } | ConvertTo-Json -Compress))
-                """);
-            await RunChildAsync("pwsh", ["-NoProfile", "-File", recoveryWorker,
-                typeof(LandingGit).Assembly.Location, fixture.Source, fixture.Repository, recoveryEvidence], expectedExit: 0);
+            var recoveryStart = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true };
+            recoveryStart.ArgumentList.Add(typeof(RepositoryMutationLeaseTests).Assembly.Location);
+            recoveryStart.Environment[RepositoryLeaseCrashWorker.Marker] = System.Text.Json.JsonSerializer.Serialize(
+                new RepositoryLeaseCrashWorker.Request(fixture.Root, fixture.Source, fixture.Repository,
+                    recoveryEvidence, "admit"));
+            await RunChildAsync(recoveryStart, expectedExit: 0);
             using (var recovery = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(recoveryEvidence)))
             {
                 recovery.RootElement.GetProperty("Worker").GetInt32().ShouldNotBe(Environment.ProcessId);
@@ -598,6 +552,11 @@ public sealed class RepositoryMutationLeaseTests
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        return await RunChildAsync(start, expectedExit);
+    }
+
+    private static async Task<string> RunChildAsync(ProcessStartInfo start, int expectedExit)
+    {
         using var child = Process.Start(start)!;
         var output = child.StandardOutput.ReadToEndAsync();
         var error = child.StandardError.ReadToEndAsync();
