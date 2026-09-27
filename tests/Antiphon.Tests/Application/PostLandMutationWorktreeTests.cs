@@ -374,8 +374,11 @@ public sealed class PostLandMutationWorktreeTests
             WorktreeManager.BuildDirectoryName(identifier)));
         var hooks = Path.Combine(world.Host.Fixture.Repository, ".git-hooks-c478-g083");
         Directory.CreateDirectory(hooks);
-        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"),
+        var hook = Path.Combine(hooks, "post-checkout");
+        await File.WriteAllTextAsync(hook,
             "#!/bin/sh\nprintf 'hook-sentinel\\n' > hook-sentinel.txt\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await world.Host.Fixture.RequiredAsync(world.Host.Fixture.Repository, "config", "core.hooksPath", hooks);
         await using var lease = await world.Host.Services.GetRequiredService<IRepositoryMutationLease>()
             .TryAcquireAsync(task.RepoPath!, default);

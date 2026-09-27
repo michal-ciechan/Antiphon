@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Domain.Enums;
@@ -200,7 +201,8 @@ public sealed class DelegateScriptKindTests
             server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard", "-Kind", "Grok");
 
         run.ExitCode.ShouldNotBe(0);
-        run.Output.ShouldContain("never silently rerouted");
+        var plainOutput = Regex.Replace(run.Output, @"\x1B\[[0-9;]*m", "");
+        Regex.Replace(plainOutput, @"\s+", " ").ShouldContain("never silently rerouted");
         server.RequestCount.ShouldBe(0);
     }
 
