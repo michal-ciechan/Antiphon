@@ -229,6 +229,16 @@ public sealed class ChannelInboundRecoveryTests
             && i.QueueMessageId == null && i.WakeTimeoutIncidentAt != null)).ShouldBe(earlierMessages);
         (await afterDeadline.TranscriptEntries.CountAsync(t => t.AgentSessionId == healthySession
             && t.Kind == TranscriptKinds.UserPrompt && t.Text == submittedBody)).ShouldBe(1);
+        var retry = bridge.DrainPendingAsync(Ct);
+        await clock.SecondPollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(90));
+        await retry.WaitAsync(TimeSpan.FromSeconds(20));
+        (await afterDeadline.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.FailureReason == "ChannelWakeTimeout")).ShouldBe(earlierMessages);
+        (await afterDeadline.ChannelInbounds.CountAsync(i => i.AgentId == h.AgentId
+            && i.QueueMessageId == null)).ShouldBe(earlierMessages);
+        (await afterDeadline.TranscriptEntries.CountAsync(t => t.AgentSessionId == healthySession
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == submittedBody)).ShouldBe(1);
     }
 
     private sealed class BridgeWakeClock : TimeProvider
@@ -237,13 +247,19 @@ public sealed class ChannelInboundRecoveryTests
         public DateTimeOffset Start => _clock.GetUtcNow() - _advanced;
         private TimeSpan _advanced;
         public TaskCompletionSource PollRegistered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondPollRegistered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _polls;
         public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
         public override long GetTimestamp() => _clock.GetTimestamp();
         public override long TimestampFrequency => _clock.TimestampFrequency;
         public override ITimer CreateTimer(TimerCallback callback, object? state,
             TimeSpan dueTime, TimeSpan period)
         {
-            if (dueTime == TimeSpan.FromSeconds(2)) PollRegistered.TrySetResult();
+            if (dueTime == TimeSpan.FromSeconds(2))
+            {
+                PollRegistered.TrySetResult();
+                if (Interlocked.Increment(ref _polls) >= 2) SecondPollRegistered.TrySetResult();
+            }
             return _clock.CreateTimer(callback, state, dueTime, period);
         }
         public void Advance(TimeSpan amount) { _advanced += amount; _clock.Advance(amount); }
@@ -332,6 +348,7 @@ public sealed class ChannelInboundRecoveryTests
         });
         var chat = await h.BindChannelAsync();
         var nativeIds = Enumerable.Range(0, 3).Select(i => $"wake-once-{i}-{Guid.NewGuid():N}").ToArray();
+        var originals = new Dictionary<string, ChannelMessage>();
         await using (var seed = Db(schema.ConnectionString))
         {
             await seed.AgentSessions.Where(s => s.Id == h.SessionId)
@@ -340,14 +357,26 @@ public sealed class ChannelInboundRecoveryTests
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));
             var channelId = await seed.ChatChannels.Where(c => c.ExternalId == chat)
                 .Select(c => c.Id).SingleAsync();
-            foreach (var native in nativeIds)
+            for (var index = 0; index < nativeIds.Length; index++)
+            {
+                var native = nativeIds[index];
+                var original = Message(chat, native, native + " DISTINCT TAIL") with
+                {
+                    Attachments = [new Attachment
+                    {
+                        Kind = AttachmentKind.File, ChannelRef = $"file-{index}",
+                        Name = $"wake-{index}.bin", Content = [(byte)(index + 1), 42],
+                    }],
+                };
+                originals.Add(native, original);
                 seed.ChannelInbounds.Add(new ChannelInbound
                 {
                     Id = Guid.NewGuid(), Provider = "telegram", ConversationId = chat,
                     NativeMessageId = native, AgentId = h.AgentId, ChatChannelId = channelId,
-                    EnvelopeJson = JsonSerializer.Serialize(Message(chat, native, native + " DISTINCT TAIL"),
+                    EnvelopeJson = JsonSerializer.Serialize(original,
                         Antiphon.Messaging.MessagingJson.Options), AcceptedAt = h.Now,
                 });
+            }
             await seed.SaveChangesAsync();
         }
         var healthy = await SeedHealthyRecipientAsync(h, "healthy beside failed starts DISTINCT TAIL");
@@ -363,6 +392,15 @@ public sealed class ChannelInboundRecoveryTests
             retained.Count.ShouldBe(3);
             retained.ShouldAllBe(i => i.EnvelopeJson != null && i.QueueMessageId == null
                 && i.TransferredAt == null && i.AgentId == h.AgentId);
+            foreach (var inbound in retained)
+            {
+                var restored = JsonSerializer.Deserialize<ChannelMessage>(inbound.EnvelopeJson!,
+                    Antiphon.Messaging.MessagingJson.Options)!;
+                restored.Text.ShouldBe(originals[inbound.NativeMessageId].Text);
+                restored.Attachments.Single().Content.ShouldBe(originals[inbound.NativeMessageId]
+                    .Attachments.Single().Content);
+                inbound.ChatChannelId.ShouldNotBeNull();
+            }
             (await verify.SessionQueuedMessages.CountAsync(q => q.AgentSessionId == h.SessionId)).ShouldBe(0);
             (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
@@ -699,7 +737,9 @@ public sealed class ChannelInboundRecoveryTests
     {
         private Guid _target;
         private int _entries;
+        private int _active;
         public int Entries => Volatile.Read(ref _entries);
+        public int Active => Volatile.Read(ref _active);
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -714,13 +754,18 @@ public sealed class ChannelInboundRecoveryTests
                 && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == _target))
             {
                 Interlocked.Increment(ref _entries);
+                Interlocked.Increment(ref _active);
                 Entered.TrySetResult();
-                if (HoldForCancellation)
+                try
                 {
-                    try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
-                    catch (OperationCanceledException) { CancellationObserved.TrySetResult(); }
+                    if (HoldForCancellation)
+                    {
+                        try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+                        catch (OperationCanceledException) { CancellationObserved.TrySetResult(); }
+                    }
+                    await Release.Task;
                 }
-                await Release.Task;
+                finally { Interlocked.Decrement(ref _active); }
                 if (HoldForCancellation) throw new OperationCanceledException(cancellationToken);
                 throw new InvalidOperationException("synthetic gated start refusal");
             }
@@ -774,6 +819,21 @@ public sealed class ChannelInboundRecoveryTests
         }
         finally { gate.Release.TrySetResult(); }
         await stop.WaitAsync(TimeSpan.FromSeconds(10));
+        gate.Active.ShouldBe(0);
+        await using (var lockDb = Db(schema.ConnectionString))
+        {
+            await lockDb.Database.OpenConnectionAsync();
+            await using var command = lockDb.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "SELECT pg_try_advisory_lock(@key)";
+            var key = command.CreateParameter();
+            key.ParameterName = "key";
+            key.Value = BitConverter.ToInt64(h.AgentId.ToByteArray(), 0);
+            command.Parameters.Add(key);
+            (await command.ExecuteScalarAsync()).ShouldBe(true,
+                "stop must release the canceled group's PostgreSQL agent claim");
+            command.CommandText = "SELECT pg_advisory_unlock(@key)";
+            await command.ExecuteScalarAsync();
+        }
         await using (var pending = Db(schema.ConnectionString))
         {
             (await pending.ChannelInbounds.Where(i => i.NativeMessageId == native)
@@ -1269,6 +1329,24 @@ public sealed class ChannelInboundRecoveryTests
             await replayHost.StartAsync(Ct);
             await WaitForAsync(() => Task.FromResult(hostedHarness.Messaging.AcknowledgedCount == 2));
             await replayHost.StopAsync(Ct);
+            InstallTranscriptReceipt(hostedHarness);
+            await using (var running = Db(ackSchema.ConnectionString))
+                await running.AgentSessions.Where(s => s.Id == hostedHarness.SessionId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+            await Bridge(hostedHarness).DrainPendingAsync(Ct);
+            await hostedHarness.Queue.OnTurnEndAsync(hostedHarness.SessionId, Ct);
+            await using (var replayed = Db(ackSchema.ConnectionString))
+            {
+                foreach (var nativeId in new[] { acceptedMessage.ChannelMessageId, failedMessage.ChannelMessageId })
+                {
+                    var inbound = await replayed.ChannelInbounds.AsNoTracking()
+                        .SingleAsync(i => i.NativeMessageId == nativeId);
+                    var owner = await replayed.SessionQueuedMessages.AsNoTracking()
+                        .SingleAsync(q => q.SourceChannelInboundId == inbound.Id);
+                    (await replayed.TranscriptEntries.CountAsync(t => t.AgentSessionId == hostedHarness.SessionId
+                        && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+                }
+            }
         }
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -1309,6 +1387,50 @@ public sealed class ChannelInboundRecoveryTests
                     && q.Body.Contains("must survive mapping fault"));
             owner.Body.ShouldContain(firstSavedPath);
             (await recoveredOwner.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
+        }
+        await using (var batchSchema = await TestDbFixture.CreateIsolatedSchemaAsync())
+        {
+            var batchFault = new QueueMappingFault();
+            await using var batchHarness = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = batchSchema.ConnectionString, Bridge = Settings(debounce: 100000),
+                AlwaysOn = false, PreserveDatabaseOnDispose = true,
+                ConfigureDbContext = options => options.AddInterceptors(batchFault),
+            });
+            var batchChat = await batchHarness.BindChannelAsync();
+            var firstBatch = Message(batchChat, $"batch-a-{Guid.NewGuid():N}", "batch first DISTINCT TAIL");
+            var secondBatch = Message(batchChat, $"batch-b-{Guid.NewGuid():N}", "batch second DISTINCT TAIL");
+            var batchBridge = Bridge(batchHarness);
+            await batchBridge.HandleInboundAsync(firstBatch, Ct);
+            await batchBridge.HandleInboundAsync(secondBatch, Ct);
+            batchFault.Arm();
+            await batchHarness.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
+            await using (var cut = Db(batchSchema.ConnectionString))
+            {
+                var retained = await cut.ChannelInbounds.AsNoTracking()
+                    .Where(i => i.NativeMessageId == firstBatch.ChannelMessageId
+                        || i.NativeMessageId == secondBatch.ChannelMessageId).ToListAsync();
+                retained.Count.ShouldBe(2);
+                retained.ShouldAllBe(i => i.EnvelopeJson != null && i.QueueMessageId == null);
+                (await cut.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId != null
+                    && q.AgentSessionId == batchHarness.SessionId)).ShouldBe(0);
+            }
+            InstallTranscriptReceipt(batchHarness);
+            await Bridge(batchHarness).DrainPendingAsync(Ct);
+            await batchHarness.Provider.GetRequiredService<ChannelInboundDebouncer>().FlushAllAsync();
+            await using var recoveredBatch = Db(batchSchema.ConnectionString);
+            var members = await recoveredBatch.ChannelInbounds.AsNoTracking()
+                .Where(i => i.NativeMessageId == firstBatch.ChannelMessageId
+                    || i.NativeMessageId == secondBatch.ChannelMessageId)
+                .OrderBy(i => i.AcceptanceSequence).ToListAsync();
+            members.Select(i => i.QueueMessageId).Distinct().Count().ShouldBe(1);
+            var owner = await recoveredBatch.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(q => q.SourceChannelInboundId == members[0].Id);
+            members.ShouldAllBe(i => i.QueueMessageId == owner.Id);
+            owner.Body.IndexOf("batch first DISTINCT TAIL", StringComparison.Ordinal)
+                .ShouldBeLessThan(owner.Body.IndexOf("batch second DISTINCT TAIL", StringComparison.Ordinal));
+            (await recoveredBatch.TranscriptEntries.CountAsync(t => t.AgentSessionId == batchHarness.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text == owner.Body)).ShouldBe(1);
         }
         var first = Message(chat, "first-" + Guid.NewGuid().ToString("N"), "first complete body");
@@ -1505,6 +1627,13 @@ public sealed class ChannelInboundRecoveryTests
         await recovered.Queue.OnTurnEndAsync(session, Ct);
         recovered.Adapter.SubmittedBodies.Count.ShouldBe(3);
         recovered.Adapter.SubmittedBodies.Count(b => b.Contains("left lane tail") && b.Contains("right lane tail")).ShouldBe(0);
+        foreach (var laneOwnerId in laneMembers.Distinct())
+        {
+            var laneBody = await db.SessionQueuedMessages.Where(q => q.Id == laneOwnerId)
+                .Select(q => q.Body).SingleAsync();
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == session
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == laneBody)).ShouldBe(1);
+        }
         await laneBridge.HandleInboundAsync(Message(chat, secondId, "line two tail"), Ct);
         (await db.SessionQueuedMessages.CountAsync(q => q.SourceChannelInboundId != null
             && (q.AgentSessionId == session))).ShouldBe(3);
@@ -1514,7 +1643,7 @@ public sealed class ChannelInboundRecoveryTests
         await using var pageSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var held = await BridgeQueueHarness.CreateAsync(new()
         {
-            ConnectionString = pageSchema.ConnectionString, ClockSpeed = 100,
+            ConnectionString = pageSchema.ConnectionString,
             Bridge = Settings(timeout: 1), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
         var heldChat = await held.BindChannelAsync();
@@ -1534,13 +1663,20 @@ public sealed class ChannelInboundRecoveryTests
                 });
             await seed.SaveChangesAsync();
         }
-        var pageBridge = Bridge(held);
+        var pageClock = new BridgeWakeClock();
+        var pageBridge = Bridge(held, pageClock);
         string lastNativeId;
         await using (var pageOrder = Db(pageSchema.ConnectionString))
             lastNativeId = await pageOrder.ChannelInbounds.OrderByDescending(i => i.AcceptanceSequence)
                 .Select(i => i.NativeMessageId).FirstAsync();
-        await pageBridge.DrainPendingAsync(Ct);
-        await pageBridge.DrainPendingAsync(Ct);
+        var firstPage = pageBridge.DrainPendingAsync(Ct);
+        await pageClock.PollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        pageClock.Advance(TimeSpan.FromSeconds(2));
+        await firstPage.WaitAsync(TimeSpan.FromSeconds(20));
+        var secondPage = pageBridge.DrainPendingAsync(Ct);
+        await pageClock.SecondPollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        pageClock.Advance(TimeSpan.FromSeconds(2));
+        await secondPage.WaitAsync(TimeSpan.FromSeconds(20));
         await using var pageVerify = Db(pageSchema.ConnectionString);
         (await pageVerify.ChannelInbounds.Where(i => i.NativeMessageId == lastNativeId)
             .Select(i => i.WakeTimeoutIncidentAt).SingleAsync()).ShouldNotBeNull();
@@ -1635,6 +1771,7 @@ public sealed class ChannelInboundRecoveryTests
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
         await Bridge(h).HandleInboundAsync(message, Ct);
+        var firstEpisodeAt = h.Now.AddMinutes(-2);
         await using (var db = Db(schema.ConnectionString))
         {
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
@@ -1645,7 +1782,7 @@ public sealed class ChannelInboundRecoveryTests
                 db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
                 {
                     Id = Guid.NewGuid(), Kind = kind, ModelAlias = ModelAlias.KindWide,
-                    Source = ModelAvailabilitySource.Manual, HitAt = DateTime.UtcNow,
+                    Source = ModelAvailabilitySource.Manual, HitAt = firstEpisodeAt,
                     Reason = "provider capacity test hold",
                 });
             await db.SaveChangesAsync();
@@ -1668,12 +1805,12 @@ public sealed class ChannelInboundRecoveryTests
             && i.FailureReason == "ProviderCapacity" && i.Message.Contains("pending"))).ShouldBe(1);
         h.Adapter.SentInput.ShouldBeEmpty();
         await verify.ModelAvailabilityHolds.ExecuteDeleteAsync();
-        await Task.Delay(20);
+        var secondEpisodeAt = firstEpisodeAt.AddMinutes(1);
         foreach (var kind in new[] { AgentKind.Raw, AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex })
             verify.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
             {
                 Id = Guid.NewGuid(), Kind = kind, ModelAlias = ModelAlias.KindWide,
-                Source = ModelAvailabilitySource.Manual, HitAt = h.Now,
+                Source = ModelAvailabilitySource.Manual, HitAt = secondEpisodeAt,
                 Reason = "second capacity episode",
             });
         await verify.SaveChangesAsync();
@@ -1857,12 +1994,14 @@ public sealed class ChannelInboundRecoveryTests
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
         var inbound = Message(chat, Guid.NewGuid().ToString("N"), "wait for Running");
-        var handling = Bridge(h).HandleInboundAsync(inbound, Ct);
-        await Task.Delay(30);
+        var bridgeClock = new BridgeWakeClock();
+        var handling = Bridge(h, bridgeClock).HandleInboundAsync(inbound, Ct);
+        await bridgeClock.PollRegistered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         h.Adapter.SentInput.ShouldBeEmpty();
         await using (var db = Db(schema.ConnectionString))
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+        bridgeClock.Advance(TimeSpan.FromSeconds(2));
         await handling;
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         await using var verify = Db(schema.ConnectionString);
