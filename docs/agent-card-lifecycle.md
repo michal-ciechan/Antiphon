@@ -5,6 +5,19 @@ Antiphon tracks two related but separate states:
 - **Card status** is the board workflow location: `Backlog`, `InProgress`, `Review`, `Done`, `NeedsDecision`, or `Canceled`.
 - **Agent session status** is the runtime process state: `Starting`, `Running`, `Stopping`, `Stopped`, or `Failed`.
 
+`CardWorkflowRun` is a third state axis: one open run per card snapshots the selected
+`PipelineDefinitionRevision`. A board's pipeline pointer outranks its project's default;
+without either pointer the code-owned Standard pipeline applies. Queue assignment only
+assigns a card and does not create a run. The first card-bound stage task creates the run
+in the next rollout slice. A run's stage pointer follows tasks, and its status mirrors
+stage activity; a card's board column remains its own state.
+
+| Card state | CardWorkflowRunStatus | Meaning |
+|---|---|---|
+| Backlog / InProgress / Review | Queued or Running | A stage task may advance the run. |
+| Done | Completed | The run has finished. |
+| Canceled / archived | Canceled | The run was stopped with the card. |
+
 ## Status Rules
 
 Moving or spawning a card into the board's active column moves the card to `InProgress` and claims it for an agent session.

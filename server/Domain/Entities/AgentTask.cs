@@ -169,6 +169,7 @@ public class AgentTask
     /// task must never become undeletable by <c>DataRetentionService</c> because of a card.</para>
     /// </summary>
     public Guid? CardId { get; set; }
+    public Guid? CardWorkflowStageId { get; set; }
 
     public Guid? WorktreeId { get; set; }
 
@@ -643,6 +644,7 @@ public class AgentTask
     public string? InternalDecisionAuditBaselineJson { get; set; }
 
     public Card? Card { get; set; }
+    public CardWorkflowStage? CardWorkflowStage { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();
     public ICollection<AgentTaskEvent> Events { get; set; } = new List<AgentTaskEvent>();

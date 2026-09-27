@@ -18,6 +18,46 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Integration")]
 public sealed class DatabaseSeederTests
 {
+    [Test]
+    public async Task Pipeline_seed_inserts_the_built_in_once_and_appends_a_revision_only_when_the_constant_hash_changes()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        await DatabaseSeeder.SeedAsync(db, new LlmSettings(), CancellationToken.None);
+        db.ChangeTracker.Clear();
+        var builtin = await db.PipelineDefinitions.AsNoTracking().SingleAsync();
+        builtin.Id.ShouldBe(PipelineDefinitions.StandardPipelineId);
+        builtin.Name.ShouldBe("Standard pipeline");
+        builtin.Source.ShouldBe(Antiphon.Server.Domain.Enums.PipelineDefinitionSource.BuiltIn);
+        var first = await db.PipelineDefinitionRevisions.AsNoTracking().SingleAsync();
+        first.ContentHash.ShouldBe(PipelineDefinitions.Hash);
+        PipelineStagesJson.Parse(first.StagesJson).Select(s => s.Role)
+            .ShouldBe(PipelineDefinitions.StandardPipeline.Select(s => s.Role));
+
+        var custom = await new PipelineDefinitionService(db, TimeProvider.System)
+            .CreateAsync(new("Private", "", [new(Antiphon.Server.Domain.Enums.AgentTaskRole.Code,
+                "stage-code", ["code"])]), CancellationToken.None);
+        await DatabaseSeeder.SeedAsync(db, new LlmSettings(), CancellationToken.None);
+        db.ChangeTracker.Clear();
+        (await db.PipelineDefinitionRevisions.CountAsync(r => r.DefinitionId == builtin.Id)).ShouldBe(1);
+        (await db.PipelineDefinitions.AsNoTracking().SingleAsync(d => d.Id == builtin.Id))
+            .UpdatedAt.ShouldBe(builtin.UpdatedAt);
+
+        var alternate = PipelineDefinitions.StandardPipeline.Select(s =>
+            s.Role == Antiphon.Server.Domain.Enums.AgentTaskRole.Code
+                ? s with { AllowedNext = ["code"] }
+                : s).ToArray();
+        await DatabaseSeeder.SeedPipelineDefinitionsAsync(db, alternate, CancellationToken.None);
+        db.ChangeTracker.Clear();
+        var revisions = await db.PipelineDefinitionRevisions.AsNoTracking()
+            .Where(r => r.DefinitionId == builtin.Id).OrderBy(r => r.RevisionNumber).ToListAsync();
+        revisions.Select(r => r.RevisionNumber).ShouldBe([1, 2]);
+        revisions[0].StagesJson.ShouldBe(first.StagesJson);
+        (await db.PipelineDefinitions.AsNoTracking().SingleAsync(d => d.Id == builtin.Id))
+            .ActiveRevisionId.ShouldBe(revisions[1].Id);
+        (await db.PipelineDefinitionRevisions.CountAsync(r => r.DefinitionId == custom.Id)).ShouldBe(1);
+    }
+
     private static readonly string[] StaleModelIds =
     [
         "claude-opus-4-20250514",

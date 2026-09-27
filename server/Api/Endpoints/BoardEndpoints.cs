@@ -98,6 +98,10 @@ public static class BoardEndpoints
             return Results.Ok(await loader.UpdateAsync(id, request, cancellationToken));
         });
 
+        boards.MapPut("/{id:guid}/pipeline", async (Guid id,
+            PipelineDefinitionPointerRequest request, BoardService service, CancellationToken ct) =>
+            Results.Ok(await service.SetPipelineAsync(id, request.PipelineDefinitionId, ct)));
+
         // POST, not DELETE-with-a-body: a body on DELETE is hostile to proxies and some clients,
         // and this is not a delete — hard delete remains the existing DELETE /{id}.
         boards.MapPost("/{id:guid}/archive", async (

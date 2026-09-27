@@ -8,10 +8,9 @@ public class CardWorkflowStage
     public Guid CardWorkflowRunId { get; set; }
     public int StageOrder { get; set; }
     public string Name { get; set; } = string.Empty;
-    public string ExecutorType { get; set; } = string.Empty;
-    public string? ModelName { get; set; }
-    public bool GateRequired { get; set; }
-    public string? SystemPrompt { get; set; }
+    public AgentTaskRole Role { get; set; }
+    public string BundleKey { get; set; } = string.Empty;
+    public string AllowedNextJson { get; set; } = "[]";
     public CardWorkflowStageStatus Status { get; set; } = CardWorkflowStageStatus.Pending;
     public string? ResultSummary { get; set; }
     public string? FailureReason { get; set; }
