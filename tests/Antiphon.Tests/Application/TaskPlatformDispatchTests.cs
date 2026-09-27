@@ -127,7 +127,10 @@ public sealed class TaskPlatformDispatchTests
                     await refresh.QueueLaunchBriefAsync(read, session,
                         desktop.Provider.GetRequiredService<SessionMessageQueueService>(), CancellationToken.None);
                 }
-                (await read.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == taskId)).ShouldBe(1);
+                var briefCount = kind == AgentKind.Grok
+                    ? await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId)
+                    : await read.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == taskId);
+                briefCount.ShouldBe(1, kind.ToString());
             }
             finally { await desktop.Provider.DisposeAsync(); }
         }
