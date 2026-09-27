@@ -177,6 +177,69 @@ public sealed class AgentTaskLandSourceFreshnessTests
     }
 
     [Test]
+    public async Task C494_DetachedFixVerifierFailurePreventsPublication()
+    {
+        await using var h = new LandingSafetyHarness();
+        var recording = ConfigureRealVerifier(h);
+        await h.InitializeAsync();
+        var library = Path.Combine(h.Fixture.Source, "src", "FreshnessProbe");
+        var tests = Path.Combine(h.Fixture.Source, "tests", "Antiphon.Tests");
+        Directory.CreateDirectory(library);
+        Directory.CreateDirectory(tests);
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "FreshnessProbe.slnx"),
+            "<Solution><Project Path=\"src/FreshnessProbe/FreshnessProbe.csproj\" /><Project Path=\"tests/Antiphon.Tests/Antiphon.Tests.csproj\" /></Solution>\n");
+        await File.WriteAllTextAsync(Path.Combine(library, "FreshnessProbe.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>\n");
+        await File.WriteAllTextAsync(Path.Combine(library, "FreshnessDecision.cs"),
+            "public static class FreshnessDecision { public static bool ApprovedFixIsPresent() => false; }\n");
+        await File.WriteAllTextAsync(Path.Combine(tests, "Antiphon.Tests.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsTestProject>true</IsTestProject><EnableMicrosoftTestingPlatformRunner>true</EnableMicrosoftTestingPlatformRunner></PropertyGroup><ItemGroup><PackageReference Include=\"TUnit\" Version=\"1.44.0\" /><ProjectReference Include=\"../../src/FreshnessProbe/FreshnessProbe.csproj\" /><None Include=\"../../nonce.txt\" Link=\"nonce.txt\" CopyToOutputDirectory=\"PreserveNewest\" /><None Include=\"../../target.txt\" Link=\"target.txt\" CopyToOutputDirectory=\"PreserveNewest\" /></ItemGroup></Project>\n");
+        await File.WriteAllTextAsync(Path.Combine(tests, "FreshnessProbeTests.cs"),
+            "using TUnit.Core; public sealed class FreshnessProbeTests { [Test] public void ApprovedFixIsPresent() { if (!FreshnessDecision.ApprovedFixIsPresent()) throw new Exception(\"approved behavior absent\"); if (File.ReadAllText(\"nonce.txt\") != \"unique-b-fix\\n\") throw new Exception(\"B nonce absent\"); if (File.ReadAllText(\"target.txt\") != \"independent target content\\n\") throw new Exception(\"T content absent\"); } }\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "buildable A with false behavior");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var a = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        var detached = Path.Combine(h.Fixture.Root, "trees", "failing-follow-up");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "--detach", detached, a);
+        await File.WriteAllTextAsync(Path.Combine(detached, "nonce.txt"), "unique-b-fix\n");
+        await h.Fixture.RequiredAsync(detached, "add", "nonce.txt");
+        await h.Fixture.RequiredAsync(detached, "commit", "-m", "reviewed B still has failing behavior");
+        var b = (await h.Fixture.RequiredAsync(detached, "rev-parse", "HEAD")).Trim();
+        await h.Fixture.RequiredAsync(detached, "push", "origin", $"HEAD:{h.Fixture.SourceRef}");
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Repository, "target.txt"), "independent target content\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", "target.txt");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "target T");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+        var t = (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim();
+        const string filter = "/*/*/FreshnessProbeTests/ApprovedFixIsPresent";
+        await h.RequestAsync(filter: filter, expectedSourceSha: b);
+        await h.RunQueuedAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.OriginalSourceSha.ShouldBe(b);
+        op.SourceLocalSha.ShouldBe(a);
+        op.LastReason.ShouldBe("verification_failed");
+        op.VerifiedSourceSha.ShouldBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeFalse();
+        recording.Invocations.Count.ShouldBe(1);
+        recording.Invocations[0].Filter.ShouldBe(filter);
+        recording.Invocations[0].Worktree.ShouldBe(op.LandWorktreePath);
+        recording.LastResult.ShouldNotBeNull().Passed.ShouldBeFalse();
+        var reports = Directory.GetFiles(recording.Invocations[0].ArtifactsPath,
+            "landing-verification.trx", SearchOption.AllDirectories);
+        reports.Length.ShouldBe(1);
+        var xml = System.Xml.Linq.XDocument.Load(reports[0]);
+        var counters = xml.Descendants().Single(e => e.Name.LocalName == "Counters");
+        counters.Attribute("executed")?.Value.ShouldBe("1");
+        counters.Attribute("failed")?.Value.ShouldBe("1");
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(t);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(a);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(b);
+        h.Fixture.Git.Trace.ShouldNotContain(command => command[0] == "push"
+            && command[^1].EndsWith(":" + h.Fixture.TargetRef, StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task C488_StaleApprovalRefusesDetachedFix()
     {
         await using var h = new LandingSafetyHarness();
