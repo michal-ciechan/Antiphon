@@ -115,6 +115,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
         await using (var db = world.NewDb())
             await db.AgentSessions.Where(s => s.RunnerId == RollingRunnerSettings.Server2Temp)
                 .ExecuteUpdateAsync(s => s.SetProperty(row => row.Status, SessionStatus.Stopped));
+        // The scripted peer does not emit a process-exit event when the DB row is ended.
+        world.PeerB.Sessions.Clear();
 
         var job = new RunnerRetireJob(world.Host.App.Services.GetRequiredService<IServiceScopeFactory>(),
             world.RunnerDirectory, Options.Create(world.Configured), clock, NullLogger<RunnerRetireJob>.Instance);
