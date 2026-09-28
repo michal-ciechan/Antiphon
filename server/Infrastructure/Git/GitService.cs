@@ -3,6 +3,7 @@ using System.Text;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Microsoft.Extensions.Logging;
+using System.IO.Abstractions;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -15,6 +16,8 @@ public class GitService : IGitService
     private readonly ILogger<GitService> _logger;
     private readonly CardFileBoardLookup? _cardFiles;
     private readonly CardFilePreCommitSweep? _preCommit;
+    private readonly IGitCommandExecutor _executor;
+    private readonly IFileSystem _fileSystem;
 
     /// <summary>
     /// Timeout for standard git operations (fetch, diff, checkout, etc.).
@@ -27,11 +30,14 @@ public class GitService : IGitService
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
     public GitService(ILogger<GitService> logger, CardFileBoardLookup? cardFiles = null,
-        CardFilePreCommitSweep? preCommit = null)
+        CardFilePreCommitSweep? preCommit = null, IGitCommandExecutor? executor = null,
+        IFileSystem? fileSystem = null)
     {
         _logger = logger;
         _cardFiles = cardFiles;
         _preCommit = preCommit;
+        _executor = executor ?? new CliGitCommandExecutor();
+        _fileSystem = fileSystem ?? new System.IO.Abstractions.FileSystem();
     }
 
     /// <summary>
@@ -64,16 +70,16 @@ public class GitService : IGitService
         _logger.LogInformation("Creating workflow master branch {Branch} in {RepoPath}", branchName, repoPath);
 
         // Create the workflow master branch from the current HEAD
-        await RunGitAsync(repoPath, $"checkout -b {branchName}", ct);
+        await RunGitVectorAsync(repoPath, ["checkout", "-b", branchName], ct);
 
         // Create the artifact directory and add a .gitkeep so the directory is tracked
         var artifactDir = Path.Combine(repoPath, GetArtifactDirectory(workflowId));
-        Directory.CreateDirectory(artifactDir);
+        _fileSystem.Directory.CreateDirectory(artifactDir);
         var gitkeepPath = Path.Combine(artifactDir, ".gitkeep");
-        await File.WriteAllTextAsync(gitkeepPath, string.Empty, ct);
+        await _fileSystem.File.WriteAllTextAsync(gitkeepPath, string.Empty, ct);
 
-        await RunGitAsync(repoPath, $"add {GetArtifactDirectory(workflowId)}", ct);
-        await RunGitAsync(repoPath, BuildCommitArgs("Initialize workflow artifact directory"), ct);
+        await RunGitVectorAsync(repoPath, ["add", GetArtifactDirectory(workflowId)], ct);
+        await RunGitVectorAsync(repoPath, BuildCommitVector("Initialize workflow artifact directory"), ct);
     }
 
     public async Task CreateStageBranchAsync(Guid workflowId, string stageName, string repoPath, CancellationToken ct)
@@ -83,7 +89,7 @@ public class GitService : IGitService
         _logger.LogInformation("Creating stage branch {Branch} from {Base} in {RepoPath}", stageBranch, workflowMaster, repoPath);
 
         // Create the stage branch from the workflow master
-        await RunGitAsync(repoPath, $"checkout -b {stageBranch} {workflowMaster}", ct);
+        await RunGitVectorAsync(repoPath, ["checkout", "-b", stageBranch, workflowMaster], ct);
     }
 
     public async Task CommitArtifactAsync(Guid workflowId, string stageName, string content, string artifactPath, string repoPath, CancellationToken ct)
@@ -92,24 +98,24 @@ public class GitService : IGitService
         _logger.LogInformation("Committing artifact {Path} on branch {Branch}", artifactPath, stageBranch);
 
         // Ensure we're on the stage branch
-        await RunGitAsync(repoPath, $"checkout {stageBranch}", ct);
+        await RunGitVectorAsync(repoPath, ["checkout", stageBranch], ct);
 
         // Write artifact content to the proper path
         var artifactDir = GetArtifactDirectory(workflowId);
         var fullArtifactDir = Path.Combine(repoPath, artifactDir);
-        Directory.CreateDirectory(fullArtifactDir);
+        _fileSystem.Directory.CreateDirectory(fullArtifactDir);
 
         var fullPath = Path.Combine(repoPath, artifactDir, artifactPath);
         var parentDir = Path.GetDirectoryName(fullPath);
         if (parentDir is not null)
-            Directory.CreateDirectory(parentDir);
+            _fileSystem.Directory.CreateDirectory(parentDir);
 
-        await File.WriteAllTextAsync(fullPath, content, ct);
+        await _fileSystem.File.WriteAllTextAsync(fullPath, content, ct);
 
         // Stage and commit with [antiphon] trailer
-        await RunGitAsync(repoPath, $"add {artifactDir}/{artifactPath}", ct);
+        await RunGitVectorAsync(repoPath, ["add", $"{artifactDir}/{artifactPath}"], ct);
         var message = $"Add artifact {artifactPath} for stage {stageName}";
-        await RunGitAsync(repoPath, BuildCommitArgs(message), ct);
+        await RunGitVectorAsync(repoPath, BuildCommitVector(message), ct);
     }
 
     public async Task<string> TagStageAsync(Guid workflowId, string stageName, int version, string repoPath, CancellationToken ct)
@@ -119,10 +125,10 @@ public class GitService : IGitService
         _logger.LogInformation("Tagging stage branch {Branch} as {Tag}", stageBranch, tagName);
 
         // Ensure we're on the stage branch
-        await RunGitAsync(repoPath, $"checkout {stageBranch}", ct);
+        await RunGitVectorAsync(repoPath, ["checkout", stageBranch], ct);
 
-        var headCommit = (await RunGitAsync(repoPath, "rev-parse HEAD", ct)).Trim();
-        var tagProbe = await TryRunGitAsync(repoPath, $"rev-list -n 1 {tagName}", ct);
+        var headCommit = (await RunGitVectorAsync(repoPath, ["rev-parse", "HEAD"], ct)).Trim();
+        var tagProbe = await TryRunGitVectorAsync(repoPath, ["rev-list", "-n", "1", tagName], ct);
         if (tagProbe.ExitCode != 0
             && !tagProbe.Stderr.Contains("unknown revision", StringComparison.OrdinalIgnoreCase)
             && !tagProbe.Stderr.Contains("ambiguous argument", StringComparison.OrdinalIgnoreCase))
@@ -145,7 +151,7 @@ public class GitService : IGitService
         }
 
         // Create the tag at the current HEAD of the stage branch
-        await RunGitAsync(repoPath, $"tag {tagName}", ct);
+        await RunGitVectorAsync(repoPath, ["tag", tagName], ct);
 
         return tagName;
     }
@@ -157,17 +163,18 @@ public class GitService : IGitService
         _logger.LogInformation("Merging stage branch {Stage} into {Master}", stageBranch, workflowMaster);
 
         // Checkout workflow master
-        await RunGitAsync(repoPath, $"checkout {workflowMaster}", ct);
+        await RunGitVectorAsync(repoPath, ["checkout", workflowMaster], ct);
 
         // Merge stage branch with a merge commit
-        await RunGitAsync(repoPath, $"merge --no-ff {stageBranch} -m \"Merge stage {stageName} into workflow master\n\nSigned-off-by: Antiphon\n[antiphon]\"", ct);
+        await RunGitVectorAsync(repoPath,
+            ["merge", "--no-ff", stageBranch, "-m", $"Merge stage {stageName} into workflow master\n\nSigned-off-by: Antiphon\n[antiphon]"], ct);
     }
 
     public async Task<string> GetDiffBetweenTagsAsync(string tag1, string tag2, string repoPath, CancellationToken ct)
     {
         _logger.LogInformation("Computing diff between {Tag1} and {Tag2}", tag1, tag2);
 
-        var result = await RunGitAsync(repoPath, $"diff {tag1}..{tag2}", ct);
+        var result = await RunGitVectorAsync(repoPath, ["diff", $"{tag1}..{tag2}"], ct);
         return result;
     }
 
@@ -175,7 +182,7 @@ public class GitService : IGitService
     {
         _logger.LogInformation("Computing path-filtered diff between {Tag1} and {Tag2} for path {Path}", tag1, tag2, pathFilter);
 
-        var result = await RunGitAsync(repoPath, $"diff {tag1}..{tag2} -- {pathFilter}", ct);
+        var result = await RunGitVectorAsync(repoPath, ["diff", $"{tag1}..{tag2}", "--", pathFilter], ct);
         return result;
     }
 
@@ -322,6 +329,35 @@ public class GitService : IGitService
             .Replace("\"", "\\\"", StringComparison.Ordinal)
             .Trim();
         return $"commit -m \"{sanitizedSubject}\" --trailer \"antiphon=true\"";
+    }
+
+    private static string[] BuildCommitVector(string subject) =>
+        ["commit", "-m", subject.Replace('\r', ' ').Replace('\n', ' ').Trim(),
+            "--trailer", "antiphon=true"];
+
+    private async Task<string> RunGitVectorAsync(
+        string workingDirectory, IReadOnlyList<string> arguments, CancellationToken ct,
+        TimeSpan? timeout = null)
+    {
+        var result = await TryRunGitVectorAsync(workingDirectory, arguments, ct, timeout);
+        if (result.ExitCode != 0)
+        {
+            var command = string.Join(' ', arguments);
+            _logger.LogError("git {Arguments} failed (exit {ExitCode}): {StdErr}",
+                command, result.ExitCode, result.Stderr);
+            throw new InvalidOperationException(
+                $"git {command} failed with exit code {result.ExitCode}: {result.Stderr}");
+        }
+        return result.Stdout;
+    }
+
+    private async Task<GitCommandResult> TryRunGitVectorAsync(
+        string workingDirectory, IReadOnlyList<string> arguments, CancellationToken ct,
+        TimeSpan? timeout = null)
+    {
+        var result = await _executor.ExecuteAsync(workingDirectory, arguments, timeout ?? GitTimeout, ct);
+        _cardFiles?.NoteServerGit(workingDirectory, string.Join(' ', arguments));
+        return result;
     }
 
     /// <summary>

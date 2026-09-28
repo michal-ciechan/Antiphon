@@ -458,6 +458,7 @@ public static class CheckpointApp
             Reruns = row.Reruns,
             Trx = row.TrxPath,
             Seconds = row.Seconds,
+            TestProcessSeconds = row.TestProcessSeconds,
             Line = row.Line,
             RerunLines = row.RerunLines,
             SlowClasses = row.Trx?.SlowClasses ?? [],

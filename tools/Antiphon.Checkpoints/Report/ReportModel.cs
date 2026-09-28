@@ -60,6 +60,7 @@ public sealed class ReportRow
     public int Reruns { get; set; }
     public string? Trx { get; set; }
     public double Seconds { get; set; }
+    public double? TestProcessSeconds { get; set; }
     public string? Line { get; set; }
     public List<ReportFailure> Failures { get; set; } = [];
     public List<string> RerunLines { get; set; } = [];

@@ -62,6 +62,7 @@ public static class ReportMerger
             Reruns = row.Reruns + earlierAttempts,
             Trx = row.Trx,
             Seconds = row.Seconds,
+            TestProcessSeconds = row.TestProcessSeconds,
             Line = row.Line,
             Failures = row.Failures,
             RerunLines = row.RerunLines.ToList(),

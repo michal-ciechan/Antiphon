@@ -18,7 +18,8 @@ public sealed record DriverRequest(
     Action<string>? OnOutput = null,
     IReadOnlyDictionary<string, string>? Environment = null);
 
-public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bool Killed = false, bool TimedOut = false);
+public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bool Killed = false,
+    bool TimedOut = false, double? ElapsedSeconds = null);
 
 public interface IDriver
 {

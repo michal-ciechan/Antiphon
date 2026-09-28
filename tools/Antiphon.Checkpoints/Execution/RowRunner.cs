@@ -39,6 +39,7 @@ public sealed class RowRunResult
     public bool TimedOut { get; init; }
     public string State { get; init; } = "";
     public double Seconds { get; set; }
+    public double? TestProcessSeconds { get; set; }
 }
 
 public sealed class RowRunner
@@ -133,6 +134,7 @@ public sealed class RowRunner
             new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
             request.Deadline,
             cancellationToken).ConfigureAwait(false);
+        var testProcessSeconds = run.ElapsedSeconds;
         if (run.TimedOut)
             return TimeoutResult(request, buildState, buffer, combined);
 
@@ -276,7 +278,10 @@ public sealed class RowRunner
             ExitCodes.RosterOrMin => "roster-miss",
             _ => "red",
         };
-        return Finish(exit, buildState, lineModel, buffer, reruns, rerunLines, Path.GetFullPath(trxPath), parsed, false, state);
+        var finished = Finish(exit, buildState, lineModel, buffer, reruns, rerunLines,
+            Path.GetFullPath(trxPath), parsed, false, state);
+        finished.TestProcessSeconds = testProcessSeconds;
+        return finished;
     }
 
     private RowRunResult TimeoutResult(RowRequest request, string buildState, StringWriter buffer, TextWriter output)

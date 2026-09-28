@@ -83,6 +83,7 @@ public sealed class ProcessDriver : IDriver
         }
 
         var outputGate = new object();
+        var processTimer = System.Diagnostics.Stopwatch.StartNew();
         if (!process.Start())
         {
             log?.Dispose();
@@ -123,7 +124,9 @@ public sealed class ProcessDriver : IDriver
             log?.Dispose();
         }
 
-        return new DriverResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+        processTimer.Stop();
+        return new DriverResult(process.ExitCode, stdout.ToString(), stderr.ToString(),
+            ElapsedSeconds: processTimer.Elapsed.TotalSeconds);
     }
 
     public void Kill(bool entireProcessTree)

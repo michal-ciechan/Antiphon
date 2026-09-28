@@ -1,284 +1,172 @@
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.TestHelpers.FakeGit;
 using Shouldly;
-using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
-/// <summary>
-/// Unit tests for GitService branch/tag name generation and integration tests for git operations.
-/// </summary>
 [Category("Integration")]
 [Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class GitServiceTests
 {
-    private static readonly Guid TestWorkflowId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    private static readonly Guid Id = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    private readonly TestGitBackendHost _host = new(() => Environment.GetEnvironmentVariable("ANTIPHON_TEST_REAL_GIT"));
+    private static string Master => GitService.GetWorkflowMasterBranch(Id);
+    private static string Stage => GitService.GetStageBranch(Id, "architecture");
+    private static string Tag(int n) => GitService.GetStageTag(Id, "architecture", n);
+    private static string Artifact(string name) => $"{GitService.GetArtifactDirectory(Id)}/{name}";
 
-    // --- Branch/Tag name generation tests ---
-
-    [Test]
-    public void GetWorkflowMasterBranch_ReturnsCorrectFormat()
+    [Test] public void GetWorkflowMasterBranch_ReturnsCorrectFormat()
     {
-        var branch = GitService.GetWorkflowMasterBranch(TestWorkflowId);
-
-        branch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
+        Master.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
+        Pure(nameof(GetWorkflowMasterBranch_ReturnsCorrectFormat), Master);
     }
-
-    [Test]
-    public void GetStageBranch_ReturnsCorrectFormat()
+    [Test] public void GetStageBranch_ReturnsCorrectFormat()
     {
-        var branch = GitService.GetStageBranch(TestWorkflowId, "architecture");
-
-        branch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
+        Stage.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
+        Pure(nameof(GetStageBranch_ReturnsCorrectFormat), Stage);
     }
-
-    [Test]
-    public void GetStageTag_ReturnsCorrectFormat()
+    [Test] public void GetStageTag_ReturnsCorrectFormat()
     {
-        var tag = GitService.GetStageTag(TestWorkflowId, "architecture", 1);
-
-        tag.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
+        Tag(1).ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
+        Pure(nameof(GetStageTag_ReturnsCorrectFormat), Tag(1));
     }
-
-    [Test]
-    public void GetStageTag_VersionIncrements()
+    [Test] public void GetStageTag_VersionIncrements()
     {
-        var tag1 = GitService.GetStageTag(TestWorkflowId, "design", 1);
-        var tag2 = GitService.GetStageTag(TestWorkflowId, "design", 2);
-
-        tag1.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v1");
-        tag2.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v2");
+        GitService.GetStageTag(Id, "design", 1).ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v1");
+        GitService.GetStageTag(Id, "design", 2).ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v2");
+        Pure(nameof(GetStageTag_VersionIncrements),
+            GitService.GetStageTag(Id, "design", 1) + "|" + GitService.GetStageTag(Id, "design", 2));
     }
-
-    [Test]
-    public void GetArtifactDirectory_ReturnsCorrectFormat()
+    [Test] public void GetArtifactDirectory_ReturnsCorrectFormat()
     {
-        var dir = GitService.GetArtifactDirectory(TestWorkflowId);
-
-        dir.ShouldBe("_antiphon/artifacts/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        GitService.GetArtifactDirectory(Id).ShouldBe("_antiphon/artifacts/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        Pure(nameof(GetArtifactDirectory_ReturnsCorrectFormat), GitService.GetArtifactDirectory(Id));
     }
-
-    [Test]
-    public void GetStageBranch_WithSpacesInName_IncludesSpaces()
+    [Test] public void GetStageBranch_WithSpacesInName_IncludesSpaces()
     {
-        // Stage names with spaces are used as-is in branch names
-        var branch = GitService.GetStageBranch(TestWorkflowId, "stage-one");
-
-        branch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-stage-one");
+        GitService.GetStageBranch(Id, "stage-one").ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-stage-one");
+        Pure(nameof(GetStageBranch_WithSpacesInName_IncludesSpaces), GitService.GetStageBranch(Id, "stage-one"));
     }
-
-    // --- Integration tests for actual git operations ---
 
     [Test]
     public async Task InitializeWorkflowBranchesAsync_CreatesWorkflowMasterBranch()
     {
-        var (service, repoPath) = await CreateTestRepo();
-        try
-        {
-            await service.InitializeWorkflowBranchesAsync(TestWorkflowId, repoPath, CancellationToken.None);
-
-            // Verify the branch was created
-            var branches = await RunGit(repoPath, "branch --list");
-            branches.ShouldContain("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
-
-            // Verify artifact directory exists
-            var artifactDir = Path.Combine(repoPath, "_antiphon", "artifacts", $"workflow-{TestWorkflowId}");
-            Directory.Exists(artifactDir).ShouldBeTrue();
-        }
-        finally
-        {
-            CleanupTestRepo(repoPath);
-        }
+        await using var git = await RepoAsync();
+        var seed = await Rev(git, "HEAD");
+        await git.Service.InitializeWorkflowBranchesAsync(Id, git.RepoPath, CancellationToken.None);
+        (await git.RequiredAsync("branch", "--show-current")).Trim().ShouldBe(Master);
+        (await git.RequiredAsync("rev-list", "--parents", "-n", "1", Master)).Trim().Split(' ')[1].ShouldBe(seed);
+        git.Files.File.Exists(Path.Combine(git.RepoPath, Artifact(".gitkeep"))).ShouldBeTrue();
+        (await git.RequiredAsync("show", $"{Master}:{Artifact(".gitkeep")}")).ShouldBe("");
+        await git.SaveReceiptAsync(nameof(InitializeWorkflowBranchesAsync_CreatesWorkflowMasterBranch), [Master], [], [Artifact(".gitkeep")]);
     }
 
     [Test]
     public async Task CreateStageBranchAsync_CreatesBranchFromWorkflowMaster()
     {
-        var (service, repoPath) = await CreateTestRepo();
-        try
-        {
-            await service.InitializeWorkflowBranchesAsync(TestWorkflowId, repoPath, CancellationToken.None);
-            await service.CreateStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
-
-            var branches = await RunGit(repoPath, "branch --list");
-            branches.ShouldContain("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
-        }
-        finally
-        {
-            CleanupTestRepo(repoPath);
-        }
+        await using var git = await RepoAsync();
+        await git.Service.InitializeWorkflowBranchesAsync(Id, git.RepoPath, CancellationToken.None);
+        var master = await Rev(git, Master);
+        await git.RequiredAsync("checkout", "-b", "unrelated", Master);
+        await git.Files.File.WriteAllTextAsync(Path.Combine(git.RepoPath, "unrelated.txt"), "other");
+        await git.RequiredAsync("add", "unrelated.txt");
+        await git.RequiredAsync("commit", "-m", "unrelated");
+        (await Rev(git, "HEAD")).ShouldNotBe(master);
+        await git.Service.CreateStageBranchAsync(Id, "architecture", git.RepoPath, CancellationToken.None);
+        (await Rev(git, Stage)).ShouldBe(master);
+        (await git.RequiredAsync("branch", "--show-current")).Trim().ShouldBe(Stage);
+        (await git.RunAsync("show", $"{Stage}:unrelated.txt")).ExitCode.ShouldBe(128);
+        await git.SaveReceiptAsync(nameof(CreateStageBranchAsync_CreatesBranchFromWorkflowMaster), [Master, Stage], [], [Artifact(".gitkeep"), "unrelated.txt"]);
     }
 
     [Test]
     public async Task CommitArtifactAsync_CreatesFileAndCommitsWithAntiphonTrailer()
     {
-        var (service, repoPath) = await CreateTestRepo();
-        try
-        {
-            await service.InitializeWorkflowBranchesAsync(TestWorkflowId, repoPath, CancellationToken.None);
-            await service.CreateStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
-
-            await service.CommitArtifactAsync(
-                TestWorkflowId, "architecture", "# Architecture\nDesign doc content",
-                "architecture.md", repoPath, CancellationToken.None);
-
-            // Verify file exists
-            var artifactPath = Path.Combine(repoPath, "_antiphon", "artifacts",
-                $"workflow-{TestWorkflowId}", "architecture.md");
-            File.Exists(artifactPath).ShouldBeTrue();
-            (await File.ReadAllTextAsync(artifactPath)).ShouldContain("Design doc content");
-
-            // Verify commit message has [antiphon] trailer
-            var log = await RunGit(repoPath, "log -1 --format=%B");
-            log.ShouldContain("antiphon: true");
-        }
-        finally
-        {
-            CleanupTestRepo(repoPath);
-        }
+        await using var git = await RepoAsync();
+        await git.Service.InitializeWorkflowBranchesAsync(Id, git.RepoPath, CancellationToken.None);
+        await git.Service.CreateStageBranchAsync(Id, "architecture", git.RepoPath, CancellationToken.None);
+        var before = await Rev(git, "HEAD");
+        await git.Files.File.WriteAllTextAsync(Path.Combine(git.RepoPath, "unrelated.txt"), "unstaged sentinel");
+        const string content = "# Architecture\nDesign doc content";
+        await git.Service.CommitArtifactAsync(Id, "architecture", content, "architecture.md", git.RepoPath, CancellationToken.None);
+        git.Files.File.ReadAllText(Path.Combine(git.RepoPath, Artifact("architecture.md"))).ShouldBe(content);
+        (await git.RequiredAsync("show", $"{Stage}:{Artifact("architecture.md")}")).ShouldBe(content);
+        (await git.RunAsync("show", $"{Stage}:unrelated.txt")).ExitCode.ShouldBe(128);
+        git.Files.File.ReadAllText(Path.Combine(git.RepoPath, "unrelated.txt")).ShouldBe("unstaged sentinel");
+        (await Rev(git, "HEAD")).ShouldNotBe(before);
+        (await git.RequiredAsync("log", "-1", "--format=%B")).TrimEnd().ShouldEndWith("antiphon: true");
+        await git.SaveReceiptAsync(nameof(CommitArtifactAsync_CreatesFileAndCommitsWithAntiphonTrailer), [Master, Stage], [], [Artifact("architecture.md"), "unrelated.txt"]);
     }
 
     [Test]
     public async Task TagStageAsync_CreatesVersionedTag()
     {
-        var (service, repoPath) = await CreateTestRepo();
-        try
-        {
-            await service.InitializeWorkflowBranchesAsync(TestWorkflowId, repoPath, CancellationToken.None);
-            await service.CreateStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
-            await service.CommitArtifactAsync(
-                TestWorkflowId, "architecture", "content", "doc.md", repoPath, CancellationToken.None);
-
-            var tagName = await service.TagStageAsync(TestWorkflowId, "architecture", 1, repoPath, CancellationToken.None);
-
-            tagName.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
-
-            var tags = await RunGit(repoPath, "tag --list");
-            tags.ShouldContain(tagName);
-        }
-        finally
-        {
-            CleanupTestRepo(repoPath);
-        }
+        await using var git = await RepoAsync();
+        await git.Service.InitializeWorkflowBranchesAsync(Id, git.RepoPath, CancellationToken.None);
+        await git.Service.CreateStageBranchAsync(Id, "architecture", git.RepoPath, CancellationToken.None);
+        await git.Service.CommitArtifactAsync(Id, "architecture", "content", "doc.md", git.RepoPath, CancellationToken.None);
+        var stage = await Rev(git, Stage);
+        await git.RequiredAsync("checkout", Master);
+        (await Rev(git, "HEAD")).ShouldNotBe(stage);
+        (await git.Service.TagStageAsync(Id, "architecture", 1, git.RepoPath, CancellationToken.None)).ShouldBe(Tag(1));
+        (await git.RequiredAsync("rev-list", "-n", "1", Tag(1))).Trim().ShouldBe(stage);
+        (await git.RequiredAsync("tag", "--list")).ShouldContain(Tag(1));
+        await git.SaveReceiptAsync(nameof(TagStageAsync_CreatesVersionedTag), [Master, Stage], [Tag(1)], [Artifact("doc.md")]);
     }
 
     [Test]
     public async Task MergeStageBranchAsync_MergesIntoWorkflowMaster()
     {
-        var (service, repoPath) = await CreateTestRepo();
-        try
-        {
-            await service.InitializeWorkflowBranchesAsync(TestWorkflowId, repoPath, CancellationToken.None);
-            await service.CreateStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
-            await service.CommitArtifactAsync(
-                TestWorkflowId, "architecture", "content", "doc.md", repoPath, CancellationToken.None);
-            await service.TagStageAsync(TestWorkflowId, "architecture", 1, repoPath, CancellationToken.None);
-
-            await service.MergeStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
-
-            // We should be on the workflow master branch after merge
-            var currentBranch = (await RunGit(repoPath, "branch --show-current")).Trim();
-            currentBranch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
-
-            // The artifact file should exist on workflow master
-            var artifactPath = Path.Combine(repoPath, "_antiphon", "artifacts",
-                $"workflow-{TestWorkflowId}", "doc.md");
-            File.Exists(artifactPath).ShouldBeTrue();
-        }
-        finally
-        {
-            CleanupTestRepo(repoPath);
-        }
+        await using var git = await RepoAsync();
+        await git.Service.InitializeWorkflowBranchesAsync(Id, git.RepoPath, CancellationToken.None);
+        await git.Service.CreateStageBranchAsync(Id, "architecture", git.RepoPath, CancellationToken.None);
+        await git.Service.CommitArtifactAsync(Id, "architecture", "content", "doc.md", git.RepoPath, CancellationToken.None);
+        await git.Service.TagStageAsync(Id, "architecture", 1, git.RepoPath, CancellationToken.None);
+        var stage = await Rev(git, Stage);
+        var master = await Rev(git, Master);
+        await git.Service.MergeStageBranchAsync(Id, "architecture", git.RepoPath, CancellationToken.None);
+        (await git.RequiredAsync("branch", "--show-current")).Trim().ShouldBe(Master);
+        var merged = await Rev(git, "HEAD");
+        merged.ShouldNotBe(stage);
+        merged.ShouldNotBe(master);
+        (await git.RequiredAsync("rev-list", "--parents", "-n", "1", "HEAD")).Trim().Split(' ')
+            .ShouldBe([merged, master, stage]);
+        (await git.RequiredAsync("show", $"{Master}:{Artifact("doc.md")}")).ShouldBe("content");
+        (await Rev(git, Tag(1))).ShouldBe(stage);
+        await git.SaveReceiptAsync(nameof(MergeStageBranchAsync_MergesIntoWorkflowMaster), [Master, Stage], [Tag(1)], [Artifact("doc.md")]);
     }
 
     [Test]
     public async Task GetDiffBetweenTagsAsync_ReturnsDiff()
     {
-        var (service, repoPath) = await CreateTestRepo();
-        try
-        {
-            await service.InitializeWorkflowBranchesAsync(TestWorkflowId, repoPath, CancellationToken.None);
-
-            // Create stage and commit v1
-            await service.CreateStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
-            await service.CommitArtifactAsync(
-                TestWorkflowId, "architecture", "version 1 content", "doc.md", repoPath, CancellationToken.None);
-            await service.TagStageAsync(TestWorkflowId, "architecture", 1, repoPath, CancellationToken.None);
-
-            // Commit v2 on same branch
-            await service.CommitArtifactAsync(
-                TestWorkflowId, "architecture", "version 2 content", "doc.md", repoPath, CancellationToken.None);
-            await service.TagStageAsync(TestWorkflowId, "architecture", 2, repoPath, CancellationToken.None);
-
-            var diff = await service.GetDiffBetweenTagsAsync(
-                GitService.GetStageTag(TestWorkflowId, "architecture", 1),
-                GitService.GetStageTag(TestWorkflowId, "architecture", 2),
-                repoPath, CancellationToken.None);
-
-            diff.ShouldContain("version 1 content");
-            diff.ShouldContain("version 2 content");
-        }
-        finally
-        {
-            CleanupTestRepo(repoPath);
-        }
+        await using var git = await RepoAsync();
+        await git.Service.InitializeWorkflowBranchesAsync(Id, git.RepoPath, CancellationToken.None);
+        await git.Service.CreateStageBranchAsync(Id, "architecture", git.RepoPath, CancellationToken.None);
+        await git.Service.CommitArtifactAsync(Id, "architecture", "version 1 content", "doc.md", git.RepoPath, CancellationToken.None);
+        await git.Service.TagStageAsync(Id, "architecture", 1, git.RepoPath, CancellationToken.None);
+        await git.Service.CommitArtifactAsync(Id, "architecture", "version 2 content", "doc.md", git.RepoPath, CancellationToken.None);
+        await git.Service.TagStageAsync(Id, "architecture", 2, git.RepoPath, CancellationToken.None);
+        (await Rev(git, Tag(1))).ShouldNotBe(await Rev(git, Tag(2)));
+        var diff = await git.Service.GetDiffBetweenTagsAsync(Tag(1), Tag(2), git.RepoPath, CancellationToken.None);
+        diff.ShouldContain("-version 1 content");
+        diff.ShouldContain("+version 2 content");
+        diff.ShouldNotContain("README.md");
+        await git.SaveReceiptAsync(nameof(GetDiffBetweenTagsAsync_ReturnsDiff), [Master, Stage], [Tag(1), Tag(2)], [Artifact("doc.md")]);
     }
 
-    // --- Helper methods ---
-
-    private static async Task<(GitService Service, string RepoPath)> CreateTestRepo()
+    private async Task<TestGitBackend> RepoAsync()
     {
-        var repoPath = Path.Combine(Path.GetTempPath(), $"antiphon-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(repoPath);
-
-        // Initialize a git repo with an initial commit
-        await RunGit(repoPath, "init");
-        await RunGit(repoPath, "config user.email \"test@antiphon.dev\"");
-        await RunGit(repoPath, "config user.name \"Antiphon Test\"");
-
-        // Create an initial commit so branches can be created
-        var readmePath = Path.Combine(repoPath, "README.md");
-        await File.WriteAllTextAsync(readmePath, "# Test Repo");
-        await RunGit(repoPath, "add .");
-        await RunGit(repoPath, "commit -m \"Initial commit\"");
-
-        var service = new GitService(NullLogger<GitService>.Instance);
-        return (service, repoPath);
+        var git = _host.Create();
+        try { await git.InitializeAsync(); return git; }
+        catch { await git.DisposeAsync(); throw; }
     }
 
-    private static async Task<string> RunGit(string workingDirectory, string arguments)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "git",
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+    private static async Task<string> Rev(TestGitBackend git, string name) =>
+        (await git.RequiredAsync("rev-parse", name)).Trim();
 
-        using var process = System.Diagnostics.Process.Start(psi)!;
-        var output = await process.StandardOutput.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        return output;
-    }
-
-    private static void CleanupTestRepo(string repoPath)
-    {
-        try
-        {
-            // On Windows, git files may be read-only
-            foreach (var file in Directory.EnumerateFiles(repoPath, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-            Directory.Delete(repoPath, recursive: true);
-        }
-        catch
-        {
-            // Best-effort cleanup
-        }
-    }
+    private void Pure(string method, string value) =>
+        TestGitBackend.SavePureReceipt(method, value, _host.UseRealGit);
 }

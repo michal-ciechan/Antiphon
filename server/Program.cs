@@ -599,6 +599,7 @@ try
     builder.Services.AddScoped<IAgentDraftGenerator, AgentDraftGenerator>();
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
+    builder.Services.AddSingleton<IGitCommandExecutor, CliGitCommandExecutor>();
     builder.Services.AddSingleton(TimeProvider.System);
     var logicalDatabase = "default";
     if (!string.IsNullOrWhiteSpace(connectionString))

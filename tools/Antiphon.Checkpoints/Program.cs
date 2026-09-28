@@ -37,6 +37,8 @@ public static class Program
             return SmokeDetach(args);
         if (args[0] == "hold")
             return Hold(args);
+        if (args[0] == "fakegit-pilot")
+            return FakeGitMeasurement.EvaluateFromPointer(args[1]);
 
         var verb = args[0];
         var options = Parse(args.Skip(1).ToArray());
