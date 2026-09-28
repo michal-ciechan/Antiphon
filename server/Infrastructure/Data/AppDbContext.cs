@@ -73,6 +73,7 @@ public class AppDbContext : DbContext
     public DbSet<WorktreeResidueCandidateCursor> WorktreeResidueCandidateCursors => Set<WorktreeResidueCandidateCursor>();
     public DbSet<WorkspaceUseReservation> WorkspaceUseReservations => Set<WorkspaceUseReservation>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
+    public DbSet<AgentTaskDecisionQuestion> AgentTaskDecisionQuestions => Set<AgentTaskDecisionQuestion>();
     public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
     public DbSet<AgentTuiProfileRevision> AgentTuiProfileRevisions => Set<AgentTuiProfileRevision>();
@@ -2010,6 +2011,23 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(t => t.CardId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AgentTaskDecisionQuestion>(entity =>
+        {
+            entity.ToTable("AgentTaskDecisionQuestions");
+            entity.HasKey(q => q.Id);
+            entity.HasIndex(q => new { q.AgentTaskId, q.Attempt, q.RequestId })
+                .IsUnique().HasDatabaseName("IX_AgentTaskDecisionQuestions_AgentTaskId_Attempt_RequestId");
+            entity.HasIndex(q => new { q.AgentTaskId, q.CreatedAt });
+            entity.Property(q => q.CanonicalPayloadJson).IsRequired().HasColumnType("text");
+            entity.Property(q => q.PayloadHash).IsRequired().HasMaxLength(64);
+            entity.Property(q => q.PolicyHash).HasMaxLength(64);
+            entity.Property(q => q.GrantId).HasMaxLength(64);
+            entity.Property(q => q.Reason).IsRequired().HasMaxLength(64);
+            entity.Property(q => q.Answer).HasMaxLength(500);
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(q => q.AgentTaskId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<AgentSession>().WithMany().HasForeignKey(q => q.AgentSessionId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<AgentTaskEvent>(entity =>

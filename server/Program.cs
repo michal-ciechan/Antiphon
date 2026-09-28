@@ -382,6 +382,7 @@ try
     builder.Services.AddScoped<InterimVerificationPolicy>();
     builder.Services.AddScoped<RunnerDefaultSettingsService>();
     builder.Services.AddScoped<AgentTaskService>();
+    builder.Services.AddScoped<AgentTaskDecisionQuestionService>();
     builder.Services.AddScoped<SourceLandingAdmission>();
     // CARD-0604 D-19 (Cut B): where a Mutation's verification snapshot physically lives. The
     // directory resolves by the TASK's runner id, so a server2-bound Mutation never has its

@@ -268,6 +268,8 @@ public enum AgentTaskEventType
     LandSuperseded = 38,
     /// <summary>The owner source branch was explicitly aligned with the reviewed source.</summary>
     SourceAdopted = 39,
+    /// <summary>CARD-0407. An audited in-turn internal decision check, never a task settlement.</summary>
+    DecisionQuestion = 40,
 }
 
 /// <summary>

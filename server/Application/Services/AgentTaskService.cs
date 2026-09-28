@@ -2439,6 +2439,14 @@ public sealed class AgentTaskService
             .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At,
                 e.LandingOperationId, e.LandingPublication, e.LandingCleanup, e.LandingMode))
             .ToListAsync(ct);
+        var internalQuestions = await _db.AgentTaskDecisionQuestions.AsNoTracking()
+            .Where(q => q.AgentTaskId == id)
+            .OrderByDescending(q => q.CreatedAt).ThenByDescending(q => q.Id)
+            .Take(100)
+            .Select(q => new InternalDecisionQuestionHistoryDto(q.Id, q.Attempt, q.AgentSessionId,
+                q.RequestId, q.CanonicalPayloadJson, q.PayloadHash, q.PolicyVersion, q.PolicyHash,
+                q.GrantId, q.Disposition, q.Reason, q.CreatedAt))
+            .ToListAsync(ct);
 
         var blocked = await BlockedContextBuilder.BuildAsync(task, family, events, _checkProbe, ct);
         var landing = task.ActiveLandingId is Guid landingId
@@ -2516,7 +2524,8 @@ public sealed class AgentTaskService
             RequestedWorktreeBaseMode: task.RequestedWorktreeBaseMode,
             RequestedWorktreeBaseTaskId: task.RequestedWorktreeBaseTaskId,
             WorktreeBaseBranch: task.WorktreeBaseBranch,
-            WorktreeBasePreviewJson: task.WorktreeBasePreviewJson);
+            WorktreeBasePreviewJson: task.WorktreeBasePreviewJson,
+            InternalDecisionQuestions: internalQuestions);
     }
 
     /// <summary>CARD-0544. Null unless the task carries a versioned profile; legacy is never shown as Full.</summary>
