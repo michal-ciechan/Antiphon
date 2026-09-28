@@ -433,6 +433,9 @@ seen; zero suppresses that warning only and is not a bypass. Ready is not delive
 still requires a native UserPrompt. Passive layout evidence does not prove the CLI will process
 the next byte (CARD-0133 S0-P4/S4 remain deferred). Automatic queue delivery admits only
 `SessionStatus.Running`; `SendNow` / Mode.Now refuse a non-Running session with "still starting".
+The launch disables Codex's startup update check (CARD-0777). If an update picker still appears,
+the readiness wait sends Escape once to skip it, then requires a fresh settled ready screen
+within the original deadline. This does not lift CARD-0772's desktop Codex refusal.
 
 Tier → reasoning effort: `Frontier`→`xhigh`, `High`→`high`, `Medium`→`medium`, `Low`→`low`.
 

@@ -353,6 +353,60 @@ public class CodexReadyWaitTests
     }
 
     [Test]
+    [Arguments("0.156.1")]
+    [Arguments("0.158.0")]
+    public async Task Update_modal_mid_wait_is_skipped_once_then_requires_fresh_readiness(string version)
+    {
+        var time = new FakeTimeProvider();
+        var modal = version == "0.156.1"
+            ? CodexStartupFixtures.V0156UpdateModal
+            : CodexStartupFixtures.V0158UpdateModal;
+        var loading = CodexStartupFixtures.ReplaceModelValue(CodexStartupFixtures.P3, "loading");
+        var writes = new List<string>();
+        var reads = 0;
+        var postWriteReads = 0;
+        DateTimeOffset? readyAt = null;
+        var gate = CodexReadyWait.WaitAsync(
+            _ =>
+            {
+                var read = Interlocked.Increment(ref reads);
+                var screen = read == 1 ? loading : modal;
+                if (writes.Count > 0)
+                {
+                    // A stale modal frame may survive the Escape write. The next poll clears it.
+                    screen = Interlocked.Increment(ref postWriteReads) == 1
+                        ? modal
+                        : CodexStartupFixtures.P3;
+                    if (screen == CodexStartupFixtures.P3)
+                        readyAt ??= time.GetUtcNow();
+                }
+
+                return Task.FromResult<CodexStartupSnapshot?>(Snap(screen));
+            },
+            Options(time, settleMs: 100, maxMs: 1000),
+            (input, _) =>
+            {
+                writes.Add(input);
+                return Task.CompletedTask;
+            });
+
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
+        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 2);
+        gate.IsCompleted.ShouldBeFalse("the update picker cannot be considered ready");
+
+        for (var step = 0; step < 20 && !gate.IsCompleted; step++)
+            await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+
+        (await gate).ShouldBeTrue("without an Escape write, the picker remains until the deadline");
+        writes.ShouldBe(["\u001b"]);
+        postWriteReads.ShouldBeGreaterThanOrEqualTo(2, "a stale modal is polled after Escape");
+        readyAt.ShouldNotBeNull();
+        (time.GetUtcNow() - readyAt.Value).ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(100),
+            "the new ready frame needs a full settle");
+    }
+
+    [Test]
     public async Task Not_ready_hands_the_last_frame_over_once_and_keeps_it_out_of_the_diagnostic()
     {
         // CARD-0777: a timeout must leave the screen that explains it; the log line stays screen-free.

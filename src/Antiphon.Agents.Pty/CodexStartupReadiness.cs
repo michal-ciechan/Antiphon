@@ -400,6 +400,7 @@ public static class CodexReadyWait
         var deadline = started + options.MaxWait;
         var tracker = new CodexReadyTracker(options.Settle);
         var acceptedTrust = false;
+        var dismissedUpdate = false;
         var warnedBoot = false;
         CodexStartupSnapshot? lastSnapshot = null;
         var poll = options.PollInterval <= TimeSpan.Zero
@@ -493,6 +494,34 @@ public static class CodexReadyWait
                 else
                 {
                     var observation = CodexStartupScreen.Classify(screen, snapshot.RawOutput);
+                    if (!dismissedUpdate
+                        && observation.Reason == CodexStartupReason.BlockingUpdate
+                        && writeAsync is not null)
+                    {
+                        remaining = deadline - time.GetUtcNow();
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            LogFinal(options, tracker, started, time, success: false, lastSnapshot);
+                            return false;
+                        }
+
+                        try
+                        {
+                            // The update picker's footer says "esc skip". Answer it once, then
+                            // require fresh positive readiness after the screen changes.
+                            await WriteBoundedAsync(writeAsync, "\u001b", time, remaining, ct);
+                        }
+                        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                        {
+                            LogFinal(options, tracker, started, time, success: false, lastSnapshot);
+                            return false;
+                        }
+
+                        dismissedUpdate = true;
+                        tracker.Reset();
+                        continue;
+                    }
+
                     var elapsed = time.GetUtcNow() - started;
                     if (observation.McpVisible || tracker.McpEverSeen)
                     {

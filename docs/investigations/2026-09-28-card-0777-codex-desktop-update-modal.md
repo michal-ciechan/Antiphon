@@ -50,7 +50,16 @@ At 2026-09-28 21:38Z, another process on this desktop ran `npm install --global 
 
 The CARD-0772 desktop Codex refusal is **unchanged**. Lifting it still needs a desktop launch demonstrated reaching `thread/start` with a positive ready screen and a matching `UserPrompt` on a stack running this fix.
 
-## Not done
+## Follow-up: active dismissal
+
+The readiness wait now sends one Escape when a live poll classifies the update picker as
+`BlockingUpdate`. It then resets its ready tracker and waits for a fresh, positively settled
+composer. A stale modal after Escape gets no second write and cannot authorize readiness.
+The original 60-second deadline still bounds the whole wait. Both measured modal fixtures
+(0.156.1 and 0.158.0) exercise the fallback in `CodexReadyWaitTests`.
+
+## Still not done
 
 - There was no live desktop Codex launch through Antiphon. The 409 refusal stands, and this task did not override it. The ConPTY probe used the same launch shape (node.exe, ModernConPty, 120x30, production flags) outside the runner.
-- The modal is not dismissed automatically. Suppressing it is sufficient. Answering it would mean typing into a session before readiness is established.
+- No operator-approved diagnostic launch has yet proved that the active fallback reaches a
+  real Codex `thread/start` and a matching `UserPrompt` on the desktop. CARD-0772's refusal remains.
