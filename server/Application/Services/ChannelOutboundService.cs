@@ -182,6 +182,8 @@ public sealed class ChannelOutboundService
                 row.ChannelOutboundDeliveryId = id;
             }
             await _db.SaveChangesAsync(ct);
+            if (ProbeBarrierAsync is { } beforeCommit)
+                await beforeCommit("admission-before-commit", id, ct);
             await transaction.CommitAsync(ct);
             if (ProbeBarrierAsync is { } admissionBarrier)
                 await admissionBarrier("admission-committed", id, ct);
