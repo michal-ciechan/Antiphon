@@ -110,6 +110,7 @@ public sealed partial class DispatchHoldVisibilityTests
                 Id = Guid.NewGuid(), DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
                 Status = SessionStatus.Running, Cwd = workspace.Path, Cols = 80, Rows = 24,
                 CreatedAt = at, StartedAt = at, LastSeenAt = at, RunnerId = "server2",
+                RunnerStoreId = Guid.NewGuid(), RunnerCwd = "/work",
             });
             await db.SaveChangesAsync();
         }
