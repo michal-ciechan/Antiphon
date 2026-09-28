@@ -4,12 +4,15 @@ using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
@@ -20,6 +23,46 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class RunnerCapacityEndpointTests
 {
+    [Test]
+    public async Task C654_heartbeat_audit_stall_and_failure_do_not_block_replies_or_disconnect()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var audit = new StalledHeartbeatAudit();
+        await using var host = await Host(schema, auditInterceptor: audit);
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new Antiphon.Server.Infrastructure.Agents.SessionRunner.PhoneHomeRunnerClient(live);
+
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
+            Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(2), PhoneHomeFraming.Json)));
+        try
+        {
+            await audit.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            live.Capacity.ShouldBe(2);
+            (await client.GetHealthAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3)))
+                .ShouldNotBeNull();
+        }
+        finally
+        {
+            audit.Release.TrySetResult();
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (!host.Logs.Entries.Any(entry => entry.Level == LogLevel.Warning
+                && entry.Message.Contains("heartbeat audit failed", StringComparison.Ordinal))
+            && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        host.Logs.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning
+            && entry.Message.Contains("heartbeat audit failed", StringComparison.Ordinal)
+            && entry.Exception is InvalidOperationException);
+        (await client.GetHealthAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3)))
+            .ShouldNotBeNull();
+        live.SocketOpen.ShouldBeTrue();
+        live.LastDisconnectReason.ShouldBeNull();
+    }
+
     [Test]
     public async Task C654_PUT_pushes_capacity_and_GET_uses_the_budget_minimum()
     {
@@ -196,14 +239,42 @@ public sealed class RunnerCapacityEndpointTests
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(6);
     }
 
-    private static async Task<PhoneHomeTestHost> Host(IsolatedTestSchema schema, TimeProvider? clock = null) =>
+    private static async Task<PhoneHomeTestHost> Host(
+        IsolatedTestSchema schema, TimeProvider? clock = null, SaveChangesInterceptor? auditInterceptor = null) =>
         await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString, clock: clock,
+            configureDbContext: options =>
+            {
+                if (auditInterceptor is not null)
+                    options.AddInterceptors(auditInterceptor);
+            },
             configureServices: services =>
             {
                 services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<Antiphon.Server.Infrastructure.Agents.SessionRunner.PhoneHomeRunnerDirectory>());
                 services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 }));
                 services.AddScoped<HostBudgetService>();
             });
+
+    private sealed class StalledHeartbeatAudit : SaveChangesInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context?.ChangeTracker.Entries<AgentIncident>().Any(entry =>
+                    entry.Entity.Kind == AgentIncidentKind.RunnerCapacityChanged
+                    && entry.Entity.Message.Contains("reconciled from runner heartbeat", StringComparison.Ordinal)) == true)
+            {
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+                throw new InvalidOperationException("heartbeat audit unavailable");
+            }
+
+            return await base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
 
     private static string Path(PhoneHomeTestHost host) => $"/api/session-runners/{host.AllowedRunnerId}/capacity";
 

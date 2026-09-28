@@ -432,7 +432,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                         var oldCapacity = Capacity;
                         SetCapacity(reported.Capacity);
                         if (_capacityReconciled is not null)
-                            await _capacityReconciled(RunnerId, oldCapacity, reported.Capacity, ct);
+                            _ = Task.Run(() => RecordCapacityReconciliationAsync(
+                                oldCapacity, reported.Capacity, logger, ct), CancellationToken.None);
                     }
                 }
                 continue;
@@ -459,6 +460,25 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                     WarnHighWater(logger);
                 await _events.Writer.WriteAsync(frame, ct);
             }
+        }
+    }
+
+    private async Task RecordCapacityReconciliationAsync(
+        int oldCapacity, int capacity, ILogger? logger, CancellationToken ct)
+    {
+        try
+        {
+            await _capacityReconciled!(RunnerId, oldCapacity, capacity, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The connection ended before its audit write completed.
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex,
+                "Runner {RunnerId} capacity {OldCapacity} -> {Capacity} heartbeat audit failed",
+                RunnerId, oldCapacity, capacity);
         }
     }
 
