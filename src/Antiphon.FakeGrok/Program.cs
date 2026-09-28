@@ -669,7 +669,9 @@ internal static class Program
             && Environment.GetEnvironmentVariable("ANTIPHON_FAKE_CHANNEL_ANSWER") is { Length: > 0 } answerPath
             && File.Exists(answerPath))
         {
-            var answer = File.ReadAllText(answerPath);
+            var answer = text.Contains("[f5-silent-t2]", StringComparison.Ordinal)
+                ? "NO_REPLY"
+                : File.ReadAllText(answerPath);
             write("FAKE channel answer completed\r\nWorked for 1.7s\r\n");
             write(IdleTitle);
             AppendSessionFiles(sessionDir, sessionId, text, answer);
