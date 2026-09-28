@@ -202,6 +202,33 @@ public sealed class AgentTaskDecisionQuestionApiTests
             && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(0);
     }
 
+    [Test]
+    public async Task Ambiguous_session_binding_is_stale_and_has_no_effect()
+    {
+        await _factory.ResetAsync();
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, token) = await SeedAsync(workspace.Path);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "Competing task",
+                Goal = "Bind the same session.", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.High,
+                Workspace = WorkspaceMode.Shared, WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Working, AgentSessionId = task.AgentSessionId,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        (await PostAsync(taskId, token, Sample())).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        using var verifyScope = _factory.Services.CreateScope();
+        var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
+    }
+
     private static InternalDecisionQuestionRequest Sample() => new(Guid.NewGuid(), 1,
         "repair", InternalDecisionCategory.ShellTransport, ["scripts/deploy.ps1"], null, null,
         InternalDecisionImpact.None, "May I repair quoting?", "Repair quoting only.",

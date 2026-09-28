@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -148,6 +149,93 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         }
         await using var verify = NewDb();
         (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
+    }
+
+    [Test]
+    public async Task Decision_is_not_a_reply_or_report_and_publication_reads_committed_rows()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        await using var beforeDb = NewDb();
+        var before = await beforeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        var bus = new CommittedQuestionBus(taskId);
+        await using (var db = NewDb())
+        {
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                sessionId, workspace.Path);
+            var service = new AgentTaskDecisionQuestionService(db, bus);
+            (await service.CheckAsync(taskId, Sample(), caller, CancellationToken.None))
+                .Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+            (await service.CheckAsync(taskId, Sample() with { Impact = InternalDecisionImpact.Data },
+                caller, CancellationToken.None)).Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+            bus.Publications.ShouldBe(2);
+        }
+        await using var verify = NewDb();
+        var after = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        after.Status.ShouldBe(before.Status);
+        after.Attempt.ShouldBe(before.Attempt);
+        after.CompletedAt.ShouldBe(before.CompletedAt);
+        after.Result.ShouldBe(before.Result);
+        after.ReportEvidence.ShouldBe(before.ReportEvidence);
+        after.ReportNudgedAt.ShouldBe(before.ReportNudgedAt);
+        after.ReportNudgedSequence.ShouldBe(before.ReportNudgedSequence);
+        after.ReportNudgeMessageId.ShouldBe(before.ReportNudgeMessageId);
+        after.AutoContinuedAt.ShouldBe(before.AutoContinuedAt);
+        after.ConcurrencyToken.ShouldBe(before.ConcurrencyToken);
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+            && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(2);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+            && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Completed
+                || e.Type == AgentTaskEventType.Replied))).ShouldBe(0);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task State_transition_committed_under_the_task_lock_precedes_the_check()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        await using var writer = NewDb();
+        await using var transaction = await writer.Database.BeginTransactionAsync();
+        await writer.AgentTasks.FromSqlInterpolated(
+            $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE").SingleAsync();
+        var pending = Task.Run(async () =>
+        {
+            await using var db = NewDb();
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.AsNoTracking()
+                .SingleAsync(t => t.Id == taskId), sessionId, workspace.Path);
+            return await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, Sample(), caller,
+                CancellationToken.None);
+        });
+        var task = await writer.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Status = AgentTaskStatus.Canceled;
+        await writer.SaveChangesAsync();
+        await transaction.CommitAsync();
+        await Should.ThrowAsync<ConflictException>(() => pending);
+        await using var verify = NewDb();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+            && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(0);
+    }
+
+    private sealed class CommittedQuestionBus(Guid taskId) : IEventBus
+    {
+        public int Publications { get; private set; }
+
+        public Task PublishToGroupAsync(string group, string eventName, object payload,
+            CancellationToken ct = default) => throw new InvalidOperationException("Unexpected group publication.");
+
+        public async Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default)
+        {
+            eventName.ShouldBe("AgentTaskChanged");
+            await using var db = NewDb();
+            var count = await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId, ct);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+                && e.Type == AgentTaskEventType.DecisionQuestion, ct)).ShouldBe(count);
+            count.ShouldBe(Publications + 1);
+            Publications++;
+        }
     }
 
     private static InternalDecisionQuestionRequest Sample() => new(
