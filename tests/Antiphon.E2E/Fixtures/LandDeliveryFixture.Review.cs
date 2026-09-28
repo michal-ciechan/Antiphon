@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -18,6 +20,12 @@ public sealed partial class LandDeliveryFixture
     public Guid ReviewTaskId { get; private set; }
     public Guid HeldReviewQueueId { get; private set; }
     public string ReviewReportText { get; private set; } = "";
+
+    // The API writes enums as names; the default reader expects numbers.
+    private static readonly JsonSerializerOptions ApiJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
 
     public sealed record ReviewReceipt(
         AgentTaskLandNotification Note, string WireText, Guid EvidenceId, string ReviewedSha);
@@ -74,7 +82,7 @@ public sealed partial class LandDeliveryFixture
         using var response = await _http.PostAsJsonAsync("/api/agents/" + agentId + "/start",
             new StartAgentRequest(Prompt: marker + "\nReview the owned change.", IgnoreSubscriptionQuota: true));
         response.EnsureSuccessStatusCode();
-        var started = (await response.Content.ReadFromJsonAsync<AgentDetailDto>()).ShouldNotBeNull();
+        var started = (await response.Content.ReadFromJsonAsync<AgentDetailDto>(ApiJson)).ShouldNotBeNull();
         var sessionId = Guid.Parse(started.PersistentSessionId!);
         await using (var db = CreateContext())
         {
