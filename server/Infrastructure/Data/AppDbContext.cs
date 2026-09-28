@@ -464,6 +464,7 @@ public class AppDbContext : DbContext
                 .HasDefaultValue("{}");
             entity.Property(p => p.OrchestratorWorkspaceAcknowledgedAt).IsRequired(false);
             entity.Property(p => p.CommitOnSettle).IsRequired(false);
+            entity.Property(p => p.DefaultWorkerWorkspace).HasConversion<string>().HasColumnType("text").IsRequired(false);
             entity.HasIndex(p => p.DefaultPipelineDefinitionId).HasDatabaseName("IX_Projects_DefaultPipelineDefinitionId");
             entity.HasOne(p => p.DefaultPipelineDefinition).WithMany()
                 .HasForeignKey(p => p.DefaultPipelineDefinitionId).OnDelete(DeleteBehavior.Restrict);
@@ -1897,6 +1898,7 @@ public class AppDbContext : DbContext
             entity.Property(t => t.AgentKind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);
             entity.Property(t => t.ModelLevel).IsRequired();
             entity.Property(t => t.Workspace).IsRequired().HasDefaultValue(WorkspaceMode.Shared);
+            entity.Property(t => t.WorkspaceSource).HasConversion<string>().HasColumnType("text").IsRequired(false);
             entity.Property(t => t.WorkingDirectory).IsRequired().HasMaxLength(1000);
             entity.Property(t => t.RepoPath).HasMaxLength(1000);
             entity.Property(t => t.WorktreePath).HasMaxLength(1000);

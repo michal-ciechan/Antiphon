@@ -111,6 +111,7 @@ public sealed record ProjectSetupRequest(
     ProjectSetupAgentRequest? Agent = null,
     bool StartAgent = false)
 {
+    public string? DefaultWorkerWorkspace { get; init; }
     [System.Text.Json.Serialization.JsonConverter(typeof(RepositoryVisibilityConverter))]
     public RepositoryVisibility? RepositoryVisibility { get; init; }
 }

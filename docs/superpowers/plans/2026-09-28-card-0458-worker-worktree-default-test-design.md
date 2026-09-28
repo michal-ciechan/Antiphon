@@ -8,12 +8,50 @@ verbatim `## Design` section retrieved with `card.ps1 get CARD-0458 -Board Antip
 No copy existed in the inspected local/remote-tracking histories; the original Plan task's
 branch was absent from `ls-remote`. The copy was committed first as `26932a91c`.
 
-**Deliverable status: all 18 original acceptance cases have test names, discriminating
-controls and a closed checkpoint manifest. Policy reconciliation is required before Code.**
+**Deliverable status: S1/S2 oracles are reconciled for Code. S3/S4 descriptions and CP-6 onward
+below record the original candidate and require a later TestDesign amendment before those slices.**
 This document designs tests; it adds no tests, application changes or live project settings.
 All execution counts below are planned rosters, not measured passes.
 
 ## Policy conflict found at the current source
+
+### Approved policy and acceptance reconciliation, 2026-09-28
+
+The caller chose to preserve CARD-0644. Its card is InProgress, yet the current code and
+`WorktreeDefaultAdmissionTests` already ship Worktree for a fresh omitted workspace, refusal
+outside Git, and Worktree for a separate orchestrator directory. The [plan's reconciliation]
+(2026-09-14-card-0458-worker-worktree-default-plan.md) is now normative. These replacements
+supersede conflicting original candidate oracles in the sections below:
+
+| Case | Reconciled oracle |
+|---|---|
+| AC-1 | Fresh explicit Worktree, Shared and ReadOnly win; existing-agent explicit Worktree still refuses and live explicit ReadOnly survives. |
+| AC-2 | Project Worktree beats a configured global Shared; dispatch uses a separate worktree. No cleanliness probe. |
+| AC-3 | Null project override inherits a configured global Shared. This is an explicit configuration case, never a claim about the shipped initializer. |
+| AC-4 | Null override inherits shipped global Worktree. |
+| AC-5 | Dirty source plus inherited or project Worktree remains Worktree; committed content is isolated and uncommitted files are absent. No fallback warning. |
+| AC-6 | Explicit Worktree on a dirty source remains Worktree. |
+| AC-7 | Fresh Deploy, Commit and Merge inherit project/global mode; existing-agent pins stay on their checkout. |
+| AC-8 | Omitted live follow-up stays on its checkout; explicit ReadOnly is preserved. |
+| AC-9 | Omitted Worktree outside Git refuses with `workspace_default_not_git` before insert. Explicit Shared remains available. |
+| AC-10 | No cleanliness probe exists; guard that project/global resolution has no Git status process call. |
+| AC-11 | Fresh orchestrators use project/global mode, including a distinct directory; non-Git Worktree refuses. |
+| AC-12 | New tasks persist and expose mode/source plus authoritative repoPath/projectId; historic source is null. DirtySource, NoRepository and Orchestrator are not produced under this policy. |
+| AC-13 | Shared-only lease text distinguishes Explicit, Project, Global and Pinned sources; no DirtySource branch. |
+| AC-14 | Delegate echo uses the actual created response fields and never invents a project name from a path. |
+| AC-15 | Project create/update/list/detail and Settings expose configured and effective values; null PUT preserves and Inherit clears. Setup modal creates through `/api/projects/setup`, so its request and service must pass the field to `ProjectService.CreateAsync`. |
+| AC-16 | Migration only adds nullable columns. Global initializer is Worktree, task entity's historical initializer stays Shared; S1/S2 do not alter admission. |
+| AC-17 | Advice is confined to a proven shared-only hold; area contention and unknown holder scope retain neutral labels. |
+| AC-18 | `project.ps1 set` extends the existing verb; one switch never overwrites the other setting or other project fields. |
+
+For S1/S2, CP-1 through CP-5 are the closed manifest. In AC-15, the new-project UI test
+targets the setup POST and its existing wizard, not an imaginary direct create modal.
+In AC-16, PC-16c changes Worktree to Shared and must fail the initializer assertion.
+All S3/S4 method names, result floors and PC variants below are **provisional** wherever
+they encode an overridden oracle; a later TestDesign must replace them before CP-6 runs.
+The 62-variant estimate and 57-result resolution floor are historical candidate estimates,
+not commitments under the reconciled policy. This task runs no PCs; all remain pending
+method-scoped SourceLanding Mutation.
 
 The card's September 14 ground truth is historical. CARD-0644 has since implemented
 [a different default policy](2026-09-23-card-0644-worktree-default-plan.md).
@@ -339,14 +377,15 @@ New `ProjectWorkerWorkspaceDefaultTests`:
 | `C458_UpdateRejectsReadOnlyWithoutChangingProject` | 1 | Real HTTP PUT `ReadOnly` is 422 with field-specific Problem Details; fresh DB proves workspace and other fields unchanged. Internal negative controls also cover unknown value and create ReadOnly. |
 | `C458_ListAndDetailResolveEffectiveDefault` | 6 | Three stored values x two globals through GET list and detail; assert configured and effective fields from production mapping. |
 
-In `ProjectConfig.test.tsx`, add exact Vitest names:
+In `ProjectConfig.test.tsx` (first three names) and `ProjectSetupModal.test.tsx` (the fourth),
+add exact Vitest names:
 
 - `C458 displays inherited workspace from effective default` (`it.each`, 2 globals).
 - `C458 changing worker workspace submits selected value` (`it.each`, Shared/Worktree/Inherit,
   3 results); use literal `Inherit`, not null, to clear an existing override.
 - `C458 unrelated save omits worker workspace` (1); omit the field, preserve commit policy/env.
-- `C458 new project submits worker workspace` (1); interact with the create modal and assert
-  its POST body. The configured/effective fields are not interchangeable.
+- `C458 new project submits worker workspace` (1); interact with `ProjectSetupModal` and assert
+  the `/api/projects/setup` POST body, then verify its service passes the value to project create.
 
 **PC-15a:** assign null on an absent/null update; preservation method fails.
 **PC-15b:** interpret Inherit as leave-unchanged; clear method fails.
@@ -360,9 +399,9 @@ In `ProjectConfig.test.tsx`, add exact Vitest names:
 
 `WorkerWorkspaceDefaultStorageTests` (Unit):
 
-- `C458_DefaultsAreSharedAndHistoricalSourceIsNull` (1): new settings initializer Shared;
-  entity Project default null, task source null, legacy task mode Shared. This is dormant in
-  S1/S2. It is not evidence that current fresh API dispatches are Shared.
+- `C458_DefaultsAreWorktreeAndHistoricalSourceIsNull` (1): settings initializer Worktree;
+  entity Project default null, task source null, legacy task entity mode Shared. S1/S2 keep
+  current fresh API Worktree admission.
 - `C458_GlobalDefaultValidatorAllowsOnlyWritableModes` (4): Shared and Worktree succeed;
   ReadOnly and an undefined numeric enum value fail on the workspace option. Use the real
   `DelegationSettingsValidator`, not a test-local allowed-values list.
@@ -384,13 +423,13 @@ In `ProjectConfig.test.tsx`, add exact Vitest names:
   rows include each saved mode, Queued/Working/terminal states, ProjectId (including null),
   refs/paths and nondefault project metadata. Apply migration. Raw SQL and fresh EF reads
   prove all originals unchanged and new fields null; no model/snapshot drift. Under S3 the
-  explicit global Shared candidate uses AC-3; never re-resolve legacy queued tasks here.
+  configured global Shared case uses AC-3; never re-resolve legacy queued tasks here.
 - `C458_DownThenUpPreservesLegacyWorkspace` (1): isolated migration down/up round-trip;
   legacy modes/IDs survive, columns disappear/reappear, source/default null after re-add.
 
 **PC-16a:** give the new project column a Worktree default; shape and legacy-upgrade tests
 fail. **PC-16b:** add an UPDATE resetting legacy `AgentTasks.Workspace`; upgrade test fails
-on the seeded non-Shared modes. **PC-16c:** change shipped global initializer to Worktree;
+on the seeded non-Shared modes. **PC-16c:** change shipped global initializer to Shared;
 storage-default method fails. **PC-16d:** permit ReadOnly in the global validator; validator
 method fails. **PC-16e:** remove the EF string conversion for project/source; mapping method
 fails on provider type. **PC-16f:** omit WorkspaceSource from Down; down-shape and round-trip
@@ -582,7 +621,7 @@ does not prove roster completeness. No tests/builds have been executed by TestDe
 | CP-2 | S1 | CP-1 | migration-upgrade | `/*/*/WorkerWorkspaceDefaultMigrationTests/*` | AC-16 | both methods executed, 0 failed/skipped | 2 | 3 | true |
 | CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c458-s2/` | project-surface | `/*/*/(ProjectWorkerWorkspaceDefaultTests*)\|(ProjectScriptWorkspaceTests*)/*` | AC-15, AC-18 | all 26 planned results, 0 failed/skipped | 26 | 6 | true |
 | CP-4 | S1-S2 | CP-3 | dormant-dispatch | `/*/*/WorktreeDefaultAdmissionTests/*` | R-0, AC-16 | all 6 existing methods, 0 failed/skipped | 6 | 4 | true |
-| CP-5 | S1-S2 | n/a | project-client | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-project-client -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectConfig.test.tsx` | AC-15 | all existing tests and 7 new results, CLIENT TESTS EXIT CODE 0, 0 failed | n/a | 3 | true |
+| CP-5 | S1-S2 | n/a | project-client | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-project-client -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectConfig.test.tsx src/features/settings/ProjectSetupModal.test.tsx` | AC-15 | all existing tests and 7 new results, CLIENT TESTS EXIT CODE 0, 0 failed | n/a | 3 | true |
 | CP-6 | S1-S3 | `tests/Antiphon.Tests -> bin-c458-s3/` | workspace-resolution | `/*/*/AgentTaskWorkspaceDefaultTests/*` | AC-1 through AC-12, R-1 through R-5 | all 57 planned results, 0 failed/skipped | 57 | 8 | true |
 | CP-7 | S1-S3 | CP-6 | caller-scope | `/*/*/AgentTaskProjectScopeTests/*` | R-6 | all 6 existing methods, 0 failed/skipped | 6 | 2 | true |
 | CP-8 | S1-S3 | CP-6 | continuation | `/*/*/WorktreeDefaultContinuationTests/(RetiredWorktreeCutsAtPriorTip*)\|(FrozenTipSurvivesPriorRefMovement*)\|(UnavailablePriorTipRefuses*)\|(LiveFollowUpKeepsCwd*)\|(StandingAndRoutingPinsKeepCwd*)\|(ExplicitWorktreePinRefuses*)\|(ContinuationRetainsCardContextAndPolicy*)` | R-6 | all 7 named methods and argument rows, 0 failed/skipped | 7 | 4 | true |

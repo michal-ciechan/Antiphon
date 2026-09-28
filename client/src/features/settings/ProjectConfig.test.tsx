@@ -131,6 +131,58 @@ it('submits commitOnSettle only when the operator changes the select', async () 
   await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ commitOnSettle: 'Off' })))
 })
 
+function seedWorkspaceProject(projectValue: ProjectDto, put: ReturnType<typeof vi.fn>) {
+  server.use(
+    http.get('/api/projects', () => HttpResponse.json([projectValue])),
+    http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([emptyReadiness])),
+    http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
+    http.put('/api/projects/:id', async ({ request }) => {
+      put(await request.json())
+      return HttpResponse.json(projectValue)
+    }),
+  )
+}
+
+it.each(['Shared', 'Worktree'] as const)(
+  'C458 displays inherited workspace from effective default %s', async (global) => {
+    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: null, effectiveWorkerWorkspace: global }, vi.fn())
+    renderWithProviders(<ProjectConfig />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+    expect(screen.getByRole('textbox', { name: 'Default worker workspace' }))
+      .toHaveValue(`Inherit (${global.toLowerCase()})`)
+  },
+)
+
+it.each(['Shared', 'Worktree', 'Inherit'] as const)(
+  'C458 changing worker workspace submits selected value %s', async (selection) => {
+    const put = vi.fn()
+    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: 'Shared', effectiveWorkerWorkspace: 'Shared' }, put)
+    renderWithProviders(<ProjectConfig />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+    await userEvent.click(screen.getByRole('textbox', { name: 'Default worker workspace' }))
+    await userEvent.click(await screen.findByRole('option', {
+      name: selection === 'Inherit' ? 'Inherit (shared)' : selection,
+    }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(put).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultWorkerWorkspace: selection }),
+    ))
+  },
+)
+
+it('C458 unrelated save omits worker workspace', async () => {
+  const put = vi.fn()
+  seedWorkspaceProject({ ...project, defaultWorkerWorkspace: 'Worktree', effectiveWorkerWorkspace: 'Worktree' }, put)
+  renderWithProviders(<ProjectConfig />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(put).toHaveBeenCalledWith(expect.not.objectContaining({ defaultWorkerWorkspace: expect.anything() }))
+  expect(put).toHaveBeenCalledWith(expect.objectContaining({ defaultLaunchEnv: { ANTHROPIC_BASE_URL: 'http://proxy:8080' } }))
+})
+
 describe('ProjectConfig readiness column', () => {
   it('replaces the Features badges with a readiness cell and empty-state copy', async () => {
     server.use(

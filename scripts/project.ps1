@@ -10,7 +10,8 @@
 #                        [-Bundles a,b] [-PromptFile p] [-RemoteControl] [-Start] [-Json]
 #   project.ps1 readiness <project name|guid> [-Json]
 #   project.ps1 catalog   [-Json]
-#   project.ps1 set       <project name|guid> -CommitOnSettle On|Off|Inherit [-Json]
+#   project.ps1 set       <project name|guid> [-CommitOnSettle On|Off|Inherit]
+#                        [-DefaultWorkerWorkspace Shared|Worktree|Inherit] [-Json]
 #
 # -PromptFile is read with Get-Content -Raw and sent as-is, so newlines, quotes and shell
 # metacharacters survive untouched. Use a file for prompt text rather than trying to quote it.
@@ -29,6 +30,9 @@ param(
 
     [ValidateSet('On', 'Off', 'Inherit')]
     [string]$CommitOnSettle,
+
+    [ValidateSet('Shared', 'Worktree', 'Inherit')]
+    [string]$DefaultWorkerWorkspace,
 
     [string]$Dir,
     [switch]$CreateDirectory,
@@ -174,7 +178,9 @@ function Write-Catalog($Catalog) {
 
 switch ($Verb) {
     'set' {
-        if ([string]::IsNullOrWhiteSpace($CommitOnSettle)) { Fail 'set requires -CommitOnSettle On|Off|Inherit.' }
+        if ([string]::IsNullOrWhiteSpace($CommitOnSettle) -and [string]::IsNullOrWhiteSpace($DefaultWorkerWorkspace)) {
+            Fail 'set requires -CommitOnSettle On|Off|Inherit or -DefaultWorkerWorkspace Shared|Worktree|Inherit.'
+        }
         $resolved = Resolve-Project $Project
         $body = @{
             name = $resolved.name
@@ -183,14 +189,16 @@ switch ($Verb) {
             gitHubIntegrationEnabled = $resolved.gitHubIntegrationEnabled
             notificationsEnabled = $resolved.notificationsEnabled
             baseBranch = $resolved.baseBranch
-            commitOnSettle = $CommitOnSettle
         }
+        if (-not [string]::IsNullOrWhiteSpace($CommitOnSettle)) { $body.commitOnSettle = $CommitOnSettle }
+        if (-not [string]::IsNullOrWhiteSpace($DefaultWorkerWorkspace)) { $body.defaultWorkerWorkspace = $DefaultWorkerWorkspace }
         if ($null -ne $resolved.localRepositoryPath) { $body.localRepositoryPath = $resolved.localRepositoryPath }
         if ($null -ne $resolved.repositoryVisibility) { $body.repositoryVisibility = $resolved.repositoryVisibility }
         $updated = Invoke-Antiphon -Method PUT -Path ("/api/projects/{0}" -f $resolved.id) -Body $body
         if ($Json) { $updated | ConvertTo-Json -Depth 10; return }
-        Write-Output ("Project: {0} ({1}) commitOnSettle={2} effective={3}" -f `
-            $updated.name, $updated.id, $updated.commitOnSettle, $updated.effectiveCommitOnSettle)
+        Write-Output ("Project: {0} ({1}) commitOnSettle={2} effectiveCommitOnSettle={3} defaultWorkerWorkspace={4} effectiveWorkerWorkspace={5}" -f `
+            $updated.name, $updated.id, $updated.commitOnSettle, $updated.effectiveCommitOnSettle, `
+            $updated.defaultWorkerWorkspace, $updated.effectiveWorkerWorkspace)
         return
     }
     'catalog' {

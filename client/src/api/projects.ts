@@ -20,6 +20,8 @@ export interface ProjectDto {
   defaultLaunchEnv?: Record<string, string>
   commitOnSettle?: string | null
   effectiveCommitOnSettle?: boolean
+  defaultWorkerWorkspace?: 'Shared' | 'Worktree' | null
+  effectiveWorkerWorkspace?: 'Shared' | 'Worktree'
 }
 
 export interface CreateProjectRequest {
@@ -33,6 +35,7 @@ export interface CreateProjectRequest {
   notificationsEnabled: boolean
   defaultLaunchEnv?: Record<string, string> | null
   commitOnSettle?: string | null
+  defaultWorkerWorkspace?: 'Shared' | 'Worktree' | 'Inherit' | null
 }
 
 export interface UpdateProjectRequest {
@@ -46,6 +49,7 @@ export interface UpdateProjectRequest {
   notificationsEnabled: boolean
   defaultLaunchEnv?: Record<string, string> | null
   commitOnSettle?: string | null
+  defaultWorkerWorkspace?: 'Shared' | 'Worktree' | 'Inherit' | null
 }
 
 export interface TestGitConnectivityResult {

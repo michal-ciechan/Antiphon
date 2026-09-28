@@ -106,6 +106,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const [formDefaultLaunchEnvText, setFormDefaultLaunchEnvText] = useState('')
   const [formCommitOnSettle, setFormCommitOnSettle] = useState('Inherit')
   const [commitOnSettleEdited, setCommitOnSettleEdited] = useState(false)
+  const [formWorkerWorkspace, setFormWorkerWorkspace] = useState('Inherit')
+  const [workerWorkspaceEdited, setWorkerWorkspaceEdited] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -153,6 +155,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setFormDefaultLaunchEnvText(envToText(project.defaultLaunchEnv ?? {}))
     setFormCommitOnSettle(project.commitOnSettle ?? 'Inherit')
     setCommitOnSettleEdited(false)
+    setFormWorkerWorkspace(project.defaultWorkerWorkspace ?? 'Inherit')
+    setWorkerWorkspaceEdited(false)
     setFormError(null)
     setTestResult(null)
     setEditModalOpen(true)
@@ -202,6 +206,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           notificationsEnabled: formNotificationsEnabled,
           defaultLaunchEnv: parsedDefaultEnv.env,
           ...(commitOnSettleEdited ? { commitOnSettle: formCommitOnSettle } : {}),
+          ...(workerWorkspaceEdited ? { defaultWorkerWorkspace: formWorkerWorkspace as 'Shared' | 'Worktree' | 'Inherit' } : {}),
         },
       })
       setEditModalOpen(false)
@@ -501,6 +506,20 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             onChange={(value) => {
               setFormCommitOnSettle(value ?? 'Inherit')
               setCommitOnSettleEdited(true)
+            }}
+          />
+          <Select
+            label="Default worker workspace"
+            description="Fresh tasks use this project's choice. Inherit follows the server's global setting. Shared keeps tasks in the project's checkout."
+            data={[
+              { value: 'Inherit', label: `Inherit (${(editingProject?.effectiveWorkerWorkspace ?? 'Worktree').toLowerCase()})` },
+              { value: 'Shared', label: 'Shared' },
+              { value: 'Worktree', label: 'Worktree' },
+            ]}
+            value={formWorkerWorkspace}
+            onChange={(value) => {
+              setFormWorkerWorkspace(value ?? 'Inherit')
+              setWorkerWorkspaceEdited(true)
             }}
           />
           <Textarea

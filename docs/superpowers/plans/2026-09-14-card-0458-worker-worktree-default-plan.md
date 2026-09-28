@@ -1,5 +1,43 @@
 ## Design (Plan task 5cfef7f8, 2026-09-14, against Antiphon 10390c81)
 
+> Reconciled 2026-09-28 for CARD-0458 S1/S2 against CARD-0644's shipped source. The September
+> 14 observations below are historical. The reconciliation in this section governs later slices.
+> CARD-0644 is still InProgress on the board, but its fresh Worktree admission and tests are in
+> the current source. S1/S2 add storage and controls only; they leave that admission untouched.
+
+### CARD-0644 reconciliation (normative)
+
+- **D-1:** `Projects.DefaultWorkerWorkspace` remains nullable `Shared`/`Worktree`, with null
+  inheriting the global value. A project such as slides can explicitly choose `Shared`.
+- **D-2:** `Delegation:DefaultWorkerWorkspace` initializes to `Worktree`, the shipped fresh-task
+  behavior. The validator allows only `Shared` and `Worktree`. No operator flip is part of this
+  card. An explicit global `Shared` is a supported operator configuration.
+- **D-3:** Explicit modes win on fresh tasks. Live follow-ups and existing-agent pins retain
+  CARD-0644's checkout rules; explicit ReadOnly on a live follow-up survives, and explicit
+  Worktree against an existing agent refuses. For a fresh unpinned task, a project override wins
+  over the global setting across Worker and Orchestrator roles, including Deploy/Commit/Merge.
+  Omitted Worktree outside Git keeps CARD-0644's `workspace_default_not_git` refusal before
+  insertion. Structured base selectors accept omitted Worktree. Retired Worktree continuations
+  retain their predecessor's frozen tip. `WorkspaceSource` records Explicit, Project, Global or
+  Pinned on newly admitted rows; historical rows stay null.
+- **D-4:** No automatic dirty-source fallback. CARD-0644 cuts a worktree from committed content
+  even when the source checkout is dirty. A project that must use local uncommitted files sets
+  `Shared`. No cleanliness probe or new process seam belongs in S3.
+- **D-5:** Shared-checkout-only holds may explain the shared slot and suggest `-Worktree`, but
+  only when scope evidence proves no area contention. A project Shared override must be named
+  accurately. Never promise immediate dispatch past other caps or dependencies.
+- **D-6:** One additive migration adds two nullable text columns without defaults or backfill.
+  Existing task modes and CARD-0644 admission remain unchanged. PUT null/omission preserves the
+  project setting; literal `Inherit` clears it. API and Settings show configured and effective
+  values. `project.ps1 set` extends the existing `-CommitOnSettle` verb.
+- **D-7:** Cleanup remains outside this card. CARD-0452 owns it; no cleanup action or worktree
+  count gate is introduced here.
+- **D-8:** No cap, carry-changes, commit-first, role matrix, cleanup or global-default flip.
+  S3 adds project precedence and provenance; S4 adds messages. Neither runs in the S1/S2 task.
+
+The original H-1/H-2 flip decisions are superseded because Worktree is already the global
+default. H-3 is a separate operator write: this code does not change a live project setting.
+
 Stage: Plan. Verification design is a separate TestDesign stage. Written onto the card because the
 Plan task could not write into C:\src\Antiphon; a Docs task should copy this section verbatim to
 docs/superpowers/plans/2026-09-14-card-0458-worker-worktree-default-plan.md.
@@ -147,10 +185,12 @@ the create-time cap (MaxOpenTasks / RecommendedInFlight), although it is the oth
 S1 storage: server/Domain/Entities/Project.cs; server/Domain/Entities/AgentTask.cs;
 server/Domain/Enums/AgentTaskEnums.cs (WorkspaceSource enum; WorkspaceMode doc no longer says
 "Shared is the default"); server/Application/Settings/DelegationSettings.cs (+ validator);
-server/Migrations/2026091xxxxxxx_Card0458WorkerWorkspaceDefault.cs + AppDbContextModelSnapshot.cs.
+server/Infrastructure/Data/AppDbContext.cs; CLI-generated
+server/Migrations/20260928211739_Card0458WorkerWorkspaceDefault.cs + designer + AppDbContextModelSnapshot.cs.
 S2 project surface: CreateProjectRequest.cs, UpdateProjectRequest.cs, ProjectDto.cs,
-ProjectService.cs; scripts/project.ps1 (`set`); client/src/api/projects.ts;
-client/src/features/settings/ProjectConfig.tsx (+ Select) and ProjectConfig.test.tsx; new
+ProjectService.cs; ProjectSetupDtos.cs/ProjectSetupService.cs (the existing setup wizard's
+create path); scripts/project.ps1 (`set`); client/src/api/projects.ts and projectSetup.ts;
+client/src/features/settings/ProjectConfig.tsx and ProjectSetupModal.tsx (+ Selects and tests); new
 tests/Antiphon.Tests/Application/ProjectWorkerWorkspaceDefaultTests.cs.
 S3 resolution: server/Application/Services/AgentTaskService.cs (hoist projectId above :425;
 ResolveWorkspace takes project default, global default, role, pin and probe; sets WorkspaceSource;

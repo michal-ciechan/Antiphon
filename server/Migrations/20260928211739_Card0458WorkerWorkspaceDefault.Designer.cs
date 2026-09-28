@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260928211739_Card0458WorkerWorkspaceDefault")]
+    partial class Card0458WorkerWorkspaceDefault
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1506,72 +1509,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("AgentTasks", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskDecisionQuestion", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("AgentSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("AgentTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Answer")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("Attempt")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("CanonicalPayloadJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Disposition")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("GrantId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("PayloadHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("PolicyHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<int?>("PolicyVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid>("RequestId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AgentSessionId");
-
-                    b.HasIndex("AgentTaskId", "CreatedAt");
-
-                    b.HasIndex("AgentTaskId", "Attempt", "RequestId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_AgentTaskDecisionQuestions_AgentTaskId_Attempt_RequestId");
-
-                    b.ToTable("AgentTaskDecisionQuestions", (string)null);
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskDispatchWarningIntent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1659,9 +1596,6 @@ namespace Antiphon.Server.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("AgentSessionId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("AgentTaskId")
@@ -8281,21 +8215,6 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("CardWorkflowStage");
 
                     b.Navigation("ParentTask");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskDecisionQuestion", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentSession", null)
-                        .WithMany()
-                        .HasForeignKey("AgentSessionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
-                        .WithMany()
-                        .HasForeignKey("AgentTaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskDispatchWarningIntent", b =>

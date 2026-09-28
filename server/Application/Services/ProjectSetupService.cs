@@ -297,7 +297,11 @@ public sealed class ProjectSetupService
                     GitHubIntegrationEnabled: false,
                     NotificationsEnabled: false,
                     LocalRepositoryPath: directory,
-                    BaseBranch: request.BaseBranch) { RepositoryVisibility = request.RepositoryVisibility },
+                    BaseBranch: request.BaseBranch)
+                {
+                    RepositoryVisibility = request.RepositoryVisibility,
+                    DefaultWorkerWorkspace = request.DefaultWorkerWorkspace,
+                },
                 ct);
 
             var createdBoard = await boardService.CreateAsync(

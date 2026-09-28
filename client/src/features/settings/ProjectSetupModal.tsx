@@ -78,6 +78,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
   const [repositoryVisibility, setRepositoryVisibility] = useState<RepositoryVisibility>('Unknown')
   const [gitRepositoryUrl, setGitRepositoryUrl] = useState('')
   const [baseBranch, setBaseBranch] = useState('master')
+  const [defaultWorkerWorkspace, setDefaultWorkerWorkspace] = useState<'Inherit' | 'Shared' | 'Worktree'>('Inherit')
   const [boardName, setBoardName] = useState('')
   const [boardNameEdited, setBoardNameEdited] = useState(false)
   const [presetKey, setPresetKey] = useState<string | null>('orchestrator')
@@ -153,6 +154,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
         gitRepositoryUrl: gitRepositoryUrl.trim() || null,
         repositoryVisibility,
         baseBranch: baseBranch.trim() || 'master',
+        defaultWorkerWorkspace,
         boardName: boardName.trim() || null,
         agent: skipAgent
           ? null
@@ -257,6 +259,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                 />
                 <Select label="Repository visibility" description="Configured locally; not checked. Unknown blocks card-file publication. Boards start with publishing off." data={['Unknown', 'Private', 'Public']} value={repositoryVisibility} onChange={(v) => setRepositoryVisibility((v as RepositoryVisibility) ?? 'Unknown')} error={fieldErrors.repositoryVisibility} />
                 <TextInput label="Base branch" value={baseBranch} onChange={(event) => setBaseBranch(event.currentTarget.value)} />
+                <Select label="Default worker workspace" description="Inherit follows the server's global setting." data={['Inherit', 'Shared', 'Worktree']} value={defaultWorkerWorkspace} onChange={(value) => setDefaultWorkerWorkspace((value as 'Inherit' | 'Shared' | 'Worktree') ?? 'Inherit')} />
                 <TextInput label="Board name" value={boardName} onChange={(event) => { setBoardNameEdited(true); setBoardName(event.currentTarget.value) }} error={fieldErrors.boardName} />
                 <Paper withBorder p="sm">
                   <Text size="sm" fw={500} mb={4}>Default columns</Text>

@@ -52,6 +52,9 @@ public class Project
     /// </summary>
     public bool? CommitOnSettle { get; set; }
 
+    /// <summary>Null inherits Delegation:DefaultWorkerWorkspace (CARD-0458).</summary>
+    public Antiphon.Server.Domain.Enums.WorkspaceMode? DefaultWorkerWorkspace { get; set; }
+
     public ICollection<Board> Boards { get; set; } = new List<Board>();
 
     /// <summary>

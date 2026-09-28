@@ -108,6 +108,18 @@ public enum WorkspaceMode
     ReadOnly = 2,
 }
 
+/// <summary>Provenance of an admitted task's workspace decision (CARD-0458).</summary>
+public enum WorkspaceSource
+{
+    Explicit,
+    Project,
+    Global,
+    DirtySource,
+    NoRepository,
+    Pinned,
+    Orchestrator,
+}
+
 /// <summary>Where the delegate's report goes when the task settles.</summary>
 public enum AgentTaskReplyTo
 {
