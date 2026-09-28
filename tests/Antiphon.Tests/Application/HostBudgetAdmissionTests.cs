@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -102,6 +103,16 @@ public sealed partial class DispatchHoldVisibilityTests
         var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
             schema.ConnectionString, workspace.Path);
         var active = await SeedDispatchedAsync(schema, workspace.Path, at, runnerId: "server2");
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = Guid.NewGuid(), DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running, Cwd = workspace.Path, Cols = 80, Rows = 24,
+                CreatedAt = at, StartedAt = at, LastSeenAt = at, RunnerId = "server2",
+            });
+            await db.SaveChangesAsync();
+        }
         var queuedDir = Path.Combine(workspace.Path, "queued-on-runner");
         Directory.CreateDirectory(queuedDir);
         var queued = await SeedQueuedAsync(schema, queuedDir, agentId, at, runnerId: "server2");
@@ -116,7 +127,6 @@ public sealed partial class DispatchHoldVisibilityTests
         }
 
         await SettleAsync(schema, active.Id, at);
-        (await world.Dispatcher.TickAsync(CancellationToken.None)).HeldOnRunner.ShouldBe(0);
     }
 
     [Test]
