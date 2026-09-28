@@ -53,6 +53,7 @@ public sealed class PhoneHomeCommandDispatcher
 {
     private readonly IPhoneHomeRuntimeSurface _runtime;
     private readonly PhoneHomeSettings _settings;
+    private readonly RunnerCapacityState _capacity;
     private readonly IProviderAuthProbe? _authProbe;
     private readonly IHostStatsSource? _hostStats;
     private readonly IHostApplicationLifetime? _lifetime;
@@ -69,10 +70,11 @@ public sealed class PhoneHomeCommandDispatcher
         IPhoneHomeRuntimeSurface runtime, PhoneHomeSettings settings, IProviderAuthProbe? authProbe = null,
         ILogger<PhoneHomeCommandDispatcher>? logger = null, IHostStatsSource? hostStats = null,
         IHostApplicationLifetime? lifetime = null, TimeProvider? time = null,
-        PhoneHomeProcessIdentity? identity = null)
+        PhoneHomeProcessIdentity? identity = null, RunnerCapacityState? capacity = null)
     {
         _runtime = runtime;
         _settings = settings;
+        _capacity = capacity ?? new RunnerCapacityState(settings);
         _authProbe = authProbe;
         _hostStats = hostStats;
         _lifetime = lifetime;
@@ -300,6 +302,18 @@ public sealed class PhoneHomeCommandDispatcher
                     request, await _runtime.ObserveCompactionAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.HostStats => HostStatsResult(request),
                 PhoneHomeOperation.HostStatsSeries => HostStatsSeriesResult(request),
+                PhoneHomeOperation.SetCapacity => await MutateAsync(request, () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeSetCapacityRequest>(PhoneHomeFraming.Json)
+                        ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.Capacity,
+                            "Capacity body is required.", 400);
+                    if (body.Capacity < 1 || string.IsNullOrWhiteSpace(body.Reason))
+                        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.Capacity,
+                            "Capacity must be at least one and a reason is required.", 409);
+                    _capacity.Apply(body.Capacity);
+                    return Task.FromResult(Result(request, new PhoneHomeSetCapacityResponse(
+                        _capacity.Capacity, true, _capacity.StatePath)));
+                }),
                 _ => Error(request, PhoneHomeProblemTypes.UnsupportedOperation, $"Operation '{request.Operation}' is not supported.", 400),
             };
         }
@@ -420,10 +434,10 @@ public sealed class PhoneHomeCommandDispatcher
                     409);
             }
 
-            if (_runtime.OwnedSessionCount >= _settings.Capacity)
+            if (_runtime.OwnedSessionCount >= _capacity.Capacity)
                 throw new PhoneHomeAdmissionException(
                     PhoneHomeProblemTypes.Capacity,
-                    $"Phone-home capacity is {_settings.Capacity} session(s).",
+                    $"Phone-home capacity is {_capacity.Capacity} session(s).",
                     409);
             // Durable before the process exists: a crash between the two can only refuse a re-send.
             if (launch.AcceptedStartedAt is { } accepting)
