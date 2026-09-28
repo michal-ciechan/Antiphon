@@ -753,6 +753,10 @@ public partial class HerdrAlwaysOnChannelParityTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<ChannelReplyDispatcher>();
+        services.AddSingleton<ChannelOutboundBoundary>();
+        services.AddSingleton<ChannelAttachmentReader>();
+        services.AddSingleton<ChannelOutboundPublicationService>();
+        services.AddChannelOutboundRecovery();
         services.AddScoped<ChatChannelService>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();

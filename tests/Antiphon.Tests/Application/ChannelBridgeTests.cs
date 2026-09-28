@@ -1010,6 +1010,10 @@ public class ChannelBridgeTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<ChatChannelService>();
+        services.AddSingleton<ChannelOutboundBoundary>();
+        services.AddSingleton<ChannelAttachmentReader>();
+        services.AddSingleton<ChannelOutboundPublicationService>();
+        services.AddChannelOutboundRecovery();
         services.AddSingleton(sp => new ChannelReplyDispatcher(
             sp.GetRequiredService<IServiceScopeFactory>(),
             messaging,

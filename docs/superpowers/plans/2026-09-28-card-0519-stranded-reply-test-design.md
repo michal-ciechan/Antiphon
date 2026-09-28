@@ -341,9 +341,12 @@ queue delivery; append only the assistant answer and TurnEnd to that actual rece
 | R-3 | `ChannelMachineTurnTextTests` — **18 methods / 19 results**. `A_produce_failure_un_claims_so_the_next_trigger_sends_once`, `Trailing_text_follows_via_the_dispatched_watermark`, `Follow_up_send_stamps_LastReplyAt_without_touching_inbound_columns`, exact NO_REPLY, System exclusion, settings and Check/Scheduled arguments. | Keep user-visible behavior. Watermark test's historical name may stay; durable state replaces its implementation. LastReplyAt/preview follow acceptance; LastMessageAt/author/native inbound ID remain unchanged. Same clock amendment as R-2. |
 | R-4 | `ChannelBatchingTests` — **10 results**, especially `Batched_reply_fans_out_once_to_the_conversation` and NO_REPLY cases. | Real queue still batches only one conversation, all members settle with one reply; UI/mixed origins and queue failure contracts unchanged. |
 | R-5 | `ChannelPromptCorrelationTests` — **24 results**, including the three C584 bodies in Inspection. | Full marker/body/session/attempt evidence, flattened marked receipt and TTL ownership stay intact. Recovery must call the same policy; no broad text-head fallback. |
+| R-6 | `ChannelBridgeTests` — **34 methods / 40 results**, including `Trailing_text_still_follow_ups_when_the_next_prompt_landed_in_the_same_batch`. | Keep bound and queued replies, trailing fragments, attachment handling, and reply metadata working through the standalone bridge harness. |
+| R-7 | `HerdrAlwaysOnChannelParityTests` — **4 methods / 7 results**. | Keep the channel reply path working across Herdr and PtyHost AlwaysOn sessions; confirm on Windows if the Linux fixture cannot finish. |
 
-Total retained ordinary roster: **96 methods / 99 expanded results**
-(24 + 20 + 18 + 10 + 24 methods). Use **99** as the checkpoint floor.
+Total retained ordinary roster: **134 methods / 146 expanded results**
+(96 + 34 + 4 methods, 99 + 40 + 7 results). CP-4 retains its **99** floor;
+CP-5 and CP-6 add **40** and **7** respectively.
 Counts came from source attributes, not discovery or execution; Code reports fresh
 TRX counts. Any added dynamic source must update its floor explicitly.
 
@@ -461,23 +464,27 @@ Same committed S1-S3 group, one isolated test build reused by the remaining rows
 | CP-2 | S1-S3 | CP-1 | crash | `/*/*/ChannelOutboundCrashTests/*` | V-17, V-18 | all 18 argument results, 0 failed/skipped | 18 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | CP-1 | broker-receipt | `/*/*/ChannelOutboundTransportTests/*` | V-20 | all 3 argument results, 0 failed/skipped | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S3 | CP-1 | existing-replies | `/*/*/(ChannelReplyDurabilityTests*)\|(ChannelFollowUpAttachmentTests*)\|(ChannelMachineTurnTextTests*)\|(ChannelBatchingTests*)\|(ChannelPromptCorrelationTests*)/*` | R-1..R-5 | all 5 classes and >= 99 executed, 0 failed/skipped | 99 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S1-S3 | CP-1 | bridge-replies | `/*/*/ChannelBridgeTests/*` | R-6: bound, queued, trailing, and attachment replies | all 40 argument results, 0 failed/skipped | 40 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-6 | S1-S3 | CP-1 | herdr-channel-parity | `/*/*/HerdrAlwaysOnChannelParityTests/*` | R-7: AlwaysOn channel reply parity | all 7 argument results, 0 failed/skipped | 7 | 15 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 ### Cost
 
-All times are estimates, not measured. Ordinary execution floor **47 minutes**:
-CP-1 15 (including an estimated 6-minute build), CP-2 12, CP-3 8, CP-4 12.
-Min execution floor **191** = 71 + 18 + 3 + 99; counts are not minutes.
-Three reused rows save an estimated **18 build minutes** compared with four builds.
+All times are estimates, not measured. Ordinary execution floor **74 minutes**:
+CP-1 15 (including an estimated 6-minute build), CP-2 12, CP-3 8, CP-4 12,
+CP-5 12, CP-6 15. Min execution floor **238** = 71 + 18 + 3 + 99 + 40 + 7;
+counts are not minutes. Five reused rows save an estimated **30 build minutes**
+compared with six builds. CP-6 needs Windows-pinned confirmation if the Herdr
+or PtyHost fixture cannot complete on Linux.
 No omitted test class or native qualification is charged as a saving.
 
-Code authoring/schema/fixture allowance **300 minutes**, plus ordinary floor 47:
-**347 minutes** before separate Review. Estimated Review **25 minutes**.
+Code authoring/schema/fixture allowance **300 minutes**, plus ordinary floor 74:
+**374 minutes** before separate Review. Estimated Review **25 minutes**.
 Mutation floor: 48 non-crash PCs x 6 minutes + 4 crash PCs (20/23/24/40) x 12
 minutes = **336 minutes**, including each method's baseline/red/restored-green
 build and run. **156 phase invocations** total. Add **25 minutes** discovery,
 schema regeneration and evidence/restoration reporting: commission Mutation for
-at least **361 minutes**. Implementation through Mutation total **733 minutes**
-(347 + 25 + 361), plus build-slot wait/cold pulls and repair. The new schema and
+at least **361 minutes**. Implementation through Mutation total **760 minutes**
+(374 + 25 + 361), plus build-slot wait/cold pulls and repair. The new schema and
 actual crash cuts are why a single existing “producer throws” test is insufficient.
 
 ### Code run and reporting contract
@@ -504,12 +511,12 @@ TestDesign validation is limited to source/manifest/roster inspection. This host
 has neither `dotnet` nor `pwsh` on PATH, so no importer, build, test or PC ran here.
 This does not block the documentation deliverable; Code needs the normal .NET,
 PowerShell and owned-Docker test lane.
-The static document audit passed: one checkpoint table, four valid-width rows with
-the same reuse group, 191 minimum results, 47 ordinary minutes, 52 unique guard/PC
-mappings, and no named PC target absent from the V matrix. This is a document
-consistency check, not execution evidence or official ManifestLoader validation.
+The original TestDesign static audit covered four rows, 191 minimum results,
+47 ordinary minutes, and 52 unique guard/PC mappings. This Code round adds two
+regression rows and updates the plan to six rows, 238 minimum results, and
+74 ordinary minutes. Execution evidence is reported by the checkpoint runner.
 
 --- next stage ---
 next: code
-handoff: Implement S1-S3 and the ratified V/R roster for durable main, trailing and machine reply publication. Cover all refusal/cancellation/crash cuts, autonomous recovery and loud uncertainty; run CP-1..CP-4 after committed slices and report actual counts. Leave the 52 method-scoped PCs pending for post-land Mutation.
+handoff: Implement S1-S3 and the ratified V/R roster for durable main, trailing and machine reply publication. Cover all refusal/cancellation/crash cuts, autonomous recovery and loud uncertainty; run CP-1..CP-6 after committed slices and report actual counts. Leave the 52 method-scoped PCs pending for post-land Mutation.
 artifact: docs/superpowers/plans/2026-09-28-card-0519-stranded-reply-test-design.md
