@@ -152,6 +152,28 @@ public class PtyDeliveryCeilingsTests
         inline.ShouldNotContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
     }
 
+    [Test]
+    public void A_runner_brief_pointer_fits_one_write_even_with_a_long_title_and_cwd()
+    {
+        var settings = new DelegationSettings();
+        var inbox = settings.CeilingsFor(PtyBackend.InboxConhost, AnyReason);
+        var task = NewTask(new string('g', 2_000));
+        task.Title = new string('t', 300);
+        task.Scope = new string('s', 600);
+        var runnerCwd = "/work/" + new string('w', 650);
+        PhoneHomeInputSpill? staged = null;
+
+        var pointer = AgentTaskDispatcher.FitBriefForTyping(
+            task, settings, inbox, agentKind: AgentKind.ClaudeCode,
+            runnerCwd: runnerCwd, stageRemoteSpill: spill => staged = spill);
+
+        staged.ShouldNotBeNull();
+        pointer.ShouldStartWith(DelegationReportFormatter.TaskMarker(task.Id));
+        pointer.ShouldContain(staged!.RelativePath);
+        pointer.ShouldNotContain(task.Scope);
+        System.Text.Encoding.UTF8.GetByteCount(pointer).ShouldBeLessThanOrEqualTo(inbox.SingleWriteMaxBytes);
+    }
+
     /// <summary>
     /// The gate is never widened by omission. Every caller that predates the profile — which is
     /// every test, and any future one that forgets — gets the conservative set.
