@@ -48,6 +48,7 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         task.Result.ShouldBeNull();
         task.AutoContinuedAt.ShouldBeNull();
         (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId)).ShouldBe(0);
     }
 
     [Test]
@@ -176,15 +177,44 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
     {
         using var workspace = new DecisionTempWorkspace();
         var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
         await using (var setup = NewDb())
         {
+            var now = DateTime.UtcNow;
+            setup.Projects.Add(new Project
+            {
+                Id = projectId, Name = "Decision fixture", GitRepositoryUrl = "https://example.invalid/fixture.git",
+                CreatedAt = now, UpdatedAt = now,
+            });
+            setup.Boards.Add(new Board
+            {
+                Id = boardId, ProjectId = projectId, Name = "Decision board", CreatedAt = now, UpdatedAt = now,
+            });
+            setup.BoardColumns.Add(new BoardColumn
+            {
+                Id = columnId, BoardId = boardId, StateKey = "backlog", Name = "Backlog",
+                CardStatus = CardStatus.Backlog, IsActive = true, CreatedAt = now, UpdatedAt = now,
+            });
+            setup.Cards.Add(new Card
+            {
+                Id = cardId, BoardId = boardId, BoardColumnId = columnId,
+                Identifier = "CARD-" + Guid.NewGuid().ToString("N")[..8], Title = "Decision fixture card",
+                CreatedAt = now, UpdatedAt = now,
+            });
             var task = await setup.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.ProjectId = projectId;
+            task.BoardId = boardId;
+            task.CardId = cardId;
             task.StandingAuthority = "May continue after an explicit reply.";
             task.AutoContinueOnWait = true;
             await setup.SaveChangesAsync();
         }
         await using var beforeDb = NewDb();
         var before = await beforeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        var cardBefore = await beforeDb.Cards.AsNoTracking().SingleAsync(c => c.Id == cardId);
         var bus = new CommittedQuestionBus(taskId);
         await using (var db = NewDb())
         {
@@ -221,6 +251,12 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
             && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Completed
                 || e.Type == AgentTaskEventType.Replied))).ShouldBe(0);
         (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
+        var cardAfter = await verify.Cards.AsNoTracking().SingleAsync(c => c.Id == cardId);
+        cardAfter.ConcurrencyToken.ShouldBe(cardBefore.ConcurrencyToken);
+        cardAfter.Status.ShouldBe(cardBefore.Status);
+        cardAfter.BoardColumnId.ShouldBe(cardBefore.BoardColumnId);
+        cardAfter.UpdatedAt.ShouldBe(cardBefore.UpdatedAt);
+        (await verify.CardRevisions.CountAsync(r => r.CardId == cardId)).ShouldBe(0);
     }
 
     [Test]
