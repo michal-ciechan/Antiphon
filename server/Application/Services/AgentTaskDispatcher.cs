@@ -5497,7 +5497,9 @@ public sealed class AgentTaskDispatcher
 
         return DelegationReportFormatter.BuildBriefPointer(
             task, settings, spillPath, brief.Length, agentKind,
-            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd) ? null : limits.SingleWriteMaxBytes);
+            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd) ? null : limits.SingleWriteMaxBytes,
+            boundSpillPath: string.IsNullOrWhiteSpace(runnerCwd) ? null
+                : TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D")));
     }
 
     /// <summary>

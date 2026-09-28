@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner;
@@ -16,6 +18,67 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class DurableRunnerSpillReceiptTests
 {
+    [Test]
+    public async Task Dispatcher_pointer_is_sized_after_queue_binding_and_recorded_complete()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+        });
+        const string runnerCwd = "/runner/worktrees/task-bound-pointer";
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, runnerCwd);
+        await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
+
+        var settings = new DelegationSettings();
+        var ceiling = settings.CeilingsFor(PtyBackend.InboxConhost, "runner inbox");
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Title = "boundary",
+            Goal = new string('g', 2_000),
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code,
+            ModelLevel = AgentModelLevel.High,
+            Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = h.TempRoot,
+            Status = AgentTaskStatus.Dispatched,
+        };
+        var stagedPath = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
+        var boundPath = TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D"));
+        task.Title = Enumerable.Range(1, 900).Select(n => new string('t', n)).First(title =>
+        {
+            task.Title = title;
+            var before = DelegationReportFormatter.BuildBriefPointer(task, settings, stagedPath, 2_000);
+            var after = before.Replace(stagedPath, boundPath, StringComparison.Ordinal);
+            return System.Text.Encoding.UTF8.GetByteCount(before) <= ceiling.SingleWriteMaxBytes
+                && System.Text.Encoding.UTF8.GetByteCount(after) > ceiling.SingleWriteMaxBytes;
+        });
+
+        var pointer = AgentTaskDispatcher.FitBriefForTyping(task, settings, ceiling,
+            runnerCwd: runnerCwd,
+            stageRemoteSpill: spill => h.Queue.StageRemoteSpill(h.SessionId, runnerCwd, spill));
+        pointer.ShouldContain(stagedPath);
+        pointer.ShouldNotContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+        await h.Queue.EnqueueAsync(h.SessionId, pointer, MessageSendMode.WhenIdle,
+            CancellationToken.None, QueuedMessageOrigin.Delegation);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var row = await db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == h.SessionId);
+        row.Body.ShouldContain(TypedBodySpill.InboxRelativePath(row.Id.ToString("D")));
+        row.Body.ShouldNotContain(TypedBodySpill.PointerHeadline);
+        System.Text.Encoding.UTF8.GetByteCount(row.Body).ShouldBeLessThanOrEqualTo(ceiling.SingleWriteMaxBytes);
+        row.RemoteSpillBody.ShouldContain(task.Goal);
+
+        await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+            schema.ConnectionString, h, row, h.SessionId, busy: true, busyBeforeDelivery: true);
+        var prompt = await db.TranscriptEntries.AsNoTracking().SingleAsync(e =>
+            e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt);
+        PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(row.Body));
+    }
+
     [Test]
     public async Task Queued_runner_spill_keeps_its_bytes_and_receives_a_complete_UserPrompt()
     {

@@ -304,7 +304,8 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
                 .Where(m => m.AgentSessionId == session.Id && m.Origin == QueuedMessageOrigin.Delegation)
                 .SingleAsync();
             var relative = TypedBodySpill.InboxRelativePath(first.Id.ToString("D"));
-            first.Body.ShouldContain(mirror + "/" + relative);
+            first.Body.ShouldContain(relative);
+            first.Body.ShouldNotContain(mirror);
             first.Body.ShouldNotContain(workspace.Path);
             // The observed runner prompt lost its heading line. Keep a marker beside the
             // instruction that survives that loss, before the spilled path is read.
