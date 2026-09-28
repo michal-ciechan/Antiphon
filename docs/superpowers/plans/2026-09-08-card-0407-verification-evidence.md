@@ -88,3 +88,65 @@ Every class that downgrades through `IMigrator` was re-run, because the migratio
 `StandingSessionOwnershipTests.Upgrade_backfills_only_unambiguous_owners_and_preserves_recovery_state(0|2|500)` is an inherited failure, not CARD-0407's: it seeds `AgentTasks` with the current EF model while downgraded past `_StandingSessionContinuity`, so it fails on `42703: column "CompletionNoteDigest" ... does not exist` (added by `20260912122418_AddCompletionNoteDeliveryStamp`). Reproduced identically at base `2fb81db3` in a detached worktree.
 
 The S1 PC inventory is unchanged; PC-17 still owns the inheritance mutations and now has the stage/specialist assertions to fail against.
+
+## S2a in progress — task 96ae83d8 (2026-09-28)
+
+Implementation commits: `eb6bc5e1bb21f5534dbd33252eda63b4c5298f37` adds the
+structured decision service, exact grant evaluation, self-worker HTTP route,
+typed question table and CLI-generated migration; `2b1026258e0e5a35f72b0d883ead47887f6fdf81`
+updates six older fixtures to request Shared explicitly after CARD-0644 made a
+fresh non-Git task default to Worktree. Both pushes were verified with
+`git ls-remote origin refs/heads/feat/card-task-96ae83d8` immediately after commit.
+
+Red-first evidence: the evaluator's temporary deny stub failed all 12 new Unit
+executions; the service stub failed both new integration executions on expected
+Continue/idempotency assertions; the mapped HTTP binder answered 400 to the
+new malformed-JSON test that requires 422. The first attempted service red run
+had a compile error in the test's local temp-workspace helper; it was corrected
+before the behavioral red run and is not counted as red evidence.
+
+Checkpoint manifest:
+`docs/superpowers/plans/2026-09-28-card-0407-s2a-checkpoints.md`. The committed
+run `20260928-083803-cf16` is green at `2b1026258e0e5a35f72b0d883ead47887f6fdf81`:
+
+| CP | Filter | Executed | Passed | Failed | Skipped | TRX |
+|---|---|---:|---:|---:|---:|---|
+| CP-1 | `/*/*/*/*[Category=Unit]` | 3434 | 3434 | 0 | 34 | `.antiphon/checkpoints/20260928-083803-cf16/rows/CP-1/run.trx` |
+| CP-2 | decision service class pair | 14 | 14 | 0 | 0 | `.antiphon/checkpoints/20260928-083803-cf16/rows/CP-2/run.trx` |
+| CP-3 | `/*/*/AgentTaskDecisionQuestionApiTests/*` | 2 | 2 | 0 | 0 | `.antiphon/checkpoints/20260928-083803-cf16/rows/CP-3/run.trx` |
+| CP-4 | four affected integration classes | 429 | 429 | 0 | 0 | `.antiphon/checkpoints/20260928-083803-cf16/rows/CP-4/run.trx` |
+
+The earlier run `20260928-082155-3502` was red: CP-1 failed two known
+`ScaledTimeProviderTests` timing cases under load; both passed in the next full
+Unit lane. CP-4 failed six preexisting non-Git fixture creates at
+`AgentTaskService.CreateAsync:873` (`workspace_default_not_git`), caused by the
+CARD-0644 default; explicit Shared in those test helpers made the same full
+class row green. The unchanged source path and the follow-up class result are
+the basis for classifying these as fixture drift rather than CARD-0407 runtime
+regressions.
+
+Only these S2a subcases are implemented and executed: V-3 exact attribute
+target/attribute-name denials; V-6 own task token positive; V-8 malformed JSON
+422; V-9 bounded LineEndings Continue, non-None impact denials and sibling-path
+denial; V-10 same-scope duplicate and changed-payload conflict; V-12 basic
+status/CompletedAt/Result/queue non-effects. Existing S1 V-4/V-5/R-4 classes
+were run as compatibility checks. The table's `Covers` cells identify subsets,
+not full V/R discharge.
+
+R-5 reinspection at this commit: `AutoContinuedAt` has no Application or
+Infrastructure assignment, and `scripts/delegate.ps1` exposes Authority and
+Continue but no `-AutoContinue` parameter. CARD-0294 S3 is still absent and
+was not implemented as part of this slice.
+
+**S2a remains open.** Required next Code work: complete V-2 link/junction and
+question-time repository tests; V-3 two-target and category matrix; V-5
+retry/session snapshot checks; V-6 self-token/session-token negative matrix;
+V-7 full state/attempt/live/unique-binding matrix; V-8 all schema boundaries;
+V-9 three categories and mixed-grant denial; V-10 cross-scope concurrency,
+restart and database uniqueness; V-11 state races and atomic publication;
+V-12 full non-effect snapshots; R-1/R-2 decision-service and R-4 legacy-field
+matrix. Inspect and correct the session-token stale-versus-unrelated HTTP
+classification and add an actual bounded history/page contract before claiming
+V-16. Keep the endpoint unadvertised until S3. All PC-1, PC-6..16 and PC-18..24
+remain pending method-scoped SourceLanding Mutation under this task's Final
+verification profile; no Code or Unit green discharges them.
