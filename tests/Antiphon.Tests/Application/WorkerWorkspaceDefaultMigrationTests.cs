@@ -28,9 +28,9 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
         await using (var db = NewDb(schema))
         {
             var migrations = db.Database.GetMigrations().ToArray();
-            migrations.Last().ShouldContain("Card0458WorkerWorkspaceDefault");
+            var migration = Card0458MigrationIndex(migrations);
             var migrator = db.Database.GetService<IMigrator>();
-            await migrator.MigrateAsync(migrations[^2]);
+            await migrator.MigrateAsync(migrations[migration - 1]);
             var oldColumns = await ColumnsAsync(db);
             oldColumns.ShouldNotContain("DefaultWorkerWorkspace");
             oldColumns.ShouldNotContain("WorkspaceSource");
@@ -60,7 +60,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
                         {false}, {(int)status}, {0}, {Guid.NewGuid()}, {now}, {0L}, {0L}, {0m})
                     """);
             }
-            await migrator.MigrateAsync(migrations[^1]);
+            await migrator.MigrateAsync(migrations[migration]);
         }
 
         await using var fresh = NewDb(schema);
@@ -172,13 +172,13 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
         await using (var db = NewDb(schema))
         {
             var migrations = db.Database.GetMigrations().ToArray();
-            migrations.Last().ShouldContain("Card0458WorkerWorkspaceDefault");
+            var migration = Card0458MigrationIndex(migrations);
             var migrator = db.Database.GetService<IMigrator>();
-            await migrator.MigrateAsync(migrations[^2]);
+            await migrator.MigrateAsync(migrations[migration - 1]);
             var oldColumns = await ColumnsAsync(db);
             oldColumns.ShouldNotContain("DefaultWorkerWorkspace");
             oldColumns.ShouldNotContain("WorkspaceSource");
-            await migrator.MigrateAsync(migrations[^1]);
+            await migrator.MigrateAsync(migrations[migration]);
         }
 
         await using var fresh = NewDb(schema);
@@ -210,6 +210,14 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
         var names = new List<string>();
         while (await reader.ReadAsync()) names.Add(reader.GetString(0));
         return names.ToArray();
+    }
+
+    private static int Card0458MigrationIndex(string[] migrations)
+    {
+        var index = Array.FindIndex(migrations, migration =>
+            migration.EndsWith("_Card0458WorkerWorkspaceDefault", StringComparison.Ordinal));
+        index.ShouldBeGreaterThan(0);
+        return index;
     }
 
     private static AppDbContext NewDb(IsolatedTestSchema schema) =>

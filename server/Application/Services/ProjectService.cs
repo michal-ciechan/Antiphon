@@ -542,6 +542,7 @@ public class ProjectService
             CommitOnSettle = CommitOnSettlePolicyResolver.FormatProjectValue(entity.CommitOnSettle),
             EffectiveCommitOnSettle = entity.CommitOnSettle ?? _delegation.CommitOnSettle,
             DefaultWorkerWorkspace = entity.DefaultWorkerWorkspace?.ToString(),
+            GlobalDefaultWorkerWorkspace = _delegation.DefaultWorkerWorkspace.ToString(),
             EffectiveWorkerWorkspace = (entity.DefaultWorkerWorkspace ?? _delegation.DefaultWorkerWorkspace).ToString(),
             DispatchHonorsWorkspaceDefault = false, // S3 will connect this preference to task admission.
             DefaultPipelineDefinitionId = entity.DefaultPipelineDefinitionId,

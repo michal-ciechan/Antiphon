@@ -146,12 +146,12 @@ function seedWorkspaceProject(projectValue: ProjectDto, put: (body: unknown) => 
 }
 
 it.each(['Shared', 'Worktree'] as const)(
-  'C458 displays inherited workspace from effective default %s', async (global) => {
-    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: null, effectiveWorkerWorkspace: global }, vi.fn())
+  'C458 displays inherited workspace from global default %s', async (global) => {
+    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: null, globalDefaultWorkerWorkspace: global, effectiveWorkerWorkspace: global }, vi.fn())
     renderWithProviders(<ProjectConfig />)
     await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
     expect(screen.getByRole('textbox', { name: 'Default worker workspace' }))
-      .toHaveValue(`Inherit (${global.toLowerCase()})`)
+      .toHaveValue(`Inherit (server default: ${global.toLowerCase()})`)
   },
 )
 
@@ -159,12 +159,12 @@ it.each(['Shared', 'Worktree', 'Inherit'] as const)(
   'C458 changing worker workspace submits selected value %s', async (selection) => {
     const put = vi.fn()
     const initial = selection === 'Shared' ? 'Worktree' : 'Shared'
-    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: initial, effectiveWorkerWorkspace: initial }, put)
+    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: initial, globalDefaultWorkerWorkspace: 'Worktree', effectiveWorkerWorkspace: initial }, put)
     renderWithProviders(<ProjectConfig />)
     await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
     await userEvent.click(screen.getByRole('textbox', { name: 'Default worker workspace' }))
     await userEvent.click(await screen.findByRole('option', {
-      name: selection === 'Inherit' ? 'Inherit (shared)' : selection,
+      name: selection === 'Inherit' ? 'Inherit (server default: worktree)' : selection,
     }))
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(put).toHaveBeenCalledWith(
@@ -172,6 +172,15 @@ it.each(['Shared', 'Worktree', 'Inherit'] as const)(
     ))
   },
 )
+
+it('C458 shows the global Worktree value when the project overrides it with Shared', async () => {
+  seedWorkspaceProject({ ...project, defaultWorkerWorkspace: 'Shared', globalDefaultWorkerWorkspace: 'Worktree', effectiveWorkerWorkspace: 'Shared' }, vi.fn())
+  renderWithProviders(<ProjectConfig />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+  expect(screen.getByRole('textbox', { name: 'Default worker workspace' })).toHaveValue('Shared')
+  await userEvent.click(screen.getByRole('textbox', { name: 'Default worker workspace' }))
+  expect(screen.getByRole('option', { name: 'Inherit (server default: worktree)' })).toBeInTheDocument()
+})
 
 it('C458 unrelated save omits worker workspace', async () => {
   const put = vi.fn()

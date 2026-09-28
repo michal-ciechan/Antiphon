@@ -24,6 +24,8 @@ public record ProjectDto(
     public bool EffectiveCommitOnSettle { get; init; }
     /// <summary>Configured override; null inherits the global setting.</summary>
     public string? DefaultWorkerWorkspace { get; init; }
+    /// <summary>Global setting used when the project override is cleared.</summary>
+    public string GlobalDefaultWorkerWorkspace { get; init; } = "Worktree";
     /// <summary>Configured project-or-global preference. Dispatch starts honoring it in CARD-0458 S3.</summary>
     public string EffectiveWorkerWorkspace { get; init; } = "Worktree";
     /// <summary>False while CARD-0458 S1/S2 only stores and reports the preference.</summary>
