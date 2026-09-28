@@ -34,7 +34,8 @@ public sealed class ProjectScriptWorkspaceTests
         using var detail = JsonDocument.Parse(await client.GetStringAsync(stub.BaseUrl + "/api/projects/" + ProjectStub.Id));
         detail.RootElement.GetProperty("defaultWorkerWorkspace").GetString().ShouldBe(expected);
         detail.RootElement.GetProperty("effectiveWorkerWorkspace").GetString().ShouldBe(expected ?? "Worktree");
-        run.Output.ShouldContain("effectiveWorkerWorkspace=" + (expected ?? "Worktree"));
+        run.Output.ShouldContain("configuredWorkerWorkspace=" + (expected ?? "Worktree"));
+        run.Output.ShouldContain("dispatchHonorsWorkspaceDefault=False");
     }
 
     [Test]
@@ -145,6 +146,7 @@ public sealed class ProjectScriptWorkspaceTests
                     defaultLaunchEnv = new { KEEP = DefaultLaunchEnv }, commitOnSettle = CommitOnSettle,
                     effectiveCommitOnSettle = false, defaultWorkerWorkspace = Workspace,
                     effectiveWorkerWorkspace = Workspace ?? "Worktree",
+                    dispatchHonorsWorkspaceDefault = false,
                 };
                 var json = JsonSerializer.Serialize(dto);
                 if (context.Request.HttpMethod == "GET" && context.Request.Url!.AbsolutePath == "/api/projects")

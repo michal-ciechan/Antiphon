@@ -92,6 +92,35 @@ public class ProjectSetupServiceTests
     }
 
     [Test]
+    [Arguments("Shared", WorkspaceMode.Shared)]
+    [Arguments("Worktree", WorkspaceMode.Worktree)]
+    public async Task C458_SetupForwardsWorkerWorkspaceToProjectAndResponse(string requested, WorkspaceMode expected)
+    {
+        var directory = NewTemp();
+        try
+        {
+            Directory.CreateDirectory(directory);
+            await using var db = CreateContext();
+            var result = await CreateService(db).SetupAsync(
+                new ProjectSetupRequest(directory, Name: $"C458 setup {Guid.NewGuid():N}")
+                {
+                    DefaultWorkerWorkspace = requested,
+                }, CancellationToken.None);
+
+            result.Project.DefaultWorkerWorkspace.ShouldBe(requested);
+            result.Project.EffectiveWorkerWorkspace.ShouldBe(requested);
+            result.Project.DispatchHonorsWorkspaceDefault.ShouldBeFalse();
+            await using var fresh = CreateContext();
+            (await fresh.Projects.AsNoTracking().SingleAsync(p => p.Id == result.Project.Id))
+                .DefaultWorkerWorkspace.ShouldBe(expected);
+        }
+        finally
+        {
+            Cleanup(directory);
+        }
+    }
+
+    [Test]
     public async Task setup_rejects_a_directory_already_owned_by_a_project()
     {
         var directory = NewTemp();
