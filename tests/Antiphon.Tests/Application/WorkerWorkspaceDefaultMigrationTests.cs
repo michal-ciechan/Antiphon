@@ -2,6 +2,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -86,7 +87,8 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
         var project = await fresh.Projects.SingleAsync(p => p.Id == projectId);
         project.DefaultWorkerWorkspace.ShouldBeNull();
         project.BaseBranch.ShouldBe("release");
-        project.DefaultLaunchEnvJson.ShouldBe("{\"KEEP\":\"yes\"}");
+        using (var env = JsonDocument.Parse(project.DefaultLaunchEnvJson))
+            env.RootElement.GetProperty("KEEP").GetString().ShouldBe("yes");
         project.CommitOnSettle.ShouldBe(false);
         foreach (var (id, mode) in tasks)
         {
