@@ -4,10 +4,13 @@ using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
+using Antiphon.Server.Infrastructure.Git;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -50,7 +53,45 @@ try
             },
         },
     });
-    if (config.Mode == "admit")
+    if (config.Mode == "dispatch")
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(config.ConnectionString));
+        services.AddSingleton<IEventBus, ProbeEventBus>();
+        services.AddSingleton<TimeProvider>(clock);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings
+            { AllowedRoots = [config.WorkspaceRoot], MaxConcurrentTasks = 16 }));
+        services.AddSingleton(Options.Create(new GitSettings()));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper, RefusingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddSingleton<IWorktreeManager, WorktreeManager>();
+        services.AddSingleton<IGitService, GitService>();
+        services.AddSingleton<GitWorkspaceService>();
+        services.AddScoped<DelegationWorktreeService>();
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<AgentTaskDispatcher>();
+        services.AddSingleton<IAgentTaskLaunchSink, RefusingTaskLaunchSink>();
+        services.AddSingleton<LandDeliveryBoundary>(new ProbeDispatchBoundary(
+            config.ConnectionString, config.MarkerPath, config.Barrier, config.DeliveryId));
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+            .TickAsync(CancellationToken.None);
+    }
+    else if (config.Mode == "admit")
     {
         var service = new ChannelOutboundService(db, files, new RefusingProducer(), profiles, clock);
         if (config.Barrier is not null) service.ProbeBarrierAsync = barrier;
@@ -172,4 +213,33 @@ internal sealed class RefusingSessionStopper : IDelegateSessionStopper
         throw new InvalidOperationException("Unexpected external session stop from conversion probe.");
     public Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct) =>
         throw new InvalidOperationException("Unexpected external session stop from conversion probe.");
+}
+
+internal sealed class RefusingTaskLaunchSink : IAgentTaskLaunchSink
+{
+    public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
+        throw new InvalidOperationException("Unexpected external worker launch from crash probe.");
+}
+
+internal sealed class ProbeDispatchBoundary(string connectionString, string markerPath,
+    string? barrier, Guid deliveryId)
+    : LandDeliveryBoundary
+{
+    public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+    {
+        if (barrier != "conversion-dispatched" || boundary != "dispatch-warning-claim-committed")
+            return;
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(connectionString).Options);
+        if (!await db.AgentTasks.AnyAsync(t => t.Id == taskId && t.OutboundDeliveryId == deliveryId, ct))
+            return;
+        await using (var stream = new FileStream(markerPath, FileMode.CreateNew,
+                         FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough))
+        {
+            await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(
+                $"{boundary}|{deliveryId:N}|{taskId:N}"), ct);
+            stream.Flush(flushToDisk: true);
+        }
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+    }
 }

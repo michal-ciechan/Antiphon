@@ -174,7 +174,8 @@ public sealed class ChannelOutboundRecoveryTests
     [Arguments("input-temporary-complete")]
     [Arguments("admission-committed")]
     [Arguments("conversion-task-committed")]
-    public async Task Process_death_preserves_admission_and_one_queued_conversion_task(string cut)
+    [Arguments("conversion-dispatched")]
+    public async Task Process_death_preserves_admission_and_one_owned_conversion_task(string cut)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-admission-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -252,13 +253,21 @@ public sealed class ChannelOutboundRecoveryTests
         }
 
         Process? child = null;
+        Guid? dispatchedSessionId = null;
         try
         {
-            if (cut == "conversion-task-committed")
+            var afterTaskCreation = cut is "conversion-task-committed" or "conversion-dispatched";
+            if (afterTaskCreation)
                 await RunToExitAsync("admit");
-            var acceptedId = cut == "conversion-task-committed" ? await ReadDeliveryIdAsync() : Guid.Empty;
-            await WriteConfigAsync(cut == "conversion-task-committed" ? "prepare" : "admit",
-                cut, acceptedId);
+            var acceptedId = afterTaskCreation ? await ReadDeliveryIdAsync() : Guid.Empty;
+            if (cut == "conversion-dispatched")
+                await RunToExitAsync("prepare", acceptedId);
+            await WriteConfigAsync(cut switch
+                {
+                    "conversion-task-committed" => "prepare",
+                    "conversion-dispatched" => "dispatch",
+                    _ => "admit",
+                }, cut, acceptedId);
             child = StartProbe(probeDll, configPath);
             var childPid = child.Id;
             var childStarted = child.StartTime;
@@ -268,6 +277,9 @@ public sealed class ChannelOutboundRecoveryTests
                     child.HasExited.ShouldBeFalse("probe exited before its admission/task barrier");
                     await Task.Delay(25, watchdog.Token);
                 }
+            if (cut == "conversion-dispatched")
+                (await File.ReadAllTextAsync(markerPath)).ShouldStartWith(
+                    $"dispatch-warning-claim-committed|{acceptedId:N}|");
             child.Id.ShouldBe(childPid);
             child.StartTime.ShouldBe(childStarted);
             child.Kill(entireProcessTree: true);
@@ -283,7 +295,22 @@ public sealed class ChannelOutboundRecoveryTests
                 (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
                     .ChannelOutboundDeliveryId.HasValue.ShouldBe(count == 1);
                 (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId != null))
-                    .ShouldBe(cut == "conversion-task-committed" ? 1 : 0);
+                    .ShouldBe(afterTaskCreation ? 1 : 0);
+                if (cut == "conversion-dispatched")
+                {
+                    var dispatched = await verify.AgentTasks.AsNoTracking()
+                        .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
+                    dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                    dispatched.AgentSessionId.ShouldNotBeNull();
+                    dispatchedSessionId = dispatched.AgentSessionId;
+                    dispatched.DispatchedAt.ShouldNotBeNull();
+                    (await verify.AgentSessions.AsNoTracking()
+                        .SingleAsync(s => s.Id == dispatched.AgentSessionId)).Status
+                        .ShouldBe(SessionStatus.Starting);
+                    (await verify.AgentTaskEvents.AsNoTracking().CountAsync(e =>
+                        e.AgentTaskId == dispatched.Id && e.Type == AgentTaskEventType.Dispatched))
+                        .ShouldBe(1);
+                }
             }
             if (cut.StartsWith("input-temporary-", StringComparison.Ordinal))
                 Directory.GetDirectories(storeRoot, ".stage-*", SearchOption.TopDirectoryOnly)
@@ -301,11 +328,11 @@ public sealed class ChannelOutboundRecoveryTests
                 await RunToExitAsync("admit");
             acceptedId = await ReadDeliveryIdAsync();
             await RunToExitAsync("prepare", acceptedId,
-                cut == "conversion-task-committed" ? 301 : 0);
+                afterTaskCreation ? 301 : 0);
             await using var final = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
             var intent = await final.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
             intent.Id.ShouldBe(acceptedId);
-            intent.State.ShouldBe(cut == "conversion-task-committed"
+            intent.State.ShouldBe(afterTaskCreation
                 ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.Converting);
             (await final.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId == acceptedId))
                 .ShouldBe(1);
@@ -315,7 +342,16 @@ public sealed class ChannelOutboundRecoveryTests
                 intent.InputPath, intent.InputSha256, CancellationToken.None);
             frozen.ReplyHandle.ShouldBe("thread-1");
             frozen.Attachments.ShouldHaveSingleItem().Content.ShouldBe("# crash source"u8.ToArray());
-            File.Exists(evidencePath).ShouldBe(cut == "conversion-task-committed");
+            File.Exists(evidencePath).ShouldBe(afterTaskCreation);
+            if (cut == "conversion-dispatched")
+            {
+                var retained = await final.AgentTasks.AsNoTracking()
+                    .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
+                retained.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                retained.AgentSessionId.ShouldBe(dispatchedSessionId);
+                (await final.AgentSessions.AsNoTracking().CountAsync(s => s.Id == dispatchedSessionId))
+                    .ShouldBe(1);
+            }
         }
         finally
         {
