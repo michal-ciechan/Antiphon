@@ -105,7 +105,7 @@ public sealed class ChannelOutboundDeadlineTests
                 .ShouldBe(new[] { "queued", "working" });
             producer.SentReplies[0].Attachments.Single().Content.ShouldBe(new byte[] { 1, 10, 255 });
             producer.SentReplies[1].Attachments.Single().Content.ShouldBe(new byte[] { 2, 10, 255 });
-            producer.SentReplies.All(r => r.Text!.Contains("original reply sent")).ShouldBeTrue();
+            producer.SentReplies.All(r => r.Text!.Contains("original attachments retained")).ShouldBeTrue();
 
             await db.AgentTasks.Where(t => t.Id == tasks[1]).ExecuteUpdateAsync(s =>
                 s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
