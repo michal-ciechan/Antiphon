@@ -77,6 +77,8 @@ public sealed class AgentTaskDecisionQuestionApiTests
         Guid sessionId;
         string sessionToken = Guid.NewGuid().ToString("N");
         string otherToken = Guid.NewGuid().ToString("N");
+        string siblingToken = Guid.NewGuid().ToString("N");
+        string capabilityToken = Guid.NewGuid().ToString("N");
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -90,6 +92,20 @@ public sealed class AgentTaskDecisionQuestionApiTests
                 DelegationTokenHash = AgentTaskService.HashToken(otherToken),
                 CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
             });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = Guid.NewGuid(), RootTaskId = taskId, ParentTaskId = taskId,
+                Title = "Sibling worker", Goal = "Other task", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Code, ModelLevel = AgentModelLevel.High,
+                Workspace = WorkspaceMode.Shared, WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Working, TokenHash = AgentTaskService.HashToken(siblingToken),
+                CreatedAt = DateTime.UtcNow,
+            });
+            db.DelegationCapabilities.Add(new DelegationCapability
+            {
+                Id = Guid.NewGuid(), Name = "question-test", TokenHash = AgentTaskService.HashToken(capabilityToken),
+                RootsJson = JsonSerializer.Serialize(new[] { workspace.Path }), CreatedAt = DateTime.UtcNow,
+            });
             await db.SaveChangesAsync();
         }
 
@@ -98,6 +114,8 @@ public sealed class AgentTaskDecisionQuestionApiTests
         (await PostAsync(taskId, null, request)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         (await PostAsync(taskId, "invalid", request)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         (await PostAsync(taskId, otherToken, request)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await PostAsync(taskId, siblingToken, request)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await PostAsync(taskId, capabilityToken, request)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
 
         using (var scope = _factory.Services.CreateScope())
         {
@@ -227,6 +245,30 @@ public sealed class AgentTaskDecisionQuestionApiTests
         using var verifyScope = _factory.Services.CreateScope();
         var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
         (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Text_and_whole_document_boundaries_are_enforced()
+    {
+        await _factory.ResetAsync();
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, token) = await SeedAsync(workspace.Path);
+        var boundary = Sample() with
+        {
+            Question = new string('q', 500), ProposedAction = new string('a', 1000),
+            PreservationEvidence = new string('e', 2000),
+        };
+        (await PostAsync(taskId, token, boundary)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var raw = JsonSerializer.Serialize(boundary with { RequestId = Guid.NewGuid() },
+            InternalDecisionPolicy.JsonOptions);
+        raw.Length.ShouldBeLessThan(InternalDecisionQuestionPolicy.MaxRequestChars);
+        var atLimit = raw.PadRight(InternalDecisionQuestionPolicy.MaxRequestChars, ' ');
+        (await PostRawAsync(taskId, token, atLimit)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await PostRawAsync(taskId, token, atLimit + " ")).StatusCode
+            .ShouldBe(HttpStatusCode.UnprocessableEntity);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
     }
 
     private static InternalDecisionQuestionRequest Sample() => new(Guid.NewGuid(), 1,

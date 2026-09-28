@@ -124,29 +124,37 @@ public static class InternalDecisionQuestionPolicy
 
     private static bool StaysInRepository(string root, string relative)
     {
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-            return false;
-        var basePath = Path.GetFullPath(root);
-        var current = basePath;
-        foreach (var segment in relative.Split('/'))
+        try
         {
-            current = Path.Combine(current, segment);
-            FileSystemInfo item = Directory.Exists(current)
-                ? new DirectoryInfo(current) : new FileInfo(current);
-            if (item.LinkTarget is not null)
-            {
-                var resolved = item.ResolveLinkTarget(true);
-                if (resolved is null)
-                    return false;
-                current = Path.GetFullPath(resolved.FullName);
-            }
-            var fromRoot = Path.GetRelativePath(basePath, current);
-            if (fromRoot == ".." || fromRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                || Path.IsPathRooted(fromRoot))
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 return false;
+            var basePath = Path.GetFullPath(root);
+            var current = basePath;
+            foreach (var segment in relative.Split('/'))
+            {
+                current = Path.Combine(current, segment);
+                FileSystemInfo item = Directory.Exists(current)
+                    ? new DirectoryInfo(current) : new FileInfo(current);
+                if (item.LinkTarget is not null)
+                {
+                    var resolved = item.ResolveLinkTarget(true);
+                    if (resolved is null)
+                        return false;
+                    current = Path.GetFullPath(resolved.FullName);
+                }
+                var fromRoot = Path.GetRelativePath(basePath, current);
+                if (fromRoot == ".." || fromRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                    || Path.IsPathRooted(fromRoot))
+                    return false;
+            }
+            // A grant always names a file. An existing directory cannot become an exact-file
+            // authorization merely because its spelling has no trailing slash.
+            return !Directory.Exists(current);
         }
-        // A grant always names a file. An existing directory cannot become an exact-file
-        // authorization merely because its spelling has no trailing slash.
-        return !Directory.Exists(current);
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A broken, cyclic or unreadable link is never proof of containment.
+            return false;
+        }
     }
 }

@@ -140,10 +140,48 @@ public sealed class AgentTaskDecisionQuestionTests
             Path.Combine(outside.Path, "outside.ps1"));
         InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
             .Reason.ShouldBe("path_not_granted");
+        File.Delete(Path.Combine(outside.Path, "outside.ps1"));
+        InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
+            .Reason.ShouldBe("path_not_granted");
         Directory.CreateSymbolicLink(Path.Combine(repository.Path, "scripts", "linked"), outside.Path);
         foreach (var path in new[] { "scripts/linked/outside.ps1", "scripts/linked/new.ps1" })
             InternalDecisionQuestionPolicy.Evaluate(policy, request with { Paths = [path] }, repository.Path)
                 .Reason.ShouldBe("path_not_granted");
+    }
+
+    [Test]
+    public void Two_attribute_targets_must_both_be_exact_and_line_endings_only()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var policy = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(
+                paths: ["scripts/one.ps1", "scripts/two.ps1", ".gitattributes"],
+                attributeTargets: ["scripts/one.ps1", "scripts/two.ps1"]),
+            AgentTaskRole.Code, WorkspaceMode.Worktree,
+            InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        var request = Sample() with
+        {
+            Paths = ["scripts/one.ps1", "scripts/two.ps1", ".gitattributes"],
+            AttributeTargets = ["scripts/one.ps1", "scripts/two.ps1"],
+        };
+        InternalDecisionQuestionPolicy.Evaluate(policy, request, workspace.Path)
+            .Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        foreach (var target in new[] { "scripts/third.ps1", "scripts/*.ps1" })
+        {
+            var variant = request with { AttributeTargets = ["scripts/one.ps1", target] };
+            if (target.Contains('*'))
+                Should.Throw<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
+                    InternalDecisionQuestionPolicy.Evaluate(policy, variant, workspace.Path));
+            else
+                InternalDecisionQuestionPolicy.Evaluate(policy, variant, workspace.Path)
+                    .Reason.ShouldBe("attribute_not_granted");
+        }
+        foreach (var attribute in new[] { "filter", "diff", "merge", "working-tree-encoding" })
+            InternalDecisionQuestionPolicy.Evaluate(policy, request with { Attributes = [attribute] }, workspace.Path)
+                .Reason.ShouldBe("attribute_not_granted");
+        foreach (var category in new[] { InternalDecisionCategory.ShellTransport,
+                     InternalDecisionCategory.BuildTestHarness })
+            InternalDecisionQuestionPolicy.Evaluate(policy, request with { Category = category }, workspace.Path)
+                .Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
     }
 
     private static InternalDecisionQuestionRequest Sample() => new(
