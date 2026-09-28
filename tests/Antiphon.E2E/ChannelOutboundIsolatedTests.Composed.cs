@@ -335,9 +335,19 @@ public sealed partial class ChannelOutboundIsolatedTests
                 delivery.SourceTaskId.ShouldBeNull();
                 (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == xCorrelationId, ct))
                     .ChannelReplySettledAt.ShouldBeNull();
-                (await db.ChatChannels.SingleAsync(c => c.ExternalId == "C0418F5", ct)).ReplyHandle =
-                    "C0418F5|1700000000.000200";
-                await db.SaveChangesAsync(ct);
+            }
+            var t2CorrelationId = await SendInboundAndAwaitTurnAsync(app, broker.GetBootstrapAddress(), inboundTopic,
+                "C0418F5", "C0418F5|1700000000.000200", ct, "[f5-silent-t2] Newer thread only.");
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                (await db.ChatChannels.AsNoTracking().SingleAsync(c => c.ExternalId == "C0418F5", ct))
+                    .ReplyHandle.ShouldBe("C0418F5|1700000000.000200");
+                (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == t2CorrelationId, ct))
+                    .ChannelReplySettledAt.ShouldNotBeNull();
+                (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == xCorrelationId, ct))
+                    .ChannelReplySettledAt.ShouldBeNull();
+                (await db.ChannelOutboundDeliveries.CountAsync(ct)).ShouldBe(1);
             }
             await UntilAsync(async () =>
             {
@@ -453,6 +463,7 @@ public sealed partial class ChannelOutboundIsolatedTests
             fakeSlack.SentMessages.Count.ShouldBe(3);
             fakeSlack.SentMessages[2].Channel.ShouldBe("C0418Z");
             fakeSlack.SentMessages[2].ThreadTs.ShouldBe("1700000000.000500");
+            fakeSlack.SentMessages[2].Text!.ShouldContain("Project Q sources complete.");
             fakeSlack.UploadedFiles.Skip(9).Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
                 .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == zCorrelationId, ct))
@@ -491,7 +502,7 @@ public sealed partial class ChannelOutboundIsolatedTests
     }
 
     private static async Task<Guid> SendInboundAndAwaitTurnAsync(AntiphonAppFixture app, string bootstrap,
-        string topic, string conversationId, string inboundHandle, CancellationToken ct)
+        string topic, string conversationId, string inboundHandle, CancellationToken ct, string? messageText = null)
     {
         var nativeId = Guid.NewGuid().ToString("N");
         using var raw = JsonDocument.Parse("{}");
@@ -500,7 +511,7 @@ public sealed partial class ChannelOutboundIsolatedTests
             Id = nativeId, Channel = "slack", ChannelMessageId = nativeId,
             Conversation = new Conversation { Id = conversationId, Kind = ConversationKind.Channel },
             Author = new Participant { Id = "f5-sender" }, Timestamp = DateTimeOffset.UtcNow,
-            Text = "Please send the four completed Markdown sources.", ReplyHandle = inboundHandle,
+            Text = messageText ?? "Please send the four completed Markdown sources.", ReplyHandle = inboundHandle,
             Raw = raw.RootElement.Clone(),
         };
         using (var producer = new ProducerBuilder<string, string>(new ProducerConfig
