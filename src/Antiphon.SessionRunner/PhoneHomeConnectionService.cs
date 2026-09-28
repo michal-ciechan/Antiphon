@@ -11,6 +11,7 @@ namespace Antiphon.SessionRunner;
 public sealed class PhoneHomeConnectionService : BackgroundService
 {
     private readonly PhoneHomeSettings _settings;
+    private readonly RunnerCapacityState _capacity;
     private readonly IPhoneHomeAdoptionGate _adoption;
     private readonly PhoneHomeCommandDispatcher _dispatcher;
     private readonly SessionRunnerRuntime _runtime;
@@ -32,9 +33,11 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         IHttpClientFactory httpFactory,
         TimeProvider clock,
         ILogger<PhoneHomeConnectionService> logger,
-        PhoneHomeProcessIdentity? identity = null)
+        PhoneHomeProcessIdentity? identity = null,
+        RunnerCapacityState? capacity = null)
     {
         _settings = settings.Value;
+        _capacity = capacity ?? new RunnerCapacityState(_settings);
         _adoption = adoption;
         _dispatcher = dispatcher;
         _runtime = runtime;
@@ -108,7 +111,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             _bootId,
             storeId,
             OperatingSystem.IsLinux() ? "linux" : "windows",
-            _settings.Capacity,
+            _capacity.Capacity,
             // CARD-0604: the registration carries the capabilities DTO, so the server can report
             // the runner's platform, build and custody backend from its own registration rather
             // than from a separate Capabilities round trip the deploy row cannot make.
@@ -150,7 +153,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     {
         Interlocked.Exchange(ref _epoch, epoch);
         var connectedAt = _clock.GetTimestamp();
-        _logger.LogInformation("Phone-home connection epoch={Epoch} connected (capacity {Capacity})", epoch, _settings.Capacity);
+        _logger.LogInformation("Phone-home connection epoch={Epoch} connected (capacity {Capacity})", epoch, _capacity.Capacity);
         using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var overflow = false;
         var reader = _runtime.SubscribeBounded(
@@ -431,5 +434,5 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     private static bool IsMutation(PhoneHomeOperation? operation) =>
         operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained or PhoneHomeOperation.Input
             or PhoneHomeOperation.ConditionalInput or PhoneHomeOperation.ClearBuffer
-            or PhoneHomeOperation.Resize or PhoneHomeOperation.KillGeneration;
+            or PhoneHomeOperation.Resize or PhoneHomeOperation.KillGeneration or PhoneHomeOperation.SetCapacity;
 }
