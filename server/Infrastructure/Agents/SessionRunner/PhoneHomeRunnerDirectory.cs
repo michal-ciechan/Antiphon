@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -455,6 +456,51 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             return null;
         return live.Capacity;
+    }
+
+    public async Task<PhoneHomeSetCapacityResponse> SetDeclaredCapacityAsync(
+        string runnerId, int capacity, string reason, CancellationToken ct)
+    {
+        if (!_slots.TryGetValue(runnerId, out var slot) || !slot.Entry.Enabled)
+            throw new NotFoundException("SessionRunner", runnerId);
+        if (capacity < 1 || capacity > _settings.MaxCapacity)
+            throw new ValidationException("capacity",
+                $"Capacity must be between 1 and {_settings.MaxCapacity}.", PhoneHomeProblemTypes.Capacity);
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ValidationException("reason", "A reason is required.");
+
+        var live = SnapshotLive(runnerId);
+        if (live is null || !live.DispatchEligible || !live.SocketOpen
+            || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            throw new ConflictException("Phone-home runner is unavailable.", PhoneHomeProblemTypes.Unavailable);
+
+        PhoneHomeFrame reply;
+        try
+        {
+            reply = await live.RequestAsync(PhoneHomeOperation.SetCapacity,
+                new PhoneHomeSetCapacityRequest(capacity, reason), ct);
+        }
+        catch (PhoneHomeTransportException ex)
+        {
+            throw new ConflictException(ex.Message, ex.Code);
+        }
+        if (reply.Kind == PhoneHomeFrameKind.Error)
+            throw new ConflictException(reply.ErrorDetail ?? "Runner refused capacity change.",
+                reply.ErrorCode ?? PhoneHomeProblemTypes.UnsupportedOperation);
+        var answer = reply.Payload?.Deserialize<PhoneHomeSetCapacityResponse>(PhoneHomeFraming.Json);
+        if (reply.Kind != PhoneHomeFrameKind.Result || answer is not { Persisted: true }
+            || answer.Capacity != capacity)
+            throw new ConflictException("Runner did not confirm persisted capacity.",
+                PhoneHomeProblemTypes.Capacity);
+
+        lock (_gate)
+        {
+            if (!ReferenceEquals(slot.Live, live) || !live.DispatchEligible || !live.SocketOpen)
+                throw new ConflictException("Runner connection changed during capacity push.",
+                    PhoneHomeProblemTypes.Unavailable);
+            live.SetCapacity(capacity);
+        }
+        return answer;
     }
 
     /// <summary>

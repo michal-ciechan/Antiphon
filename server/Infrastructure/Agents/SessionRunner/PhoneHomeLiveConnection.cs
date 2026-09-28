@@ -55,7 +55,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _socket = socket;
         _limits = limits;
         Clock = clock;
-        Capacity = capacity;
+        _capacity = capacity;
         Platform = platform;
         Capabilities = capabilities;
         LastHeartbeatUtc = clock.GetUtcNow();
@@ -71,7 +71,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     public long Epoch { get; }
 
     /// <summary>CARD-0604 D-14: how many concurrent sessions this runner declared it can hold.</summary>
-    public int Capacity { get; }
+    private int _capacity;
+    public int Capacity => Volatile.Read(ref _capacity);
+    internal void SetCapacity(int capacity) => Volatile.Write(ref _capacity, capacity);
 
     /// <summary>What the runner reported at registration ("linux"/"windows"), for diagnostics.</summary>
     public string? Platform { get; }
@@ -300,6 +302,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     {
         PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceRemove => TimeSpan.FromMinutes(5),
         PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained => TimeSpan.FromMinutes(2),
+        PhoneHomeOperation.SetCapacity => TimeSpan.FromSeconds(3),
         _ => TimeSpan.FromSeconds(60),
     };
 

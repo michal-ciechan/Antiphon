@@ -8,6 +8,8 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +21,7 @@ public sealed record RunnerDrainRequest(string? Reason, string? RedirectTo = nul
 
 public sealed record RunnerDrainClearRequest(string? Reason);
 public sealed record RunnerRetireOperatorRequest(string? Reason, string? ConfirmRunnerId);
+public sealed record RunnerCapacityRequest(int Capacity, string? Reason);
 
 public static class SessionRunnerEndpoints
 {
@@ -54,6 +57,49 @@ public static class SessionRunnerEndpoints
             string runnerId,
             PhoneHomeRunnerDirectory directory) =>
             Results.Ok(directory.Status(runnerId))).WithTags("SessionRunners");
+
+        app.MapGet("/api/session-runners/{runnerId}/capacity", async (
+            string runnerId, PhoneHomeRunnerDirectory directory, [FromServices] HostBudgetService budgets,
+            IOptions<PhoneHomeRunnerSettings> settings, [FromServices] AppDbContext db, CancellationToken ct) =>
+            Results.Ok(await CapacityAsync(runnerId, directory, budgets, settings.Value, db, ct)))
+            .WithTags("SessionRunners");
+
+        app.MapPut("/api/session-runners/{runnerId}/capacity", async (
+            string runnerId, RunnerCapacityRequest body, PhoneHomeRunnerDirectory directory,
+            [FromServices] HostBudgetService budgets, IOptions<PhoneHomeRunnerSettings> settings,
+            [FromServices] AppDbContext db, TimeProvider clock, CancellationToken ct) =>
+        {
+            var reason = body.Reason?.Trim() ?? "";
+            if (reason.Length is < 1 or > 400)
+                throw new ValidationException("reason", "A reason of 1 to 400 characters is required.");
+            var old = directory.DeclaredCapacity(runnerId);
+            PhoneHomeSetCapacityResponse applied;
+            try
+            {
+                applied = await directory.SetDeclaredCapacityAsync(runnerId, body.Capacity, reason, ct);
+            }
+            catch (ConflictException ex)
+            {
+                db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(), Kind = AgentIncidentKind.RunnerCapacityChanged,
+                    Severity = AlertSeverity.Warning, CreatedAt = clock.GetUtcNow().UtcDateTime,
+                    Message = $"Runner '{runnerId}' capacity {old?.ToString() ?? "unknown"} -> {body.Capacity} refused: {reason}",
+                    FailureReason = ex.Code,
+                });
+                await db.SaveChangesAsync(ct);
+                throw;
+            }
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(), Kind = AgentIncidentKind.RunnerCapacityChanged,
+                Severity = AlertSeverity.Info, CreatedAt = clock.GetUtcNow().UtcDateTime,
+                Message = $"Runner '{runnerId}' capacity {old?.ToString() ?? "unknown"} -> {applied.Capacity} " +
+                    $"(runner persisted at {applied.Path}): {reason}",
+            });
+            await db.SaveChangesAsync(ct);
+            return Results.Ok(await CapacityAsync(runnerId, directory, budgets, settings.Value, db, ct));
+        }).WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/drain", async (
             HttpContext http,
@@ -336,6 +382,26 @@ public static class SessionRunnerEndpoints
     /// </summary>
     private static string AbortReason(IHostApplicationLifetime lifetime) =>
         lifetime.ApplicationStopping.IsCancellationRequested ? "request_aborted" : "transport_abort";
+
+    private static async Task<RunnerCapacityDto> CapacityAsync(
+        string runnerId, PhoneHomeRunnerDirectory directory, HostBudgetService budgets,
+        PhoneHomeRunnerSettings settings, AppDbContext db, CancellationToken ct)
+    {
+        if (runnerId == PhoneHomeProtocol.LocalRunnerId
+            || !directory.KnownRunnerIds.Contains(runnerId, StringComparer.Ordinal))
+            throw new NotFoundException("SessionRunner", runnerId);
+        var status = directory.Status(runnerId);
+        var limit = await budgets.EffectiveAsync(runnerId, ct);
+        var sessions = await db.AgentSessions.AsNoTracking().CountAsync(s => s.RunnerId == runnerId
+            && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
+                || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping), ct);
+        var pending = await db.AgentTasks.AsNoTracking().CountAsync(t => t.RunnerId == runnerId
+            && t.Status == AgentTaskStatus.Queued && t.AgentSessionId == null
+            && t.RemoteWorktreePath != null, ct);
+        return new RunnerCapacityDto(runnerId, limit.Declared, settings.MaxCapacity,
+            limit.Configured, limit.Effective, sessions + pending,
+            status.Available, status.DispatchEligible);
+    }
 
     /// <summary>
     /// CARD-0653: force-release needs the operator credential. The client address proves nothing:
