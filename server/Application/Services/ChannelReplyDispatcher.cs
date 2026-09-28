@@ -76,6 +76,7 @@ public sealed record ChannelReplyDispatchResult(
 /// </summary>
 public sealed class ChannelReplyDispatcher
 {
+    private const int MaxDiscoveryPagesPerPass = 10;
     private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
 
     /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
@@ -124,6 +125,9 @@ public sealed class ChannelReplyDispatcher
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ChannelReplyDispatcher> _logger;
     private readonly ChannelAttachmentReader _attachmentReader;
+    private readonly SemaphoreSlim _discoveryGate = new(1, 1);
+    private DateTime? _discoveryCursorAt;
+    private Guid _discoveryCursorId;
 
     private ChannelOutboundPublicationService Publications(IServiceProvider services)
     {
@@ -218,6 +222,19 @@ public sealed class ChannelReplyDispatcher
     /// <summary>Find completed source turns independently of live transcript callbacks.</summary>
     public async Task<int> DiscoverCompletedTurnsAsync(CancellationToken ct)
     {
+        await _discoveryGate.WaitAsync(ct);
+        try
+        {
+            return await DiscoverCompletedTurnsCoreAsync(ct);
+        }
+        finally
+        {
+            _discoveryGate.Release();
+        }
+    }
+
+    private async Task<int> DiscoverCompletedTurnsCoreAsync(CancellationToken ct)
+    {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var candidates = db.SessionQueuedMessages.AsNoTracking()
@@ -235,20 +252,20 @@ public sealed class ChannelReplyDispatcher
                         && channel.Origin == QueuedMessageOrigin.Channel
                         && channel.ConversationKey != null && channel.Sequence < m.Sequence)));
         var count = 0;
-        DateTime? cursorAt = null;
-        Guid cursorId = Guid.Empty;
         var scannedSessions = new HashSet<Guid>();
-        while (true)
+        for (var pageNumber = 0; pageNumber < MaxDiscoveryPagesPerPass; pageNumber++)
         {
             var page = await candidates
-                .Where(m => cursorAt == null || m.CreatedAt > cursorAt
-                    || (m.CreatedAt == cursorAt && m.Id.CompareTo(cursorId) > 0))
+                .Where(m => _discoveryCursorAt == null || m.CreatedAt > _discoveryCursorAt
+                    || (m.CreatedAt == _discoveryCursorAt && m.Id.CompareTo(_discoveryCursorId) > 0))
                 .OrderBy(m => m.CreatedAt).ThenBy(m => m.Id)
                 .Take(_settings.OutboundPageSize).ToListAsync(ct);
             if (page.Count == 0)
+            {
+                _discoveryCursorAt = null;
+                _discoveryCursorId = Guid.Empty;
                 break;
-            cursorAt = page[^1].CreatedAt;
-            cursorId = page[^1].Id;
+            }
             foreach (var group in page.GroupBy(m => m.AgentSessionId))
             {
                 scannedSessions.Add(group.Key);
@@ -302,12 +319,20 @@ public sealed class ChannelReplyDispatcher
                 }
                 await DispatchFollowUpAsync(group.Key, ct);
             }
+            _discoveryCursorAt = page[^1].CreatedAt;
+            _discoveryCursorId = page[^1].Id;
             if (page.Count < _settings.OutboundPageSize)
+            {
+                _discoveryCursorAt = null;
+                _discoveryCursorId = Guid.Empty;
                 break;
+            }
         }
         var trailingSessions = await OpenTrailingWindows(db)
-            .OrderByDescending(p => p.PublishedAt)
-            .Select(p => p.SessionId).Distinct().Take(_settings.OutboundPageSize).ToListAsync(ct);
+            .GroupBy(p => p.SessionId)
+            .Select(group => new { SessionId = group.Key, LastPublishedAt = group.Max(p => p.PublishedAt) })
+            .OrderByDescending(group => group.LastPublishedAt).ThenBy(group => group.SessionId)
+            .Take(_settings.OutboundPageSize).Select(group => group.SessionId).ToListAsync(ct);
         foreach (var sessionId in trailingSessions.Except(scannedSessions))
             await DispatchFollowUpAsync(sessionId, ct);
         return count;

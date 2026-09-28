@@ -31,11 +31,21 @@ public class ChannelOutboundPublicationTests
         await f.Harness.InsertTurnAsync(oldNote, $"Old attachment\n[[attach: {attachment}]]");
 
         var chat = await f.Harness.BindChannelAsync();
+        const string firstPrompt = "Establish the first answered chat exchange";
+        var first = await f.Harness.SeedChannelCorrelationAsync(firstPrompt, $"telegram:{chat}");
+        await f.Harness.InsertTurnAsync(firstPrompt, "First chat answer.");
+        await f.DispatchAsync();
+        (await f.ReadAsync(first)).Publication!.State.ShouldBe("Published");
+        var withheld = new List<Guid>();
         for (var i = 0; i < 5; i++)
-            await f.Harness.SeedPendingMessageAsync($"[task 15ed2644 done] withheld {i}",
-                origin: QueuedMessageOrigin.Delegation, status: QueuedMessageStatus.Sent);
+        {
+            var note = $"[task 15ed2644 done] withheld {i}";
+            withheld.Add(await f.Harness.SeedPendingMessageAsync(note,
+                origin: QueuedMessageOrigin.Delegation, status: QueuedMessageStatus.Sent));
+            await f.Harness.InsertTurnAsync(note, "NO_REPLY");
+        }
         await using (var db = f.CreateContext())
-            await db.SessionQueuedMessages.Where(m => m.Origin == QueuedMessageOrigin.Delegation)
+            await db.SessionQueuedMessages.Where(m => withheld.Contains(m.Id))
                 .ExecuteUpdateAsync(set => set.SetProperty(m => m.CreatedAt, DateTime.UtcNow.AddHours(-1)));
 
         const string prompt = "Answer the newer owed channel request";
@@ -45,7 +55,29 @@ public class ChannelOutboundPublicationTests
 
         (await f.ReadAsync(owed)).Publication!.State.ShouldBe("Published");
         (await f.ReadAsync(preChat, "machine")).Publication.ShouldBeNull();
-        f.Producer.Accepted.ShouldHaveSingleItem().Text.ShouldBe("Newer owed answer.");
+        foreach (var id in withheld)
+            (await f.ReadAsync(id, "machine")).Publication.ShouldBeNull();
+        f.Producer.Accepted.Select(reply => reply.Text).ShouldBe(new[]
+        {
+            "First chat answer.", "Newer owed answer.",
+        });
+        // The first pass must stop after ten two-row pages, then resume from its cursor.
+        for (var i = 0; i < 21; i++)
+            await f.Harness.SeedPendingMessageAsync($"[task 15ed2644 done] unanswered {i}",
+                createdAtUtc: DateTime.UtcNow.AddHours(-1),
+                origin: QueuedMessageOrigin.Delegation, status: QueuedMessageStatus.Sent);
+        const string laterPrompt = "Answer after the machine backlog";
+        var laterOwed = await f.Harness.SeedChannelCorrelationAsync(laterPrompt, $"telegram:{chat}");
+        await f.Harness.InsertTurnAsync(laterPrompt, "Answer after budget rollover.");
+
+        await f.AdvanceAndScanAsync(TimeSpan.FromSeconds(30));
+        (await f.ReadAsync(laterOwed)).Publication.ShouldBeNull();
+        await f.AdvanceAndScanAsync(TimeSpan.FromSeconds(30));
+        (await f.ReadAsync(laterOwed)).Publication!.State.ShouldBe("Published");
+        f.Producer.Accepted.Select(reply => reply.Text).ShouldBe(new[]
+        {
+            "First chat answer.", "Newer owed answer.", "Answer after budget rollover.",
+        });
     }
 
     [Test]
