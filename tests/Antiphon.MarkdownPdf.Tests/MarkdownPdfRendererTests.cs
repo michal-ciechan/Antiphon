@@ -208,6 +208,7 @@ public class MarkdownPdfRendererTests
         var childFile = Path.Combine(root, "child.pid");
         var pdf = Path.Combine(root, "result.pdf");
         var previousRoot = Environment.GetEnvironmentVariable("ANTIPHON_CARD0418_BROWSER_ROOT");
+        var fixtureStarted = DateTime.Now;
         int? parentPid = null, childPid = null;
         DateTime? parentStarted = null, childStarted = null;
         try
@@ -253,8 +254,8 @@ public class MarkdownPdfRendererTests
                 childPid = int.Parse(await File.ReadAllTextAsync(childFile));
             if (parentPid is null && File.Exists(parentFile))
                 parentPid = int.Parse(await File.ReadAllTextAsync(parentFile));
-            if (childPid is int child) KillFixtureProcess(child, childStarted);
-            if (parentPid is int parent) KillFixtureProcess(parent, parentStarted);
+            if (childPid is int child) KillFixtureProcess(child, childStarted, fixtureStarted);
+            if (parentPid is int parent) KillFixtureProcess(parent, parentStarted, fixtureStarted);
             Environment.SetEnvironmentVariable("ANTIPHON_CARD0418_BROWSER_ROOT", previousRoot);
             Directory.Delete(root, recursive: true);
         }
@@ -297,13 +298,15 @@ public class MarkdownPdfRendererTests
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { return false; }
     }
 
-    private static void KillFixtureProcess(int pid, DateTime? started)
+    private static void KillFixtureProcess(int pid, DateTime? started, DateTime fixtureStarted)
     {
         if (!IsRunning(pid)) return;
         try
         {
             using var process = Process.GetProcessById(pid);
             if (started is not null && process.StartTime != started) return;
+            if (process.StartTime < fixtureStarted.AddSeconds(-1)) return;
+            if (process.ProcessName is not ("dotnet" or "Antiphon.MarkdownPdf.FakeBrowser")) return;
             process.Kill(entireProcessTree: true);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
