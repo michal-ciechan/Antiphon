@@ -168,34 +168,27 @@ the existing `AgentReplyStyles.CorrectnessSentence` verbatim.
 ```text
 Reply style: phone.
 
-Use this style only for replies delivered to a human in Telegram or Slack,
-including chat follow-ups to Antiphon task reports, checks, and scheduled prompts.
-For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
-and terminal-only replies, follow their own contracts; the phone rules below do
-not apply. Do not pass these phone rules to delegates.
+Apply only to human Telegram or Slack replies, including follow-ups to task reports,
+checks, and scheduled prompts. Worker/delegate reports, briefs, stage artifacts,
+specialist outputs, and terminal-only replies follow their own contracts. Do not
+pass this style to delegates.
 
-- Give the minimum useful answer to the current request. Lead with the answer,
-  outcome, or blocker. If one short line is enough, use it and stop.
-- Prefer bullets when there are several points. One point per bullet; aim for
-  about five to seven words each. Use fewer words when enough, and more when
-  needed for clarity or correctness. Do not pad or force broken grammar.
-- Use short sentences and short lines. Split separate points onto separate lines.
-  Use plain Markdown. No tables, aligned columns, or wide code blocks in chat.
-  Use short descriptive links instead of displaying long URLs.
-- No filler, pleasantries, preamble, repeated question, progress narration, recap,
-  or sign-off. Include only what the user needs to understand or act now.
-- Do not add background, alternatives, or explanations the user did not ask for.
-  Let the user request more. Do not append offers of more help. Ask a question
-  only when its answer is needed to continue.
-- If the user asks for detail, provide the requested detail in short sections
-  and bullets. Put a requested table or wide artifact in a file, with a short
-  chat summary and the required attachment marker.
-- Keep necessary caveats, risks, uncertainty, corrections, quantities, deadlines,
-  and next actions. Never shorten an exact name, path, command, flag, identifier,
-  quote, or attachment marker to meet the word or line target. Put long exact
-  material in an appropriate attachment when needed; do not break it arbitrarily.
-- Follow the channel's delivery and attachment contract. When that contract calls
-  for silence, reply exactly NO_REPLY, without bullets or extra text.
+- Lead with the answer, outcome, or blocker. Give only what the user needs now;
+  stop after one line when one line suffices.
+- For multiple points, prefer one short bullet per point, roughly five to seven
+  words when natural. Use plain Markdown; avoid tables, columns, and wide code
+  blocks in chat. Link long URLs descriptively.
+- Skip greetings, preamble, repeated questions, progress recaps, sign-offs, and
+  offers of more help. Add background or alternatives only when asked or needed
+  for a decision. Ask a question only when its answer is needed to continue.
+- If asked for detail, provide it in short sections. Put requested tables or wide
+  artifacts in a file, with a short summary and the required attachment marker.
+- Preserve material caveats, uncertainty, corrections, quantities, deadlines,
+  next actions, and exact names, paths, commands, flags, identifiers, quotes, and
+  attachment markers. Longer bullets are fine when accuracy needs them. Put long
+  exact material in an attachment; do not break it.
+- Follow the channel delivery and attachment contract. When it calls for
+  silence, reply exactly NO_REPLY.
 
 Whatever the style: never drop a caveat, a risk, an uncertainty or a correction to save words.
 ```
@@ -206,7 +199,7 @@ UI/setup description, identical in both catalogs:
 > Delegate reports keep their own contracts.
 
 This is proposed wording for review and testing, not a claim that a model has
-already followed it. Keep the bundle under 3,000 characters as a design budget;
+already followed it. Keep the bundle under 1,700 characters as a design budget;
 use the existing command-line budget guard for composed instructions. Do not add
 an output word-count enforcement service. Natural language does not guarantee a
 pixel width; verify phone rendering instead of inventing a fixed character limit.
@@ -483,7 +476,7 @@ pre-existing red** below, in this file, not left in a task's scratch output.
   versioned-header argument cases. Add `Phone_enum_and_audience_contract_are_explicit`:
   assert `(Normal,Terse,Caveman,Explanatory,Brief,Phone) == (0,1,2,3,4,5)`,
   `BundleKey(Phone) == ComposedKey(Phone) == "style-phone"`, exactly one matching
-  embedded catalog entry, and normalized bundle text shorter than 3,000 chars.
+  embedded catalog entry, and normalized bundle text shorter than 1,700 chars.
   Assert the complete scope paragraph, detail-request exception, exact-material
   preservation clause, whole-turn NO_REPLY instruction and correctness suffix.
   Inspect the new file against the exact proposed text above, allowing CRLF/LF and
@@ -793,10 +786,9 @@ launch/bootstrap path, not on reply style, and are not this card's to fix.
 | V-8 contracts | `--treenode-filter "/*/*/ChannelContractsTests/*"` | **14/14** |
 | V-8 delivery | the six methods listed above, one filter per run | **6/6**, one test per run |
 
-Every commit on this branch after `483e28f0` is documentation-only: confirm with
-`git diff --stat 483e28f0..HEAD`, which lists this plan file and nothing else. The
-results above therefore still describe the tip, and do not need rerunning for a
-docs commit.
+At the recorded `a52120b3` tip, every commit after `483e28f0` was
+documentation-only. Later code changes require fresh verification; the results
+above remain historical evidence rather than a verdict on the current tip.
 
 Run the six delivery methods one filter at a time. Method-level alternation --
 `/*/*/ChannelBridgeTests/(A)|(B)|(C)` -- discovers **zero** tests on this runner,
@@ -817,7 +809,7 @@ deploy a mutant. Existing guards are exercised, not weakened in the final code.
 | ID | One-line mutation / negative input | Expected red evidence |
 |---|---|---|
 | PC-1 | In `AgentReplyStyles.ComposedKey`, replace the Normal arm `null` with `"style-phone"` | Existing Normal composition test and Normal launch case fail equality; restore => green |
-| PC-2 | In `style-phone.md`, replace `and terminal-only replies, follow their own contracts; the phone rules below do` with `and terminal-only replies must also follow the phone rules below; they do` | V-1 complete audience paragraph assertion and V-4 mixed composition assertion fail; restore => green |
+| PC-2 | In `style-phone.md`, replace `specialist outputs, and terminal-only replies follow their own contracts. Do not` with `specialist outputs, and terminal-only replies must follow this phone style. Do not` | V-1 complete audience paragraph assertion and V-4 mixed composition assertion fail; restore => green |
 | PC-3 | Remove the final correctness sentence from `style-phone.md` | Phone argument of `every_style_block_ends_with_the_correctness_sentence` fails; restore => green |
 | PC-4 | In `AgentTaskDispatcher.ComposeDelegateArgs`, pass `AgentReplyStyles.ComposedKey(agent.ReplyStyle)` as the second argument of its `InstructionBundleComposer.Compose(...)` call | V-4 Normal-versus-Phone delegate instruction equality/no-Phone assertion fails; restore => green |
 | PC-5 | In `AgentTaskReplyService`, replace `task.Result = settledBody;` with `task.Result = settledBody.Split('\n')[0];` | V-5 full-body/table preservation assertion fails at real settlement; restore => green |
@@ -1066,23 +1058,38 @@ only `Phone_parent_preserves_worker_table_and_stage_handoff` in the large
 `AgentTaskReplyIntegrationTests`; only the six V-8 delivery methods. No full
 `AgentTaskReplyIntegrationTests` run is required by this change.
 
-Use one exact class/method filter at a time, foreground, sequentially:
+Run the Checkpoints table as the closed build/test list and inspect its fresh
+executed names and nonzero counts, not `--list-tests` or exit zero alone. All
+server fixtures use test Postgres/fake adapters and the production-runner guard;
+any new process-spawning fixture must have the assembly-local limiter. Never
+co-run the server and Pty test assemblies.
 
-```powershell
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0417/ -- --treenode-filter "/*/*/AgentReplyStyleTests/*" --report-trx --report-trx-filename card0417-style.trx
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0417/ -- --treenode-filter "/*/*/AgentSystemPromptLaunchTests/*" --report-trx --report-trx-filename card0417-launch.trx
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0417/ -- --treenode-filter "/*/*/PolicyRefreshServiceTests/Phone_*" --report-trx --report-trx-filename card0417-refresh.trx
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0417/ -- --treenode-filter "/*/*/AgentTaskReplyIntegrationTests/Phone_parent_preserves_worker_table_and_stage_handoff" --report-trx --report-trx-filename card0417-report.trx
-pwsh -NoProfile -File scripts/test-client.ps1 AgentReplyStyle.test.tsx AgentCreateModal.test.tsx ProjectSetupModal.test.tsx
-```
+### Checkpoints
 
-Apply the same exact-filter command to each other class/method listed; use unique
-TRX names for class, mutation-red and restored-green runs. Inspect fresh executed
-method names and nonzero counters, not `--list-tests` or exit zero alone.
-Run `npm run build` from `client/` for typed union/catalog validation and before
-any E2E consuming dist. All server fixtures use test Postgres/fake adapters and
-the production-runner guard; any new process-spawning fixture must have the
-assembly-local limiter. Never co-run the server and Pty test assemblies.
+Run these rows after the support-code slices are committed. The class filters
+select every named full affected integration class. CP-4 selects the seven
+specified refresh methods; CP-5 and CP-7 through CP-12 keep the method-level
+scope specified above. V-7 narrow-width browser inspection, V-9, V-10 and
+PC-1 through PC-10 remain separate pending acceptance or SourceLanding Mutation
+work; they are not implied by a green checkpoint row. R-1's unchanged-source
+diff and the V-7 CLI binder probe are manual checks specified above.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c0417/` | unit-lane | `/*/*/*/*[Category=Unit]` | Final Unit lane, V-1, R-6 | >= 1000 executed, 0 failed | 1000 | 6 |
+| CP-2 | S1-S3 | CP-1 | style-and-api | `/*/Antiphon.Tests.Application/(AgentReplyStyleTests*)\|(AgentReplyStyleEndpointTests*)\|(AgentBundleAttachmentTests*)\|(InstructionBundleTests*)\|(ProjectSetupServiceTests*)/*` | V-1, V-2, R-1, R-3, R-5, R-6 | all five classes, 0 failed | 80 | 10 |
+| CP-3 | S1-S3 | CP-1 | launch-and-delegate | `/*/Antiphon.Tests.Application/(AgentSystemPromptLaunchTests*)\|(DelegateBundleLaunchTests*)/*` | V-3, V-4, R-2, R-4 | both classes, 0 failed | 35 | 12 |
+| CP-4 | S1-S3 | CP-1 | policy-refresh | `/*/*/PolicyRefreshServiceTests/(Phone_*)\|(RefreshPolicyAsync_working_is_409_session_working_even_with_force*)\|(RefreshPolicyAsync_notify_lane_returns_notified*)\|(Unbound_transcript_is_Notify_not_a_kill*)\|(Codex_is_Notify_not_a_kill*)\|(Herdr_null_stamp_does_nothing*)` | V-6, R-4 | all seven methods, 0 failed | 7 | 7 |
+| CP-5 | S1-S3 | CP-1 | worker-report | `/*/*/AgentTaskReplyIntegrationTests/Phone_parent_preserves_worker_table_and_stage_handoff` | V-5, R-2, R-6 | one method, 0 failed | 1 | 4 |
+| CP-6 | S1-S3 | CP-1 | channel-contracts | `/*/*/ChannelContractsTests/*` | V-8, R-1, R-6 | full class, 0 failed | 14 | 3 |
+| CP-7 | S1-S3 | CP-1 | attach-inline | `/*/*/ChannelBridgeTests/An_attach_marker_sends_the_file_inline_and_strips_the_marker_line` | V-8, R-6 | one method, 0 failed | 1 | 3 |
+| CP-8 | S1-S3 | CP-1 | marker-only | `/*/*/ChannelBridgeTests/A_marker_only_reply_sends_the_document_with_no_text` | V-8, R-6 | one method, 0 failed | 1 | 3 |
+| CP-9 | S1-S3 | CP-1 | unsourced-turn | `/*/*/ChannelBridgeTests/A_turn_the_bridge_did_not_start_sends_no_reply` | V-8, R-6 | one method, 0 failed | 1 | 3 |
+| CP-10 | S1-S3 | CP-1 | follow-up-attach | `/*/*/ChannelFollowUpAttachmentTests/A_later_task_done_turn_with_attach_is_delivered_to_the_settled_conversation` | V-8, R-6 | one method, 0 failed | 1 | 3 |
+| CP-11 | S1-S3 | CP-1 | no-reply | `/*/*/ChannelFollowUpAttachmentTests/An_exact_NO_REPLY_without_markers_holds_the_bundle` | V-8, R-6 | one method, 0 failed | 1 | 3 |
+| CP-12 | S1-S3 | CP-1 | no-reply-attach | `/*/*/ChannelFollowUpAttachmentTests/NO_REPLY_plus_marker_sends_the_file_with_empty_text` | V-8, R-6 | one method, 0 failed | 1 | 3 |
+| CP-13 | S1-S3 | n/a | client-selection | `pwsh -NoProfile -File scripts/test-client.ps1 AgentReplyStyle.test.tsx AgentCreateModal.test.tsx ProjectSetupModal.test.tsx` | V-7, R-5 | three files, 0 failed | n/a | 3 |
+| CP-14 | S1-S3 | n/a | client-build | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c0417-client-build -- npm run build --prefix client` | V-7, R-5 | exit 0 | n/a | 3 |
 
 Estimated deterministic verification floor ~20 minutes, allow ~30–45 minutes
 including independent mutation rebuilds and browser inspection on a warm machine;

@@ -56,7 +56,7 @@ public class DelegateBundleLaunchTests
         var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
         brief.ShouldContain(task.Goal);
         brief.ShouldNotContain("Reply style: phone");
-        brief.ShouldNotContain("phone rules");
+        brief.ShouldNotContain("Apply only to human Telegram or Slack replies");
         if (role == AgentTaskRole.Code) brief.ShouldContain("--- next stage ---");
     }
 

@@ -43,9 +43,10 @@ public class AgentReplyStyleTests
           artifacts in a file, with a short summary and the required attachment marker.
         - Preserve material caveats, uncertainty, corrections, quantities, deadlines,
           next actions, and exact names, paths, commands, flags, identifiers, quotes, and
-          attachment markers. Longer bullets are fine when accuracy needs them.
-        - Follow the channel delivery contract. When it calls for silence, reply exactly
-          NO_REPLY.
+          attachment markers. Longer bullets are fine when accuracy needs them. Put long
+          exact material in an attachment; do not break it.
+        - Follow the channel delivery and attachment contract. When it calls for
+          silence, reply exactly NO_REPLY.
 
         Whatever the style: never drop a caveat, a risk, an uncertainty or a correction to save words.
         """;
@@ -80,11 +81,12 @@ public class AgentReplyStyleTests
             """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
               next actions, and exact names, paths, commands, flags, identifiers, quotes, and
-              attachment markers. Longer bullets are fine when accuracy needs them.
+              attachment markers. Longer bullets are fine when accuracy needs them. Put long
+              exact material in an attachment; do not break it.
             """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
-            - Follow the channel delivery contract. When it calls for silence, reply exactly
-              NO_REPLY.
+            - Follow the channel delivery and attachment contract. When it calls for
+              silence, reply exactly NO_REPLY.
             """.ReplaceLineEndings("\n"));
         text.ShouldEndWith(AgentReplyStyles.CorrectnessSentence);
 
