@@ -303,7 +303,7 @@ Ordinary Code floor is the sum of `EstimatedMinutes` (26). `Antiphon.Tests` and
 | CP-6 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c654-s3/` | runner-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 | all listed, 0 failed/skipped | 3 | 2 |
 | CP-7 | S3 | `tests/Antiphon.Tests -> bin-c654-s3-server/` | capacity-green | `/*/*/(RunnerCapacityEndpointTests*)\|(PhoneHomeDirectoryTests*)/*` | V-5, R-1 | all listed, 0 failed/skipped (its red run is the same filter on the S3-red commit, reported as CP-7 rerun 1) | 5 | 3 |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c654-s4/` | hosts-api | `/*/*/HostEndpointTests/*` | V-6 | all listed, 0 failed/skipped | 4 | 2 |
-| CP-9 | S4 | n/a | client | `pwsh -File scripts/test-client.ps1 -Filter HostsPanel` | V-6 | 4 tests, 0 failed; lint 0 errors | n/a | 2 |
+| CP-9 | S4 | n/a | client | `pwsh -File scripts/test-client.ps1 HostsPanel` | V-6 | 4 tests, 0 failed; lint 0 errors | n/a | 2 |
 | CP-10 | all | `tests/Antiphon.Tests -> bin-c654-all/` | regressions | `/*/*/(RunnerSlotEndpointTests*)\|(RunnerSlotRulesTests*)\|(CapacityRecoveryTaskTests*)\|(AgentTaskConcurrencyLimitTests*)/*` | R-1, R-2 | all listed, 0 failed/skipped | 12 | 2 |
 
 The Code brief points at this table as
