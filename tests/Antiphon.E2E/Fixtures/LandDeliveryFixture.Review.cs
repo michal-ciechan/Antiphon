@@ -281,7 +281,7 @@ public sealed partial class LandDeliveryFixture
             && n.Kind == LandNotificationKind.TaskCompletion)).ShouldBe(1);
         var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m =>
             m.SourceLandNotificationId == receipt.Note.Id);
-        queued.Id.ShouldBe(receipt.Note.QueueMessageId);
+        receipt.Note.QueueMessageId.ShouldBe(queued.Id);
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == ReviewTaskId
             && m.SourceLandNotificationId != null)).ShouldBe(1);
     }
