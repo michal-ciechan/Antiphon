@@ -1,0 +1,118 @@
+shortId	status	branch	remoteSha	worktreePath	worktreeHead	verdict	remoteAction	worktreeAction	filesIdentical	filesBlobInMasterHistory	filesLinesOnly	filesDeleted	note
+015dc1ee	Succeeded	feat/card-task-015dc1ee	a0c6682e7c8f5e87acb53c655025c2236fc69b0b	-	-	PASS	REMOTE-DELETED	-	1	3	0	0	remote:PASS 4; pinned refs/cleanup-kept/remote-tip/015dc1ee
+05522ab3	Succeeded	feat/card-task-05522ab3	b893f665ed906bf3b04ca62eea592c497c9f8bc2	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/05522ab3
+08e6f2d2	Succeeded	feat/card-task-08e6f2d2	396aa8161d66ce9521875b25adec840f87145592	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/08e6f2d2
+176e26d6	Succeeded	feat/card-task-176e26d6	8f7bb031d170b95506071d7fbd1dc87e39454272	-	-	PASS	REMOTE-DELETED	-	1	4	0	0	remote:PASS 5; pinned refs/cleanup-kept/remote-tip/176e26d6
+2060e274	Succeeded	feat/card-task-2060e274	96dc68c7deb6400abdb7adc9a6f8db9ea61dc4c1	-	-	PASS	REMOTE-DELETED	-	6	34	0	0	remote:PASS 40; pinned refs/cleanup-kept/remote-tip/2060e274
+354b15be	Succeeded	feat/card-task-354b15be	514dfaaf58a63398d4ca6c68597b514ed430b02d	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/354b15be
+3895b67b	Succeeded	feat/card-task-3895b67b	d65a17c9ef89ba5941f9905e3c9497bfe0eba8a4	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/3895b67b
+39d0e7e2	Succeeded	feat/card-task-39d0e7e2	673cd50c6db24f84463d8a0aaade0fc7e2dec27b	-	-	PASS	REMOTE-DELETED	-	41	5	0	0	remote:PASS 46; pinned refs/cleanup-kept/remote-tip/39d0e7e2
+443b21c2	Succeeded	feat/card-task-443b21c2	5b1c2e0fbdfc83fdda8568bd04fd7651db3eb97c	-	-	PASS	REMOTE-DELETED	-	0	9	0	0	remote:PASS 9; pinned refs/cleanup-kept/remote-tip/443b21c2
+520f3e0a	Succeeded	feat/card-task-520f3e0a	2b47c3d166acd87f2e2742cb6df2f7373bffea0f	-	-	PASS	REMOTE-DELETED	-	8	9	0	0	remote:PASS 17; pinned refs/cleanup-kept/remote-tip/520f3e0a
+5dc73c10	Succeeded	feat/card-task-5dc73c10	fcd657c2d91d49eace5a4ae14276c3e035ada11f	-	-	PASS	REMOTE-DELETED	-	13	2	0	0	remote:PASS 15
+5ef9bb0e	Succeeded	feat/card-task-5ef9bb0e	5f32849af54f50b512c73d25bc0d50349e4ce1c3	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/5ef9bb0e
+609f77b4	Succeeded	feat/card-task-609f77b4	59a93e5156f763e2b17f1331fbbdf6377951ff40	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1
+67e84356	Succeeded	feat/card-task-67e84356	16f0a8caf3f41ca59220873a3c561979810233be	-	-	PASS	REMOTE-DELETED	-	1	1	0	0	remote:PASS 2
+695a54a1	Succeeded	feat/card-task-695a54a1	4c3f23efe0a707697b76d3717ebf75cbfaabe5fe	-	-	PASS	REMOTE-DELETED	-	1	5	0	0	remote:PASS 6; pinned refs/cleanup-kept/remote-tip/695a54a1
+7f644884	Succeeded	feat/card-task-7f644884	125f8dda23cce27abf2acfb37e294e1d7eddee63	-	-	PASS	REMOTE-DELETED	-	3	4	0	0	remote:PASS 7
+8afa8f97	Succeeded	feat/card-task-8afa8f97	2fc8b3d2ce01d4aaf0d3240e7aabfd4e7129e8d7	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/8afa8f97
+924d72d5	Succeeded	feat/card-task-924d72d5	9bda7bb2d578644b02c0e9b469772c95ad38b99b	-	-	PASS	REMOTE-DELETED	-	1	1	0	0	remote:PASS 2; pinned refs/cleanup-kept/remote-tip/924d72d5
+a57a83df	Succeeded	feat/card-task-a57a83df	9f36fd341b65278d0d5f4bd07abaf07808dcc9c2	-	-	PASS	REMOTE-DELETED	-	0	7	0	0	remote:PASS 7
+b18bb8e3	Succeeded	feat/card-task-b18bb8e3	c642611c963f7c0d67520c8f2e0da9c26143d4a2	-	-	PASS	REMOTE-DELETED	-	8	8	0	0	remote:PASS 16; pinned refs/cleanup-kept/remote-tip/b18bb8e3
+bc527408	Succeeded	feat/card-task-bc527408	0467ca3b79e319abb64a835fa78ae54dd1d216ac	-	-	PASS	REMOTE-DELETED	-	18	15	0	0	remote:PASS 33; pinned refs/cleanup-kept/remote-tip/bc527408
+bddfb3cc	Succeeded	feat/card-task-bddfb3cc	cde78c6e3b6f7e2c608d6d96699fe13991e1c29b	-	-	PASS	REMOTE-DELETED	-	3	6	0	0	remote:PASS 9
+bf7e81ee	Succeeded	feat/card-task-bf7e81ee	131c7b4a0859235feabf216a2608a656095113b5	-	-	PASS	REMOTE-DELETED	-	7	8	0	0	remote:PASS 15; pinned refs/cleanup-kept/remote-tip/bf7e81ee
+d0abdf16	Succeeded	feat/card-task-d0abdf16	ec4ff7ff540cf34d098ad7481f3722009dec8516	-	-	PASS	REMOTE-DELETED	-	5	5	0	0	remote:PASS 10
+d5219854	Succeeded	feat/card-task-d5219854	eca307e287f6c3cfc8aea31f4fb408db0357ffc9	-	-	PASS	REMOTE-DELETED	-	1	1	0	0	remote:PASS 2; pinned refs/cleanup-kept/remote-tip/d5219854
+ea7d1a1c	Succeeded	feat/card-task-ea7d1a1c	4fe3bce933bb061af6a872ef24835365448ee9c7	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/ea7d1a1c
+ee01d18e	Succeeded	feat/card-task-ee01d18e	44d1a8d7a5014000400d7a6ec57e46c682934f6b	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/ee01d18e
+f3e2953f	Succeeded	feat/card-task-f3e2953f	7dc2bca118558e5cb0347191dc5bd5e9d347ec34	-	-	PASS	REMOTE-DELETED	-	0	7	0	0	remote:PASS 7; pinned refs/cleanup-kept/remote-tip/f3e2953f
+f602d622	Succeeded	feat/card-task-f602d622	597fe2693f96f1fa32441c621a28762b59e831bd	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1; pinned refs/cleanup-kept/remote-tip/f602d622
+f646569d	Succeeded	feat/card-task-f646569d	145ac6028b1b62a1a007b8a55ba646551f58cd41	-	-	PASS	REMOTE-DELETED	-	7	3	0	0	remote:PASS 10; pinned refs/cleanup-kept/remote-tip/f646569d
+f908a771	Succeeded	feat/card-task-f908a771	4063a46d758b95619043aa6cdaa7490cddadfc0b	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1
+fb612012	Succeeded	feat/card-task-fb612012	7b1abc8dcf347657e8e613dccd17b84a33be8bc7	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1
+00f66c8f	Succeeded	feat/card-task-00f66c8f	25e41f3551024f86db72c26b733c176900c88a27	C:/Antiphon/worktrees/card-task-00f66c8f	25e41f3551024f86db72c26b733c176900c88a27	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+02983cde	Canceled	feat/card-task-02983cde	f529bc7d519f55e46189d570b223f091ec274f08	C:/Antiphon/worktrees/card-task-02983cde	959e5aa8a5be80b751ba5b5ff31f74b4fe866e93	PASS	REMOTE-DELETED	WT-REMOVED	94	14	0	0	remote:PASS 54 | wt:PASS 54; pinned refs/cleanup-kept/remote-tip/02983cde
+05a66230	Succeeded	feat/card-task-05a66230	-	C:/Antiphon/worktrees/card-task-05a66230	048b6a180cdbb14e85c03c6e18da057f00a93603	LOOK	-	-	31	18	3	0	 | wt:PASS 52 | wt has 1 nested registered worktree(s)
+06805739	Succeeded	feat/card-task-06805739	88e25816aebda0975d7d9048c908cb0da79d750e	C:/Antiphon/worktrees/card-task-06805739	88e25816aebda0975d7d9048c908cb0da79d750e	PASS	REMOTE-DELETED	WT-REMOVED	8	19	0	0	remote:PASS 27
+07df9f1d	Succeeded	feat/card-task-07df9f1d	a3396e08c4d19a46f480db44c26af0b9df4dda18	C:/Antiphon/worktrees/card-task-07df9f1d	a3396e08c4d19a46f480db44c26af0b9df4dda18	PASS	REMOTE-DELETED	WT-REMOVED	0	7	0	0	remote:PASS 7
+0aa9717c	Failed	feat/card-task-0aa9717c	fcbb594d72c11c01f11a5f4ba58e5c7a7dcf3895	C:/Antiphon/worktrees/card-task-0aa9717c	26c1393a1eccba0a0c7abb657e320a9aaf635727	PASS	REMOTE-DELETED	WT-REMOVED	9	4	0	0	remote:PASS 12 | wt:PASS 1
+0cc1623f	Succeeded	feat/card-task-0cc1623f	0ac283301b0fa52fd64aada333540b3b359bfd30	C:/Antiphon/worktrees/card-task-0cc1623f	0ac283301b0fa52fd64aada333540b3b359bfd30	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+10632f25	Succeeded	feat/card-task-10632f25	f1195ea11826643cf7417b44a9368544f70df57c	-	-	PASS	REMOTE-DELETED	-	0	5	0	0	remote:PASS 5
+125f62dc	Succeeded	feat/card-task-125f62dc	-	C:/Antiphon/worktrees/card-task-125f62dc	3df764bd37e91286de9add2af4d09ea339700c62	PASS	-	WT-REMOVED	3	5	1	0	 | wt:PASS 9; pinned refs/cleanup-kept/wt-head/125f62dc
+131508fb	Succeeded	feat/card-task-131508fb	-	C:/Antiphon/worktrees/card-task-131508fb	8289bdc74750f81070045cf144cd291aa1a7ceb3	PASS	-	WT-REMOVED	17	9	1	0	 | wt:PASS 27; pinned refs/cleanup-kept/wt-head/131508fb
+15a86ac9	Failed	feat/card-task-15a86ac9	bc619b4a35bad2aa99125ac7c9a3bb0b7d28bf97	-	-	PASS	REMOTE-DELETED	-	0	7	0	0	remote:PASS 7
+169fe4dd	Succeeded	feat/card-task-169fe4dd	04bb109d569e3fc34a405fb241fce56e275e96b3	-	-	PASS	REMOTE-DELETED	-	0	8	0	0	remote:PASS 8
+16d7e477	Succeeded	feat/card-task-16d7e477	0a97e75eb23201fc3884ad5db1a1c5bdf4e45278	C:/Antiphon/worktrees/card-task-16d7e477	0a97e75eb23201fc3884ad5db1a1c5bdf4e45278	PASS	REMOTE-DELETED	WT-REMOVED	1	2	0	0	remote:PASS 3
+19c7ff68	Succeeded	feat/card-task-19c7ff68	7526a1e197c1f245a10b90f5e31af2fb79e4a313	C:/Antiphon/worktrees/card-task-19c7ff68	7526a1e197c1f245a10b90f5e31af2fb79e4a313	PASS	REMOTE-DELETED	WT-REMOVED	4	4	0	0	remote:PASS 8
+1aa86155	Succeeded	feat/card-task-1aa86155	1d10961adf547f478753905e61282167a40df57c	C:/Antiphon/worktrees/card-task-1aa86155	1d10961adf547f478753905e61282167a40df57c	PASS	REMOTE-DELETED	WT-REMOVED	2	3	0	0	remote:PASS 5
+1ceae9ac	Succeeded	feat/card-task-1ceae9ac	f6519816f830121918cfc8fb308d45127fc1208d	C:/Antiphon/worktrees/card-task-1ceae9ac	f6519816f830121918cfc8fb308d45127fc1208d	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+1d5b779b	Succeeded	feat/card-task-1d5b779b	97efafaab1830873c186bc46c3a6a8960e142420	C:/Antiphon/worktrees/card-task-1d5b779b	97efafaab1830873c186bc46c3a6a8960e142420	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+1d94da9e	Canceled	feat/card-task-1d94da9e	14dbe1110a590679e65eca40512e991e8dfbf37f	-	-	PASS	REMOTE-DELETED	-	11	5	0	0	remote:PASS 16
+22c54e3f	Succeeded	feat/card-task-22c54e3f	993a664c43fd699bd87612fc0c78c41b55f35e9e	C:/Antiphon/worktrees/card-task-22c54e3f	993a664c43fd699bd87612fc0c78c41b55f35e9e	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+2cd14d4c	Failed	feat/card-task-2cd14d4c	4eed6c9699d735667df2893e4b40fb543e618758	-	-	PASS	REMOTE-DELETED	-	1	2	0	0	remote:PASS 3
+2dd9fbf3	Succeeded	feat/card-task-2dd9fbf3	eaee40f8fc3431212819efb86ecdca94753b3c0a	C:/Antiphon/worktrees/card-task-2dd9fbf3	eaee40f8fc3431212819efb86ecdca94753b3c0a	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+2e841047	Canceled	feat/card-task-2e841047	fa1897c39bfe2aa9a6d83800003ad4974235a0a7	-	-	PASS	REMOTE-DELETED	-	0	3	0	0	remote:PASS 3
+30103883	Failed	feat/card-task-30103883	2c85ee0a6452632fc1e4166b0157316ed0fa6ac4	-	-	PASS	REMOTE-DELETED	-	1	7	0	0	remote:PASS 8
+359c1a1c	Succeeded	feat/card-task-359c1a1c	-	C:/Antiphon/worktrees/card-task-359c1a1c	4646a8ba6b30cff00290ec5c9b581e9b78fac399	PASS	-	WT-REMOVED	5	3	1	0	 | wt:PASS 9; pinned refs/cleanup-kept/wt-head/359c1a1c
+365d4862	Succeeded	feat/card-task-365d4862	00fcd926b6946476d836216ef5744da518dca3d2	C:/Antiphon/worktrees/card-task-365d4862	00fcd926b6946476d836216ef5744da518dca3d2	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+36b868ff	Failed	feat/card-task-36b868ff	-	C:/Antiphon/worktrees/card-task-36b868ff	00e710d5e0fbffbec39cf62ab8fb00b761661e9c	PASS	-	WT-REMOVED	13	9	0	0	 | wt:PASS 22; pinned refs/cleanup-kept/wt-head/36b868ff
+37a70801	Failed	feat/card-task-37a70801	0e845e98756a2eda11e76cbdc196068bfab48a2c	-	-	PASS	REMOTE-DELETED	-	1	5	0	0	remote:PASS 6
+3816b58e	Canceled	feat/card-task-3816b58e	7629fe0dc0c0aaee34ba251c9e396b3391184355	-	-	PASS	REMOTE-DELETED	-	6	3	0	0	remote:PASS 9
+3c593d7c	Succeeded	feat/card-task-3c593d7c	dde854b521a97ccb749a383b3a5b0f365cbb9b8d	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1
+3d4eb382	Succeeded	feat/card-task-3d4eb382	-	C:/Antiphon/worktrees/card-task-3d4eb382	6d986b061a0b754ec79d476b4ab5c3559ec37733	PASS	-	WT-REMOVED	4	4	1	0	 | wt:PASS 9; pinned refs/cleanup-kept/wt-head/3d4eb382
+47be9689	Succeeded	feat/card-task-47be9689	4eacef936bbe2490f1ef169f41be4e193a43ea5e	C:/Antiphon/worktrees/card-task-47be9689	4eacef936bbe2490f1ef169f41be4e193a43ea5e	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+4ce3b0ad	Succeeded	feat/card-task-4ce3b0ad	f6207fbb3a426b1188a8bc760740f4d70cba4d5e	-	-	PASS	REMOTE-DELETED	-	5	33	0	0	remote:PASS 38
+50a2b232	Succeeded	feat/card-task-50a2b232	b0a6d5bc3b7de0e7c9854b63291303c87d7bfc78	C:/Antiphon/worktrees/card-task-50a2b232	b0a6d5bc3b7de0e7c9854b63291303c87d7bfc78	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+51b599cb	Succeeded	feat/card-task-51b599cb	60cb80df93668678069e27e74b4143ce93d66409	C:/Antiphon/worktrees/card-task-51b599cb	60cb80df93668678069e27e74b4143ce93d66409	PASS	REMOTE-DELETED	WT-REMOVED	16	3	0	0	remote:PASS 19
+5704b46b	Succeeded	feat/card-task-5704b46b	-	C:/Antiphon/worktrees/card-task-5704b46b	6b332e6f4919a6dc72669b1a8eec747458702918	PASS	-	WT-REMOVED	17	16	0	0	 | wt:PASS 33; pinned refs/cleanup-kept/wt-head/5704b46b
+5ef74c0f	Succeeded	feat/card-task-5ef74c0f	449a28c840ab5e6315c9f1e48daaae4508a1971e	-	-	PASS	REMOTE-DELETED	-	2	6	0	0	remote:PASS 8
+69c7a060	Succeeded	feat/card-task-69c7a060	f5632b80befba0e0512fd5feaeac5829a10cd1b1	C:/Antiphon/worktrees/card-task-69c7a060	f5632b80befba0e0512fd5feaeac5829a10cd1b1	PASS	REMOTE-DELETED	WT-REMOVED	41	5	0	0	remote:PASS 46
+6ca40cd0	Canceled	feat/card-task-6ca40cd0	6b332e6f4919a6dc72669b1a8eec747458702918	C:/Antiphon/worktrees/card-task-6ca40cd0	7062c5cb10f00dd3ebe05cb557e8e00888a15737	PASS	REMOTE-DELETED	WT-REMOVED	34	32	3	0	remote:PASS 33 | wt:PASS 36
+6eed34e6	Failed	feat/card-task-6eed34e6	fcd657c2d91d49eace5a4ae14276c3e035ada11f	-	-	PASS	REMOTE-DELETED	-	13	2	0	0	remote:PASS 15
+70302dc6	Succeeded	feat/card-task-70302dc6	212128028d79f07d12f229ce4d76973d176fb002	-	-	PASS	REMOTE-DELETED	-	4	8	0	0	remote:PASS 12
+74da5d1b	Succeeded	feat/card-task-74da5d1b	956380a53575af592237477ad78c03a86486a093	C:/Antiphon/worktrees/card-task-74da5d1b	956380a53575af592237477ad78c03a86486a093	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+78c5f868	Succeeded	feat/card-task-78c5f868	5a8c688bd8bb4333573083b180b545d40b27c1ca	C:/Antiphon/worktrees/card-task-78c5f868	314ec59f2062003fa34ac1a4f6f5796605751e6d	PASS	REMOTE-DELETED	WT-REMOVED	2	2	0	0	remote:PASS 2 | wt:PASS 2; pinned refs/cleanup-kept/remote-tip/78c5f868
+7dc235bc	Succeeded	feat/card-task-7dc235bc	9c5702bdbcecf8dc9df7343e7a901ebbb0472633	-	-	PASS	REMOTE-DELETED	-	3	13	0	0	remote:PASS 16
+80103e29	Succeeded	feat/card-task-80103e29	-	C:/Antiphon/worktrees/card-task-80103e29	9c1c68980308ece42c808c4ed16db5158e457ad2	PASS	-	WT-REMOVED	4	7	3	0	 | wt:PASS 14; pinned refs/cleanup-kept/wt-head/80103e29
+86d683e9	Succeeded	feat/card-task-86d683e9	29924ec485292e9f1f25db231d19a29652c277c8	C:/Antiphon/worktrees/card-task-86d683e9	29924ec485292e9f1f25db231d19a29652c277c8	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+86e57e3d	Succeeded	feat/card-task-86e57e3d	26c1393a1eccba0a0c7abb657e320a9aaf635727	C:/Antiphon/worktrees/card-task-86e57e3d	26c1393a1eccba0a0c7abb657e320a9aaf635727	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+907b5d3e	Succeeded	feat/card-task-907b5d3e	-	C:/Antiphon/worktrees/card-task-907b5d3e	0eb4cccac9590c9ebc5a9566a589f36b1f73ff05	PASS	-	WT-REMOVED	23	5	1	0	 | wt:PASS 29; pinned refs/cleanup-kept/wt-head/907b5d3e
+92783ab1	Succeeded	feat/card-task-92783ab1	3c260199895a68c3c8717e35be0b07424f6c2678	-	-	PASS	REMOTE-DELETED	-	1	5	0	0	remote:PASS 6
+92b9022f	Succeeded	feat/card-task-92b9022f	-	C:/Antiphon/worktrees/card-task-92b9022f	c206cd7fc45bae7d63663f19a77d30148b21e565	PASS	-	WT-REMOVED	14	5	5	0	 | wt:PASS 24; pinned refs/cleanup-kept/wt-head/92b9022f
+94d4b1de	Succeeded	feat/card-task-94d4b1de	4efce814f0f79325b81af17fa638220517b0ee2f	C:/Antiphon/worktrees/card-task-94d4b1de	4efce814f0f79325b81af17fa638220517b0ee2f	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+993405ad	Failed	feat/card-task-993405ad	b8aeaa51ebf9ac09662fdee5102f72215f3f3e99	-	-	PASS	REMOTE-DELETED	-	0	4	0	0	remote:PASS 4
+9b83888e	Canceled	feat/card-task-9b83888e	bb4db96a9850bc84c7f899671e404c5bd2ce7ed9	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1
+9e28086d	Failed	feat/card-task-9e28086d	e91e3ac847dbaceb553912beeb1cbd1612e1a3cb	-	-	PASS	REMOTE-DELETED	-	9	11	0	0	remote:PASS 20
+a103fe6f	Succeeded	feat/card-task-a103fe6f	ae6956e72caf317ce031d169a2400b59e0734053	C:/Antiphon/worktrees/card-task-a103fe6f	ae6956e72caf317ce031d169a2400b59e0734053	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+a36875a7	Succeeded	feat/card-task-a36875a7	dd76c862aa1a8045d8f4430ac8adc6687a050143	-	-	PASS	REMOTE-DELETED	-	1	7	0	0	remote:PASS 8
+a7ab0cda	Failed	feat/card-task-a7ab0cda	a0a5b7b6243098e73a14dc7f865be67ef193239b	-	-	PASS	REMOTE-DELETED	-	4	5	0	0	remote:PASS 9
+a8f042bb	Succeeded	feat/card-task-a8f042bb	2f7cb8497afe0f32d6101589afb3a190bce9ff8e	-	-	PASS	REMOTE-DELETED	-	1	1	0	0	remote:PASS 2
+aadd05ab	Succeeded	feat/card-task-aadd05ab	2ee0387ae3327489915553a38459bbee88664f96	-	-	PASS	REMOTE-DELETED	-	5	10	0	0	remote:PASS 15
+b0e67a1d	Succeeded	feat/card-task-b0e67a1d	2c363d9cf953ecce08a392f07d45eea3af555ee1	C:/Antiphon/worktrees/card-task-b0e67a1d	2c363d9cf953ecce08a392f07d45eea3af555ee1	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+b560c49a	Succeeded	feat/card-task-b560c49a	eba6afa3274cdde99d6759a752e8a5b25c0eca02	C:/Antiphon/worktrees/card-task-b560c49a	eba6afa3274cdde99d6759a752e8a5b25c0eca02	PASS	REMOTE-DELETED	WT-REMOVED	9	7	0	0	remote:PASS 16
+bca19885	Succeeded	feat/card-task-bca19885	a1c6c59eadc39fbf48d9c3d5b18d227c3649c1f8	-	-	PASS	REMOTE-DELETED	-	0	5	0	0	remote:PASS 5
+c0a787fe	Succeeded	feat/card-task-c0a787fe	897b3cc4b917fb30f22641c1708a9eb0407e9cfd	C:/Antiphon/worktrees/card-task-c0a787fe	897b3cc4b917fb30f22641c1708a9eb0407e9cfd	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+c107ce5c	Succeeded	feat/card-task-c107ce5c	10fe51b0f668a272d621a935c27e53313b8de1c8	C:/Antiphon/worktrees/card-task-c107ce5c	10fe51b0f668a272d621a935c27e53313b8de1c8	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+c4154b22	Succeeded	feat/card-task-c4154b22	d68203aafcef1554605a995e5cb3509eb711e433	C:/Antiphon/worktrees/card-task-c4154b22	d68203aafcef1554605a995e5cb3509eb711e433	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+c4b35a78	Succeeded	feat/card-task-c4b35a78	b96ed0790670d6fe69267f3d908ac253e4ee3178	C:/Antiphon/worktrees/card-task-c4b35a78	b96ed0790670d6fe69267f3d908ac253e4ee3178	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+c5885cc9	Canceled	feat/card-task-c5885cc9	53e0bebfba0219a2edfd8594c10cdbf4db266ebd	-	-	PASS	REMOTE-DELETED	-	0	1	0	0	remote:PASS 1
+cb96c3a4	Succeeded	feat/card-task-cb96c3a4	6a75ab72d7bf52f7f5dc8c476891d30c8a315f62	C:/Antiphon/worktrees/card-task-cb96c3a4	6a75ab72d7bf52f7f5dc8c476891d30c8a315f62	PASS	REMOTE-DELETED	WT-REMOVED	12	16	0	0	remote:PASS 28
+d24e1b4d	Canceled	feat/card-task-d24e1b4d	ce4cce1e8c03f6a769506eaa44a185d289a12b44	-	-	PASS	REMOTE-DELETED	-	7	9	0	0	remote:PASS 16
+d6481d37	Canceled	feat/card-task-d6481d37	-	C:/Antiphon/worktrees/card-task-d6481d37	c206cd7fc45bae7d63663f19a77d30148b21e565	PASS	-	WT-REMOVED	14	5	5	0	 | wt:PASS 24; pinned refs/cleanup-kept/wt-head/d6481d37
+d76ef522	Canceled	feat/card-task-d76ef522	2b963bb7774f00930862120f2728aa22ea66666a	C:/Antiphon/worktrees/card-task-d76ef522	ae6956e72caf317ce031d169a2400b59e0734053	PASS	REMOTE-DELETED	WT-REMOVED	0	2	0	0	remote:PASS 1 | wt:PASS 1; pinned refs/cleanup-kept/remote-tip/d76ef522
+d806b77b	Canceled	feat/card-task-d806b77b	2d1c9af84160ac7499e821c0eebf57c484ce68f8	-	-	PASS	REMOTE-DELETED	-	1	5	0	0	remote:PASS 6
+db55819f	Succeeded	feat/card-task-db55819f	cdf994beb36979fb1602734cb975008154f8e544	C:/Antiphon/worktrees/card-task-db55819f	cdf994beb36979fb1602734cb975008154f8e544	PASS	REMOTE-DELETED	WT-REMOVED	30	2	0	0	remote:PASS 32
+db7a34db	Failed	feat/card-task-db7a34db	e51c7ff56bac522882941f73d9b26d13048a6c68	-	-	PASS	REMOTE-DELETED	-	0	9	0	0	remote:PASS 9
+dbdfa428	Succeeded	feat/card-task-dbdfa428	7cfc72ce36c352ddf10ffcecf67bc83f9f82f337	-	-	PASS	REMOTE-DELETED	-	0	4	0	0	remote:PASS 4
+dca8c233	Failed	feat/card-task-dca8c233	7a1021209d9a87c8c7e5784b3562ff412a2d9e0d	-	-	PASS	REMOTE-DELETED	-	0	6	0	0	remote:PASS 6
+e09045ba	Succeeded	feat/card-task-e09045ba	654c3c09d0476aa05f94f866dc777b2236b2d0cf	C:/Antiphon/worktrees/card-task-e09045ba	654c3c09d0476aa05f94f866dc777b2236b2d0cf	PASS	REMOTE-DELETED	WT-REMOVED	41	5	0	0	remote:PASS 46
+e8eae8df	Succeeded	feat/card-task-e8eae8df	-	C:/Antiphon/worktrees/card-task-e8eae8df	315df03964db2adee51bf8ac621bc26f0c2f9a48	PASS	-	WT-REMOVED	29	12	1	0	 | wt:PASS 42; pinned refs/cleanup-kept/wt-head/e8eae8df
+f012a1d3	Succeeded	feat/card-task-f012a1d3	62ab4bdf74e1c335e337e6ebcc74714ac4493ec1	-	-	PASS	REMOTE-DELETED	-	1	1	0	0	remote:PASS 2
+f67e6efa	Succeeded	feat/card-task-f67e6efa	0ba3c55a4b66bd6f1dfd6d9712af16598e61d6c3	-	-	PASS	REMOTE-DELETED	-	6	10	0	0	remote:PASS 16
+f7833ef2	Canceled	feat/card-task-f7833ef2	2744fc835d3a8d363cd1b094923c47a4a118ce1b	-	-	PASS	REMOTE-DELETED	-	6	6	0	0	remote:PASS 12
+fa3a1135	Failed	feat/card-task-fa3a1135	a95add1e9b434c158a29075f7f5af7a9fe4675be	-	-	PASS	REMOTE-DELETED	-	1	4	0	0	remote:PASS 5
+fa8d1265	Succeeded	feat/card-task-fa8d1265	7c7e685a085d20c89cce8fdb872f7fd1723ec80f	C:/Antiphon/worktrees/card-task-fa8d1265	7c7e685a085d20c89cce8fdb872f7fd1723ec80f	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+fc89bde9	Succeeded	feat/card-task-fc89bde9	989abc9f58687dcaec8811432c9aca76e6ff4a1a	C:/Antiphon/worktrees/card-task-fc89bde9	989abc9f58687dcaec8811432c9aca76e6ff4a1a	PASS	REMOTE-DELETED	WT-REMOVED	1	1	0	0	remote:PASS 2
+fcb2e819	Succeeded	feat/card-task-fcb2e819	00b5e151b5c1ba34a7d29d343236b1b48dfbcd59	C:/Antiphon/worktrees/card-task-fcb2e819	00b5e151b5c1ba34a7d29d343236b1b48dfbcd59	PASS	REMOTE-DELETED	WT-REMOVED	0	1	0	0	remote:PASS 1
+fd089677	Succeeded	feat/card-task-fd089677	38ddf39505a7657bf1d0ebf9cbae6b7a3a93a255	-	-	PASS	REMOTE-DELETED	-	6	1	0	0	remote:PASS 7

@@ -1,0 +1,1334 @@
+shortId	ref	status	result	path	evidence
+00f66c8f	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0727-rolling-runner-upgrade-plan.md	branch blob in master history since mb; added=573 missingNow=503
+015dc1ee	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=81 missingNow=0
+015dc1ee	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=9 missingNow=0
+015dc1ee	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=28 missingNow=0
+015dc1ee	remote	A	OK	tests/Antiphon.Tests/Application/BootWedgeRelaunchParityTests.cs	identical to master now
+02983cde	remote	M	OK	docs/agent-card-lifecycle.md	identical to master now
+02983cde	remote	M	OK	docs/antiphon-api.md	branch blob in master history since mb; added=18 missingNow=0
+02983cde	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=3 missingNow=0
+02983cde	remote	M	OK	docs/superpowers/plans/2026-09-17-card-0558-stages-as-shareable-workflows-plan.md	branch blob in master history since mb; added=22 missingNow=0
+02983cde	remote	A	OK	scripts/pipeline-definition.ps1	identical to master now
+02983cde	remote	M	OK	server/Api/Endpoints/BoardEndpoints.cs	identical to master now
+02983cde	remote	A	OK	server/Api/Endpoints/PipelineDefinitionEndpoints.cs	identical to master now
+02983cde	remote	M	OK	server/Api/Endpoints/ProjectEndpoints.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Dtos/BoardDtos.cs	identical to master now
+02983cde	remote	A	OK	server/Application/Dtos/PipelineDefinitionDtos.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Dtos/ProjectDto.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Services/AgentService.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Services/BoardService.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Services/CardLifecycleTransitions.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Services/CardWorkflowRunFactory.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Services/InstructionBundles.cs	identical to master now
+02983cde	remote	A	OK	server/Application/Services/PipelineDefinitionService.cs	identical to master now
+02983cde	remote	A	OK	server/Application/Services/PipelineDefinitions.cs	identical to master now
+02983cde	remote	A	OK	server/Application/Services/PipelineResolution.cs	identical to master now
+02983cde	remote	A	OK	server/Application/Services/PipelineStagesJson.cs	identical to master now
+02983cde	remote	M	OK	server/Application/Services/ProjectService.cs	identical to master now
+02983cde	remote	M	OK	server/Domain/Entities/Agent.cs	identical to master now
+02983cde	remote	M	OK	server/Domain/Entities/AgentTask.cs	branch blob in master history since mb; added=2 missingNow=0
+02983cde	remote	M	OK	server/Domain/Entities/Board.cs	identical to master now
+02983cde	remote	M	OK	server/Domain/Entities/CardWorkflowRun.cs	identical to master now
+02983cde	remote	M	OK	server/Domain/Entities/CardWorkflowStage.cs	identical to master now
+02983cde	remote	A	OK	server/Domain/Entities/PipelineDefinition.cs	identical to master now
+02983cde	remote	A	OK	server/Domain/Entities/PipelineDefinitionRevision.cs	identical to master now
+02983cde	remote	M	OK	server/Domain/Entities/Project.cs	identical to master now
+02983cde	remote	A	OK	server/Domain/Enums/PipelineDefinitionSource.cs	identical to master now
+02983cde	remote	A	OK	server/Domain/ValueObjects/PipelineStageSpec.cs	identical to master now
+02983cde	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=62 missingNow=0
+02983cde	remote	M	OK	server/Infrastructure/Data/Seeding/DatabaseSeeder.cs	identical to master now
+02983cde	remote	A	OK	server/Migrations/20260927161251_AddPipelineDefinitions.Designer.cs	identical to master now
+02983cde	remote	A	OK	server/Migrations/20260927161251_AddPipelineDefinitions.cs	identical to master now
+02983cde	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=100 missingNow=0
+02983cde	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=3 missingNow=0
+02983cde	remote	M	OK	tests/Antiphon.E2E/AgentE2ETests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Application/AgentControlServiceIntegrationTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Application/AgentServiceIntegrationTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskInternalDecisionMigrationTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Application/BoardServiceIntegrationTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Application/CardWorkflowRunFactoryTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Application/HomeTaskServiceIntegrationTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Application/PipelineDefinitionDocumentationTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Application/PipelineDefinitionEndpointTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Application/PipelineDefinitionServiceTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Application/PipelineResolutionTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Application/PipelineStagesJsonTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Application/ProjectDeletionTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Infrastructure/DatabaseSeederTests.cs	identical to master now
+02983cde	remote	M	OK	tests/Antiphon.Tests/Infrastructure/KanbanPersistenceTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Migrations/PipelineDefinitionMigrationTests.cs	identical to master now
+02983cde	remote	A	OK	tests/Antiphon.Tests/Scripts/PipelineDefinitionScriptTests.cs	identical to master now
+02983cde	wt	M	OK	docs/agent-card-lifecycle.md	identical to master now
+02983cde	wt	M	OK	docs/antiphon-api.md	branch blob in master history since mb; added=18 missingNow=0
+02983cde	wt	M	OK	docs/ops-http.md	branch blob in master history since mb; added=3 missingNow=0
+02983cde	wt	A	OK	docs/superpowers/plans/2026-09-17-card-0558-stages-as-shareable-workflows-plan.md	branch blob in master history since mb; added=796 missingNow=0
+02983cde	wt	A	OK	scripts/pipeline-definition.ps1	identical to master now
+02983cde	wt	M	OK	server/Api/Endpoints/BoardEndpoints.cs	identical to master now
+02983cde	wt	A	OK	server/Api/Endpoints/PipelineDefinitionEndpoints.cs	identical to master now
+02983cde	wt	M	OK	server/Api/Endpoints/ProjectEndpoints.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Dtos/BoardDtos.cs	identical to master now
+02983cde	wt	A	OK	server/Application/Dtos/PipelineDefinitionDtos.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Dtos/ProjectDto.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Services/AgentService.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Services/BoardService.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Services/CardLifecycleTransitions.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Services/CardWorkflowRunFactory.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Services/InstructionBundles.cs	identical to master now
+02983cde	wt	A	OK	server/Application/Services/PipelineDefinitionService.cs	identical to master now
+02983cde	wt	A	OK	server/Application/Services/PipelineDefinitions.cs	identical to master now
+02983cde	wt	A	OK	server/Application/Services/PipelineResolution.cs	identical to master now
+02983cde	wt	A	OK	server/Application/Services/PipelineStagesJson.cs	identical to master now
+02983cde	wt	M	OK	server/Application/Services/ProjectService.cs	identical to master now
+02983cde	wt	M	OK	server/Domain/Entities/Agent.cs	identical to master now
+02983cde	wt	M	OK	server/Domain/Entities/AgentTask.cs	branch blob in master history since mb; added=2 missingNow=0
+02983cde	wt	M	OK	server/Domain/Entities/Board.cs	identical to master now
+02983cde	wt	M	OK	server/Domain/Entities/CardWorkflowRun.cs	identical to master now
+02983cde	wt	M	OK	server/Domain/Entities/CardWorkflowStage.cs	identical to master now
+02983cde	wt	A	OK	server/Domain/Entities/PipelineDefinition.cs	identical to master now
+02983cde	wt	A	OK	server/Domain/Entities/PipelineDefinitionRevision.cs	identical to master now
+02983cde	wt	M	OK	server/Domain/Entities/Project.cs	identical to master now
+02983cde	wt	A	OK	server/Domain/Enums/PipelineDefinitionSource.cs	identical to master now
+02983cde	wt	A	OK	server/Domain/ValueObjects/PipelineStageSpec.cs	identical to master now
+02983cde	wt	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=62 missingNow=0
+02983cde	wt	M	OK	server/Infrastructure/Data/Seeding/DatabaseSeeder.cs	identical to master now
+02983cde	wt	A	OK	server/Migrations/20260927161251_AddPipelineDefinitions.Designer.cs	identical to master now
+02983cde	wt	A	OK	server/Migrations/20260927161251_AddPipelineDefinitions.cs	identical to master now
+02983cde	wt	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=100 missingNow=0
+02983cde	wt	M	OK	server/Program.cs	branch blob in master history since mb; added=3 missingNow=0
+02983cde	wt	M	OK	tests/Antiphon.E2E/AgentE2ETests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Application/AgentControlServiceIntegrationTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Application/AgentServiceIntegrationTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskInternalDecisionMigrationTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Application/BoardServiceIntegrationTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Application/CardWorkflowRunFactoryTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Application/HomeTaskServiceIntegrationTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Application/PipelineDefinitionDocumentationTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Application/PipelineDefinitionEndpointTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Application/PipelineDefinitionServiceTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Application/PipelineResolutionTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Application/PipelineStagesJsonTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Application/ProjectDeletionTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Infrastructure/DatabaseSeederTests.cs	identical to master now
+02983cde	wt	M	OK	tests/Antiphon.Tests/Infrastructure/KanbanPersistenceTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Migrations/PipelineDefinitionMigrationTests.cs	identical to master now
+02983cde	wt	A	OK	tests/Antiphon.Tests/Scripts/PipelineDefinitionScriptTests.cs	identical to master now
+05522ab3	remote	A	OK	docs/superpowers/plans/2026-09-17-card-0550-native-land-check-v26-evidence-and-barrier-plan.md	branch blob in master history since mb; added=791 missingNow=0
+05a66230	wt	M	OK	docs/herdr-sessions.md	identical to master now
+05a66230	wt	A	OK	docs/investigations/2026-09-16-card-0462-code-verification.md	branch blob in master history since mb; added=270 missingNow=0
+05a66230	wt	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=8 missingNow=0
+05a66230	wt	M	OK	server/Application/Dtos/SessionRunnerDtos.cs	branch blob in master history since mb; added=2 missingNow=1
+05a66230	wt	M	OK	server/Application/Services/AgentService.cs	branch blob in master history since mb; added=8 missingNow=0
+05a66230	wt	A	OK	server/Application/Services/HerdrLabelFollowService.cs	identical to master now
+05a66230	wt	M	OK	server/Application/Services/HerdrLaunchContextResolver.cs	identical to master now
+05a66230	wt	A	OK	server/Application/Services/HerdrPlacementLock.cs	identical to master now
+05a66230	wt	A	OK	server/Application/Settings/HerdrLabelFollowSettings.cs	identical to master now
+05a66230	wt	M	OK	server/Domain/Entities/Agent.cs	branch blob in master history since mb; added=5 missingNow=0
+05a66230	wt	M	OK	server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs	branch blob in master history since mb; added=2 missingNow=0
+05a66230	wt	M	OK	server/Infrastructure/Data/AppDbContext.cs	blob unseen but all 2 added lines in current master
+05a66230	wt	A	OK	server/Infrastructure/Supervision/HerdrLabelFollowHostedService.cs	identical to master now
+05a66230	wt	A	OK	server/Migrations/20260916074258_AddHerdrLabelFollow.Designer.cs	identical to master now
+05a66230	wt	A	OK	server/Migrations/20260916074258_AddHerdrLabelFollow.cs	identical to master now
+05a66230	wt	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	blob unseen but all 11 added lines in current master
+05a66230	wt	M	OK	server/Program.cs	blob unseen but all 5 added lines in current master
+05a66230	wt	A	OK	src/Antiphon.SessionRunner.Contracts/HerdrLabelFollowContracts.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs	branch blob in master history since mb; added=4 missingNow=0
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrApiModels.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrClient.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrEventPumpService.cs	identical to master now
+05a66230	wt	A	OK	src/Antiphon.SessionRunner/HerdrLabelObserver.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrLastPane.cs	identical to master now
+05a66230	wt	A	OK	src/Antiphon.SessionRunner/HerdrPaneChild.LabelFollow.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrPaneChild.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrPaneSidecar.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/HerdrSettings.cs	identical to master now
+05a66230	wt	A	OK	src/Antiphon.SessionRunner/HerdrSnapshotFile.cs	identical to master now
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/Program.cs	branch blob in master history since mb; added=5 missingNow=0
+05a66230	wt	A	OK	src/Antiphon.SessionRunner/SessionReadLaunchRoutes.cs	branch blob in master history since mb; added=33 missingNow=0
+05a66230	wt	M	OK	src/Antiphon.SessionRunner/SessionRunnerRuntime.cs	branch blob in master history since mb; added=27 missingNow=0
+05a66230	wt	M	OK	tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj	identical to master now
+05a66230	wt	M	OK	tests/Antiphon.SessionRunner.Tests/FakeHerdrServer.cs	branch blob in master history since mb; added=18 missingNow=0
+05a66230	wt	M	OK	tests/Antiphon.SessionRunner.Tests/HerdrClientSurfaceTests.cs	identical to master now
+05a66230	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HerdrLabelFollowFixture.cs	identical to master now
+05a66230	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HerdrLabelFollowLiveTests.cs	identical to master now
+05a66230	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HerdrLabelFollowSchedulingTests.cs	branch blob in master history since mb; added=125 missingNow=2
+05a66230	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HerdrLabelObservationTests.cs	branch blob in master history since mb; added=146 missingNow=1
+05a66230	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HerdrLabelSnapshotTests.cs	branch blob in master history since mb; added=167 missingNow=0
+05a66230	wt	A	OK	tests/Antiphon.Tests/Application/HerdrLabelFollowConcurrencyTests.cs	identical to master now
+05a66230	wt	A	OK	tests/Antiphon.Tests/Application/HerdrLabelFollowFlowTests.cs	branch blob in master history since mb; added=89 missingNow=7
+05a66230	wt	A	OK	tests/Antiphon.Tests/Application/HerdrLabelFollowTests.cs	identical to master now
+05a66230	wt	A	OK	tests/Antiphon.Tests/Application/HerdrLabelFollowWireTests.cs	identical to master now
+05a66230	wt	M	OK	tests/Antiphon.Tests/Application/HerdrLaunchContextResolverTests.cs	identical to master now
+05a66230	wt	M	OK	tests/Antiphon.Tests/Application/HerdrPlacementPreflightTests.cs	identical to master now
+05a66230	wt	M	OK	tests/Antiphon.Tests/Application/HerdrPlacementSettingsTests.cs	identical to master now
+05a66230	wt	M	OK	tests/Antiphon.Tests/TestHelpers/DirectSessionRunnerClient.cs	identical to master now
+05a66230	wt	M	OK	tests/Antiphon.Tests/TestHelpers/FakeSessionRunnerClient.cs	branch blob in master history since mb; added=2 missingNow=0
+05a66230	wt	A	OK	tests/Antiphon.Tests/TestHelpers/HerdrLabelFollowDbFixture.cs	identical to master now
+05a66230	wt	A	OK	tests/Antiphon.Tests/TestHelpers/HerdrLabelFollowHttpFixture.cs	branch blob in master history since mb; added=169 missingNow=6
+05a66230	wt	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=12 missingNow=0
+06805739	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=4 missingNow=0
+06805739	remote	M	OK	server/Api/Endpoints/AgentEndpoints.cs	identical to master now
+06805739	remote	M	OK	server/Application/Interfaces/IDelegateSessionStopper.cs	identical to master now
+06805739	remote	M	OK	server/Application/Services/AgentService.cs	branch blob in master history since mb; added=37 missingNow=5
+06805739	remote	M	OK	server/Application/Services/AgentSessionService.cs	branch blob in master history since mb; added=40 missingNow=3
+06805739	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=142 missingNow=3
+06805739	remote	M	OK	server/Application/Services/AgentTaskReplyService.cs	branch blob in master history since mb; added=53 missingNow=1
+06805739	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=15 missingNow=2
+06805739	remote	A	OK	server/Application/Services/PoolDelegateRelease.cs	branch blob in master history since mb; added=85 missingNow=11
+06805739	remote	M	OK	server/Application/Services/SessionReconciliationService.cs	branch blob in master history since mb; added=17 missingNow=0
+06805739	remote	M	OK	server/Application/Settings/DelegationSettings.cs	branch blob in master history since mb; added=10 missingNow=0
+06805739	remote	M	OK	server/Application/Settings/SessionReconciliationSettings.cs	identical to master now
+06805739	remote	M	OK	server/Domain/Entities/Agent.cs	branch blob in master history since mb; added=7 missingNow=0
+06805739	remote	M	OK	server/Domain/Enums/AgentIncidentKind.cs	branch blob in master history since mb; added=7 missingNow=0
+06805739	remote	A	OK	server/Migrations/20260925044814_AddAgentPoolKillRetries.Designer.cs	identical to master now
+06805739	remote	A	OK	server/Migrations/20260925044814_AddAgentPoolKillRetries.cs	identical to master now
+06805739	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=2 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs	branch blob in master history since mb; added=4 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/AgentServiceIntegrationTests.cs	branch blob in master history since mb; added=52 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/AgentSessionServiceIntegrationTests.cs	branch blob in master history since mb; added=56 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskOverdueDeadlineTests.cs	identical to master now
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskPoolTests.cs	branch blob in master history since mb; added=160 missingNow=1
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskReplyIntegrationTests.cs	branch blob in master history since mb; added=53 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskServiceIntegrationTests.cs	branch blob in master history since mb; added=41 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/GrokDelegateDispatchTests.cs	identical to master now
+06805739	remote	M	OK	tests/Antiphon.Tests/Application/SessionReconciliationServiceTests.cs	branch blob in master history since mb; added=33 missingNow=0
+06805739	remote	M	OK	tests/Antiphon.Tests/TestHelpers/RecordingSessionStopper.cs	identical to master now
+07df9f1d	remote	M	OK	docs/agent-credentials.md	branch blob in master history since mb; added=3 missingNow=0
+07df9f1d	remote	M	OK	docs/docker-stack.md	branch blob in master history since mb; added=2 missingNow=0
+07df9f1d	remote	M	OK	scripts/c590-real.ps1	branch blob in master history since mb; added=38 missingNow=0
+07df9f1d	remote	M	OK	scripts/c590-remote.sh	branch blob in master history since mb; added=5 missingNow=0
+07df9f1d	remote	M	OK	scripts/verify-docker-stack.ps1	branch blob in master history since mb; added=6 missingNow=0
+07df9f1d	remote	M	OK	tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs	branch blob in master history since mb; added=2 missingNow=0
+07df9f1d	remote	A	OK	tests/Antiphon.Tests/Scripts/ClaudeTokenRefreshOptInTests.cs	branch blob in master history since mb; added=130 missingNow=5
+08e6f2d2	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0726-runner-and-journal-alarms-plan.md	branch blob in master history since mb; added=1192 missingNow=15
+0aa9717c	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0452-plan.md	branch blob in master history since mb; added=171 missingNow=0
+0aa9717c	remote	M	OK	scripts/recover-repository-children.ps1	identical to master now
+0aa9717c	remote	M	OK	server/Application/Services/LandOperationFactory.cs	identical to master now
+0aa9717c	remote	M	OK	server/Infrastructure/Git/RepositoryChildJournal.cs	identical to master now
+0aa9717c	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandActiveSourceClaimTests.cs	identical to master now
+0aa9717c	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandIdentityMatrixTests.cs	identical to master now
+0aa9717c	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandLocalContainmentTests.cs	identical to master now
+0aa9717c	remote	A	OK	tests/Antiphon.Tests/Infrastructure/RepositoryChildRecoveryTests.cs	identical to master now
+0aa9717c	remote	M	OK	tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs	branch blob in master history since mb; added=0 missingNow=0
+0aa9717c	remote	A	OK	tests/Antiphon.Tests/TestHelpers/RepositoryJournalCrashWorker.cs	identical to master now
+0aa9717c	remote	M	OK	tests/Antiphon.Tests/TestHelpers/TestWorkerModes.cs	identical to master now
+0aa9717c	remote	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=6 missingNow=0
+0aa9717c	wt	A	OK	docs/superpowers/plans/2026-09-27-card-0452-plan.md	branch blob in master history since mb; added=171 missingNow=0
+0cc1623f	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0767-plan.md	branch blob in master history since mb; added=35 missingNow=4
+10632f25	remote	A	OK	server/Application/Dtos/RemoteSettlementSyncDtos.cs	branch blob in master history since mb; added=57 missingNow=0
+10632f25	remote	M	OK	server/Application/Services/AgentTaskReplyService.cs	branch blob in master history since mb; added=8 missingNow=7
+10632f25	remote	M	OK	server/Application/Services/RemoteWorkspaceService.cs	branch blob in master history since mb; added=230 missingNow=14
+10632f25	remote	M	OK	tests/Antiphon.Tests/Application/RemoteWorktreeMirrorTests.cs	branch blob in master history since mb; added=106 missingNow=0
+10632f25	remote	A	OK	tests/Antiphon.Tests/Application/RunnerSettlementSyncTests.cs	branch blob in master history since mb; added=539 missingNow=2
+125f62dc	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0735-messagequeue-test-speed-plan.md	branch blob in master history since mb; added=162 missingNow=17
+125f62dc	wt	M	OK	docs/testing-and-build.md	blob unseen but all 1 added lines in current master
+125f62dc	wt	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.C561.cs	identical to master now
+125f62dc	wt	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs	branch blob in master history since mb; added=43 missingNow=0
+125f62dc	wt	M	OK	tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs	branch blob in master history since mb; added=45 missingNow=0
+125f62dc	wt	A	OK	tests/Antiphon.Tests/TestHelpers/ScaledTimeProvider.cs	identical to master now
+125f62dc	wt	A	OK	tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs	branch blob in master history since mb; added=48 missingNow=2
+125f62dc	wt	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=1 missingNow=1
+125f62dc	wt	M	OK	tests/linux-test-roster.json	identical to master now
+131508fb	wt	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	identical to master now
+131508fb	wt	M	OK	docs/testing-and-build.md	blob unseen but all 5 added lines in master history since mb; missingNow=1
+131508fb	wt	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointExecutorLogTests.cs	branch blob in master history since mb; added=148 missingNow=1
+131508fb	wt	M	OK	tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs	branch blob in master history since mb; added=194 missingNow=7
+131508fb	wt	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointTaskOwnershipTests.cs	branch blob in master history since mb; added=505 missingNow=4
+131508fb	wt	A	OK	tests/Antiphon.Tests/Checkpoints/Fixtures/plan-table-0723-same-after.md	identical to master now
+131508fb	wt	M	OK	tests/Antiphon.Tests/Checkpoints/TimeoutTests.cs	branch blob in master history since mb; added=2 missingNow=0
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Baseline/BaselineComparer.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/CheckpointApp.cs	branch blob in master history since mb; added=134 missingNow=1
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Cleanup/OutputCleanup.cs	identical to master now
+131508fb	wt	A	OK	tools/Antiphon.Checkpoints/Execution/ExecutorLogWriter.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Execution/ExitCodes.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Execution/IDriver.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Execution/ProcessDriver.cs	branch blob in master history since mb; added=66 missingNow=2
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Execution/RowRunner.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Execution/RowTimeout.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Execution/RunScheduler.cs	branch blob in master history since mb; added=48 missingNow=7
+131508fb	wt	A	OK	tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs	branch blob in master history since mb; added=144 missingNow=8
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Manifest/CheckpointManifest.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Manifest/ManifestValidator.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Program.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Report/ReportModel.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Report/ReportWriter.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/RunRequest.cs	identical to master now
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs	branch blob in master history since mb; added=14 missingNow=0
+131508fb	wt	M	OK	tools/Antiphon.Checkpoints/State/RunState.cs	identical to master now
+15a86ac9	remote	A	OK	server/Application/Interfaces/IExpectationPromptSender.cs	branch blob in master history since mb; added=41 missingNow=4
+15a86ac9	remote	A	OK	server/Application/Services/ExpectationNudgeDeliveryService.cs	branch blob in master history since mb; added=158 missingNow=19
+15a86ac9	remote	A	OK	server/Application/Services/SessionMessageQueueService.Expectations.cs	branch blob in master history since mb; added=176 missingNow=35
+15a86ac9	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=12 missingNow=2
+15a86ac9	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDeliveryFixture.cs	branch blob in master history since mb; added=124 missingNow=1
+15a86ac9	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDirectDeliveryTests.cs	branch blob in master history since mb; added=177 missingNow=4
+15a86ac9	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationReceiptTests.cs	branch blob in master history since mb; added=127 missingNow=2
+169fe4dd	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=57 missingNow=6
+169fe4dd	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=26 missingNow=2
+169fe4dd	remote	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=21 missingNow=6
+169fe4dd	remote	M	OK	server/Application/Services/PhoneHomeLaunchPolicy.cs	branch blob in master history since mb; added=5 missingNow=0
+169fe4dd	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerPinTests.cs	branch blob in master history since mb; added=222 missingNow=14
+169fe4dd	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerRerouteTests.cs	branch blob in master history since mb; added=267 missingNow=25
+169fe4dd	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	branch blob in master history since mb; added=3 missingNow=0
+169fe4dd	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskRoutingTests.cs	branch blob in master history since mb; added=7 missingNow=0
+16d7e477	remote	M	OK	docs/agent-kinds.md	branch blob in master history since mb; added=7 missingNow=4
+16d7e477	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0611-final-verification.md	branch blob in master history since mb; added=35 missingNow=8
+16d7e477	remote	M	OK	server/Application/Services/ModelLevelAliases.cs	identical to master now
+176e26d6	remote	M	OK	AGENTS.md	branch blob in master history since mb; added=1 missingNow=0
+176e26d6	remote	A	OK	docs/logs.md	branch blob in master history since mb; added=27 missingNow=13
+176e26d6	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=2 missingNow=0
+176e26d6	remote	A	OK	scripts/logs.ps1	branch blob in master history since mb; added=68 missingNow=2
+176e26d6	remote	A	OK	scripts/test-logs.ps1	identical to master now
+19c7ff68	remote	M	OK	docs/agent-credentials.md	identical to master now
+19c7ff68	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=3 missingNow=1
+19c7ff68	remote	M	OK	docs/testing-and-build.md	branch blob in master history since mb; added=14 missingNow=0
+19c7ff68	remote	M	OK	tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs	branch blob in master history since mb; added=63 missingNow=0
+19c7ff68	remote	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs	branch blob in master history since mb; added=325 missingNow=19
+19c7ff68	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRunnerSettingsValidatorTests.cs	identical to master now
+19c7ff68	remote	M	OK	tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs	identical to master now
+19c7ff68	remote	A	OK	tests/Antiphon.Tests/TestHelpers/RollingRunnerSettings.cs	identical to master now
+1aa86155	remote	M	OK	docker-compose.dev.yml	identical to master now
+1aa86155	remote	M	OK	docs/bootstrap.md	branch blob in master history since mb; added=11 missingNow=0
+1aa86155	remote	M	OK	docs/logs.md	branch blob in master history since mb; added=18 missingNow=0
+1aa86155	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=2 missingNow=0
+1aa86155	remote	A	OK	server/Migrations/20260925120000_EnablePgStatStatements.cs	identical to master now
+1ceae9ac	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0710-task-platform-placement-plan.md	branch blob in master history since mb; added=167 missingNow=37
+1d5b779b	remote	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	branch blob in master history since mb; added=171 missingNow=1
+1d94da9e	remote	M	OK	docs/antiphon-api.md	branch blob in master history since mb; added=1 missingNow=0
+1d94da9e	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=33 missingNow=0
+1d94da9e	remote	M	OK	server/Api/Endpoints/SessionEndpoints.cs	identical to master now
+1d94da9e	remote	M	OK	server/Application/Dtos/SessionQueueDtos.cs	branch blob in master history since mb; added=4 missingNow=0
+1d94da9e	remote	A	OK	server/Application/Interfaces/IExpectationPromptSender.cs	identical to master now
+1d94da9e	remote	A	OK	server/Application/Services/ExpectationHoldAudit.cs	identical to master now
+1d94da9e	remote	A	OK	server/Application/Services/ExpectationNudgeDeliveryService.cs	identical to master now
+1d94da9e	remote	A	OK	server/Application/Services/SessionMessageQueueService.Expectations.cs	identical to master now
+1d94da9e	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=28 missingNow=2
+1d94da9e	remote	M	OK	server/Domain/Enums/ExpectationWatchdogEnums.cs	identical to master now
+1d94da9e	remote	M	OK	src/Antiphon.Agents.Pty/ClaudeScreen.cs	identical to master now
+1d94da9e	remote	M	OK	tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs	branch blob in master history since mb; added=25 missingNow=0
+1d94da9e	remote	A	OK	tests/Antiphon.Tests/Api/ExpectationHoldReleaseEndpointTests.cs	identical to master now
+1d94da9e	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDeliveryFixture.cs	identical to master now
+1d94da9e	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDirectDeliveryTests.cs	identical to master now
+1d94da9e	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationReceiptTests.cs	identical to master now
+2060e274	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=1 missingNow=0
+2060e274	remote	M	OK	docs/agent-credentials.md	branch blob in master history since mb; added=9 missingNow=3
+2060e274	remote	M	OK	docs/docker-stack.md	branch blob in master history since mb; added=1 missingNow=0
+2060e274	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=1
+2060e274	remote	M	OK	docs/superpowers/plans/2026-09-24-card-0659-default-runner-plan.md	identical to master now
+2060e274	remote	A	OK	scripts/runner-slots.ps1	branch blob in master history since mb; added=55 missingNow=8
+2060e274	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=63 missingNow=7
+2060e274	remote	A	OK	server/Application/Dtos/RunnerSlotDtos.cs	identical to master now
+2060e274	remote	M	OK	server/Application/Dtos/SessionRunnerDtos.cs	identical to master now
+2060e274	remote	M	OK	server/Application/Interfaces/ISessionRunnerClient.cs	branch blob in master history since mb; added=6 missingNow=0
+2060e274	remote	M	OK	server/Application/Interfaces/ISessionRunnerDirectory.cs	branch blob in master history since mb; added=5 missingNow=0
+2060e274	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=38 missingNow=1
+2060e274	remote	M	OK	server/Application/Services/DispatchHoldDetails.cs	branch blob in master history since mb; added=6 missingNow=0
+2060e274	remote	M	OK	server/Application/Services/RemoteWorkspacePreparer.cs	branch blob in master history since mb; added=7 missingNow=0
+2060e274	remote	A	OK	server/Application/Services/RunnerSlotService.cs	branch blob in master history since mb; added=262 missingNow=0
+2060e274	remote	M	OK	server/Application/Settings/PhoneHomeRunnerSettings.cs	branch blob in master history since mb; added=12 missingNow=3
+2060e274	remote	M	OK	server/Domain/Enums/AgentIncidentKind.cs	branch blob in master history since mb; added=9 missingNow=0
+2060e274	remote	M	OK	server/Infrastructure/Agents/HangfireConfiguration.cs	branch blob in master history since mb; added=12 missingNow=0
+2060e274	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=32 missingNow=1
+2060e274	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=9 missingNow=2
+2060e274	remote	M	OK	server/Infrastructure/Agents/SessionRunner/RoutingSessionRunnerClient.cs	branch blob in master history since mb; added=7 missingNow=0
+2060e274	remote	M	OK	server/Infrastructure/Agents/SessionRunner/RunnerContractMapper.cs	branch blob in master history since mb; added=2 missingNow=0
+2060e274	remote	A	OK	server/Infrastructure/Agents/SessionRunner/RunnerSlotReconcileJob.cs	identical to master now
+2060e274	remote	A	OK	server/Infrastructure/Security/OperatorTokenFile.cs	branch blob in master history since mb; added=107 missingNow=5
+2060e274	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=15 missingNow=0
+2060e274	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=9 missingNow=0
+2060e274	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=35 missingNow=1
+2060e274	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeRuntimeAdapter.cs	branch blob in master history since mb; added=8 missingNow=0
+2060e274	remote	M	OK	src/Antiphon.SessionRunner/SessionRunnerRuntime.cs	branch blob in master history since mb; added=61 missingNow=0
+2060e274	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=30 missingNow=0
+2060e274	remote	A	OK	tests/Antiphon.SessionRunner.Tests/RunnerCapacityCountTests.cs	identical to master now
+2060e274	remote	M	OK	tests/Antiphon.Tests/Application/DispatchHoldVisibilityTests.cs	branch blob in master history since mb; added=30 missingNow=0
+2060e274	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRunnerSettingsValidatorTests.cs	branch blob in master history since mb; added=1 missingNow=0
+2060e274	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeSessionRoutingTests.cs	branch blob in master history since mb; added=53 missingNow=1
+2060e274	remote	M	OK	tests/Antiphon.Tests/Application/RemoteWorkspacePreparerTests.cs	branch blob in master history since mb; added=46 missingNow=0
+2060e274	remote	A	OK	tests/Antiphon.Tests/Application/RunnerSlotEndpointTests.cs	branch blob in master history since mb; added=299 missingNow=5
+2060e274	remote	A	OK	tests/Antiphon.Tests/Application/RunnerSlotRulesTests.cs	identical to master now
+2060e274	remote	M	OK	tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs	branch blob in master history since mb; added=12 missingNow=0
+2060e274	remote	A	OK	tests/Antiphon.Tests/Infrastructure/OperatorTokenFileTests.cs	branch blob in master history since mb; added=81 missingNow=0
+2060e274	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=26 missingNow=1
+22c54e3f	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0735-messagequeue-test-speed-plan.md	branch blob in master history since mb; added=159 missingNow=20
+2cd14d4c	remote	M	OK	server/Application/Exceptions/ValidationException.cs	identical to master now
+2cd14d4c	remote	M	OK	server/Infrastructure/Git/WorktreeManager.cs	branch blob in master history since mb; added=35 missingNow=27
+2cd14d4c	remote	A	OK	tests/Antiphon.Tests/Infrastructure/WorktreeManagerStartRefFetchTests.cs	branch blob in master history since mb; added=120 missingNow=120
+2dd9fbf3	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0457-plan.md	branch blob in master history since mb; added=32 missingNow=1
+2e841047	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=3 missingNow=2
+2e841047	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=11 missingNow=8
+2e841047	remote	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueuePhoneHomeDropTests.cs	branch blob in master history since mb; added=72 missingNow=0
+30103883	remote	A	OK	server/Application/Interfaces/IExpectationPromptSender.cs	branch blob in master history since mb; added=43 missingNow=4
+30103883	remote	A	OK	server/Application/Services/ExpectationNudgeDeliveryService.cs	branch blob in master history since mb; added=158 missingNow=10
+30103883	remote	A	OK	server/Application/Services/SessionMessageQueueService.Expectations.cs	branch blob in master history since mb; added=193 missingNow=39
+30103883	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=28 missingNow=2
+30103883	remote	M	OK	server/Domain/Enums/ExpectationWatchdogEnums.cs	branch blob in master history since mb; added=8 missingNow=5
+30103883	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDeliveryFixture.cs	branch blob in master history since mb; added=124 missingNow=1
+30103883	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDirectDeliveryTests.cs	branch blob in master history since mb; added=253 missingNow=10
+30103883	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationReceiptTests.cs	identical to master now
+354b15be	remote	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=2 missingNow=0
+359c1a1c	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0735-messagequeue-test-speed-plan.md	identical to master now
+359c1a1c	wt	M	OK	docs/testing-and-build.md	blob unseen but all 1 added lines in current master
+359c1a1c	wt	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.C561.cs	identical to master now
+359c1a1c	wt	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs	identical to master now
+359c1a1c	wt	M	OK	tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs	branch blob in master history since mb; added=45 missingNow=0
+359c1a1c	wt	A	OK	tests/Antiphon.Tests/TestHelpers/ScaledTimeProvider.cs	identical to master now
+359c1a1c	wt	A	OK	tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs	branch blob in master history since mb; added=48 missingNow=2
+359c1a1c	wt	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=1 missingNow=0
+359c1a1c	wt	M	OK	tests/linux-test-roster.json	identical to master now
+365d4862	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0464-plan.md	branch blob in master history since mb; added=30 missingNow=4
+36b868ff	wt	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=0
+36b868ff	wt	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=13 missingNow=0
+36b868ff	wt	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=1 missingNow=0
+36b868ff	wt	M	OK	server/Application/Services/AgentTaskLandService.cs	branch blob in master history since mb; added=51 missingNow=0
+36b868ff	wt	M	OK	server/Application/Services/AgentTaskLandSourceResolver.cs	branch blob in master history since mb; added=3 missingNow=0
+36b868ff	wt	M	OK	server/Application/Services/AgentTaskLandingProtocol.cs	branch blob in master history since mb; added=17 missingNow=0
+36b868ff	wt	M	OK	server/Application/Services/AgentTaskLandingState.cs	identical to master now
+36b868ff	wt	M	OK	server/Application/Services/LandOperationFactory.cs	branch blob in master history since mb; added=9 missingNow=2
+36b868ff	wt	M	OK	server/Application/Settings/DelegationSettings.cs	identical to master now
+36b868ff	wt	M	OK	server/appsettings.json	branch blob in master history since mb; added=1 missingNow=0
+36b868ff	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandPreparationIdentityTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandRecoveryTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandSourceFreshnessTests.cs	identical to master now
+36b868ff	wt	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceFakeTests.cs	identical to master now
+36b868ff	wt	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandingStateTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/ProcessSpawnLimitTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/TestHelpers/ControlledLandingGit.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/TestHelpers/ControlledLandingGitTests.cs	identical to master now
+36b868ff	wt	M	OK	tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs	branch blob in master history since mb; added=25 missingNow=0
+36b868ff	wt	M	OK	tests/Antiphon.Tests/TestHelpers/LandingProtocolHarness.cs	identical to master now
+37a70801	remote	A	OK	scripts/lib/release-authority.ps1	branch blob in master history since mb; added=508 missingNow=74
+37a70801	remote	M	OK	scripts/lib/release-gate.ps1	branch blob in master history since mb; added=30 missingNow=0
+37a70801	remote	M	OK	scripts/publish-release.ps1	branch blob in master history since mb; added=37 missingNow=1
+37a70801	remote	M	OK	scripts/test-release-gate.ps1	branch blob in master history since mb; added=787 missingNow=22
+37a70801	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGateAuthorityContractTests.cs	identical to master now
+37a70801	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGatePublicationAuthorityTests.cs	branch blob in master history since mb; added=74 missingNow=54
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/AgentExecutableResolverTests.cs	identical to master now
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/AgentPinPathTests.cs	identical to master now
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/DelegationUnitTests.cs	branch blob in master history since mb; added=5 missingNow=0
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/InstructionFileStampTests.cs	identical to master now
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/OrchestratorWorkspaceLayoutTests.cs	identical to master now
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskRoutingTests.cs	branch blob in master history since mb; added=8 missingNow=0
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Application/SessionDeliveryProfileTests.cs	identical to master now
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Infrastructure/OperatorTokenFileTests.cs	branch blob in master history since mb; added=7 missingNow=7
+3816b58e	remote	M	OK	tests/Antiphon.Tests/Infrastructure/WorktreeLockDiagnosticsTests.cs	identical to master now
+3895b67b	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0727-rolling-runner-upgrade-plan.md	branch blob in master history since mb; added=1102 missingNow=1
+39d0e7e2	remote	M	OK	docs/apphost-runbook.md	identical to master now
+39d0e7e2	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=8 missingNow=0
+39d0e7e2	remote	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	identical to master now
+39d0e7e2	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0457-plan.md	identical to master now
+39d0e7e2	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0464-plan.md	identical to master now
+39d0e7e2	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0767-plan.md	identical to master now
+39d0e7e2	remote	M	OK	docs/testing-and-build.md	branch blob in master history since mb; added=6 missingNow=0
+39d0e7e2	remote	M	OK	scripts/card.ps1	identical to master now
+39d0e7e2	remote	M	OK	server/Application/Services/ChannelBridgeService.cs	branch blob in master history since mb; added=119 missingNow=0
+39d0e7e2	remote	M	OK	src/Antiphon.Agents.Pty/PtyAgentRunner.cs	identical to master now
+39d0e7e2	remote	A	OK	src/Antiphon.Agents.Pty/PtyUtf8Decoder.cs	identical to master now
+39d0e7e2	remote	M	OK	src/Antiphon.Agents.Pty/TerminalScreen.cs	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Agents.Pty.Tests/ClaudeEffortDismissalReplayTests.cs	identical to master now
+39d0e7e2	remote	A	OK	tests/Antiphon.Agents.Pty.Tests/PtyUtf8DecoderTests.cs	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Agents.Pty.Tests/TerminalScreenTests.cs	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Tests/Application/ChannelBridgeTests.cs	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Tests/Application/ChannelInboundRecoveryTests.cs	branch blob in master history since mb; added=894 missingNow=0
+39d0e7e2	remote	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointExecutorLogTests.cs	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs	identical to master now
+39d0e7e2	remote	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointTaskOwnershipTests.cs	identical to master now
+39d0e7e2	remote	A	OK	tests/Antiphon.Tests/Checkpoints/Fixtures/plan-table-0723-same-after.md	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Tests/Checkpoints/TimeoutTests.cs	identical to master now
+39d0e7e2	remote	A	OK	tests/Antiphon.Tests/Scripts/CardCloseDeploymentPromptScriptTests.cs	identical to master now
+39d0e7e2	remote	M	OK	tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Baseline/BaselineComparer.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/CheckpointApp.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Cleanup/OutputCleanup.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Commands/WaitCommand.cs	identical to master now
+39d0e7e2	remote	A	OK	tools/Antiphon.Checkpoints/Execution/ExecutorLogWriter.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Execution/ExitCodes.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Execution/IDriver.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Execution/ProcessDriver.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RowRunner.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RowTimeout.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RunScheduler.cs	identical to master now
+39d0e7e2	remote	A	OK	tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs	identical to master now
+39d0e7e2	remote	A	OK	tools/Antiphon.Checkpoints/Execution/WindowsJobProcessHandle.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/CheckpointManifest.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/ManifestValidator.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Program.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Report/ReportModel.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Report/ReportWriter.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/RunRequest.cs	identical to master now
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs	branch blob in master history since mb; added=14 missingNow=0
+39d0e7e2	remote	M	OK	tools/Antiphon.Checkpoints/State/RunState.cs	identical to master now
+3c593d7c	remote	A	OK	docs/superpowers/plans/2026-09-17-card-0550-native-land-check-v26-evidence-and-barrier-plan.md	branch blob in master history since mb; added=241 missingNow=0
+3d4eb382	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0735-messagequeue-test-speed-plan.md	identical to master now
+3d4eb382	wt	M	OK	docs/testing-and-build.md	blob unseen but all 1 added lines in current master
+3d4eb382	wt	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.C561.cs	identical to master now
+3d4eb382	wt	M	OK	tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs	branch blob in master history since mb; added=58 missingNow=0
+3d4eb382	wt	M	OK	tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs	branch blob in master history since mb; added=45 missingNow=0
+3d4eb382	wt	A	OK	tests/Antiphon.Tests/TestHelpers/ScaledTimeProvider.cs	identical to master now
+3d4eb382	wt	A	OK	tests/Antiphon.Tests/TestHelpers/ScaledTimeProviderTests.cs	branch blob in master history since mb; added=48 missingNow=2
+3d4eb382	wt	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=1 missingNow=0
+3d4eb382	wt	M	OK	tests/linux-test-roster.json	identical to master now
+443b21c2	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=62 missingNow=4
+443b21c2	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=26 missingNow=2
+443b21c2	remote	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=21 missingNow=6
+443b21c2	remote	M	OK	server/Application/Services/DelegationWorktreeService.cs	branch blob in master history since mb; added=18 missingNow=0
+443b21c2	remote	M	OK	server/Application/Services/PhoneHomeLaunchPolicy.cs	branch blob in master history since mb; added=5 missingNow=0
+443b21c2	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerPinTests.cs	branch blob in master history since mb; added=516 missingNow=14
+443b21c2	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerRerouteTests.cs	branch blob in master history since mb; added=375 missingNow=24
+443b21c2	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	branch blob in master history since mb; added=3 missingNow=0
+443b21c2	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskRoutingTests.cs	branch blob in master history since mb; added=7 missingNow=0
+47be9689	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0557-plan.md	branch blob in master history since mb; added=37 missingNow=7
+4ce3b0ad	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=1 missingNow=1
+4ce3b0ad	remote	M	OK	docs/agent-credentials.md	branch blob in master history since mb; added=9 missingNow=3
+4ce3b0ad	remote	M	OK	docs/docker-stack.md	branch blob in master history since mb; added=1 missingNow=1
+4ce3b0ad	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=1
+4ce3b0ad	remote	A	OK	scripts/runner-slots.ps1	branch blob in master history since mb; added=55 missingNow=8
+4ce3b0ad	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=63 missingNow=7
+4ce3b0ad	remote	A	OK	server/Application/Dtos/RunnerSlotDtos.cs	identical to master now
+4ce3b0ad	remote	M	OK	server/Application/Dtos/SessionRunnerDtos.cs	identical to master now
+4ce3b0ad	remote	M	OK	server/Application/Interfaces/ISessionRunnerClient.cs	branch blob in master history since mb; added=6 missingNow=0
+4ce3b0ad	remote	M	OK	server/Application/Interfaces/ISessionRunnerDirectory.cs	branch blob in master history since mb; added=5 missingNow=0
+4ce3b0ad	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=38 missingNow=1
+4ce3b0ad	remote	M	OK	server/Application/Services/DispatchHoldDetails.cs	branch blob in master history since mb; added=6 missingNow=0
+4ce3b0ad	remote	M	OK	server/Application/Services/RemoteWorkspacePreparer.cs	branch blob in master history since mb; added=7 missingNow=0
+4ce3b0ad	remote	A	OK	server/Application/Services/RunnerSlotService.cs	branch blob in master history since mb; added=262 missingNow=0
+4ce3b0ad	remote	M	OK	server/Application/Settings/PhoneHomeRunnerSettings.cs	branch blob in master history since mb; added=11 missingNow=3
+4ce3b0ad	remote	M	OK	server/Domain/Enums/AgentIncidentKind.cs	branch blob in master history since mb; added=9 missingNow=0
+4ce3b0ad	remote	M	OK	server/Infrastructure/Agents/HangfireConfiguration.cs	branch blob in master history since mb; added=12 missingNow=0
+4ce3b0ad	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=32 missingNow=1
+4ce3b0ad	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=9 missingNow=2
+4ce3b0ad	remote	M	OK	server/Infrastructure/Agents/SessionRunner/RoutingSessionRunnerClient.cs	branch blob in master history since mb; added=7 missingNow=0
+4ce3b0ad	remote	M	OK	server/Infrastructure/Agents/SessionRunner/RunnerContractMapper.cs	branch blob in master history since mb; added=2 missingNow=0
+4ce3b0ad	remote	A	OK	server/Infrastructure/Agents/SessionRunner/RunnerSlotReconcileJob.cs	identical to master now
+4ce3b0ad	remote	A	OK	server/Infrastructure/Security/OperatorTokenFile.cs	branch blob in master history since mb; added=107 missingNow=5
+4ce3b0ad	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=15 missingNow=0
+4ce3b0ad	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=9 missingNow=0
+4ce3b0ad	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=35 missingNow=1
+4ce3b0ad	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeRuntimeAdapter.cs	branch blob in master history since mb; added=8 missingNow=0
+4ce3b0ad	remote	M	OK	src/Antiphon.SessionRunner/SessionRunnerRuntime.cs	branch blob in master history since mb; added=61 missingNow=0
+4ce3b0ad	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=30 missingNow=0
+4ce3b0ad	remote	A	OK	tests/Antiphon.SessionRunner.Tests/RunnerCapacityCountTests.cs	identical to master now
+4ce3b0ad	remote	M	OK	tests/Antiphon.Tests/Application/DispatchHoldVisibilityTests.cs	branch blob in master history since mb; added=30 missingNow=0
+4ce3b0ad	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeSessionRoutingTests.cs	branch blob in master history since mb; added=53 missingNow=1
+4ce3b0ad	remote	M	OK	tests/Antiphon.Tests/Application/RemoteWorkspacePreparerTests.cs	branch blob in master history since mb; added=46 missingNow=0
+4ce3b0ad	remote	A	OK	tests/Antiphon.Tests/Application/RunnerSlotEndpointTests.cs	branch blob in master history since mb; added=299 missingNow=5
+4ce3b0ad	remote	A	OK	tests/Antiphon.Tests/Application/RunnerSlotRulesTests.cs	identical to master now
+4ce3b0ad	remote	M	OK	tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs	branch blob in master history since mb; added=9 missingNow=3
+4ce3b0ad	remote	A	OK	tests/Antiphon.Tests/Infrastructure/OperatorTokenFileTests.cs	branch blob in master history since mb; added=81 missingNow=0
+4ce3b0ad	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=26 missingNow=1
+50a2b232	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0768-plan.md	branch blob in master history since mb; added=39 missingNow=4
+51b599cb	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0452-plan.md	branch blob in master history since mb; added=171 missingNow=0
+51b599cb	remote	M	OK	scripts/recover-repository-children.ps1	identical to master now
+51b599cb	remote	M	OK	server/Application/Services/LandOperationFactory.cs	identical to master now
+51b599cb	remote	M	OK	server/Infrastructure/Git/RepositoryChildJournal.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandActiveSourceClaimTests.cs	identical to master now
+51b599cb	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandIdentityMatrixTests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandLocalContainmentTests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandRemoteSourceRetentionATests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandRemoteSourceRetentionBTests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandRemoteSourceRetentionCTests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandRemoteSourceRetentionDTests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/Infrastructure/RepositoryChildRecoveryTests.cs	identical to master now
+51b599cb	remote	M	OK	tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs	branch blob in master history since mb; added=36 missingNow=33
+51b599cb	remote	M	OK	tests/Antiphon.Tests/Infrastructure/Resilience/ResilienceBudgetTests.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/TestHelpers/Card0452LandingCases.cs	identical to master now
+51b599cb	remote	M	OK	tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs	identical to master now
+51b599cb	remote	A	OK	tests/Antiphon.Tests/TestHelpers/RepositoryJournalCrashWorker.cs	identical to master now
+51b599cb	remote	M	OK	tests/Antiphon.Tests/TestHelpers/TestWorkerModes.cs	identical to master now
+51b599cb	remote	M	OK	tests/Antiphon.Tests/slow-tests-allowlist.txt	branch blob in master history since mb; added=14 missingNow=0
+520f3e0a	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=14 missingNow=0
+520f3e0a	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0647-durable-runner-spill-followup-plan.md	identical to master now
+520f3e0a	remote	M	OK	server/Application/Services/RemoteSpillCourier.cs	identical to master now
+520f3e0a	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=100 missingNow=4
+520f3e0a	remote	M	OK	server/Domain/Entities/SessionQueuedMessage.cs	branch blob in master history since mb; added=4 missingNow=0
+520f3e0a	remote	M	OK	server/Domain/Enums/DeliveryVerdict.cs	identical to master now
+520f3e0a	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=9 missingNow=0
+520f3e0a	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=2 missingNow=0
+520f3e0a	remote	A	OK	server/Migrations/20260924120000_AddQueuedRemoteSpillBodies.cs	identical to master now
+520f3e0a	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=5 missingNow=0
+520f3e0a	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=1 missingNow=0
+520f3e0a	remote	M	OK	src/Antiphon.SessionRunner/RunnerWorkspaceService.cs	identical to master now
+520f3e0a	remote	M	OK	tests/Antiphon.SessionRunner.Tests/RunnerWorkspaceServiceTests.cs	identical to master now
+520f3e0a	remote	A	OK	tests/Antiphon.Tests/Application/DurableRunnerSpillReceiptTests.cs	branch blob in master history since mb; added=199 missingNow=0
+520f3e0a	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeSpillTests.cs	identical to master now
+520f3e0a	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskDispatchProjectionTests.cs	branch blob in master history since mb; added=39 missingNow=1
+520f3e0a	remote	M	OK	tests/Antiphon.Tests/Application/RemoteCompletionSpillTests.cs	identical to master now
+5704b46b	wt	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=1
+5704b46b	wt	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=13 missingNow=0
+5704b46b	wt	M	OK	docs/superpowers/plans/2026-09-25-card-0727-rolling-runner-upgrade-plan.md	identical to master now
+5704b46b	wt	A	OK	scripts/runner-drain.ps1	branch blob in master history since mb; added=90 missingNow=2
+5704b46b	wt	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=33 missingNow=0
+5704b46b	wt	M	OK	server/Application/Dtos/SessionRunnerCatalogueDtos.cs	identical to master now
+5704b46b	wt	M	OK	server/Application/Interfaces/ISessionRunnerDirectory.cs	identical to master now
+5704b46b	wt	M	OK	server/Application/Services/AgentControlService.cs	identical to master now
+5704b46b	wt	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=85 missingNow=0
+5704b46b	wt	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=44 missingNow=0
+5704b46b	wt	M	OK	server/Application/Services/DispatchHoldDetails.cs	identical to master now
+5704b46b	wt	M	OK	server/Application/Services/RemoteWorkspacePreparer.cs	identical to master now
+5704b46b	wt	A	OK	server/Application/Services/RunnerState.cs	identical to master now
+5704b46b	wt	A	OK	server/Application/Services/RunnerStateLoader.cs	identical to master now
+5704b46b	wt	A	OK	server/Application/Services/RunnerStateService.cs	identical to master now
+5704b46b	wt	M	OK	server/Application/Services/SessionRunnerCatalogue.cs	identical to master now
+5704b46b	wt	A	OK	server/Domain/Entities/SessionRunnerState.cs	identical to master now
+5704b46b	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs	identical to master now
+5704b46b	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=1 missingNow=0
+5704b46b	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=67 missingNow=0
+5704b46b	wt	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=11 missingNow=0
+5704b46b	wt	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.Designer.cs	identical to master now
+5704b46b	wt	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.cs	identical to master now
+5704b46b	wt	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=23 missingNow=0
+5704b46b	wt	M	OK	server/Program.cs	branch blob in master history since mb; added=4 missingNow=0
+5704b46b	wt	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=23 missingNow=0
+5704b46b	wt	M	OK	tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs	identical to master now
+5704b46b	wt	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerDrainTests.cs	branch blob in master history since mb; added=532 missingNow=0
+5704b46b	wt	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs	branch blob in master history since mb; added=61 missingNow=1
+5704b46b	wt	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	identical to master now
+5704b46b	wt	A	OK	tests/Antiphon.Tests/Scripts/RunnerDrainScriptTests.cs	branch blob in master history since mb; added=34 missingNow=1
+5704b46b	wt	A	OK	tests/Antiphon.Tests/TestHelpers/DrainAfterClaimCheckDirectory.cs	identical to master now
+5704b46b	wt	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=9 missingNow=0
+5dc73c10	remote	M	OK	docs/superpowers/plans/2026-09-24-card-0650-expectation-watchdog-plan.md	identical to master now
+5dc73c10	remote	M	OK	server/Application/Services/AgentTaskLandNotificationService.cs	branch blob in master history since mb; added=7 missingNow=0
+5dc73c10	remote	M	OK	server/Application/Services/DispatchHoldDetails.cs	branch blob in master history since mb; added=40 missingNow=0
+5dc73c10	remote	M	OK	server/Application/Services/ExpectationLedger.cs	identical to master now
+5dc73c10	remote	M	OK	server/Application/Services/ExpectationObservation.cs	identical to master now
+5dc73c10	remote	A	OK	server/Application/Services/ExpectationPromptFormatter.cs	identical to master now
+5dc73c10	remote	M	OK	server/Application/Services/ExpectationSnapshotReader.cs	identical to master now
+5dc73c10	remote	M	OK	server/Application/Services/ExpectationWatchdogPolicy.cs	identical to master now
+5dc73c10	remote	M	OK	server/Application/Services/ExpectationWatchdogService.cs	identical to master now
+5dc73c10	remote	A	OK	server/Application/Services/LandNoteReceipt.cs	identical to master now
+5dc73c10	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDebtTests.cs	identical to master now
+5dc73c10	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationEpisodeTests.cs	identical to master now
+5dc73c10	remote	M	OK	tests/Antiphon.Tests/Application/ExpectationPipelineTests.cs	identical to master now
+5dc73c10	remote	M	OK	tests/Antiphon.Tests/Application/ExpectationSnapshotTests.cs	identical to master now
+5dc73c10	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationTestWorld.cs	identical to master now
+5ef74c0f	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=13 missingNow=2
+5ef74c0f	remote	M	OK	server/Application/Services/AgentTaskLandService.cs	branch blob in master history since mb; added=24 missingNow=4
+5ef74c0f	remote	M	OK	server/Domain/Entities/AgentTaskLandRequest.cs	branch blob in master history since mb; added=6 missingNow=0
+5ef74c0f	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=1 missingNow=0
+5ef74c0f	remote	A	OK	server/Migrations/20260924151156_AddLandHoldNotificationOwner.Designer.cs	identical to master now
+5ef74c0f	remote	A	OK	server/Migrations/20260924151156_AddLandHoldNotificationOwner.cs	identical to master now
+5ef74c0f	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=8 missingNow=0
+5ef74c0f	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandHeldNotificationTests.cs	branch blob in master history since mb; added=223 missingNow=9
+5ef9bb0e	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0657-runner-settlement-sync-plan.md	branch blob in master history since mb; added=319 missingNow=0
+609f77b4	remote	M	OK	docs/superpowers/plans/2026-09-26-card-0718-host-stats-plan.md	branch blob in master history since mb; added=740 missingNow=3
+67e84356	remote	A	OK	docs/investigations/2026-09-25-card-0714-grok-report-attribution.md	identical to master now
+67e84356	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0714-grok-report-attribution-plan.md	branch blob in master history since mb; added=164 missingNow=6
+695a54a1	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=9 missingNow=0
+695a54a1	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=18 missingNow=0
+695a54a1	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=112 missingNow=2
+695a54a1	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskServiceIntegrationTests.cs	branch blob in master history since mb; added=22 missingNow=0
+695a54a1	remote	A	OK	tests/Antiphon.Tests/Application/WorktreeDefaultContinuationTests.cs	identical to master now
+695a54a1	remote	M	OK	tests/Antiphon.Tests/TestHelpers/RepairSourceWorld.cs	branch blob in master history since mb; added=3 missingNow=0
+69c7a060	remote	M	OK	docs/apphost-runbook.md	identical to master now
+69c7a060	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=8 missingNow=0
+69c7a060	remote	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	identical to master now
+69c7a060	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0457-plan.md	identical to master now
+69c7a060	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0464-plan.md	identical to master now
+69c7a060	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0767-plan.md	identical to master now
+69c7a060	remote	M	OK	docs/testing-and-build.md	branch blob in master history since mb; added=6 missingNow=0
+69c7a060	remote	M	OK	scripts/card.ps1	identical to master now
+69c7a060	remote	M	OK	server/Application/Services/ChannelBridgeService.cs	branch blob in master history since mb; added=111 missingNow=0
+69c7a060	remote	M	OK	src/Antiphon.Agents.Pty/PtyAgentRunner.cs	identical to master now
+69c7a060	remote	A	OK	src/Antiphon.Agents.Pty/PtyUtf8Decoder.cs	identical to master now
+69c7a060	remote	M	OK	src/Antiphon.Agents.Pty/TerminalScreen.cs	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Agents.Pty.Tests/ClaudeEffortDismissalReplayTests.cs	identical to master now
+69c7a060	remote	A	OK	tests/Antiphon.Agents.Pty.Tests/PtyUtf8DecoderTests.cs	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Agents.Pty.Tests/TerminalScreenTests.cs	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Tests/Application/ChannelBridgeTests.cs	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Tests/Application/ChannelInboundRecoveryTests.cs	branch blob in master history since mb; added=816 missingNow=1
+69c7a060	remote	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointExecutorLogTests.cs	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs	identical to master now
+69c7a060	remote	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointTaskOwnershipTests.cs	identical to master now
+69c7a060	remote	A	OK	tests/Antiphon.Tests/Checkpoints/Fixtures/plan-table-0723-same-after.md	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Tests/Checkpoints/TimeoutTests.cs	identical to master now
+69c7a060	remote	A	OK	tests/Antiphon.Tests/Scripts/CardCloseDeploymentPromptScriptTests.cs	identical to master now
+69c7a060	remote	M	OK	tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Baseline/BaselineComparer.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/CheckpointApp.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Cleanup/OutputCleanup.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Commands/WaitCommand.cs	identical to master now
+69c7a060	remote	A	OK	tools/Antiphon.Checkpoints/Execution/ExecutorLogWriter.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Execution/ExitCodes.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Execution/IDriver.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Execution/ProcessDriver.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RowRunner.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RowTimeout.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RunScheduler.cs	identical to master now
+69c7a060	remote	A	OK	tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs	identical to master now
+69c7a060	remote	A	OK	tools/Antiphon.Checkpoints/Execution/WindowsJobProcessHandle.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/CheckpointManifest.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/ManifestValidator.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Program.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Report/ReportModel.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Report/ReportWriter.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/RunRequest.cs	identical to master now
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs	branch blob in master history since mb; added=14 missingNow=0
+69c7a060	remote	M	OK	tools/Antiphon.Checkpoints/State/RunState.cs	identical to master now
+6ca40cd0	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=1
+6ca40cd0	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=13 missingNow=0
+6ca40cd0	remote	M	OK	docs/superpowers/plans/2026-09-25-card-0727-rolling-runner-upgrade-plan.md	identical to master now
+6ca40cd0	remote	A	OK	scripts/runner-drain.ps1	branch blob in master history since mb; added=90 missingNow=2
+6ca40cd0	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=33 missingNow=0
+6ca40cd0	remote	M	OK	server/Application/Dtos/SessionRunnerCatalogueDtos.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Application/Interfaces/ISessionRunnerDirectory.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Application/Services/AgentControlService.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=85 missingNow=0
+6ca40cd0	remote	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=44 missingNow=0
+6ca40cd0	remote	M	OK	server/Application/Services/DispatchHoldDetails.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Application/Services/RemoteWorkspacePreparer.cs	identical to master now
+6ca40cd0	remote	A	OK	server/Application/Services/RunnerState.cs	identical to master now
+6ca40cd0	remote	A	OK	server/Application/Services/RunnerStateLoader.cs	identical to master now
+6ca40cd0	remote	A	OK	server/Application/Services/RunnerStateService.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Application/Services/SessionRunnerCatalogue.cs	identical to master now
+6ca40cd0	remote	A	OK	server/Domain/Entities/SessionRunnerState.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=1 missingNow=0
+6ca40cd0	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=67 missingNow=0
+6ca40cd0	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=11 missingNow=0
+6ca40cd0	remote	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.Designer.cs	identical to master now
+6ca40cd0	remote	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.cs	identical to master now
+6ca40cd0	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=23 missingNow=0
+6ca40cd0	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=4 missingNow=0
+6ca40cd0	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=23 missingNow=0
+6ca40cd0	remote	M	OK	tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs	identical to master now
+6ca40cd0	remote	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerDrainTests.cs	branch blob in master history since mb; added=532 missingNow=0
+6ca40cd0	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs	branch blob in master history since mb; added=61 missingNow=1
+6ca40cd0	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	identical to master now
+6ca40cd0	remote	A	OK	tests/Antiphon.Tests/Scripts/RunnerDrainScriptTests.cs	branch blob in master history since mb; added=34 missingNow=1
+6ca40cd0	remote	A	OK	tests/Antiphon.Tests/TestHelpers/DrainAfterClaimCheckDirectory.cs	identical to master now
+6ca40cd0	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=9 missingNow=0
+6ca40cd0	wt	M	OK	docs/agent-credentials.md	identical to master now
+6ca40cd0	wt	M	OK	docs/ops-http.md	blob unseen but all 4 added lines in master history since mb; missingNow=2
+6ca40cd0	wt	M	OK	docs/session-runtime-invariants.md	blob unseen but all 13 added lines in current master
+6ca40cd0	wt	M	OK	docs/testing-and-build.md	branch blob in master history since mb; added=14 missingNow=0
+6ca40cd0	wt	A	OK	scripts/runner-drain.ps1	branch blob in master history since mb; added=78 missingNow=6
+6ca40cd0	wt	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=18 missingNow=1
+6ca40cd0	wt	M	OK	server/Application/Dtos/SessionRunnerCatalogueDtos.cs	identical to master now
+6ca40cd0	wt	M	OK	server/Application/Interfaces/ISessionRunnerDirectory.cs	identical to master now
+6ca40cd0	wt	M	OK	server/Application/Services/AgentControlService.cs	identical to master now
+6ca40cd0	wt	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=80 missingNow=0
+6ca40cd0	wt	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=40 missingNow=2
+6ca40cd0	wt	M	OK	server/Application/Services/DispatchHoldDetails.cs	identical to master now
+6ca40cd0	wt	A	OK	server/Application/Services/RunnerState.cs	identical to master now
+6ca40cd0	wt	A	OK	server/Application/Services/RunnerStateLoader.cs	branch blob in master history since mb; added=29 missingNow=2
+6ca40cd0	wt	A	OK	server/Application/Services/RunnerStateService.cs	branch blob in master history since mb; added=88 missingNow=3
+6ca40cd0	wt	M	OK	server/Application/Services/SessionRunnerCatalogue.cs	identical to master now
+6ca40cd0	wt	A	OK	server/Domain/Entities/SessionRunnerState.cs	identical to master now
+6ca40cd0	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs	identical to master now
+6ca40cd0	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=1 missingNow=0
+6ca40cd0	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=67 missingNow=0
+6ca40cd0	wt	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=11 missingNow=0
+6ca40cd0	wt	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.Designer.cs	identical to master now
+6ca40cd0	wt	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.cs	identical to master now
+6ca40cd0	wt	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=23 missingNow=0
+6ca40cd0	wt	M	OK	server/Program.cs	blob unseen but all 4 added lines in current master
+6ca40cd0	wt	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=23 missingNow=0
+6ca40cd0	wt	M	OK	tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs	identical to master now
+6ca40cd0	wt	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerDrainTests.cs	branch blob in master history since mb; added=481 missingNow=2
+6ca40cd0	wt	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs	branch blob in master history since mb; added=363 missingNow=4
+6ca40cd0	wt	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRunnerSettingsValidatorTests.cs	identical to master now
+6ca40cd0	wt	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	identical to master now
+6ca40cd0	wt	M	OK	tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs	identical to master now
+6ca40cd0	wt	A	OK	tests/Antiphon.Tests/Scripts/RunnerDrainScriptTests.cs	branch blob in master history since mb; added=32 missingNow=1
+6ca40cd0	wt	A	OK	tests/Antiphon.Tests/TestHelpers/DrainAfterClaimCheckDirectory.cs	identical to master now
+6ca40cd0	wt	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=5 missingNow=0
+6ca40cd0	wt	A	OK	tests/Antiphon.Tests/TestHelpers/RollingRunnerSettings.cs	identical to master now
+6eed34e6	remote	M	OK	docs/superpowers/plans/2026-09-24-card-0650-expectation-watchdog-plan.md	identical to master now
+6eed34e6	remote	M	OK	server/Application/Services/AgentTaskLandNotificationService.cs	branch blob in master history since mb; added=7 missingNow=0
+6eed34e6	remote	M	OK	server/Application/Services/DispatchHoldDetails.cs	branch blob in master history since mb; added=40 missingNow=0
+6eed34e6	remote	M	OK	server/Application/Services/ExpectationLedger.cs	identical to master now
+6eed34e6	remote	M	OK	server/Application/Services/ExpectationObservation.cs	identical to master now
+6eed34e6	remote	A	OK	server/Application/Services/ExpectationPromptFormatter.cs	identical to master now
+6eed34e6	remote	M	OK	server/Application/Services/ExpectationSnapshotReader.cs	identical to master now
+6eed34e6	remote	M	OK	server/Application/Services/ExpectationWatchdogPolicy.cs	identical to master now
+6eed34e6	remote	M	OK	server/Application/Services/ExpectationWatchdogService.cs	identical to master now
+6eed34e6	remote	A	OK	server/Application/Services/LandNoteReceipt.cs	identical to master now
+6eed34e6	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDebtTests.cs	identical to master now
+6eed34e6	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationEpisodeTests.cs	identical to master now
+6eed34e6	remote	M	OK	tests/Antiphon.Tests/Application/ExpectationPipelineTests.cs	identical to master now
+6eed34e6	remote	M	OK	tests/Antiphon.Tests/Application/ExpectationSnapshotTests.cs	identical to master now
+6eed34e6	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationTestWorld.cs	identical to master now
+70302dc6	remote	M	OK	.gitattributes	identical to master now
+70302dc6	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=17 missingNow=0
+70302dc6	remote	M	OK	docker/session-runner-grok/Dockerfile	identical to master now
+70302dc6	remote	A	OK	docker/session-runner-grok/verify-codex-image.sh	identical to master now
+70302dc6	remote	M	OK	docker/stack.env.example	branch blob in master history since mb; added=4 missingNow=0
+70302dc6	remote	M	OK	docker/stack/init-state.sh	branch blob in master history since mb; added=38 missingNow=25
+70302dc6	remote	M	OK	docs/docker-stack.md	branch blob in master history since mb; added=12 missingNow=4
+70302dc6	remote	M	OK	docs/superpowers/plans/2026-09-24-card-0660-codex-on-server2-plan.md	identical to master now
+70302dc6	remote	M	OK	scripts/c590-remote.sh	branch blob in master history since mb; added=48 missingNow=0
+70302dc6	remote	A	OK	scripts/verify-card0660-codex-image.ps1	branch blob in master history since mb; added=128 missingNow=0
+70302dc6	remote	A	OK	tests/Antiphon.Tests/Infrastructure/CodexRunnerImageContractTests.cs	branch blob in master history since mb; added=264 missingNow=3
+70302dc6	remote	M	OK	tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs	branch blob in master history since mb; added=170 missingNow=3
+74da5d1b	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0753-landing-owner-recovery-plan.md	branch blob in master history since mb; added=38 missingNow=4
+78c5f868	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0717-database-call-sites.md	branch blob in master history since mb; added=216 missingNow=2
+78c5f868	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0717-polly-resilience-plan.md	identical to master now
+78c5f868	wt	A	OK	docs/superpowers/plans/2026-09-25-card-0717-database-call-sites.md	branch blob in master history since mb; added=216 missingNow=2
+78c5f868	wt	A	OK	docs/superpowers/plans/2026-09-25-card-0717-polly-resilience-plan.md	identical to master now
+7dc235bc	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=9 missingNow=3
+7dc235bc	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0647-durable-runner-spill-followup-plan.md	branch blob in master history since mb; added=25 missingNow=4
+7dc235bc	remote	M	OK	server/Application/Services/RemoteSpillCourier.cs	branch blob in master history since mb; added=114 missingNow=14
+7dc235bc	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=68 missingNow=9
+7dc235bc	remote	M	OK	server/Domain/Entities/SessionQueuedMessage.cs	branch blob in master history since mb; added=4 missingNow=0
+7dc235bc	remote	M	OK	server/Domain/Enums/DeliveryVerdict.cs	identical to master now
+7dc235bc	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=9 missingNow=0
+7dc235bc	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=2 missingNow=0
+7dc235bc	remote	A	OK	server/Migrations/20260924120000_AddQueuedRemoteSpillBodies.cs	identical to master now
+7dc235bc	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=5 missingNow=0
+7dc235bc	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=1 missingNow=0
+7dc235bc	remote	M	OK	src/Antiphon.SessionRunner/RunnerWorkspaceService.cs	branch blob in master history since mb; added=88 missingNow=4
+7dc235bc	remote	M	OK	tests/Antiphon.SessionRunner.Tests/RunnerWorkspaceServiceTests.cs	branch blob in master history since mb; added=42 missingNow=0
+7dc235bc	remote	A	OK	tests/Antiphon.Tests/Application/DurableRunnerSpillReceiptTests.cs	branch blob in master history since mb; added=160 missingNow=2
+7dc235bc	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeSpillTests.cs	identical to master now
+7dc235bc	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskDispatchProjectionTests.cs	branch blob in master history since mb; added=39 missingNow=1
+7f644884	remote	M	OK	.gitattributes	identical to master now
+7f644884	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=6 missingNow=3
+7f644884	remote	M	OK	docker/session-runner-grok/Dockerfile	identical to master now
+7f644884	remote	A	OK	docker/session-runner-grok/verify-codex-image.sh	identical to master now
+7f644884	remote	M	OK	docker/stack/init-state.sh	branch blob in master history since mb; added=26 missingNow=19
+7f644884	remote	A	OK	scripts/verify-card0660-codex-image.ps1	branch blob in master history since mb; added=121 missingNow=3
+7f644884	remote	A	OK	tests/Antiphon.Tests/Infrastructure/CodexRunnerImageContractTests.cs	branch blob in master history since mb; added=152 missingNow=28
+80103e29	wt	M	OK	client/src/api/attention.ts	identical to master now
+80103e29	wt	M	OK	client/src/features/attention/attentionVisuals.test.ts	branch blob in master history since mb; added=4 missingNow=0
+80103e29	wt	M	OK	client/src/features/attention/attentionVisuals.ts	branch blob in master history since mb; added=7 missingNow=1
+80103e29	wt	M	OK	docs/bootstrap.md	branch blob in master history since mb; added=5 missingNow=0
+80103e29	wt	M	OK	docs/ops-http.md	blob unseen but all 1 added lines in current master
+80103e29	wt	M	OK	docs/orchestration-loop.md	blob unseen but all 7 added lines in current master
+80103e29	wt	M	OK	docs/session-runtime-invariants.md	blob unseen but all 5 added lines in current master
+80103e29	wt	M	OK	docs/superpowers/plans/2026-09-26-card-0726-runner-and-journal-alarms-plan.md	branch blob in master history since mb; added=15 missingNow=1
+80103e29	wt	M	OK	server/Application/Dtos/AttentionDtos.cs	identical to master now
+80103e29	wt	A	OK	server/Application/Services/AttentionService.Alarms.cs	branch blob in master history since mb; added=59 missingNow=6
+80103e29	wt	M	OK	server/Application/Services/AttentionService.cs	branch blob in master history since mb; added=8 missingNow=0
+80103e29	wt	M	OK	server/Application/Services/RunnerAlarmCoordinator.cs	identical to master now
+80103e29	wt	M	OK	server/Infrastructure/Agents/SessionRunner/RunnerAlarmState.cs	identical to master now
+80103e29	wt	A	OK	tests/Antiphon.Tests/Application/RunnerAlarmAttentionTests.cs	branch blob in master history since mb; added=107 missingNow=7
+86d683e9	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0452-plan.md	branch blob in master history since mb; added=40 missingNow=10
+86e57e3d	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0452-plan.md	branch blob in master history since mb; added=171 missingNow=0
+8afa8f97	remote	A	OK	docs/investigations/2026-09-24-card-0664-consumer-slot-release.md	branch blob in master history since mb; added=193 missingNow=0
+907b5d3e	wt	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	identical to master now
+907b5d3e	wt	M	OK	docs/testing-and-build.md	blob unseen but all 5 added lines in master history since mb; missingNow=1
+907b5d3e	wt	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointExecutorLogTests.cs	identical to master now
+907b5d3e	wt	M	OK	tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs	identical to master now
+907b5d3e	wt	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointTaskOwnershipTests.cs	branch blob in master history since mb; added=561 missingNow=4
+907b5d3e	wt	A	OK	tests/Antiphon.Tests/Checkpoints/Fixtures/plan-table-0723-same-after.md	identical to master now
+907b5d3e	wt	M	OK	tests/Antiphon.Tests/Checkpoints/TimeoutTests.cs	branch blob in master history since mb; added=59 missingNow=2
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Baseline/BaselineComparer.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/CheckpointApp.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Cleanup/OutputCleanup.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Commands/WaitCommand.cs	identical to master now
+907b5d3e	wt	A	OK	tools/Antiphon.Checkpoints/Execution/ExecutorLogWriter.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Execution/ExitCodes.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Execution/IDriver.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Execution/ProcessDriver.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Execution/RowRunner.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Execution/RowTimeout.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Execution/RunScheduler.cs	identical to master now
+907b5d3e	wt	A	OK	tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs	branch blob in master history since mb; added=152 missingNow=10
+907b5d3e	wt	A	OK	tools/Antiphon.Checkpoints/Execution/WindowsJobProcessHandle.cs	branch blob in master history since mb; added=297 missingNow=173
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Manifest/CheckpointManifest.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Manifest/ManifestValidator.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Program.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Report/ReportModel.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Report/ReportWriter.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/RunRequest.cs	identical to master now
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs	branch blob in master history since mb; added=14 missingNow=0
+907b5d3e	wt	M	OK	tools/Antiphon.Checkpoints/State/RunState.cs	identical to master now
+924d72d5	remote	A	OK	docs/investigations/2026-09-17-card-0558-stages-as-shareable-workflows.md	identical to master now
+924d72d5	remote	A	OK	docs/superpowers/plans/2026-09-17-card-0558-stages-as-shareable-workflows-plan.md	branch blob in master history since mb; added=774 missingNow=0
+92783ab1	remote	A	OK	scripts/lib/release-authority.ps1	branch blob in master history since mb; added=644 missingNow=6
+92783ab1	remote	M	OK	scripts/lib/release-gate.ps1	branch blob in master history since mb; added=69 missingNow=2
+92783ab1	remote	M	OK	scripts/publish-release.ps1	branch blob in master history since mb; added=47 missingNow=2
+92783ab1	remote	M	OK	scripts/test-release-gate.ps1	branch blob in master history since mb; added=964 missingNow=13
+92783ab1	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGateAuthorityContractTests.cs	identical to master now
+92783ab1	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGatePublicationAuthorityTests.cs	branch blob in master history since mb; added=89 missingNow=63
+92b9022f	wt	M	OK	docs/ops-http.md	blob unseen but all 1 added lines in current master
+92b9022f	wt	M	OK	docs/orchestration-loop.md	blob unseen but all 13 added lines in current master
+92b9022f	wt	M	OK	docs/session-runtime-invariants.md	blob unseen but all 1 added lines in current master
+92b9022f	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-plan.md	identical to master now
+92b9022f	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-probe.diff	identical to master now
+92b9022f	wt	M	OK	server/Application/Services/AgentTaskLandService.cs	branch blob in master history since mb; added=51 missingNow=0
+92b9022f	wt	M	OK	server/Application/Services/AgentTaskLandSourceResolver.cs	branch blob in master history since mb; added=3 missingNow=0
+92b9022f	wt	M	OK	server/Application/Services/AgentTaskLandingProtocol.cs	branch blob in master history since mb; added=17 missingNow=0
+92b9022f	wt	M	OK	server/Application/Services/AgentTaskLandingState.cs	identical to master now
+92b9022f	wt	M	OK	server/Application/Services/LandOperationFactory.cs	branch blob in master history since mb; added=9 missingNow=2
+92b9022f	wt	M	OK	server/Application/Settings/DelegationSettings.cs	blob unseen but all 9 added lines in current master
+92b9022f	wt	M	OK	server/appsettings.json	blob unseen but all 1 added lines in current master
+92b9022f	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandPreparationIdentityTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandRecoveryTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandSourceFreshnessTests.cs	identical to master now
+92b9022f	wt	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceFakeTests.cs	identical to master now
+92b9022f	wt	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandingStateTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/ProcessSpawnLimitTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/TestHelpers/ControlledLandingGit.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/TestHelpers/ControlledLandingGitTests.cs	identical to master now
+92b9022f	wt	M	OK	tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs	branch blob in master history since mb; added=25 missingNow=0
+92b9022f	wt	M	OK	tests/Antiphon.Tests/TestHelpers/LandingProtocolHarness.cs	identical to master now
+94d4b1de	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0566-plan.md	branch blob in master history since mb; added=254 missingNow=0
+993405ad	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=70 missingNow=0
+993405ad	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=9 missingNow=0
+993405ad	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=28 missingNow=0
+993405ad	remote	A	OK	tests/Antiphon.Tests/Application/BootWedgeRelaunchParityTests.cs	branch blob in master history since mb; added=200 missingNow=1
+9b83888e	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0684-conflicted-land-and-adopt-repair-plan.md	branch blob in master history since mb; added=455 missingNow=1
+9e28086d	remote	M	OK	docs/agent-credentials.md	branch blob in master history since mb; added=11 missingNow=1
+9e28086d	remote	M	OK	docs/antiphon-api.md	branch blob in master history since mb; added=5 missingNow=0
+9e28086d	remote	M	OK	docs/bootstrap.md	branch blob in master history since mb; added=2 missingNow=0
+9e28086d	remote	M	OK	docs/logs.md	branch blob in master history since mb; added=1 missingNow=0
+9e28086d	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=0
+9e28086d	remote	A	OK	scripts/hangfire-dashboard.ps1	identical to master now
+9e28086d	remote	M	OK	scripts/logs.ps1	identical to master now
+9e28086d	remote	A	OK	server/Api/Endpoints/OperatorEndpoints.cs	branch blob in master history since mb; added=48 missingNow=1
+9e28086d	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=3 missingNow=0
+9e28086d	remote	A	OK	server/Application/Dtos/OperatorDashboardLoginDto.cs	identical to master now
+9e28086d	remote	A	OK	server/Infrastructure/Security/OperatorCredential.cs	identical to master now
+9e28086d	remote	A	OK	server/Infrastructure/Security/OperatorDashboardAuthorizationFilter.cs	identical to master now
+9e28086d	remote	A	OK	server/Infrastructure/Security/OperatorDashboardSessions.cs	identical to master now
+9e28086d	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=13 missingNow=0
+9e28086d	remote	A	OK	tests/Antiphon.Tests/Api/OperatorDashboardLoginTests.cs	branch blob in master history since mb; added=76 missingNow=3
+9e28086d	remote	M	OK	tests/Antiphon.Tests/Application/RunnerSlotEndpointTests.cs	identical to master now
+9e28086d	remote	M	OK	tests/Antiphon.Tests/Infrastructure/HangfireStartupSafetyTests.cs	identical to master now
+9e28086d	remote	A	OK	tests/Antiphon.Tests/Infrastructure/OperatorDashboardSessionsTests.cs	identical to master now
+9e28086d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs	branch blob in master history since mb; added=7 missingNow=1
+9e28086d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=9 missingNow=1
+a103fe6f	remote	M	OK	docs/logs.md	branch blob in master history since mb; added=11 missingNow=6
+a36875a7	remote	A	OK	server/Application/Interfaces/IExpectationPromptSender.cs	branch blob in master history since mb; added=44 missingNow=2
+a36875a7	remote	A	OK	server/Application/Services/ExpectationNudgeDeliveryService.cs	branch blob in master history since mb; added=158 missingNow=10
+a36875a7	remote	A	OK	server/Application/Services/SessionMessageQueueService.Expectations.cs	branch blob in master history since mb; added=214 missingNow=42
+a36875a7	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=28 missingNow=2
+a36875a7	remote	M	OK	server/Domain/Enums/ExpectationWatchdogEnums.cs	branch blob in master history since mb; added=10 missingNow=1
+a36875a7	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDeliveryFixture.cs	branch blob in master history since mb; added=124 missingNow=1
+a36875a7	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDirectDeliveryTests.cs	branch blob in master history since mb; added=285 missingNow=1
+a36875a7	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationReceiptTests.cs	identical to master now
+a57a83df	remote	M	OK	server/Application/Dtos/AgentTaskDtos.cs	branch blob in master history since mb; added=6 missingNow=0
+a57a83df	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=36 missingNow=2
+a57a83df	remote	A	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=152 missingNow=21
+a57a83df	remote	M	OK	server/Application/Settings/DelegationSettings.cs	branch blob in master history since mb; added=14 missingNow=6
+a57a83df	remote	M	OK	server/Application/Settings/PhoneHomeRunnerSettings.cs	branch blob in master history since mb; added=3 missingNow=2
+a57a83df	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerCreateTests.cs	branch blob in master history since mb; added=351 missingNow=16
+a57a83df	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerEligibilityTests.cs	branch blob in master history since mb; added=104 missingNow=2
+a7ab0cda	remote	M	OK	server/Application/Services/ExpectationLedger.cs	identical to master now
+a7ab0cda	remote	M	OK	server/Application/Services/ExpectationObservation.cs	branch blob in master history since mb; added=65 missingNow=0
+a7ab0cda	remote	A	OK	server/Application/Services/ExpectationPromptFormatter.cs	identical to master now
+a7ab0cda	remote	M	OK	server/Application/Services/ExpectationSnapshotReader.cs	branch blob in master history since mb; added=179 missingNow=18
+a7ab0cda	remote	M	OK	server/Application/Services/ExpectationWatchdogPolicy.cs	branch blob in master history since mb; added=112 missingNow=0
+a7ab0cda	remote	M	OK	server/Application/Services/ExpectationWatchdogService.cs	branch blob in master history since mb; added=196 missingNow=2
+a7ab0cda	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDebtTests.cs	branch blob in master history since mb; added=258 missingNow=1
+a7ab0cda	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationEpisodeTests.cs	identical to master now
+a7ab0cda	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationTestWorld.cs	identical to master now
+a8f042bb	remote	A	OK	docs/investigations/2026-09-17-card-0558-stages-as-shareable-workflows.md	identical to master now
+a8f042bb	remote	A	OK	docs/superpowers/plans/2026-09-17-card-0558-stages-as-shareable-workflows-plan.md	branch blob in master history since mb; added=322 missingNow=38
+aadd05ab	remote	M	OK	.gitattributes	identical to master now
+aadd05ab	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=6 missingNow=3
+aadd05ab	remote	M	OK	docker/session-runner-grok/Dockerfile	identical to master now
+aadd05ab	remote	A	OK	docker/session-runner-grok/verify-codex-image.sh	identical to master now
+aadd05ab	remote	M	OK	docker/stack/init-state.sh	branch blob in master history since mb; added=26 missingNow=19
+aadd05ab	remote	A	OK	scripts/verify-card0660-codex-image.ps1	branch blob in master history since mb; added=121 missingNow=3
+aadd05ab	remote	A	OK	src/Antiphon.SessionRunner/CodexAuthProbe.cs	branch blob in master history since mb; added=73 missingNow=4
+aadd05ab	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=38 missingNow=0
+aadd05ab	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeSettings.cs	branch blob in master history since mb; added=11 missingNow=0
+aadd05ab	remote	M	OK	src/Antiphon.SessionRunner/Program.cs	branch blob in master history since mb; added=2 missingNow=0
+aadd05ab	remote	M	OK	src/Antiphon.SessionRunner/RoutingProviderAuthProbe.cs	identical to master now
+aadd05ab	remote	A	OK	tests/Antiphon.SessionRunner.Tests/CodexAuthProbeTests.cs	branch blob in master history since mb; added=144 missingNow=0
+aadd05ab	remote	A	OK	tests/Antiphon.SessionRunner.Tests/CodexProviderAuthRoutingTests.cs	identical to master now
+aadd05ab	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=155 missingNow=1
+aadd05ab	remote	A	OK	tests/Antiphon.Tests/Infrastructure/CodexRunnerImageContractTests.cs	branch blob in master history since mb; added=152 missingNow=28
+b0e67a1d	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0566-plan.md	branch blob in master history since mb; added=29 missingNow=0
+b18bb8e3	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=11 missingNow=0
+b18bb8e3	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=2 missingNow=0
+b18bb8e3	remote	M	OK	server/Application/Exceptions/ValidationException.cs	identical to master now
+b18bb8e3	remote	M	OK	server/Application/Interfaces/IRepositoryMutationLease.cs	identical to master now
+b18bb8e3	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=9 missingNow=1
+b18bb8e3	remote	A	OK	server/Application/Services/StartRefAvailability.cs	identical to master now
+b18bb8e3	remote	M	OK	server/Infrastructure/Git/LandingGit.cs	branch blob in master history since mb; added=20 missingNow=0
+b18bb8e3	remote	M	OK	server/Infrastructure/Git/RepositoryChildJournal.cs	branch blob in master history since mb; added=2 missingNow=0
+b18bb8e3	remote	M	OK	server/Infrastructure/Git/WorktreeManager.cs	branch blob in master history since mb; added=8 missingNow=0
+b18bb8e3	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=2 missingNow=0
+b18bb8e3	remote	A	OK	tests/Antiphon.Tests/Application/StartRefAvailabilityTests.cs	identical to master now
+b18bb8e3	remote	M	OK	tests/Antiphon.Tests/Application/WorktreeStartRefDispatchTests.cs	identical to master now
+b18bb8e3	remote	M	OK	tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs	branch blob in master history since mb; added=53 missingNow=0
+b18bb8e3	remote	A	OK	tests/Antiphon.Tests/Infrastructure/WorktreeManagerStartRefLocalOnlyTests.cs	identical to master now
+b18bb8e3	remote	M	OK	tests/Antiphon.Tests/TestHelpers/RepairSourceWorld.cs	identical to master now
+b18bb8e3	remote	A	OK	tests/Antiphon.Tests/TestHelpers/StartRefGit.cs	identical to master now
+b560c49a	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=9 missingNow=0
+b560c49a	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=5 missingNow=0
+b560c49a	remote	M	OK	server/Application/Services/AgentTaskReplyService.cs	branch blob in master history since mb; added=37 missingNow=0
+b560c49a	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=5 missingNow=1
+b560c49a	remote	M	OK	server/Application/Services/CompletionNoteStamp.cs	identical to master now
+b560c49a	remote	M	OK	server/Application/Services/CompletionNoteWork.cs	identical to master now
+b560c49a	remote	M	OK	server/Application/Services/OutputDistillationService.cs	identical to master now
+b560c49a	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=26 missingNow=1
+b560c49a	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=7 missingNow=0
+b560c49a	remote	M	OK	server/Infrastructure/Orchestration/CompletionNoteWorkHostedService.cs	identical to master now
+b560c49a	remote	A	OK	server/Migrations/20260925150636_AddCompletionRecoveryIndexes.Designer.cs	identical to master now
+b560c49a	remote	A	OK	server/Migrations/20260925150636_AddCompletionRecoveryIndexes.cs	identical to master now
+b560c49a	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=5 missingNow=0
+b560c49a	remote	A	OK	tests/Antiphon.Tests/Application/CompletionNoteWorkQueueTests.cs	identical to master now
+b560c49a	remote	A	OK	tests/Antiphon.Tests/Application/PostLandMutationDeliveryTests.CompletionRecovery.cs	identical to master now
+b560c49a	remote	M	OK	tests/Antiphon.Tests/Application/PostLandMutationDeliveryTests.cs	identical to master now
+bc527408	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=0
+bc527408	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=13 missingNow=0
+bc527408	remote	M	OK	docs/superpowers/plans/2026-09-25-card-0727-rolling-runner-upgrade-plan.md	identical to master now
+bc527408	remote	A	OK	scripts/runner-drain.ps1	branch blob in master history since mb; added=90 missingNow=2
+bc527408	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=33 missingNow=0
+bc527408	remote	M	OK	server/Application/Dtos/SessionRunnerCatalogueDtos.cs	identical to master now
+bc527408	remote	M	OK	server/Application/Interfaces/ISessionRunnerDirectory.cs	identical to master now
+bc527408	remote	M	OK	server/Application/Services/AgentControlService.cs	identical to master now
+bc527408	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=112 missingNow=0
+bc527408	remote	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=44 missingNow=0
+bc527408	remote	M	OK	server/Application/Services/DispatchHoldDetails.cs	identical to master now
+bc527408	remote	M	OK	server/Application/Services/RemoteWorkspacePreparer.cs	identical to master now
+bc527408	remote	A	OK	server/Application/Services/RunnerState.cs	identical to master now
+bc527408	remote	A	OK	server/Application/Services/RunnerStateLoader.cs	identical to master now
+bc527408	remote	A	OK	server/Application/Services/RunnerStateService.cs	identical to master now
+bc527408	remote	M	OK	server/Application/Services/SessionRunnerCatalogue.cs	identical to master now
+bc527408	remote	A	OK	server/Domain/Entities/SessionRunnerState.cs	identical to master now
+bc527408	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs	identical to master now
+bc527408	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=1 missingNow=0
+bc527408	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=67 missingNow=0
+bc527408	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=11 missingNow=0
+bc527408	remote	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.Designer.cs	identical to master now
+bc527408	remote	A	OK	server/Migrations/20260926023339_AddSessionRunnerStates.cs	identical to master now
+bc527408	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=23 missingNow=0
+bc527408	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=4 missingNow=0
+bc527408	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=23 missingNow=0
+bc527408	remote	M	OK	tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs	identical to master now
+bc527408	remote	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerDrainTests.cs	identical to master now
+bc527408	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs	branch blob in master history since mb; added=65 missingNow=1
+bc527408	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	identical to master now
+bc527408	remote	A	OK	tests/Antiphon.Tests/Scripts/RunnerDrainScriptTests.cs	branch blob in master history since mb; added=34 missingNow=1
+bc527408	remote	A	OK	tests/Antiphon.Tests/TestHelpers/DrainAfterClaimCheckDirectory.cs	identical to master now
+bc527408	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=9 missingNow=0
+bca19885	remote	A	OK	server/Application/Dtos/RemoteSettlementSyncDtos.cs	branch blob in master history since mb; added=57 missingNow=0
+bca19885	remote	M	OK	server/Application/Services/AgentTaskReplyService.cs	branch blob in master history since mb; added=8 missingNow=7
+bca19885	remote	M	OK	server/Application/Services/RemoteWorkspaceService.cs	branch blob in master history since mb; added=214 missingNow=20
+bca19885	remote	M	OK	tests/Antiphon.Tests/Application/RemoteWorktreeMirrorTests.cs	branch blob in master history since mb; added=106 missingNow=0
+bca19885	remote	A	OK	tests/Antiphon.Tests/Application/RunnerSettlementSyncTests.cs	branch blob in master history since mb; added=473 missingNow=10
+bddfb3cc	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=15 missingNow=0
+bddfb3cc	remote	M	OK	server/Application/Services/AgentTaskLandService.cs	branch blob in master history since mb; added=37 missingNow=0
+bddfb3cc	remote	M	OK	server/Domain/Entities/AgentTaskLandRequest.cs	branch blob in master history since mb; added=6 missingNow=0
+bddfb3cc	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=1 missingNow=0
+bddfb3cc	remote	A	OK	server/Migrations/20260924151156_AddLandHoldNotificationOwner.Designer.cs	identical to master now
+bddfb3cc	remote	A	OK	server/Migrations/20260924151156_AddLandHoldNotificationOwner.cs	identical to master now
+bddfb3cc	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=8 missingNow=0
+bddfb3cc	remote	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandHeldNotificationTests.cs	identical to master now
+bddfb3cc	remote	M	OK	tests/Antiphon.Tests/TestHelpers/LandingSafetyHarness.cs	branch blob in master history since mb; added=2 missingNow=1
+bf7e81ee	remote	M	OK	.gitattributes	identical to master now
+bf7e81ee	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=6 missingNow=3
+bf7e81ee	remote	M	OK	docker/session-runner-grok/Dockerfile	identical to master now
+bf7e81ee	remote	A	OK	docker/session-runner-grok/verify-codex-image.sh	identical to master now
+bf7e81ee	remote	M	OK	docker/stack/init-state.sh	branch blob in master history since mb; added=26 missingNow=19
+bf7e81ee	remote	A	OK	scripts/verify-card0660-codex-image.ps1	branch blob in master history since mb; added=121 missingNow=3
+bf7e81ee	remote	A	OK	src/Antiphon.SessionRunner/CodexAuthProbe.cs	identical to master now
+bf7e81ee	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=44 missingNow=0
+bf7e81ee	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeSettings.cs	branch blob in master history since mb; added=11 missingNow=0
+bf7e81ee	remote	M	OK	src/Antiphon.SessionRunner/Program.cs	branch blob in master history since mb; added=2 missingNow=0
+bf7e81ee	remote	M	OK	src/Antiphon.SessionRunner/RoutingProviderAuthProbe.cs	identical to master now
+bf7e81ee	remote	A	OK	tests/Antiphon.SessionRunner.Tests/CodexAuthProbeTests.cs	identical to master now
+bf7e81ee	remote	A	OK	tests/Antiphon.SessionRunner.Tests/CodexProviderAuthRoutingTests.cs	identical to master now
+bf7e81ee	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=186 missingNow=0
+bf7e81ee	remote	A	OK	tests/Antiphon.Tests/Infrastructure/CodexRunnerImageContractTests.cs	branch blob in master history since mb; added=152 missingNow=28
+c0a787fe	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0464-plan.md	branch blob in master history since mb; added=106 missingNow=1
+c107ce5c	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0504-plan.md	branch blob in master history since mb; added=26 missingNow=0
+c4154b22	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0593-plan.md	branch blob in master history since mb; added=52 missingNow=6
+c4b35a78	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0758-plan.md	branch blob in master history since mb; added=26 missingNow=2
+c5885cc9	remote	M	OK	docs/logs.md	branch blob in master history since mb; added=10 missingNow=5
+cb96c3a4	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=4 missingNow=0
+cb96c3a4	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=7 missingNow=0
+cb96c3a4	remote	M	OK	server/Api/Endpoints/AgentEndpoints.cs	identical to master now
+cb96c3a4	remote	M	OK	server/Application/Interfaces/IDelegateSessionStopper.cs	identical to master now
+cb96c3a4	remote	M	OK	server/Application/Services/AgentService.cs	branch blob in master history since mb; added=38 missingNow=1
+cb96c3a4	remote	M	OK	server/Application/Services/AgentSessionService.cs	branch blob in master history since mb; added=46 missingNow=0
+cb96c3a4	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=151 missingNow=0
+cb96c3a4	remote	M	OK	server/Application/Services/AgentTaskReplyService.cs	branch blob in master history since mb; added=54 missingNow=0
+cb96c3a4	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=20 missingNow=1
+cb96c3a4	remote	A	OK	server/Application/Services/PoolDelegateRelease.cs	identical to master now
+cb96c3a4	remote	M	OK	server/Application/Services/SessionReconciliationService.cs	branch blob in master history since mb; added=17 missingNow=0
+cb96c3a4	remote	M	OK	server/Application/Settings/DelegationSettings.cs	branch blob in master history since mb; added=10 missingNow=0
+cb96c3a4	remote	M	OK	server/Application/Settings/SessionReconciliationSettings.cs	identical to master now
+cb96c3a4	remote	M	OK	server/Domain/Entities/Agent.cs	branch blob in master history since mb; added=7 missingNow=0
+cb96c3a4	remote	M	OK	server/Domain/Enums/AgentIncidentKind.cs	branch blob in master history since mb; added=7 missingNow=0
+cb96c3a4	remote	A	OK	server/Migrations/20260925044814_AddAgentPoolKillRetries.Designer.cs	identical to master now
+cb96c3a4	remote	A	OK	server/Migrations/20260925044814_AddAgentPoolKillRetries.cs	identical to master now
+cb96c3a4	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=2 missingNow=0
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs	identical to master now
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/AgentServiceIntegrationTests.cs	branch blob in master history since mb; added=52 missingNow=0
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/AgentSessionServiceIntegrationTests.cs	identical to master now
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskOverdueDeadlineTests.cs	identical to master now
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskPoolTests.cs	identical to master now
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskReplyIntegrationTests.cs	branch blob in master history since mb; added=91 missingNow=0
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskServiceIntegrationTests.cs	branch blob in master history since mb; added=41 missingNow=0
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/GrokDelegateDispatchTests.cs	identical to master now
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/Application/SessionReconciliationServiceTests.cs	branch blob in master history since mb; added=33 missingNow=0
+cb96c3a4	remote	M	OK	tests/Antiphon.Tests/TestHelpers/RecordingSessionStopper.cs	identical to master now
+d0abdf16	remote	M	OK	docs/agent-credentials.md	branch blob in master history since mb; added=2 missingNow=0
+d0abdf16	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=1
+d0abdf16	remote	M	OK	server/Api/Endpoints/OperatorEndpoints.cs	branch blob in master history since mb; added=14 missingNow=0
+d0abdf16	remote	M	OK	server/Application/Settings/PhoneHomeRunnerSettings.cs	branch blob in master history since mb; added=4 missingNow=0
+d0abdf16	remote	M	OK	server/Infrastructure/Security/OperatorTokenFile.cs	identical to master now
+d0abdf16	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=2 missingNow=0
+d0abdf16	remote	M	OK	tests/Antiphon.E2E/Fixtures/AntiphonAppFixture.cs	identical to master now
+d0abdf16	remote	M	OK	tests/Antiphon.Tests/Api/OperatorDashboardLoginTests.cs	identical to master now
+d0abdf16	remote	M	OK	tests/Antiphon.Tests/Infrastructure/OperatorTokenFileTests.cs	identical to master now
+d0abdf16	remote	M	OK	tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs	identical to master now
+d24e1b4d	remote	M	OK	docs/antiphon-api.md	branch blob in master history since mb; added=1 missingNow=0
+d24e1b4d	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=29 missingNow=2
+d24e1b4d	remote	M	OK	server/Api/Endpoints/SessionEndpoints.cs	identical to master now
+d24e1b4d	remote	M	OK	server/Application/Dtos/SessionQueueDtos.cs	branch blob in master history since mb; added=4 missingNow=0
+d24e1b4d	remote	A	OK	server/Application/Interfaces/IExpectationPromptSender.cs	identical to master now
+d24e1b4d	remote	A	OK	server/Application/Services/ExpectationHoldAudit.cs	identical to master now
+d24e1b4d	remote	A	OK	server/Application/Services/ExpectationNudgeDeliveryService.cs	identical to master now
+d24e1b4d	remote	A	OK	server/Application/Services/SessionMessageQueueService.Expectations.cs	branch blob in master history since mb; added=307 missingNow=1
+d24e1b4d	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=28 missingNow=2
+d24e1b4d	remote	M	OK	server/Domain/Enums/ExpectationWatchdogEnums.cs	identical to master now
+d24e1b4d	remote	M	OK	src/Antiphon.Agents.Pty/ClaudeScreen.cs	branch blob in master history since mb; added=79 missingNow=0
+d24e1b4d	remote	M	OK	tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs	branch blob in master history since mb; added=16 missingNow=0
+d24e1b4d	remote	A	OK	tests/Antiphon.Tests/Api/ExpectationHoldReleaseEndpointTests.cs	branch blob in master history since mb; added=200 missingNow=0
+d24e1b4d	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDeliveryFixture.cs	identical to master now
+d24e1b4d	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationDirectDeliveryTests.cs	branch blob in master history since mb; added=444 missingNow=0
+d24e1b4d	remote	A	OK	tests/Antiphon.Tests/Application/ExpectationReceiptTests.cs	identical to master now
+d5219854	remote	A	OK	docs/investigations/2026-09-24-card-0679-phone-home-launch-loss.md	identical to master now
+d5219854	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0679-phone-home-launch-loss-plan.md	branch blob in master history since mb; added=401 missingNow=3
+d6481d37	wt	M	OK	docs/ops-http.md	blob unseen but all 1 added lines in current master
+d6481d37	wt	M	OK	docs/orchestration-loop.md	blob unseen but all 13 added lines in current master
+d6481d37	wt	M	OK	docs/session-runtime-invariants.md	blob unseen but all 1 added lines in current master
+d6481d37	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-plan.md	identical to master now
+d6481d37	wt	A	OK	docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-probe.diff	identical to master now
+d6481d37	wt	M	OK	server/Application/Services/AgentTaskLandService.cs	branch blob in master history since mb; added=51 missingNow=0
+d6481d37	wt	M	OK	server/Application/Services/AgentTaskLandSourceResolver.cs	branch blob in master history since mb; added=3 missingNow=0
+d6481d37	wt	M	OK	server/Application/Services/AgentTaskLandingProtocol.cs	branch blob in master history since mb; added=17 missingNow=0
+d6481d37	wt	M	OK	server/Application/Services/AgentTaskLandingState.cs	identical to master now
+d6481d37	wt	M	OK	server/Application/Services/LandOperationFactory.cs	branch blob in master history since mb; added=9 missingNow=2
+d6481d37	wt	M	OK	server/Application/Settings/DelegationSettings.cs	blob unseen but all 9 added lines in current master
+d6481d37	wt	M	OK	server/appsettings.json	blob unseen but all 1 added lines in current master
+d6481d37	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandPreparationIdentityTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandPublicationTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandRecoveryTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandSourceFreshnessTests.cs	identical to master now
+d6481d37	wt	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceFakeTests.cs	identical to master now
+d6481d37	wt	A	OK	tests/Antiphon.Tests/Application/AgentTaskLandTargetRaceTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/Application/AgentTaskLandingStateTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/ProcessSpawnLimitTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/TestHelpers/ControlledLandingGit.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/TestHelpers/ControlledLandingGitTests.cs	identical to master now
+d6481d37	wt	M	OK	tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs	branch blob in master history since mb; added=25 missingNow=0
+d6481d37	wt	M	OK	tests/Antiphon.Tests/TestHelpers/LandingProtocolHarness.cs	identical to master now
+d76ef522	remote	M	OK	docs/logs.md	branch blob in master history since mb; added=14 missingNow=0
+d76ef522	wt	M	OK	docs/logs.md	branch blob in master history since mb; added=11 missingNow=6
+d806b77b	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=15 missingNow=2
+d806b77b	remote	M	OK	server/Application/Services/AgentTaskLandService.cs	branch blob in master history since mb; added=92 missingNow=6
+d806b77b	remote	M	OK	server/Application/Services/AgentTaskReplyService.cs	branch blob in master history since mb; added=124 missingNow=5
+d806b77b	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=3 missingNow=0
+d806b77b	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskSettlementRaceTests.cs	identical to master now
+d806b77b	remote	M	OK	tests/Antiphon.Tests/Application/WorktreeRetirementRaceTests.cs	branch blob in master history since mb; added=120 missingNow=1
+db55819f	remote	M	OK	scripts/fixtures/c589-command-shim.ps1	identical to master now
+db55819f	remote	M	OK	scripts/fixtures/c589-slot-shim.ps1	identical to master now
+db55819f	remote	M	OK	scripts/lib/build-slot.ps1	identical to master now
+db55819f	remote	M	OK	scripts/test-build-slot.ps1	identical to master now
+db55819f	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	identical to master now
+db55819f	remote	A	OK	server/Application/Services/RunnerRetireService.cs	identical to master now
+db55819f	remote	M	OK	server/Application/Settings/PhoneHomeRunnerSettings.cs	identical to master now
+db55819f	remote	M	OK	server/Domain/Enums/AgentIncidentKind.cs	identical to master now
+db55819f	remote	M	OK	server/Infrastructure/Agents/HangfireConfiguration.cs	identical to master now
+db55819f	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	identical to master now
+db55819f	remote	A	OK	server/Infrastructure/Agents/SessionRunner/RunnerRetireJob.cs	identical to master now
+db55819f	remote	M	OK	server/Program.cs	branch blob in master history since mb; added=4 missingNow=0
+db55819f	remote	M	OK	src/Antiphon.SessionRunner.Contracts/BuildSlotContracts.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/BuildSlotBroker.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/BuildSlotRoutes.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/BuildSlotSettings.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeConnectionService.cs	identical to master now
+db55819f	remote	A	OK	src/Antiphon.SessionRunner/PhoneHomeProcessIdentity.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeRuntimeAdapter.cs	identical to master now
+db55819f	remote	M	OK	src/Antiphon.SessionRunner/Program.cs	identical to master now
+db55819f	remote	M	OK	tests/Antiphon.SessionRunner.Tests/BuildSlotBrokerTests.cs	identical to master now
+db55819f	remote	M	OK	tests/Antiphon.SessionRunner.Tests/BuildSlotEndpointTests.cs	identical to master now
+db55819f	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	identical to master now
+db55819f	remote	A	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerRetireTests.cs	branch blob in master history since mb; added=110 missingNow=0
+db55819f	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeRollingRunnerTests.cs	identical to master now
+db55819f	remote	A	OK	tests/Antiphon.Tests/Application/RunnerRetireJobTests.cs	identical to master now
+db55819f	remote	M	OK	tests/Antiphon.Tests/Checkpoints/BuildSlotClientTests.cs	identical to master now
+db55819f	remote	M	OK	tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs	identical to master now
+db55819f	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	identical to master now
+db55819f	remote	M	OK	tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs	identical to master now
+db7a34db	remote	M	OK	server/Application/Services/AgentTaskDispatcher.cs	branch blob in master history since mb; added=62 missingNow=4
+db7a34db	remote	M	OK	server/Application/Services/AgentTaskService.cs	branch blob in master history since mb; added=26 missingNow=2
+db7a34db	remote	M	OK	server/Application/Services/DefaultRunnerRoutingPolicy.cs	branch blob in master history since mb; added=21 missingNow=6
+db7a34db	remote	M	OK	server/Application/Services/DelegationWorktreeService.cs	branch blob in master history since mb; added=18 missingNow=0
+db7a34db	remote	M	OK	server/Application/Services/PhoneHomeLaunchPolicy.cs	branch blob in master history since mb; added=5 missingNow=0
+db7a34db	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerPinTests.cs	branch blob in master history since mb; added=456 missingNow=29
+db7a34db	remote	A	OK	tests/Antiphon.Tests/Application/DefaultRunnerRerouteTests.cs	branch blob in master history since mb; added=375 missingNow=24
+db7a34db	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeStandingLaunchTests.cs	branch blob in master history since mb; added=3 missingNow=0
+db7a34db	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskRoutingTests.cs	branch blob in master history since mb; added=7 missingNow=0
+dbdfa428	remote	M	OK	src/Antiphon.SessionRunner/PhoneHomeConnectionService.cs	branch blob in master history since mb; added=11 missingNow=5
+dbdfa428	remote	M	OK	src/Antiphon.SessionRunner/SessionRunnerRuntime.cs	branch blob in master history since mb; added=73 missingNow=8
+dbdfa428	remote	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeConnectionServiceTests.cs	branch blob in master history since mb; added=53 missingNow=0
+dbdfa428	remote	A	OK	tests/Antiphon.SessionRunner.Tests/SessionRunnerEventHubTests.cs	branch blob in master history since mb; added=42 missingNow=0
+dca8c233	remote	M	OK	docker/session-runner-grok/Dockerfile	branch blob in master history since mb; added=37 missingNow=0
+dca8c233	remote	M	OK	docs/docker-stack.md	branch blob in master history since mb; added=1 missingNow=0
+dca8c233	remote	M	OK	server/Infrastructure/Git/LandingGit.cs	branch blob in master history since mb; added=5 missingNow=4
+dca8c233	remote	M	OK	server/Infrastructure/Git/RepositoryChildJournal.cs	branch blob in master history since mb; added=25 missingNow=3
+dca8c233	remote	M	OK	tests/Antiphon.Tests/Infrastructure/DockerStackContractTests.cs	branch blob in master history since mb; added=34 missingNow=0
+dca8c233	remote	M	OK	tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs	branch blob in master history since mb; added=30 missingNow=0
+e09045ba	remote	M	OK	docs/apphost-runbook.md	identical to master now
+e09045ba	remote	M	OK	docs/orchestration-loop.md	branch blob in master history since mb; added=8 missingNow=0
+e09045ba	remote	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	identical to master now
+e09045ba	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0457-plan.md	identical to master now
+e09045ba	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0464-plan.md	identical to master now
+e09045ba	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0767-plan.md	identical to master now
+e09045ba	remote	M	OK	docs/testing-and-build.md	branch blob in master history since mb; added=6 missingNow=0
+e09045ba	remote	M	OK	scripts/card.ps1	identical to master now
+e09045ba	remote	M	OK	server/Application/Services/ChannelBridgeService.cs	branch blob in master history since mb; added=92 missingNow=4
+e09045ba	remote	M	OK	src/Antiphon.Agents.Pty/PtyAgentRunner.cs	identical to master now
+e09045ba	remote	A	OK	src/Antiphon.Agents.Pty/PtyUtf8Decoder.cs	identical to master now
+e09045ba	remote	M	OK	src/Antiphon.Agents.Pty/TerminalScreen.cs	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Agents.Pty.Tests/ClaudeEffortDismissalReplayTests.cs	identical to master now
+e09045ba	remote	A	OK	tests/Antiphon.Agents.Pty.Tests/PtyUtf8DecoderTests.cs	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Agents.Pty.Tests/TerminalScreenTests.cs	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Tests/Application/ChannelBridgeTests.cs	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Tests/Application/ChannelInboundRecoveryTests.cs	branch blob in master history since mb; added=746 missingNow=2
+e09045ba	remote	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointExecutorLogTests.cs	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs	identical to master now
+e09045ba	remote	A	OK	tests/Antiphon.Tests/Checkpoints/CheckpointTaskOwnershipTests.cs	identical to master now
+e09045ba	remote	A	OK	tests/Antiphon.Tests/Checkpoints/Fixtures/plan-table-0723-same-after.md	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Tests/Checkpoints/TimeoutTests.cs	identical to master now
+e09045ba	remote	A	OK	tests/Antiphon.Tests/Scripts/CardCloseDeploymentPromptScriptTests.cs	identical to master now
+e09045ba	remote	M	OK	tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Baseline/BaselineComparer.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/CheckpointApp.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Cleanup/OutputCleanup.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Commands/WaitCommand.cs	identical to master now
+e09045ba	remote	A	OK	tools/Antiphon.Checkpoints/Execution/ExecutorLogWriter.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Execution/ExitCodes.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Execution/IDriver.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Execution/ProcessDriver.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RowRunner.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RowTimeout.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Execution/RunScheduler.cs	identical to master now
+e09045ba	remote	A	OK	tools/Antiphon.Checkpoints/Execution/TaskOwnerGuard.cs	identical to master now
+e09045ba	remote	A	OK	tools/Antiphon.Checkpoints/Execution/WindowsJobProcessHandle.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/CheckpointManifest.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/ManifestValidator.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Program.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Report/ReportModel.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Report/ReportWriter.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/RunRequest.cs	identical to master now
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs	branch blob in master history since mb; added=14 missingNow=0
+e09045ba	remote	M	OK	tools/Antiphon.Checkpoints/State/RunState.cs	identical to master now
+e8eae8df	wt	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=2 missingNow=2
+e8eae8df	wt	M	OK	docs/superpowers/plans/2026-09-26-card-0718-host-stats-plan.md	branch blob in master history since mb; added=12 missingNow=0
+e8eae8df	wt	A	OK	scripts/measure-host-stats-overhead.ps1	identical to master now
+e8eae8df	wt	A	OK	server/Api/Endpoints/HostStatsEndpoints.cs	identical to master now
+e8eae8df	wt	A	OK	server/Application/Dtos/HostStatsDtos.cs	identical to master now
+e8eae8df	wt	A	OK	server/Application/Exceptions/HostStatsUnsupportedException.cs	identical to master now
+e8eae8df	wt	M	OK	server/Application/Interfaces/ISessionRunnerClient.cs	identical to master now
+e8eae8df	wt	A	OK	server/Application/Services/HostStatsAntiphonCounters.cs	identical to master now
+e8eae8df	wt	A	OK	server/Application/Services/HostStatsCache.cs	identical to master now
+e8eae8df	wt	A	OK	server/Application/Settings/HostStatsSettings.cs	identical to master now
+e8eae8df	wt	A	OK	server/Infrastructure/Agents/SessionRunner/HostStatsPollService.cs	identical to master now
+e8eae8df	wt	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=13 missingNow=0
+e8eae8df	wt	M	OK	server/Infrastructure/Agents/SessionRunner/SessionRunnerHttpClient.cs	identical to master now
+e8eae8df	wt	M	OK	server/Program.cs	branch blob in master history since mb; added=11 missingNow=0
+e8eae8df	wt	M	OK	server/appsettings.json	blob unseen but all 7 added lines in current master
+e8eae8df	wt	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=6 missingNow=0
+e8eae8df	wt	M	OK	src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs	identical to master now
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/HostStatsProbe.cs	identical to master now
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/HostStatsRoutes.cs	branch blob in master history since mb; added=84 missingNow=3
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/HostStatsSamplerService.cs	identical to master now
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/HostStatsSettings.cs	branch blob in master history since mb; added=27 missingNow=1
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/HostStatsStore.cs	identical to master now
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/LinuxHostStatsProbe.cs	identical to master now
+e8eae8df	wt	M	OK	src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs	branch blob in master history since mb; added=20 missingNow=1
+e8eae8df	wt	M	OK	src/Antiphon.SessionRunner/Program.cs	branch blob in master history since mb; added=8 missingNow=1
+e8eae8df	wt	A	OK	src/Antiphon.SessionRunner/WindowsHostStatsProbe.cs	identical to master now
+e8eae8df	wt	M	OK	src/Antiphon.SessionRunner/appsettings.json	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HostStatsEndpointTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HostStatsProbeLiveTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HostStatsProbeParseTests.cs	branch blob in master history since mb; added=127 missingNow=0
+e8eae8df	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HostStatsSamplerTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HostStatsStoreTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.SessionRunner.Tests/HostStatsTestHost.cs	identical to master now
+e8eae8df	wt	M	OK	tests/Antiphon.SessionRunner.Tests/PhoneHomeCommandDispatcherTests.cs	branch blob in master history since mb; added=52 missingNow=0
+e8eae8df	wt	M	OK	tests/Antiphon.SessionRunner.Tests/RunnerCapabilitiesTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.Tests/Application/HostStatsAntiphonCountersTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.Tests/Application/HostStatsCacheTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.Tests/Application/HostStatsEndpointTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.Tests/Application/HostStatsPollServiceTests.cs	identical to master now
+e8eae8df	wt	A	OK	tests/Antiphon.Tests/Application/SessionRunnerHttpClientHostStatsTests.cs	identical to master now
+e8eae8df	wt	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=15 missingNow=0
+e8eae8df	wt	A	OK	tests/Antiphon.Tests/TestHelpers/RecordingHostStatsEventBus.cs	identical to master now
+ea7d1a1c	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0726-runner-and-journal-alarms-plan.md	branch blob in master history since mb; added=447 missingNow=1
+ee01d18e	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0688-dedicated-land-worktree-plan.md	branch blob in master history since mb; added=587 missingNow=8
+f012a1d3	remote	A	OK	docs/investigations/2026-09-17-card-0558-stages-as-shareable-workflows.md	identical to master now
+f012a1d3	remote	A	OK	docs/superpowers/plans/2026-09-17-card-0558-stages-as-shareable-workflows-plan.md	branch blob in master history since mb; added=426 missingNow=0
+f3e2953f	remote	M	OK	docs/ops-http.md	branch blob in master history since mb; added=1 missingNow=1
+f3e2953f	remote	M	OK	server/Api/Endpoints/SessionRunnerEndpoints.cs	branch blob in master history since mb; added=45 missingNow=23
+f3e2953f	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeLiveConnection.cs	branch blob in master history since mb; added=88 missingNow=0
+f3e2953f	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs	branch blob in master history since mb; added=52 missingNow=13
+f3e2953f	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=11 missingNow=1
+f3e2953f	remote	M	OK	tests/Antiphon.Tests/Agents/PhoneHomeConnectionTests.cs	branch blob in master history since mb; added=79 missingNow=0
+f3e2953f	remote	M	OK	tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs	branch blob in master history since mb; added=39 missingNow=0
+f602d622	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0660-codex-on-server2-plan.md	branch blob in master history since mb; added=330 missingNow=0
+f646569d	remote	M	OK	docs/testing-and-build.md	branch blob in master history since mb; added=1 missingNow=0
+f646569d	remote	M	OK	tests/Antiphon.Tests/Application/AgentTaskDispatchBaseGuardTests.cs	branch blob in master history since mb; added=0 missingNow=0
+f646569d	remote	M	OK	tests/Antiphon.Tests/Application/HerdrPaneDisposalApplicationTests.cs	identical to master now
+f646569d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/CheckCompactionCrashWorker.cs	identical to master now
+f646569d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/LandQueueRaceWorker.cs	identical to master now
+f646569d	remote	A	OK	tests/Antiphon.Tests/TestHelpers/SharedStoreWarmup.cs	identical to master now
+f646569d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs	identical to master now
+f646569d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/TestDbFixtureLazyInitializationTests.cs	identical to master now
+f646569d	remote	M	OK	tests/Antiphon.Tests/TestHelpers/TestDbFixtureLifecycleTests.cs	identical to master now
+f646569d	remote	A	OK	tests/Antiphon.Tests/TestHelpers/TestWorkerModes.cs	branch blob in master history since mb; added=47 missingNow=0
+f67e6efa	remote	M	OK	docs/session-runtime-invariants.md	branch blob in master history since mb; added=11 missingNow=3
+f67e6efa	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0647-durable-runner-spill-followup-plan.md	identical to master now
+f67e6efa	remote	M	OK	server/Application/Services/RemoteSpillCourier.cs	branch blob in master history since mb; added=114 missingNow=14
+f67e6efa	remote	M	OK	server/Application/Services/SessionMessageQueueService.cs	branch blob in master history since mb; added=82 missingNow=8
+f67e6efa	remote	M	OK	server/Domain/Entities/SessionQueuedMessage.cs	branch blob in master history since mb; added=4 missingNow=0
+f67e6efa	remote	M	OK	server/Domain/Enums/DeliveryVerdict.cs	identical to master now
+f67e6efa	remote	M	OK	server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs	branch blob in master history since mb; added=9 missingNow=0
+f67e6efa	remote	M	OK	server/Infrastructure/Data/AppDbContext.cs	branch blob in master history since mb; added=2 missingNow=0
+f67e6efa	remote	A	OK	server/Migrations/20260924120000_AddQueuedRemoteSpillBodies.cs	identical to master now
+f67e6efa	remote	M	OK	server/Migrations/AppDbContextModelSnapshot.cs	branch blob in master history since mb; added=5 missingNow=0
+f67e6efa	remote	M	OK	src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs	branch blob in master history since mb; added=1 missingNow=0
+f67e6efa	remote	M	OK	src/Antiphon.SessionRunner/RunnerWorkspaceService.cs	identical to master now
+f67e6efa	remote	M	OK	tests/Antiphon.SessionRunner.Tests/RunnerWorkspaceServiceTests.cs	identical to master now
+f67e6efa	remote	A	OK	tests/Antiphon.Tests/Application/DurableRunnerSpillReceiptTests.cs	branch blob in master history since mb; added=184 missingNow=0
+f67e6efa	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeSpillTests.cs	identical to master now
+f67e6efa	remote	M	OK	tests/Antiphon.Tests/Application/PhoneHomeTaskDispatchProjectionTests.cs	branch blob in master history since mb; added=39 missingNow=1
+f7833ef2	remote	M	OK	.gitattributes	identical to master now
+f7833ef2	remote	M	OK	docker-compose.server2-runner.yml	branch blob in master history since mb; added=22 missingNow=0
+f7833ef2	remote	M	OK	docker/session-runner-grok/Dockerfile	identical to master now
+f7833ef2	remote	A	OK	docker/session-runner-grok/verify-codex-image.sh	identical to master now
+f7833ef2	remote	M	OK	docker/stack.env.example	branch blob in master history since mb; added=4 missingNow=0
+f7833ef2	remote	M	OK	docker/stack/init-state.sh	identical to master now
+f7833ef2	remote	M	OK	docs/docker-stack.md	branch blob in master history since mb; added=12 missingNow=2
+f7833ef2	remote	M	OK	docs/superpowers/plans/2026-09-24-card-0660-codex-on-server2-plan.md	identical to master now
+f7833ef2	remote	M	OK	scripts/c590-remote.sh	branch blob in master history since mb; added=48 missingNow=0
+f7833ef2	remote	A	OK	scripts/verify-card0660-codex-image.ps1	identical to master now
+f7833ef2	remote	A	OK	tests/Antiphon.Tests/Infrastructure/CodexRunnerImageContractTests.cs	branch blob in master history since mb; added=345 missingNow=1
+f7833ef2	remote	M	OK	tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs	branch blob in master history since mb; added=170 missingNow=3
+f908a771	remote	A	OK	docs/superpowers/plans/2026-09-25-card-0727-rolling-runner-upgrade-plan.md	branch blob in master history since mb; added=587 missingNow=10
+fa3a1135	remote	A	OK	scripts/lib/release-authority.ps1	branch blob in master history since mb; added=507 missingNow=76
+fa3a1135	remote	M	OK	scripts/lib/release-gate.ps1	branch blob in master history since mb; added=30 missingNow=0
+fa3a1135	remote	M	OK	scripts/publish-release.ps1	branch blob in master history since mb; added=37 missingNow=2
+fa3a1135	remote	M	OK	scripts/test-release-gate.ps1	branch blob in master history since mb; added=235 missingNow=2
+fa3a1135	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGateAuthorityContractTests.cs	identical to master now
+fa8d1265	remote	A	OK	docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md	branch blob in master history since mb; added=42 missingNow=5
+fb612012	remote	A	OK	docs/superpowers/plans/2026-09-24-card-0665-land-cleanup-disposable-content-plan.md	branch blob in master history since mb; added=329 missingNow=8
+fc89bde9	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-plan.md	branch blob in master history since mb; added=424 missingNow=0
+fc89bde9	remote	A	OK	docs/superpowers/plans/2026-09-26-card-0711-land-refusal-race-probe.diff	identical to master now
+fcb2e819	remote	A	OK	docs/superpowers/plans/2026-09-27-card-0772-plan.md	branch blob in master history since mb; added=31 missingNow=0
+fd089677	remote	M	OK	docs/superpowers/plans/2026-09-23-card-0599-release-recovery-and-cards-plan.md	branch blob in master history since mb; added=62 missingNow=4
+fd089677	remote	A	OK	scripts/lib/release-authority.ps1	identical to master now
+fd089677	remote	M	OK	scripts/lib/release-gate.ps1	identical to master now
+fd089677	remote	M	OK	scripts/publish-release.ps1	identical to master now
+fd089677	remote	M	OK	scripts/test-release-gate.ps1	identical to master now
+fd089677	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGateAuthorityContractTests.cs	identical to master now
+fd089677	remote	A	OK	tests/Antiphon.Tests/Scripts/ReleaseGatePublicationAuthorityTests.cs	identical to master now

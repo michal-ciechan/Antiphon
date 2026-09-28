@@ -124,6 +124,8 @@ Worktrees removed (30): f5d7a783 07cabe87 0bebfaa7 1668ddd6 1c52bd82 22b951cd 23
 
 ## NEEDS-A-LOOK from C/D: L1, superseded by later master edits (117)
 
+> **Resolved by task 1807540f (below):** 116 of these 117 were re-verified file by file and deleted. `05a66230` stays in NEEDS-A-LOOK because its worktree holds a nested registered worktree. See "L1 follow-up: per-file re-verification and deletion (task 1807540f)".
+
 The content check failed, but master history holds the branch's exact version of every touched file, so master most likely absorbed the branch and then changed further. These are very likely safe, but they were not deleted because the brief requires an empty diff against current master.
 
 | shortId | grp | status | card | remote | worktree | remote verdict | worktree verdict | branch version of touched files seen in master history (remote \| wt) |
@@ -245,3 +247,50 @@ The content check failed, but master history holds the branch's exact version of
 | fc89bde9 | D | Succeeded | CARD-0711 | LOOK | LOOK | CONFLICT;touched=2;differNow=1 | SAMEASREMOTE | seen=2 unseen=0  | wt: (=remote) |
 | fcb2e819 | D | Succeeded | CARD-0772 | LOOK | LOOK | CONFLICT;touched=1;differNow=1 | SAMEASREMOTE | seen=1 unseen=0  | wt: (=remote) |
 | fd089677 | D | Succeeded | CARD-0599 | LOOK | - | CONFLICT;touched=7;differNow=1 | - | seen=7 unseen=0  | wt: - |
+
+## L1 follow-up: per-file re-verification and deletion (task 1807540f)
+
+This section covers only the 117 L1 IDs above. Groups A, B, F and L2 were not touched. Every ID was re-verified from scratch against `origin/master` `49a7c8a8`. Master had only moved forward by deletion time; `49a7c8a8` was an ancestor of the fetched tip.
+
+### Method
+
+- **Live status:** `GET /api/agent-tasks/{shortId}` `.summary.status` was queried at verification. It was queried again immediately before each deletion, retrying empty responses. Seventeen first-pass queries came back empty while the server was momentarily unresponsive; each was retried and returned a terminal status. Only Succeeded, Failed and Canceled were acted on. The branch and worktree came from the task's own `worktreeBranch`, from `git worktree list` and from `ls-remote`.
+- **Per-file check:** each ref was checked separately: the remote tip, and the worktree HEAD when it differed from the remote tip. For each ref, `mb = merge-base(origin/master, ref)` and every file in `git diff --name-status --no-renames mb ref` was classified:
+  1. `identical`: master's current blob equals the branch's blob.
+  2. `blob-in-history`: the branch's exact blob appears as a new blob in `git log --full-history -m --raw mb..origin/master -- <file>`. Master held exactly this version after the merge base and then changed it further.
+  3. `lines-only`: the blob never appeared. Every non-blank line the branch added (`git diff -U0 mb ref -- <file>`, `+` lines) is present in current master's file, or among the lines master added to that file in `mb..origin/master`.
+  4. A deleted file passes only when master no longer has it, or master deleted it after `mb`. No L1 branch deleted a file.
+  Any file that failed all of these would have moved its whole ID to NEEDS-A-LOOK.
+- **Worktree:** it must be clean (`status --porcelain --untracked-files=all` empty), unlocked, have an unchanged HEAD at deletion time and contain no nested registered worktree. It was removed with `git -c core.longpaths=true worktree remove --force` (clean only), then `git worktree prune`.
+- **Remote deletion:** `git push --force-with-lease=refs/heads/<br>:<verified sha> origin --delete <br>`, preceded by an `ls-remote` check that the tip had not moved.
+- **Reachability:** local `feat/card-task-*` refs were kept. Eleven removed worktrees had a detached HEAD, or one on another branch (`review-rebased`), that no `feat/card-task-<id>` ref contained. Those HEADs were pinned as `refs/cleanup-kept/wt-head/<id>` in `C:\src\Antiphon`. Twenty-six deleted remote tips were not contained in any local branch and were pinned as `refs/cleanup-kept/remote-tip/<id>`. No verified commit became unreachable. After a final review, `git update-ref -d` drops a pin.
+
+### Counts
+
+| Item | Count |
+|---|---|
+| L1 task IDs examined | 117 (Succeeded 92, Failed 13, Canceled 12) |
+| Skipped because active | 0 |
+| Verified fully superseded (every touched file passed) | 116 |
+| Moved to NEEDS-A-LOOK | 1 |
+| Remote branches deleted | 105 (0 failures; `ls-remote` confirms none of the 116 remain) |
+| Worktrees removed | 49 (0 failures, none dirty or locked; no directories left) |
+| Task IDs fully cleaned | 116 |
+| Files checked (remote and worktree refs combined) | 1,333: 699 identical, 609 blob-in-history, 25 lines-only, 0 failed |
+
+The 25 lines-only files span 11 worktree-only IDs: `05a66230` `125f62dc` `131508fb` `359c1a1c` `3d4eb382` `6ca40cd0` `80103e29` `907b5d3e` `92b9022f` `d6481d37` `e8eae8df`. The prior pass listed them with `unseen>0` because the worktree had been rebased, so its blob combined the branch change with a master state that never existed exactly. Each diff was also read by hand. The added lines are all in master; examples are `LandTargetRaceRetries`, the CARD-0727 drain invariants, the CARD-0726 alarm docs and `HostStats` settings. The lines the branch removed are gone from master too. In `131508fb`, `907b5d3e` and `6ca40cd0`, one or two added lines exist only in master history, because master later rewrote those lines. An example is the checkpoint-tool exit-code line, which now includes `7 owning task ended`.
+
+### NEEDS-A-LOOK (1)
+
+- `05a66230` (CARD-0462, Succeeded). The worktree-only HEAD `048b6a18` passes all 52 files. It was not removed because `C:\Antiphon\worktrees\card-task-05a66230\.antiphon\c462-base` is a nested registered worktree (detached at `7a7dac4a`). Removing the parent would delete it. It has no remote branch.
+
+### Deleted
+
+Remote branches (105): 015dc1ee 05522ab3 08e6f2d2 176e26d6 2060e274 354b15be 3895b67b 39d0e7e2 443b21c2 520f3e0a 5dc73c10 5ef9bb0e 609f77b4 67e84356 695a54a1 7f644884 8afa8f97 924d72d5 a57a83df b18bb8e3 bc527408 bddfb3cc bf7e81ee d0abdf16 d5219854 ea7d1a1c ee01d18e f3e2953f f602d622 f646569d f908a771 fb612012 00f66c8f 02983cde 06805739 07df9f1d 0aa9717c 0cc1623f 10632f25 15a86ac9 169fe4dd 16d7e477 19c7ff68 1aa86155 1ceae9ac 1d5b779b 1d94da9e 22c54e3f 2cd14d4c 2dd9fbf3 2e841047 30103883 365d4862 37a70801 3816b58e 3c593d7c 47be9689 4ce3b0ad 50a2b232 51b599cb 5ef74c0f 69c7a060 6ca40cd0 6eed34e6 70302dc6 74da5d1b 78c5f868 7dc235bc 86d683e9 86e57e3d 92783ab1 94d4b1de 993405ad 9b83888e 9e28086d a103fe6f a36875a7 a7ab0cda a8f042bb aadd05ab b0e67a1d b560c49a bca19885 c0a787fe c107ce5c c4154b22 c4b35a78 c5885cc9 cb96c3a4 d24e1b4d d76ef522 d806b77b db55819f db7a34db dbdfa428 dca8c233 e09045ba f012a1d3 f67e6efa f7833ef2 fa3a1135 fa8d1265 fc89bde9 fcb2e819 fd089677
+
+Worktrees removed (49): 00f66c8f 02983cde 06805739 07df9f1d 0aa9717c 0cc1623f 125f62dc 131508fb 16d7e477 19c7ff68 1aa86155 1ceae9ac 1d5b779b 22c54e3f 2dd9fbf3 359c1a1c 365d4862 36b868ff 3d4eb382 47be9689 50a2b232 51b599cb 5704b46b 69c7a060 6ca40cd0 74da5d1b 78c5f868 80103e29 86d683e9 86e57e3d 907b5d3e 92b9022f 94d4b1de a103fe6f b0e67a1d b560c49a c0a787fe c107ce5c c4154b22 c4b35a78 cb96c3a4 d6481d37 d76ef522 db55819f e09045ba e8eae8df fa8d1265 fc89bde9 fcb2e819
+
+### Evidence files
+
+- `2026-09-28-branch-worktree-cleanup-l1.tsv`: one row per L1 ID with status, branch, verified SHAs, verdict, the actions taken, per-class file counts and pins.
+- `2026-09-28-branch-worktree-cleanup-l1-files.tsv`: one row per checked file with its class and evidence (`added`, and `missingNow`, the count of branch-added lines not in current master).
