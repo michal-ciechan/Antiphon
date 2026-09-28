@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0535: lease/cap holds through TraceHeldAsync, HeldAged 300/900s.</summary>
 [Category("Integration")]
-public sealed class DispatchHoldVisibilityTests
+public sealed partial class DispatchHoldVisibilityTests
 {
     [Test]
     public async Task lease_hold_traces_once_per_holder_and_names_the_running_land()
@@ -545,6 +545,10 @@ public sealed class DispatchHoldVisibilityTests
         services.AddScoped<RoutingPinService>();
         services.AddScoped<ComplexityRoutingService>();
         services.AddScoped<AgentTaskDispatcher>();
+        services.AddScoped(sp => new HostBudgetService(
+            sp.GetRequiredService<AppDbContext>(), new BudgetDirectory(),
+            sp.GetRequiredService<IOptions<DelegationSettings>>(),
+            sp.GetRequiredService<TimeProvider>()));
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
         return new World(provider, scope, scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
@@ -743,6 +747,9 @@ public sealed class DispatchHoldVisibilityTests
         : IAsyncDisposable
     {
         public AgentTaskDispatcher Dispatcher { get; } = dispatcher;
+        public HostBudgetService Budgets => scope.ServiceProvider.GetRequiredService<HostBudgetService>();
+        public CapacityRecoveryService Recovery => provider.GetRequiredService<CapacityRecoveryService>();
+        public RecordingSessionStopper Stopper => (RecordingSessionStopper)provider.GetRequiredService<IDelegateSessionStopper>();
 
         /// <summary>CARD-0672: the turnstile the dispatcher registers lease refusals in.</summary>
         public RepositoryLeaseWaiters Waiters => provider.GetRequiredService<RepositoryLeaseWaiters>();
