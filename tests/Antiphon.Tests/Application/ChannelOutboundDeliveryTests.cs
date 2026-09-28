@@ -377,16 +377,29 @@ public sealed class ChannelOutboundDeliveryTests
             (await outbound.SendAsync(second, ChannelOutboundOrigin.AgentReply,
                 new ChannelOutboundSource(sessionId, 2, 5, 6, "trailing", []),
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            options.Value.Profiles["conversion"].Trigger = ChannelOutboundTrigger.MarkdownSources;
+            var plain = reply with { ReplyHandle = "thread-3", Text = "plain follow-up" };
+            (await outbound.SendAsync(plain, ChannelOutboundOrigin.AgentReply,
+                new ChannelOutboundSource(sessionId, 2, 7, 8, "trailing", []),
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            options.Value.Profiles["conversion"].Trigger = ChannelOutboundTrigger.EveryAgentReply;
             producer.SentReplies.ShouldBeEmpty();
+            var control = reply with { Text = "# Control notice", ReplyHandle = "control-thread" };
+            (await outbound.SendAsync(control, ChannelOutboundOrigin.Control, source,
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
+            producer.SentReplies.ShouldHaveSingleItem().ReplyHandle.ShouldBe("control-thread");
 
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var intents = await verify.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId)
                 .OrderBy(d => d.CreatedAt).ToListAsync();
-            intents.Count.ShouldBe(2);
+            intents.Count.ShouldBe(3);
             var intent = intents[0];
             var later = intents[1];
+            var plainIntent = intents[2];
             intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
             intent.PromptText.ShouldBe("Convert the supplied sources.");
+            plainIntent.Trigger.ShouldBe("Passthrough");
+            plainIntent.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
             var row = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == correlationId);
             row.ChannelOutboundDeliveryId.ShouldBe(intent.Id);
             row.ChannelReplySettledAt.ShouldBeNull();
@@ -428,24 +441,22 @@ public sealed class ChannelOutboundDeliveryTests
                 Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
                 NullLogger<ChannelOutboundDeliveryPump>.Instance, options);
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
-            producer.SentReplies.Count.ShouldBe(2);
-            var sent = producer.SentReplies[0];
+            producer.SentReplies.Count.ShouldBe(4);
+            var sent = producer.SentReplies[1];
             sent.ReplyHandle.ShouldBe("thread-1");
             sent.Text.ShouldBe("converted answer");
             sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(pdf);
-            producer.SentReplies[1].ReplyHandle.ShouldBe("thread-2");
-            producer.SentReplies[1].Text.ShouldBe("second answer");
+            producer.SentReplies[2].ReplyHandle.ShouldBe("thread-2");
+            producer.SentReplies[2].Text.ShouldBe("second answer");
+            producer.SentReplies[3].ReplyHandle.ShouldBe("thread-3");
+            producer.SentReplies[3].Text.ShouldBe("plain follow-up");
             (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == intent.Id))
                 .State.ShouldBe(ChannelOutboundDeliveryState.Published);
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
                 .ChannelReplySettledAt.ShouldNotBeNull();
 
-            var control = reply with { Text = "# Control notice", ReplyHandle = "control-thread" };
-            (await outbound.SendAsync(control, ChannelOutboundOrigin.Control, source,
-                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
-            producer.SentReplies[2].ReplyHandle.ShouldBe("control-thread");
             (await verify.ChannelOutboundDeliveries.AsNoTracking()
-                .CountAsync(d => d.ChannelId == channelId)).ShouldBe(2);
+                .CountAsync(d => d.ChannelId == channelId)).ShouldBe(3);
 
             var machine = reply with { Text = "# Machine completion", ReplyHandle = "machine-thread" };
             (await outbound.SendAsync(machine, ChannelOutboundOrigin.AgentReply,
@@ -458,8 +469,8 @@ public sealed class ChannelOutboundDeliveryTests
             machineIntent.ConversionOutcome = "Passthrough";
             await verify.SaveChangesAsync();
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
-            producer.SentReplies[3].ReplyHandle.ShouldBe("machine-thread");
-            producer.SentReplies[3].Text.ShouldBe("# Machine completion");
+            producer.SentReplies[4].ReplyHandle.ShouldBe("machine-thread");
+            producer.SentReplies[4].Text.ShouldBe("# Machine completion");
             (await verify.ChannelOutboundDeliveries.AsNoTracking()
                 .SingleAsync(d => d.Id == machineIntent.Id)).State.ShouldBe(ChannelOutboundDeliveryState.Published);
 
@@ -477,9 +488,9 @@ public sealed class ChannelOutboundDeliveryTests
             revoked.OutputSha256 = new string('a', 64);
             await verify.SaveChangesAsync();
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
-            producer.SentReplies.Count.ShouldBe(4);
+            producer.SentReplies.Count.ShouldBe(5);
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
-            producer.SentReplies[4].Text.ShouldBe("sources after revocation");
+            producer.SentReplies[5].Text.ShouldBe("sources after revocation");
             (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == revoked.Id))
                 .ConversionOutcome.ShouldBe("Revoked");
 
