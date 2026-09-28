@@ -20,6 +20,35 @@ namespace Antiphon.Tests.Application;
 public class ChannelOutboundPublicationTests
 {
     [Test]
+    public async Task C519_Discovery_pages_past_withheld_rows_without_replaying_pre_chat_attachments()
+    {
+        await using var f = await ChannelOutboundFixture.CreateAsync();
+        var attachment = Path.Combine(f.Harness.TempRoot, "pre-chat.pdf");
+        File.WriteAllBytes(attachment, "%PDF-1.4 pre-chat"u8.ToArray());
+        const string oldNote = "[task 15ed2644 done] before first chat";
+        var preChat = await f.Harness.SeedPendingMessageAsync(oldNote,
+            origin: QueuedMessageOrigin.Delegation, status: QueuedMessageStatus.Sent);
+        await f.Harness.InsertTurnAsync(oldNote, $"Old attachment\n[[attach: {attachment}]]");
+
+        var chat = await f.Harness.BindChannelAsync();
+        for (var i = 0; i < 5; i++)
+            await f.Harness.SeedPendingMessageAsync($"[task 15ed2644 done] withheld {i}",
+                origin: QueuedMessageOrigin.Delegation, status: QueuedMessageStatus.Sent);
+        await using (var db = f.CreateContext())
+            await db.SessionQueuedMessages.Where(m => m.Origin == QueuedMessageOrigin.Delegation)
+                .ExecuteUpdateAsync(set => set.SetProperty(m => m.CreatedAt, DateTime.UtcNow.AddHours(-1)));
+
+        const string prompt = "Answer the newer owed channel request";
+        var owed = await f.Harness.SeedChannelCorrelationAsync(prompt, $"telegram:{chat}");
+        await f.Harness.InsertTurnAsync(prompt, "Newer owed answer.");
+        await f.StartWorkerAsync();
+
+        (await f.ReadAsync(owed)).Publication!.State.ShouldBe("Published");
+        (await f.ReadAsync(preChat, "machine")).Publication.ShouldBeNull();
+        f.Producer.Accepted.ShouldHaveSingleItem().Text.ShouldBe("Newer owed answer.");
+    }
+
+    [Test]
     [Arguments("main-no-reply")]
     [Arguments("machine-no-reply")]
     [Arguments("system-text")]

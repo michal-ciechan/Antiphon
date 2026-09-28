@@ -220,76 +220,111 @@ public sealed class ChannelReplyDispatcher
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var rows = await db.SessionQueuedMessages.AsNoTracking()
+        var candidates = db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.Status == QueuedMessageStatus.Sent && m.ChannelReplySettledAt == null
                 && (m.Origin == QueuedMessageOrigin.Channel
                     || m.Origin == QueuedMessageOrigin.Delegation
                     || m.Origin == QueuedMessageOrigin.Check
                     || m.Origin == QueuedMessageOrigin.System
                     || m.Origin == QueuedMessageOrigin.Scheduled)
-                && !db.ChannelOutboundPublicationSources.Any(s => s.QueueMessageId == m.Id))
-            .OrderBy(m => m.CreatedAt).Take(_settings.OutboundPageSize).ToListAsync(ct);
+                && !db.ChannelOutboundPublicationSources.Any(s => s.QueueMessageId == m.Id)
+                // A machine turn predating the first chat binding has no destination. It must
+                // not become an attachment in a conversation established much later.
+                && (m.Origin == QueuedMessageOrigin.Channel
+                    || db.SessionQueuedMessages.Any(channel => channel.AgentSessionId == m.AgentSessionId
+                        && channel.Origin == QueuedMessageOrigin.Channel
+                        && channel.ConversationKey != null && channel.Sequence < m.Sequence)));
         var count = 0;
-        foreach (var group in rows.GroupBy(m => m.AgentSessionId))
+        DateTime? cursorAt = null;
+        Guid cursorId = Guid.Empty;
+        var scannedSessions = new HashSet<Guid>();
+        while (true)
         {
-            // Page sources, not turn ends. A session can have arbitrarily many later turns while
-            // an older completed source remains open; paging the latest ends starves that source.
-            var floor = group.Min(m => m.LastDeliveryBaselineSequence ?? 0);
-            var prompts = await db.TranscriptEntries.AsNoTracking()
-                .Where(t => t.AgentSessionId == group.Key && t.Sequence > floor
-                    && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
-                .OrderBy(t => t.Sequence).ToListAsync(ct);
-            foreach (var source in group)
+            var page = await candidates
+                .Where(m => cursorAt == null || m.CreatedAt > cursorAt
+                    || (m.CreatedAt == cursorAt && m.Id.CompareTo(cursorId) > 0))
+                .OrderBy(m => m.CreatedAt).ThenBy(m => m.Id)
+                .Take(_settings.OutboundPageSize).ToListAsync(ct);
+            if (page.Count == 0)
+                break;
+            cursorAt = page[^1].CreatedAt;
+            cursorId = page[^1].Id;
+            foreach (var group in page.GroupBy(m => m.AgentSessionId))
             {
-                foreach (var prompt in prompts.Where(p => p.Sequence > (source.LastDeliveryBaselineSequence ?? 0)))
+                scannedSessions.Add(group.Key);
+                // Page sources, not turn ends. A session can have arbitrarily many later turns while
+                // an older completed source remains open; paging the latest ends starves that source.
+                var floor = group.Min(m => m.LastDeliveryBaselineSequence ?? 0);
+                var prompts = await db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == group.Key && t.Sequence > floor
+                        && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
+                    .OrderBy(t => t.Sequence).ToListAsync(ct);
+                foreach (var source in group)
                 {
-                    var channel = source.Origin == QueuedMessageOrigin.Channel;
-                    if (channel)
+                    foreach (var prompt in prompts.Where(p => p.Sequence > (source.LastDeliveryBaselineSequence ?? 0)))
                     {
-                        if (!ChannelPromptCorrelation.Matches(source, prompt, _correlationTolerance, out _)
-                            || !(await MatchChannelRowsAsync(db, prompt, ct)).Any(m => m.Id == source.Id))
-                            continue;
-                    }
-                    else
-                    {
-                        if (prompt.Text is not string promptText
-                            || ChannelPromptCorrelation.HasMarkedTransportFrame(promptText))
-                            continue;
-                        var ids = ChannelContracts.CollectInjectionShortIds(promptText);
-                        if (!MatchesByTaskId(source, ids)
-                            && !MatchesHeaderLine(source, Normalize(promptText)))
-                            continue;
-                    }
-
-                    var next = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
-                        db, group.Key, prompt.Sequence, ct);
-                    var ends = await db.TranscriptEntries.AsNoTracking()
-                        .Where(t => t.AgentSessionId == group.Key && t.Kind == TranscriptKinds.TurnEnd
-                            && t.Sequence > prompt.Sequence && (next == null || t.Sequence < next))
-                        .OrderBy(t => t.Sequence).Select(t => t.Sequence).ToListAsync(ct);
-                    foreach (var end in ends)
-                    {
-                        if ((await TranscriptTurnWindow.FindOwningPromptAsync(db, group.Key, end, ct))?.Id != prompt.Id)
-                            continue;
+                        var channel = source.Origin == QueuedMessageOrigin.Channel;
                         if (channel)
-                            await DispatchAsync(group.Key, ct, end);
+                        {
+                            if (!ChannelPromptCorrelation.Matches(source, prompt, _correlationTolerance, out _)
+                                || !(await MatchChannelRowsAsync(db, prompt, ct)).Any(m => m.Id == source.Id))
+                                continue;
+                        }
                         else
-                            await DispatchMachineTurnFollowUpAsync(group.Key, ct, end);
-                        count++;
-                        break;
+                        {
+                            if (prompt.Text is not string promptText
+                                || ChannelPromptCorrelation.HasMarkedTransportFrame(promptText))
+                                continue;
+                            var ids = ChannelContracts.CollectInjectionShortIds(promptText);
+                            if (!MatchesByTaskId(source, ids)
+                                && !MatchesHeaderLine(source, Normalize(promptText)))
+                                continue;
+                        }
+
+                        var next = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
+                            db, group.Key, prompt.Sequence, ct);
+                        var ends = await db.TranscriptEntries.AsNoTracking()
+                            .Where(t => t.AgentSessionId == group.Key && t.Kind == TranscriptKinds.TurnEnd
+                                && t.Sequence > prompt.Sequence && (next == null || t.Sequence < next))
+                            .OrderBy(t => t.Sequence).Select(t => t.Sequence).ToListAsync(ct);
+                        foreach (var end in ends)
+                        {
+                            if ((await TranscriptTurnWindow.FindOwningPromptAsync(db, group.Key, end, ct))?.Id != prompt.Id)
+                                continue;
+                            if (channel)
+                                await DispatchAsync(group.Key, ct, end);
+                            else
+                                await DispatchMachineTurnFollowUpAsync(group.Key, ct, end);
+                            count++;
+                            break;
+                        }
                     }
                 }
+                await DispatchFollowUpAsync(group.Key, ct);
             }
-            await DispatchFollowUpAsync(group.Key, ct);
+            if (page.Count < _settings.OutboundPageSize)
+                break;
         }
-        var trailingSessions = await db.ChannelOutboundPublications.AsNoTracking()
-            .Where(p => p.State == "Published")
+        var trailingSessions = OpenTrailingWindows(db)
             .OrderByDescending(p => p.PublishedAt)
             .Select(p => p.SessionId).Distinct().Take(_settings.OutboundPageSize).ToListAsync(ct);
-        foreach (var sessionId in trailingSessions.Except(rows.Select(r => r.AgentSessionId)))
+        foreach (var sessionId in trailingSessions.Except(scannedSessions))
             await DispatchFollowUpAsync(sessionId, ct);
         return count;
     }
+
+    // A later turn-opening prompt permanently caps this publication's text interval. A queued
+    // prompt typed during the current turn is not an opener until a TurnEnd precedes it.
+    private static IQueryable<ChannelOutboundPublication> OpenTrailingWindows(AppDbContext db) =>
+        db.ChannelOutboundPublications.AsNoTracking()
+            .Where(p => p.State == "Published"
+                && !db.TranscriptEntries.Any(t => t.AgentSessionId == p.SessionId
+                    && t.Sequence > p.PromptSequence
+                    && (t.Kind == TranscriptKinds.UserPrompt
+                        || (t.Kind == TranscriptKinds.QueuedUserPrompt
+                            && db.TranscriptEntries.Any(end => end.AgentSessionId == p.SessionId
+                                && end.Kind == TranscriptKinds.TurnEnd
+                                && end.Sequence > p.PromptSequence && end.Sequence < t.Sequence)))));
 
     /// <summary>
     /// The global abandon sweep, for the periodic supervision tick. The per-session sweep inside
@@ -1162,7 +1197,7 @@ public sealed class ChannelReplyDispatcher
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var publications = await db.ChannelOutboundPublications.AsNoTracking()
+        var publications = await OpenTrailingWindows(db)
             .Include(p => p.Sources)
             .Where(p => p.SessionId == sessionId
                 && (p.Path == "main" || p.Path == "machine" || p.Path == "trailing"))
@@ -1292,6 +1327,9 @@ public sealed class ChannelReplyDispatcher
                     || m.Origin == QueuedMessageOrigin.Scheduled)
                 && m.Status == QueuedMessageStatus.Sent
                 && m.ChannelReplySettledAt == null
+                && db.SessionQueuedMessages.Any(channel => channel.AgentSessionId == m.AgentSessionId
+                    && channel.Origin == QueuedMessageOrigin.Channel
+                    && channel.ConversationKey != null && channel.Sequence < m.Sequence)
                 && !db.ChannelOutboundPublicationSources.Any(s => s.QueueMessageId == m.Id
                     && s.Publication.Path == "machine"))
             .OrderBy(m => m.Sequence)

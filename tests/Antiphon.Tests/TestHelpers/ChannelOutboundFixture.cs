@@ -86,6 +86,10 @@ internal sealed class OutboundScanObserver : ChannelOutboundRecoveryObserver
         return Task.CompletedTask;
     }
     public Task<long> NextAsync(CancellationToken ct = default) => _passes.Reader.ReadAsync(ct).AsTask();
+    public void Clear()
+    {
+        while (_passes.Reader.TryRead(out _)) { }
+    }
 }
 
 internal sealed class OutboundRuntimeLogCapture : ILogger<AgentSessionRuntime>
@@ -306,6 +310,7 @@ internal sealed class ChannelOutboundFixture : IAsyncDisposable
 
     public async Task StartWorkerAsync()
     {
+        Observer.Clear();
         _worker = _harness.Provider.GetRequiredService<ChannelOutboundRecoveryWorker>();
         await _worker.StartAsync(CancellationToken.None);
         await Observer.NextAsync().WaitAsync(TimeSpan.FromSeconds(45));
@@ -324,6 +329,7 @@ internal sealed class ChannelOutboundFixture : IAsyncDisposable
             await _worker.StopAsync(CancellationToken.None);
             _worker = null;
         }
+        Observer.Clear();
         var sessionId = _harness.SessionId;
         var agentId = _harness.AgentId;
         await _harness.DisposeAsync();

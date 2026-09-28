@@ -47,10 +47,14 @@ public sealed class ChannelOutboundRecoveryWorker : BackgroundService
         long pass = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
+            Task? nextScan = null;
             try
             {
                 await _publications.RecoverDueAsync(stoppingToken);
                 await _dispatcher.DiscoverCompletedTurnsAsync(stoppingToken);
+                // Arm the fake/host clock before observers release a waiting caller. Otherwise
+                // an immediate clock advance can happen before the delay has been registered.
+                nextScan = Task.Delay(TimeSpan.FromSeconds(_settings.OutboundScanSeconds), _clock, stoppingToken);
                 await _observer.ScanCompletedAsync(++pass, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -63,7 +67,7 @@ public sealed class ChannelOutboundRecoveryWorker : BackgroundService
             }
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(_settings.OutboundScanSeconds), _clock, stoppingToken);
+                await (nextScan ?? Task.Delay(TimeSpan.FromSeconds(_settings.OutboundScanSeconds), _clock, stoppingToken));
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
