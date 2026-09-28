@@ -109,6 +109,11 @@ whether or not you copy them. A delegate's own `[[attach:]]` reaches only you, a
 Markdown files are the default deliverable; a configured channel step may add a converted file.
 Naming a SHA or a path in prose sends nothing.
 
+When a watchdog prompt contains `[expectation-nudge:<guid>]`, inspect the named task/card state
+and reply with a whole line `[expectation-ack:<same-guid>]` followed by the action you are taking
+or the reason you are waiting. The ACK records an answer; the watchdog continues to observe the
+condition and may page the configured operator if no answer arrives by its stated deadline.
+
 If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
 file another agent owns, a step that became unnecessary — steer it with
 -Refine <taskId> "one sentence" instead of cancelling and redispatching.

@@ -234,6 +234,11 @@ try
     builder.Services.AddOptions<SubscriptionQuotaGateSettings>()
         .Bind(builder.Configuration.GetSection("SubscriptionQuotaGate"))
         .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<ExpectationWatchdogSettings>, ExpectationWatchdogSettingsValidator>();
+    builder.Services.AddOptions<ExpectationWatchdogSettings>()
+        .Bind(builder.Configuration.GetSection(ExpectationWatchdogSettings.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value.Timing);
     builder.Services.Configure<TranscriptBindingSettings>(builder.Configuration.GetSection("TranscriptBinding"));
     builder.Services.Configure<ContextWindowSettings>(builder.Configuration.GetSection("ContextWindow"));
     builder.Services.Configure<CardsSettings>(builder.Configuration.GetSection("Cards"));
@@ -652,6 +657,23 @@ try
     // CARD-0161: per-session ceilings (herdr vs pty). Composes PtyDeliveryProfile.
     builder.Services.AddSingleton<SessionDeliveryProfile>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
+    builder.Services.AddSingleton<IExpectationPromptSender, SessionQueueExpectationPromptSender>();
+    builder.Services.AddSingleton<IExpectationCatchUp, ExpectationTranscriptCatchUp>();
+    builder.Services.AddScoped<ExpectationObservationAdapter>();
+    builder.Services.AddScoped<ExpectationLedger>();
+    builder.Services.AddScoped<ExpectationWatchdogService>(sp => new ExpectationWatchdogService(
+        sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<ExpectationLedger>(),
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<IOptions<DelegationSettings>>().Value,
+        sp.GetRequiredService<IExpectationCatchUp>(),
+        sp.GetRequiredService<IOptions<SupervisionSettings>>().Value,
+        sp.GetRequiredService<ExpectationTimingSettings>(),
+        sp.GetRequiredService<SessionDeliveryProfile>()));
+    builder.Services.AddScoped<ExpectationNudgeDeliveryService>();
+    builder.Services.AddScoped<ExpectationResponseService>();
+    builder.Services.AddScoped<ExpectationOperatorDeliveryService>();
+    builder.Services.AddScoped<ExpectationWatchdogStatusService>();
+    builder.Services.AddTransient<ExpectationWatchdogJob>();
     // CARD-0082 S3: idle auto-compact sweep. Singleton because the in-memory per-session attempt
     // stamp has to survive the supervisor hosted service's per-tick scope.
     builder.Services.AddSingleton<ContextCompactionService>();
@@ -852,7 +874,16 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         config.UseInMemoryStorage(HangfireConfiguration.CreateStorageOptions(hangfireSettings)));
     if (hangfireSettings.ServerEnabled)
     {
-        builder.Services.AddHangfireServer(options => options.WorkerCount = 1);
+        builder.Services.AddHangfireServer(options => { options.WorkerCount = 1; options.Queues = ["default"]; });
+        if (builder.Configuration.GetSection(ExpectationWatchdogSettings.SectionName)
+            .Get<ExpectationWatchdogSettings>()?.Enabled == true)
+        {
+            builder.Services.AddHangfireServer(options =>
+            {
+                options.WorkerCount = 1;
+                options.Queues = ["expectations"];
+            });
+        }
     }
 
     // HttpClient for provider connectivity testing
@@ -1002,6 +1033,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
             if (residue.Enabled)
                 HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
+            if (scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value.Enabled)
+                HangfireConfiguration.AddOrUpdateExpectationWatchdogJob(recurringJobManager);
             // CARD-0653: finish pending slot-release intents at startup and on a schedule.
             var phoneHome = scope.ServiceProvider.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value;
             if (phoneHome.Enabled)
@@ -1071,6 +1104,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapComplexityChainEndpoints();
     app.MapScheduleEndpoints();
     app.MapAttentionEndpoints();
+    app.MapExpectationWatchdogEndpoints();
     app.MapHomeEndpoints();
     app.MapDigestEndpoints();
     app.MapDiagnosticsEndpoints();
