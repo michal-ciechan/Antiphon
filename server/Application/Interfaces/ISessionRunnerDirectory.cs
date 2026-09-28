@@ -74,6 +74,11 @@ public interface ISessionRunnerDirectory
     /// </summary>
     int? DeclaredCapacity(string runnerId) => null;
 
+    /// <summary>CARD-0654. Push a bounded, durable capacity to a live runner.</summary>
+    Task<PhoneHomeSetCapacityResponse> SetDeclaredCapacityAsync(
+        string runnerId, int capacity, string reason, CancellationToken ct) =>
+        throw new NotSupportedException("This runner directory cannot change capacity.");
+
     /// <summary>
     /// CARD-0679 D-10: sessions a connected remote runner holds live, from the connection's cached
     /// inventory. Never an RPC; empty when no remote runner is connected and recovered.
