@@ -7,6 +7,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Tests.TestHelpers;
@@ -21,6 +22,98 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class ChannelOutboundPolicyTests
 {
+    [Test]
+    [Arguments("disabled")]
+    [Arguments("unbound")]
+    [Arguments("inbound_project")]
+    [Arguments("converter_project")]
+    [Arguments("same_agent")]
+    [Arguments("raw_converter")]
+    [Arguments("pool_converter")]
+    [Arguments("always_on_converter")]
+    [Arguments("converter_is_inbound_elsewhere")]
+    [Arguments("missing_prompt")]
+    [Arguments("escaping_prompt")]
+    public async Task Invalid_profile_bindings_are_atomic_failures(string fault)
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-policy-matrix-").FullName;
+        var projectId = Guid.NewGuid();
+        var otherProjectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var otherBoardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var extraChannelId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert source Markdown.");
+        var profile = new ChannelOutboundProfile
+        {
+            ProjectId = projectId, AgentId = converterId, PromptFile = "convert.md",
+        };
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile> { ["conversion"] = profile },
+        });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        db.Projects.AddRange(
+            new Project { Id = projectId, Name = "policy-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now },
+            new Project { Id = otherProjectId, Name = "policy-" + otherProjectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+        db.Boards.AddRange(
+            new Board { Id = boardId, ProjectId = projectId, Name = "policy",
+                CreatedAt = now, UpdatedAt = now },
+            new Board { Id = otherBoardId, ProjectId = otherProjectId, Name = "other",
+                CreatedAt = now, UpdatedAt = now });
+        db.Agents.AddRange(
+            new Agent { Id = inboundId, Name = "inbound", Slug = "inbound-" + inboundId.ToString("N"),
+                BoardId = fault == "inbound_project" ? otherBoardId : boardId,
+                WorkingDirectory = root },
+            new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
+                BoardId = fault == "converter_project" ? otherBoardId : boardId,
+                WorkingDirectory = root, Kind = fault == "raw_converter" ? AgentKind.Raw : AgentKind.ClaudeCode,
+                IsPoolDelegate = fault == "pool_converter", AlwaysOn = fault == "always_on_converter" });
+        db.ChatChannels.Add(new ChatChannel
+        {
+            Id = channelId, Provider = "fake", ExternalId = channelId.ToString("N"),
+            AgentId = fault == "unbound" ? null : inboundId, Enabled = fault != "disabled",
+            CreatedAt = now, UpdatedAt = now,
+        });
+        if (fault == "converter_is_inbound_elsewhere")
+            db.ChatChannels.Add(new ChatChannel
+            {
+                Id = extraChannelId, Provider = "fake", ExternalId = extraChannelId.ToString("N"),
+                AgentId = converterId, CreatedAt = now, UpdatedAt = now,
+            });
+        if (fault == "same_agent") profile.AgentId = inboundId;
+        if (fault == "missing_prompt") profile.PromptFile = "absent.md";
+        if (fault == "escaping_prompt") profile.PromptFile = "../escape.md";
+        await db.SaveChangesAsync();
+        try
+        {
+            var service = new ChatChannelService(db, TimeProvider.System,
+                new FakeAntiphonMessagingClient(), settings);
+            await Should.ThrowAsync<ValidationException>(() => service.UpdateAsync(channelId,
+                new UpdateChatChannelRequest(OutboundAgentProfile: "conversion"), CancellationToken.None));
+            db.ChangeTracker.Clear();
+            (await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                .OutboundAgentProfile.ShouldBeNull();
+        }
+        finally
+        {
+            await db.ChatChannels.Where(c => c.Id == channelId || c.Id == extraChannelId)
+                .ExecuteDeleteAsync();
+            await db.Agents.Where(a => a.Id == inboundId || a.Id == converterId)
+                .ExecuteDeleteAsync();
+            await db.Boards.Where(b => b.Id == boardId || b.Id == otherBoardId)
+                .ExecuteDeleteAsync();
+            await db.Projects.Where(p => p.Id == projectId || p.Id == otherProjectId)
+                .ExecuteDeleteAsync();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public async Task Profile_binding_defaults_and_validation()
     {

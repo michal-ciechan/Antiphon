@@ -53,9 +53,12 @@ public sealed class MarkdownPdfRealBrowserTests
             var tool = typeof(MarkdownPdfRenderer).Assembly.Location;
             var runtimeConfig = Path.Combine(AppContext.BaseDirectory,
                 "Antiphon.MarkdownPdf.Tests.runtimeconfig.json");
+            var depsFile = Path.Combine(AppContext.BaseDirectory,
+                "Antiphon.MarkdownPdf.Tests.deps.json");
             File.Exists(runtimeConfig).ShouldBeTrue();
+            File.Exists(depsFile).ShouldBeTrue();
             var render = await RunAsync("dotnet",
-                ["exec", "--runtimeconfig", runtimeConfig, tool,
+                ["exec", "--runtimeconfig", runtimeConfig, "--depsfile", depsFile, tool,
                     "--manifest", Path.Combine(root, "manifest.json"), "--output", pdf,
                     "--browser-path", wrapper, "--timeout-seconds", "60"], TimeSpan.FromSeconds(90));
             render.ExitCode.ShouldBe(0, render.Stderr);
@@ -148,7 +151,7 @@ public sealed class MarkdownPdfRealBrowserTests
             await process.WaitForExitAsync(CancellationToken.None);
             try { await Task.WhenAll(stdout, stderr); }
             catch (OperationCanceledException) { }
-            throw new TimeoutException($"{program} exceeded {timeout}.");
+            throw new System.TimeoutException($"{program} exceeded {timeout}.");
         }
     }
 }
