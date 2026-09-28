@@ -165,6 +165,31 @@ public sealed class ExpectationResponseTests
         f.Harness.Adapter.Inputs.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task C650_Reconcile_bounds_unanswered_history_per_pass_and_rotates_pages()
+    {
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        for (var i = 0; i < 60; i++)
+            await f.NudgeAsync();
+        await using (var db = f.Db())
+            await db.ExpectationNudges.Where(n => n.DirectiveId == f.World.Directive.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(n => n.CreatedAt, DateTime.UtcNow.AddMinutes(-10)));
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using (var db = f.Db())
+            await new ExpectationResponseService(db, clock, f.CatchUp,
+                new ExpectationTimingSettings()).ReconcileAsync(f.World.Directive, CancellationToken.None);
+        await using (var db = f.Db())
+            (await db.ExpectationNudges.CountAsync(n => n.DirectiveId == f.World.Directive.Id
+                && n.OperatorOutboxState == ExpectationOperatorOutboxState.Due)).ShouldBe(25);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using (var db = f.Db())
+            await new ExpectationResponseService(db, clock, f.CatchUp,
+                new ExpectationTimingSettings()).ReconcileAsync(f.World.Directive, CancellationToken.None);
+        await using var verify = f.Db();
+        (await verify.ExpectationNudges.CountAsync(n => n.DirectiveId == f.World.Directive.Id
+            && n.OperatorOutboxState == ExpectationOperatorOutboxState.Due)).ShouldBe(50);
+    }
+
     private static async Task<ExpectationNudge> AttemptedAsync(ExpectationDeliveryFixture f,
         ExpectationAttemptState state = ExpectationAttemptState.Submitted) =>
         await f.NudgeAsync(state: state, destination: f.SessionId,

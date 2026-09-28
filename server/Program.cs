@@ -875,8 +875,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     if (hangfireSettings.ServerEnabled)
     {
         builder.Services.AddHangfireServer(options => { options.WorkerCount = 1; options.Queues = ["default"]; });
-        if (builder.Configuration.GetSection(ExpectationWatchdogSettings.SectionName)
-            .Get<ExpectationWatchdogSettings>()?.Enabled == true)
+        if (ExpectationWatchdogJob.ShouldRun(hangfireSettings,
+            builder.Configuration.GetSection(ExpectationWatchdogSettings.SectionName)
+                .Get<ExpectationWatchdogSettings>() ?? new ExpectationWatchdogSettings()))
         {
             builder.Services.AddHangfireServer(options =>
             {
@@ -1033,7 +1034,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
             if (residue.Enabled)
                 HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
-            if (scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value.Enabled)
+            if (ExpectationWatchdogJob.ShouldRun(hangfire,
+                scope.ServiceProvider.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value))
                 HangfireConfiguration.AddOrUpdateExpectationWatchdogJob(recurringJobManager);
             // CARD-0653: finish pending slot-release intents at startup and on a schedule.
             var phoneHome = scope.ServiceProvider.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>().Value;

@@ -15,6 +15,9 @@ public sealed class ExpectationWatchdogJob(IServiceScopeFactory scopes,
 {
     public const string RecurringJobId = "antiphon:expectation-watchdog";
 
+    public static bool ShouldRun(HangfireSettings hangfire, ExpectationWatchdogSettings watchdog) =>
+        hangfire.ServerEnabled && watchdog.Enabled;
+
     [Queue("expectations")]
     [AutomaticRetry(Attempts = 0)]
     public async Task ExecuteAsync(CancellationToken ct)

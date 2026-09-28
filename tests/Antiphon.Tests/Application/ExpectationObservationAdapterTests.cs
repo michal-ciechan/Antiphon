@@ -187,15 +187,15 @@ public sealed class ExpectationObservationAdapterTests
         await using var firstDb = world.Db();
         var first = await new ExpectationSnapshotReader(firstDb).ReadAsync(world.Directive,
             world.Digest, world.Now, ExpectationProbeInput.None, CancellationToken.None);
-        first.Notes.Count.ShouldBe(100);
-        first.NoteCoverageIncomplete.ShouldBeTrue();
+        first.Notes.Count.ShouldBe(105);
+        first.NoteCoverageIncomplete.ShouldBeFalse();
         var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
         await using (var scanDb = world.Db())
             await world.Service(scanDb, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
         await using var secondDb = world.Db();
         var second = await new ExpectationSnapshotReader(secondDb).ReadAsync(world.Directive,
             world.Digest, world.Now.AddMinutes(1), ExpectationProbeInput.None, CancellationToken.None);
-        second.Notes.Count.ShouldBe(5);
+        second.Notes.Count.ShouldBe(105);
         first.Notes.Select(n => n.NotificationId).Concat(second.Notes.Select(n => n.NotificationId))
             .Distinct().Count().ShouldBe(105);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -203,6 +203,47 @@ public sealed class ExpectationObservationAdapterTests
             await world.Service(scanDb, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
         await using var verify = world.Db();
         (await verify.ExpectationEpisodes.CountAsync(e => e.ResolvedAt == null)).ShouldBe(105);
+    }
+
+    [Test]
+    public async Task C650_More_than_one_page_of_delivered_notes_clears_episode_and_scan()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        var notes = Enumerable.Range(1, 105).Select(i => Note(world, taskId, i)).ToList();
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, world.Now.AddMinutes(-30)));
+            db.SessionQueuedMessages.AddRange(notes);
+            await db.SaveChangesAsync();
+        }
+        var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+        await using (var db = world.Db())
+        {
+            foreach (var (note, index) in notes.Select((note, index) => (note, index)))
+            {
+                await db.SessionQueuedMessages.Where(row => row.Id == note.Id).ExecuteUpdateAsync(u => u
+                    .SetProperty(row => row.Status, QueuedMessageStatus.Sent)
+                    .SetProperty(row => row.DeliveryAttempts, 1)
+                    .SetProperty(row => row.LastDeliveryBaselineSequence, 0L)
+                    .SetProperty(row => row.LastDeliveryStartedAt, world.Now.AddSeconds(-1)));
+                db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, index + 1,
+                    TranscriptKinds.UserPrompt, world.Now, note.Body));
+            }
+            await db.SaveChangesAsync();
+        }
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+        await using var read = world.Db();
+        (await read.ExpectationEpisodes.CountAsync(row => row.ResolvedAt == null)).ShouldBe(0);
+        (await read.ExpectationWatchStates.SingleAsync()).LastSuccessfulScanAt.ShouldBe(world.Now.AddMinutes(2));
     }
 
     private static SessionQueuedMessage Note(ExpectationTestWorld world, Guid taskId, int sequence)

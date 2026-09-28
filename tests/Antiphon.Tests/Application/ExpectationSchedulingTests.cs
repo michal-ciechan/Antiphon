@@ -4,6 +4,9 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -126,6 +129,36 @@ public sealed class ExpectationSchedulingTests
         System.Text.Encoding.UTF8.GetByteCount(Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(body))
             .ShouldBeLessThanOrEqualTo(minBytes + 100);
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C650_Too_small_runner_write_ceiling_refuses_and_audits_operator_page()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        await SeedSilentAsync(world);
+        var clock = Clock(world.Now);
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var settings = new DelegationSettings { PtySingleChunkBytes = 80 };
+        var pty = new PtyDeliveryProfile(provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<PtyDeliveryProfile>.Instance, Options.Create(settings), clock, "inbox");
+        var profile = new SessionDeliveryProfile(pty, Options.Create(settings),
+            new RefusingSessionRunnerClient(), clock, NullLogger<SessionDeliveryProfile>.Instance);
+        await using (var db = world.Db())
+        {
+            var ledger = new ExpectationLedger(db, clock, new ExpectationTestWorld.QuietBus());
+            var scan = await new ExpectationWatchdogService(db, ledger, clock,
+                deliveryProfile: profile).ScanAsync(world.Directive, ExpectationProbeInput.None,
+                CancellationToken.None);
+            scan.NudgesCommitted.ShouldBe(1);
+        }
+        await using var read = world.Db();
+        var nudge = await read.ExpectationNudges.SingleAsync();
+        nudge.AttemptState.ShouldBe(ExpectationAttemptState.Refused);
+        nudge.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Due);
+        (await read.CardComments.CountAsync(comment => comment.Body.Contains("byte write ceiling"))).ShouldBe(1);
+        (await read.AgentTaskEvents.CountAsync(e => e.Detail != null
+            && e.Detail.Contains("expectation-nudge:"))).ShouldBeGreaterThan(0);
     }
 
     private static FakeTimeProvider Clock(DateTime at) => new(new DateTimeOffset(at, TimeSpan.Zero));

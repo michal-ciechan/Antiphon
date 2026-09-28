@@ -576,12 +576,9 @@ public sealed class ExpectationSnapshotReader
                 && note.ParentSessionId != null
                 && _db.AgentSessions.Any(session =>
                     session.Id == note.ParentSessionId && session.StandingAgentId == agentId));
-        var outboxCount = await outboxQuery.CountAsync(ct);
-        var seekOutbox = state?.NoteOutboxCursorAt is { } outboxAt && state.NoteOutboxCursorId is { } outboxId
-            ? outboxQuery.Where(note => note.CreatedAt > outboxAt
-                || note.CreatedAt == outboxAt && note.Id.CompareTo(outboxId) > 0)
-            : outboxQuery;
-        var rows = await seekOutbox
+        // Read every page in this observation. A cursor across scans cannot establish a clear
+        // observation: an undelivered subject on an earlier page would look absent on the last.
+        var rows = await outboxQuery
             .OrderBy(note => note.CreatedAt)
             .ThenBy(note => note.Id)
             .Select(note => new NoteRow(
@@ -599,14 +596,18 @@ public sealed class ExpectationSnapshotReader
                 note.CompletionDeliveryJson))
             .Take(pageSize)
             .ToListAsync(ct);
-        if (rows.Count == 0 && outboxCount > 0 && state?.NoteOutboxCursorAt is not null)
-            rows = await outboxQuery.OrderBy(note => note.CreatedAt).ThenBy(note => note.Id)
+        for (var offset = pageSize; rows.Count == offset; offset += pageSize)
+        {
+            var page = await outboxQuery.OrderBy(note => note.CreatedAt).ThenBy(note => note.Id)
                 .Select(note => new NoteRow(
                     note.Id, note.TaskId, note.Kind, note.State, note.CreatedAt,
                     note.ParentSessionId, note.LastErrorCode, note.QueueMessageId,
                     note.Body, note.IsLegacy, note.CompletionSnapshotJson != null,
                     note.CompletionDeliveryJson))
-                .Take(pageSize).ToListAsync(ct);
+                .Skip(offset).Take(pageSize).ToListAsync(ct);
+            rows.AddRange(page);
+            if (page.Count < pageSize) break;
+        }
         var queueIds = rows.Where(row => row.QueueMessageId is not null)
             .Select(row => row.QueueMessageId!.Value)
             .ToList();
@@ -666,12 +667,7 @@ public sealed class ExpectationSnapshotReader
                 && message.CanceledAt == null
                 && _db.AgentSessions.Any(session => session.Id == message.AgentSessionId
                     && session.StandingAgentId == agentId));
-        var queueCount = await queueQuery.CountAsync(ct);
-        var seekQueue = state?.NoteQueueCursorAt is { } queueAt && state.NoteQueueCursorId is { } cursorQueueId
-            ? queueQuery.Where(message => message.CreatedAt > queueAt
-                || message.CreatedAt == queueAt && message.Id.CompareTo(cursorQueueId) > 0)
-            : queueQuery;
-        var queueOnly = await seekQueue.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
+        var queueOnly = await queueQuery.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
             .Select(message => new
             {
                 message.Id,
@@ -686,18 +682,24 @@ public sealed class ExpectationSnapshotReader
                 message.CreatedAt,
                 message.DeliveryAttempts,
                 message.LastDeliveryBaselineSequence,
+                message.LastDeliveryStartedAt,
             })
             .Take(pageSize)
             .ToListAsync(ct);
-        if (queueOnly.Count == 0 && queueCount > 0 && state?.NoteQueueCursorAt is not null)
-            queueOnly = await queueQuery.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
+        for (var offset = pageSize; queueOnly.Count == offset; offset += pageSize)
+        {
+            var page = await queueQuery.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
                 .Select(message => new
                 {
                     message.Id, message.SourceTaskId, message.SourceLandNotificationId,
                     message.AgentSessionId, message.Origin, message.ConversationKey,
                     message.NoteHeader, message.Body, message.Status, message.CreatedAt,
                     message.DeliveryAttempts, message.LastDeliveryBaselineSequence,
-                }).Take(pageSize).ToListAsync(ct);
+                    message.LastDeliveryStartedAt,
+                }).Skip(offset).Take(pageSize).ToListAsync(ct);
+            queueOnly.AddRange(page);
+            if (page.Count < pageSize) break;
+        }
         // Completion producers can link several queue members through their delivery snapshot.
         // Deduplicate against those links even when the outbox cursor is on a different page.
         var pageTaskIds = queueOnly.Where(message => message.SourceTaskId is not null)
@@ -730,16 +732,15 @@ public sealed class ExpectationSnapshotReader
                 && (!AgentTaskCheckService.TryParseCheckConversationKey(message.ConversationKey, out var checkTask)
                     || checkTask != message.SourceTaskId))
                 continue;
-            if (message.DeliveryAttempts > 0 && message.LastDeliveryBaselineSequence is { } floor)
+            if (message.DeliveryAttempts > 0)
             {
                 var typed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(message.Body.Trim());
-                var transcripts = await _db.TranscriptEntries.AsNoTracking()
-                    .Where(entry => entry.AgentSessionId == message.AgentSessionId
-                        && entry.Sequence > floor && entry.Kind == TranscriptKinds.UserPrompt)
-                    .Select(entry => entry.Text)
-                    .ToListAsync(ct);
-                if (transcripts.Any(body => PromptSubmissionMatch.IsConfirmedBy(typed, body)
-                    && PromptSubmissionMatch.IsCompleteIn(typed, body)))
+                var prompts = LandNoteReceipt.Prompts(_db.TranscriptEntries.AsNoTracking(),
+                    message.AgentSessionId, true, LandNotificationKind.TaskCompletion,
+                    message.LastDeliveryBaselineSequence, message.LastDeliveryStartedAt,
+                    _supervision.DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
+                if (prompts is not null && (await prompts.Select(entry => entry.Text).ToListAsync(ct))
+                    .Any(body => body is not null && LandNoteReceipt.IsReceipt(typed, body)))
                     continue;
             }
 
@@ -757,7 +758,7 @@ public sealed class ExpectationSnapshotReader
             });
         }
 
-        return new NotePage(results, outboxCount > pageSize || queueCount > pageSize,
+        return new NotePage(results, false,
             rows.LastOrDefault()?.CreatedAt, rows.LastOrDefault()?.Id,
             queueOnly.LastOrDefault()?.CreatedAt, queueOnly.LastOrDefault()?.Id);
     }

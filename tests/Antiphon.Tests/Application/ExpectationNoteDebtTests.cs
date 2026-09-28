@@ -121,6 +121,29 @@ public sealed class ExpectationNoteDebtTests
             .Select(m => m.DeliveryAttempts).SingleAsync()).ShouldBe(2);
     }
 
+    [Test]
+    public async Task C650_First_turn_delivery_without_sequence_baseline_is_not_debt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var task = Guid.NewGuid();
+        var delivered = Queue(world, task, QueuedMessageOrigin.Check, world.Now.AddMinutes(-20), 1);
+        delivered.ConversationKey = AgentTaskCheckService.ConversationKey(task);
+        delivered.Status = QueuedMessageStatus.Sent;
+        delivered.DeliveryAttempts = 1;
+        delivered.LastDeliveryBaselineSequence = null;
+        delivered.LastDeliveryStartedAt = world.Now.AddMinutes(-1);
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(task, AgentTaskStatus.Succeeded, world.Now.AddMinutes(-30)));
+            db.SessionQueuedMessages.Add(delivered);
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 1,
+                TranscriptKinds.UserPrompt, world.Now, delivered.Body));
+            await db.SaveChangesAsync();
+        }
+        (await ReadAsync(world)).Notes.ShouldBeEmpty();
+    }
+
     private static SessionQueuedMessage Queue(ExpectationTestWorld world, Guid task,
         QueuedMessageOrigin origin, DateTime created, long sequence, Guid? session = null)
     {

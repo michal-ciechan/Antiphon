@@ -15,10 +15,17 @@ public sealed class ExpectationResponseService(AppDbContext db, TimeProvider tim
         var active = directive.Enabled
             && (directive.ActiveUntilUtc is null || directive.ActiveUntilUtc > time.GetUtcNow());
         var digest = await ExpectationConfigIdentity.ResolveAsync(db, directive, timing, ct);
-        var nudges = await db.ExpectationNudges.AsNoTracking()
-            .Where(n => n.DirectiveId == directive.Id && n.AnsweredAt == null)
-            .OrderBy(n => n.CreatedAt).ToListAsync(ct);
         var now = time.GetUtcNow().UtcDateTime;
+        // A long-lived standing agent can accumulate unacknowledged history indefinitely.
+        // Rotate a bounded page each minute so old rows cannot consume the whole job budget.
+        const int pageSize = 25;
+        var query = db.ExpectationNudges.AsNoTracking()
+            .Where(n => n.DirectiveId == directive.Id && n.AnsweredAt == null);
+        var count = await query.CountAsync(ct);
+        var pageCount = Math.Max(1, (count + pageSize - 1) / pageSize);
+        var page = (int)((now.Ticks / TimeSpan.TicksPerMinute) % pageCount);
+        var nudges = await query.OrderBy(n => n.CreatedAt).ThenBy(n => n.Id)
+            .Skip(page * pageSize).Take(pageSize).ToListAsync(ct);
         foreach (var nudge in nudges)
         {
             if (!active || nudge.ConfigDigest != digest)
