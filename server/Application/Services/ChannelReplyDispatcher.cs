@@ -186,6 +186,9 @@ public sealed class ChannelReplyDispatcher
     /// </summary>
     public async Task<ChannelReplyDispatchResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct)
     {
+        if (!_settings.Enabled)
+            return ChannelReplyDispatchResult.Empty;
+
         var result = ChannelReplyDispatchResult.Empty;
         try
         {
