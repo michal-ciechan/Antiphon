@@ -89,6 +89,25 @@ public sealed class BuildSlotClientTests
     }
 
     [Test]
+    public async Task pid_liveness_grant_with_null_renewal_is_granted_without_renewing()
+    {
+        // The Windows desktop runner's pid-liveness broker serialises renewEverySeconds as null.
+        var handler = ScriptProbe();
+        handler.Enqueue(HttpStatusCode.OK, """{"leaseId":"L-pid","maxCpuCount":3,"renewEverySeconds":null}""");
+        handler.Enqueue(HttpStatusCode.NoContent, "");
+        var (client, _) = Client(handler);
+        var session = await client.ProbeAsync(CancellationToken.None);
+        var lease = await client.AcquireAsync(session, "CP-9@bin-pdf", CancellationToken.None);
+        lease.State.ShouldBe("granted");
+        lease.LeaseId.ShouldBe("L-pid");
+        lease.MaxCpuCount.ShouldBe(3);
+        await lease.DisposeAsync();
+        handler.Calls.ShouldNotContain(call => call.Uri.EndsWith("/renew", StringComparison.Ordinal));
+        handler.Calls.ShouldContain(call => call.Method == "DELETE"
+            && call.Uri.EndsWith("/L-pid", StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task renewable_grant_is_renewed_until_the_checkpoint_releases_it()
     {
         var handler = new RenewableSlotHandler();
