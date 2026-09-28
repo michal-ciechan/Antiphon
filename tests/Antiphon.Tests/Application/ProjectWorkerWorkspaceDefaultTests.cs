@@ -32,7 +32,8 @@ public sealed class ProjectWorkerWorkspaceDefaultTests
         created.EffectiveWorkerWorkspace.ShouldBe(selected ?? global.ToString());
         await using var fresh = NewDb(schema);
         var stored = await fresh.Projects.SingleAsync(p => p.Id == created.Id);
-        stored.DefaultWorkerWorkspace?.ToString().ShouldBe(selected);
+        string? persisted = stored.DefaultWorkerWorkspace?.ToString();
+        persisted.ShouldBe(selected);
     }
 
     [Test]
