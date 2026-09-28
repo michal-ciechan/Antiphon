@@ -1,5 +1,12 @@
 # Session runtime invariants
 
+- **Host budget changes gate new dispatch only (CARD-0654).** The local limit and each runner's
+  effective limit are evaluated when claiming new work. Lowering a budget or a runner's declared
+  capacity below current occupancy leaves existing Working tasks and sessions running; it never
+  authorizes a stop, kill, release or rebind. A held task remains Queued until a later tick finds
+  capacity. Retained capacity-wait returns take a local slot before newly queued tasks and do
+  not count while retained.
+
 - **A draining runner takes no new work and still serves its sessions (CARD-0727).**
   `ResolveForNewWork` refuses a draining or retired runner (`phone_home_runner_draining`,
   `phone_home_runner_retired`). `Resolve` is unchanged, so input, transcript, kill, release
