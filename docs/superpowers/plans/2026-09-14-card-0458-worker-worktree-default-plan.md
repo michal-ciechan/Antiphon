@@ -25,7 +25,8 @@
   `Shared`. No cleanliness probe or new process seam belongs in S3.
 - **D-5:** Shared-checkout-only holds may explain the shared slot and suggest `-Worktree`, but
   only when scope evidence proves no area contention. A project Shared override must be named
-  accurately. Never promise immediate dispatch past other caps or dependencies.
+  accurately. Say `-Worktree would avoid this shared slot`; other caps or dependencies may still
+  hold the task, so do not promise immediate dispatch.
 - **D-6:** One additive migration adds two nullable text columns without defaults or backfill.
   Existing task modes and CARD-0644 admission remain unchanged. PUT null/omission preserves the
   project setting; literal `Inherit` clears it. API and Settings show configured and effective

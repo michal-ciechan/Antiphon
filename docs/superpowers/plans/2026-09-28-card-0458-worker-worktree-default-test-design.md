@@ -8,10 +8,9 @@ verbatim `## Design` section retrieved with `card.ps1 get CARD-0458 -Board Antip
 No copy existed in the inspected local/remote-tracking histories; the original Plan task's
 branch was absent from `ls-remote`. The copy was committed first as `26932a91c`.
 
-**Deliverable status: S1/S2 oracles are reconciled for Code. S3/S4 descriptions and CP-9 onward
-below record the original candidate and require a later TestDesign amendment before those slices.**
-This document designs tests; it adds no tests, application changes or live project settings.
-All execution counts below are planned rosters, not measured passes.
+**Deliverable status: S1/S2 is implemented and verified; the reconciled S3/S4 roster below
+replaces the September 14 candidate descriptions. Those later slices remain unbuilt.**
+All S3/S4 execution counts below are planned rosters, not measured passes.
 
 ## Policy conflict found at the current source
 
@@ -41,17 +40,47 @@ supersede conflicting original candidate oracles in the sections below:
 | AC-14 | Delegate echo uses the actual created response fields and never invents a project name from a path. |
 | AC-15 | Project create/update/list/detail and Settings expose configured and effective values; null PUT preserves and Inherit clears. Setup modal creates through `/api/projects/setup`, so its request and service must pass the field to `ProjectService.CreateAsync`. |
 | AC-16 | Migration only adds nullable columns. Global initializer is Worktree, task entity's historical initializer stays Shared; S1/S2 do not alter admission. |
-| AC-17 | Advice is confined to a proven shared-only hold; area contention and unknown holder scope retain neutral labels. |
+| AC-17 | Advice says `-Worktree would avoid this shared slot` only for a proven shared-only hold; area contention and unknown holder scope retain neutral labels. |
 | AC-18 | `project.ps1 set` extends the existing verb; one switch never overwrites the other setting or other project fields. |
 
-For S1/S2, CP-1 through CP-8 are the closed manifest under the Final profile. In AC-15, the new-project UI test
-targets the setup POST and its existing wizard, not an imaginary direct create modal.
-In AC-16, PC-16c changes Worktree to Shared and must fail the initializer assertion.
-All S3/S4 method names, result floors and PC variants below are **provisional** wherever
-they encode an overridden oracle; a later TestDesign must replace them before CP-9 runs.
-The 62-variant estimate and 57-result resolution floor are historical candidate estimates,
-not commitments under the reconciled policy. This task runs no PCs; all remain pending
-method-scoped SourceLanding Mutation.
+For S1/S2, CP-1 through CP-8 are the closed manifest under the Final profile. In AC-15, the
+new-project UI test targets the setup POST and its existing wizard. In AC-16, PC-16c changes
+Worktree to Shared and must fail the initializer assertion. This task runs no PCs; every PC
+remains pending method-scoped SourceLanding Mutation.
+
+### Reconciled S3/S4 test and control roster
+
+The original candidate detail in AC-1 through AC-14 and R-1 through R-5 below is retained
+as design history. Use this replacement roster for S3/S4. Each method asserts persisted
+mode/source and its observable boundary, with no test-local resolver. The result floors
+remain 57 for CP-9 and 42 for CP-13.
+
+| Case | Exact method and results | Replacement assertion and positive control |
+|---|---|---|
+| AC-1 | `C458_ExplicitWorkspaceOverridesEveryDefault` (18) | Fresh explicit modes win under all project/global combinations; PC-01 overwrites an explicit mode. |
+| AC-2 | `C458_CleanProjectDefaultUsesWorktree` (1) | Project Worktree beats configured global Shared, with separate launch cwd and unchanged source ref; no status probe. PC-02a ignores project; PC-02b launches in source cwd. |
+| AC-3 | `C458_NullProjectDefaultUsesSharedGlobal` (2) | Explicit global Shared, null override and null ProjectId each yield Shared/Global; PC-03 hard-codes Worktree. |
+| AC-4 | `C458_NullProjectDefaultUsesWorktreeGlobal` (2) | Shipped global Worktree yields Worktree/Global for both identity shapes; PC-04 hard-codes Shared. |
+| AC-5 | `C458_DirtyDefaultKeepsWorktree` (4), `C458_IgnoredOnlyCheckoutKeepsDefaultWorktree` (1) | Tracked, untracked, mixed and ignored source changes never downgrade Worktree; isolated branch contains committed content only. PC-05a/b/c/d inject all-dirty, tracked-only, untracked-only and ignored-only downgrades. |
+| AC-6 | `C458_ExplicitWorktreeKeepsDirtySourceIsolated` (1) | Explicit Worktree still uses committed content and no status probe; PC-06 downgrades explicit mode. |
+| AC-7 | `C458_FreshRolesInheritDefaultAndStandingPinsStayPut` (5) | Fresh Deploy/Commit/Merge inherit project Worktree, while two existing-agent pin shapes remain Shared/Pinned in their cwd; PC-07a forces a role to Shared, PC-07b moves a pin. |
+| AC-8 | `C458_LiveFollowUpUsesExistingCheckout` (1) | Omitted live follow-up stays Shared/Pinned in the live cwd; PC-08 reapplies project mode. |
+| AC-9 | `C458_NonRepositoryWorktreeRefusesBeforeInsert` (1) | Project Worktree outside Git returns `workspace_default_not_git` with no row; an explicit Shared control succeeds. PC-09 silently falls back to Shared. |
+| AC-10 | `C458_NoStatusProbeOnDefaultWorktree` (2), `C458_NoStatusProbeOnExplicitOrPinned` (1), `C458_CallerCancellationDoesNotCreateTask` (1) | Recording process seam sees no `git status` for project/global/explicit/pinned choices. Cancellation during admission inserts no row. PC-10a/b/c add status calls to project/global/explicit or pinned decisions; PC-10d swallows cancellation. |
+| AC-11 | `C458_OrchestratorUsesProjectOrGlobalDefault` (3) | Separate Git directory with project Shared stays Shared/Project; inherited Git with global Worktree is Worktree/Global; non-Git Worktree refuses. PC-11a ignores project override, PC-11b treats separate directory as an implicit Shared pin, PC-11c falls back outside Git. |
+| AC-12 | `C458_WorkspaceProvenanceSurvivesCreateReloadAndDetail` (7) | Rows cover Explicit Shared/Worktree, Project Shared/Worktree, Global Shared/Worktree and Pinned. Persisted row, Created event, create/detail DTO and JSON agree; historic null source remains null. Created response adds authoritative `repoPath` and nullable `projectId`; no path-based identity. PC-12a-d independently omit persistence, event, create and detail mapping. |
+| AC-13 | `C458_SharedOnlyHeldTextExplainsWorkspaceSource` (5), `C458_IntersectingScopeTextRemainsContention` (2) | Shared-only rows use Explicit, Project, Global, Pinned and historical null; no DirtySource branch. Area contention keeps its old message. PC-13a-c remain source-clause, scope-discrimination and lease-policy mutations. |
+| AC-14 | `C458_OmittedWorkspaceStaysOffWire` (1), `C458_ExplicitWorkspaceSwitchesRoundTrip` (3), `C458_EchoUsesResolvedWorkspaceAndSource` (7), `C458_SharedWaitEchoExplainsSourceAndHolderCount` (10), `C458_IntersectingWaitEchoKeepsContentionMessage` (1), `C458_LegacyAndUnscopedResponseDoesNotInventProject` (1) | Echo's seven rows match AC-12; waits use AC-13's five sources x one/two holders. The response, including `repoPath`/`projectId`, is authoritative. PC-14a-f keep wire/echo/wait/identity targets, with Project Shared replacing the former DirtySource echo row. |
+| R-1 | `C458_ProjectSharedBeatsGlobalWorktree` (1) | Shared/Project; PC-19 consults global first. |
+| R-2 | `C458_CommissioningProjectWinsOverDirectoryProject` (3) | Parent/session provenance wins over target path; PC-20 derives identity from directory. |
+| R-3 | `C458_NoStatusProbeOnAnyWorkspace` (1) | Matrix of explicit, project, global, roles and pins makes no Git status call; PC-21 adds one before decision filtering. |
+| R-4 | `C458_LiveFollowUpExplicitReadOnlyIsPreserved` (1) | ReadOnly/Explicit in live cwd; PC-22 normalizes to Shared. |
+| R-5 | `C458_QueuedTaskRetainsResolvedModeAfterSettingChange` (1) | Created mode/source stay frozen through dispatch; PC-23 re-resolves. |
+
+The 62 PC identities and variants remain pending. Their S3/S4 production mutations use the
+replacement targets above; no candidate-only DirtySource, NoRepository or Orchestrator
+provenance is an expected new result. CP-9 and CP-13 retain their class filters and floors;
+the other later rows retain the existing regression roster.
 
 The card's September 14 ground truth is historical. CARD-0644 has since implemented
 [a different default policy](2026-09-23-card-0644-worktree-default-plan.md).
@@ -374,8 +403,8 @@ New `ProjectWorkerWorkspaceDefaultTests`:
 | `C458_CreateStoresAndReportsProjectDefault` | 6 | Create value omitted/Shared/Worktree x two globals. Fresh DB and DTO retain nullable configured value; effective field is stored-or-global. |
 | `C458_UpdateNullPreservesStoredDefault` | 2 | Seed Shared/Worktree; PUT explicit JSON null, then PUT omitting field. Both preserve stored value and unrelated fields (two requests inside each result). |
 | `C458_UpdateInheritClearsStoredDefault` | 2 | Two globals, opposing stored override. PUT literal `Inherit`; persisted value becomes null; effective response changes to global. |
-| `C458_UpdateRejectsReadOnlyWithoutChangingProject` | 1 | Real HTTP PUT `ReadOnly` is 422 with field-specific Problem Details; fresh DB proves workspace and other fields unchanged. Internal negative controls also cover unknown value and create ReadOnly. |
-| `C458_ListAndDetailResolveEffectiveDefault` | 6 | Three stored values x two globals through GET list and detail; assert configured and effective fields from production mapping. |
+| `C458_UpdateRejectsReadOnlyWithoutChangingProject` | 1 | Production service throws a field-specific `ValidationException` for ReadOnly; standard middleware maps it to HTTP 422. Fresh DB proves workspace and other fields unchanged. Internal controls cover unknown value and create ReadOnly. |
+| `C458_ListAndDetailResolveEffectiveDefault` | 6 | Three stored values x two globals through service list and detail; assert configured and effective fields from production mapping. |
 
 In `ProjectConfig.test.tsx` (first three names) and `ProjectSetupModal.test.tsx` (the fourth),
 add exact Vitest names:
