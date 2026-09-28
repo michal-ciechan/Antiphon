@@ -9,6 +9,7 @@ This record continues the [round-7 audit](2026-09-28-card-0418-round-7-evidence.
 - The output-manifest validator matrix now has fixture-owned file and directory links, UNC-shaped paths, empty name/MIME, extra manifest/file fields and an overlong replacement. The near-default wire-cap test uses actual `MessagingJson.Options` serialization with 13 MiB of random original bytes and Unicode metadata; exact 20 MiB stages and +1 byte refuses without a visible snapshot.
 - A client test checks that a rejected outbound profile PATCH shows the API validation detail and leaves the selector/profile preview unbound.
 - A ten-row trigger matrix probes direct Markdown, manifested ZIP, unmatched ZIP, missing bytes, missing manifest, wrong version and plain text against the production `MatchesMarkdownSources` decision. This does not substitute for the main/trailing/machine route integration in V-6.
+- The file-store fault seam now has three rows for partial input write, complete temporary snapshot and final rename collision. Each refuses the staged reply and leaves no exposed partial snapshot. A narrow test-only barrier just before the admission commit supports an independent-connection check that `Deferred` and the correlation FK cannot escape before commit.
 
 ## Targeted checkpoint evidence
 
@@ -23,6 +24,8 @@ The checkpoint tool was provisioned under `scripts/build-slot.ps1` because its b
 | `20260928-115504-f591`, `e325654b8d04b0f923c62ed46606af3dbe92faf8` | CP-12 | 26/26 client cases passed across two files. |
 | `20260928-115618-717f`, `fd8d521e87eba1195c88a01de74924202bd582ba` | CP-9 | 19/19 passed after the browser-nonzero row. |
 | `20260928-115748-b176`, `4898519dbb2a88a732f12fad743505d732667f1f` | CP-3 | 29/29 passed, including ten trigger-shape rows. |
+| `20260928-120328-fcc6`, `cbe943b420b0b880fc6086f382088e6c3337111b` | CP-4 | 57/57 passed, including three staging fault rows. |
+| `20260928-120546-dbe4`, `8af6cdc58577318ab173a081098922621af365d6` | CP-5 | 5/5 passed, including the before-commit admission visibility barrier. |
 
 TRX, command, roster and logs are retained under `.antiphon/checkpoints/<run-id>/`. The client row has no TRX; its console log says `Tests 26 passed (26)` and `CLIENT TESTS EXIT CODE: 0`.
 
@@ -33,7 +36,7 @@ The full V-1–V-19, V-21–V-23 and R-1–R-14 assertions are **not closed**. T
 | IDs | Main remaining assertions |
 |---|---|
 | V-1–V-4, R-1/R-2 | Full P/Q four-source settlement through X/Y/Z and source provenance across all read paths, including complete ZIP input and actual completion-note routing. |
-| V-5–V-9, R-3–R-6 | Endpoint/policy edge matrix, all three send shapes and withheld/control callers, durable admission and runtime release barriers, concurrent trigger/lease takeover identity. |
+| V-5–V-9, R-3–R-6 | Endpoint/policy edge matrix, all three send shapes and withheld/control callers, runtime release after admission, concurrent trigger/lease takeover identity. The new before-commit probe covers only the admission visibility boundary. |
 | V-10/V-11, R-7 | Internal-purpose side-effect and privilege matrix with ordinary companions; refusal, capacity, queue and dispatch race rows. |
 | V-12/V-13, R-8/R-9 | Further I/O, partial-write and link-swap fault injection, serialized fallback, malicious prose and exact route/byte recovery. |
 | V-14–V-18, R-10/R-11 | Frozen T1/T2 routing/order, C-1–C-8's full state/receipt oracles, multi-target acceptance/completeness, TTL ownership, revocation and final policy race. |
