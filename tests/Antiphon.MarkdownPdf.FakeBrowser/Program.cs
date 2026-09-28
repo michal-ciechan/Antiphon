@@ -5,8 +5,7 @@ var root = Environment.GetEnvironmentVariable("ANTIPHON_CARD0418_BROWSER_ROOT")
 Directory.CreateDirectory(root);
 if (args.Contains("--fixture-child", StringComparer.Ordinal))
 {
-    await File.WriteAllTextAsync(Path.Combine(root, "child.pid"),
-        Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    await WritePidAsync("child.pid");
     await Task.Delay(Timeout.InfiniteTimeSpan);
     return;
 }
@@ -17,6 +16,14 @@ if (Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparis
     start.ArgumentList.Add(System.Reflection.Assembly.GetExecutingAssembly().Location);
 start.ArgumentList.Add("--fixture-child");
 using var child = Process.Start(start) ?? throw new InvalidOperationException("Child did not start.");
-await File.WriteAllTextAsync(Path.Combine(root, "parent.pid"),
-    Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+await WritePidAsync("parent.pid");
 await Task.Delay(Timeout.InfiniteTimeSpan);
+
+async Task WritePidAsync(string name)
+{
+    var target = Path.Combine(root, name);
+    var temporary = target + ".tmp";
+    await File.WriteAllTextAsync(temporary,
+        Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    File.Move(temporary, target);
+}
