@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -202,6 +203,64 @@ public class DeliverableBundleServiceTests
         var manifest = await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!,
             DeliverableBundleService.SourceManifestName));
         manifest.ShouldContain(Convert.ToHexString(SHA256.HashData(expected)).ToLowerInvariant());
+    }
+
+    [Test]
+    public async Task Source_bytes_from_all_disk_roots_survive_a_single_zip()
+    {
+        using var workspace = new TempDir();
+        var worktree = Path.Combine(workspace.Path, "worktree");
+        var working = Path.Combine(workspace.Path, "working");
+        var repo = Path.Combine(workspace.Path, "repo");
+        Directory.CreateDirectory(worktree);
+        Directory.CreateDirectory(working);
+        Directory.CreateDirectory(repo);
+        var roots = new[] { worktree, working, repo };
+        var expected = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        for (var i = 0; i < 6; i++)
+        {
+            var relative = $"docs/features/source-{i}.md";
+            var bytes = Encoding.Unicode.GetPreamble()
+                .Concat(Encoding.Unicode.GetBytes($"# source {i}\r\nZażółć ✨  \r\n"))
+                .ToArray();
+            expected.Add(relative, bytes);
+            var path = Path.Combine(roots[i % roots.Length],
+                relative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, bytes);
+        }
+
+        var task = NewTask(repo, AgentTaskRole.Docs, WorkspaceMode.Worktree);
+        task.WorktreePath = worktree;
+        task.WorkingDirectory = working;
+        await CreateService().TryBuildAsync(task,
+            string.Join(' ', expected.Keys.Select(path => $"`{path}`")),
+            db: null, CancellationToken.None);
+
+        task.DeliverableFileCount.ShouldBe(6);
+        var zip = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
+        DeliverableBundleService.FormatNoteBit(task).ShouldBe("6 md, sources zip");
+        var manifest = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(
+            await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!,
+                DeliverableBundleService.SourceManifestName)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        manifest.Complete.ShouldBeTrue();
+        manifest.Omitted.ShouldBeEmpty();
+        manifest.Sources.Count.ShouldBe(6);
+        using var archive = ZipFile.OpenRead(zip);
+        archive.Entries.Count.ShouldBe(6);
+        foreach (var member in manifest.Sources)
+        {
+            var bytes = expected[member.OriginalRelativePath];
+            member.StoredFile.ShouldBe(Path.GetFileName(zip));
+            member.ZipEntry.ShouldBe(member.OriginalRelativePath);
+            member.Length.ShouldBe(bytes.LongLength);
+            member.Sha256.ShouldBe(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
+            await using var entry = archive.GetEntry(member.ZipEntry!)!.Open();
+            using var copied = new MemoryStream();
+            await entry.CopyToAsync(copied);
+            copied.ToArray().ShouldBe(bytes);
+        }
     }
 
     [Test]
