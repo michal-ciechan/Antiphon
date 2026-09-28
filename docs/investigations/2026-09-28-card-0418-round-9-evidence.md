@@ -9,7 +9,7 @@ This continues the [round-8 ledger](2026-09-28-card-0418-round-8-evidence.md). I
 
 ## Verification status
 
-- The required checkpoint tool was invoked for CP-5 on committed slice `249a79a62`, but exited 7 before a row launched: `CHECKPOINT owner owner-unverified`. This task process has `ANTIPHON_TASK_ID` and `ANTIPHON_API`, but no `ANTIPHON_TASK_TOKEN`; the tool's owner guard requires that token. **No CP-5 tests ran.** The same owner guard prevents the required full CP-1–CP-13 Final sweep until the task transport is repaired. Do not substitute an unbound run for owner-checked checkpoint evidence.
+- The required checkpoint tool was invoked for CP-5 on committed slice `249a79a62` and for CP-4/CP-5 on `36431f0f7`. Both invocations exited 7 before a row launched: `CHECKPOINT owner owner-unverified`. This task process has `ANTIPHON_TASK_ID` and `ANTIPHON_API`, but no `ANTIPHON_TASK_TOKEN`; the tool's owner guard requires that token. **No CP-4 or CP-5 tests ran.** The same owner guard prevents the required full CP-1–CP-13 Final sweep until the task transport is repaired. Do not substitute an unbound run for owner-checked checkpoint evidence.
 - A compile-only build was run through `scripts/build-slot.ps1` because the checkpoint tool could not start. Its first Linux attempt failed at the documented FakeClaude apphost/directory collision. The corrected build with `--property:UseAppHost=false` and an isolated output path exited 0 with 0 errors and 482 warnings. This is syntax/build evidence only, not a checkpoint or test verdict.
 
 ## Remaining scope
