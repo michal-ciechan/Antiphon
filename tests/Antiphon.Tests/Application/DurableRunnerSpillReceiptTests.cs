@@ -1,6 +1,9 @@
+using System.Text;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner;
@@ -16,6 +19,101 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class DurableRunnerSpillReceiptTests
 {
+    [Test]
+    public async Task Dispatcher_pointer_near_one_write_limit_survives_binding_and_reaches_a_complete_UserPrompt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var root = Path.Combine(Path.GetTempPath(), "c649-bound-" + Guid.NewGuid().ToString("N")).Replace('\\', '/');
+        var mirror = root + "/worktrees/task-bound";
+        Directory.CreateDirectory(mirror);
+        try
+        {
+            await using var h = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = schema.ConnectionString,
+                ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+            });
+            await BindRunnerAsync(schema.ConnectionString, h.SessionId, mirror);
+            var task = new AgentTask
+            {
+                Id = Guid.NewGuid(), Title = "boundary", Goal = "HEAD-0649\n" + new string('g', 2200) + "\nTAIL-0649",
+                Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
+                ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = mirror, Status = AgentTaskStatus.Dispatched,
+            };
+            var settings = new DelegationSettings();
+            var inbox = settings.CeilingsFor(PtyBackend.InboxConhost, "runner-bound test");
+            var stagedPath = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
+            var boundPath = TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D"));
+            string? candidate = null;
+            for (var titleLength = 1; titleLength <= 700; titleLength++)
+            {
+                task.Title = new string('t', titleLength);
+                var fitted = DelegationReportFormatter.BuildBriefPointer(task, settings, stagedPath,
+                    DelegationReportFormatter.BuildBrief(task, settings).Length);
+                var bound = fitted.Replace(stagedPath, boundPath, StringComparison.Ordinal);
+                if (fitted.Contains("YOUR BRIEF IS NOT IN THIS MESSAGE", StringComparison.Ordinal)
+                    && Encoding.UTF8.GetByteCount(fitted) <= inbox.SingleWriteMaxBytes
+                    && Encoding.UTF8.GetByteCount(bound) > inbox.SingleWriteMaxBytes)
+                {
+                    candidate = fitted;
+                    break;
+                }
+            }
+            candidate.ShouldNotBeNull("the test must exercise a staged pointer that grows past one write");
+            var fullBrief = DelegationReportFormatter.BuildBrief(task, settings);
+            var pointer = AgentTaskDispatcher.FitBriefForTyping(task, settings, inbox,
+                runnerCwd: mirror, stageRemoteSpill: spill => h.Queue.StageRemoteSpill(h.SessionId, mirror, spill));
+            pointer.ShouldNotBe(candidate, "the bound size must select the compact pointer");
+
+            await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
+            await h.Queue.EnqueueAsync(h.SessionId, pointer, MessageSendMode.WhenIdle,
+                CancellationToken.None, QueuedMessageOrigin.Delegation);
+            await using (var before = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var waiting = await before.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == h.SessionId);
+                waiting.Body.ShouldStartWith(DelegationReportFormatter.TaskMarker(task.Id));
+                waiting.Body.ShouldContain(TypedBodySpill.InboxRelativePath(waiting.Id.ToString("D")));
+                waiting.Body.ShouldNotContain(TypedBodySpill.PointerHeadline);
+                Encoding.UTF8.GetByteCount(waiting.Body).ShouldBeLessThanOrEqualTo(inbox.SingleWriteMaxBytes);
+                waiting.RemoteSpillBody.ShouldBe(fullBrief);
+            }
+
+            var writer = new RunnerWorkspaceService(root + "/repo", root);
+            var record = h.Adapter.OnSubmitted;
+            h.Adapter.OnSubmitted = async submitted =>
+            {
+                await using var live = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                var row = await live.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == h.SessionId);
+                await writer.WriteSpillAsync(mirror, new PhoneHomeInputSpill(
+                    row.RemoteSpillRelativePath!, row.RemoteSpillBody!, row.Id), CancellationToken.None);
+                if (record is not null)
+                    await record(submitted);
+            };
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd,
+                stopReason: TranscriptKinds.StopReasons.EndTurn, timestamp: DateTime.UtcNow);
+            await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+
+            await using var after = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var confirmed = await after.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.AgentSessionId == h.SessionId);
+            confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            confirmed.RemoteSpillBody.ShouldBeNull();
+            var prompt = await after.TranscriptEntries.AsNoTracking().SingleAsync(e =>
+                e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt);
+            PromptSubmissionMatch.IsCompleteIn(confirmed.Body, prompt.Text!).ShouldBeTrue();
+            var file = Path.Combine(mirror, confirmed.RemoteSpillRelativePath!.Replace('/', Path.DirectorySeparatorChar));
+            (await File.ReadAllTextAsync(file)).ShouldBe(fullBrief);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public async Task Queued_runner_spill_keeps_its_bytes_and_receives_a_complete_UserPrompt()
     {

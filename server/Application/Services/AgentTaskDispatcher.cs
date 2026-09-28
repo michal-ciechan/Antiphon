@@ -5495,9 +5495,19 @@ public sealed class AgentTaskDispatcher
             DelegationReportFormatter.Short(task.Id), briefBytes, limits.BriefInlineMaxBytes,
             limits, spillPath ?? "the API");
 
+        // The queue replaces the staged path with an inbox path containing its 36-character
+        // message Id. Size the pointer as it will be typed, after that binding. Otherwise a
+        // pointer just under 1 KB can become oversized and be spilled a second time.
+        var boundPathBytes = string.IsNullOrWhiteSpace(runnerCwd) || spillPath is null
+            ? 0
+            : System.Text.Encoding.UTF8.GetByteCount(
+                TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D")));
+        var stagedPathBytes = spillPath is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(spillPath);
+        var boundGrowth = Math.Max(0, boundPathBytes - stagedPathBytes);
         return DelegationReportFormatter.BuildBriefPointer(
             task, settings, spillPath, brief.Length, agentKind,
-            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd) ? null : limits.SingleWriteMaxBytes);
+            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd)
+                ? null : limits.SingleWriteMaxBytes - boundGrowth);
     }
 
     /// <summary>
