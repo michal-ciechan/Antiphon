@@ -1,0 +1,11 @@
+# CARD-0649 final repair evidence
+
+The dispatcher stages a relative runner brief path. The queue later replaces that path with its message-owned inbox path. The pointer budget now evaluates the projected typed text after that replacement. The CARD-0647 task marker remains repeated beside the explanatory pointer instruction as a correlation safeguard. The aff1b9c6 prompt loss predated this repair and was already fixed on master by 7851254ea; the synthetic size in a unit fixture is not a root-cause measurement.
+
+Plan: [2026-09-28-card-0649-repair-plan.md](../superpowers/plans/2026-09-28-card-0649-repair-plan.md). The checkpoint tool acquired the build slot for both rows. Initial CP-1 had one timing-sensitive, unrelated `RunnerCodexAdapterReadyTests.One_snapshot_is_used_for_each_startup_decision` failure (snapshot reads 2 instead of 1 after a 20 ms wait); the same full row passed on rerun. CP-2 passed on its first run. The Unit lane reported 34 skips on Linux; the affected integration classes had no skips. No test or build commands outside these rows were run.
+
+CHECKPOINT CP-1 commit=dc5e34dbdf2c37406891addb35b6e334148700da build=ok filter=/*/*/*/*[Category=Unit] executed=3424 passed=3424 failed=0 skipped=34 trx=/work/worktrees/task-7ae56a95/.antiphon/checkpoints/20260928-104409-65b2/rows/CP-1/run.trx reruns=1
+
+CHECKPOINT CP-2 commit=dc5e34dbdf2c37406891addb35b6e334148700da build=reused filter=/*/*/(PhoneHomeTaskDispatchProjectionTests*)|(DurableRunnerSpillReceiptTests*)|(PhoneHomeSpillTransportTests*)/* executed=20 passed=20 failed=0 skipped=0 trx=/work/worktrees/task-7ae56a95/.antiphon/checkpoints/20260928-103855-d6fa/rows/CP-2/run.trx
+
+`SessionMessageQueuePtyIntegrationTests.Large_multiline_channel_body_submits_as_one_intact_turn` is the existing real runner/ConPTY test that asserts the complete multiline UserPrompt in both the file transcript and the ingested transcript. It is Windows-only and was not executed on this Linux host. This round's new dispatcher-to-queue receipt test uses the durable queue harness's recorded UserPrompt and separately proves there is no second spill after path binding. PC-1 through PC-3 remain pending method-scoped SourceLanding Mutation.
