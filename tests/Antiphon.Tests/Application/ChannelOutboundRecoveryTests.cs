@@ -2,6 +2,7 @@ using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Confluent.Kafka;
+using Confluent.Kafka.Admin;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -15,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
+using Testcontainers.Redpanda;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
@@ -24,6 +26,149 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ChannelOutboundRecoveryTests
 {
+    [Test]
+    public async Task Broker_ack_before_process_death_remains_uncertain_without_replay()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-broker-crash-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
+        await broker.StartAsync();
+        var address = broker.GetBootstrapAddress();
+        var topic = "c0418-crash-" + Guid.NewGuid().ToString("N");
+        using (var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = address }).Build())
+            await admin.CreateTopicsAsync([new TopicSpecification
+                { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var source = "# accepted before crash\n"u8.ToArray();
+        var frozen = await store.StageAsync(deliveryId, new ChannelReply
+        {
+            Channel = "slack", ConversationId = "C0418",
+            ReplyHandle = "C0418|1700000000.000100", Text = "broker crash source",
+            Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                Name = "source.md", Mime = "text/markdown", Content = source }],
+        }, CancellationToken.None);
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
+        {
+            db.Projects.Add(new Project { Id = projectId, Name = "broker-crash-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "broker-crash",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "broker-crash",
+                Slug = "broker-crash-" + agentId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "slack",
+                ExternalId = "C0418", AgentId = agentId, CreatedAt = now, UpdatedAt = now });
+            db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "broker-crash",
+                Cwd = root, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+            db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                ProjectId = projectId, InboundAgentId = agentId, SourceSessionId = sessionId,
+                SendKind = "main", ProfileName = "", PromptRevision = new string('a', 64),
+                InputPath = frozen.ReplyPath, InputSha256 = frozen.ReplySha256,
+                Trigger = "Passthrough", State = ChannelOutboundDeliveryState.Ready,
+                CreatedAt = now, DeadlineAt = now.AddMinutes(2),
+            });
+            await db.SaveChangesAsync();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = correlationId, AgentSessionId = sessionId, Body = "broker crash source",
+                Sequence = 1, Origin = QueuedMessageOrigin.Channel,
+                Status = QueuedMessageStatus.Sent, ConversationKey = "slack:C0418",
+                ChannelOutboundDeliveryId = deliveryId, CreatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+        var configPath = Path.Combine(root, "probe.json");
+        var markerPath = Path.Combine(root, "barrier");
+        var probeDll = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
+            "Antiphon.ChannelOutbound.Probe.dll");
+        File.Exists(probeDll).ShouldBeTrue();
+        Process? child = null;
+        try
+        {
+            async Task WriteConfigAsync(string? barrier, int offset) =>
+                await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new
+                {
+                    ConnectionString = isolated.ConnectionString, StoreRoot = Path.Combine(root, "store"),
+                    DeliveryId = deliveryId, EvidencePath = Path.Combine(root, "unused.bin"),
+                    MarkerPath = markerPath, Barrier = barrier, ClockOffsetSeconds = offset,
+                    Mode = "broker", BootstrapServers = address, Topic = topic,
+                }));
+            await WriteConfigAsync("producer-accepted", 0);
+            child = StartProbe(probeDll, configPath);
+            var childPid = child.Id;
+            var childStarted = child.StartTime;
+            using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                while (!File.Exists(markerPath))
+                {
+                    child.HasExited.ShouldBeFalse("broker probe exited before the acceptance barrier");
+                    await Task.Delay(25, watchdog.Token);
+                }
+            child.Id.ShouldBe(childPid);
+            child.StartTime.ShouldBe(childStarted);
+            child.Kill(entireProcessTree: true);
+            using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                await child.WaitForExitAsync(watchdog.Token);
+            child.Dispose();
+            child = null;
+
+            using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
+            {
+                BootstrapServers = address,
+                GroupId = "c0418-crash-group-" + Guid.NewGuid().ToString("N"),
+                AutoOffsetReset = AutoOffsetReset.Earliest, EnableAutoCommit = false,
+            }).Build();
+            consumer.Subscribe(topic);
+            var accepted = consumer.Consume(TimeSpan.FromSeconds(30));
+            accepted.ShouldNotBeNull();
+            accepted.Topic.ShouldBe(topic);
+            accepted.Message.Key.ShouldBe("C0418");
+            var reply = JsonSerializer.Deserialize<ChannelReply>(accepted.Message.Value,
+                Antiphon.Messaging.MessagingJson.Options)!;
+            reply.ReplyHandle.ShouldBe("C0418|1700000000.000100");
+            reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(source);
+
+            await WriteConfigAsync(null, 301);
+            for (var i = 0; i < 2; i++)
+            {
+                using var recovery = StartProbe(probeDll, configPath);
+                using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await recovery.WaitForExitAsync(watchdog.Token);
+                recovery.ExitCode.ShouldBe(0);
+            }
+            consumer.Consume(TimeSpan.FromSeconds(2)).ShouldBeNull();
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+            var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId);
+            delivery.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
+            delivery.PublicationAttempts.ShouldBe(1);
+            delivery.PublishedAt.ShouldBeNull();
+            delivery.FailureReason.ShouldContain("unknown");
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                .ChannelReplySettledAt.ShouldBeNull();
+            (await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                .LastReplyAt.ShouldBeNull();
+        }
+        finally
+        {
+            if (child is not null)
+            {
+                if (!child.HasExited) child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync();
+                child.Dispose();
+            }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     [Arguments("input-temporary-partial")]
     [Arguments("input-temporary-complete")]
@@ -190,7 +335,8 @@ public sealed class ChannelOutboundRecoveryTests
     [Arguments("publishing-committed", ChannelOutboundDeliveryState.PublishUncertain, 0)]
     [Arguments("producer-accepted", ChannelOutboundDeliveryState.PublishUncertain, 1)]
     [Arguments("published-committed", ChannelOutboundDeliveryState.Published, 1)]
-    public async Task Process_death_recovers_settled_worker_and_publication_boundaries(
+    [Arguments("publication-commit-failed", ChannelOutboundDeliveryState.PublishUncertain, 1)]
+    public async Task Recovery_preserves_settled_worker_and_publication_boundaries(
         string barrier, ChannelOutboundDeliveryState expectedState, int expectedAcceptances)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-crash-" + Guid.NewGuid().ToString("N"));
@@ -201,13 +347,36 @@ public sealed class ChannelOutboundRecoveryTests
         var agentId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
         var deliveryId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         var storeRoot = Path.Combine(root, "store");
         var store = new ChannelOutboundFileStore(storeRoot);
+        var hasSource = barrier is "published-committed" or "publication-commit-failed";
+        var sourceTaskId = Guid.NewGuid();
+        var sourceBytes = "# crash source\n"u8.ToArray();
+        var bundleDir = Path.Combine(root, "bundle");
+        var sourcePath = Path.Combine(bundleDir, "source.md");
+        if (hasSource)
+        {
+            Directory.CreateDirectory(bundleDir);
+            await File.WriteAllBytesAsync(sourcePath, sourceBytes);
+            var sourceManifest = new DeliverableBundleService.SourceManifest(1, true,
+                [new DeliverableBundleService.SourceMember("docs/source.md", "source.md", null,
+                    sourceBytes.Length, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sourceBytes))
+                        .ToLowerInvariant())], []);
+            await File.WriteAllTextAsync(Path.Combine(bundleDir, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(sourceManifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        }
         var frozen = await store.StageAsync(deliveryId, new ChannelReply
         {
             Channel = "fake", ConversationId = channelId.ToString("N"),
             ReplyHandle = "thread-1", Text = "crash-frozen-source",
+            Attachments = hasSource ? [new OutboundAttachment
+            {
+                Kind = AttachmentKind.File, Name = "source.md", Mime = "text/markdown",
+                Source = sourcePath, Content = sourceBytes,
+            }] : [],
         }, CancellationToken.None);
         var hasSettledWorker = barrier is "before-conversion-observation" or "ready-committed";
         var workerTaskId = Guid.NewGuid();
@@ -235,18 +404,37 @@ public sealed class ChannelOutboundRecoveryTests
             db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
                 ExternalId = channelId.ToString("N"), AgentId = agentId,
                 CreatedAt = now, UpdatedAt = now });
+            db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "crash",
+                Cwd = root, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+            if (hasSource)
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = sourceTaskId, RootTaskId = sourceTaskId, ProjectId = projectId,
+                    AgentId = agentId, Title = "Crash source", Goal = "Write source",
+                    WorkingDirectory = root, RepoPath = root, Status = AgentTaskStatus.Succeeded,
+                    DeliverableBundleDir = bundleDir, CreatedAt = now, CompletedAt = now,
+                });
             var delivery = new ChannelOutboundDelivery
             {
                 Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
-                ProjectId = projectId, InboundAgentId = agentId, SourceSessionId = Guid.NewGuid(),
+                ProjectId = projectId, InboundAgentId = agentId, SourceSessionId = sessionId,
                 SendKind = "main", ProfileName = "", PromptRevision = new string('a', 64),
                 InputPath = frozen.ReplyPath, InputSha256 = frozen.ReplySha256,
                 Trigger = "Passthrough", State = hasSettledWorker
                     ? ChannelOutboundDeliveryState.Converting : ChannelOutboundDeliveryState.Ready,
+                SourceTaskId = hasSource ? sourceTaskId : null,
                 ConversionTaskId = null,
                 CreatedAt = now, DeadlineAt = now.AddMinutes(hasSettledWorker ? 10 : 2),
             };
             db.ChannelOutboundDeliveries.Add(delivery);
+            await db.SaveChangesAsync();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = correlationId, AgentSessionId = sessionId, Body = "crash source",
+                Sequence = 1, Origin = QueuedMessageOrigin.Channel,
+                Status = QueuedMessageStatus.Sent, ConversationKey = "fake:" + channelId.ToString("N"),
+                ChannelOutboundDeliveryId = deliveryId, CreatedAt = now,
+            });
             await db.SaveChangesAsync();
             if (hasSettledWorker)
             {
@@ -276,7 +464,10 @@ public sealed class ChannelOutboundRecoveryTests
             {
                 ConnectionString = isolated.ConnectionString, StoreRoot = storeRoot,
                 DeliveryId = deliveryId, EvidencePath = evidencePath,
-                MarkerPath = markerPath, Barrier = barrier, ClockOffsetSeconds = 0,
+                MarkerPath = markerPath,
+                Barrier = barrier == "publication-commit-failed" ? "commit-failed" : barrier,
+                FailPublishCommit = barrier == "publication-commit-failed",
+                ClockOffsetSeconds = 0,
             }));
             child = StartProbe(probeDll, configPath);
             var childPid = child.Id;
@@ -287,13 +478,31 @@ public sealed class ChannelOutboundRecoveryTests
                     child.HasExited.ShouldBeFalse("probe exited before its durable barrier");
                     await Task.Delay(25, watchdog.Token);
                 }
+            if (barrier == "publication-commit-failed")
+                File.Exists(Path.Combine(root, "commit-injected")).ShouldBeTrue(
+                    "the probe must reach the database commit interceptor after acceptance");
             child.Id.ShouldBe(childPid);
             child.StartTime.ShouldBe(childStarted);
             child.Kill(entireProcessTree: true);
-            using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
-                await child.WaitForExitAsync(watchdog.Token);
+            using (var exitWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                await child.WaitForExitAsync(exitWatchdog.Token);
             child.Dispose();
             child = null;
+
+            if (barrier == "publication-commit-failed")
+            {
+                await using var rolledBack = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+                var pending = await rolledBack.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == deliveryId);
+                pending.State.ShouldBe(ChannelOutboundDeliveryState.Publishing);
+                pending.PublishedAt.ShouldBeNull();
+                (await rolledBack.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                    .ChannelReplySettledAt.ShouldBeNull();
+                (await rolledBack.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                    .LastReplyAt.ShouldBeNull();
+                (await rolledBack.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskId))
+                    .DeliverableDeliveredAt.ShouldBeNull();
+            }
 
             // The second launch receives only the original database and durable files.
             // It does not reconstruct or seed the expected state in memory.
@@ -322,12 +531,19 @@ public sealed class ChannelOutboundRecoveryTests
                     Antiphon.Messaging.MessagingJson.Options)!;
                 reply.ReplyHandle.ShouldBe("thread-1");
                 reply.Text.ShouldBe("crash-frozen-source");
-                reply.Attachments.Count.ShouldBe(hasSettledWorker ? 1 : 0);
+                reply.Attachments.Count.ShouldBe((hasSettledWorker ? 1 : 0) + (hasSource ? 1 : 0));
+                if (hasSource)
+                    reply.Attachments[0].Content.ShouldBe(sourceBytes);
                 if (hasSettledWorker)
                     reply.Attachments[0].Content.ShouldBe("%PDF-1.4 crash-boundary"u8.ToArray());
             }
             (await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
                 .LastReplyAt.HasValue.ShouldBe(expectedState == ChannelOutboundDeliveryState.Published);
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                .ChannelReplySettledAt.HasValue.ShouldBe(expectedState == ChannelOutboundDeliveryState.Published);
+            if (hasSource)
+                (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskId))
+                    .DeliverableDeliveredAt.HasValue.ShouldBe(expectedState == ChannelOutboundDeliveryState.Published);
         }
         finally
         {
