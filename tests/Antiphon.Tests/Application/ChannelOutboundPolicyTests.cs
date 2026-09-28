@@ -90,6 +90,11 @@ public sealed class ChannelOutboundPolicyTests
         if (fault == "missing_prompt") profile.PromptFile = "absent.md";
         if (fault == "escaping_prompt") profile.PromptFile = "../escape.md";
         await db.SaveChangesAsync();
+        // Raw is enum zero, the EF store-generated sentinel for the ClaudeCode default.
+        // Force the persisted kind so this row exercises the nondelegatable binding guard.
+        if (fault == "raw_converter")
+            await db.Agents.Where(a => a.Id == converterId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.Kind, AgentKind.Raw));
         try
         {
             var service = new ChatChannelService(db, TimeProvider.System,
@@ -229,12 +234,22 @@ public sealed class ChannelOutboundPolicyTests
             Profiles = new Dictionary<string, ChannelOutboundProfile> { ["conversion"] = profile },
         };
         validator.Validate(null, settings).Succeeded.ShouldBeTrue();
+        foreach (var timeout in new[] { 10, 120, 300 })
+        {
+            profile.TimeoutSeconds = timeout;
+            validator.Validate(null, settings).Succeeded.ShouldBeTrue();
+        }
         foreach (var timeout in new[] { 9, 301 })
         {
             profile.TimeoutSeconds = timeout;
             validator.Validate(null, settings).Succeeded.ShouldBeFalse();
         }
         profile.TimeoutSeconds = 120;
+        foreach (var maxPending in new[] { 1, 8, 32 })
+        {
+            profile.MaxPending = maxPending;
+            validator.Validate(null, settings).Succeeded.ShouldBeTrue();
+        }
         foreach (var maxPending in new[] { 0, 33 })
         {
             profile.MaxPending = maxPending;
