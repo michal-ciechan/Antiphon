@@ -43,19 +43,22 @@ public sealed class AgentTaskPipelineStatusService
     private readonly AreaMapLoader _areas;
     private readonly TimeProvider _time;
     private readonly HostBudgetService? _budgets;
+    private readonly RemoteWorkspacePreparer? _remotePrep;
 
     public AgentTaskPipelineStatusService(
         AppDbContext db,
         IOptions<DelegationSettings> settings,
         AreaMapLoader areas,
         TimeProvider timeProvider,
-        HostBudgetService? budgets = null)
+        HostBudgetService? budgets = null,
+        RemoteWorkspacePreparer? remotePrep = null)
     {
         _db = db;
         _settings = settings.Value;
         _areas = areas;
         _time = timeProvider;
         _budgets = budgets;
+        _remotePrep = remotePrep;
     }
 
     public async Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct)
@@ -72,7 +75,8 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId, t.RunnerId))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId,
+                t.RunnerId, t.CapacityWaitRetained))
             .ToListAsync(ct);
 
         var boundStages = await _db.AgentTasks.AsNoTracking()
@@ -82,7 +86,8 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId, t.RunnerId))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId,
+                t.RunnerId, t.CapacityWaitRetained))
             .ToListAsync(ct);
 
         var cardIds = open.Select(t => t.CardId)
@@ -148,7 +153,8 @@ public sealed class AgentTaskPipelineStatusService
         var inFlightRows = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             .ToList();
-        var localInFlight = inFlightRows.Count(t => string.IsNullOrEmpty(t.RunnerId));
+        var localInFlight = inFlightRows.Count(t => string.IsNullOrEmpty(t.RunnerId)
+            && !t.CapacityWaitRetained);
         var limits = _budgets is null
             ? new Dictionary<string, HostLimit>(StringComparer.Ordinal)
             : (await _budgets.ListAsync(ct)).ToDictionary(h => h.HostId, StringComparer.Ordinal);
@@ -162,7 +168,8 @@ public sealed class AgentTaskPipelineStatusService
             var pendingLaunch = await _db.AgentTasks.CountAsync(t => t.RunnerId == host
                 && t.Status == AgentTaskStatus.Queued && t.AgentSessionId == null
                 && t.RemoteWorktreePath != null, ct);
-            remoteOccupancy[host] = sessions + pendingLaunch;
+            remoteOccupancy[host] = sessions + pendingLaunch
+                + (_remotePrep?.InFlightCount(host, Guid.Empty) ?? 0);
         }
         var lastActivity = await LoadLastActivityAsync(inFlightRows, ct);
 
@@ -223,7 +230,7 @@ public sealed class AgentTaskPipelineStatusService
         {
             Hosts = limits.Values.OrderBy(h => h.HostId, StringComparer.Ordinal)
                 .Select(h => new HostLimitSummaryDto(h.HostId,
-                    inFlightRows.Count(t => (string.IsNullOrEmpty(t.RunnerId) ? "local" : t.RunnerId) == h.HostId),
+                    h.HostId == "local" ? localInFlight : remoteOccupancy.GetValueOrDefault(h.HostId),
                     h.Effective, h.Configured, h.Declared, h.Source)).ToArray()
         };
     }
@@ -599,7 +606,8 @@ public sealed class AgentTaskPipelineStatusService
         PipelineHandoffKind? NextStage = null,
         string? NextHandoff = null,
         Guid? RoutingPinId = null,
-        string? RunnerId = null);
+        string? RunnerId = null,
+        bool CapacityWaitRetained = false);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 

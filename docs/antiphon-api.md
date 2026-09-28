@@ -428,7 +428,7 @@ GET    /api/stage-outcomes                   CARD-0272 per-stage hit rate vs. co
                                              `FollowUp`/`Deploy`. `scripts/stage-value-report.ps1`
                                              wraps this as a table.
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
-GET    /api/agent-tasks/pipeline             fleet-wide across every board; there is no board filter. Advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace. Ready rows sit on the stage named by a settled stage-role task's `next:` handoff (`Investigate`/`Plan`/`TestDesign`/`Code`/`Review`) and carry `sourcePlanTaskId`, `sourceRole`, `deliverablePath`, `handoff`. A Succeeded Plan with `NextStage` unset and a verified `docs/superpowers/plans/` deliverable still yields a Code ready row (CARD-0146 S4 legacy). `land`/`decide`/`none` produce no ready row.
+GET    /api/agent-tasks/pipeline             fleet-wide across every board; there is no board filter. Advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, hostBudget, routingPinNotBefore, awaitingDispatch. `maxConcurrentTasks` and `inFlightAgainstCap` describe the local host only; `hosts` gives each host's in-flight count and effective/configured/declared limit. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace. Ready rows sit on the stage named by a settled stage-role task's `next:` handoff (`Investigate`/`Plan`/`TestDesign`/`Code`/`Review`) and carry `sourcePlanTaskId`, `sourceRole`, `deliverablePath`, `handoff`. A Succeeded Plan with `NextStage` unset and a verified `docs/superpowers/plans/` deliverable still yields a Code ready row (CARD-0146 S4 legacy). `land`/`decide`/`none` produce no ready row.
 
 The same response has `investigateBacklog: { total, items }`: up to five fresh Backlog candidates across live boards, ranked by the dispatcher's full card key `(rank, position null last, dueAt null last, createdAt)`, then board/card GUID for exact ties. `total` counts all eligible cards before the five-item limit. Each item carries `cardId`, `boardId`, board-scoped `identifier`, `title`, derived `rank`, and nullable `position`. Cards already owned by a session, archived or terminal, marked `post-land-verification`, or bound to an open or succeeded pipeline-stage task are omitted. Failed/canceled history alone does not omit one. Formal `ready` rows remain separate and are ordered by the same card key, then ready age and board/card GUID; each exposes `rank`. The ordering is advisory: WIP, scope and human decisions still govern dispatch. Semantic coverage by a different landed card is an operator check against the card thread and closure evidence, not inferred by this response.
 POST   /api/agent-tasks/worktree-residue/preview   CARD-0459 inventory only (projectId/boardId). Never deletes.
@@ -510,6 +510,10 @@ GET    /api/runner-defaults
 PUT    /api/runner-defaults                           expectedRevision, globalRunnerId, kindDefaults, reason, provenance
 GET    /api/runner-defaults/revisions?beforeRevision=&limit=
 GET    /api/session-runners                           desktop plus every configured runner
+GET    /api/hosts                                     local and configured runner budgets, occupancy, availability and revision
+PUT    /api/hosts/{hostId}/budget                     maxInFlight (0–512 or null to clear), reason (required)
+GET    /api/session-runners/{runnerId}/capacity       declared capacity, server bound, effective limit and occupancy
+PUT    /api/session-runners/{runnerId}/capacity       capacity, reason (required); live runner push
 GET    /api/hosts/stats                               latest per-host sample, rollups, state, Antiphon counts
 GET    /api/hosts/{hostId}/stats/series?metric=cpu&window=30m
 ```
@@ -526,6 +530,13 @@ lands, sessions, seats, and build slots. `metric=cpu|load|memory` and
 physical swap use/capacity. `HostStatsUpdated` publishes the same list to SignalR group `hosts`.
 The server settings are `HostStats:PollIntervalMs`, `StaleAfterMs`, `RequestTimeoutMs`, and
 `SeriesTimeoutMs`; runner settings are under `SessionRunner:HostStats`.
+
+Host budgets are separate from the sampled host stats. A local budget overrides
+`Delegation:MaxConcurrentTasks`; a runner's effective limit is the minimum of its configured
+budget and declared capacity. A null budget uses the setting or declaration. A zero budget
+holds every new task for that host without stopping existing sessions. Runner capacity PUT
+requires a live compatible phone-home peer and returns 409 on refusal or timeout. Both writes
+record an incident with the operator's reason.
 
 `PUT /api/runner-defaults` is one complete snapshot. `409 runner_defaults_revision_conflict` and
 `409 runner_defaults_human` write nothing. `Delegation:DefaultRunnerId` is imported once into

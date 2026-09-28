@@ -321,6 +321,14 @@ is the `orchestrator` bundle; this section carries the reasons.
    `axis: absolute` with no occupant in that role: re-send with `-IgnoreConcurrencyLimit`,
    because rule 1 is the standing request for cross-stage parallelism.
 
+Create-time per-project and per-role gates run before host admission (CARD-0654). Passing
+those gates can still leave a task Queued when its assigned host is at its dispatch budget.
+The pipeline's `hosts` summary shows each host's current count and effective limit;
+`inFlightAgainstCap` counts local work only. Runner seats and the local budget are separate.
+Raising a host budget releases eligible held work on the next dispatch tick. This round keeps
+the existing explicit/default/local placement order; local overflow from a full default runner
+is a follow-on placement policy.
+
 ### Reprioritising the backlog
 
 An agent that can call the API — `delegate.ps1 -Role Custom` (or Plan), or a `ScheduleKind.Prompt`

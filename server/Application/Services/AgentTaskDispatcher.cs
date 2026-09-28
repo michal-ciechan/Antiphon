@@ -494,7 +494,8 @@ public sealed class AgentTaskDispatcher
             var returning = await _db.AgentTasks
                 .Where(t => t.CapacityWaitRetained
                     && t.Status == AgentTaskStatus.Working
-                    && t.CapacityWaitId != null)
+                    && t.CapacityWaitId != null
+                    && (t.RunnerId == null || t.RunnerId == ""))
                 .OrderBy(t => t.CreatedAt)
                 .ToListAsync(ct);
             foreach (var retained in returning)
