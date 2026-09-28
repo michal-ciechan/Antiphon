@@ -144,6 +144,9 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
             if (bytes.LongLength != source.Length
                 || !string.Equals(hash, source.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("An attached source no longer matches its manifest.");
+            if (bytes.LongLength > MaxExpandedSourceBytes - expanded)
+                throw new InvalidDataException("Manifested sources exceed the expanded budget.");
+            expanded += bytes.LongLength;
             var extension = Path.GetExtension(attachments[index].Name ?? "").ToLowerInvariant();
             var localName = $"attachment-{index + 1:D3}{(extension == ".md" ? ".md" : ".bin")}";
             staged.Add(new StagedSource(source.OriginalRelativePath, localName, source.Length, hash));

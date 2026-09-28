@@ -285,6 +285,63 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
+    public async Task Inline_and_zip_sources_share_the_expanded_budget()
+    {
+        const int mebibyte = 1024 * 1024;
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-mixed-budget-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+        var inline = new byte[mebibyte];
+        var inlineHash = Convert.ToHexString(SHA256.HashData(inline)).ToLowerInvariant();
+        try
+        {
+            foreach (var zipLength in new[] { 63 * mebibyte, 64 * mebibyte })
+            {
+                var expanded = new byte[zipLength];
+                var zipHash = Convert.ToHexString(SHA256.HashData(expanded)).ToLowerInvariant();
+                byte[] zipBytes;
+                using (var stream = new MemoryStream())
+                {
+                    using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+                    await using (var entry = archive.CreateEntry("docs/zip.md", CompressionLevel.Optimal).Open())
+                        await entry.WriteAsync(expanded);
+                    zipBytes = stream.ToArray();
+                }
+                var reply = new ChannelReply
+                {
+                    Channel = "slack", ConversationId = "C1",
+                    Attachments =
+                    [
+                        new OutboundAttachment { Kind = AttachmentKind.File, Name = "inline.md",
+                            Mime = "text/markdown", Content = inline },
+                        new OutboundAttachment { Kind = AttachmentKind.File, Name = "sources.zip",
+                            Mime = "application/zip", Content = zipBytes },
+                    ],
+                };
+                var manifest = new DeliverableBundleService.SourceManifest(1, true,
+                [
+                    new("docs/inline.md", "inline.md", null, inline.Length, inlineHash),
+                    new("docs/zip.md", "sources.zip", "docs/zip.md", zipLength, zipHash),
+                ], []);
+                var id = Guid.NewGuid();
+                var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                if (zipLength == 63 * mebibyte)
+                {
+                    var snapshot = await store.StageAsync(id, reply, CancellationToken.None, json);
+                    using var request = JsonDocument.Parse(await File.ReadAllTextAsync(snapshot.RequestPath));
+                    request.RootElement.GetProperty("sourceFiles").GetArrayLength().ShouldBe(2);
+                }
+                else
+                {
+                    await Should.ThrowAsync<InvalidDataException>(() =>
+                        store.StageAsync(id, reply, CancellationToken.None, json));
+                    Directory.Exists(Path.Combine(root, id.ToString("N"))).ShouldBeFalse();
+                }
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Attachment_source_url_does_not_supply_worker_input()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-source-authority-" + Guid.NewGuid().ToString("N"));

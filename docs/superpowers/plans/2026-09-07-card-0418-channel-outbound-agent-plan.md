@@ -640,6 +640,33 @@ Otherwise those tests can stop exercising an over-cap attachment while looking
 green. Preserve explicit-marker ordering/dedup and the normal no-profile
 claim/retry regressions rather than rewriting them to assume every send defers.
 
+### Checkpoints
+
+Round-7 Final selection below covers the ordinary V-1..V-23 and R-1..R-14
+scope. F-5/V-24 belongs to CARD-0784's owned-host fixture and V-25 is the
+separate live gate. Run rows after the implementation slice is committed. The
+source and routing groups are separate so the shared PostgreSQL host does not
+turn a connection-capacity failure into an apparent product failure. A red row
+must retain its TRX and receive a same-row rerun after a fix. The process-death,
+broker and real-browser rows are native evidence, not replacements for one
+another.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---:|---:|---|---|
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c0418-r7/` | unit | `/*/*/*/*[Category=Unit]` | V-2, V-5, V-12, V-13, V-19, V-21; R-1, R-2, R-8, R-12 | whole Unit lane, 0 failed | 3450 | 7 | true | n/a |
+| CP-2 | all | CP-1 | source-settlement | `/*/*/(DeliverableBundleServiceTests*)\|(SourceBundleManifestTests*)\|(AgentTaskReplyIntegrationTests*)\|(ChannelFollowUpAttachmentTests*)/*` | V-1..V-4, V-16, V-21; R-1, R-2 | all four classes, 0 failed | 320 | 7 | true | n/a |
+| CP-3 | all | CP-1 | policy-schema | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundEndpointTests*)\|(ChannelOutboundMigrationTests*)\|(ChannelOutboundContractTests*)/*` | V-5, V-18, V-21; R-3, R-12 | all four classes, 0 failed | 8 | 3 | true | n/a |
+| CP-4 | all | CP-1 | file-boundary | `/*/*/(ChannelOutboundStorageTests*)\|(OutboundConversionManifestTests*)/*` | V-2, V-3, V-12, V-13, V-23; R-2, R-8, R-9 | both classes and every data row, 0 failed | 40 | 5 | true | n/a |
+| CP-5 | all | CP-1 | purpose-deadline | `/*/*/(ChannelOutboundDeliveryTests*)\|(OutboundConversionTaskTests*)\|(ChannelOutboundDeadlineTests*)/*` | V-6..V-11, V-14, V-16..V-18, V-23; R-3..R-7, R-9..R-11 | all three classes, 0 failed | 3 | 7 | true | n/a |
+| CP-6 | all | CP-1 | crash-transport | `/*/*/(ChannelOutboundRecoveryTests*)\|(ChannelOutboundDispatchIntegrationTests*)\|(ChannelOutboundComposedTransportTests*)/*` | V-4, V-6, V-9, V-14..V-16, V-23; R-4..R-6, R-10, R-13 | all three classes, all C-1..C-8 cuts, 0 failed | 16 | 12 | true | n/a |
+| CP-7 | all | CP-1 | routing-attention | `/*/*/(ChannelReplyDurabilityTests*)\|(ChannelMachineTurnMatchTests*)\|(ChannelMachineTurnTextTests*)\|(ChannelBridgeTests*)\|(ChatChannelServiceTests*)\|(AttentionServiceTests*)\|(InstructionBundleTests*)\|(ChannelConsumerIdentityEndpointTests*)/*` | V-6, V-7, V-14, V-17, V-21, V-22; R-4, R-10, R-11, R-13 | all eight classes, 0 failed | 250 | 9 | true | TUNIT_MAX_PARALLEL_TESTS=2 |
+| CP-8 | all | CP-1 | existing-deadlines | `/*/*/(TaskDeadlinePolicyTests*)\|(AgentTaskOverdueDeadlineTests*)\|(SpecialistTaskRunnerDeadlineTests*)\|(OutputDistillationDeadlineTests*)\|(PinnedAgentKindTests*)/*` | V-10, V-11; R-7 | all five classes, 0 introduced failures | 70 | 5 | true | TUNIT_MAX_PARALLEL_TESTS=2 |
+| CP-9 | all | `tests/Antiphon.MarkdownPdf.Tests -> bin-c0418-r7-pdf/` | renderer | `/*/*/(MarkdownPdfRendererTests*)\|(MarkdownPdfCommandTests*)/*` | V-19, V-21; R-12 | both classes, 0 failed | 8 | 3 | true | n/a |
+| CP-10 | all | CP-9 | real-browser | `/*/*/MarkdownPdfRealBrowserTests/*` | V-20; R-12 | independently parsed four-page PDF and inspected page images, 0 failed | 1 | 8 | true | ANTIPHON_HEADED_TESTS=1 |
+| CP-11 | all | `tests/Antiphon.Messaging.Tests -> bin-c0418-r7-msg/` | gateway-wire | `/*/*/(GatewayTests*)\|(SlackChannelAdapterTests*)\|(TelegramChannelAdapterTests*)\|(GatewayMonitorValidationTests*)\|(ConsumerLagAssessmentTests*)\|(InboundUnconsumedMonitorTests*)\|(GatewayMonitorStatusTests*)\|(LibrarySufficiencyTests*)\|(KafkaOutboundPayloadTests*)/*` | V-22, V-23; R-13 | all nine classes, 0 failed | 120 | 5 | true | ANTIPHON_BROKER_TESTS=1 |
+| CP-12 | all | n/a | channels-client | `pwsh -NoProfile -File scripts/test-client.ps1 ChannelsPage.test.tsx` | V-5; R-3 | 25 client cases, 0 failed | n/a | 3 | true | n/a |
+| CP-13 | all | n/a | client-bundle | `npm --prefix client run build` | V-5, V-21; R-3 | production bundle succeeds | n/a | 3 | true | n/a |
+
 ### Out of scope
 
 - Implementing production S1-S6, running their still-unwritten tests, deployment,
@@ -662,6 +689,8 @@ Suites forced: focused Antiphon.Tests classes above; dedicated MarkdownPdf tests
 focused Antiphon.Messaging.Tests; ChannelsPage Vitest; one isolated outbound E2E
 class with a real browser and disposable broker. No full Pty suite or full
 Antiphon.Tests run by default.
+
+Round-7 Final verification additionally runs the whole Unit lane under CP-1.
 
 Estimated verification floor after tests exist: 25-40 minutes for build, focused
 normal tests, real PDF inspection, all process-death cuts and isolated broker
