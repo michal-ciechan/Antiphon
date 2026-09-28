@@ -131,20 +131,24 @@ public sealed class RunnerCapacityEndpointTests
         await using var host = await Host(schema, clock);
         host.Capacity = 10;
         await using var peer = await host.ConnectPeerAsync();
-        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
         peer.SilentFor(PhoneHomeOperation.SetCapacity);
         var pending = host.Http.PutAsJsonAsync(Path(host), new { capacity = 6, reason = "scale" });
         await peer.WaitForAsync(PhoneHomeOperation.SetCapacity);
-        clock.Advance(TimeSpan.FromMinutes(7));
+        for (var minute = 0; minute < 7; minute++)
+        {
+            clock.Advance(TimeSpan.FromMinutes(1));
+            await peer.EmitAsync(new PhoneHomeFrame(
+                PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
+                Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(10), PhoneHomeFraming.Json)));
+            var heartbeatDeadline = DateTime.UtcNow.AddSeconds(3);
+            while (live.LastHeartbeatUtc < clock.GetUtcNow() && DateTime.UtcNow < heartbeatDeadline)
+                await Task.Delay(20);
+        }
         using var response = await pending;
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await response.Content.ReadAsStringAsync()).ShouldContain(PhoneHomeProblemTypes.RequestTimeout);
-        await peer.EmitAsync(new PhoneHomeFrame(
-            PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
-            Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(10), PhoneHomeFraming.Json)));
-        var currentDeadline = DateTime.UtcNow.AddSeconds(3);
-        while (host.Directory.DeclaredCapacity(host.AllowedRunnerId) is null && DateTime.UtcNow < currentDeadline)
-            await Task.Delay(20);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(10);
         await peer.EmitAsync(new PhoneHomeFrame(
             PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),

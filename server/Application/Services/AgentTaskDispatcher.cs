@@ -494,6 +494,7 @@ public sealed class AgentTaskDispatcher
         if (_capacityRecovery is not null)
         {
             var resumedRemote = new Dictionary<string, int>(StringComparer.Ordinal);
+            var resumedAny = false;
             var returning = await _db.AgentTasks
                 .Where(t => t.CapacityWaitRetained
                     && t.Status == AgentTaskStatus.Working
@@ -531,6 +532,7 @@ public sealed class AgentTaskDispatcher
                         _db, localLimit, retainedReturn: true, ct))
                     continue;
                 retained.CapacityWaitRetained = false;
+                resumedAny = true;
                 if (string.IsNullOrEmpty(runnerId))
                 {
                     active++;
@@ -540,6 +542,8 @@ public sealed class AgentTaskDispatcher
                     resumedRemote[runnerId] = resumedRemote.GetValueOrDefault(runnerId) + 1;
                 }
             }
+            if (resumedAny)
+                await _db.SaveChangesAsync(ct);
         }
         var skippedConcurrency = 0;
         var skippedScope = 0;
