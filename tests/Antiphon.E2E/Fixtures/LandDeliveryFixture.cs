@@ -244,8 +244,19 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         var header = note.Body.Split('\n')[0];
         prompts.Count(p => p.Text!.Contains(header)).ShouldBe(1);
         var native = Directory.GetFiles(Path.Combine(Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
-            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk") && line.Contains(header));
+            .SelectMany(File.ReadAllLines).Count(line => NativeUserText(line)?.Contains(header) == true);
         native.ShouldBe(1);
+    }
+
+    // The native log escapes non-ASCII (a Review header's "·" is ·), so match the decoded text.
+    private static string? NativeUserText(string line)
+    {
+        if (!line.Contains("user_message_chunk", StringComparison.Ordinal)) return null;
+        using var record = JsonDocument.Parse(line);
+        var update = record.RootElement.GetProperty("params").GetProperty("update");
+        return update.GetProperty("sessionUpdate").GetString() == "user_message_chunk"
+            ? update.GetProperty("content").GetProperty("text").GetString()
+            : null;
     }
 
     public async Task UseChildAsync(string cut)
