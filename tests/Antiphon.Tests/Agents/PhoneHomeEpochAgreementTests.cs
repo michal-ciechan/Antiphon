@@ -91,6 +91,7 @@ public class PhoneHomeEpochAgreementTests
                 ServerOrigin = host.Http.BaseAddress!.ToString(),
                 SecretPath = secretPath,
                 StoreIdPath = storeIdPath,
+                CapacityStatePath = Path.Combine(root, "runner-capacity"),
                 AllowedCwd = "/work",
                 Capacity = 1,
                 HeartbeatSeconds = 1,

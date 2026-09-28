@@ -12,6 +12,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private readonly WebSocket _socket;
     private readonly PhoneHomeLimits _limits;
     private readonly int _maxCapacity;
+    private readonly Func<string, int, int, CancellationToken, Task>? _capacityReconciled;
     private readonly SemaphoreSlim _send = new(1, 1);
     private readonly ConcurrentDictionary<Guid, Waiter> _waiters = new();
     private readonly Channel<PhoneHomeFrame> _events = Channel.CreateUnbounded<PhoneHomeFrame>();
@@ -48,7 +49,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         int capacity = 1,
         string? platform = null,
         RunnerCapabilitiesDto? capabilities = null,
-        int maxCapacity = int.MaxValue)
+        int maxCapacity = int.MaxValue,
+        Func<string, int, int, CancellationToken, Task>? capacityReconciled = null)
     {
         RunnerId = runnerId;
         RunnerStoreId = runnerStoreId;
@@ -57,6 +59,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         _socket = socket;
         _limits = limits;
         _maxCapacity = maxCapacity;
+        _capacityReconciled = capacityReconciled;
         Clock = clock;
         _capacity = capacity;
         Platform = platform;
@@ -423,8 +426,14 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 if (frame.Payload is { } payload)
                 {
                     var reported = payload.Deserialize<PhoneHomeCapacityHeartbeat>(PhoneHomeFraming.Json);
-                    if (reported is { Capacity: >= 1 } && reported.Capacity <= _maxCapacity)
+                    if (reported is { Capacity: >= 1 } && reported.Capacity <= _maxCapacity
+                        && reported.Capacity != Capacity)
+                    {
+                        var oldCapacity = Capacity;
                         SetCapacity(reported.Capacity);
+                        if (_capacityReconciled is not null)
+                            await _capacityReconciled(RunnerId, oldCapacity, reported.Capacity, ct);
+                    }
                 }
                 continue;
             }

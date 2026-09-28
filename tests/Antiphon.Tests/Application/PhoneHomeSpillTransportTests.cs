@@ -136,7 +136,11 @@ public sealed class PhoneHomeSpillTransportTests
             SpillPath = Path.Combine(Cwd, ".antiphon", "inbox", "brief.md");
             _dispatcher = new PhoneHomeCommandDispatcher(
                 new SilentRuntime(this),
-                new PhoneHomeSettings { AllowedCwd = _root, RunnerRepository = _root + "/repo" });
+                new PhoneHomeSettings
+                {
+                    AllowedCwd = _root, RunnerRepository = _root + "/repo",
+                    CapacityStatePath = Path.Combine(_root, "runner-capacity"),
+                });
         }
 
         public string Cwd { get; }

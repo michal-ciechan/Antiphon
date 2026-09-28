@@ -576,7 +576,11 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
         {
             _dispatcher = new PhoneHomeCommandDispatcher(
                 new SilentRuntime(),
-                new PhoneHomeSettings { AllowedCwd = root, RunnerRepository = root + "/repo" });
+                new PhoneHomeSettings
+                {
+                    AllowedCwd = root, RunnerRepository = root + "/repo",
+                    CapacityStatePath = Path.Combine(root, "runner-capacity"),
+                });
         }
 
         public PhoneHomeFrame Answer(PhoneHomeFrame frame) =>
