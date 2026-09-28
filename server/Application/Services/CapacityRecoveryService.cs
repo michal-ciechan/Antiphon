@@ -694,7 +694,8 @@ public sealed class CapacityRecoveryService
             .Where(AgentTaskRoles.NotSpecialist)
             .CountAsync(
                 t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                    && !t.CapacityWaitRetained,
+                    && !t.CapacityWaitRetained
+                    && (t.RunnerId == null || t.RunnerId == ""),
                 ct);
         if (active >= maxConcurrent)
             return false;

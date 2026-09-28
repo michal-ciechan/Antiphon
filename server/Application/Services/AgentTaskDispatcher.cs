@@ -105,6 +105,8 @@ public sealed class AgentTaskDispatcher
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly ILandingGit? _landingGit;
     private readonly AgentTaskWorktreeBaseResolver? _baseResolver;
+    private readonly HostBudgetService? _hostBudgets;
+    private IReadOnlyDictionary<string, HostLimit> _hostLimits = new Dictionary<string, HostLimit>();
 
     /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
     internal AppDbContext Db => _db;
@@ -181,8 +183,10 @@ public sealed class AgentTaskDispatcher
         // (the repository's common directory); without it the key is the full repository path.
         RepositoryLeaseWaiters? leaseWaiters = null,
         ILandingGit? landingGit = null,
-        AgentTaskWorktreeBaseResolver? baseResolver = null)
+        AgentTaskWorktreeBaseResolver? baseResolver = null,
+        HostBudgetService? hostBudgets = null)
     {
+        _hostBudgets = hostBudgets;
         _baseResolver = baseResolver;
         _leaseWaiters = leaseWaiters;
         _landingGit = landingGit;
@@ -400,6 +404,11 @@ public sealed class AgentTaskDispatcher
 
         // CARD-0653: a runner-bound task occupies that runner's declared seats, not this
         // desktop process cap. An empty RunnerId is the local process-spawning population.
+        _hostLimits = _hostBudgets is null
+            ? new Dictionary<string, HostLimit>()
+            : (await _hostBudgets.ListAsync(ct)).ToDictionary(h => h.HostId, StringComparer.Ordinal);
+        var localHost = _hostLimits.GetValueOrDefault("local");
+        var localLimit = localHost?.Effective ?? _settings.MaxConcurrentTasks;
         var active = await _db.AgentTasks
             .Where(AgentTaskRoles.NotSpecialist)
             .CountAsync(
@@ -490,13 +499,13 @@ public sealed class AgentTaskDispatcher
                 .ToListAsync(ct);
             foreach (var retained in returning)
             {
-                if (active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
+                if (active + dispatchedAgainstCap >= localLimit)
                     break;
                 if (_capacityRecovery.IsEnabled
                     && !await TryRedeemCapacityWaitAsync(retained, CapacityRedemptionPath.Dispatch, ct))
                     continue;
                 if (!await _capacityRecovery.TryClaimCountedSlotAsync(
-                        _db, _settings.MaxConcurrentTasks, retainedReturn: true, ct))
+                        _db, localLimit, retainedReturn: true, ct))
                     break;
                 retained.CapacityWaitRetained = false;
                 dispatchedAgainstCap++;
@@ -521,10 +530,13 @@ public sealed class AgentTaskDispatcher
             var runnerBound = !string.IsNullOrEmpty(task.RunnerId);
             if (!runnerBound
                 && !AgentTaskRoles.IsSpecialist(task.Role)
-                && active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
+                && active + dispatchedAgainstCap >= localLimit)
             {
                 skippedConcurrency++;
-                var capDetail = DispatchHoldDetails.ConcurrencyCap(_settings.MaxConcurrentTasks);
+                var capDetail = localHost?.Configured is null
+                    ? DispatchHoldDetails.ConcurrencyCap(localLimit)
+                    : DispatchHoldDetails.HostBudget("local", active + dispatchedAgainstCap,
+                        localLimit, localHost.Configured, null);
                 heldThisTick.Add((task.Id, HoldKind.ConcurrencyCap));
                 if (await TraceHeldAsync(task, capDetail, lastHeld, ct))
                 {
@@ -1064,11 +1076,15 @@ public sealed class AgentTaskDispatcher
 
         // CARD-0653: declared seats, before any claim or remote prep. Failed and stopped
         // sessions do not reserve. In-flight mirrors and prepared-but-unlaunched tasks do.
-        if (_runners.DeclaredCapacity(runnerId) is int capacity)
+        var runnerLimit = _hostLimits.GetValueOrDefault(runnerId);
+        if ((runnerLimit?.Effective ?? _runners.DeclaredCapacity(runnerId)) is int capacity)
         {
             var occupied = await CountRunnerOccupancyAsync(runnerId, task.Id, ct);
             if (occupied >= capacity)
-                return (HoldKind.RunnerCapacity, DispatchHoldDetails.RunnerAtCapacity(runnerId, occupied, capacity));
+                return runnerLimit?.Configured is null
+                    ? (HoldKind.RunnerCapacity, DispatchHoldDetails.RunnerAtCapacity(runnerId, occupied, capacity))
+                    : (HoldKind.RunnerCapacity, DispatchHoldDetails.HostBudget(runnerId, occupied, capacity,
+                        runnerLimit.Configured, runnerLimit.Declared));
         }
 
         return null;

@@ -399,6 +399,7 @@ try
     builder.Services.AddScoped<VerificationExecutionService>();
     builder.Services.AddScoped<VerificationCleanupService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
+    builder.Services.AddScoped<HostBudgetService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
     builder.Services.AddSingleton<RepositoryChildJournalInspector>();
