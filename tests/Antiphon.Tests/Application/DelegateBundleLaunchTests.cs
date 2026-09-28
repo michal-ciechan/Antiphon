@@ -56,7 +56,7 @@ public class DelegateBundleLaunchTests
         var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
         brief.ShouldContain(task.Goal);
         brief.ShouldNotContain("Reply style: phone");
-        brief.ShouldNotContain("phone rules");
+        brief.ShouldNotContain("Apply only to human Telegram or Slack replies");
         if (role == AgentTaskRole.Code) brief.ShouldContain("--- next stage ---");
     }
 
@@ -71,9 +71,9 @@ public class DelegateBundleLaunchTests
         text.ShouldContain("Report every PC-n/variant pending for Mutation");
         text.ShouldContain("next: review when implementation and ordinary V/R are complete");
         text.ShouldContain("""
-            For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
-            and terminal-only replies, follow their own contracts; the phone rules below do
-            not apply. Do not pass these phone rules to delegates.
+            checks, and scheduled prompts. Worker/delegate reports, briefs, stage artifacts,
+            specialist outputs, and terminal-only replies follow their own contracts. Do not
+            pass this style to delegates.
             """.ReplaceLineEndings("\n"));
         text.ShouldEndWith("Write the complete internal report.");
     }

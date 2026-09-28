@@ -132,6 +132,7 @@
     <Compile Include="../Antiphon.Messaging.Tests/KestrelLoopback.cs" Link="TestHelpers/KestrelLoopback.cs" />
     <Compile Include="../Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs" Link="TestHelpers/FakeSlackServer.cs" />
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\ProgressAwareWait.cs" Link="TestSupport\ProgressAwareWait.cs" />
     <Compile Include="..\Shared\TestAppHostPath.cs" Link="TestSupport\TestAppHostPath.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />

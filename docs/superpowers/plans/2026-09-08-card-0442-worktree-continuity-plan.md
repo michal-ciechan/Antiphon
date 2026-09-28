@@ -6,6 +6,10 @@ Source: full live CARD-0442, id `d181aef8-47ff-41bc-882b-1707d9ca9fe7`.
 Code inspected at `ccb48b2ca88f96e8845ac2d6e818ec2cb6a8a4b3`.
 Amended after full design review `057585a3` (B-1/B-2, S-1/S-2/S-3); Plan and the existing
 TestDesign below are updated together. Amendment baseline: `3b7efe32` (includes `45b91a9b`).
+Implementation clarification, 2026-09-27: CARD-0508 subsequently changed the null-target
+fallback to the configured default branch when it resolves to a commit, with repository HEAD
+only when that probe fails. This newer shipped rule supersedes the HEAD assertions below;
+CARD-0442 preserves it. Explicit merge targets still take precedence.
 
 ## Outcome and scope
 
@@ -65,7 +69,7 @@ an agent, reuse a process, bypass a land hold, or grant access to another reposi
 `-BaseTask` explicitly chooses one same-card/same-Git-repository source when histories diverge.
 It must have the same effective landing destination (null means the existing explicit-land
 default `master` for this comparison). A mismatch is 422, not implicit rebinding.
-`-FreshWorktree` chooses the pre-change `MergeTargetRef ?? HEAD` behavior, with an immediate
+`-FreshWorktree` chooses the current CARD-0508 target/default-branch fallback, with an immediate
 warning listing any omitted same-card work. Neither accepts an arbitrary ref/path.
 Reject combination with `-OnAgent` so its Shared rewrite cannot silently discard the request.
 `AgentTaskService` resolves a child's destination as `parent.WorktreeBranch ?? parent.MergeTargetRef`:
@@ -437,7 +441,7 @@ asserts the relevant reason/branch identity, not just a nonzero exit or an excep
 | V-7 / R | Unsafe checkout; `tracked_unstaged`, `staged`, `untracked`, `merge_in_progress`, `rebase_in_progress` (5) | integration / `T0442_V07` | Auto excludes with precise warning; explicit Task refuses 422. Commit/clean ordinary changes or finish/abort the scratch merge/rebase, then the same branch becomes eligible. Preserve file bytes/index and in-progress state during every refused observation. |
 | V-8 / R | Availability; `unregistered_local_branch`, `missing_original_directory`, `missing_local_branch`, `remote_only`, `git_error` (5) | integration / `T0442_V08` | First two continue A using a verified surviving common repository/local branch. Missing-local and remote-only cases retain a kept task record but offer warned fallback; explicit Task refuses. Inject a strict Git observation error separately from missing-ref: Auto says inspection unknown/fallback, Task refuses, neither claims no prior work. Remote-only fixture has objects and `refs/remotes/origin/<branch>` but no `refs/heads/<branch>`; no implicit fetch/remote substitution. |
 | V-9 / R | Eligible tip plus excluded work; `excluded_contained`, `excluded_divergent` (2) | integration / `T0442_V09` | B remains Auto's source. An excluded row at committed A is not falsely advertised as missing committed work; an excluded X is named with its reason and SHA. If dirty working files exist, any dirty-files warning must not claim those bytes were inherited merely because the committed tip is contained. |
-| V-10 / R | Legacy fallback; `no_card_auto`, `bound_no_candidates`, `fresh_target` (3) | integration / `T0442_V10` | Put repository HEAD on a scratch `topic` branch ahead of master. With null destination, fallback is topic HEAD, not master/origin/master; source provenance is null. Fresh with eligible A names A as intentionally omitted. Within each case, repeat with explicit `release` destination: start at release and retain that field. Auto with no card makes no sibling inventory query. |
+| V-10 / R | CARD-0508 fallback; `no_card_auto`, `bound_no_candidates`, `fresh_target` (3) | integration / `T0442_V10` | Put repository HEAD on a scratch `topic` branch ahead of master. With null destination and a resolvable configured `master`, fallback is master, not topic HEAD or origin/master; source provenance is null. Fresh with eligible A names A as intentionally omitted. Within each case, repeat with explicit `release` destination: start at release and retain that field. Auto with no card makes no sibling inventory query. |
 | V-11 / A | Invalid overrides; `both_flags`, `shared`, `readonly`, `onagent_task`, `onagent_fresh`, `task_without_card` (6) | integration / `T0442_V11` | Real create refuses 422 before a runnable row or worktree. Exercise the OnAgent cases with a live prior agent so the existing Shared rewrite cannot discard the flag. Error names the invalid combination; explicit Task is never silently changed to Auto. |
 | V-12 / A | Explicit boundaries; `cross_card`, `cross_board`, `nested_repo`, `separate_clone`, `destination_mismatch` (5) | integration / `T0442_V12` | Authorized caller cannot use BaseTask to cross card/common-repo/destination boundaries; 422, no new task/source mutation. Destination mismatch fixture uses source `release` and requested `master`; also show null and explicit `master` compare equal in its accepted control. Parent/root/card/session routing fields are unchanged by accepted selection. |
 | V-13 / A | Source identifier; `full_guid`, `unique_short`, `missing`, `ambiguous_short` (4) | integration / `T0442_V13` | Full and unique 8-hex short IDs resolve to the same persisted GUID. Missing ID is the existing 404; seed two same-prefix GUIDs for existing 409 ambiguity. No arbitrary ref/path interpretation. Refused responses cannot expose an unauthorized card's candidates. |
@@ -452,7 +456,7 @@ asserts the relevant reason/branch identity, not just a nonzero exit or an excep
 | V-22 / D | Inputs worsen after preview; `auto_diverges`, `task_deleted`, `task_dirty`, `task_active` (4) | integration / `T0442_V22` | Create from valid A, then introduce X or invalidate explicit source before tick. Durable Blocked/error evidence and no-launch oracle; no fallback to master. Detail survives restart and names branches/actions; Auto divergence retains `worktree_base_ambiguous`. For the active case source stays Succeeded and a new Shared follow-up is the writer. |
 | V-23 / W | Immutable snapshot; `ref_moves_after_observation` (1) | integration / `T0442_V23` | Capture full A SHA passed to worktree creation, move source to B behind the barrier, then create. New HEAD and WorktreeBaseSha are A, A marker exists, B marker absent, source still at B. Event/brief/detail identify inherited A; no checkout/reset of the source or main repository. |
 | V-24 / W | Failed SHA creation; `creation_fails` (1) | integration / `T0442_V24` | Fail the worktree add at selected A through the I/O seam. Assert the existing failed-creation path, zero runner starts, one attempted full-SHA base and no second attempt from HEAD/master. Source A/ref/files survive. Reuse existing rollback tests for partial directory/registration cleanup. |
-| V-25 / W | Adoption wins; `persisted_coordinates`, `crash_before_coordinates`, `registered_missing_directory` (3) | integration / `T0442_V25` | Existing task branch contains A plus task-owned C. Before retry, add divergent sibling X and invalidate any former explicit source. Adopt/heal this task branch instead of blocking/reselecting/recreating from the new preview. C survives; branch/directory ownership is the same task. For persisted data retain its original WorktreeBaseSha=A and source provenance, even though HEAD=C. Unsaved provenance stays unknown rather than invented; if no base SHA was recorded, do not assert a reconstructed historical A. Missing-directory arm preserves C while using the existing locked-registration heal path. |
+| V-25 / W,D | Adoption wins; `persisted_coordinates`, `crash_before_coordinates`, `registered_missing_directory`, `dispatcher_existing_checkout` (4) | integration / `T0442_V25` | Existing task branch contains A plus task-owned C. Before retry, add divergent sibling X and invalidate any former explicit source. Adopt/heal this task branch instead of blocking/reselecting/recreating from the new preview. C survives; branch/directory ownership is the same task. For persisted data retain its original WorktreeBaseSha=A and source provenance, even though HEAD=C. Unsaved provenance stays unknown rather than invented; if no base SHA was recorded, do not assert a reconstructed historical A. Missing-directory arm preserves C while using the existing locked-registration heal path. The dispatcher arm exercises adoption before source resolution. |
 | V-26 / D | Retry with no worktree yet; `auto`, `target`, `task` (3) | integration / `T0442_V26` | Prelaunch-block a task, reload and call real `RetryAsync`. Requested mode/source GUID and original preview survive, attempt increments, and destination/parent/root/card stay unchanged. At next tick Auto may re-resolve to B, Target still uses target despite B, Task still uses chosen A despite B. If Task remains invalid it blocks again rather than defaulting. |
 | V-27 / C | Existing Git-facts semantics; `no_target`, `explicit_target` (2) | integration / `T0442_V27` | Start at inherited A, add B. With null target, existing completion/check Git facts use WorktreeBaseSha=A and count only the task's new range. With explicit target M, retain target-relative A+B facts. In both cases provenance identifies inherited A. Re-adopt after B and recheck: recorded creation base must not change to B and make the new range disappear. |
 | V-28 / D | Recovery is explicit; `question_is_not_source_selection` (1) | integration / `T0442_V28` | After V22-shaped Blocked, submit an ordinary reply containing a branch/task ID through the established reply path. It may follow its existing no-session refusal/handling, but cannot change requested mode/source or create a worktree/session. Only the named retry-after-integration or cancel/recreate override paths select history. |
@@ -620,7 +624,7 @@ are no subsequent relevant edits.
 | PC-35 | Replace create ambiguity's code with generic `conflict`. | V14 fails exact JSON `worktree_base_ambiguous` even though status remains 409. V16 independently pins script handling of the correct coded response. |
 | PC-36 | Change equal-tip grouping key from full SHA to task ID formatted as a string. | V02 `equal_tip_completion`/`equal_tip_id_tie`: identical content is no longer one source snapshot; required no-conflict/deterministic source assertions fail. |
 | PC-37 | Reverse the final task-ID ordering used only to label equal tips with equal completion times. | V02 `equal_tip_id_tie`: exact expected task GUID changes in both row insertion orders. |
-| PC-38 | Disable explicit Target/Fresh selection so it falls through to Auto. | V10 `fresh_target`: eligible A is inherited instead of the independent topic HEAD/explicit release fallback, or source provenance ceases being null. |
+| PC-38 | Disable explicit Target/Fresh selection so it falls through to Auto. | V10 `fresh_target`: eligible A is inherited instead of the independent configured master/explicit release fallback, or source provenance ceases being null. |
 
 For PC-25, keep every other gate satisfied and retain the valid caller control. A red status
 alone without proof of the forbidden source access does not validate the custody assertion.
@@ -721,3 +725,48 @@ verified by rerunning that exact test at the base commit in isolation. Finish wi
 `git diff --check`, confirm no mutation remains, and remove only this checkout's verified
 `bin-c442` directories using native PowerShell path handling per the testing owner. Commit/push
 the implementation and evidence; landing/deployment remain the caller's operation.
+
+### Checkpoints
+
+This is the Final Code round's closed ordinary verification list. Run it through
+`tools/Antiphon.Checkpoints` after all named V fixtures are committed. The V floors
+are TUnit invocations, not assertion counts. PCs remain for post-land SourceLanding Mutation.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c442cp/` | unit | `/*/*/*/*[Category=Unit]` | R-11 | >= 3408 executed, 0 failed | 3408 | 8 |
+| CP-2 | all | CP-1 | continuity-v | `/*/*/AgentTaskWorktreeContinuityTests/T0442_V*` | V-1, V-27, V-31, R-1, R-8, R-12 | all 8 cases, 0 failed/skipped | 8 | 6 |
+| CP-3 | all | CP-1 | resolver-v | `/*/*/AgentTaskWorktreeBaseResolverTests/T0442_V*` | V-2, V-3, V-4, V-5, V-6, V-7, V-8, V-9, V-10, V-29, R-2, R-3, R-4, R-5, R-13 | all 46 cases, 0 failed/skipped | 46 | 5 |
+| CP-4 | all | CP-1 | create-v | `/*/*/AgentTaskWorktreeBaseCreateTests/T0442_V*` | V-11, V-12, V-13, V-14, V-17, R-2, R-3, R-14 | all 23 cases, 0 failed/skipped | 23 | 5 |
+| CP-5 | all | CP-1 | script-preview-v | `/*/*/DelegateScriptWorktreeBaseTests/T0442_V15*` | V-15, R-6 | all 4 cases, 0 failed/skipped | 4 | 4 |
+| CP-6 | all | CP-1 | script-payload-v | `/*/*/DelegateScriptKindTests/T0442_V16*` | V-16, R-6, R-14 | all 9 cases, 0 failed/skipped | 9 | 2 |
+| CP-7 | all | CP-1 | migration-v | `/*/*/AgentTaskWorktreeBaseMigrationTests/T0442_V18*` | V-18, R-11 | 1 case, 0 failed/skipped | 1 | 2 |
+| CP-8 | all | CP-1 | dispatch-v | `/*/*/AgentTaskDispatchBaseGuardTests/T0442_V*` | V-19, V-20, V-21, V-22, V-25, V-26, V-28, V-30, R-7, R-9, R-10 | all 25 cases, 0 failed/skipped | 25 | 6 |
+| CP-9 | all | CP-1 | worktree-v | `/*/*/DelegationWorktreeTests/T0442_V2*` | V-23, V-24, V-25, R-7, R-10 | all 5 cases, 0 failed/skipped | 5 | 3 |
+| CP-10 | all | CP-1 | default-branch-retained | `/*/*/WorktreeBaseSelectionTests/C508_*` | R-10, CARD-0508 | all 9 cases, 0 failed/skipped | 9 | 3 |
+| CP-11 | all | CP-1 | dispatch-retained | `/*/*/AgentTaskDispatchBaseGuardTests/*` | R-9, R-11 | full class, 0 failed | 15 | 4 |
+| CP-12 | all | CP-1 | worktree-retained | `/*/*/DelegationWorktreeTests/*` | R-1, R-7, R-10, R-11 | full class, 0 failed | 32 | 6 |
+| CP-13 | all | CP-1 | land-stage-retained | `/*/*/AgentTaskLandStageOutcomeTests/*` | R-11, R-12 | full class, 0 failed | 14 | 4 |
+| CP-14 | all | CP-1 | pipeline-retained | `/*/*/AgentTaskPipelineStatusTests/*` | R-9, R-11 | full class, 0 failed | 19 | 3 |
+| CP-15 | all | CP-1 | script-kind-retained | `/*/*/DelegateScriptKindTests/*` | R-6, R-11, R-14 | full class, 0 failed | 38 | 3 |
+| CP-16 | all | CP-1 | script-capability-retained | `/*/*/DelegateScriptCapabilityTests/*` | R-3, R-11 | 1 portable case and 5 Windows DPAPI cases when supported, 0 failed | 1 | 2 |
+| CP-17 | all | CP-1 | capability-retained | `/*/*/DelegationCapabilityTests/*` | R-3, R-11 | full class, 0 failed | 20 | 3 |
+| CP-18 | all | CP-1 | delegation-di-retained | `/*/*/DelegationTestServicesTests/*` | R-11 | full class, 0 failed | 5 | 2 |
+| CP-19 | all | CP-1 | delegation-census-retained | `/*/*/DelegationHarnessCensusTests/*` | R-11 | full class, 0 failed | 7 | 2 |
+| CP-20 | all | CP-1 | followup-service-retained | `/*/*/AgentTaskServiceIntegrationTests/a_follow_up_*` | R-4, R-10, R-11 | all matching methods, 0 failed | 1 | 2 |
+| CP-21 | all | CP-1 | followup-default-retained | `/*/*/AgentTaskServiceIntegrationTests/OnAgent_defaults_stage_to_FollowUp_and_sets_FollowUpOfTaskId` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
+| CP-22 | all | CP-1 | retry-service-retained | `/*/*/AgentTaskServiceIntegrationTests/retrying_*` | R-10, R-11 | all matching methods, 0 failed | 1 | 2 |
+| CP-23 | all | CP-1 | followup-kind-retained | `/*/*/AgentTaskAgentKindTests/a_follow_up_*` | R-4, R-11 | all matching methods, 0 failed | 1 | 2 |
+| CP-24 | all | CP-1 | followup-pool-retained | `/*/*/AgentTaskPoolTests/a_follow_up_in_the_same_run_keeps_the_context_uncompacted` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
+| CP-25 | all | CP-1 | pinned-pool-retained | `/*/*/AgentTaskPoolTests/a_pinned_follow_up_waits_while_its_agent_is_still_working` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
+| CP-26 | all | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-11 | exit 0, 0 TypeScript errors | n/a | 2 |
+
+## Final verification
+
+Recorded 2026-09-28 07:10 UTC for implementation commit
+`21b14b01c21bcb7863568a6f3f7355757d5e8ee2`. Final Review `d917251d`
+(Full scope) confirmed D1-D4 fixed and enforced by real scratch mutations. All
+121/121 V-case checkpoint rows passed. Overall, 25/26 checkpoint rows were green;
+the one red row was a confirmed unrelated load flake. The history is linear on
+`master`, with no merge commits. Planned PC controls remain pending for
+method-scoped SourceLanding Mutation after landing.

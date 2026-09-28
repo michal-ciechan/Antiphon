@@ -73,9 +73,9 @@ public class BoardServiceIntegrationTests
             backlogCard.AssignedAgentId.ShouldBe(agent.Id);
             backlogCard.AssignedAgentName.ShouldBe("Frontend Claude");
             backlogCard.AgentQueuePosition.ShouldBe(1);
-            backlogCard.ActiveWorkflowRunId.ShouldNotBeNull();
-            backlogCard.WorkflowRunStatus.ShouldBe(CardWorkflowRunStatus.Queued);
-            backlogCard.CurrentWorkflowStageName.ShouldBe("Implement");
+            backlogCard.ActiveWorkflowRunId.ShouldBeNull();
+            backlogCard.WorkflowRunStatus.ShouldBeNull();
+            backlogCard.CurrentWorkflowStageName.ShouldBeNull();
         }
         finally
         {
@@ -618,8 +618,7 @@ public class BoardServiceIntegrationTests
         var agentIds = await db.Agents
             .Where(a => a.WorkingDirectory.StartsWith(tempRoot)
                 || (a.CurrentCardId != null && cardIds.Contains(a.CurrentCardId.Value))
-                || db.Cards.Any(c => cardIds.Contains(c.Id) && c.AssignedAgentId == a.Id)
-                || db.CardWorkflowRuns.Any(r => workflowRunIds.Contains(r.Id) && r.AgentId == a.Id))
+                || db.Cards.Any(c => cardIds.Contains(c.Id) && c.AssignedAgentId == a.Id))
             .Select(a => a.Id)
             .ToListAsync();
         var attemptIds = await db.RunAttempts

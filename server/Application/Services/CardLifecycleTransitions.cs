@@ -74,8 +74,6 @@ internal static class CardLifecycleTransitions
 
         card.AssignedAgentId = null;
         card.AgentQueuePosition = null;
-        card.ActiveWorkflowRunId = null;
-        card.ActiveWorkflowRun = null;
         card.UpdatedAt = utcNow;
         card.ConcurrencyToken = Guid.NewGuid();
 

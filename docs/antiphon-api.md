@@ -172,6 +172,7 @@ POST   /api/boards            DELETE /api/boards/{id}
 POST   /api/boards/{id}/cards                create a card on this board (importance/urgency names, optional dueAt; a `priority` field is 400)
 POST   /api/boards/{id}/card-order           bulk relative order (listed cards first per rank cell; required reason; skippedHumanRated when Human-rated axes are left alone)
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
+PUT    /api/boards/{id}/pipeline   select a shared pipeline definition; `{ "pipelineDefinitionId": null }` inherits the project default
 POST   /api/boards/{id}/archive | /unarchive  hide/restore a board (reason body; not a delete)
 GET    /api/boards/{id}/card-files/status    read-only policy and cleanup state
 PUT    /api/boards/{id}/card-files/settings  explicit opt-in CAS; requires syncCardFiles + expectedSyncCardFiles
@@ -179,6 +180,7 @@ POST   /api/boards/{id}/card-files/sync      reconcile permitted public fields a
 
 GET    /api/projects  |  /api/projects/{id}
 POST   /api/projects   PUT /api/projects/{id}   DELETE /api/projects/{id}
+PUT    /api/projects/{id}/pipeline   set or clear the project's default pipeline definition
 POST   /api/projects/{id}/archive | /unarchive  hide/restore a project (reason body; not a delete)
 GET    /api/projects/{id}/deletion-impact
 POST   /api/projects/test-connectivity
@@ -193,6 +195,25 @@ POST   /api/projects/setup                          ProjectSetupResultDto
 > `GET /api/boards` and `GET /api/projects` hide archived rows unless `?includeArchived=true`
 > (the same query name the board-detail endpoint already uses for archived cards). Archive is
 > reversible hide, not delete; `scripts/prune-test-data.ps1` is the bulk front door.
+
+Shared pipeline definitions are named, versioned orders of stage roles. The board pointer
+overrides the project default, which falls back to the code-owned Standard pipeline. The
+definition's active revision changes for future card runs; existing runs stay pinned.
+
+```text
+GET    /api/pipeline-definitions[?includeArchived=true]  |  /api/pipeline-definitions/{id}
+POST   /api/pipeline-definitions                       create a Custom definition and revision 1
+POST   /api/pipeline-definitions/{id}/clone            copy the active revision into a Custom definition
+POST   /api/pipeline-definitions/{id}/revisions        append an immutable revision and activate it
+POST   /api/pipeline-definitions/{id}/archive | /unarchive
+```
+
+Revision stages are ordered `{role, bundleKey, allowedNext}` rows. Roles are the six
+`AgentTaskRole` stages; bundle keys name shipping `stage-*` bundles; allowed next tokens
+must name a stage in the same revision or `land`, `decide`, or `none`. Built-in definitions
+may be cloned but not edited or archived. Archived definitions remain resolvable by existing
+pointers; new pointer writes to them return 409. `scripts/pipeline-definition.ps1` exposes
+list, get, clone, revise, set-board, and set-project.
 
 ### Agents and their sessions
 
@@ -423,8 +444,15 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
 `ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `commitOnSettle` (`Never`/`Always`/`Agent`; omitted inherits project then `Delegation:CommitOnSettle`; `-NoCommit` sends Never), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`). `mergeTargetRef` is the landing target, never a
-worktree base. Detail records `worktreeBaseRequestedRef` (S4 create input; unused in this release),
-`worktreeBaseRef`, `worktreeBaseSource`, `worktreeBaseTaskId`, and `worktreeBaseSha`.
+worktree base. Fresh card-bound Worktrees default to `requestedWorktreeBaseMode: Auto`:
+creation returns `worktreeBase` with the observed decision, source task/branch/full SHA,
+warnings and inspection counts. `worktreeBaseTask` selects a same-card source task;
+`freshWorktree: true` requests the target base. The two overrides are exclusive. A
+divergent automatic choice is 409 `worktree_base_ambiguous`; an invalid requested source
+is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`,
+`requestedWorktreeBaseMode`, `requestedWorktreeBaseTaskId`, `worktreeBasePreviewJson`,
+`worktreeBaseRef`, `worktreeBaseSource`, `worktreeBaseTaskId`, `worktreeBaseBranch`, and
+`worktreeBaseSha`. Dispatch rechecks the selection before creating a distinct task branch.
 `AgentTaskLandNotifications` also carries `DispatchBase` notes with a null `RequestId`.
 
 `role` is `AgentTaskRole`. Dispatchable: `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`,

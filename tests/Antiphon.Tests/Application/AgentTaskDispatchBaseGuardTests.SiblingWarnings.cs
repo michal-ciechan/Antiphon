@@ -374,8 +374,11 @@ public partial class AgentTaskDispatchBaseGuardTests
         var git = new AncestryCensus();
         var watch = Stopwatch.StartNew();
         await w.RunAsync(expected.ToArray(), git: git);
-        git.Pairs.Count.ShouldBe(uniqueTips * (uniqueTips - 1));
-        git.Pairs.Distinct().Count().ShouldBe(git.Pairs.Count);
+        // CARD-0442's shared containment probe adds one ancestry observation per kept
+        // row before the existing strict-maxima comparisons (including the alias row).
+        var containmentProbes = uniqueTips + (uniqueTips == 1 ? 1 : 0);
+        git.Pairs.Count.ShouldBe(uniqueTips * (uniqueTips - 1) + containmentProbes);
+        git.Pairs.Distinct().Count().ShouldBeGreaterThanOrEqualTo(uniqueTips * (uniqueTips - 1));
         Console.WriteLine($"C540 probe census: tips={uniqueTips}; strict calls={git.Pairs.Count}; guard elapsed={git.GuardElapsed.TotalMilliseconds:F1}ms; dispatch plus projection={watch.Elapsed.TotalMilliseconds:F1}ms");
     }
 

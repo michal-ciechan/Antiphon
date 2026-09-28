@@ -290,6 +290,92 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
         h.Adapter.Inputs.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task C550_Keyed_enqueue_returns_the_existing_row_and_records_the_boundary()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var boundary = new RecordingBoundary();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<LandDeliveryBoundary>(boundary) });
+        var task = Guid.NewGuid(); var notification = Guid.NewGuid();
+        Guid first = Guid.Empty, second = Guid.Empty;
+        await h.Queue.EnqueueAsync(h.SessionId, "immutable keyed body", MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false,
+            sourceLandNotificationId: notification, onCreated: id => first = id);
+        first.ShouldNotBe(Guid.Empty);
+        // The match arm: same key, same session, same digest. It must hand back the existing row, not conflict or insert.
+        await Should.NotThrowAsync(() => h.Queue.EnqueueAsync(h.SessionId, "immutable keyed body", MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false,
+            sourceLandNotificationId: notification, onCreated: id => second = id));
+        second.ShouldBe(first, "the keyed match arm returns the existing row's id");
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == notification)).ShouldBe(1);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == task)).ShouldBe(1);
+        boundary.Reached.Where(r => r.Boundary == "queue-key-absent").ShouldHaveSingleItem().Identity.ShouldBe(notification);
+        var reused = boundary.Reached.Where(r => r.Boundary == "queue-existing-key").ShouldHaveSingleItem();
+        reused.Identity.ShouldBe(first);
+        reused.TaskId.ShouldBe(task);
+        boundary.Reached.Count(r => r.Boundary == "queue-inserted").ShouldBe(0, "no afterLandQueueInsert callback was supplied");
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C550_Recovery_prelink_records_queue_existing_key_after_the_link_is_saved(bool observerThrows)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, caller.SessionId);
+        // CARD-0481 F3 shape: the producer committed the keyed row and died before the outbox link.
+        await caller.Queue.EnqueueAsync(caller.SessionId, note.Body, MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, sourceTaskId: note.TaskId, contentDigest: note.ContentDigest,
+            deliverIfIdle: false, sourceLandNotificationId: note.Id);
+        var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceLandNotificationId == note.Id);
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).QueueMessageId.ShouldBeNull();
+
+        var boundary = new RecordingBoundary();
+        if (observerThrows) boundary.Throw.Add("queue-existing-key");
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using (var recoveredDb = new AppDbContext(options))
+            await new AgentTaskLandNotificationService(recoveredDb, caller.Queue, new CompletionNoteFlushQueue(), caller.Runtime, clock, boundary)
+                .ReconcileAsync(note.Id, CancellationToken.None);
+
+        var saved = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        saved.QueueMessageId.ShouldBe(row.Id, "the link is saved before the observer runs");
+        saved.EnqueuedAt.ShouldBe(row.CreatedAt);
+        saved.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+        saved.ConfirmedAt.ShouldBeNull();
+        saved.EnqueueAttempts.ShouldBe(observerThrows ? 1 : 0);
+        saved.LastErrorCode.ShouldBe(observerThrows ? "notification_reconcile_failed:IOException" : null);
+        boundary.Reached.ToArray().ShouldBe(new[] { ("queue-existing-key", note.TaskId, row.Id) }, "one reuse observation, no enqueue boundaries");
+        (await db.SessionQueuedMessages.AsNoTracking().CountAsync(m => m.SourceLandNotificationId == note.Id || m.SourceTaskId == note.TaskId)).ShouldBe(1);
+        caller.Adapter.Inputs.ShouldBeEmpty();
+
+        // A later scan of the linked note neither repeats the observation nor enqueues.
+        boundary.Throw.Clear();
+        await using (var scannedDb = new AppDbContext(options))
+            await new AgentTaskLandNotificationService(scannedDb, caller.Queue, new CompletionNoteFlushQueue(), caller.Runtime, clock, boundary)
+                .ReconcileAsync(note.Id, CancellationToken.None);
+        boundary.Reached.Count.ShouldBe(1);
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).EnqueueAttempts.ShouldBe(observerThrows ? 1 : 0);
+        (await db.SessionQueuedMessages.AsNoTracking().CountAsync(m => m.SourceTaskId == note.TaskId)).ShouldBe(1);
+        caller.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    private sealed class RecordingBoundary : LandDeliveryBoundary
+    {
+        public List<(string Boundary, Guid TaskId, Guid Identity)> Reached { get; } = [];
+        public HashSet<string> Throw { get; } = [];
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            lock (Reached) Reached.Add((boundary, taskId, identity));
+            return Throw.Contains(boundary) ? Task.FromException(new IOException("owned observer failure at " + boundary)) : Task.CompletedTask;
+        }
+    }
+
     private sealed class FailedInsert : LandDeliveryBoundary
     {
         public int Calls;

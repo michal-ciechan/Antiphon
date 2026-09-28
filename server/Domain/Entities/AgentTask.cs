@@ -171,6 +171,7 @@ public class AgentTask
     /// task must never become undeletable by <c>DataRetentionService</c> because of a card.</para>
     /// </summary>
     public Guid? CardId { get; set; }
+    public Guid? CardWorkflowStageId { get; set; }
 
     public Guid? WorktreeId { get; set; }
 
@@ -276,6 +277,14 @@ public class AgentTask
     /// No FK — retained if that row is later removed.
     /// </summary>
     public Guid? WorktreeBaseTaskId { get; set; }
+
+    /// <summary>Requested selection remains fixed through queueing and retry.</summary>
+    public RequestedWorktreeBaseMode RequestedWorktreeBaseMode { get; set; }
+    public Guid? RequestedWorktreeBaseTaskId { get; set; }
+    /// <summary>The source branch label at actual creation; the SHA remains WorktreeBaseSha.</summary>
+    public string? WorktreeBaseBranch { get; set; }
+    /// <summary>Bounded create-time advisory, retained to explain launch-time changes.</summary>
+    public string? WorktreeBasePreviewJson { get; set; }
 
     /// <summary>Advisory file lease — two Shared tasks with intersecting globs are serialised.</summary>
     public string? Scope { get; set; }
@@ -645,6 +654,7 @@ public class AgentTask
     public string? InternalDecisionAuditBaselineJson { get; set; }
 
     public Card? Card { get; set; }
+    public CardWorkflowStage? CardWorkflowStage { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();
     public ICollection<AgentTaskEvent> Events { get; set; } = new List<AgentTaskEvent>();

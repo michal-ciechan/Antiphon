@@ -110,6 +110,15 @@ the repair task never becomes the landing owner. Historical Failed status is pre
 default base - continuing an interrupted stage, or picking up where another task's branch got to -
 pass the base as a DISPATCH PARAMETER, never as `git checkout -B ...` prose in the goal:
 
+For a fresh Worktree bound to a card, CARD-0442 automatically selects a clean, committed,
+quiescent tip from that card's unlanded work in the same local Git repository. The create
+response previews the selected task, branch and full SHA; dispatch checks again and cuts a
+different task branch at the observed SHA. A pending sibling land holds dispatch. Divergent
+eligible tips refuse creation with `worktree_base_ambiguous`; choose one with `-BaseTask <id>`
+or explicitly omit the history with `-FreshWorktree`. An invalid, dirty, active or unavailable
+explicit source is refused. Inspect the create preview and the dispatch event for changes
+between create and launch. Landing still uses the original destination and explicit `-Land`.
+
 ```
 pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Worktree -StartRef <full-sha> -Goal <work>
 ```
@@ -236,8 +245,8 @@ in-flight / queued / ready per stage, generalised across all six stage roles (CA
 A Worktree task records the ref it was cut from. Precedence is repair SHA, then an explicit
 requested ref, then the merge target, then the project's `BaseBranch` / `Git:DefaultBranch` /
 `master` when that ref resolves to a commit, then `HEAD` with a warning naming the failed default
-(CARD-0508 S1). The card's current kept sibling is not chosen as a base in this release
-(CARD-0215 policy is unchanged). Containment of a kept sibling is patch-aware (`git cherry`): a
+(CARD-0508 S1). CARD-0442 selects an eligible same-card unlanded tip ahead of the ordinary
+default when no repair, StartRef or SourceLanding base is requested. Containment of a kept sibling is patch-aware (`git cherry`): a
 rebase-landed branch is silent. The dispatcher still holds while a sibling land is in flight, and
 still warns when a divergent kept branch is simply not landed. CARD-0540 snapshots full sibling
 commit IDs and emits one warning per surviving observed tip: identical tips share a deterministic
@@ -253,11 +262,12 @@ A sibling holds dispatch only while its current request is pending in Queued, He
 NeedsResolution emits the ordinary warning. An explicit StartRef that equals or descends from
 the request's reviewed source SHA bypasses that sibling check even if a Merge helper later
 rewrites the sibling's local tip.
-Land a Plan with `delegate.ps1 -Land <id>` before dispatching Execute as a
-convenience so the plan commit is on master — it is not required for a correct base. A `Landed`
+Land a Plan with `delegate.ps1 -Land <id>` when the plan should be published immediately;
+a same-card Execute can continue its committed branch before that land. A `Landed`
 line carrying `unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
-noticed.
+noticed. An inspection-unknown Warning names a branch whose containment could not be established.
+Inspect that history and decide whether it needs integration; the warning alone does not prove omission.
 
 ### Picking
 
@@ -899,7 +909,10 @@ local `master`; reset that checkout to `origin/master` with fetch and `reset --h
 A `Landed` line that also carries
 `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
 not present in the pinned verified SHA by patch id (`git cherry`) — land or drop that sibling; the
-server warns rather than refusing. A rebase-landed sibling no longer appears.
+server warns rather than refusing. A rebase-landed sibling no longer appears. An
+inspection-unknown Warning is separate from `unlanded-sibling=`: the server could not prove
+whether the branch is contained. Inspect its history and decide on integration or disposal;
+successful publication and cleanup are unchanged.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same

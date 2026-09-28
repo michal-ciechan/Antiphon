@@ -22,38 +22,31 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class AgentReplyStyleTests
 {
-    // Copied from the CARD-0417 plan. Do not load this from the bundle under test.
+    // Independent expected wording. Do not load this from the bundle under test.
     private const string ExpectedPhoneText = """
         Reply style: phone.
 
-        Use this style only for replies delivered to a human in Telegram or Slack,
-        including chat follow-ups to Antiphon task reports, checks, and scheduled prompts.
-        For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
-        and terminal-only replies, follow their own contracts; the phone rules below do
-        not apply. Do not pass these phone rules to delegates.
+        Apply only to human Telegram or Slack replies, including follow-ups to task reports,
+        checks, and scheduled prompts. Worker/delegate reports, briefs, stage artifacts,
+        specialist outputs, and terminal-only replies follow their own contracts. Do not
+        pass this style to delegates.
 
-        - Give the minimum useful answer to the current request. Lead with the answer,
-          outcome, or blocker. If one short line is enough, use it and stop.
-        - Prefer bullets when there are several points. One point per bullet; aim for
-          about five to seven words each. Use fewer words when enough, and more when
-          needed for clarity or correctness. Do not pad or force broken grammar.
-        - Use short sentences and short lines. Split separate points onto separate lines.
-          Use plain Markdown. No tables, aligned columns, or wide code blocks in chat.
-          Use short descriptive links instead of displaying long URLs.
-        - No filler, pleasantries, preamble, repeated question, progress narration, recap,
-          or sign-off. Include only what the user needs to understand or act now.
-        - Do not add background, alternatives, or explanations the user did not ask for.
-          Let the user request more. Do not append offers of more help. Ask a question
-          only when its answer is needed to continue.
-        - If the user asks for detail, provide the requested detail in short sections
-          and bullets. Put a requested table or wide artifact in a file, with a short
-          chat summary and the required attachment marker.
-        - Keep necessary caveats, risks, uncertainty, corrections, quantities, deadlines,
-          and next actions. Never shorten an exact name, path, command, flag, identifier,
-          quote, or attachment marker to meet the word or line target. Put long exact
-          material in an appropriate attachment when needed; do not break it arbitrarily.
-        - Follow the channel's delivery and attachment contract. When that contract calls
-          for silence, reply exactly NO_REPLY, without bullets or extra text.
+        - Lead with the answer, outcome, or blocker. Give only what the user needs now;
+          stop after one line when one line suffices.
+        - For multiple points, prefer one short bullet per point, roughly five to seven
+          words when natural. Use plain Markdown; avoid tables, columns, and wide code
+          blocks in chat. Link long URLs descriptively.
+        - Skip greetings, preamble, repeated questions, progress recaps, sign-offs, and
+          offers of more help. Add background or alternatives only when asked or needed
+          for a decision. Ask a question only when its answer is needed to continue.
+        - If asked for detail, provide it in short sections. Put requested tables or wide
+          artifacts in a file, with a short summary and the required attachment marker.
+        - Preserve material caveats, uncertainty, corrections, quantities, deadlines,
+          next actions, and exact names, paths, commands, flags, identifiers, quotes, and
+          attachment markers. Longer bullets are fine when accuracy needs them. Put long
+          exact material in an attachment; do not break it.
+        - Follow the channel delivery and attachment contract. When it calls for
+          silence, reply exactly NO_REPLY.
 
         Whatever the style: never drop a caveat, a risk, an uncertainty or a correction to save words.
         """;
@@ -74,28 +67,26 @@ public class AgentReplyStyleTests
 
         var expected = ExpectedPhoneText.ReplaceLineEndings("\n").Trim();
         var text = InstructionBundles.TextOf("style-phone");
-        text.Length.ShouldBeLessThan(3000);
+        text.Length.ShouldBeLessThan(1700);
         text.ShouldBe(expected);
         text.ShouldContain("""
-            Use this style only for replies delivered to a human in Telegram or Slack,
-            including chat follow-ups to Antiphon task reports, checks, and scheduled prompts.
-            For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
-            and terminal-only replies, follow their own contracts; the phone rules below do
-            not apply. Do not pass these phone rules to delegates.
+            Apply only to human Telegram or Slack replies, including follow-ups to task reports,
+            checks, and scheduled prompts. Worker/delegate reports, briefs, stage artifacts,
+            specialist outputs, and terminal-only replies follow their own contracts. Do not
+            pass this style to delegates.
             """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
-            - If the user asks for detail, provide the requested detail in short sections
-              and bullets. Put a requested table or wide artifact in a file, with a short
-              chat summary and the required attachment marker.
+            - If asked for detail, provide it in short sections. Put requested tables or wide
+              artifacts in a file, with a short summary and the required attachment marker.
             """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
-              and next actions. Never shorten an exact name, path, command, flag, identifier,
-              quote, or attachment marker to meet the word or line target. Put long exact
-              material in an appropriate attachment when needed; do not break it arbitrarily.
+              next actions, and exact names, paths, commands, flags, identifiers, quotes, and
+              attachment markers. Longer bullets are fine when accuracy needs them. Put long
+              exact material in an attachment; do not break it.
             """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
-            - Follow the channel's delivery and attachment contract. When that contract calls
-              for silence, reply exactly NO_REPLY, without bullets or extra text.
+            - Follow the channel delivery and attachment contract. When it calls for
+              silence, reply exactly NO_REPLY.
             """.ReplaceLineEndings("\n"));
         text.ShouldEndWith(AgentReplyStyles.CorrectnessSentence);
 

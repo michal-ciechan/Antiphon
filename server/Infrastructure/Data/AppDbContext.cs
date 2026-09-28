@@ -31,6 +31,8 @@ public class AppDbContext : DbContext
     public DbSet<CardRevision> CardRevisions => Set<CardRevision>();
     public DbSet<CardWorkflowRun> CardWorkflowRuns => Set<CardWorkflowRun>();
     public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
+    public DbSet<PipelineDefinition> PipelineDefinitions => Set<PipelineDefinition>();
+    public DbSet<PipelineDefinitionRevision> PipelineDefinitionRevisions => Set<PipelineDefinitionRevision>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
     public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
@@ -451,6 +453,9 @@ public class AppDbContext : DbContext
                 .HasDefaultValue("{}");
             entity.Property(p => p.OrchestratorWorkspaceAcknowledgedAt).IsRequired(false);
             entity.Property(p => p.CommitOnSettle).IsRequired(false);
+            entity.HasIndex(p => p.DefaultPipelineDefinitionId).HasDatabaseName("IX_Projects_DefaultPipelineDefinitionId");
+            entity.HasOne(p => p.DefaultPipelineDefinition).WithMany()
+                .HasForeignKey(p => p.DefaultPipelineDefinitionId).OnDelete(DeleteBehavior.Restrict);
 
             entity.HasIndex(p => p.Name).IsUnique();
         });
@@ -680,6 +685,9 @@ public class AppDbContext : DbContext
             entity.Property(b => b.ArchivedBy).HasMaxLength(200);
 
             entity.HasIndex(b => b.ProjectId).HasDatabaseName("IX_Boards_ProjectId");
+            entity.HasIndex(b => b.PipelineDefinitionId).HasDatabaseName("IX_Boards_PipelineDefinitionId");
+            entity.HasOne(b => b.PipelineDefinition).WithMany()
+                .HasForeignKey(b => b.PipelineDefinitionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(b => new { b.ProjectId, b.Name })
                 .IsUnique()
                 .HasDatabaseName("IX_Boards_ProjectId_Name");
@@ -1119,22 +1127,61 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<PipelineDefinition>(entity =>
+        {
+            entity.ToTable("PipelineDefinitions");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.Id).ValueGeneratedNever();
+            entity.Property(d => d.Name).IsRequired().HasMaxLength(200);
+            entity.Property(d => d.Description).HasMaxLength(2000);
+            entity.Property(d => d.Source).IsRequired();
+            entity.Property(d => d.ArchivedReason).HasMaxLength(2000);
+            entity.Property(d => d.ArchivedBy).HasMaxLength(200);
+            entity.HasIndex(d => d.Name).IsUnique().HasDatabaseName("IX_PipelineDefinitions_Name");
+            entity.HasOne(d => d.ActiveRevision).WithMany()
+                .HasForeignKey(d => new { d.Id, d.ActiveRevisionId })
+                .HasPrincipalKey(r => new { r.DefinitionId, r.Id })
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<PipelineDefinitionRevision>(entity =>
+        {
+            entity.ToTable("PipelineDefinitionRevisions", table =>
+                table.HasCheckConstraint("CK_PipelineDefinitionRevisions_RevisionNumber_Positive", "\"RevisionNumber\" > 0"));
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.StagesJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.ContentHash).IsRequired().HasMaxLength(8).IsFixedLength();
+            entity.Property(r => r.ChangeNote).HasMaxLength(400);
+            entity.HasIndex(r => new { r.DefinitionId, r.RevisionNumber }).IsUnique()
+                .HasDatabaseName("IX_PipelineDefinitionRevisions_DefinitionId_RevisionNumber");
+            entity.HasOne(r => r.Definition).WithMany(d => d.Revisions)
+                .HasForeignKey(r => r.DefinitionId).OnDelete(DeleteBehavior.Cascade);
+            foreach (var name in new[] { nameof(PipelineDefinitionRevision.DefinitionId),
+                nameof(PipelineDefinitionRevision.RevisionNumber), nameof(PipelineDefinitionRevision.StagesJson),
+                nameof(PipelineDefinitionRevision.ContentHash), nameof(PipelineDefinitionRevision.CreatedAt) })
+                entity.Property(name).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
+        });
+
         modelBuilder.Entity<CardWorkflowRun>(entity =>
         {
             entity.ToTable("CardWorkflowRuns");
             entity.HasKey(r => r.Id);
             entity.Property(r => r.CardId).IsRequired();
-            entity.Property(r => r.AgentId).IsRequired();
+            entity.Property(r => r.PipelineDefinitionId).IsRequired();
+            entity.Property(r => r.PipelineDefinitionRevisionId).IsRequired();
+            entity.Property(r => r.PipelineDefinitionRevisionId).Metadata.SetAfterSaveBehavior(
+                Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
             entity.Property(r => r.WorkflowName).IsRequired().HasMaxLength(200);
-            entity.Property(r => r.WorkflowDefinitionSnapshot).IsRequired();
             entity.Property(r => r.Status).IsRequired();
             entity.Property(r => r.FailureReason).HasMaxLength(4000);
             entity.Property(r => r.CreatedAt).IsRequired();
             entity.Property(r => r.UpdatedAt).IsRequired();
 
-            entity.HasIndex(r => r.CardId).HasDatabaseName("IX_CardWorkflowRuns_CardId");
-            entity.HasIndex(r => r.AgentId).HasDatabaseName("IX_CardWorkflowRuns_AgentId");
+            entity.HasIndex(r => r.PipelineDefinitionId).HasDatabaseName("IX_CardWorkflowRuns_PipelineDefinitionId");
+            entity.HasIndex(r => r.PipelineDefinitionRevisionId).HasDatabaseName("IX_CardWorkflowRuns_PipelineDefinitionRevisionId");
             entity.HasIndex(r => new { r.CardId, r.Status }).HasDatabaseName("IX_CardWorkflowRuns_CardId_Status");
+            entity.HasIndex(r => r.CardId).IsUnique().HasFilter("\"Status\" IN (0, 1)")
+                .HasDatabaseName("IX_CardWorkflowRuns_CardId_Open");
             entity.HasIndex(r => new { r.CardId, r.Id })
                 .IsUnique()
                 .HasDatabaseName("IX_CardWorkflowRuns_CardId_Id");
@@ -1144,15 +1191,15 @@ public class AppDbContext : DbContext
                 .HasForeignKey(r => r.CardId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            entity.HasOne(r => r.Agent)
-                .WithMany(a => a.WorkflowRuns)
-                .HasForeignKey(r => r.AgentId)
+            entity.HasOne(r => r.PipelineDefinition)
+                .WithMany()
+                .HasForeignKey(r => r.PipelineDefinitionId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            entity.HasOne(r => r.WorkflowTemplate)
-                .WithMany()
-                .HasForeignKey(r => r.WorkflowTemplateId)
-                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(r => r.PipelineDefinitionRevision)
+                .WithMany(revision => revision.Runs)
+                .HasForeignKey(r => r.PipelineDefinitionRevisionId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(r => r.CurrentStage)
                 .WithMany()
@@ -1167,10 +1214,9 @@ public class AppDbContext : DbContext
             entity.Property(s => s.CardWorkflowRunId).IsRequired();
             entity.Property(s => s.StageOrder).IsRequired();
             entity.Property(s => s.Name).IsRequired().HasMaxLength(200);
-            entity.Property(s => s.ExecutorType).IsRequired().HasMaxLength(100);
-            entity.Property(s => s.ModelName).HasMaxLength(200);
-            entity.Property(s => s.SystemPrompt).HasMaxLength(4000);
-            entity.Property(s => s.GateRequired).IsRequired();
+            entity.Property(s => s.Role).IsRequired();
+            entity.Property(s => s.BundleKey).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.AllowedNextJson).IsRequired().HasColumnType("jsonb");
             entity.Property(s => s.Status).IsRequired();
             entity.Property(s => s.ResultSummary).HasMaxLength(4000);
             entity.Property(s => s.FailureReason).HasMaxLength(4000);
@@ -1180,6 +1226,8 @@ public class AppDbContext : DbContext
             entity.HasIndex(s => new { s.CardWorkflowRunId, s.StageOrder })
                 .IsUnique()
                 .HasDatabaseName("IX_CardWorkflowStages_RunId_StageOrder");
+            entity.HasIndex(s => new { s.CardWorkflowRunId, s.Role }).IsUnique()
+                .HasDatabaseName("IX_CardWorkflowStages_RunId_Role");
             entity.HasIndex(s => new { s.CardWorkflowRunId, s.Id })
                 .IsUnique()
                 .HasDatabaseName("IX_CardWorkflowStages_RunId_Id");
@@ -1805,6 +1853,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AgentTask>(entity =>
         {
             entity.ToTable("AgentTasks");
+            entity.HasIndex(t => t.CardWorkflowStageId).HasDatabaseName("IX_AgentTasks_CardWorkflowStageId");
+            entity.HasOne(t => t.CardWorkflowStage).WithMany()
+                .HasForeignKey(t => t.CardWorkflowStageId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne<ChannelOutboundDelivery>().WithMany()
                 .HasForeignKey(t => t.OutboundDeliveryId).OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(t => t.OutboundDeliveryId).IsUnique()
@@ -1908,6 +1959,11 @@ public class AppDbContext : DbContext
             entity.Property(t => t.WorktreeBaseRef).HasMaxLength(300);
             entity.Property(t => t.WorktreeBaseSource).IsRequired().HasDefaultValue(WorktreeBaseSource.Unset);
             entity.Property(t => t.WorktreeBaseTaskId).IsRequired(false);
+            entity.Property(t => t.RequestedWorktreeBaseMode)
+                .HasDefaultValue(RequestedWorktreeBaseMode.Auto).IsRequired();
+            entity.Property(t => t.RequestedWorktreeBaseTaskId).IsRequired(false);
+            entity.Property(t => t.WorktreeBaseBranch).HasMaxLength(300);
+            entity.Property(t => t.WorktreeBasePreviewJson).HasColumnType("text");
             // CARD-0499. Null on every pre-existing row: no backfill of baselines or source identity.
             entity.Property(t => t.RepairSourceTaskId).IsRequired(false);
             entity.Property(t => t.ProgressBaselineJson).HasColumnType("text");

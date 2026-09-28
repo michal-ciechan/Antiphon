@@ -117,7 +117,7 @@ public class DispatchBaseWarningDeliveryE2ETests
         {
             // A missing key also disables the production keyed-insert callback. Observe the
             // stored key independently so PC-21 reaches an assertion instead of losing its cut.
-            await LandDeliveryFixture.UntilAsync(async () =>
+            await f.UntilProtocolAsync(async () =>
             {
                 await using var db = f.CreateContext();
                 (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == f.TaskId

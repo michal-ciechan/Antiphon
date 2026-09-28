@@ -152,6 +152,60 @@ public class PtyDeliveryCeilingsTests
         inline.ShouldNotContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
     }
 
+    [Test]
+    public void A_runner_brief_pointer_fits_one_write_even_with_a_long_title_and_cwd()
+    {
+        var settings = new DelegationSettings();
+        var inbox = settings.CeilingsFor(PtyBackend.InboxConhost, AnyReason);
+        var task = NewTask(new string('g', 2_000));
+        task.Title = new string('t', 300);
+        task.Scope = new string('s', 600);
+        var runnerCwd = "/work/" + new string('w', 650);
+        PhoneHomeInputSpill? staged = null;
+
+        var pointer = AgentTaskDispatcher.FitBriefForTyping(
+            task, settings, inbox, agentKind: AgentKind.ClaudeCode,
+            runnerCwd: runnerCwd, stageRemoteSpill: spill => staged = spill);
+
+        staged.ShouldNotBeNull();
+        pointer.ShouldStartWith(DelegationReportFormatter.TaskMarker(task.Id));
+        pointer.ShouldContain(staged!.RelativePath);
+        pointer.ShouldNotContain(task.Scope);
+        System.Text.Encoding.UTF8.GetByteCount(pointer).ShouldBeLessThanOrEqualTo(inbox.SingleWriteMaxBytes);
+    }
+
+    [Test]
+    public void A_runner_pointer_is_measured_after_the_queue_expands_its_spill_path()
+    {
+        var settings = new DelegationSettings();
+        var inbox = settings.CeilingsFor(PtyBackend.InboxConhost, AnyReason);
+        var task = NewTask(new string('g', 2000));
+        var relative = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
+        var bound = TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D"));
+        var found = false;
+        for (var length = 1; length < 1200; length++)
+        {
+            task.Title = new string('t', length);
+            var before = DelegationReportFormatter.BuildBriefPointer(task, settings, relative, 2000);
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(before);
+            if (bytes > inbox.SingleWriteMaxBytes ||
+                System.Text.Encoding.UTF8.GetByteCount(before.Replace(relative, bound, StringComparison.Ordinal))
+                    <= inbox.SingleWriteMaxBytes)
+                continue;
+
+            found = true;
+            PhoneHomeInputSpill? staged = null;
+            var pointer = AgentTaskDispatcher.FitBriefForTyping(task, settings, inbox,
+                runnerCwd: "/runner/worktrees/task-bound", stageRemoteSpill: spill => staged = spill);
+            staged.ShouldNotBeNull();
+            var typed = pointer.Replace(staged.RelativePath, bound, StringComparison.Ordinal);
+            System.Text.Encoding.UTF8.GetByteCount(typed).ShouldBeLessThanOrEqualTo(inbox.SingleWriteMaxBytes);
+            pointer.ShouldNotContain(task.Title);
+            break;
+        }
+        found.ShouldBeTrue("the fixture must exercise a pointer that fits before binding but grows past the limit");
+    }
+
     /// <summary>
     /// The gate is never widened by omission. Every caller that predates the profile — which is
     /// every test, and any future one that forgets — gets the conservative set.

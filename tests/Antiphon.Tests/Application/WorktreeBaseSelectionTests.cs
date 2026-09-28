@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 public partial class WorktreeBaseSelectionTests
 {
+
     [Test]
     public async Task C508_UnresolvedDefaultRetainsName()
     {
@@ -288,6 +289,37 @@ public partial class WorktreeBaseSelectionTests
         (await service.ContainsPatchesAsync(repo.Path, "missing-branch", "master", CancellationToken.None)).ShouldBeFalse();
         (await service.ContainsPatchesAsync(repo.Path, "topic", "missing-base", CancellationToken.None)).ShouldBeFalse();
         (await service.ContainsPatchesAsync(Path.Combine(repo.Path, "gone"), "topic", "master", CancellationToken.None))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task T0442_merge_range_is_not_proven_contained_by_cherry()
+    {
+        using var repo = new ScratchGitRepo("c442-merge-containment");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await repo.GitAsync("checkout", "-b", "left");
+        await repo.CommitFileAsync("left.txt", "L\n");
+        var left = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        await repo.GitAsync("checkout", "-b", "right");
+        await repo.CommitFileAsync("right.txt", "R\n");
+        var right = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "left");
+        await repo.GitAsync("merge", "--no-ff", "right", "-m", "join");
+        var merged = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        await repo.GitAsync("cherry-pick", left);
+        await repo.GitAsync("cherry-pick", right);
+        (await ScratchGitRepo.GitInAsync(repo.Path, "merge-base", "--is-ancestor", merged, "master"))
+            .Ok.ShouldBeFalse();
+        var cherry = await ScratchGitRepo.GitInAsync(repo.Path, "cherry", "master", merged);
+        cherry.Ok.ShouldBeTrue();
+        cherry.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .ShouldAllBe(line => line.StartsWith('-'));
+
+        var (service, _) = CreateService(repo,
+            new GitSettings { DefaultBranch = "master", WorktreeBasePath = repo.WorktreeRoot });
+        (await service.ContainsPatchesAsync(repo.Path, merged, "master", CancellationToken.None))
             .ShouldBeFalse();
     }
 

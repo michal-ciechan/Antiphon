@@ -225,7 +225,9 @@ and `ForCodex`; Codex's short family names describe the tiers but are not CLI mo
 Three things worth knowing about that table:
 
 - **Claude rides family aliases, never versioned ids**, so a launch picks up the family's current
-  model without a code change.
+  model known by the installed CLI without a code change. Claude Code 2.1.280+ is required for
+  `opus` to resolve to Opus 5.5; a live `--model opus` probe on this Linux host on 2026-09-27
+  returned `claude-opus-5-5` in `modelUsage`.
 - **Grok is collapsed to `grok-4.7` at every tier** (CARD-0169 collapse; 2026-09-21 bump from
   `grok-4.6`) — the operator's instruction, not a capability judgement. `grok-4.6` and `grok-4.5`
   remain selectable model ids in the profile catalogue and in historical records; they are only
@@ -242,8 +244,11 @@ Three things worth knowing about that table:
   0.155.1 → 0.156.1; `gpt-6-sol` is catalog priority 2 and `gpt-5.6-sol` dropped to 4).
   `gpt-6-sol`'s catalog includes `high` reasoning; its own default is `medium`, so the launch
   still sets effort from the tier. `gpt-5.6-sol` stays a selectable profile model and is only
-  gone from the ladder new dispatches resolve through. The Medium rung is still `gpt-5.6-terra`
-  — whether it moves to `gpt-6-luna` is an open product decision, not part of that bump.
+  gone from the ladder new dispatches resolve through. The Medium rung stays `gpt-5.6-terra`
+  for CARD-0611: `gpt-6-terra` does not exist, and `gpt-6-luna` would change the model family
+  rather than update Terra. Whether to replace Terra with `gpt-6-luna` remains open pending an
+  explicit operator decision. A live `codex exec --ephemeral -m gpt-6-sol` probe succeeded on
+  this Linux host with codex-cli 0.156.1 on 2026-09-27.
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately

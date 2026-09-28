@@ -38,11 +38,9 @@ using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 // Startup writes PROCESS-GLOBAL state: Serilog's static Log.Logger. WebApplicationFactory runs
 // this entry point once per factory, and the test assembly holds several of them (the shared
 // AntiphonWebAppFactory, its per-suite subclasses, and SmokeTests' own bare factory), so two
-// invocations can be inside startup at the same time. The bootstrap logger is a ReloadableLogger
-// parked on Log.Logger and builder.Build() FREEZES it: interleaved, the second invocation
-// overwrites Log.Logger, the first freezes what the second parked there, and the second's Build()
-// throws "The logger is already frozen." The gate covers assignment-through-Build only - it is
-// released before app.Run() blocks - and is a no-op for the single invocation a real server makes.
+// invocations can be inside startup at the same time. Each host has an independent configured
+// logger; the gate protects the static bootstrap logger assignment and startup sequence.
+// It is released before app.Run() blocks and is a no-op for a single real server invocation.
 //
 // It covers the whole of startup, not just Build(), because the same overlap breaks the seeder:
 // DatabaseSeeder is check-then-insert against a database both invocations share, so a second one
@@ -51,17 +49,23 @@ using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 // around migrate+seed, which this gate is not.
 Program.StartupGate.Wait();
 var startupGateHeld = true;
+Serilog.ILogger? ownedLogger = null;
 
 try
 {
     // Bootstrap Serilog for startup logging (before host is built)
-    Log.Logger = new LoggerConfiguration()
+    ownedLogger = new LoggerConfiguration()
         .WriteTo.Console()
         .CreateBootstrapLogger();
+    Log.Logger = ownedLogger;
 
     var builder = WebApplication.CreateBuilder(args);
 
     // Serilog — structured logging with correlation enrichment (NFR19)
+    // Serilog reloads this startup's bootstrap logger with the host's sinks and assigns it to
+    // Log.Logger. Each host therefore owns its configured logger, while static calls use the
+    // same file and alert sinks as injected loggers. Teardown below closes only this startup's
+    // logger; an older host must not close a newer host's static logger.
     builder.Host.UseSerilog((ctx, lc) =>
     {
         var logPath = ctx.Configuration["Serilog:LogPath"] ?? "logs";
@@ -102,7 +106,7 @@ try
             )
             // Alert log tap (armed after build via AlertingLogSink.Attach; disabled by default).
             .WriteTo.Sink(Antiphon.Server.Infrastructure.Supervision.AlertingLogSink.Instance);
-    });
+    }, preserveStaticLogger: false);
 
     // Database
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -121,6 +125,9 @@ try
     builder.Services.Configure<GitSettings>(builder.Configuration.GetSection("Git"));
     builder.Services.AddOptions<GitSettings>()
         .Validate(s => s.IndexLockStaleAfterSeconds >= 30, "Git:IndexLockStaleAfterSeconds must be at least 30.")
+        .Validate(s => s.WorktreeBaseInspectionTimeoutSeconds > 0
+            && s.WorktreeBaseMaxCandidates > 0 && s.WorktreeBaseMaxGitCommands > 0,
+            "Git worktree-base inspection limits must be positive.")
         .ValidateOnStart();
     builder.Services.Configure<ProjectsSettings>(builder.Configuration.GetSection("Projects"));
     builder.Services.Configure<LlmSettings>(builder.Configuration.GetSection("Llm"));
@@ -375,6 +382,7 @@ try
     // malformed map degrades to "no names known").
     builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
+    builder.Services.AddScoped<AgentTaskWorktreeBaseResolver>();
     builder.Services.AddScoped<DispatchBaseWarningIntentService>();
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();
@@ -483,6 +491,8 @@ try
     builder.Services.AddSingleton<OperatorShutdownCoordinator>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
+    builder.Services.AddScoped<PipelineDefinitionService>();
+    builder.Services.AddScoped<PipelineResolution>();
     builder.Services.AddSingleton<OrchestratorWorkspaceFactGatherer>();
     builder.Services.AddScoped<OrchestratorWorkspaceWarningService>();
     builder.Services.AddScoped<ProjectSetupService>();
@@ -871,6 +881,14 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         .WithMetrics(metrics => metrics.AddAntiphonResilienceMetrics());
 
     var app = builder.Build();
+    // Freeze() replaces the bootstrap wrapper with its configured inner logger. Capture that
+    // exact instance so this host can close it without touching a later host's static logger.
+    ownedLogger = Log.Logger;
+
+    if (builder.Configuration["Deliverables:BrowserPath"] is not null
+        || builder.Configuration["Deliverables:RenderTimeoutSeconds"] is not null
+        || builder.Configuration["Deliverables:MaxDocuments"] is not null)
+        app.Logger.LogWarning("Legacy Deliverables renderer settings are ignored; settlement now bundles sources only.");
 
     if (builder.Configuration["Deliverables:BrowserPath"] is not null
         || builder.Configuration["Deliverables:RenderTimeoutSeconds"] is not null
@@ -1021,6 +1039,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // API endpoints
     app.MapSettingsEndpoints();
     app.MapProjectEndpoints();
+    app.MapPipelineDefinitionEndpoints();
     app.MapApiKeyEndpoints();
     app.MapDelegationCapabilityEndpoints();
     app.MapBoardEndpoints();
@@ -1105,10 +1124,26 @@ catch (Exception ex) when (ex is not HostAbortedException)
 }
 finally
 {
-    if (startupGateHeld)
+    if (!startupGateHeld)
+        Program.StartupGate.Wait();
+    try
+    {
+        // A failed Build can install the configured logger before the assignment above. While
+        // this startup still holds the gate, any current static logger is its own.
+        if (startupGateHeld && ownedLogger is not null)
+            ownedLogger = Log.Logger;
+        if (ownedLogger is not null)
+        {
+            if (ReferenceEquals(Log.Logger, ownedLogger))
+                Log.CloseAndFlush();
+            else
+                (ownedLogger as IDisposable)?.Dispose();
+        }
+    }
+    finally
+    {
         Program.StartupGate.Release();
-
-    Log.CloseAndFlush();
+    }
 }
 
 // Exposed as public so test projects can use WebApplicationFactory<Program> with public

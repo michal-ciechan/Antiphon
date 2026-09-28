@@ -176,3 +176,14 @@ Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionCTests
 Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionDTests
 # CARD-0452: real repository child journal recovery and crash evidence.
 Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
+
+# CARD-0442: real Git ancestry and isolated PostgreSQL candidate selection.
+Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
+# CARD-0442: real create, dispatch and land against scratch Git and isolated PostgreSQL.
+Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests
+# CARD-0442: real create admission and source-boundary fixtures.
+Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
+# CARD-0442: downgrade/upgrade of isolated PostgreSQL task rows.
+Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests
+# CARD-0442: real delegate.ps1 POST and service-backed worktree preview.
+Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests

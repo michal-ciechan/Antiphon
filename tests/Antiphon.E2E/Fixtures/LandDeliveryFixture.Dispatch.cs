@@ -98,7 +98,7 @@ public sealed partial class LandDeliveryFixture
 
     public async Task<List<AgentTaskDispatchWarningIntent>> WaitForDispatchIntentsAsync()
     {
-        await UntilAsync(async () => (await DispatchIntentsAsync()).Count == 2, "two committed reduced dispatch intents");
+        await UntilProtocolAsync(async () => (await DispatchIntentsAsync()).Count == 2, "two committed reduced dispatch intents");
         var intents = await DispatchIntentsAsync();
         foreach (var expected in ExpectedDispatchSiblings)
         {
@@ -123,7 +123,7 @@ public sealed partial class LandDeliveryFixture
         return intents;
     }
 
-    public Task WaitForBoundaryAsync(string boundary) => UntilAsync(() =>
+    public Task WaitForBoundaryAsync(string boundary) => UntilProtocolAsync(() =>
         Task.FromResult(File.Exists(Path.Combine(Root, boundary + ".barrier.json"))), boundary);
 
     public Task TwoNotificationScansAsync()

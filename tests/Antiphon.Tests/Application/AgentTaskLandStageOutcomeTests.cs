@@ -542,6 +542,37 @@ public class AgentTaskLandStageOutcomeTests
         moving.Warnings.ShouldBeEmpty();
     }
 
+    [Test]
+    [Timeout(180_000)]
+    public async Task retained_merge_uncertainty_warns_without_stranded_marker()
+    {
+        using var repo = new ScratchGitRepo("c442-land-merge-unknown");
+        await repo.CommitFileAsync("README.md", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(sibling.WorktreePath!, "left.txt", "L\n", "left");
+        var left = (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
+        await repo.GitAsync("checkout", "-b", "right");
+        await repo.CommitFileAsync("right.txt", "R\n");
+        var right = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        (await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "merge", "--no-ff", "right", "-m", "join"))
+            .Ok.ShouldBeTrue();
+        await repo.GitAsync("cherry-pick", left);
+        await repo.GitAsync("cherry-pick", right);
+        var verified = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+
+        var observed = await CollectAsync(land, build, repo.Path, verified);
+        observed.Marker.ShouldBeNull();
+        observed.Warnings.ShouldContain(w => w.Contains(sibling.WorktreeBranch!)
+            && w.Contains("unknown", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task CommitInAsync(string worktree, string file, string content, string message)
     {
         await File.WriteAllTextAsync(Path.Combine(worktree, file), content);
@@ -564,7 +595,7 @@ public class AgentTaskLandStageOutcomeTests
         return (AgentTaskLandService.UnlandedMarker(siblings), warnings);
     }
 
-    private static async Task<AgentTask> SeedSucceededWorktreeAsync(
+    internal static async Task<AgentTask> SeedSucceededWorktreeAsync(
         AppDbContext db, DelegationWorktreeService worktrees, ScratchGitRepo repo, Guid? cardId = null)
     {
         var id = Guid.NewGuid();
@@ -591,7 +622,7 @@ public class AgentTaskLandStageOutcomeTests
         return task;
     }
 
-    private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
+    internal static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
         AppDbContext db, ScratchGitRepo repo)
     {
         var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
@@ -620,7 +651,7 @@ public class AgentTaskLandStageOutcomeTests
         return (land, worktrees);
     }
 
-    private static async Task<LandRequestResult> RequestHeadAsync(AgentTaskLandService land, AgentTask task)
+    internal static async Task<LandRequestResult> RequestHeadAsync(AgentTaskLandService land, AgentTask task)
     {
         var sha = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim();
         var branch = task.WorktreeBranch!.StartsWith("refs/", StringComparison.Ordinal)
@@ -677,7 +708,7 @@ public class AgentTaskLandStageOutcomeTests
         return card;
     }
 
-    private static async Task SeedBuildableAsync(ScratchGitRepo repo)
+    internal static async Task SeedBuildableAsync(ScratchGitRepo repo)
     {
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "LandProbe.csproj"),
             """

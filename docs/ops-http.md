@@ -9,6 +9,10 @@ API); nothing here replaces that.
 
 For process logs, Hangfire history, server2 container output, deployment-evidence gaps and
 transcript retention, see the authoritative [log-source inventory](logs.md).
+
+Use `GET /api/pipeline-definitions` to list shared stage pipelines and
+`scripts/pipeline-definition.ps1` to inspect, clone, revise, or select one for a board or project.
+Board and project detail responses expose the effective pipeline and its source.
 For desktop Postgres query totals, use the
 [pg_stat_statements query and reset commands](logs.md#desktop-postgres-query-statistics).
 
@@ -427,6 +431,16 @@ fails the task, never falling back to master. `GET /api/agent-tasks/{id}` expose
 are what provisioning actually used, so a reuse cannot relabel the first decision. StartRef never
 sets `mergeTargetRef` and never takes over the named branch, which stays checked out wherever it
 already is.
+
+CARD-0442: a new card-bound Worktree selects a clean, quiescent same-card unlanded
+commit when one eligible tip exists. `POST /api/agent-tasks` returns a `worktreeBase`
+preview before dispatch. `worktreeBaseTask` (task GUID or unique short ID) selects a
+specific same-card source; `freshWorktree: true` deliberately starts at the target.
+They are exclusive and require a fresh Worktree. Divergent eligible tips produce 409
+`worktree_base_ambiguous` with candidate identities; an invalid explicit source
+produces 422 `worktree_base_source_invalid`. Dispatch resolves again and records the
+actual `worktreeBaseTaskId`, `worktreeBaseBranch`, `worktreeBaseSha` and source in task
+detail and the creation event. A pending sibling land continues to hold dispatch.
 
 `GET /api/agent-tasks/{id}`'s `progressEvidence.sources[]` adds `origin: "PrimaryAlternate"` and
 `observedRef` (CARD-0613). That origin means post-dispatch work was proved in the task's own

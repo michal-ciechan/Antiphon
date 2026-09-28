@@ -161,7 +161,7 @@ public class HttpResilienceRegistrationTests
         var result = await ResilienceTestHost.Pump(
             time,
             projects.TestGitConnectivityAsync("https://example.test/repo", CancellationToken.None),
-            TimeSpan.FromSeconds(1),
+            TimeSpan.FromMilliseconds(250),
             TimeSpan.FromSeconds(8));
         result.Success.ShouldBeFalse();
         var gitElapsed = time.GetUtcNow() - gitStarted;

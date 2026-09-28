@@ -8,8 +8,8 @@ namespace Antiphon.Server.Application.Services;
 /// that holds an <see cref="AgentKind"/>.
 ///
 /// <para>Claude and Grok ride family ALIASES — never versioned model ids — so every launch picks up
-/// the family's current model (Claude aliases verified against the CLI 2026-07-31: fable →
-/// claude-fable-5, opus → claude-opus-5, sonnet → claude-sonnet-5, haiku → claude-haiku-4-5).
+/// the family's current model as known by the installed CLI (on 2026-09-27, Claude Code 2.1.280's
+/// <c>opus</c> alias resolved to <c>claude-opus-5-5</c>; an older CLI can still resolve Opus 5).
 /// <b>Codex cannot</b>: measured 2026-08-20 against codex-cli 0.147.0, <c>-m luna</c> is rejected
 /// twice over — "Model metadata for `luna` not found" locally, then HTTP 400 "the 'luna' model is
 /// not supported" from the service. There are no unversioned aliases in Codex's catalog (bare

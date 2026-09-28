@@ -209,7 +209,6 @@ public class Agent
     public Card? CurrentCard { get; set; }
     public Board? Board { get; set; }
     public ICollection<Card> QueueCards { get; set; } = new List<Card>();
-    public ICollection<CardWorkflowRun> WorkflowRuns { get; set; } = new List<CardWorkflowRun>();
 
     /// <summary>
     /// Optional instruction bundles attached to THIS agent (CARD-0058 slice 6), on top of whatever
