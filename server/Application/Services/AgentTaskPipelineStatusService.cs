@@ -42,6 +42,7 @@ public sealed class AgentTaskPipelineStatusService
     private readonly DelegationSettings _settings;
     private readonly AreaMapLoader _areas;
     private readonly TimeProvider _time;
+    private readonly HostBudgetService? _budgets;
 
     public AgentTaskPipelineStatusService(
         AppDbContext db,
@@ -54,6 +55,7 @@ public sealed class AgentTaskPipelineStatusService
         _settings = settings.Value;
         _areas = areas;
         _time = timeProvider;
+        _budgets = budgets;
     }
 
     public async Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct)
@@ -70,7 +72,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId, t.RunnerId))
             .ToListAsync(ct);
 
         var boundStages = await _db.AgentTasks.AsNoTracking()
@@ -80,7 +82,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId, t.RunnerId))
             .ToListAsync(ct);
 
         var cardIds = open.Select(t => t.CardId)
@@ -146,6 +148,22 @@ public sealed class AgentTaskPipelineStatusService
         var inFlightRows = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             .ToList();
+        var localInFlight = inFlightRows.Count(t => string.IsNullOrEmpty(t.RunnerId));
+        var limits = _budgets is null
+            ? new Dictionary<string, HostLimit>(StringComparer.Ordinal)
+            : (await _budgets.ListAsync(ct)).ToDictionary(h => h.HostId, StringComparer.Ordinal);
+        var localLimit = limits.GetValueOrDefault("local")?.Effective ?? _settings.MaxConcurrentTasks;
+        var remoteOccupancy = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var host in limits.Keys.Where(id => id != "local"))
+        {
+            var sessions = await _db.AgentSessions.CountAsync(s => s.RunnerId == host
+                && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting
+                    || s.Status == SessionStatus.Running || s.Status == SessionStatus.Stopping), ct);
+            var pendingLaunch = await _db.AgentTasks.CountAsync(t => t.RunnerId == host
+                && t.Status == AgentTaskStatus.Queued && t.AgentSessionId == null
+                && t.RemoteWorktreePath != null, ct);
+            remoteOccupancy[host] = sessions + pendingLaunch;
+        }
         var lastActivity = await LoadLastActivityAsync(inFlightRows, ct);
 
         var holders = inFlightRows
@@ -171,7 +189,8 @@ public sealed class AgentTaskPipelineStatusService
             var roleQueued = queued
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
-                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf, inFlightRows.Count, siblingLands))
+                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf,
+                    localInFlight, localLimit, limits, remoteOccupancy, siblingLands))
                 .ToList();
             var roleBlocked = blocked
                 .Where(t => t.Role == role)
@@ -197,10 +216,16 @@ public sealed class AgentTaskPipelineStatusService
         return new AgentTaskPipelineDto(
             asOf,
             RecommendationsAreAdvisory: true,
-            _settings.MaxConcurrentTasks,
-            inFlightRows.Count,
+            localLimit,
+            localInFlight,
             stages,
-            investigateBacklog);
+            investigateBacklog)
+        {
+            Hosts = limits.Values.OrderBy(h => h.HostId, StringComparer.Ordinal)
+                .Select(h => new HostLimitSummaryDto(h.HostId,
+                    inFlightRows.Count(t => (string.IsNullOrEmpty(t.RunnerId) ? "local" : t.RunnerId) == h.HostId),
+                    h.Effective, h.Configured, h.Declared, h.Source)).ToArray()
+        };
     }
 
     internal static bool IsVerifiedPlanDeliverable(string? path)
@@ -347,6 +372,9 @@ public sealed class AgentTaskPipelineStatusService
         Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins,
         DateTime asOf,
         int inFlightAgainstCap,
+        int localLimit,
+        IReadOnlyDictionary<string, HostLimit> limits,
+        IReadOnlyDictionary<string, int> remoteOccupancy,
         Dictionary<Guid, SiblingLandRow> siblingLands)
     {
         IReadOnlyList<AgentTaskPipelineHolderDto> heldBy = [];
@@ -401,7 +429,15 @@ public sealed class AgentTaskPipelineStatusService
         // checks the cap first and continues, but a task that is also behind a checkout still
         // reports the checkout.
         if (queueReason == QueueReasonAwaitingDispatch
-            && inFlightAgainstCap >= _settings.MaxConcurrentTasks)
+            && task.RunnerId is { Length: > 0 } runnerId
+            && limits.GetValueOrDefault(runnerId)?.Effective is int runnerLimit
+            && remoteOccupancy.GetValueOrDefault(runnerId) >= runnerLimit)
+        {
+            queueReason = QueueReasonHostBudget;
+        }
+        else if (queueReason == QueueReasonAwaitingDispatch
+            && string.IsNullOrEmpty(task.RunnerId)
+            && inFlightAgainstCap >= localLimit)
         {
             queueReason = QueueReasonConcurrencyCap;
         }
@@ -562,7 +598,8 @@ public sealed class AgentTaskPipelineStatusService
         string? FailureReason = null,
         PipelineHandoffKind? NextStage = null,
         string? NextHandoff = null,
-        Guid? RoutingPinId = null);
+        Guid? RoutingPinId = null,
+        string? RunnerId = null);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 

@@ -108,7 +108,8 @@ public static class DispatchHoldDetails
         $"Held: runner '{runnerId}' at capacity {occupied}/{capacity}; the task stays Queued until a session slot frees.";
 
     public static string HostBudget(string hostId, int occupied, int effective, int? configured, int? declared) =>
-        RunnerAtCapacity(hostId, occupied, effective);
+        $"Held: host '{hostId}' budget {hostId} {occupied}/{effective} " +
+        $"(configured {configured?.ToString() ?? "default"}, runner declares {declared?.ToString() ?? "n/a"}); waiting for a seat.";
 
     public static string StandingAgentNoSession(string agentName) =>
         $"Held: standing agent '{agentName}' (always-on) has no live session; waiting for supervision to restart it.";
@@ -174,6 +175,8 @@ public static class DispatchHoldDetails
             return DispatchHoldClass.Lease;
         if (reason.StartsWith("Held: remote workspace preparation", StringComparison.Ordinal))
             return DispatchHoldClass.RemotePrep;
+        if (reason.StartsWith("Held: host '", StringComparison.Ordinal))
+            return reason.Contains("host 'local'", StringComparison.Ordinal) ? DispatchHoldClass.Cap : DispatchHoldClass.Runner;
         if (reason.StartsWith("Held: RunnerUnavailable", StringComparison.Ordinal)
             || (reason.StartsWith("Held: runner '", StringComparison.Ordinal)
                 && reason.Contains("' at capacity ", StringComparison.Ordinal)))
