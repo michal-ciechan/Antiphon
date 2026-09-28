@@ -13,6 +13,56 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundStorageTests
 {
     [Test]
+    [Arguments("partial_write")]
+    [Arguments("complete_write")]
+    [Arguments("rename_refusal")]
+    public async Task Failed_staging_never_exposes_a_partial_snapshot(string fault)
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-stage-fault-").FullName;
+        var store = new ChannelOutboundFileStore(root);
+        var id = Guid.NewGuid();
+        var reached = false;
+        try
+        {
+            store.ProbeBarrierAsync = (boundary, _, _) =>
+            {
+                if (fault == "partial_write" && boundary == "input-temporary-partial"
+                    || fault != "partial_write" && boundary == "input-temporary-complete")
+                {
+                    reached = true;
+                    if (fault == "rename_refusal")
+                    {
+                        var blocker = Path.Combine(root, id.ToString("N"));
+                        Directory.CreateDirectory(blocker);
+                        File.WriteAllText(Path.Combine(blocker, "owner.txt"), "fixture-owned collision");
+                        return Task.CompletedTask;
+                    }
+                    throw new IOException("fixture-owned staging refusal");
+                }
+                return Task.CompletedTask;
+            };
+            var reply = new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", Text = "original",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Content = [1, 2, 3, 255] }],
+            };
+            await Should.ThrowAsync<IOException>(() =>
+                store.StageAsync(id, reply, CancellationToken.None));
+            reached.ShouldBeTrue();
+            Directory.GetDirectories(root, ".stage-*", SearchOption.TopDirectoryOnly).ShouldBeEmpty();
+            var final = Path.Combine(root, id.ToString("N"));
+            if (fault == "rename_refusal")
+            {
+                File.ReadAllText(Path.Combine(final, "owner.txt")).ShouldBe("fixture-owned collision");
+                File.Exists(Path.Combine(final, "reply.json")).ShouldBeFalse();
+            }
+            else Directory.Exists(final).ShouldBeFalse();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Frozen_reply_and_input_bytes_survive_source_mutation()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-files-" + Guid.NewGuid().ToString("N"));
