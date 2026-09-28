@@ -679,6 +679,7 @@ public sealed class ExpectationSnapshotReader
                 message.NoteHeader,
                 message.Body,
                 message.Status,
+                message.DeliveryVerdict,
                 message.CreatedAt,
                 message.DeliveryAttempts,
                 message.LastDeliveryBaselineSequence,
@@ -693,7 +694,7 @@ public sealed class ExpectationSnapshotReader
                 {
                     message.Id, message.SourceTaskId, message.SourceLandNotificationId,
                     message.AgentSessionId, message.Origin, message.ConversationKey,
-                    message.NoteHeader, message.Body, message.Status, message.CreatedAt,
+                    message.NoteHeader, message.Body, message.Status, message.DeliveryVerdict, message.CreatedAt,
                     message.DeliveryAttempts, message.LastDeliveryBaselineSequence,
                     message.LastDeliveryStartedAt,
                 }).Skip(offset).Take(pageSize).ToListAsync(ct);
@@ -731,6 +732,11 @@ public sealed class ExpectationSnapshotReader
             if (message.Origin == QueuedMessageOrigin.Check
                 && (!AgentTaskCheckService.TryParseCheckConversationKey(message.ConversationKey, out var checkTask)
                     || checkTask != message.SourceTaskId))
+                continue;
+            // LateConfirmed is persisted only after a complete UserPrompt matched this keyed
+            // attempt. It remains proof after retention removes a stopped session's transcript.
+            if (message.Status == QueuedMessageStatus.Sent
+                && message.DeliveryVerdict == DeliveryVerdict.LateConfirmed)
                 continue;
             if (message.DeliveryAttempts > 0)
             {
