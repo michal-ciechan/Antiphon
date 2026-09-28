@@ -193,6 +193,11 @@ pass this style to delegates.
 Whatever the style: never drop a caveat, a risk, an uncertainty or a correction to save words.
 ```
 
+This replaces the longer original proposal with shorter phone guidance while
+retaining the audience boundary, requested detail, exact material, delivery and
+attachment obligations. The source bundle is the wording owner; V-9/V-10 still
+judge whether real replies follow it.
+
 UI/setup description, identical in both catalogs:
 
 > Minimal Telegram/Slack replies. Short bullets, about 5–7 words; no tables.
