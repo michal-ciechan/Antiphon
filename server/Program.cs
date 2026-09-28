@@ -890,11 +890,6 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         || builder.Configuration["Deliverables:MaxDocuments"] is not null)
         app.Logger.LogWarning("Legacy Deliverables renderer settings are ignored; settlement now bundles sources only.");
 
-    if (builder.Configuration["Deliverables:BrowserPath"] is not null
-        || builder.Configuration["Deliverables:RenderTimeoutSeconds"] is not null
-        || builder.Configuration["Deliverables:MaxDocuments"] is not null)
-        app.Logger.LogWarning("Legacy Deliverables renderer settings are ignored; settlement now bundles sources only.");
-
     // Arm the alert log tap (no-op unless Alerts:LogTap:Enabled).
     {
         var logTap = app.Services
