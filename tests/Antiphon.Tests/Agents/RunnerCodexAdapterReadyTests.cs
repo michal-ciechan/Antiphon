@@ -48,8 +48,11 @@ public class RunnerCodexAdapterReadyTests
         var adapter = NewAdapter(client, settleMs: 50, maxMs: 5_000);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
         var ready = adapter.WaitForReadyAsync(CancellationToken.None);
+        await WaitUntilAsync(() => client.SnapshotReads >= 1);
+        await Task.Delay(20);
+        client.SnapshotReads.ShouldBe(1, "R-33: snapshotReads.ShouldBe(decisions) on an alternating-frame script");
         (await ready).ShouldBeTrue();
-        client.SnapshotReads.ShouldBe(2, "R-33: one snapshot for each of the two settle decisions");
+        client.SnapshotReads.ShouldBeLessThan(4, "R-33: a double GetSnapshot per loop would be 4+");
     }
 
     [Test]

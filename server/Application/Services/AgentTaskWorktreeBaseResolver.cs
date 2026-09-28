@@ -136,10 +136,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 .Where(t => t.Id != task.Id
                     && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
                         || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked))
-                .Select(t => new { t.WorktreePath, t.WorkingDirectory }).ToListAsync(ct);
-            var activePaths = writers.SelectMany(w => new[] { w.WorktreePath, w.WorkingDirectory })
-                .Where(p => !string.IsNullOrWhiteSpace(p)).ToHashSet(
-                OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+                .Select(t => new { t.Id, t.WorktreePath, t.WorkingDirectory }).ToListAsync(ct);
             var eligible = new List<(AgentTask Task, string Sha)>();
             (AgentTask Task, string Sha)? explicitSource = null;
             foreach (var row in kept)
@@ -224,7 +221,11 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     warnings.Add($"Task {Short(row.Id)} branch {branch} @ {sha} is {row.Status}; it is not an automatic source.");
                     continue;
                 }
-                if (row.WorktreePath is not null && activePaths.Contains(row.WorktreePath))
+                // A Blocked source owns its checkout but is quiescent. Another task using
+                // that checkout, including a Shared follow-up, is still an open writer.
+                if (row.WorktreePath is not null && writers.Any(w => w.Id != row.Id
+                    && (string.Equals(w.WorktreePath, row.WorktreePath, PathComparison)
+                        || string.Equals(w.WorkingDirectory, row.WorktreePath, PathComparison))))
                 {
                     warnings.Add($"Task {Short(row.Id)} branch {branch} has an open writer.");
                     continue;

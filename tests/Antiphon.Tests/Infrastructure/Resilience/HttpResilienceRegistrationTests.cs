@@ -166,7 +166,7 @@ public class HttpResilienceRegistrationTests
         result.Success.ShouldBeFalse();
         var gitElapsed = time.GetUtcNow() - gitStarted;
         gitElapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(10));
-        gitElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20));
+        gitElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
     }
 
     [Test]

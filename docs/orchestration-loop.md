@@ -266,7 +266,8 @@ Land a Plan with `delegate.ps1 -Land <id>` when the plan should be published imm
 a same-card Execute can continue its committed branch before that land. A `Landed`
 line carrying `unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
-noticed.
+noticed. An inspection-unknown Warning names a branch whose containment could not be established.
+Inspect that history and decide whether it needs integration; the warning alone does not prove omission.
 
 ### Picking
 
@@ -908,7 +909,10 @@ local `master`; reset that checkout to `origin/master` with fetch and `reset --h
 A `Landed` line that also carries
 `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
 not present in the pinned verified SHA by patch id (`git cherry`) — land or drop that sibling; the
-server warns rather than refusing. A rebase-landed sibling no longer appears.
+server warns rather than refusing. A rebase-landed sibling no longer appears. An
+inspection-unknown Warning is separate from `unlanded-sibling=`: the server could not prove
+whether the branch is contained. Inspect its history and decide on integration or disposal;
+successful publication and cleanup are unchanged.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same

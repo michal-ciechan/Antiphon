@@ -242,6 +242,7 @@ public class AgentTaskWorktreeBaseResolverTests
         await using var db = Context(schema);
         var card = await CardAsync(db);
         var source = await SourceAsync(db, repo, card.Id, "A", "master");
+        var checkout = await CheckoutAsync(repo, source);
         source.Status = status;
         await db.SaveChangesAsync();
         var auto = await ResolveAsync(db, NewRequest(repo, card.Id));
@@ -255,6 +256,7 @@ public class AgentTaskWorktreeBaseResolverTests
         explicitSelection.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
         explicitSelection.SourceTaskId.ShouldBe(source.Id);
         explicitSelection.SourceSha.ShouldBe((await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim());
+        source.WorktreePath.ShouldBe(checkout);
     }
 
     [Test]

@@ -362,6 +362,64 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(90_000)]
+    public async Task T0442_V25_dispatch_adopts_owned_checkout_before_reselecting_invalid_source(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c442-v25-dispatch");
+        await repo.CommitFileAsync("seed.txt", "M\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0442");
+        var source = await SeedKeptSiblingAsync(db, repo, card.Id, "A", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        var sourceSha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+
+        AgentTaskCreatedDto created;
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = provider.CreateAsyncScope())
+            created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                new CreateAgentTaskRequest("Continue A", Title: "CARD-0442 Code",
+                    Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree,
+                    Card: card.Id.ToString("D"),
+                    WorktreeBaseTask: DelegationReportFormatter.Short(source.Id)),
+                new AgentTaskService.Caller(null, null, repo.Path), ct);
+        created.WorktreeBase!.SourceTaskId.ShouldBe(source.Id);
+
+        var branch = $"feat/card-task-{DelegationReportFormatter.Short(created.Id)}";
+        var checkout = Path.Combine(repo.WorktreeRoot, "owned-" + DelegationReportFormatter.Short(created.Id));
+        await repo.GitAsync("worktree", "add", "-b", branch, checkout, source.WorktreeBranch!);
+        await File.WriteAllTextAsync(Path.Combine(checkout, "task.txt"), "C\n", ct);
+        (await ScratchGitRepo.GitInAsync(checkout, "add", "task.txt")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(checkout, "commit", "-m", "task C")).Ok.ShouldBeTrue();
+        var taskHead = (await ScratchGitRepo.GitInAsync(checkout, "rev-parse", "HEAD")).StdOut.Trim();
+        var queued = await db.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
+        queued.WorktreeBranch = branch;
+        queued.WorktreeBaseRef = source.WorktreeBranch;
+        queued.WorktreeBaseSource = WorktreeBaseSource.CardCurrent;
+        queued.WorktreeBaseSha = sourceSha;
+        queued.WorktreeBaseTaskId = source.Id;
+        queued.WorktreeBaseBranch = source.WorktreeBranch;
+        await SeedKeptSiblingAsync(db, repo, card.Id, "X", startRef: "master");
+        await db.SaveChangesAsync(ct);
+        await repo.GitAsync("branch", "-D", source.WorktreeBranch!);
+
+        await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
+        await using (var scope = provider.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreePath.ShouldBe(checkout);
+        dispatched.WorktreeBranch.ShouldBe(branch);
+        dispatched.WorktreeBaseSha.ShouldBe(sourceSha);
+        dispatched.WorktreeBaseTaskId.ShouldBe(source.Id);
+        dispatched.WorktreeBaseBranch.ShouldBe(source.WorktreeBranch);
+        (await ScratchGitRepo.GitInAsync(checkout, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(taskHead);
+        (await ScratchGitRepo.GitInAsync(checkout, "show", "HEAD:task.txt")).StdOut.ShouldBe("C\n");
+    }
+
+    [Test]
+    [Timeout(90_000)]
     public async Task T0442_V28_reply_cannot_select_a_blocked_task_source(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c442-v28");
