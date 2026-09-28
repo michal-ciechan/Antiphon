@@ -38,3 +38,21 @@ the regression test is deliberately constructed to exercise the 1,024-byte limit
 
 Ordinary checkpoint floor: 12 minutes. CP-1's Unit lane and CP-2's three
 named integration classes are the complete ordinary scope for this repair.
+
+## Code checkpoint report
+
+The first run at `b34afea4233c5bdb0fbba8e9b2d849ef9623a2ca` failed during
+the CP-1 build because the new test lacked the `PtyBackend` namespace import;
+both rows executed zero tests. After the import repair, the planned rows passed:
+
+```text
+CHECKPOINT CP-1 commit=74126f6bba3829d51a242057e941241c016796b5 build=ok filter=/*/*/*/*[Category=Unit] executed=3423 passed=3423 failed=0 skipped=34 trx=/work/worktrees/task-be4f9e5f/.antiphon/checkpoints/20260928-102636-c442/rows/CP-1/run.trx slot=granted waited=0s reruns=1
+CHECKPOINT CP-2 commit=74126f6bba3829d51a242057e941241c016796b5 build=reused filter=/*/Antiphon.Tests.Application/(PhoneHomeTaskDispatchProjectionTests*)|(DurableRunnerSpillReceiptTests*)|(PhoneHomeSpillTransportTests*)/* executed=20 passed=20 failed=0 skipped=0 trx=/work/worktrees/task-be4f9e5f/.antiphon/checkpoints/20260928-102636-c442/rows/CP-2/run.trx slot=granted waited=0s reruns=1
+```
+
+The runner transcript side is already pinned by the Windows-only
+`SessionMessageQueueGrokPtyIntegrationTests.Multiline_delivery_is_transcript_confirmed_through_the_real_grok_tailer`:
+its real fake-Grok tailer records the whole submitted multi-line prompt with
+the measured newline join. The new V-3 test covers the specific CARD-0649
+dispatcher and queue pointer boundary. No 1,547-byte root-cause measurement is
+claimed; the regression length is constructed for the boundary.
