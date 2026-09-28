@@ -278,8 +278,11 @@ public static class CodexStartupScreen
     /// </summary>
     private static bool ContainsBlockingUpdate(string text) =>
         text.Contains("Press enter to continue", StringComparison.OrdinalIgnoreCase)
-        || (text.Contains("Update available", StringComparison.OrdinalIgnoreCase)
-            && text.Contains("Skip until next version", StringComparison.OrdinalIgnoreCase));
+        || IsMeasuredUpdatePicker(text);
+
+    internal static bool IsMeasuredUpdatePicker(string text) =>
+        text.Contains("Update available", StringComparison.OrdinalIgnoreCase)
+        && text.Contains("Skip until next version", StringComparison.OrdinalIgnoreCase);
 
     private static string StripBox(string line)
     {
@@ -496,8 +499,13 @@ public static class CodexReadyWait
                     var observation = CodexStartupScreen.Classify(screen, snapshot.RawOutput);
                     if (!dismissedUpdate
                         && observation.Reason == CodexStartupReason.BlockingUpdate
+                        && CodexStartupScreen.IsMeasuredUpdatePicker(screen)
                         && writeAsync is not null)
                     {
+                        // Keep the measured blocker as the timeout reason even if Escape
+                        // consumes the remaining budget before another frame is read.
+                        tracker.Reset();
+                        tracker.Observe(observation, now - started);
                         remaining = deadline - time.GetUtcNow();
                         if (remaining <= TimeSpan.Zero)
                         {
@@ -518,7 +526,8 @@ public static class CodexReadyWait
                         }
 
                         dismissedUpdate = true;
-                        tracker.Reset();
+                        options.OnDiagnostic?.Invoke(
+                            $"codex-startup update-picker escape-sent elapsedMs={(int)(time.GetUtcNow() - started).TotalMilliseconds}");
                         continue;
                     }
 
