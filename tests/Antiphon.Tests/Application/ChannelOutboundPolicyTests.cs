@@ -288,4 +288,52 @@ public sealed class ChannelOutboundPolicyTests
         ChannelOutboundService.MatchesMarkdownSources(new ChannelReply
             { Channel = "fake", ConversationId = "C1", Text = "plain" }, manifest).ShouldBeFalse();
     }
+
+    [Test]
+    [Arguments("inline_markdown", true)]
+    [Arguments("uppercase_markdown", true)]
+    [Arguments("missing_inline_bytes", false)]
+    [Arguments("manifested_zip", true)]
+    [Arguments("unlisted_zip", false)]
+    [Arguments("zip_without_bytes", false)]
+    [Arguments("zip_without_manifest", false)]
+    [Arguments("wrong_manifest_version", false)]
+    [Arguments("non_source_zip_member", false)]
+    [Arguments("text_only", false)]
+    public void Markdown_trigger_matches_only_authorized_source_shapes(string shape, bool expected)
+    {
+        var source = new DeliverableBundleService.SourceMember("docs/source.md",
+            "sources.zip", "docs/source.md", 3, new string('a', 64));
+        var manifest = JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+            [source], []), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (shape == "wrong_manifest_version")
+            manifest = JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(2, true,
+                [source], []), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (shape == "non_source_zip_member")
+            manifest = JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+                [source with { ZipEntry = null }], []), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var (name, bytes) = shape switch
+        {
+            "inline_markdown" => ("source.md", (byte[]?)[1, 2, 3]),
+            "uppercase_markdown" => ("SOURCE.MD", (byte[]?)[1, 2, 3]),
+            "missing_inline_bytes" => ("source.md", null),
+            "manifested_zip" or "wrong_manifest_version" or "non_source_zip_member"
+                => ("sources.zip", (byte[]?)[1, 2, 3]),
+            "unlisted_zip" => ("unlisted.zip", (byte[]?)[1, 2, 3]),
+            "zip_without_manifest" => ("sources.zip", (byte[]?)[1, 2, 3]),
+            "zip_without_bytes" => ("sources.zip", null),
+            _ => ("answer.txt", (byte[]?)null),
+        };
+        var reply = new ChannelReply
+        {
+            Channel = "fake", ConversationId = "C1", Text = "source task finished",
+            Attachments = shape == "text_only" ? [] : [new OutboundAttachment
+            {
+                Kind = AttachmentKind.File, Name = name, Mime = "application/octet-stream",
+                Content = bytes,
+            }],
+        };
+        ChannelOutboundService.MatchesMarkdownSources(reply,
+            shape == "zip_without_manifest" ? null : manifest).ShouldBe(expected);
+    }
 }
