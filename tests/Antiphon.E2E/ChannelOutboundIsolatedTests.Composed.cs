@@ -327,8 +327,8 @@ public sealed partial class ChannelOutboundIsolatedTests
                 .LogInformation("CARD-0418 post-restart delivery published for {DeliveryId}", deliveryId);
             await UntilAsync(() => Task.FromResult(Directory.GetFiles(Path.Combine(root, "logs"), "antiphon-*.log")
                 .Select(File.ReadAllText)
-                .Any(log => log.Contains("post-restart conversion release for " + deliveryId, StringComparison.Ordinal)
-                    && log.Contains("post-restart delivery published for " + deliveryId, StringComparison.Ordinal))), ct);
+                .Any(log => log.Contains("post-restart conversion release for \"" + deliveryId + "\"", StringComparison.Ordinal)
+                    && log.Contains("post-restart delivery published for \"" + deliveryId + "\"", StringComparison.Ordinal))), ct);
             await using var verifyScope = app.Services.CreateAsyncScope();
             var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
             var final = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId, ct);
