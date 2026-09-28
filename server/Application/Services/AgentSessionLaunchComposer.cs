@@ -73,6 +73,8 @@ public sealed class AgentSessionLaunchComposer
                     CodexLaunchArgs.ReasoningEffortOverride(agent.ModelLevel),
                     CodexLaunchArgs.ConfigFlag,
                     CodexLaunchArgs.DisablePasteBurst,
+                    CodexLaunchArgs.ConfigFlag,
+                    CodexLaunchArgs.DisableUpdateCheck,
                 ]);
             }
 

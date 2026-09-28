@@ -57,6 +57,7 @@ public class CodexDelegateDispatchTests
         // All -c overrides are present, each as the TWO argv elements Codex expects.
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
         ConfigValue(args, "disable_paste_burst").ShouldBe("true");
+        ConfigValue(args, "check_for_update_on_startup").ShouldBe("false", "CARD-0777: the update modal blocks the readiness gate");
         ConfigValue(args, "developer_instructions").ShouldNotBeNullOrWhiteSpace();
     }
 

@@ -271,8 +271,15 @@ public static class CodexStartupScreen
         || text.Contains("input disabled", StringComparison.OrdinalIgnoreCase)
         || text.Contains("input is disabled", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// CARD-0777: 0.156.1 and 0.158.0 draw the update modal with an "enter continue · esc skip"
+    /// footer, not "Press enter to continue", so "Skip until next version" (an option only the
+    /// modal offers, never the dismissed-version banner above a live composer) also marks it.
+    /// </summary>
     private static bool ContainsBlockingUpdate(string text) =>
-        text.Contains("Press enter to continue", StringComparison.OrdinalIgnoreCase);
+        text.Contains("Press enter to continue", StringComparison.OrdinalIgnoreCase)
+        || (text.Contains("Update available", StringComparison.OrdinalIgnoreCase)
+            && text.Contains("Skip until next version", StringComparison.OrdinalIgnoreCase));
 
     private static string StripBox(string line)
     {
@@ -355,6 +362,13 @@ public sealed class CodexReadyWaitOptions
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
     public Action<string>? OnDiagnostic { get; init; }
     public Action<int>? OnBootStatusThreshold { get; init; }
+
+    /// <summary>
+    /// CARD-0777: the last frame the gate observed, handed over once when the wait ends not-ready
+    /// (null when no snapshot was ever read). Kept out of <see cref="OnDiagnostic"/> on purpose:
+    /// log lines stay bounded and screen-free (CARD-0574 R-56); the caller stores the frame.
+    /// </summary>
+    public Action<CodexStartupSnapshot?>? OnNotReadyFrame { get; init; }
 }
 
 /// <summary>
@@ -387,6 +401,7 @@ public static class CodexReadyWait
         var tracker = new CodexReadyTracker(options.Settle);
         var acceptedTrust = false;
         var warnedBoot = false;
+        CodexStartupSnapshot? lastSnapshot = null;
         var poll = options.PollInterval <= TimeSpan.Zero
             ? TimeSpan.FromMilliseconds(50)
             : options.PollInterval;
@@ -396,7 +411,7 @@ public static class CodexReadyWait
             ct.ThrowIfCancellationRequested();
             if (isExited?.Invoke() == true)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
 
@@ -404,7 +419,7 @@ public static class CodexReadyWait
             var remaining = deadline - now;
             if (remaining <= TimeSpan.Zero)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
 
@@ -415,21 +430,22 @@ public static class CodexReadyWait
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
 
+            lastSnapshot = snapshot ?? lastSnapshot;
             ct.ThrowIfCancellationRequested();
             if (isExited?.Invoke() == true)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
 
             now = time.GetUtcNow();
             if (now >= deadline)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
 
@@ -455,7 +471,7 @@ public static class CodexReadyWait
                         remaining = deadline - time.GetUtcNow();
                         if (remaining <= TimeSpan.Zero)
                         {
-                            LogFinal(options, tracker, started, time, success: false);
+                            LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                             return false;
                         }
 
@@ -465,7 +481,7 @@ public static class CodexReadyWait
                         }
                         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                         {
-                            LogFinal(options, tracker, started, time, success: false);
+                            LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                             return false;
                         }
 
@@ -495,13 +511,13 @@ public static class CodexReadyWait
                         ct.ThrowIfCancellationRequested();
                         if (isExited?.Invoke() == true)
                         {
-                            LogFinal(options, tracker, started, time, success: false);
+                            LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                             return false;
                         }
 
                         if (time.GetUtcNow() >= deadline)
                         {
-                            LogFinal(options, tracker, started, time, success: false);
+                            LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                             return false;
                         }
 
@@ -516,7 +532,7 @@ public static class CodexReadyWait
             remaining = deadline - now;
             if (remaining <= TimeSpan.Zero)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
 
@@ -527,7 +543,7 @@ public static class CodexReadyWait
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                LogFinal(options, tracker, started, time, success: false);
+                LogFinal(options, tracker, started, time, success: false, lastSnapshot);
                 return false;
             }
         }
@@ -538,7 +554,8 @@ public static class CodexReadyWait
         CodexReadyTracker tracker,
         DateTimeOffset started,
         TimeProvider time,
-        bool success)
+        bool success,
+        CodexStartupSnapshot? lastSnapshot = null)
     {
         var elapsedMs = (int)(time.GetUtcNow() - started).TotalMilliseconds;
         if (success)
@@ -550,6 +567,7 @@ public static class CodexReadyWait
 
         options.OnDiagnostic?.Invoke(
             $"codex-startup not-ready reason={tracker.LastReason} elapsedMs={elapsedMs} mcpSeen={tracker.McpEverSeen}");
+        options.OnNotReadyFrame?.Invoke(lastSnapshot);
     }
 
     private static async Task<CodexStartupSnapshot?> ReadBoundedAsync(

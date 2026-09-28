@@ -5819,6 +5819,8 @@ public sealed class AgentTaskDispatcher
                 CodexLaunchArgs.ReasoningEffortOverride(task.ModelLevel),
                 CodexLaunchArgs.ConfigFlag,
                 CodexLaunchArgs.DisablePasteBurst,
+                CodexLaunchArgs.ConfigFlag,
+                CodexLaunchArgs.DisableUpdateCheck,
             ]);
         }
 
