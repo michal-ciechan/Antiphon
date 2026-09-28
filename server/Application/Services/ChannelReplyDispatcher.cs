@@ -338,7 +338,8 @@ public sealed class ChannelReplyDispatcher
                     .Max(t => (DateTime?)t.CreatedAt),
                 LastPublishedAt = group.Max(p => p.PublishedAt),
             })
-            .OrderByDescending(group => group.LastTranscriptAt)
+            .OrderByDescending(group => group.LastTranscriptAt != null)
+            .ThenByDescending(group => group.LastTranscriptAt)
             .ThenByDescending(group => group.LastPublishedAt)
             .ThenBy(group => group.SessionId)
             .Take(_settings.OutboundPageSize).Select(group => group.SessionId).ToListAsync(ct);
