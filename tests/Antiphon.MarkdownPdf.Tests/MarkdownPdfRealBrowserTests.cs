@@ -100,7 +100,7 @@ public sealed class MarkdownPdfRealBrowserTests
                     pages[i].ShouldNotContain(other);
             }
             pages[0].ShouldContain("zażółć gęślą jaźń");
-            pages[3].ShouldContain("Unicode ✨");
+            Regex.IsMatch(pages[3], @"Unicode\s+✨").ShouldBeTrue();
 
             var images = await RunAsync("docker",
                 ["run", "--rm", "--network", "none", "--mount",

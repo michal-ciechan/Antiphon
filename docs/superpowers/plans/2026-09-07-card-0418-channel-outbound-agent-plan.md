@@ -665,7 +665,7 @@ another.
 | CP-9 | all | `tests/Antiphon.MarkdownPdf.Tests -> bin-c0418-r7-pdf/` | renderer | `/*/*/(MarkdownPdfRendererTests*)\|(MarkdownPdfCommandTests*)/*` | V-19, V-21; R-12 | both classes, 0 failed | 8 | 3 | true | n/a |
 | CP-10 | all | CP-9 | real-browser | `/*/*/MarkdownPdfRealBrowserTests/*` | V-20; R-12 | independently parsed four-page PDF and inspected page images, 0 failed | 1 | 8 | true | ANTIPHON_HEADED_TESTS=1 |
 | CP-11 | all | `tests/Antiphon.Messaging.Tests -> bin-c0418-r7-msg/` | gateway-wire | `/*/*/(GatewayTests*)\|(SlackChannelAdapterTests*)\|(TelegramChannelAdapterTests*)\|(GatewayMonitorValidationTests*)\|(ConsumerLagAssessmentTests*)\|(InboundUnconsumedMonitorTests*)\|(GatewayMonitorStatusTests*)\|(LibrarySufficiencyTests*)\|(KafkaOutboundPayloadTests*)/*` | V-22, V-23; R-13 | all nine classes, 0 failed | 120 | 5 | true | ANTIPHON_BROKER_TESTS=1 |
-| CP-12 | all | n/a | channels-client | `pwsh -NoProfile -File scripts/test-client.ps1 ChannelsPage.test.tsx` | V-5; R-3 | 25 client cases, 0 failed | n/a | 3 | true | n/a |
+| CP-12 | all | n/a | channels-client | `pwsh -NoProfile -File scripts/test-client.ps1 ChannelsPage.test.tsx attentionVisuals.test.ts` | V-5, V-17; R-3, R-11 | 25 client cases, 0 failed | n/a | 3 | true | n/a |
 | CP-13 | all | n/a | client-bundle | `npm --prefix client run build` | V-5, V-21; R-3 | production bundle succeeds | n/a | 3 | true | n/a |
 
 ### Out of scope
