@@ -760,3 +760,13 @@ are TUnit invocations, not assertion counts. PCs remain for post-land SourceLand
 | CP-24 | all | CP-1 | followup-pool-retained | `/*/*/AgentTaskPoolTests/a_follow_up_in_the_same_run_keeps_the_context_uncompacted` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
 | CP-25 | all | CP-1 | pinned-pool-retained | `/*/*/AgentTaskPoolTests/a_pinned_follow_up_waits_while_its_agent_is_still_working` | R-4, R-11 | exact method, 0 failed | 1 | 2 |
 | CP-26 | all | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-11 | exit 0, 0 TypeScript errors | n/a | 2 |
+
+## Final verification
+
+Recorded 2026-09-28 07:10 UTC for implementation commit
+`21b14b01c21bcb7863568a6f3f7355757d5e8ee2`. Final Review `d917251d`
+(Full scope) confirmed D1-D4 fixed and enforced by real scratch mutations. All
+121/121 V-case checkpoint rows passed. Overall, 25/26 checkpoint rows were green;
+the one red row was a confirmed unrelated load flake. The history is linear on
+`master`, with no merge commits. Planned PC controls remain pending for
+method-scoped SourceLanding Mutation after landing.
