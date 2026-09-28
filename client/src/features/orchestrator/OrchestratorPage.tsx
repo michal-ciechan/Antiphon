@@ -11,6 +11,7 @@ import { ComplexityChainPanel } from './ComplexityChainPanel'
 import { ModelAvailabilityPanel } from './ModelAvailabilityPanel'
 import { OrchestratorPanel } from './OrchestratorPanel'
 import { PipelineStagesPanel } from './PipelineStagesPanel'
+import { HostsPanel } from './HostsPanel'
 
 const TABS = ['cards', 'delegations', 'pipeline', 'history', 'attention', 'decisions'] as const
 type TabValue = (typeof TABS)[number]
@@ -94,7 +95,10 @@ export function OrchestratorPage() {
         <DelegationsBoard />
       </Tabs.Panel>
       <Tabs.Panel value="pipeline">
-        <PipelineStagesPanel />
+        <Stack gap="md">
+          <HostsPanel />
+          <PipelineStagesPanel />
+        </Stack>
       </Tabs.Panel>
       <Tabs.Panel value="history">
         <DelegationsHistory />
