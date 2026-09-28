@@ -250,6 +250,8 @@ public class DeliverableBundleServiceTests
             .Concat(Encoding.UTF8.GetBytes("# Plan on branch\r\nZażółć ✨  \r\n"))
             .ToArray();
         await File.WriteAllBytesAsync(Path.Combine(repo.Path, relative), expected);
+        // Store the CRLF bytes verbatim; a host core.autocrlf=true would normalise the blob to LF.
+        await repo.RunAsync("config", "core.autocrlf", "false");
         await repo.RunAsync("add", "-A");
         await repo.RunAsync("commit", "-m", "plan");
         await repo.RunAsync("branch", "feat/plan");
