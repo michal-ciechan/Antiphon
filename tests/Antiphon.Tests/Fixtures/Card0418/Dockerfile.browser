@@ -1,0 +1,7 @@
+FROM antiphon-card0418-browser:base
+
+# Without this font, Chromium emits tofu for the specimen's U+2728 character.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
