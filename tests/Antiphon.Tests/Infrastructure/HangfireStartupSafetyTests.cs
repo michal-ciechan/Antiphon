@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Tests.TestHelpers;
 using Hangfire;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -64,6 +66,20 @@ public class HangfireStartupSafetyTests
         var storage = _factory.Services.GetRequiredService<JobStorage>();
         using var connection = storage.GetConnection();
         connection.GetRecurringJobs().ShouldBeEmpty();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task C650_Program_registers_real_catchup_and_no_disabled_expectation_worker()
+    {
+        using var scope = _factory.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IExpectationCatchUp>()
+            .ShouldBeOfType<ExpectationTranscriptCatchUp>();
+        scope.ServiceProvider.GetRequiredService<ExpectationWatchdogService>().ShouldNotBeNull();
+        _factory.Services.GetRequiredService<IOptions<HangfireSettings>>().Value.ServerEnabled.ShouldBeFalse();
+        _factory.Services.GetServices<IHostedService>()
+            .Any(service => service.GetType().Name.Contains("BackgroundJobServer", StringComparison.Ordinal))
+            .ShouldBeFalse();
         await Task.CompletedTask;
     }
 

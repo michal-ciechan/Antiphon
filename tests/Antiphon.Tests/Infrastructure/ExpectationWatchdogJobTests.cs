@@ -46,15 +46,18 @@ public sealed class ExpectationWatchdogJobTests
     [Test]
     public async Task C650_Disabled_host_or_feature_starts_no_worker()
     {
+        ExpectationWatchdogJob.ShouldRun(new HangfireSettings { ServerEnabled = false },
+            new ExpectationWatchdogSettings { Enabled = true }).ShouldBeFalse();
+        ExpectationWatchdogJob.ShouldRun(new HangfireSettings { ServerEnabled = true },
+            new ExpectationWatchdogSettings { Enabled = false }).ShouldBeFalse();
+        ExpectationWatchdogJob.ShouldRun(new HangfireSettings { ServerEnabled = true },
+            new ExpectationWatchdogSettings { Enabled = true }).ShouldBeTrue();
         await using var f = await Fixture.CreateAsync(enabled: false);
         await using var provider = f.Services();
         await provider.GetRequiredService<ExpectationWatchdogJob>().ExecuteAsync(CancellationToken.None);
         f.Producer.Sent.ShouldBeEmpty();
         await using var db = f.World.Db();
         (await db.ExpectationWatchStates.CountAsync()).ShouldBe(0);
-        var storage = new InMemoryStorage(HangfireConfiguration.CreateStorageOptions(new HangfireSettings()));
-        using var connection = storage.GetConnection();
-        connection.GetRecurringJobs().ShouldBeEmpty();
     }
 
     [Test]
@@ -63,7 +66,10 @@ public sealed class ExpectationWatchdogJobTests
         await using var f = await Fixture.CreateAsync();
         await f.SeedDueAsync();
         await using (var first = f.Services())
+        {
             first.GetRequiredService<ExpectationObservationAdapter>().ShouldNotBeNull();
+            first.GetRequiredService<IExpectationCatchUp>().ShouldBeOfType<ValidatingCatchUp>();
+        }
         await using (var fresh = f.Services())
             await fresh.GetRequiredService<ExpectationWatchdogJob>().ExecuteAsync(CancellationToken.None);
         f.Producer.Sent.ShouldHaveSingleItem().ConversationId
@@ -128,18 +134,16 @@ public sealed class ExpectationWatchdogJobTests
         var right = new ExpectationWatchdogJob(scopes, settings, f.Clock);
         await Task.WhenAll(left.ExecuteAsync(CancellationToken.None), right.ExecuteAsync(CancellationToken.None));
         f.Producer.Sent.Count.ShouldBe(1);
-        Guid? cursor;
         await using (var db = f.World.Db())
         {
             (await db.ExpectationNudges.SingleAsync()).OperatorPublicationOrdinal.ShouldBe(1);
             var state = await db.ExpectationWatchStates.SingleAsync();
             state.NoteQueueCursorId.ShouldNotBeNull();
-            state.LastSuccessfulScanAt.ShouldBeNull("a page of 105 notes cannot clear unseen subjects");
-            cursor = state.NoteQueueCursorId;
+            state.LastSuccessfulScanAt.ShouldBe(f.World.Now, "the scan read every note page");
         }
         await left.ExecuteAsync(CancellationToken.None);
         await using var after = f.World.Db();
-        (await after.ExpectationWatchStates.SingleAsync()).NoteQueueCursorId.ShouldNotBe(cursor);
+        (await after.ExpectationWatchStates.SingleAsync()).LastSuccessfulScanAt.ShouldBe(f.World.Now);
     }
 
     private sealed class Fixture : IAsyncDisposable
@@ -217,7 +221,7 @@ public sealed class ExpectationWatchdogJobTests
             services.AddSingleton<IOptions<SubscriptionQuotaGateSettings>>(Options.Create(new SubscriptionQuotaGateSettings()));
             services.AddScoped(_ => new AppDbContext(World.Options));
             services.AddSingleton<IAntiphonMessagingProducer>(Producer);
-            services.AddSingleton<IExpectationCatchUp>(NoExpectationCatchUp.Instance);
+            services.AddScoped<IExpectationCatchUp>(sp => new ValidatingCatchUp(sp.GetRequiredService<AppDbContext>()));
             services.AddSingleton<IExpectationPromptSender, RefusePrompt>();
             services.AddSingleton<Antiphon.Server.Application.Interfaces.ISessionRunnerClient>(new RefusingSessionRunnerClient());
             services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
@@ -244,6 +248,16 @@ public sealed class ExpectationWatchdogJobTests
     }
     private sealed class OpenModel : IModelAvailability
     { public Task<bool> IsHeldAsync(AgentKind kind, string alias, CancellationToken ct) => Task.FromResult(false); }
+    private sealed class ValidatingCatchUp(AppDbContext db) : IExpectationCatchUp
+    {
+        public async Task CatchUpAsync(IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
+        {
+            var known = await db.AgentSessions.AsNoTracking()
+                .Where(session => sessionIds.Contains(session.Id))
+                .Select(session => session.Id).ToListAsync(ct);
+            known.Count.ShouldBe(sessionIds.Distinct().Count(), "catch-up must address existing sessions");
+        }
+    }
     private sealed class RefusePrompt : IExpectationPromptSender
     {
         public Task<ExpectationSendResult> SendAsync(Guid sessionId, DateTime expectedGeneration,
