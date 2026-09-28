@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -25,15 +26,24 @@ public sealed class AgentTaskDecisionQuestionService(
         var payloadHash = InternalDecisionPolicy.Hash(canonical);
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        // Task writers take PostgreSQL's ROW EXCLUSIVE table lock. Acquire the compatible SHARE
-        // lock before the row lock so another task cannot become bound to this session between
-        // the binding count and our commit, including a status-only update of an existing row.
-        // A writer that committed first is rechecked below; a later writer waits for this check.
-        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"AgentTasks\" IN SHARE MODE", ct);
-        var task = await db.AgentTasks.FromSqlInterpolated(
-                $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE")
-            .AsNoTracking().SingleOrDefaultAsync(ct)
-            ?? throw new ConflictException("The task no longer exists.", "decision_question_stale");
+        // Task writers take PostgreSQL's ROW EXCLUSIVE table lock. SHARE keeps another binding
+        // from appearing after the count, including a status-only update of an existing row.
+        // NOWAIT on both locks avoids a cycle with a writer that already locked this task row
+        // but has not yet updated it: contention is an unresolved/stale question, never approval.
+        AgentTask task;
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"AgentTasks\" IN SHARE MODE NOWAIT", ct);
+            task = await db.AgentTasks.FromSqlInterpolated(
+                    $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE NOWAIT")
+                .AsNoTracking().SingleOrDefaultAsync(ct)
+                ?? throw new ConflictException("The task no longer exists.", "decision_question_stale");
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
+        {
+            throw new ConflictException("The task binding is changing; retry the question.",
+                "decision_question_stale");
+        }
 
         if (caller.Task is null && caller.SessionId != task.AgentSessionId)
         {
