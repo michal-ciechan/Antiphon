@@ -76,7 +76,7 @@ public sealed record ChannelReplyDispatchResult(
 /// </summary>
 public sealed class ChannelReplyDispatcher
 {
-    private const int MaxDiscoveryPagesPerPass = 10;
+    private const int MaxDiscoveryRowsPerPass = 20;
     private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
 
     /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
@@ -253,13 +253,15 @@ public sealed class ChannelReplyDispatcher
                         && channel.ConversationKey != null && channel.Sequence < m.Sequence)));
         var count = 0;
         var scannedSessions = new HashSet<Guid>();
-        for (var pageNumber = 0; pageNumber < MaxDiscoveryPagesPerPass; pageNumber++)
+        var remaining = MaxDiscoveryRowsPerPass;
+        while (remaining > 0)
         {
+            var pageSize = Math.Min(_settings.OutboundPageSize, remaining);
             var page = await candidates
                 .Where(m => _discoveryCursorAt == null || m.CreatedAt > _discoveryCursorAt
                     || (m.CreatedAt == _discoveryCursorAt && m.Id.CompareTo(_discoveryCursorId) > 0))
                 .OrderBy(m => m.CreatedAt).ThenBy(m => m.Id)
-                .Take(_settings.OutboundPageSize).ToListAsync(ct);
+                .Take(pageSize).ToListAsync(ct);
             if (page.Count == 0)
             {
                 _discoveryCursorAt = null;
@@ -321,7 +323,8 @@ public sealed class ChannelReplyDispatcher
             }
             _discoveryCursorAt = page[^1].CreatedAt;
             _discoveryCursorId = page[^1].Id;
-            if (page.Count < _settings.OutboundPageSize)
+            remaining -= page.Count;
+            if (page.Count < pageSize)
             {
                 _discoveryCursorAt = null;
                 _discoveryCursorId = Guid.Empty;
