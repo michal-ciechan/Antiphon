@@ -150,3 +150,65 @@ classification and add an actual bounded history/page contract before claiming
 V-16. Keep the endpoint unadvertised until S3. All PC-1, PC-6..16 and PC-18..24
 remain pending method-scoped SourceLanding Mutation under this task's Final
 verification profile; no Code or Unit green discharges them.
+
+## S2a continuation — task ab6c59b3 (2026-09-28)
+
+Branch `feat/card-task-ab6c59b3` continued from `20805c83`. The endpoint remains
+unadvertised. Question-time evaluation now rejects existing directories, broken
+links and escaped file/directory links. Admission distinguishes unrelated live
+session credentials (403) from prior bound sessions (409), including a retired
+session that made no earlier decision check. Cold, warm and standing dispatch
+events retain a typed session binding. The additive
+`AddAgentTaskDispatchSessionEvidence` migration was generated with the repo-local
+EF CLI; its downgrade/upgrade test proves old events gain a null binding without
+invented identity.
+
+Question admission takes a short PostgreSQL `SHARE NOWAIT` task-table lock and
+`FOR UPDATE NOWAIT` task-row lock. Lock contention retries with a new transaction
+for up to one second, then returns 409 rather than approving through ambiguous
+binding. This serializes status-only changes to another task sharing the same
+session as well as changes to the target task. A blocking-lock attempt deadlocked
+with a writer that held the row before its update; the `NOWAIT` repair and
+bounded retry have a green focused decision-service row. The database test
+pauses at the decision insert, proves a competing status update cannot commit,
+then releases the check. Another isolated-schema test forces event insertion to
+fail after the typed row insert: both roll back, no publish fires, and a retry
+records one complete decision/event pair. A separate-connection bus observes
+both rows only after commit.
+
+Added ordinary coverage: exact two-target `.gitattributes` rules, three
+category positives and nine impact denials; link retargeting after task
+creation; self, session, sibling, capability, unrelated and retired session
+token cases; task statuses, wrong attempts, stopped/detached/ambiguous sessions;
+required fields, enum/numeric/path/text/raw-document boundaries; cross-scope
+concurrent duplicate, property-order/path-normalized duplicate, changed Continue
+and NeedsHuman payloads, later-attempt and cross-task request IDs, direct
+unique-index violation; cancel, settlement and retry state-first races;
+task/report/legacy-field and queue/event non-effects; prior Continue on
+cancelled/unmarked turns; six Grok/Codex/ClaudeCode policy/no-policy
+design-approval cases. These are executed method rows.
+
+Checkpoint manifest gained CP-5 for migration, pool and standing dispatch
+classes. At `72d88c32077263e194f6589515458c3dc5c96e83` run
+`20260928-195249-a42e`: CP-2 31/31, CP-3 9/9, CP-4 437/437. CP-5 executed
+60, passed 57, failed 3 in older fixture assertions before the new binding
+assertions. Focused repeat `20260928-200236-441f` reproduced exactly those
+three; baseline comparison `20260928-200516-4aa3` ran the same methods at
+`20805c83` and classified all three **INHERITED**: standing T5/T6 expected
+Dispatched/Failed but got Blocked, and pool Codex reuse expected a session but
+got null. The new migration test and warm/standing binding assertions passed.
+CP-1 executed 3440, passed 3439, failed one existing
+`ResilienceBudgetTests.Slow_first_attempt_consumes_the_same_budget` deadline
+under the concurrent run. Solo CP-1 `20260928-201110-617a` executed 3440,
+passed 3438, with that deadline and an unrelated checkpoint-ownership timeout;
+CP-1 had passed 3440/3440 at the preceding `a3e3437e` source slice. A final
+latest-tip Unit green remains to be recorded. Every listed run used the
+checkpoint runner's build-slot gate. The EF tool restore and migration creation
+used `scripts/build-slot.ps1` as separate, necessary migration-generation work.
+
+S2a is still open for the plan's full V-5 retry/session snapshot witness and
+full V-12 card-revision, delivery/terminal spy and report-watermark non-effect
+matrix. R-1/R-2 worker/reply-side cases and visible paged history are later
+slices; an actual bounded history/page contract must precede any V-16 claim.
+All S2a PCs remain pending method-scoped SourceLanding Mutation, including
+PC-1, PC-6..16 and PC-18..24. CARD-0294 S3 remains absent and out of scope.
