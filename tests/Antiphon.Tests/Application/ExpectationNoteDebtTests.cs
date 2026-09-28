@@ -144,6 +144,30 @@ public sealed class ExpectationNoteDebtTests
         (await ReadAsync(world)).Notes.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task C650_Pruned_transcript_keeps_late_confirmed_note_resolved()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var task = Guid.NewGuid();
+        var delivered = Queue(world, task, QueuedMessageOrigin.Delegation,
+            world.Now.AddDays(-8), 1);
+        delivered.Status = QueuedMessageStatus.Sent;
+        delivered.DeliveryAttempts = 1;
+        delivered.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
+        delivered.LastDeliveryBaselineSequence = null;
+        delivered.LastDeliveryStartedAt = world.Now.AddDays(-8);
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(task, AgentTaskStatus.Succeeded, world.Now.AddDays(-8)));
+            db.SessionQueuedMessages.Add(delivered);
+            await db.AgentSessions.Where(session => session.Id == world.OwnedSessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(session => session.Status, SessionStatus.Stopped));
+            await db.SaveChangesAsync();
+        }
+        (await ReadAsync(world)).Notes.ShouldBeEmpty();
+    }
+
     private static SessionQueuedMessage Queue(ExpectationTestWorld world, Guid task,
         QueuedMessageOrigin origin, DateTime created, long sequence, Guid? session = null)
     {
