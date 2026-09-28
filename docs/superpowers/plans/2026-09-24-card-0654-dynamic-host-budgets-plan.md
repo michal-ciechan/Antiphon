@@ -297,7 +297,7 @@ Ordinary Code floor is the sum of `EstimatedMinutes` (26). `Antiphon.Tests` and
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c654-s1-red/` | budget-red | `/*/*/HostBudgetServiceTests/*` | V-1 red | all listed; effective/audit assertions red, no build/fixture errors | 7 | 3 |
 | CP-2 | S1 | `tests/Antiphon.Tests -> bin-c654-s1/` | budget-green | `/*/*/HostBudgetServiceTests/*` | V-1 | all listed, 0 failed/skipped | 7 | 3 |
-| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c654-s2-red/` | admission-red | `/*/*/DispatchHoldVisibilityTests/C654_*` | V-2, V-3 red | all listed; hold/trace/no-kill assertions red, no build/fixture errors | 6 | 3 |
+| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c654-s2-red/` | admission-red | `/*/*/(DispatchHoldVisibilityTests*)\|(AgentTaskPipelineStatusTests*)/C654_*` | V-2, V-3 red | all listed; hold/trace/no-kill and pipeline assertions red, no build/fixture errors | 9 | 3 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c654-s2/` | admission-green | `/*/*/(DispatchHoldVisibilityTests*)\|(AgentTaskPipelineStatusTests*)/*` | V-2, V-3 | all listed, 0 failed/skipped | 6 | 4 |
 | CP-5 | S3-red | `tests/Antiphon.SessionRunner.Tests -> bin-c654-s3-red/` | runner-red | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 red | all listed; `SetCapacity_*` and persisted-registration assertions red (unsupported-operation answer), no build errors | 3 | 2 |
 | CP-6 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c654-s3/` | runner-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 | all listed, 0 failed/skipped | 3 | 2 |

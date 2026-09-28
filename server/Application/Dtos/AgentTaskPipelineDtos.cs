@@ -17,7 +17,13 @@ public sealed record AgentTaskPipelineDto(
     /// </summary>
     int InFlightAgainstCap,
     IReadOnlyList<AgentTaskPipelineStageDto> Stages,
-    AgentTaskPipelineBacklogDto InvestigateBacklog);
+    AgentTaskPipelineBacklogDto InvestigateBacklog)
+{
+    public IReadOnlyList<HostLimitSummaryDto> Hosts { get; init; } = [];
+}
+
+public sealed record HostLimitSummaryDto(
+    string HostId, int InFlight, int? EffectiveLimit, int? Configured, int? Declared, string Source);
 
 /// <summary>Fresh Backlog work, ranked for an advisory Investigate glance.</summary>
 public sealed record AgentTaskPipelineBacklogDto(
