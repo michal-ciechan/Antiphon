@@ -207,9 +207,36 @@ skips. Every listed run used the
 checkpoint runner's build-slot gate. The EF tool restore and migration creation
 used `scripts/build-slot.ps1` as separate, necessary migration-generation work.
 
-S2a is still open for the plan's full V-5 retry/session snapshot witness and
-full V-12 card-revision, delivery/terminal spy and report-watermark non-effect
-matrix. R-1/R-2 worker/reply-side cases and visible paged history are later
-slices; an actual bounded history/page contract must precede any V-16 claim.
-All S2a PCs remain pending method-scoped SourceLanding Mutation, including
-PC-1, PC-6..16 and PC-18..24. CARD-0294 S3 remains absent and out of scope.
+### Final S2a witnesses — task ab6c59b3
+
+`AgentTaskInternalDecisionLifecycleTests.Policy_snapshot_survives_only_same_task_requeue`
+now runs question-time checks after a real same-task Retry: the original narrow
+ShellTransport grant Continues, while BuildTestHarness on the README remains
+NeedsHuman despite the edited policy file and forged Refine text. The decision
+integration non-effect test attaches a real project/board/card and asserts the
+card's revision, status, column and timestamp, task report/handoff/watermark/
+legacy fields, event kinds, queue and transcript are unchanged for both Continue
+and NeedsHuman. The service has no terminal, release, merge or reply collaborator;
+its only post-commit collaborator is the tested `AgentTaskChanged` event bus.
+The injected database failure and HTTP authentication/schema denials produce no
+question/event publication. Multiple distinct questions remain in the same
+task attempt without consuming legacy `AutoContinueOnWait`.
+
+At `30aaf2bc7814492c731360fab50d440f27d03cda`, focused run
+`20260928-202606-7907` passed CP-2 31/31 and CP-4 437/437. Solo Unit run
+`20260928-203155-889b` passed CP-1 3440/3440 (34 pre-existing skips).
+Run `20260928-203604-6c61` passed CP-3 9/9. Its full CP-5 executed 60,
+passed 57 and failed the same three old standing/pool assertions; the runner's
+baseline comparison classified each **INHERITED** against pinned `20805c83`.
+The new migration and binding assertions passed. The earlier full-manifest
+attempt at `c4cd1fe3` did not run tests because the new card fixture named a
+nonexistent task property; that compile error was corrected before these runs.
+All final slice rows used the checkpoint tool and build-slot gate.
+
+S2a ordinary V/R is complete with those three inherited full-class failures
+explicitly carried, not counted green. R-1/R-2 worker/reply-side cases and
+visible paged history belong to later slices; an actual bounded history/page
+contract must precede any V-16 claim. Every S2a PC remains pending
+method-scoped SourceLanding Mutation, including PC-1, PC-6..16 and PC-18..24.
+CARD-0294 S3 remains absent and out of scope. Next Code slice: S2b settlement
+path warnings, before the helper is published.
