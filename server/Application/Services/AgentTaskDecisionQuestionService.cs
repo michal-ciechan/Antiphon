@@ -25,25 +25,40 @@ public sealed class AgentTaskDecisionQuestionService(
         var canonical = InternalDecisionQuestionPolicy.CanonicalJson(normalized);
         var payloadHash = InternalDecisionPolicy.Hash(canonical);
 
+        // Ordinary concurrent duplicates wait briefly for the first committed answer. A writer
+        // that changes state wins or follows this transaction; either way admission is rechecked.
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            try
+            {
+                return await CheckLockedAsync(taskId, normalized, canonical, payloadHash, caller, ct);
+            }
+            catch (Exception ex) when (IsLockContention(ex))
+            {
+                if (attempt == 49)
+                    throw new ConflictException("The task binding is changing; retry the question.",
+                        "decision_question_stale");
+                db.ChangeTracker.Clear();
+                await Task.Delay(20, ct);
+            }
+        }
+        throw new InvalidOperationException("The decision question retry loop ended unexpectedly.");
+    }
+
+    private async Task<InternalDecisionQuestionResponse> CheckLockedAsync(Guid taskId,
+        InternalDecisionQuestionRequest normalized, string canonical, string payloadHash,
+        AgentTaskService.Caller caller, CancellationToken ct)
+    {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         // Task writers take PostgreSQL's ROW EXCLUSIVE table lock. SHARE keeps another binding
         // from appearing after the count, including a status-only update of an existing row.
         // NOWAIT on both locks avoids a cycle with a writer that already locked this task row
         // but has not yet updated it: contention is an unresolved/stale question, never approval.
-        AgentTask task;
-        try
-        {
-            await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"AgentTasks\" IN SHARE MODE NOWAIT", ct);
-            task = await db.AgentTasks.FromSqlInterpolated(
-                    $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE NOWAIT")
-                .AsNoTracking().SingleOrDefaultAsync(ct)
-                ?? throw new ConflictException("The task no longer exists.", "decision_question_stale");
-        }
-        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
-        {
-            throw new ConflictException("The task binding is changing; retry the question.",
-                "decision_question_stale");
-        }
+        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"AgentTasks\" IN SHARE MODE NOWAIT", ct);
+        var task = await db.AgentTasks.FromSqlInterpolated(
+                $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE NOWAIT")
+            .AsNoTracking().SingleOrDefaultAsync(ct)
+            ?? throw new ConflictException("The task no longer exists.", "decision_question_stale");
 
         if (caller.Task is null && caller.SessionId != task.AgentSessionId)
         {
@@ -117,5 +132,14 @@ public sealed class AgentTaskDecisionQuestionService(
             await eventBus.PublishToAllAsync("AgentTaskChanged",
                 new { taskId, rootId = task.RootTaskId }, ct);
         return result with { QuestionId = question.Id };
+    }
+
+    private static bool IsLockContention(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is PostgresException postgres
+                && postgres.SqlState == PostgresErrorCodes.LockNotAvailable)
+                return true;
+        return false;
     }
 }
