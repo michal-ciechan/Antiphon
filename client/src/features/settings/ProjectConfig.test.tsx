@@ -158,7 +158,8 @@ it.each(['Shared', 'Worktree'] as const)(
 it.each(['Shared', 'Worktree', 'Inherit'] as const)(
   'C458 changing worker workspace submits selected value %s', async (selection) => {
     const put = vi.fn()
-    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: 'Shared', effectiveWorkerWorkspace: 'Shared' }, put)
+    const initial = selection === 'Shared' ? 'Worktree' : 'Shared'
+    seedWorkspaceProject({ ...project, defaultWorkerWorkspace: initial, effectiveWorkerWorkspace: initial }, put)
     renderWithProviders(<ProjectConfig />)
     await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
     await userEvent.click(screen.getByRole('textbox', { name: 'Default worker workspace' }))
