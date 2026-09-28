@@ -780,7 +780,8 @@ public partial class AgentTaskPipelineStatusTests
     }
 
     private static AgentTaskPipelineStatusService CreateService(
-        AppDbContext db, DelegationSettings? settings = null, TimeProvider? time = null)
+        AppDbContext db, DelegationSettings? settings = null, TimeProvider? time = null,
+        HostBudgetService? budgets = null)
     {
         var resolved = settings ?? new DelegationSettings();
         var options = Options.Create(resolved);
@@ -788,7 +789,8 @@ public partial class AgentTaskPipelineStatusTests
             db,
             options,
             new AreaMapLoader(options, NullLogger<AreaMapLoader>.Instance),
-            time ?? TimeProvider.System);
+            time ?? TimeProvider.System,
+            budgets);
     }
 
     private static AppDbContext CreateContext(IsolatedTestSchema schema) =>

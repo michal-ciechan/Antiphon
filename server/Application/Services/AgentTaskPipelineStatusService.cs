@@ -30,6 +30,7 @@ public sealed class AgentTaskPipelineStatusService
     /// only after lease and pin, so a task behind a checkout still names the checkout.
     /// </summary>
     internal const string QueueReasonConcurrencyCap = "concurrencyCap";
+    internal const string QueueReasonHostBudget = "hostBudget";
     internal const string PlanDeliverablePrefix = "docs/superpowers/plans/";
 
     private static readonly AgentTaskRole[] VisibleRoles = Enum.GetValues<AgentTaskRole>()
@@ -46,7 +47,8 @@ public sealed class AgentTaskPipelineStatusService
         AppDbContext db,
         IOptions<DelegationSettings> settings,
         AreaMapLoader areas,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        HostBudgetService? budgets = null)
     {
         _db = db;
         _settings = settings.Value;
