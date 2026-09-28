@@ -18,8 +18,107 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
     public async Task C458_UpgradePreservesLegacyRowsAndAddsNullColumns()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var (projectId, tasks) = await SeedAsync(schema);
-        await RoundTripAsync(schema, projectId, tasks);
+        var projectId = Guid.NewGuid();
+        var tasks = new[]
+        {
+            (Guid.NewGuid(), WorkspaceMode.Shared, AgentTaskStatus.Queued, true),
+            (Guid.NewGuid(), WorkspaceMode.Worktree, AgentTaskStatus.Working, true),
+            (Guid.NewGuid(), WorkspaceMode.ReadOnly, AgentTaskStatus.Succeeded, false),
+        };
+        await using (var db = NewDb(schema))
+        {
+            var migrations = db.Database.GetMigrations().ToArray();
+            migrations.Last().ShouldContain("Card0458WorkerWorkspaceDefault");
+            var migrator = db.Database.GetService<IMigrator>();
+            await migrator.MigrateAsync(migrations[^2]);
+            var oldColumns = await ColumnsAsync(db);
+            oldColumns.ShouldNotContain("DefaultWorkerWorkspace");
+            oldColumns.ShouldNotContain("WorkspaceSource");
+
+            var now = DateTime.UtcNow;
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "Projects" ("Id", "Name", "GitRepositoryUrl", "LocalRepositoryPath",
+                    "BaseBranch", "ConstitutionPath", "GitHubIntegrationEnabled", "NotificationsEnabled",
+                    "DefaultLaunchEnvJson", "CommitOnSettle", "CreatedAt", "UpdatedAt")
+                VALUES ({projectId}, {"C458-legacy-" + projectId.ToString("N")}, {"https://example.test/repo.git"},
+                    {"/tmp/c458"}, {"release"}, {"AGENTS.md"}, {true}, {true},
+                    '{{"KEEP":"yes"}}'::jsonb, {false}, {now}, {now})
+                """);
+            for (var index = 0; index < tasks.Length; index++)
+            {
+                var (id, mode, status, linked) = tasks[index];
+                await db.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO "AgentTasks" ("Id", "RootTaskId", "ProjectId", "Depth", "Title", "Goal",
+                        "Kind", "Role", "ModelLevel", "Attempt", "MaxAttempts", "Workspace",
+                        "WorkingDirectory", "RepoPath", "WorktreeBranch", "Ephemeral", "Status", "ReplyTo",
+                        "ConcurrencyToken", "CreatedAt", "TokensIn", "TokensOut", "CostUsd")
+                    VALUES ({id}, {id}, CASE WHEN {linked} THEN {projectId} ELSE NULL END, {0},
+                        {"legacy-" + index}, {"preserve"}, {0}, {0}, {0}, {1}, {2}, {(int)mode},
+                        {"/tmp/c458"}, {"/tmp/c458"}, {mode == WorkspaceMode.Worktree ? "legacy-branch" : null},
+                        {false}, {(int)status}, {0}, {Guid.NewGuid()}, {now}, {0L}, {0L}, {0m})
+                    """);
+            }
+            await migrator.MigrateAsync(migrations[^1]);
+        }
+
+        await using var fresh = NewDb(schema);
+        var columns = await ColumnsAsync(fresh);
+        columns.ShouldContain("DefaultWorkerWorkspace");
+        columns.ShouldContain("WorkspaceSource");
+        await fresh.Database.OpenConnectionAsync();
+        await using (var command = fresh.Database.GetDbConnection().CreateCommand())
+        {
+            command.CommandText = $"""
+                SELECT "GitRepositoryUrl", "LocalRepositoryPath", "BaseBranch", "ConstitutionPath",
+                    "GitHubIntegrationEnabled", "NotificationsEnabled", "DefaultLaunchEnvJson"::text,
+                    "CommitOnSettle", "DefaultWorkerWorkspace"
+                FROM "Projects" WHERE "Id" = '{projectId}'
+                """;
+            await using var reader = await command.ExecuteReaderAsync();
+            (await reader.ReadAsync()).ShouldBeTrue();
+            reader.GetString(0).ShouldBe("https://example.test/repo.git");
+            reader.GetString(1).ShouldBe("/tmp/c458");
+            reader.GetString(2).ShouldBe("release");
+            reader.GetString(3).ShouldBe("AGENTS.md");
+            reader.GetBoolean(4).ShouldBeTrue();
+            reader.GetBoolean(5).ShouldBeTrue();
+            using (var env = JsonDocument.Parse(reader.GetString(6)))
+                env.RootElement.GetProperty("KEEP").GetString().ShouldBe("yes");
+            reader.GetBoolean(7).ShouldBeFalse();
+            (await reader.IsDBNullAsync(8)).ShouldBeTrue();
+            (await reader.ReadAsync()).ShouldBeFalse();
+        }
+        foreach (var (id, mode, status, linked) in tasks)
+        {
+            await using var command = fresh.Database.GetDbConnection().CreateCommand();
+            command.CommandText = $"""
+                SELECT "ProjectId", "Workspace", "Status", "WorkingDirectory", "RepoPath",
+                    "WorktreeBranch", "WorkspaceSource", "Title", "Goal"
+                FROM "AgentTasks" WHERE "Id" = '{id}'
+                """;
+            await using var reader = await command.ExecuteReaderAsync();
+            (await reader.ReadAsync()).ShouldBeTrue();
+            if (linked) reader.GetGuid(0).ShouldBe(projectId);
+            else (await reader.IsDBNullAsync(0)).ShouldBeTrue();
+            reader.GetInt32(1).ShouldBe((int)mode);
+            reader.GetInt32(2).ShouldBe((int)status);
+            reader.GetString(3).ShouldBe("/tmp/c458");
+            reader.GetString(4).ShouldBe("/tmp/c458");
+            if (mode == WorkspaceMode.Worktree) reader.GetString(5).ShouldBe("legacy-branch");
+            else (await reader.IsDBNullAsync(5)).ShouldBeTrue();
+            (await reader.IsDBNullAsync(6)).ShouldBeTrue();
+            reader.GetString(7).ShouldStartWith("legacy-");
+            reader.GetString(8).ShouldBe("preserve");
+            (await reader.ReadAsync()).ShouldBeFalse();
+        }
+        (await fresh.Projects.AsNoTracking().SingleAsync(p => p.Id == projectId))
+            .DefaultWorkerWorkspace.ShouldBeNull();
+        foreach (var (id, mode, _, _) in tasks)
+        {
+            var task = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
+            task.Workspace.ShouldBe(mode);
+            task.WorkspaceSource.ShouldBeNull();
+        }
     }
 
     [Test]

@@ -30,6 +30,7 @@ public sealed class ProjectWorkerWorkspaceDefaultTests
         var created = await Service(db, global).CreateAsync(Create(selected), CancellationToken.None);
         created.DefaultWorkerWorkspace.ShouldBe(selected);
         created.EffectiveWorkerWorkspace.ShouldBe(selected ?? global.ToString());
+        created.DispatchHonorsWorkspaceDefault.ShouldBeFalse();
         await using var fresh = NewDb(schema);
         var stored = await fresh.Projects.SingleAsync(p => p.Id == created.Id);
         string? persisted = stored.DefaultWorkerWorkspace?.ToString();
@@ -109,6 +110,7 @@ public sealed class ProjectWorkerWorkspaceDefaultTests
         {
             dto.DefaultWorkerWorkspace.ShouldBe(selected);
             dto.EffectiveWorkerWorkspace.ShouldBe(selected ?? global.ToString());
+            dto.DispatchHonorsWorkspaceDefault.ShouldBeFalse();
         }
     }
 

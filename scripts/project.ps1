@@ -196,9 +196,9 @@ switch ($Verb) {
         if ($null -ne $resolved.repositoryVisibility) { $body.repositoryVisibility = $resolved.repositoryVisibility }
         $updated = Invoke-Antiphon -Method PUT -Path ("/api/projects/{0}" -f $resolved.id) -Body $body
         if ($Json) { $updated | ConvertTo-Json -Depth 10; return }
-        Write-Output ("Project: {0} ({1}) commitOnSettle={2} effectiveCommitOnSettle={3} defaultWorkerWorkspace={4} effectiveWorkerWorkspace={5}" -f `
+        Write-Output ("Project: {0} ({1}) commitOnSettle={2} effectiveCommitOnSettle={3} defaultWorkerWorkspace={4} configuredWorkerWorkspace={5} dispatchHonorsWorkspaceDefault={6}" -f `
             $updated.name, $updated.id, $updated.commitOnSettle, $updated.effectiveCommitOnSettle, `
-            $updated.defaultWorkerWorkspace, $updated.effectiveWorkerWorkspace)
+            $updated.defaultWorkerWorkspace, $updated.effectiveWorkerWorkspace, $updated.dispatchHonorsWorkspaceDefault)
         return
     }
     'catalog' {

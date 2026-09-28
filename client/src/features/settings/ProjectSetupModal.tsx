@@ -259,7 +259,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                 />
                 <Select label="Repository visibility" description="Configured locally; not checked. Unknown blocks card-file publication. Boards start with publishing off." data={['Unknown', 'Private', 'Public']} value={repositoryVisibility} onChange={(v) => setRepositoryVisibility((v as RepositoryVisibility) ?? 'Unknown')} error={fieldErrors.repositoryVisibility} />
                 <TextInput label="Base branch" value={baseBranch} onChange={(event) => setBaseBranch(event.currentTarget.value)} />
-                <Select label="Default worker workspace" allowDeselect={false} description="Inherit follows the server's global setting." data={['Inherit', 'Shared', 'Worktree']} value={defaultWorkerWorkspace} onChange={(value) => setDefaultWorkerWorkspace((value as 'Inherit' | 'Shared' | 'Worktree') ?? 'Inherit')} />
+                <Select label="Default worker workspace" allowDeselect={false} description="Saved preference only; fresh task dispatch does not use it until workspace resolution (S3) lands. Inherit follows the server's global preference." data={['Inherit', 'Shared', 'Worktree']} value={defaultWorkerWorkspace} onChange={(value) => setDefaultWorkerWorkspace((value as 'Inherit' | 'Shared' | 'Worktree') ?? 'Inherit')} />
                 <TextInput label="Board name" value={boardName} onChange={(event) => { setBoardNameEdited(true); setBoardName(event.currentTarget.value) }} error={fieldErrors.boardName} />
                 <Paper withBorder p="sm">
                   <Text size="sm" fw={500} mb={4}>Default columns</Text>

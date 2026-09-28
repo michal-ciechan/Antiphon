@@ -406,6 +406,13 @@ New `ProjectWorkerWorkspaceDefaultTests`:
 | `C458_UpdateRejectsReadOnlyWithoutChangingProject` | 1 | Production service throws a field-specific `ValidationException` for ReadOnly; standard middleware maps it to HTTP 422. Fresh DB proves workspace and other fields unchanged. Internal controls cover unknown value and create ReadOnly. |
 | `C458_ListAndDetailResolveEffectiveDefault` | 6 | Three stored values x two globals through service list and detail; assert configured and effective fields from production mapping. |
 
+`ProjectSetupServiceTests.C458_SetupForwardsWorkerWorkspaceToProjectAndResponse`
+(2 results) sends Shared and Worktree through `ProjectSetupService.SetupAsync` and checks
+the returned project DTO plus a fresh persisted project read. Both must match the requested
+value. **PC-15h:** remove the setup service's `DefaultWorkerWorkspace = request.DefaultWorkerWorkspace`
+forwarding; both results fail on the response and stored row. This control is pending the
+method-scoped SourceLanding Mutation round with the other PCs.
+
 In `ProjectConfig.test.tsx` (first three names) and `ProjectSetupModal.test.tsx` (the fourth),
 add exact Vitest names:
 
@@ -575,9 +582,9 @@ the intended failing assertion is stated there. Run all argument results of that
 retain which ones discriminate. A fixture exception, build failure, timeout of the driver,
 or zero executed tests is not an intended red.
 
-There are **62 independent mutation variants**: PC-01 (1), 02 (2), 03 (1), 04 (1), 05 (4),
+There are **63 independent mutation variants**: PC-01 (1), 02 (2), 03 (1), 04 (1), 05 (4),
 06 (1), 07 (2), 08 (1), 09 (1), 10 (4), 11 (3), 12 (4), 13 (3), 14 (6), 15 (7), 16 (6),
-17 (6, including one PC-17d per file), 18 (4), and PC-19 through PC-23 (one each).
+17 (6, including one PC-17d per file), 18 (4), PC-15h (1), and PC-19 through PC-23 (one each).
 Most workspace controls share `AgentTaskService` or the probe; execute serially.
 
 Code performs ordinary checkpoints only, then separate ordinary Review. After confirmed
@@ -605,10 +612,10 @@ evidence commits in the SourceLanding tree; findings return to a separate repair
 
 Ordinary checkpoint floor: **76 minutes**, the sum of `EstimatedMinutes` below; add an
 estimated **180 minutes authoring** for Code (`ExpectAbout` floor **256 minutes**).
-Mutation execution floor: **372 minutes** (62 variants x 6 minutes for baseline/red/green
+Mutation execution floor: **378 minutes** (63 variants x 6 minutes for baseline/red/green
 builds and selected results); add **60 minutes** discovery, triage, restoration and evidence
-for a **432-minute Mutation** estimate. Combined execution floor is **448 minutes**
-(76 + 372); combined Code + Mutation estimate is **688 minutes** (256 + 432), excluding
+for a **438-minute Mutation** estimate. Combined execution floor is **454 minutes**
+(76 + 378); combined Code + Mutation estimate is **694 minutes** (256 + 438), excluding
 separate Review and operator activation. These are budgeting estimates, not measured runtime
 or ceilings; actual cold builds/schema setup may take longer. Revise them with PD-1 if the
 roster changes. `Min` below is executed TUnit results, never minutes or assertion counts.
