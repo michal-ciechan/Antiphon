@@ -17,7 +17,9 @@ namespace Antiphon.Tests.TestHelpers;
 internal sealed class LandingSafetyHarness : IAsyncDisposable
 {
     public LandingGitFixture Fixture { get; }
-    public LandingSafetyHarness(string? root = null, Guid? taskId = null) => Fixture = new(root, taskId);
+    private readonly LandingPilotTrace? _pilotTrace;
+    public LandingSafetyHarness(string? root = null, Guid? taskId = null, LandingPilotTrace? trace = null)
+    { _pilotTrace = trace; Fixture = new(root, taskId, trace); }
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
     public TimeProvider Clock { get; set; } = TimeProvider.System;
@@ -35,8 +37,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async Task InitializeAsync()
     {
+        _pilotTrace?.Mark("setup", "entered");
         await Fixture.InitializeAsync();
+        _pilotTrace?.Mark("setup", "exited");
+        _pilotTrace?.Mark("db-clone", "entered");
         Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        _pilotTrace?.Mark("db-clone", "exited");
         BuildServices();
         await SeedAsync();
     }
@@ -228,6 +234,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async Task<LandRunResult> RunAsync(CancellationToken ct)
     {
+        _pilotTrace?.Mark("service", "entered");
+        Fixture.Git.Role = "service";
         await using var scope = Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await Fixture.CaptureAsync("before_service");
@@ -255,7 +263,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         finally
         {
             await Fixture.CaptureAsync("after_service");
-            if (LandingEvidence.Enabled)
+            if (LandingEvidence.Enabled || _pilotTrace is not null)
             {
                 await using var observer = CreateContext();
                 var operations = await observer.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == Fixture.TaskId).ToListAsync();
@@ -265,7 +273,10 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
                         t.Status, t.LandAttempt, t.LandRequestedAt, t.LandStartedAt, t.LandVerifyFilter }).SingleOrDefaultAsync();
                 var stages = await observer.StageOutcomes.AsNoTracking().Where(o => o.SubjectTaskId == Fixture.TaskId).ToListAsync();
                 LandingEvidence.Write(Fixture.TaskId, "committed_after_service", new { task, operations, events, stages });
+                _pilotTrace?.Observe("committed_after_service", new { task, operations, events, stages });
             }
+            Fixture.Git.Role = "setup";
+            _pilotTrace?.Mark("service", "exited");
         }
     }
 
@@ -383,8 +394,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _pilotTrace?.Mark("provider-disposal", "entered");
         if (Services is not null) await Services.DisposeAsync();
+        _pilotTrace?.Mark("provider-disposal", "exited");
+        _pilotTrace?.Mark("db-drop", "entered");
         if (Schema is not null) await Schema.DisposeAsync();
+        _pilotTrace?.Mark("db-drop", "exited");
         await Fixture.DisposeAsync();
     }
 

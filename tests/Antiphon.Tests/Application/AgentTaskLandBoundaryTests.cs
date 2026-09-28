@@ -20,7 +20,9 @@ public sealed class AgentTaskLandBoundaryTests
     [Arguments("staged")]
     public async Task C448_V11_TargetMutationAfterFastForwardCannotBeAcknowledged(string change)
     {
-        await using var h = new LandingSafetyHarness();
+        var caseId = change switch { "advance" => "B16", "switch" => "B17", "dirty" => "B18", "staged" => "B19", _ => throw new ArgumentOutOfRangeException(nameof(change)) };
+        await using var trace = LandingPilotTrace.ForCase(caseId, change);
+        await using var h = new LandingSafetyHarness(trace: trace);
         await h.InitializeAsync();
         await h.AddSourceAsync();
         var fired = false;
@@ -236,7 +238,20 @@ public sealed class AgentTaskLandBoundaryTests
     [Arguments("PushStarted", "metadata-repository", false)]
     public async Task C448_V10_EachAcknowledgedBoundaryRechecksSource(string boundary, string change, bool contained)
     {
-        await using var h = new LandingSafetyHarness();
+        var caseId = (boundary, change, contained) switch
+        {
+            ("remote", "advance", false) => "B01", ("remote", "advance", true) => "B02",
+            ("remote", "switch", true) => "B03", ("BeforeRebaseIntent", "dirty", false) => "B04",
+            ("RebaseStarted", "staged", false) => "B05", ("Prepared", "untracked", false) => "B06",
+            ("Prepared", "metadata", false) => "B07", ("Verified", "switch", false) => "B08",
+            ("Verified", "metadata-path", false) => "B09", ("TargetAdvanceStarted", "advance", false) => "B10",
+            ("LocalTargetAdvanced", "dirty", false) => "B11", ("BeforePushIntent", "staged", false) => "B12",
+            ("BeforePushIntent", "metadata-target", false) => "B13", ("PushStarted", "untracked", false) => "B14",
+            ("PushStarted", "metadata-repository", false) => "B15",
+            _ => throw new ArgumentOutOfRangeException(nameof(boundary))
+        };
+        await using var trace = LandingPilotTrace.ForCase(caseId, boundary, change, contained);
+        await using var h = new LandingSafetyHarness(trace: trace);
         await h.InitializeAsync();
         if (!contained) await h.AddSourceAsync();
         if (boundary == "Prepared")

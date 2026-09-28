@@ -40,7 +40,18 @@ public class TestDbFixture
 			return;
 		if (!SharedStoreWarmup.SelectionNeedsSharedStore(context.AllTests))
 			return;
-		await Lifecycle.EnsureReadyAsync().ConfigureAwait(false);
+		var bootstrapStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+		var outcome = "failed";
+		try
+		{
+			await Lifecycle.EnsureReadyAsync().ConfigureAwait(false);
+			outcome = "complete";
+		}
+		finally
+		{
+			await LandingPilotTrace.RecordBootstrapAsync(bootstrapStarted,
+				System.Diagnostics.Stopwatch.GetTimestamp(), outcome).ConfigureAwait(false);
+		}
 	}
 
 	[After(Assembly)]

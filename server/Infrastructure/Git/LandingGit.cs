@@ -25,6 +25,11 @@ public class LandingGit : ILandingGit
     /// <summary>Test seam for the one call that creates the git child.</summary>
     protected virtual Process? StartProcess(ProcessStartInfo start) => Process.Start(start);
 
+    /// <summary>Fixture observation after the child and both redirected streams have drained.</summary>
+    protected virtual void ObserveCompletedChild(ProcessStartInfo start, int processId,
+        long startedTimestamp, long finishedTimestamp, int exitCode, string output,
+        string error) { }
+
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, null, ct);
 
@@ -76,6 +81,7 @@ public class LandingGit : ILandingGit
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
         var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
         Process? child;
+        var childStartedTimestamp = Stopwatch.GetTimestamp();
         try { child = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
         {
@@ -110,14 +116,19 @@ public class LandingGit : ILandingGit
             await Task.WhenAll(output, error);
             journal?.Exited(process);
             _cardFiles?.NoteServerGit(repository, arguments);
+            ObserveCompletedChild(start, process.Id, childStartedTimestamp, Stopwatch.GetTimestamp(),
+                process.ExitCode, await output, await error);
             if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
             throw;
         }
         // Descendants may retain redirected handles after the root exits. Keep the standing
         // journal until both streams drain; worker death in that interval must still fence admission.
         await Task.WhenAll(output, error); // Never expose Git stderr (endpoints/hooks may contain secrets).
+        var childFinishedTimestamp = Stopwatch.GetTimestamp();
         journal?.Exited(process);
         _cardFiles?.NoteServerGit(repository, arguments);
+        ObserveCompletedChild(start, process.Id, childStartedTimestamp, childFinishedTimestamp,
+            process.ExitCode, await output, await error);
         string? rebaseHead = null;
         if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
         {

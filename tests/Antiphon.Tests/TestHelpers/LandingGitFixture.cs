@@ -17,19 +17,21 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     public string TargetRef => "refs/heads/master";
     public Guid TaskId { get; }
     public FixtureGit Git { get; }
+    private readonly LandingPilotTrace? _pilotTrace;
     public string SeedSha { get; private set; } = "";
     public LandSourceCoordinates Coordinates => new(TaskId, Repository, Source, SourceRef, TargetRef);
     public string ObservationRef => $"refs/antiphon/land/{TaskId:N}/{Guid.NewGuid():N}/remote-observed";
 
-    public LandingGitFixture(string? root = null, Guid? taskId = null)
+    public LandingGitFixture(string? root = null, Guid? taskId = null, LandingPilotTrace? pilotTrace = null)
     {
+        _pilotTrace = pilotTrace;
         Root = root ?? Path.Combine(Path.GetTempPath(), "antiphon-c448-" + Guid.NewGuid().ToString("N"));
         TaskId = taskId ?? Guid.NewGuid();
         Directory.CreateDirectory(Root);
         Directory.CreateDirectory(Repository);
         Directory.CreateDirectory(Remote);
         Directory.CreateDirectory(Path.Combine(Root, "home"));
-        Git = new FixtureGit(Path.Combine(Root, "home"), TaskId);
+        Git = new FixtureGit(Path.Combine(Root, "home"), TaskId, pilotTrace, "setup");
     }
 
     public async Task InitializeAsync()
@@ -58,7 +60,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     /// <summary>Same stranger push, with the committed path and content chosen by the caller.</summary>
     public async Task<string> PushIndependentAsync(string name, string path, string content)
     {
-        var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId);
+        var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId, _pilotTrace, "observer");
         var fetched = await reader.RunAsync(Observer, ["fetch", "origin", TargetRef], CancellationToken.None);
         fetched.Succeeded.ShouldBeTrue(fetched.Diagnostic);
         var based = await reader.RunAsync(Observer, ["reset", "--hard", "FETCH_HEAD"], CancellationToken.None);
@@ -80,14 +82,18 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
     public async Task<string> RequiredAsync(string path, params string[] arguments)
     {
-        var result = await Git.RunAsync(path, arguments, CancellationToken.None);
+        var priorRole = Git.Role;
+        if (priorRole == "service") Git.Role = "fault-hook";
+        LandingGitResult result;
+        try { result = await Git.RunAsync(path, arguments, CancellationToken.None); }
+        finally { Git.Role = priorRole; }
         if (!result.Succeeded) throw new InvalidOperationException($"fixture_git_failed:{arguments[0]}:{result.ExitCode}");
         return result.Output;
     }
 
     public async Task AssertRemoteSourceAsync()
     {
-        var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId); // Independent of fault-injected production I/O.
+        var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId, _pilotTrace, "observer"); // Independent of fault-injected production I/O.
         var actual = await reader.RunAsync(Remote, ["rev-parse", "--verify", SourceRef + "^{commit}"], CancellationToken.None);
         actual.Succeeded.ShouldBeTrue("the pre-published fixture remote source must not be deleted by landing/refusal/recovery");
         actual.Output.Trim().ShouldBe(SeedSha, "the pre-published remote source must retain its exact original commit");
@@ -101,7 +107,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
     public async Task CaptureAsync(string kind)
     {
-        if (!LandingEvidence.Enabled) return;
+        if (!LandingEvidence.Enabled && _pilotTrace is null) return;
+        _pilotTrace?.Mark("capture", "entered");
         var contents = new List<object>();
         if (Directory.Exists(Source))
             foreach (var file in Directory.EnumerateFiles(Source, "*", SearchOption.AllDirectories))
@@ -112,7 +119,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
                 catch (UnauthorizedAccessException) { digest = "inaccessible"; }
                 contents.Add(new { path = Path.GetRelativePath(Source, file), digest });
             }
-        var reader = new LandingGit();
+        var reader = new FixtureGit(Path.Combine(Root, "home"), TaskId, _pilotTrace, "capture");
         var refs = await reader.RunAsync(Repository, ["show-ref"], CancellationToken.None);
         var remote = await reader.RunAsync(Remote, ["show-ref"], CancellationToken.None);
         var registration = await reader.RunAsync(Repository, ["worktree", "list", "--porcelain", "-z"], CancellationToken.None);
@@ -137,10 +144,15 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         }
         LandingEvidence.Write(TaskId, kind, new { directoryExists = Directory.Exists(Source), contents, index, registrations = registration.Output, registrationExit = registration.ExitCode,
             localRefs = refs.Output, localQueryExit = refs.ExitCode, remoteRefs = remote.Output, remoteQueryExit = remote.ExitCode });
+        _pilotTrace?.Observe(kind, new { directoryExists = Directory.Exists(Source), contents, index,
+            registrations = registration.Output, registrationExit = registration.ExitCode,
+            localRefs = refs.Output, localQueryExit = refs.ExitCode, remoteRefs = remote.Output, remoteQueryExit = remote.ExitCode });
+        _pilotTrace?.Mark("capture", "exited");
     }
 
     public async ValueTask DisposeAsync()
     {
+        _pilotTrace?.Mark("fixture-disposal", "entered");
         var full = Path.GetFullPath(Root);
         var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
         if (!full.StartsWith(temp, StringComparison.OrdinalIgnoreCase)
@@ -151,10 +163,18 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
             File.SetAttributes(file, FileAttributes.Normal);
         Directory.Delete(full, true);
+        _pilotTrace?.Mark("fixture-disposal", "exited");
     }
 
-    internal class FixtureGit(string home, Guid taskId) : LandingGit
+    internal class FixtureGit(string home, Guid taskId, LandingPilotTrace? pilotTrace = null,
+        string role = "service") : LandingGit
     {
+        private readonly AsyncLocal<string?> _role = new();
+        public string Role { get => _role.Value ?? role; set => _role.Value = value; }
+        protected override void ObserveCompletedChild(ProcessStartInfo start, int processId,
+            long startedTimestamp, long finishedTimestamp, int exitCode, string output, string error)
+            => pilotTrace?.Child(Role, start, processId, startedTimestamp, finishedTimestamp,
+                exitCode, output, error);
         public List<string[]> Trace { get; } = [];
         public string? HooksPathOverride { get; set; }
         /// <summary>CARD-0688: every command with the directory it ran in.</summary>
@@ -187,6 +207,10 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
+            var currentRole = Role;
+            pilotTrace?.Mark(currentRole, "entered");
+            try
+            {
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
@@ -196,6 +220,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;
+            }
+            finally { pilotTrace?.Mark(currentRole, "exited"); }
         }
 
         /// <summary>
@@ -207,6 +233,9 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         public override async Task<LandingGitResult> UnregisterWorktreeAsync(string repository, string worktreePath,
             string gitDirectory, CancellationToken ct)
         {
+            pilotTrace?.Mark("unregister-file-io", "entered");
+            try
+            {
             var arguments = UnregisterVector(worktreePath);
             Trace.Add(arguments);
             if (BeforeUnregister is not null) await BeforeUnregister(gitDirectory);
@@ -219,7 +248,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
                 Directory.Exists(gitDirectory).ShouldBeFalse("the real administrative entry was dropped");
                 // This independent test oracle is not a production cleanup command. Keep its
                 // real registration proof outside the land's measured operation scope (V-18).
-                var observer = new FixtureGit(home, taskId);
+                var observer = new FixtureGit(home, taskId, pilotTrace, "observer");
                 var observed = await observer.RunAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct);
                 observed.Succeeded.ShouldBeTrue();
                 ParseRegistrations(observed.Output).ShouldNotContain(r => PathsEqual(r.Path, worktreePath));
@@ -229,11 +258,17 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.Diagnostic });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;
+            }
+            finally { pilotTrace?.Mark("unregister-file-io", "exited"); }
         }
 
         public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
             Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         {
+            var currentRole = Role;
+            pilotTrace?.Mark(currentRole, "entered");
+            try
+            {
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
@@ -243,6 +278,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             LandingEvidence.Write(taskId, "owned_git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;
+            }
+            finally { pilotTrace?.Mark(currentRole, "exited"); }
         }
     }
 }
