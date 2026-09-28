@@ -257,6 +257,35 @@ public sealed partial class LandDeliveryFixture
             && p.Text != null && p.Text.Contains("review-evidence="))).ShouldBe(1);
     }
 
+    public async Task AssertReviewSettlementRolledBackAsync()
+    {
+        // A separate connection after the worker's death must still see an open Review.
+        await using var db = CreateContext();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == ReviewTaskId)).Status
+            .ShouldBe(AgentTaskStatus.Working);
+        (await db.StageOutcomes.CountAsync(o => o.StageTaskId == ReviewTaskId)).ShouldBe(0);
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == ReviewTaskId
+            && n.Kind == LandNotificationKind.TaskCompletion)).ShouldBe(0);
+    }
+
+    public async Task AssertReviewSettledOnceAfterScansAsync(ReviewReceipt receipt)
+    {
+        await AssertOnePromptAsync(receipt.Note);
+        await using var db = CreateContext();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == ReviewTaskId)).Status
+            .ShouldBe(AgentTaskStatus.Succeeded);
+        (await db.StageOutcomes.CountAsync(o => o.StageTaskId == ReviewTaskId && o.Id == receipt.EvidenceId))
+            .ShouldBe(1);
+        (await db.StageOutcomes.CountAsync(o => o.StageTaskId == ReviewTaskId)).ShouldBe(1);
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == ReviewTaskId
+            && n.Kind == LandNotificationKind.TaskCompletion)).ShouldBe(1);
+        var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m =>
+            m.SourceLandNotificationId == receipt.Note.Id);
+        queued.Id.ShouldBe(receipt.Note.QueueMessageId);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == ReviewTaskId
+            && m.SourceLandNotificationId != null)).ShouldBe(1);
+    }
+
     public async Task SeedFalseReviewCandidateAsync(string arm)
     {
         await UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(Root, "queue-before-typing.barrier.json"))),
