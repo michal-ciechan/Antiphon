@@ -5455,7 +5455,9 @@ public sealed class AgentTaskDispatcher
         if (!string.IsNullOrWhiteSpace(runnerCwd))
         {
             var relative = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
-            spillPath = runnerCwd.Replace('\\', '/').TrimEnd('/') + "/" + relative;
+            // The runner starts the child in runnerCwd and stages this same relative path there.
+            // An absolute cwd can make the pointer itself exceed the inbox write envelope.
+            spillPath = relative;
             try
             {
                 stageRemoteSpill?.Invoke(new PhoneHomeInputSpill(relative, brief));
@@ -5493,7 +5495,9 @@ public sealed class AgentTaskDispatcher
             DelegationReportFormatter.Short(task.Id), briefBytes, limits.BriefInlineMaxBytes,
             limits, spillPath ?? "the API");
 
-        return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length, agentKind);
+        return DelegationReportFormatter.BuildBriefPointer(
+            task, settings, spillPath, brief.Length, agentKind,
+            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd) ? null : limits.SingleWriteMaxBytes);
     }
 
     /// <summary>

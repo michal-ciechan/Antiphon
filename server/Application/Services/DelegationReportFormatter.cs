@@ -795,7 +795,7 @@ public static class DelegationReportFormatter
     /// </param>
     public static string BuildBriefPointer(
         AgentTask task, DelegationSettings settings, string? spillPath, int fullLength,
-        AgentKind agentKind = AgentKind.ClaudeCode)
+        AgentKind agentKind = AgentKind.ClaudeCode, int? maxWireBytes = null)
     {
         var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var where = string.IsNullOrWhiteSpace(spillPath)
@@ -880,7 +880,20 @@ public static class DelegationReportFormatter
         }
 
         sb.Append(TaskMarker(task.Id));
-        return joins ? FlattenForJoiningComposer(sb.ToString()) : sb.ToString();
+        var pointer = joins ? FlattenForJoiningComposer(sb.ToString()) : sb.ToString();
+        if (maxWireBytes is null || Encoding.UTF8.GetByteCount(pointer) <= maxWireBytes.Value)
+            return pointer;
+
+        // A runner brief has already been staged in its session cwd. Keep the typed pointer
+        // inside one measured write even when the title or scope makes the explanatory form long.
+        // The file carries the complete title, scope, instructions, and reporting contract.
+        var compact = $"{TaskMarker(task.Id)} role={task.Role} tier={task.ModelLevel} workspace={task.Workspace}\n"
+            + $"Read the complete task brief at {where} before doing anything. Follow its reporting contract.\n"
+            + TaskMarker(task.Id);
+        compact = joins ? FlattenForJoiningComposer(compact) : compact;
+        if (Encoding.UTF8.GetByteCount(compact) > maxWireBytes.Value)
+            throw new InvalidOperationException("The runner brief pointer exceeds its single-write ceiling.");
+        return compact;
     }
 
     /// <summary>
