@@ -45,17 +45,21 @@ public sealed class DurableRunnerSpillReceiptTests
         // Pick a real boundary: the old pointer fits before queue binding, but the
         // message-owned inbox path makes it exceed one runner write.
         var boundaryFound = false;
-        for (var length = 1; length <= 300; length++)
+        for (var scopeLength = 0; scopeLength <= 400 && !boundaryFound; scopeLength += 100)
         {
-            task.Title = new string('t', length);
-            var fullLength = DelegationReportFormatter.BuildBrief(task, settings, inbox.ReplyInlineMaxChars).Length;
-            var verbose = DelegationReportFormatter.BuildBriefPointer(task, settings, relative, fullLength);
-            if (System.Text.Encoding.UTF8.GetByteCount(verbose) > inbox.SingleWriteMaxBytes ||
-                System.Text.Encoding.UTF8.GetByteCount(verbose.Replace(relative, bound, StringComparison.Ordinal))
-                    <= inbox.SingleWriteMaxBytes)
-                continue;
-            boundaryFound = true;
-            break;
+            task.Scope = scopeLength == 0 ? null : new string('s', scopeLength);
+            for (var length = 1; length <= 300; length++)
+            {
+                task.Title = new string('t', length);
+                var fullLength = DelegationReportFormatter.BuildBrief(task, settings, inbox.ReplyInlineMaxChars).Length;
+                var verbose = DelegationReportFormatter.BuildBriefPointer(task, settings, relative, fullLength);
+                if (System.Text.Encoding.UTF8.GetByteCount(verbose) > inbox.SingleWriteMaxBytes ||
+                    System.Text.Encoding.UTF8.GetByteCount(verbose.Replace(relative, bound, StringComparison.Ordinal))
+                        <= inbox.SingleWriteMaxBytes)
+                    continue;
+                boundaryFound = true;
+                break;
+            }
         }
         boundaryFound.ShouldBeTrue("the queued test must cross the limit only after binding");
         var staged = new List<PhoneHomeInputSpill>();
@@ -101,14 +105,23 @@ public sealed class DurableRunnerSpillReceiptTests
             ConfigureServices = services =>
             {
                 services.AddSingleton<RemoteSpillCourier>();
-                services.AddSingleton(sp => new PtyDeliveryProfile(
-                    sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PtyDeliveryProfile>.Instance,
-                    sp.GetRequiredService<IOptions<DelegationSettings>>(), backendOverride: "modern"));
+                services.AddSingleton(sp =>
+                {
+                    // The attached fake has no Windows ConPTY binary. Give only this profile
+                    // the desktop's modern verdict; the runner queue still resolves its own 1 KB ceiling.
+                    var settings = sp.GetRequiredService<IOptions<DelegationSettings>>().Value;
+                    var profile = new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
+                        NullLogger<PtyDeliveryProfile>.Instance, Options.Create(settings), backendOverride: "inbox");
+                    typeof(PtyDeliveryProfile).GetField("_ceilings",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                        .SetValue(profile, settings.CeilingsFor(Antiphon.Agents.Pty.PtyBackend.ModernConPty,
+                            "synthetic desktop profile for attached fake"));
+                    return profile;
+                });
                 services.AddSingleton<SessionDeliveryProfile>();
             },
         });
         const string cwd = "/runner/worktrees/task-grok-rules-brief";
-        h.Runner.Capabilities = new("ModernConPty", "test", "test", false);
         await BindRunnerAsync(schema.ConnectionString, h.SessionId, cwd);
         var taskId = Guid.NewGuid();
         var goal = new string('g', 3000);
@@ -127,7 +140,7 @@ public sealed class DurableRunnerSpillReceiptTests
         await db.SaveChangesAsync();
 
         var profile = h.Provider.GetRequiredService<PtyDeliveryProfile>();
-        (await profile.RefreshAsync(CancellationToken.None)).SingleWriteMaxBytes.ShouldBe(86_400);
+        profile.Ceilings.SingleWriteMaxBytes.ShouldBe(86_400);
         var rules = new GrokRulesRefreshService(h.Provider.GetRequiredService<IServiceScopeFactory>(),
             TimeProvider.System, Options.Create(new GrokRulesSettings()));
         await rules.QueueLaunchBriefAsync(db, session, h.Queue, CancellationToken.None);
