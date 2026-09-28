@@ -312,7 +312,11 @@ public class PhoneHomeConnectionTests
     {
         var dispatcher = new Antiphon.SessionRunner.PhoneHomeCommandDispatcher(
             new FakeRuntime(),
-            new Antiphon.SessionRunner.PhoneHomeSettings { AllowedCwd = "/work", Capacity = 1, Enabled = true });
+            new Antiphon.SessionRunner.PhoneHomeSettings
+            {
+                AllowedCwd = "/work", Capacity = 1, Enabled = true,
+                CapacityStatePath = Path.Combine(Path.GetTempPath(), "antiphon-runner-tests", Guid.NewGuid().ToString("N"), "capacity"),
+            });
         foreach (PhoneHomeOperation op in Enum.GetValues<PhoneHomeOperation>())
         {
             object body = op == PhoneHomeOperation.Launch
