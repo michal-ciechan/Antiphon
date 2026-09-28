@@ -1,9 +1,12 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { notifications } from '@mantine/notifications'
 import type { ChatChannelDto } from '../../api/channels'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ChannelsPage } from './ChannelsPage'
+
+vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
 function channel(over: Partial<ChatChannelDto> = {}): ChatChannelDto {
   return {
@@ -87,5 +90,34 @@ describe('ChannelsPage', () => {
     await waitFor(() => expect(requests).toEqual([
       { outboundAgentProfile: 'pdf-project' }, { clearOutboundAgentProfile: true },
     ]))
+  })
+
+  it('shows an API validation refusal without displaying an unsaved profile', async () => {
+    const profile = {
+      name: 'pdf-project', projectId: 'project-1', agentId: 'converter-1', agentName: 'PDF converter',
+      promptRevision: 'abcdef', trigger: 'MarkdownSources' as const, timeoutSeconds: 120,
+      maxPending: 8, authorization: 'One metered worker invocation per matching agent reply',
+    }
+    let patchCount = 0
+    server.use(
+      http.get('/api/channels', () => HttpResponse.json([channel({ agentId: 'agent-1' })])),
+      http.get('/api/channels/outbound-profiles', () => HttpResponse.json([profile])),
+      http.get('/api/agents', () => HttpResponse.json([{ id: 'agent-1', name: 'Inbound agent' }])),
+      http.patch('/api/channels/ch-1', () => {
+        patchCount++
+        return HttpResponse.json({ status: 400, title: 'Validation failed',
+          detail: 'Converter is bound to an inbound channel.' }, { status: 400 })
+      }),
+    )
+    renderWithProviders(<ChannelsPage />)
+    const selector = await screen.findByRole('textbox', { name: 'Outbound profile for Family' })
+    await userEvent.click(selector)
+    await userEvent.click(await screen.findByText('pdf-project'))
+    await waitFor(() => expect(patchCount).toBe(1))
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'red', message: 'Converter is bound to an inbound channel.' }),
+    ))
+    expect(selector).toHaveValue('')
+    expect(screen.queryByText(/PDF converter · MarkdownSources/)).not.toBeInTheDocument()
   })
 })
