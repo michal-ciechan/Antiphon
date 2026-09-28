@@ -8,7 +8,7 @@ verbatim `## Design` section retrieved with `card.ps1 get CARD-0458 -Board Antip
 No copy existed in the inspected local/remote-tracking histories; the original Plan task's
 branch was absent from `ls-remote`. The copy was committed first as `26932a91c`.
 
-**Deliverable status: S1/S2 oracles are reconciled for Code. S3/S4 descriptions and CP-6 onward
+**Deliverable status: S1/S2 oracles are reconciled for Code. S3/S4 descriptions and CP-9 onward
 below record the original candidate and require a later TestDesign amendment before those slices.**
 This document designs tests; it adds no tests, application changes or live project settings.
 All execution counts below are planned rosters, not measured passes.
@@ -44,11 +44,11 @@ supersede conflicting original candidate oracles in the sections below:
 | AC-17 | Advice is confined to a proven shared-only hold; area contention and unknown holder scope retain neutral labels. |
 | AC-18 | `project.ps1 set` extends the existing verb; one switch never overwrites the other setting or other project fields. |
 
-For S1/S2, CP-1 through CP-5 are the closed manifest. In AC-15, the new-project UI test
+For S1/S2, CP-1 through CP-8 are the closed manifest under the Final profile. In AC-15, the new-project UI test
 targets the setup POST and its existing wizard, not an imaginary direct create modal.
 In AC-16, PC-16c changes Worktree to Shared and must fail the initializer assertion.
 All S3/S4 method names, result floors and PC variants below are **provisional** wherever
-they encode an overridden oracle; a later TestDesign must replace them before CP-6 runs.
+they encode an overridden oracle; a later TestDesign must replace them before CP-9 runs.
 The 62-variant estimate and 57-result resolution floor are historical candidate estimates,
 not commitments under the reconciled policy. This task runs no PCs; all remain pending
 method-scoped SourceLanding Mutation.
@@ -574,12 +574,12 @@ evidence commits in the SourceLanding tree; findings return to a separate repair
 
 ### Cost
 
-Ordinary checkpoint floor: **63 minutes**, the sum of `EstimatedMinutes` below; add an
-estimated **180 minutes authoring** for Code (`ExpectAbout` floor **243 minutes**).
+Ordinary checkpoint floor: **76 minutes**, the sum of `EstimatedMinutes` below; add an
+estimated **180 minutes authoring** for Code (`ExpectAbout` floor **256 minutes**).
 Mutation execution floor: **372 minutes** (62 variants x 6 minutes for baseline/red/green
 builds and selected results); add **60 minutes** discovery, triage, restoration and evidence
-for a **432-minute Mutation** estimate. Combined execution floor is **435 minutes**
-(63 + 372); combined Code + Mutation estimate is **675 minutes** (243 + 432), excluding
+for a **432-minute Mutation** estimate. Combined execution floor is **448 minutes**
+(76 + 372); combined Code + Mutation estimate is **688 minutes** (256 + 432), excluding
 separate Review and operator activation. These are budgeting estimates, not measured runtime
 or ceilings; actual cold builds/schema setup may take longer. Revise them with PD-1 if the
 roster changes. `Min` below is executed TUnit results, never minutes or assertion counts.
@@ -596,8 +596,8 @@ build/test loops:
 # One tooling bootstrap, only if the tool is not already built:
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-checkpoint-tool -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c458-tool/ --nologo
 dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c458-tool/ -- run --plan docs/superpowers/plans/2026-09-28-card-0458-worker-worktree-default-test-design.md --rows CP-1,CP-2
-# Later committed groups: CP-3,CP-4,CP-5; CP-6,CP-7,CP-8,CP-9;
-# CP-10,CP-11,CP-12,CP-13,CP-14; CP-15,CP-16.
+# Later committed groups: CP-3,CP-4,CP-5,CP-6,CP-7,CP-8; CP-9,CP-10,CP-11,CP-12;
+# CP-13,CP-14,CP-15,CP-16,CP-17; CP-18,CP-19.
 # If run/wait returns 75, continue the same run:
 dotnet run --no-build --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c458-tool/ -- wait <run-id> --max-wait 50s
 ```
@@ -622,14 +622,17 @@ does not prove roster completeness. No tests/builds have been executed by TestDe
 | CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c458-s2/` | project-surface | `/*/*/(ProjectWorkerWorkspaceDefaultTests*)\|(ProjectScriptWorkspaceTests*)/*` | AC-15, AC-18 | all 26 planned results, 0 failed/skipped | 26 | 6 | true |
 | CP-4 | S1-S2 | CP-3 | dormant-dispatch | `/*/*/WorktreeDefaultAdmissionTests/*` | R-0, AC-16 | all 6 existing methods, 0 failed/skipped | 6 | 4 | true |
 | CP-5 | S1-S2 | n/a | project-client | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-project-client -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectConfig.test.tsx src/features/settings/ProjectSetupModal.test.tsx` | AC-15 | all existing tests and 7 new results, CLIENT TESTS EXIT CODE 0, 0 failed | n/a | 3 | true |
-| CP-6 | S1-S3 | `tests/Antiphon.Tests -> bin-c458-s3/` | workspace-resolution | `/*/*/AgentTaskWorkspaceDefaultTests/*` | AC-1 through AC-12, R-1 through R-5 | all 57 planned results, 0 failed/skipped | 57 | 8 | true |
-| CP-7 | S1-S3 | CP-6 | caller-scope | `/*/*/AgentTaskProjectScopeTests/*` | R-6 | all 6 existing methods, 0 failed/skipped | 6 | 2 | true |
-| CP-8 | S1-S3 | CP-6 | continuation | `/*/*/WorktreeDefaultContinuationTests/(RetiredWorktreeCutsAtPriorTip*)\|(FrozenTipSurvivesPriorRefMovement*)\|(UnavailablePriorTipRefuses*)\|(LiveFollowUpKeepsCwd*)\|(StandingAndRoutingPinsKeepCwd*)\|(ExplicitWorktreePinRefuses*)\|(ContinuationRetainsCardContextAndPolicy*)` | R-6 | all 7 named methods and argument rows, 0 failed/skipped | 7 | 4 | true |
-| CP-9 | S1-S3 | CP-6 | resolution-unit | `/*/*/*/*[Category=Unit]` | R-8, AC-16 | entire Unit lane, >=8 executed, 0 failed; report existing skips | 8 | 5 | true |
-| CP-10 | S1-S4 | `tests/Antiphon.Tests -> bin-c458-s4/` | workspace-messages | `/*/*/(SharedWriterLeaseProjectionTests*)\|(DelegateScriptWorkspaceTests*)\|(DelegateScriptWorkspaceDefaultTests*)/*` | AC-13, AC-14, R-7 | all 42 planned/existing results, 0 failed/skipped | 42 | 6 | true |
-| CP-11 | S1-S4 | CP-10 | queue-holder-projection | `/*/*/AgentTaskPipelineStatusTests/C458_HolderProjectionPreservesScopeContention*` | AC-17 | all 3 planned argument rows, 0 failed/skipped | 3 | 2 | true |
-| CP-12 | S1-S4 | CP-10 | project-script-regression | `/*/*/CommitOnSettleScriptTests/(Project_set_CommitOnSettle_puts_the_value*)\|(Project_set_PUT_carries_the_GET_fields_unchanged*)\|(Commit_on_settle_scripts_are_ascii_only*)` | AC-18, R-7 | 3 methods, 5 argument-expanded results, 0 failed/skipped | 5 | 2 | true |
-| CP-13 | S1-S4 | CP-10 | messages-unit | `/*/*/*/*[Category=Unit]` | AC-13, R-8 | entire Unit lane, >=21 executed, 0 failed; report existing skips | 21 | 5 | true |
-| CP-14 | S1-S4 | n/a | queue-labels | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-queue-labels -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/home/tasks/homeTasksModel.test.ts src/features/orchestrator/pipelineStageModel.test.ts` | AC-17 | both files, all existing tests and 12 new results, CLIENT TESTS EXIT CODE 0, 0 failed | n/a | 3 | true |
-| CP-15 | S1-S5 | n/a | client-contract-build | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-client-build -- npm --prefix client run build` | AC-12, AC-15, AC-17, R-9 | TypeScript and Vite exit 0, current bundle produced | n/a | 4 | true |
-| CP-16 | S1-S5 | n/a | documentation-diff | `git diff --check 7ca550cec42852b9659078420707b6bda0128cc3 HEAD -- AGENTS.md .claude/skills/antiphon-delegate/SKILL.md docs/orchestration-loop.md docs/antiphon-api.md scripts/delegate.ps1 docs/superpowers/plans/2026-09-14-card-0458-worker-worktree-default-plan.md docs/superpowers/plans/2026-09-28-card-0458-worker-worktree-default-test-design.md` | R-10 | exit 0; separate Review records five-surface semantic audit | n/a | 1 | true |
+| CP-6 | S1-S2 | CP-3 | storage-and-surface-unit | `/*/*/*/*[Category=Unit]` | AC-15, AC-16, Final Unit lane | entire Unit lane, 0 failed; report existing skips | 8 | 5 | true |
+| CP-7 | S1-S2 | CP-3 | affected-integrations | `/*/*/(ProjectServiceTests*)\|(ProjectSetupServiceTests*)\|(CommitOnSettleScriptTests*)/*` | AC-15, AC-18, Final integration classes | every method and argument row in all three existing classes, 0 failed/skipped | 3 | 4 | true |
+| CP-8 | S1-S2 | n/a | project-client-build | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-project-client-build -- npm --prefix client run build` | AC-15, Final client build | TypeScript and Vite exit 0, current bundle produced | n/a | 4 | true |
+| CP-9 | S1-S3 | `tests/Antiphon.Tests -> bin-c458-s3/` | workspace-resolution | `/*/*/AgentTaskWorkspaceDefaultTests/*` | AC-1 through AC-12, R-1 through R-5 | all 57 planned results, 0 failed/skipped | 57 | 8 | true |
+| CP-10 | S1-S3 | CP-9 | caller-scope | `/*/*/AgentTaskProjectScopeTests/*` | R-6 | all 6 existing methods, 0 failed/skipped | 6 | 2 | true |
+| CP-11 | S1-S3 | CP-9 | continuation | `/*/*/WorktreeDefaultContinuationTests/(RetiredWorktreeCutsAtPriorTip*)\|(FrozenTipSurvivesPriorRefMovement*)\|(UnavailablePriorTipRefuses*)\|(LiveFollowUpKeepsCwd*)\|(StandingAndRoutingPinsKeepCwd*)\|(ExplicitWorktreePinRefuses*)\|(ContinuationRetainsCardContextAndPolicy*)` | R-6 | all 7 named methods and argument rows, 0 failed/skipped | 7 | 4 | true |
+| CP-12 | S1-S3 | CP-9 | resolution-unit | `/*/*/*/*[Category=Unit]` | R-8, AC-16 | entire Unit lane, >=8 executed, 0 failed; report existing skips | 8 | 5 | true |
+| CP-13 | S1-S4 | `tests/Antiphon.Tests -> bin-c458-s4/` | workspace-messages | `/*/*/(SharedWriterLeaseProjectionTests*)\|(DelegateScriptWorkspaceTests*)\|(DelegateScriptWorkspaceDefaultTests*)/*` | AC-13, AC-14, R-7 | all 42 planned/existing results, 0 failed/skipped | 42 | 6 | true |
+| CP-14 | S1-S4 | CP-13 | queue-holder-projection | `/*/*/AgentTaskPipelineStatusTests/C458_HolderProjectionPreservesScopeContention*` | AC-17 | all 3 planned argument rows, 0 failed/skipped | 3 | 2 | true |
+| CP-15 | S1-S4 | CP-13 | project-script-regression | `/*/*/CommitOnSettleScriptTests/(Project_set_CommitOnSettle_puts_the_value*)\|(Project_set_PUT_carries_the_GET_fields_unchanged*)\|(Commit_on_settle_scripts_are_ascii_only*)` | AC-18, R-7 | 3 methods, 5 argument-expanded results, 0 failed/skipped | 5 | 2 | true |
+| CP-16 | S1-S4 | CP-13 | messages-unit | `/*/*/*/*[Category=Unit]` | AC-13, R-8 | entire Unit lane, >=21 executed, 0 failed; report existing skips | 21 | 5 | true |
+| CP-17 | S1-S4 | n/a | queue-labels | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-queue-labels -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/home/tasks/homeTasksModel.test.ts src/features/orchestrator/pipelineStageModel.test.ts` | AC-17 | both files, all existing tests and 12 new results, CLIENT TESTS EXIT CODE 0, 0 failed | n/a | 3 | true |
+| CP-18 | S1-S5 | n/a | client-contract-build | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c458-client-build -- npm --prefix client run build` | AC-12, AC-15, AC-17, R-9 | TypeScript and Vite exit 0, current bundle produced | n/a | 4 | true |
+| CP-19 | S1-S5 | n/a | documentation-diff | `git diff --check 7ca550cec42852b9659078420707b6bda0128cc3 HEAD -- AGENTS.md .claude/skills/antiphon-delegate/SKILL.md docs/orchestration-loop.md docs/antiphon-api.md scripts/delegate.ps1 docs/superpowers/plans/2026-09-14-card-0458-worker-worktree-default-plan.md docs/superpowers/plans/2026-09-28-card-0458-worker-worktree-default-test-design.md` | R-10 | exit 0; separate Review records five-surface semantic audit | n/a | 1 | true |
