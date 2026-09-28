@@ -545,8 +545,9 @@ public sealed partial class DispatchHoldVisibilityTests
         services.AddScoped<RoutingPinService>();
         services.AddScoped<ComplexityRoutingService>();
         services.AddScoped<AgentTaskDispatcher>();
+        services.AddSingleton<ISessionRunnerDirectory, BudgetDirectory>();
         services.AddScoped(sp => new HostBudgetService(
-            sp.GetRequiredService<AppDbContext>(), new BudgetDirectory(),
+            sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<ISessionRunnerDirectory>(),
             sp.GetRequiredService<IOptions<DelegationSettings>>(),
             sp.GetRequiredService<TimeProvider>()));
         var provider = services.BuildServiceProvider();

@@ -31,6 +31,7 @@ public class CodexProviderAuthRoutingTests
             RunnerId = "routing-test",
             AllowedCwd = "/work",
             Capacity = 8,
+            CapacityStatePath = Path.Combine(root, "capacity"),
             GrokHome = grokHome.Replace('\\', '/'),
             CodexHome = codexHome.Replace('\\', '/'),
             ClaudeHome = Path.Combine(root, "claude").Replace('\\', '/'),

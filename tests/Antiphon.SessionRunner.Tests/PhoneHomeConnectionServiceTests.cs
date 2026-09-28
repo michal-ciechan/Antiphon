@@ -73,6 +73,7 @@ public class PhoneHomeConnectionServiceTests
             StoreIdPath = Path.Combine(Path.GetTempPath(), "c490-store-" + Guid.NewGuid().ToString("N")),
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
         });
         var dispatcher = new PhoneHomeCommandDispatcher(new RecordingRuntime(), settings.Value);
         var runtime = new SessionRunnerRuntime(
@@ -226,6 +227,7 @@ public class PhoneHomeConnectionServiceTests
             Enabled = true,
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
         });
         var launch = dispatcher.DispatchAsync(
             new PhoneHomeFrame(
@@ -615,6 +617,7 @@ public class PhoneHomeConnectionServiceTests
             ServerOrigin = "http://127.0.0.1:1",
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
             Limits = limits ?? new PhoneHomeLimits(),
         });
         var runtime = new SessionRunnerRuntime(
@@ -718,6 +721,7 @@ public class PhoneHomeConnectionServiceTests
             StoreIdPath = Path.Combine(root, "store-id"),
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
         };
     }
 
@@ -744,6 +748,9 @@ public class PhoneHomeConnectionServiceTests
             clock ?? TimeProvider.System,
             logger ?? NullLogger<PhoneHomeConnectionService>.Instance);
     }
+
+    private static string TestCapacityPath() =>
+        Path.Combine(Path.GetTempPath(), "antiphon-runner-tests", Guid.NewGuid().ToString("N"), "capacity");
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

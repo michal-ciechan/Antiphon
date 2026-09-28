@@ -50,6 +50,7 @@ public class RunnerCapacityCountTests
                     Enabled = true,
                     AllowedCwd = "/work",
                     Capacity = 1,
+                    CapacityStatePath = Path.Combine(root, "capacity"),
                     ClaudeAuthProbeEnabled = false,
                     GrokAuthProbeEnabled = false,
                 });

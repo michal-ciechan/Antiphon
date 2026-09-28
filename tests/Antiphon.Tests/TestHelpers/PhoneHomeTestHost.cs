@@ -58,7 +58,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         PhoneHomeRunnerSettings? configured = null,
         IRunnerEligibilityObserver? observer = null,
         Action<IServiceCollection>? configureServices = null,
-        Action<WebApplication>? mapEndpoints = null)
+        Action<WebApplication>? mapEndpoints = null,
+        Action<PhoneHomeRunnerSettings>? configureRunnerSettings = null)
     {
         var host = new PhoneHomeTestHost();
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -85,6 +86,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
                 settings.Value.OperatorTokenPath = host.OperatorTokenPath;
             settings.Value.Limits ??= limits ?? new PhoneHomeLimits();
         }
+        configureRunnerSettings?.Invoke(settings.Value);
         if (connectionString is not null)
         {
             builder.Services.AddDbContext<AppDbContext>(o =>

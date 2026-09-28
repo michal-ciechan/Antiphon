@@ -494,23 +494,40 @@ public sealed class AgentTaskDispatcher
             var returning = await _db.AgentTasks
                 .Where(t => t.CapacityWaitRetained
                     && t.Status == AgentTaskStatus.Working
-                    && t.CapacityWaitId != null
-                    && (t.RunnerId == null || t.RunnerId == ""))
+                    && t.CapacityWaitId != null)
                 .OrderBy(t => t.CreatedAt)
                 .ToListAsync(ct);
             foreach (var retained in returning)
             {
-                if (active + dispatchedAgainstCap >= localLimit)
-                    break;
+                var runnerId = retained.RunnerId;
+                if (string.IsNullOrEmpty(runnerId))
+                {
+                    if (active + dispatchedAgainstCap >= localLimit)
+                        continue;
+                }
+                else
+                {
+                    var runnerLimit = _hostLimits.GetValueOrDefault(runnerId);
+                    var limit = runnerLimit?.Effective ?? _runners?.DeclaredCapacity(runnerId);
+                    if (limit is null || await _db.AgentTasks
+                            .Where(AgentTaskRoles.NotSpecialist)
+                            .CountAsync(t => t.RunnerId == runnerId
+                                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                                && !t.CapacityWaitRetained, ct) >= limit.Value)
+                        continue;
+                }
                 if (_capacityRecovery.IsEnabled
                     && !await TryRedeemCapacityWaitAsync(retained, CapacityRedemptionPath.Dispatch, ct))
                     continue;
-                if (!await _capacityRecovery.TryClaimCountedSlotAsync(
+                if (string.IsNullOrEmpty(runnerId)
+                    && !await _capacityRecovery.TryClaimCountedSlotAsync(
                         _db, localLimit, retainedReturn: true, ct))
-                    break;
+                    continue;
                 retained.CapacityWaitRetained = false;
-                dispatchedAgainstCap++;
-                active++;
+                if (string.IsNullOrEmpty(runnerId))
+                {
+                    active++;
+                }
             }
         }
         var skippedConcurrency = 0;

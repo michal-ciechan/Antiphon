@@ -463,9 +463,9 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     {
         if (!_slots.TryGetValue(runnerId, out var slot) || !slot.Entry.Enabled)
             throw new NotFoundException("SessionRunner", runnerId);
-        if (capacity < 1 || capacity > _settings.MaxCapacity)
+        if (capacity < 1 || capacity > slot.Entry.MaxCapacity)
             throw new ValidationException("capacity",
-                $"Capacity must be between 1 and {_settings.MaxCapacity}.", PhoneHomeProblemTypes.Capacity);
+                $"Capacity must be between 1 and {slot.Entry.MaxCapacity}.", PhoneHomeProblemTypes.Capacity);
         if (string.IsNullOrWhiteSpace(reason))
             throw new ValidationException("reason", "A reason is required.");
 
