@@ -137,6 +137,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
+        string? notReadyDiagnostic = null;
         return await CodexReadyWait.WaitAsync(
             async token =>
             {
@@ -152,6 +153,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                 {
                     if (message.StartsWith("codex-startup not-ready", StringComparison.Ordinal))
                     {
+                        notReadyDiagnostic = message;
                         _logger?.LogWarning(
                             "Session {SessionId} {Message}", _terminal.SessionId, message);
                     }
@@ -161,6 +163,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                             "Session {SessionId} {Message}", _terminal.SessionId, message);
                     }
                 },
+                OnNotReadyFrame = frame => StoreStartupCapture(frame, notReadyDiagnostic),
                 OnBootStatusThreshold = ms => _logger?.LogWarning(
                     "Session {SessionId} Codex MCP still observed after {Ms}ms; continuing the positive gate",
                     _terminal.SessionId,
@@ -169,6 +172,36 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
             writeAsync: (input, token) => _terminal.WriteAsync(input, token),
             isExited: () => _terminal.Exited.IsCompleted,
             ct: ct);
+    }
+
+    /// <summary>
+    /// CARD-0777: keep the frame a failed readiness wait last saw. Best effort: a capture that
+    /// cannot be written is logged and never changes the readiness verdict. Only the path is
+    /// logged (CARD-0574 R-56).
+    /// </summary>
+    private void StoreStartupCapture(CodexStartupSnapshot? frame, string? diagnostic)
+    {
+        try
+        {
+            var path = CodexStartupCaptureStore.Write(
+                CodexStartupCaptureStore.ResolveDirectory(_settings.CodexStartupCaptureDirectory),
+                _settings.CodexStartupCaptureKeep,
+                _terminal.SessionId,
+                frame,
+                diagnostic,
+                DateTimeOffset.UtcNow);
+            _logger?.LogWarning(
+                "Session {SessionId} codex-startup capture stored at {CapturePath}",
+                _terminal.SessionId,
+                path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            _logger?.LogWarning(
+                "Session {SessionId} codex-startup capture could not be stored: {Error}",
+                _terminal.SessionId,
+                ex.Message);
+        }
     }
 
     /// <summary>

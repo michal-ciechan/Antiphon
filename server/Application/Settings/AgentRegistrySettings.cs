@@ -68,6 +68,15 @@ public class AgentRegistrySettings
     /// not disable the positive ready gate or add time to <see cref="CodexReadyMaxWaitMs"/>.
     /// </summary>
     public int CodexBootStatusMaxWaitMs { get; set; } = 10_000;
+
+    /// <summary>
+    /// CARD-0777: where a Codex readiness failure stores the last rendered screen and raw output
+    /// tail, one file per failed session. Empty means <c>%TEMP%\antiphon-codex-startup</c>. The log
+    /// line carries only the path (CARD-0574 R-56). Newest <see cref="CodexStartupCaptureKeep"/>
+    /// files are kept.
+    /// </summary>
+    public string CodexStartupCaptureDirectory { get; set; } = "";
+    public int CodexStartupCaptureKeep { get; set; } = 50;
     public int CodexDoneQuietPeriodMs { get; set; } = 3000;
     public int CodexDoneMaxWaitMs { get; set; } = 300000;
 

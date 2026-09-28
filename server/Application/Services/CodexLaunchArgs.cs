@@ -76,4 +76,14 @@ public static class CodexLaunchArgs
     /// config key makes every Enter submit unconditionally.
     /// </summary>
     public const string DisablePasteBurst = "disable_paste_burst=true";
+
+    /// <summary>
+    /// CARD-0777: once <c>CODEX_HOME/version.json</c> records a release newer than the installed CLI
+    /// (and not dismissed), the TUI opens an "Update available" modal before the composer and waits
+    /// for a key. Every desktop Codex launch after 0.157.x was recorded against 0.156.1 sat on it
+    /// until the 60 s readiness gate killed it. Measured through ModernConPty on 0.156.1 and
+    /// 0.158.0 with a pending-update <c>version.json</c>: this override skips the modal. The server2
+    /// runner's seeded config.toml already sets the same key (CARD-0660).
+    /// </summary>
+    public const string DisableUpdateCheck = "check_for_update_on_startup=false";
 }

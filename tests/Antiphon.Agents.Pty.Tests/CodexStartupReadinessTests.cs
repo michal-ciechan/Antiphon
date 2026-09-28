@@ -188,6 +188,22 @@ public class CodexStartupReadinessTests
     }
 
     [Test]
+    public void V0156_and_v0158_update_modal_is_a_blocking_update()
+    {
+        // CARD-0777: this modal drew "enter continue · esc skip", classified Unknown, and was the
+        // screen behind CARD-0772's reason=Unknown desktop timeouts.
+        foreach (var modal in new[] { CodexStartupFixtures.V0156UpdateModal, CodexStartupFixtures.V0158UpdateModal })
+        {
+            modal.ShouldNotContain("Press enter to continue");
+            var observation = CodexStartupScreen.Classify(modal);
+            observation.IsReady.ShouldBeFalse();
+            observation.Reason.ShouldBe(CodexStartupReason.BlockingUpdate);
+        }
+
+        Ready(CodexStartupFixtures.P3).ShouldBeTrue("the dismissed-version banner above a live composer still passes");
+    }
+
+    [Test]
     [Arguments("sandbox setup")]
     [Arguments("input disabled")]
     public void Sandbox_setup_and_input_disabled_are_blockers(string phrase)

@@ -154,6 +154,42 @@ public class RunnerCodexAdapterReadyTests
         string.Join('\n', logger.Messages).ShouldContain("codex-startup not-ready");
     }
 
+    [Test]
+    public async Task Timeout_stores_the_last_frame_and_logs_only_its_path()
+    {
+        // CARD-0777: CARD-0772's desktop timeouts left reason=Unknown and no screen. The failure
+        // now keeps the frame in a capture file; the log carries the path, never the screen.
+        var captureDir = Path.Combine(Path.GetTempPath(), "c777-capture-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var logger = new CollectingLogger();
+            var modal = CodexStartupFixtures.V0158UpdateModal;
+            var client = new ScriptedCodexRunnerClient
+            {
+                StartupScreens = [modal],
+                RawOutput = "\u001b[2J" + SecretSentinel,
+            };
+            var adapter = NewAdapter(client, settleMs: 50, maxMs: 200, logger: logger, captureDir: captureDir);
+            await adapter.StartAsync(NewSpec(), CancellationToken.None);
+            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+
+            var file = Directory.GetFiles(captureDir, "codex-startup-*.txt").ShouldHaveSingleItem();
+            var body = await File.ReadAllTextAsync(file);
+            body.ShouldContain("Skip until next version");
+            body.ShouldContain("classifiedAs: BlockingUpdate");
+            body.ShouldContain("reason=BlockingUpdate");
+            body.ShouldContain(@"\e[2J" + SecretSentinel);
+            var log = string.Join("\n", logger.Messages);
+            log.ShouldContain(file);
+            log.ShouldNotContain("Skip until next version");
+            log.ShouldNotContain(SecretSentinel, Case.Sensitive, "R-56");
+        }
+        finally
+        {
+            try { Directory.Delete(captureDir, true); } catch (IOException) { }
+        }
+    }
+
     private static string LoadingScreen() =>
         CodexStartupFixtures.ReplaceModelValue(CodexStartupFixtures.P3, "loading");
 
@@ -166,7 +202,8 @@ public class RunnerCodexAdapterReadyTests
         int settleMs = 50,
         int maxMs = 5_000,
         int bootMs = 10_000,
-        ILogger? logger = null) =>
+        ILogger? logger = null,
+        string? captureDir = null) =>
         new(
             client,
             Options.Create(new AgentRegistrySettings
@@ -174,6 +211,8 @@ public class RunnerCodexAdapterReadyTests
                 CodexReadyQuietPeriodMs = settleMs,
                 CodexReadyMaxWaitMs = maxMs,
                 CodexBootStatusMaxWaitMs = bootMs,
+                CodexStartupCaptureDirectory = captureDir
+                    ?? Path.Combine(Path.GetTempPath(), "antiphon-tests-codex-startup"),
             }),
             logger);
 

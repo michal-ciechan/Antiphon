@@ -352,6 +352,61 @@ public class CodexReadyWaitTests
         (await gate).ShouldBeTrue();
     }
 
+    [Test]
+    public async Task Not_ready_hands_the_last_frame_over_once_and_keeps_it_out_of_the_diagnostic()
+    {
+        // CARD-0777: a timeout must leave the screen that explains it; the log line stays screen-free.
+        var time = new FakeTimeProvider();
+        var modal = CodexStartupFixtures.V0158UpdateModal;
+        var frames = new List<CodexStartupSnapshot?>();
+        var diagnostics = new List<string>();
+        var reads = 0;
+        var gate = CodexReadyWait.WaitAsync(
+            _ =>
+            {
+                Interlocked.Increment(ref reads);
+                return Task.FromResult<CodexStartupSnapshot?>(Snap(modal));
+            },
+            new CodexReadyWaitOptions
+            {
+                TimeProvider = time,
+                Settle = TimeSpan.FromMilliseconds(50),
+                MaxWait = TimeSpan.FromMilliseconds(200),
+                PollInterval = TimeSpan.FromMilliseconds(50),
+                OnDiagnostic = diagnostics.Add,
+                OnNotReadyFrame = frames.Add,
+            });
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
+        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(200));
+
+        (await gate).ShouldBeFalse();
+        frames.Count.ShouldBe(1);
+        frames[0].ShouldNotBeNull().RenderedScreen.ShouldBe(modal);
+        string.Join('\n', diagnostics).ShouldContain("reason=BlockingUpdate");
+        string.Join('\n', diagnostics).ShouldNotContain("Skip until next version");
+
+        var readyFrames = new List<CodexStartupSnapshot?>();
+        var readyReads = 0;
+        var ready = CodexReadyWait.WaitAsync(
+            _ =>
+            {
+                Interlocked.Increment(ref readyReads);
+                return Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.P3));
+            },
+            new CodexReadyWaitOptions
+            {
+                TimeProvider = time,
+                Settle = TimeSpan.FromMilliseconds(50),
+                MaxWait = TimeSpan.FromMilliseconds(5_000),
+                PollInterval = TimeSpan.FromMilliseconds(50),
+                OnNotReadyFrame = readyFrames.Add,
+            });
+        await WaitUntilAsync(() => Volatile.Read(ref readyReads) >= 1);
+        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(100));
+        (await ready).ShouldBeTrue();
+        readyFrames.ShouldBeEmpty();
+    }
+
     private static CodexReadyWaitOptions Options(
         FakeTimeProvider time, int settleMs = 1000, int maxMs = 60_000) => new()
     {
