@@ -61,7 +61,8 @@ maximum automatic attempts 3, and scan page size 100. The existing
 exhausted records remain `Held` with a Critical `ChannelReplyLost` incident and alert. A
 discovery pass pages through all unsettled candidates, so old withheld rows cannot hide a newer
 completed reply. Machine turns preceding the first channel binding have no chat destination and
-are excluded. Trailing-text checks inspect only published turns without a later opening prompt.
+are excluded. Trailing-text checks inspect only the latest published watermark for turns without
+a later opening prompt, or a closed turn with text that arrived before its next prompt.
 A scan signal is emitted after the next timer is armed, so fake-clock tests can advance safely.
 A confirmed broker refusal stays retryable with a recorded reason. An exception, cancellation,
 timeout or expired lease with no durable outcome is `Unknown`: publication may already have

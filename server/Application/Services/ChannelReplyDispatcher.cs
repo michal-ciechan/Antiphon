@@ -305,7 +305,7 @@ public sealed class ChannelReplyDispatcher
             if (page.Count < _settings.OutboundPageSize)
                 break;
         }
-        var trailingSessions = OpenTrailingWindows(db)
+        var trailingSessions = await OpenTrailingWindows(db)
             .OrderByDescending(p => p.PublishedAt)
             .Select(p => p.SessionId).Distinct().Take(_settings.OutboundPageSize).ToListAsync(ct);
         foreach (var sessionId in trailingSessions.Except(scannedSessions))
@@ -313,18 +313,34 @@ public sealed class ChannelReplyDispatcher
         return count;
     }
 
-    // A later turn-opening prompt permanently caps this publication's text interval. A queued
-    // prompt typed during the current turn is not an opener until a TurnEnd precedes it.
+    // A later turn-opening prompt caps this interval. A closed interval is still checked when
+    // text arrived before that opener in the same ingestion batch (CARD-0068). Only the newest
+    // published watermark per target/turn needs a follow-up check.
     private static IQueryable<ChannelOutboundPublication> OpenTrailingWindows(AppDbContext db) =>
         db.ChannelOutboundPublications.AsNoTracking()
             .Where(p => p.State == "Published"
-                && !db.TranscriptEntries.Any(t => t.AgentSessionId == p.SessionId
+                && !db.ChannelOutboundPublications.Any(newer => newer.SessionId == p.SessionId
+                    && newer.PromptSequence == p.PromptSequence && newer.Provider == p.Provider
+                    && newer.ConversationId == p.ConversationId && newer.State == "Published"
+                    && newer.LastTextSequence > p.LastTextSequence)
+                && (!db.TranscriptEntries.Any(t => t.AgentSessionId == p.SessionId
                     && t.Sequence > p.PromptSequence
                     && (t.Kind == TranscriptKinds.UserPrompt
                         || (t.Kind == TranscriptKinds.QueuedUserPrompt
                             && db.TranscriptEntries.Any(end => end.AgentSessionId == p.SessionId
                                 && end.Kind == TranscriptKinds.TurnEnd
-                                && end.Sequence > p.PromptSequence && end.Sequence < t.Sequence)))));
+                                && end.Sequence > p.PromptSequence && end.Sequence < t.Sequence)))
+                || db.TranscriptEntries.Any(text =>
+                    text.AgentSessionId == p.SessionId && text.Kind == TranscriptKinds.AssistantText
+                    && text.Sequence > p.LastTextSequence
+                    && !db.TranscriptEntries.Any(opening => opening.AgentSessionId == p.SessionId
+                        && opening.Sequence > p.PromptSequence && opening.Sequence <= text.Sequence
+                        && (opening.Kind == TranscriptKinds.UserPrompt
+                            || (opening.Kind == TranscriptKinds.QueuedUserPrompt
+                                && db.TranscriptEntries.Any(end => end.AgentSessionId == p.SessionId
+                                    && end.Kind == TranscriptKinds.TurnEnd
+                                    && end.Sequence > p.PromptSequence
+                                    && end.Sequence < opening.Sequence))))));
 
     /// <summary>
     /// The global abandon sweep, for the periodic supervision tick. The per-session sweep inside
