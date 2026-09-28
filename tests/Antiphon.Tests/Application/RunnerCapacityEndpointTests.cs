@@ -139,6 +139,12 @@ public sealed class RunnerCapacityEndpointTests
         using var response = await pending;
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await response.Content.ReadAsStringAsync()).ShouldContain(PhoneHomeProblemTypes.RequestTimeout);
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
+            Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(10), PhoneHomeFraming.Json)));
+        var currentDeadline = DateTime.UtcNow.AddSeconds(3);
+        while (host.Directory.DeclaredCapacity(host.AllowedRunnerId) is null && DateTime.UtcNow < currentDeadline)
+            await Task.Delay(20);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(10);
         await peer.EmitAsync(new PhoneHomeFrame(
             PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),

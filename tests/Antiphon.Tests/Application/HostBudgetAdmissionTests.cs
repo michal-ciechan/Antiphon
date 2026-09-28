@@ -102,7 +102,9 @@ public sealed partial class DispatchHoldVisibilityTests
         var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
             schema.ConnectionString, workspace.Path);
         var active = await SeedDispatchedAsync(schema, workspace.Path, at, runnerId: "server2");
-        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, at, runnerId: "server2");
+        var queuedDir = Path.Combine(workspace.Path, "queued-on-runner");
+        Directory.CreateDirectory(queuedDir);
+        var queued = await SeedQueuedAsync(schema, queuedDir, agentId, at, runnerId: "server2");
         await world.Budgets.UpsertAsync("server2", 1, "reserve", CancellationToken.None);
 
         (await world.Dispatcher.TickAsync(CancellationToken.None)).Dispatched.ShouldBe(0);
@@ -114,7 +116,7 @@ public sealed partial class DispatchHoldVisibilityTests
         }
 
         await SettleAsync(schema, active.Id, at);
-        (await world.Dispatcher.TickAsync(CancellationToken.None)).Dispatched.ShouldBe(1);
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).HeldOnRunner.ShouldBe(0);
     }
 
     [Test]
