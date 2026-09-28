@@ -449,7 +449,8 @@ public sealed record AgentTaskDetailDto(
     RequestedWorktreeBaseMode RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Auto,
     Guid? RequestedWorktreeBaseTaskId = null,
     string? WorktreeBaseBranch = null,
-    string? WorktreeBasePreviewJson = null);
+    string? WorktreeBasePreviewJson = null,
+    IReadOnlyList<InternalDecisionQuestionHistoryDto>? InternalDecisionQuestions = null);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

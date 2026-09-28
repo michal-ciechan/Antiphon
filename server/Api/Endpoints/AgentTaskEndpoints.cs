@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -227,6 +229,21 @@ public static class AgentTaskEndpoints
                 taskId, request?.Origin ?? AnswerOrigin.Web, ct));
         });
 
+        // CARD-0407. A worker asks before opening a human question. Only its own live task or
+        // exact current session credential may use this route; a manual/capability caller cannot.
+        tasks.MapPost("/{id}/decision-questions", async (
+            string id,
+            HttpContext http,
+            AgentTaskService tasksService,
+            AgentTaskDecisionQuestionService questions,
+            CancellationToken ct) =>
+        {
+            var caller = await tasksService.AuthenticateAsync(http.Request.Headers[TokenHeader].FirstOrDefault(), ct);
+            var taskId = await tasksService.ResolveTaskIdAsync(id, ct);
+            var request = await ReadDecisionQuestionAsync(http.Request, ct);
+            return Results.Ok(await questions.CheckAsync(taskId, request, caller, ct));
+        });
+
         // Steer a RUNNING delegate without cancelling it (CARD-0062). Same body shape as reply;
         // unlike reply it never changes status — a Queued task's brief is amended in place, a
         // running one gets the message WhenIdle, and a settled one is refused.
@@ -368,6 +385,50 @@ public static class AgentTaskEndpoints
             || path.Any(c => char.IsControl(c) || "<>\"|?*:".Contains(c)))
             return false;
         return path.Replace('\\', '/').Split('/').All(segment => segment is not ("" or "." or ".."));
+    }
+
+    private static async Task<InternalDecisionQuestionRequest> ReadDecisionQuestionAsync(
+        HttpRequest request, CancellationToken ct)
+    {
+        // Read a bounded UTF-8 document ourselves so malformed enum/GUID/JSON and unknown
+        // fields use the same 422 contract as semantic validation, rather than binder 400.
+        const int maxUtf8Bytes = InternalDecisionQuestionPolicy.MaxRequestChars * 4;
+        await using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        while (true)
+        {
+            var read = await request.Body.ReadAsync(chunk, ct);
+            if (read == 0)
+                break;
+            if (buffer.Length + read > maxUtf8Bytes)
+                throw new ValidationException("DecisionQuestion", "Decision question JSON is too large.",
+                    "decision_question_invalid");
+            buffer.Write(chunk, 0, read);
+        }
+        string json;
+        try
+        {
+            json = new UTF8Encoding(false, true).GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new ValidationException("DecisionQuestion", "Decision question JSON is not UTF-8.",
+                "decision_question_invalid");
+        }
+        if (json.Length > InternalDecisionQuestionPolicy.MaxRequestChars)
+            throw new ValidationException("DecisionQuestion", "Decision question JSON is too large.",
+                "decision_question_invalid");
+        try
+        {
+            return JsonSerializer.Deserialize<InternalDecisionQuestionRequest>(
+                json, InternalDecisionPolicy.JsonOptions)
+                ?? throw new JsonException("A question object is required.");
+        }
+        catch (JsonException)
+        {
+            throw new ValidationException("DecisionQuestion", "Decision question JSON is invalid.",
+                "decision_question_invalid");
+        }
     }
 
     private static DistillationFeedback ParseDistillationFeedback(string? verdict)
