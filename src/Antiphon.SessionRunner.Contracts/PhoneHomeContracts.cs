@@ -94,7 +94,13 @@ public enum PhoneHomeOperation
 
     /// <summary>CARD-0718. One metric's series over a named window.</summary>
     HostStatsSeries = 30,
+
+    /// <summary>CARD-0654. Change the runner's own persisted launch seat limit.</summary>
+    SetCapacity = 31,
 }
+
+public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
+public sealed record PhoneHomeSetCapacityResponse(int Capacity, bool Persisted, string? Path);
 
 public sealed record RunnerRetireRequest(bool Force, string Reason);
 
