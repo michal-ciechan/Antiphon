@@ -175,6 +175,56 @@ public sealed partial class DispatchHoldVisibilityTests
             (await db.AgentTasks.SingleAsync(t => t.Id == retained.Id)).CapacityWaitRetained.ShouldBeFalse();
     }
 
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(true, 1)]
+    public async Task C654_Runner_resume_ignores_parked_sessions_but_counts_active_ones(
+        bool hasActiveSession, int expectedResumed)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var at = UtcMs();
+        await using var world = CreateWorld(schema.ConnectionString,
+            new FakeTimeProvider(new DateTimeOffset(at, TimeSpan.Zero)), new FakeLease());
+        var parked = new List<Guid>();
+        for (var index = 0; index < 3; index++)
+        {
+            var task = await SeedDispatchedAsync(schema, workspace.Path, at.AddSeconds(index), runnerId: "server2");
+            await MarkRetainedAsync(schema, task.Id);
+            await AttachRunnerSessionAsync(schema, task.Id, workspace.Path, at);
+            parked.Add(task.Id);
+        }
+        if (hasActiveSession)
+        {
+            var active = await SeedDispatchedAsync(schema, workspace.Path, at.AddSeconds(10), runnerId: "server2");
+            await AttachRunnerSessionAsync(schema, active.Id, workspace.Path, at);
+        }
+        await world.Budgets.UpsertAsync("server2", 2, "drain below parked occupancy", CancellationToken.None);
+
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+
+        await using var db = CreateContext(schema);
+        (await db.AgentTasks.CountAsync(t => parked.Contains(t.Id) && !t.CapacityWaitRetained))
+            .ShouldBe(expectedResumed);
+    }
+
+    private static async Task AttachRunnerSessionAsync(
+        IsolatedTestSchema schema, Guid taskId, string directory, DateTime at)
+    {
+        await using var db = CreateContext(schema);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(), DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running, Cwd = directory, Cols = 80, Rows = 24,
+            CreatedAt = at, StartedAt = at, LastSeenAt = at, RunnerId = "server2",
+            RunnerStoreId = Guid.NewGuid(), RunnerCwd = "/work",
+        };
+        db.AgentSessions.Add(session);
+        task.AgentSessionId = session.Id;
+        await db.SaveChangesAsync();
+    }
+
     private static async Task MarkRetainedAsync(IsolatedTestSchema schema, Guid taskId)
     {
         await using var db = CreateContext(schema);

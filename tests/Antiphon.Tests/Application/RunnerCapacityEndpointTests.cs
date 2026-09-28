@@ -86,6 +86,10 @@ public sealed class RunnerCapacityEndpointTests
         response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
         peer.RequestCount(PhoneHomeOperation.SetCapacity).ShouldBe(0);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(2);
+        using var read = await host.Http.GetAsync(Path(host));
+        read.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var json = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("maxCapacity").GetInt32().ShouldBe(2);
         await peer.EmitAsync(new PhoneHomeFrame(
             PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
             Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(3), PhoneHomeFraming.Json)));
@@ -158,6 +162,20 @@ public sealed class RunnerCapacityEndpointTests
             await Task.Delay(20);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(6,
             "the runner's applied value catches up even after the request timed out");
+        var incidentDeadline = DateTime.UtcNow.AddSeconds(3);
+        await using var scope = host.App.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        while (await db.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.RunnerCapacityChanged) < 2
+            && DateTime.UtcNow < incidentDeadline)
+            await Task.Delay(20);
+        var incidents = await db.AgentIncidents
+            .Where(i => i.Kind == AgentIncidentKind.RunnerCapacityChanged)
+            .OrderBy(i => i.CreatedAt).ToListAsync();
+        incidents.Count.ShouldBe(2);
+        incidents.ShouldContain(i => i.Severity == AlertSeverity.Warning
+            && i.FailureReason == PhoneHomeProblemTypes.RequestTimeout);
+        incidents.ShouldContain(i => i.Severity == AlertSeverity.Info
+            && i.Message.Contains("10 -> 6") && i.Message.Contains("heartbeat"));
     }
 
     [Test]

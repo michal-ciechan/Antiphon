@@ -363,7 +363,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             var epoch = ticket.Epoch;
             connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
-                ticket.Capacity, ticket.Platform, ticket.Capabilities, slot.Entry.MaxCapacity);
+                ticket.Capacity, ticket.Platform, ticket.Capabilities, slot.Entry.MaxCapacity,
+                RecordHeartbeatCapacityChangeAsync);
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;
@@ -456,6 +457,26 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             || live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
             return null;
         return live.Capacity;
+    }
+
+    public int MaxCapacity(string runnerId) =>
+        _slots.TryGetValue(runnerId, out var slot) && slot.Entry.Enabled
+            ? slot.Entry.MaxCapacity
+            : throw new NotFoundException("SessionRunner", runnerId);
+
+    private async Task RecordHeartbeatCapacityChangeAsync(
+        string runnerId, int oldCapacity, int capacity, CancellationToken ct)
+    {
+        await using var scope = _scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.AgentIncidents.Add(new Antiphon.Server.Domain.Entities.AgentIncident
+        {
+            Id = Guid.NewGuid(), Kind = AgentIncidentKind.RunnerCapacityChanged,
+            Severity = AlertSeverity.Info, CreatedAt = _clock.GetUtcNow().UtcDateTime,
+            Message = $"Runner '{runnerId}' capacity {oldCapacity} -> {capacity} " +
+                "(reconciled from runner heartbeat after capacity push)",
+        });
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<PhoneHomeSetCapacityResponse> SetDeclaredCapacityAsync(

@@ -518,8 +518,10 @@ public sealed class AgentTaskDispatcher
                             .CountAsync(t => t.RunnerId == runnerId
                                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
                                 && !t.CapacityWaitRetained, ct);
+                    // A retained task already owns its process. Its session (and the sessions
+                    // of other retained tasks) cannot consume a new launch seat on return.
                     var occupied = await CountRunnerOccupancyAsync(runnerId, retained.Id, ct,
-                        retained.AgentSessionId);
+                        excludeRetainedSessions: true);
                     if (limit is null || Math.Max(countedTasks, occupied)
                         + resumedRemote.GetValueOrDefault(runnerId) >= limit.Value)
                         continue;
@@ -1124,11 +1126,13 @@ public sealed class AgentTaskDispatcher
     }
 
     private async Task<int> CountRunnerOccupancyAsync(
-        string runnerId, Guid exceptTaskId, CancellationToken ct, Guid? excludeSessionId = null)
+        string runnerId, Guid exceptTaskId, CancellationToken ct, bool excludeRetainedSessions = false)
     {
         var sessions = await _db.AgentSessions.CountAsync(
             s => s.RunnerId == runnerId
-                && (excludeSessionId == null || s.Id != excludeSessionId)
+                && (!excludeRetainedSessions || !_db.AgentTasks.Any(t =>
+                    t.AgentSessionId == s.Id && t.RunnerId == runnerId
+                    && t.Status == AgentTaskStatus.Working && t.CapacityWaitRetained))
                 && (s.Status == SessionStatus.Created
                     || s.Status == SessionStatus.Starting
                     || s.Status == SessionStatus.Running

@@ -60,13 +60,13 @@ public static class SessionRunnerEndpoints
 
         app.MapGet("/api/session-runners/{runnerId}/capacity", async (
             string runnerId, PhoneHomeRunnerDirectory directory, [FromServices] HostBudgetService budgets,
-            IOptions<PhoneHomeRunnerSettings> settings, [FromServices] AppDbContext db, CancellationToken ct) =>
-            Results.Ok(await CapacityAsync(runnerId, directory, budgets, settings.Value, db, ct)))
+            [FromServices] AppDbContext db, CancellationToken ct) =>
+            Results.Ok(await CapacityAsync(runnerId, directory, budgets, db, ct)))
             .WithTags("SessionRunners");
 
         app.MapPut("/api/session-runners/{runnerId}/capacity", async (
             string runnerId, RunnerCapacityRequest body, PhoneHomeRunnerDirectory directory,
-            [FromServices] HostBudgetService budgets, IOptions<PhoneHomeRunnerSettings> settings,
+            [FromServices] HostBudgetService budgets,
             [FromServices] AppDbContext db, TimeProvider clock, CancellationToken ct) =>
         {
             var reason = body.Reason?.Trim() ?? "";
@@ -98,7 +98,7 @@ public static class SessionRunnerEndpoints
                     $"(runner persisted at {applied.Path}): {reason}",
             });
             await db.SaveChangesAsync(ct);
-            return Results.Ok(await CapacityAsync(runnerId, directory, budgets, settings.Value, db, ct));
+            return Results.Ok(await CapacityAsync(runnerId, directory, budgets, db, ct));
         }).WithTags("SessionRunners");
 
         app.MapPost("/api/session-runners/{runnerId}/drain", async (
@@ -385,7 +385,7 @@ public static class SessionRunnerEndpoints
 
     private static async Task<RunnerCapacityDto> CapacityAsync(
         string runnerId, PhoneHomeRunnerDirectory directory, HostBudgetService budgets,
-        PhoneHomeRunnerSettings settings, AppDbContext db, CancellationToken ct)
+        AppDbContext db, CancellationToken ct)
     {
         if (runnerId == PhoneHomeProtocol.LocalRunnerId
             || !directory.KnownRunnerIds.Contains(runnerId, StringComparer.Ordinal))
@@ -398,7 +398,7 @@ public static class SessionRunnerEndpoints
         var pending = await db.AgentTasks.AsNoTracking().CountAsync(t => t.RunnerId == runnerId
             && t.Status == AgentTaskStatus.Queued && t.AgentSessionId == null
             && t.RemoteWorktreePath != null, ct);
-        return new RunnerCapacityDto(runnerId, limit.Declared, settings.MaxCapacity,
+        return new RunnerCapacityDto(runnerId, limit.Declared, directory.MaxCapacity(runnerId),
             limit.Configured, limit.Effective, sessions + pending,
             status.Available, status.DispatchEligible);
     }
