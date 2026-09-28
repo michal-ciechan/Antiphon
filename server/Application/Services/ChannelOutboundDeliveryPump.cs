@@ -275,6 +275,12 @@ public sealed class ChannelOutboundDeliveryPump
             await _db.SaveChangesAsync(ct);
             if (ProbeBarrierAsync is { } beforeCallBarrier)
                 await beforeCallBarrier("before-producer-call", delivery.Id, ct);
+            var callAt = UtcNow();
+            if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d =>
+                    d.Id == delivery.Id && d.Version == delivery.Version
+                    && d.LeaseOwner == _owner && d.LeaseUntil > callAt
+                    && d.State == ChannelOutboundDeliveryState.Publishing, ct))
+                return;
             try
             {
                 await _producer.SendAsync(reply, ct);
