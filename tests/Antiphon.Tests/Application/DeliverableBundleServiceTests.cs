@@ -15,7 +15,7 @@ using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>CARD-0337 S1: document detection, source copy/zip, PDF failure still keeps sources.</summary>
+/// <summary>Document eligibility and byte-preserving source copy/ZIP behavior.</summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class DeliverableBundleServiceTests
