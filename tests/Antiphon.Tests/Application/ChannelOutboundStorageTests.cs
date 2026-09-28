@@ -629,26 +629,65 @@ public sealed class ChannelOutboundStorageTests
             var second = Path.Combine(root, "second.md");
             await File.WriteAllTextAsync(first, "# First");
             await File.WriteAllTextAsync(second, "# Second");
+            var firstBytes = "# First"u8.ToArray();
+            var secondBytes = "# Second"u8.ToArray();
             var manifest = new DeliverableBundleService.SourceManifest(1, true,
             [
-                new("docs/first.md", "first.md", null, 7, new string('a', 64)),
-                new("docs/second.md", "second.md", null, 8, new string('b', 64)),
+                new("docs/first.md", "first.md", null, firstBytes.Length,
+                    Convert.ToHexString(SHA256.HashData(firstBytes)).ToLowerInvariant()),
+                new("docs/second.md", "second.md", null, secondBytes.Length,
+                    Convert.ToHexString(SHA256.HashData(secondBytes)).ToLowerInvariant()),
             ], []);
             await File.WriteAllTextAsync(Path.Combine(root, DeliverableBundleService.SourceManifestName),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
             var task = new Antiphon.Server.Domain.Entities.AgentTask { DeliverableBundleDir = root };
             var both = new[]
             {
-                new OutboundAttachment { Kind = AttachmentKind.File, Name = "first.md", Source = first, Content = "# First"u8.ToArray() },
-                new OutboundAttachment { Kind = AttachmentKind.File, Name = "second.md", Source = second, Content = "# Second"u8.ToArray() },
+                new OutboundAttachment { Kind = AttachmentKind.File, Name = "first.md", Source = first, Content = firstBytes },
+                new OutboundAttachment { Kind = AttachmentKind.File, Name = "second.md", Source = second, Content = secondBytes },
             };
             ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both).ShouldBeTrue();
             ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both[..1]).ShouldBeFalse();
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest,
+                [both[0] with { Content = "# Alter"u8.ToArray() }, both[1]]).ShouldBeFalse();
 
             File.Delete(second);
             ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both).ShouldBeFalse();
             File.Delete(first);
             ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, manifest, both).ShouldBeFalse();
+
+            static byte[] Pack(byte[] firstContent, byte[] secondContent)
+            {
+                using var stream = new MemoryStream();
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    foreach (var (name, content) in new[]
+                        { ("docs/first.md", firstContent), ("docs/second.md", secondContent) })
+                    {
+                        using var entry = archive.CreateEntry(name).Open();
+                        entry.Write(content);
+                    }
+                }
+                return stream.ToArray();
+            }
+            var zipPath = Path.Combine(root, "bundle-sources.zip");
+            var zipBytes = Pack(firstBytes, secondBytes);
+            await File.WriteAllBytesAsync(zipPath, zipBytes);
+            var zipManifest = new DeliverableBundleService.SourceManifest(1, true,
+            [
+                new("docs/first.md", "bundle-sources.zip", "docs/first.md", firstBytes.Length,
+                    Convert.ToHexString(SHA256.HashData(firstBytes)).ToLowerInvariant()),
+                new("docs/second.md", "bundle-sources.zip", "docs/second.md", secondBytes.Length,
+                    Convert.ToHexString(SHA256.HashData(secondBytes)).ToLowerInvariant()),
+            ], []);
+            await File.WriteAllTextAsync(Path.Combine(root, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(zipManifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var zipped = new OutboundAttachment { Kind = AttachmentKind.File, Name = "bundle-sources.zip",
+                Source = zipPath, Content = zipBytes };
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, zipManifest, [zipped])
+                .ShouldBeTrue();
+            ChannelOutboundDeliveryPump.HasCompleteSourceAttachments(task, zipManifest,
+                [zipped with { Content = Pack(firstBytes, "# Changed"u8.ToArray()) }]).ShouldBeFalse();
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.IO.Compression;
 using Confluent.Kafka;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
@@ -395,19 +396,76 @@ public sealed class ChannelOutboundDeliveryPump
         DeliverableBundleService.SourceManifest manifest,
         IReadOnlyList<OutboundAttachment> attachments)
     {
-        if (manifest.Sources is not { Count: > 0 })
+        if (manifest.Sources is not { Count: > 0 and <= 256 })
             return false;
+        const long maxSourceBytes = 64L * 1024 * 1024;
+        long sourceBytes = 0;
+        foreach (var source in manifest.Sources)
+        {
+            if (source.Length < 0 || source.Length > maxSourceBytes - sourceBytes)
+                return false;
+            sourceBytes += source.Length;
+        }
         var required = manifest.Sources.Select(s => s.StoredFile)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var files = DeliverableBundleService.ListAttachableFiles(task);
         if (files.Count != required.Length)
             return false;
-        var attached = attachments.Where(a => a.Source is not null && a.Content is not null)
-            .Select(a => a.Source!).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return files.All(attached.Contains)
-            && required.All(name => files.Any(path =>
-                string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase)));
+        if (!required.All(name => files.Any(path =>
+                string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase))))
+            return false;
+        foreach (var source in manifest.Sources)
+        {
+            var file = files.SingleOrDefault(path =>
+                string.Equals(Path.GetFileName(path), source.StoredFile, StringComparison.OrdinalIgnoreCase));
+            var attached = attachments.Where(a => a.Source is not null && a.Content is not null
+                && string.Equals(a.Source, file, StringComparison.OrdinalIgnoreCase)).Take(2).ToArray();
+            if (file is null || attached.Length != 1)
+                return false;
+            var content = attached[0].Content!;
+            if (source.ZipEntry is null)
+            {
+                if (content.LongLength != source.Length || !MatchesHash(content, source.Sha256))
+                    return false;
+                continue;
+            }
+            try
+            {
+                using var archive = new ZipArchive(new MemoryStream(content, writable: false),
+                    ZipArchiveMode.Read);
+                var entries = archive.Entries.Where(entry =>
+                    string.Equals(entry.FullName, source.ZipEntry, StringComparison.Ordinal))
+                    .Take(2).ToArray();
+                if (entries.Length != 1 || entries[0].Length != source.Length)
+                    return false;
+                using var stream = entries[0].Open();
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[81920];
+                long length = 0;
+                int read;
+                while ((read = stream.Read(buffer)) > 0)
+                {
+                    if (read > source.Length - length)
+                        return false;
+                    hash.AppendData(buffer, 0, read);
+                    length += read;
+                }
+                if (length != source.Length || !string.Equals(
+                        Convert.ToHexString(hash.GetHashAndReset()), source.Sha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            catch (Exception ex) when (ex is InvalidDataException or IOException)
+            {
+                return false;
+            }
+        }
+        return true;
     }
+
+    private static bool MatchesHash(byte[] content, string expected) =>
+        string.Equals(Convert.ToHexString(SHA256.HashData(content)), expected,
+            StringComparison.OrdinalIgnoreCase);
 
     private static void Fallback(ChannelOutboundDelivery delivery, string reason)
     {
