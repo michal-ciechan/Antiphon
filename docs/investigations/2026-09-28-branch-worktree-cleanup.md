@@ -24,11 +24,11 @@ Housekeeping run over `feat/card-task-<8hex>` remote branches and `C:\Antiphon\w
 
 ## Removal failures and execution skips
 
-- `025d739b` (Succeeded): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \?\<path>`
-- `42c6b627` (Canceled): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \?\<path>`
-- `496f4fcd` (Succeeded): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \?\<path>`
+- `025d739b` (Succeeded): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \\?\<path>`
+- `42c6b627` (Canceled): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \\?\<path>`
+- `496f4fcd` (Succeeded): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \\?\<path>`
 - `95d13463` (Succeeded): first push got GitHub 500 (remote rejected, Internal Server Error); retry with same lease succeeded
-- `a31d53c1` (Failed): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \?\<path>`
+- `a31d53c1` (Failed): plain `git worktree remove` failed deleting files (Filename too long; core.longpaths unset) but git still deleted the admin dir, leaving an unregistered checkout; after re-checking task terminal, finished with `rd /s /q \\?\<path>`
 - `ed926edd` (Succeeded): removal was interrupted by my 560s batch timeout mid-delete (.git file gone, admin dir present); re-checked terminal, finished with `rd /s /q`, then `git worktree prune`
 
 Net effect: every SAFE item ended deleted; no removal remains outstanding. Root cause of the long-path failures: `core.longpaths` is not set on C:\src\Antiphon, so `git worktree remove` cannot delete deep node_modules/bin paths and (git behaviour) still drops `.git/worktrees/<id>`. Later batches ran with `git -c core.longpaths=true`. Any future cleanup tooling should do the same.
