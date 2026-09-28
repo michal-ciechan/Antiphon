@@ -48,8 +48,8 @@ public sealed class WorkerWorkspaceDefaultStorageTests
         source.IsNullable.ShouldBeTrue();
         project.GetColumnType().ShouldBe("text");
         source.GetColumnType().ShouldBe("text");
-        project.GetValueConverter().ShouldNotBeNull();
-        source.GetValueConverter().ShouldNotBeNull();
+        project.GetProviderClrType().ShouldBe(typeof(string));
+        source.GetProviderClrType().ShouldBe(typeof(string));
         project.GetDefaultValue().ShouldBeNull();
         source.GetDefaultValue().ShouldBeNull();
         ((int)WorkspaceMode.Shared).ShouldBe(0);

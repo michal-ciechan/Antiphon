@@ -131,7 +131,7 @@ it('submits commitOnSettle only when the operator changes the select', async () 
   await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ commitOnSettle: 'Off' })))
 })
 
-function seedWorkspaceProject(projectValue: ProjectDto, put: ReturnType<typeof vi.fn>) {
+function seedWorkspaceProject(projectValue: ProjectDto, put: (body: unknown) => void) {
   server.use(
     http.get('/api/projects', () => HttpResponse.json([projectValue])),
     http.get('/api/boards', () => HttpResponse.json([])),

@@ -510,6 +510,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           />
           <Select
             label="Default worker workspace"
+            allowDeselect={false}
             description="Fresh tasks use this project's choice. Inherit follows the server's global setting. Shared keeps tasks in the project's checkout."
             data={[
               { value: 'Inherit', label: `Inherit (${(editingProject?.effectiveWorkerWorkspace ?? 'Worktree').toLowerCase()})` },
