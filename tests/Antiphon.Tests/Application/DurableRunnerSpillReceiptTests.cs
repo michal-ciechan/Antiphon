@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Dtos;
