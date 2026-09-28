@@ -1,5 +1,9 @@
 # CARD-0650: expectation watchdog
 
+**Continuation, 2026-09-28:** S1-S4 source is now present. Use the
+[current continuation plan](2026-09-28-card-0650-expectation-watchdog-continuation-plan.md)
+for remaining work and checkpoints; this document retains the original design and round history.
+
 Plan date: 2026-09-24. Plan task: `af7c5c18`. Inspected source:
 `c5e32c2f9029cd1c8bb2132bbda59bcd44bd1424`.
 Card: `6cb4a3b9-f903-48cc-bb22-e2623c7e9229`, board
