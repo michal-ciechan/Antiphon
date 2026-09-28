@@ -454,7 +454,7 @@ Same committed S1-S3 group, one isolated test build reused by the remaining rows
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c519/` | publication | `/*/*/ChannelOutboundPublicationTests/*` | V-1..V-16, V-19, V-21, V-22 | all 69 argument results, 0 failed/skipped | 69 | 15 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c519/` | publication | `/*/*/ChannelOutboundPublicationTests/*` | V-1..V-16, V-19, V-21, V-22 | all 71 argument results, 0 failed/skipped | 71 | 15 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1-S3 | CP-1 | crash | `/*/*/ChannelOutboundCrashTests/*` | V-17, V-18 | all 18 argument results, 0 failed/skipped | 18 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | CP-1 | broker-receipt | `/*/*/ChannelOutboundTransportTests/*` | V-20 | all 3 argument results, 0 failed/skipped | 3 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S3 | CP-1 | existing-replies | `/*/*/(ChannelReplyDurabilityTests*)\|(ChannelFollowUpAttachmentTests*)\|(ChannelMachineTurnTextTests*)\|(ChannelBatchingTests*)\|(ChannelPromptCorrelationTests*)/*` | R-1..R-5 | all 5 classes and >= 99 executed, 0 failed/skipped | 99 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |

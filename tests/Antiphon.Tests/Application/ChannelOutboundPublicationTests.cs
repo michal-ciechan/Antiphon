@@ -81,6 +81,45 @@ public class ChannelOutboundPublicationTests
     }
 
     [Test]
+    public async Task C519_Trailing_discovery_prioritizes_recent_transcript_over_idle_publications()
+    {
+        await using var f = await ChannelOutboundFixture.CreateAsync();
+        var (sourceId, _, _) = await f.CompleteSourceTurnAsync("trailing");
+        await using (var db = f.CreateContext())
+        {
+            await db.ChannelOutboundPublications.Where(p => p.SessionId == f.SessionId)
+                .ExecuteUpdateAsync(set => set.SetProperty(p => p.PublishedAt,
+                    DateTime.UtcNow.AddDays(-1)));
+            for (var i = 0; i < 2; i++)
+            {
+                var sessionId = Guid.NewGuid();
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, DefinitionName = "idle", AgentKind = AgentKind.ClaudeCode,
+                    Status = SessionStatus.Running, Cwd = f.Harness.TempRoot, Cols = 120, Rows = 30,
+                    CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                });
+                db.ChannelOutboundPublications.Add(new ChannelOutboundPublication
+                {
+                    Id = Guid.NewGuid(), SessionId = sessionId, Path = "main",
+                    Provider = "telegram", ConversationId = $"idle-{i}",
+                    PromptSequence = 1, FirstTextSequence = 2, LastTextSequence = 2,
+                    OriginalResponse = "Old idle answer", EnvelopeJson = "{}",
+                    State = "Published", CreatedAt = now, PublishedAt = now,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        await f.StartWorkerAsync();
+        (await f.ReadPublicationsAsync(sourceId, "trailing"))
+            .ShouldHaveSingleItem().State.ShouldBe("Published");
+        f.Producer.Accepted.Count.ShouldBe(2);
+        f.Producer.Accepted[1].Text.ShouldContain("Late middle sentinel; Late tail sentinel.");
+    }
+
+    [Test]
     [Arguments("main-no-reply")]
     [Arguments("machine-no-reply")]
     [Arguments("system-text")]

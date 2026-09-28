@@ -330,8 +330,17 @@ public sealed class ChannelReplyDispatcher
         }
         var trailingSessions = await OpenTrailingWindows(db)
             .GroupBy(p => p.SessionId)
-            .Select(group => new { SessionId = group.Key, LastPublishedAt = group.Max(p => p.PublishedAt) })
-            .OrderByDescending(group => group.LastPublishedAt).ThenBy(group => group.SessionId)
+            .Select(group => new
+            {
+                SessionId = group.Key,
+                LastTranscriptAt = db.TranscriptEntries
+                    .Where(t => t.AgentSessionId == group.Key)
+                    .Max(t => (DateTime?)t.CreatedAt),
+                LastPublishedAt = group.Max(p => p.PublishedAt),
+            })
+            .OrderByDescending(group => group.LastTranscriptAt)
+            .ThenByDescending(group => group.LastPublishedAt)
+            .ThenBy(group => group.SessionId)
             .Take(_settings.OutboundPageSize).Select(group => group.SessionId).ToListAsync(ct);
         foreach (var sessionId in trailingSessions.Except(scannedSessions))
             await DispatchFollowUpAsync(sessionId, ct);
