@@ -31,7 +31,8 @@ public sealed record ExpectationSendResult(
     string Reason,
     bool AttemptCommitted,
     DateTime? ReceiptAt = null,
-    bool Submitted = false)
+    bool Submitted = false,
+    long? ReceiptSequence = null)
 {
     public static ExpectationSendResult Refuse(string reason) => new(ExpectationSendOutcome.Refused, reason, false);
 }

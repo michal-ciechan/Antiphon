@@ -176,6 +176,32 @@ public sealed class ExpectationEpisodeTests
         due.NudgedSubjectKeys!.OrderBy(key => key, StringComparer.Ordinal)
             .ShouldBe(new[] { localSubject, remoteSubject }.OrderBy(key => key, StringComparer.Ordinal).ToArray());
 
+        // The initial prompt is delivered and explicitly acknowledged at t+11. Its unresolved
+        // capacity subjects may be nudged again only thirty minutes after that answer.
+        await using (var db = world.Db())
+        {
+            var initial = await db.ExpectationNudges.SingleAsync(n => n.Id == due.NudgeId);
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == world.OwnedSessionId);
+            initial.AttemptState = ExpectationAttemptState.Submitted;
+            initial.DestinationSessionId = world.OwnedSessionId;
+            initial.DestinationGeneration = Antiphon.SessionRunner.Contracts.SessionGeneration.Normalize(session.StartedAt);
+            initial.BaselineSequence = 0;
+            initial.AttemptStartedAt = t0.AddMinutes(10);
+            initial.AnswerDueAt = t0.AddMinutes(15);
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 1,
+                Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt, t0.AddMinutes(11), initial.Body));
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(world.OwnedSessionId, 2,
+                Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText, t0.AddMinutes(11),
+                ExpectationPromptFormatter.AckMarker(initial.Id) + "\nI will inspect the capacity gap."));
+            await db.SaveChangesAsync();
+        }
+        clock.SetUtcNow(new DateTimeOffset(t0.AddMinutes(11), TimeSpan.Zero));
+        await using (var db = world.Db())
+            await new ExpectationResponseService(db, clock, NoExpectationCatchUp.Instance,
+                new ExpectationTimingSettings()).ReconcileAsync(world.Directive, CancellationToken.None);
+        await using (var db = world.Db())
+            (await db.ExpectationNudges.SingleAsync(n => n.Id == due.NudgeId)).AnsweredAt.ShouldBe(t0.AddMinutes(11));
+
         // A new ordinary condition inside the cooldown waits. Its runner has no target, so it
         // does not fill a lane and end the capacity episodes.
         var silent = Guid.NewGuid();
@@ -219,10 +245,10 @@ public sealed class ExpectationEpisodeTests
             await db.SaveChangesAsync();
         }
 
-        // Thirty minutes after the capacity nudge, the unresolved deficit is reminded once.
-        clock.SetUtcNow(new DateTimeOffset(t0.AddMinutes(39), TimeSpan.Zero));
-        (await Scan(world, clock)).NudgedSubjectKeys.ShouldBeNull();
+        // Thirty minutes after the answer, the unresolved deficit is prompted once.
         clock.SetUtcNow(new DateTimeOffset(t0.AddMinutes(40), TimeSpan.Zero));
+        (await Scan(world, clock)).NudgedSubjectKeys.ShouldBeNull();
+        clock.SetUtcNow(new DateTimeOffset(t0.AddMinutes(41), TimeSpan.Zero));
         var reminder = await Scan(world, clock);
         reminder.NudgesCommitted.ShouldBe(1);
         reminder.NudgedSubjectKeys!.ShouldContain(localSubject);
@@ -235,24 +261,24 @@ public sealed class ExpectationEpisodeTests
                 .ToListAsync();
             capacity.Count.ShouldBe(2);
             capacity.ShouldAllBe(row => row.FirstObservedAt == t0 && row.ResolvedAt == null);
-            (await read.ExpectationWatchStates.SingleAsync()).NextNudgeAt.ShouldBe(t0.AddMinutes(50));
+            (await read.ExpectationWatchStates.SingleAsync()).NextNudgeAt.ShouldBe(t0.AddMinutes(51));
         }
 
         // A semantic config edit retires old episodes and starts the capacity clock afresh.
         var changed = Clone(world.Directive);
         changed.Targets[0].InFlightTarget = 2;
-        clock.SetUtcNow(new DateTimeOffset(t0.AddMinutes(41), TimeSpan.Zero));
+        clock.SetUtcNow(new DateTimeOffset(t0.AddMinutes(42), TimeSpan.Zero));
         (await ScanWith(world, changed, clock)).NudgesCommitted.ShouldBe(0);
         await using (var read = world.Db())
         {
             var episodes = await read.ExpectationEpisodes.AsNoTracking().ToListAsync();
             episodes.Where(row => row.ConfigDigest == world.Digest).ShouldAllBe(row => row.ResolvedAt != null);
             episodes.Where(row => row.ConfigDigest == world.Digest && row.Kind == ExpectationEpisodeKind.CapacityDeficit)
-                .ShouldAllBe(row => row.ResolvedAt == t0.AddMinutes(41));
+                .ShouldAllBe(row => row.ResolvedAt == t0.AddMinutes(42));
             var fresh = episodes.Where(row => row.ConfigDigest == ExpectationDirectiveDigest.Compute(changed)
                 && row.Kind == ExpectationEpisodeKind.CapacityDeficit).ToList();
             fresh.Count.ShouldBe(2);
-            fresh.ShouldAllBe(row => row.FirstObservedAt == t0.AddMinutes(41) && row.ResolvedAt == null);
+            fresh.ShouldAllBe(row => row.FirstObservedAt == t0.AddMinutes(42) && row.ResolvedAt == null);
         }
     }
 
