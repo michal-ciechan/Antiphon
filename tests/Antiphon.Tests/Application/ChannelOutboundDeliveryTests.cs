@@ -171,6 +171,8 @@ public sealed class ChannelOutboundDeliveryTests
         await seed.SaveChangesAsync();
         try
         {
+            var sourceSessionId = Guid.NewGuid();
+            var sourceTaskId = Guid.NewGuid();
             async Task SendOneAsync(int sequence)
             {
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
@@ -180,13 +182,18 @@ public sealed class ChannelOutboundDeliveryTests
                 var reply = new ChannelReply { Channel = "slack",
                     ConversationId = channelId.ToString("N"), Text = "reply " + sequence };
                 (await service.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
-                    new ChannelOutboundSource(Guid.NewGuid(), sequence, 1, 2, "main", []),
+                    new ChannelOutboundSource(sourceSessionId, sequence, 1, 2, "main", [], sourceTaskId),
                     CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
             }
-            await Task.WhenAll(SendOneAsync(1), SendOneAsync(2));
+            await Task.WhenAll(SendOneAsync(1), SendOneAsync(1));
+            (await seed.ChannelOutboundDeliveries.AsNoTracking()
+                .CountAsync(d => d.ChannelId == channelId)).ShouldBe(1);
+            await SendOneAsync(2);
             var deliveries = await seed.ChannelOutboundDeliveries.AsNoTracking()
                 .Where(d => d.ChannelId == channelId).ToListAsync();
             deliveries.Count.ShouldBe(2);
+            deliveries.Select(d => d.SourceKey).Distinct().Count().ShouldBe(2);
+            deliveries.All(d => d.SourceTaskId == sourceTaskId).ShouldBeTrue();
             deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Pending).ShouldBe(1);
             deliveries.Count(d => d.ConversionOutcome == "QueueOverflow").ShouldBe(1);
         }
