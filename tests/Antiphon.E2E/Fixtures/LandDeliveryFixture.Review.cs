@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
@@ -70,10 +71,10 @@ public sealed partial class LandDeliveryFixture
             agentId = agent.Id;
         }
 
-        using var scope = _app.Services.CreateScope();
-        var started = await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(
-            agentId, new StartAgentRequest(Prompt: marker + "\nReview the owned change.", IgnoreSubscriptionQuota: true),
-            CancellationToken.None);
+        using var response = await _http.PostAsJsonAsync("/api/agents/" + agentId + "/start",
+            new StartAgentRequest(Prompt: marker + "\nReview the owned change.", IgnoreSubscriptionQuota: true));
+        response.EnsureSuccessStatusCode();
+        var started = (await response.Content.ReadFromJsonAsync<AgentDetailDto>()).ShouldNotBeNull();
         var sessionId = Guid.Parse(started.PersistentSessionId!);
         await using (var db = CreateContext())
         {
