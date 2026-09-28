@@ -17,7 +17,7 @@ Fix review defects D1-D3 and D5 on the pinned 7fb7bc5cb commit. Runner pointers 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c649retry/` | unit | `/*/*/*/*[Category=Unit]` | R-2, pointer sizing | Whole Unit lane; 0 failed except triaged inherited host-load flakes | 1 | 8 |
-| CP-2 | S1 | `CP-1, --no-build` | integration | `/*/*/(PhoneHomeTaskDispatchProjectionTests*)\|(DurableRunnerSpillReceiptTests*)\|(PhoneHomeSpillTransportTests*)/*` | V-1, V-2, R-1 | All three full classes; 0 failed/skipped; recorded UserPrompt and original brief assertions execute | 3 | 12 |
+| CP-2 | S1 | `CP-1 (-NoBuild)` | integration | `/*/*/(PhoneHomeTaskDispatchProjectionTests*)\|(DurableRunnerSpillReceiptTests*)\|(PhoneHomeSpillTransportTests*)/*` | V-1, V-2, R-1 | All three full classes; 0 failed/skipped; recorded UserPrompt and original brief assertions execute | 3 | 12 |
 
 Run the closed list with `dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-28-card-0649-bound-brief-retry-plan.md`, then `wait` while exit is 75. Each row's driver obtains a host build slot. Code or plan changes after a red row require a new committed slice and a rerun of the affected row.
 
