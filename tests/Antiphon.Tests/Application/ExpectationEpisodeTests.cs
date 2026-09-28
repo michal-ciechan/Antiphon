@@ -272,10 +272,12 @@ public sealed class ExpectationEpisodeTests
         await using (var read = world.Db())
         {
             var episodes = await read.ExpectationEpisodes.AsNoTracking().ToListAsync();
+            var changedDigest = await ExpectationConfigIdentity.ResolveAsync(
+                read, changed, new ExpectationTimingSettings(), CancellationToken.None);
             episodes.Where(row => row.ConfigDigest == world.Digest).ShouldAllBe(row => row.ResolvedAt != null);
             episodes.Where(row => row.ConfigDigest == world.Digest && row.Kind == ExpectationEpisodeKind.CapacityDeficit)
                 .ShouldAllBe(row => row.ResolvedAt == t0.AddMinutes(42));
-            var fresh = episodes.Where(row => row.ConfigDigest == ExpectationDirectiveDigest.Compute(changed)
+            var fresh = episodes.Where(row => row.ConfigDigest == changedDigest
                 && row.Kind == ExpectationEpisodeKind.CapacityDeficit).ToList();
             fresh.Count.ShouldBe(2);
             fresh.ShouldAllBe(row => row.FirstObservedAt == t0.AddMinutes(42) && row.ResolvedAt == null);
