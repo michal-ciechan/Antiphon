@@ -163,6 +163,48 @@ public class DeliverableBundleServiceTests
     }
 
     [Test]
+    [Arguments("worktree")]
+    [Arguments("working")]
+    [Arguments("repo")]
+    public async Task Source_bytes_survive_each_disk_read_root(string sourceRoot)
+    {
+        using var workspace = new TempDir();
+        var worktree = Path.Combine(workspace.Path, "worktree");
+        var working = Path.Combine(workspace.Path, "working");
+        var repo = Path.Combine(workspace.Path, "repo");
+        Directory.CreateDirectory(worktree);
+        Directory.CreateDirectory(working);
+        Directory.CreateDirectory(repo);
+        var relative = Path.Combine("docs", "features", "source.md");
+        var root = sourceRoot switch
+        {
+            "worktree" => worktree,
+            "working" => working,
+            "repo" => repo,
+            _ => throw new ArgumentOutOfRangeException(nameof(sourceRoot)),
+        };
+        var path = Path.Combine(root, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var expected = Encoding.Unicode.GetPreamble()
+            .Concat(Encoding.Unicode.GetBytes("# source\r\nZażółć ✨  \r\n"))
+            .ToArray();
+        await File.WriteAllBytesAsync(path, expected);
+        var task = NewTask(repo, AgentTaskRole.Docs, WorkspaceMode.Worktree);
+        task.WorktreePath = worktree;
+        task.WorkingDirectory = working;
+
+        await CreateService().TryBuildAsync(task,
+            "`docs/features/source.md`", db: null, CancellationToken.None);
+
+        task.DeliverableFileCount.ShouldBe(1);
+        var copy = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
+        (await File.ReadAllBytesAsync(copy)).ShouldBe(expected);
+        var manifest = await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!,
+            DeliverableBundleService.SourceManifestName));
+        manifest.ShouldContain(Convert.ToHexString(SHA256.HashData(expected)).ToLowerInvariant());
+    }
+
+    [Test]
     public async Task Forty_one_sources_are_all_preserved_and_stale_files_are_not_implicit()
     {
         using var workspace = new TempDir();
