@@ -259,6 +259,64 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task Legacy_auto_continue_fields_are_orthogonal(bool autoContinue, bool stampUsed)
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        DateTime? usedAt = stampUsed
+            ? new DateTime(2026, 9, 1, 12, 34, 56, DateTimeKind.Utc)
+            : null;
+        await using (var setup = NewDb())
+        {
+            var task = await setup.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.StandingAuthority = "May continue after an explicit reply.";
+            task.AutoContinueOnWait = autoContinue;
+            task.AutoContinuedAt = usedAt;
+            await setup.SaveChangesAsync();
+        }
+
+        async Task<InternalDecisionQuestionResponse> CheckAsync(InternalDecisionQuestionRequest request)
+        {
+            await using var db = NewDb();
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                sessionId, workspace.Path);
+            return await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, request, caller,
+                CancellationToken.None);
+        }
+
+        async Task AssertLegacyFieldsAsync()
+        {
+            await using var db = NewDb();
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            task.AutoContinueOnWait.ShouldBe(autoContinue);
+            (task.AutoContinuedAt?.ToBinary()).ShouldBe(usedAt?.ToBinary());
+            (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
+        }
+
+        var first = Sample();
+        var firstResponse = await CheckAsync(first);
+        firstResponse.Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        await AssertLegacyFieldsAsync();
+
+        (await CheckAsync(Sample())).Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        await AssertLegacyFieldsAsync();
+
+        (await CheckAsync(Sample() with { Impact = InternalDecisionImpact.Data }))
+            .Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+        await AssertLegacyFieldsAsync();
+
+        (await CheckAsync(first)).ShouldBe(firstResponse);
+        await AssertLegacyFieldsAsync();
+        await using var verify = NewDb();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(3);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+            && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(3);
+    }
+
+    [Test]
     [Arguments(AgentTaskStatus.Canceled)]
     [Arguments(AgentTaskStatus.Succeeded)]
     [Arguments(AgentTaskStatus.Blocked)]
