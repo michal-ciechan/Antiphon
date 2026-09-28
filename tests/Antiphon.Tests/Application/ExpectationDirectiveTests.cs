@@ -182,6 +182,49 @@ public sealed class ExpectationDirectiveTests
     }
 
     [Test]
+    public async Task C650_Configurable_windows_validate_and_change_digest()
+    {
+        var validator = new ExpectationWatchdogSettingsValidator();
+        var directive = ValidDirective();
+        var settings = Settings(directive);
+        var baseline = ExpectationDirectiveDigest.Compute(directive, settings.Timing);
+        var propertyNames = new[]
+        {
+            nameof(ExpectationTimingSettings.QueuedMinutes),
+            nameof(ExpectationTimingSettings.CapacityMinutes),
+            nameof(ExpectationTimingSettings.MissingSessionMinutes),
+            nameof(ExpectationTimingSettings.NoteMinutes),
+            nameof(ExpectationTimingSettings.AnswerMinutes),
+            nameof(ExpectationTimingSettings.NudgeCooldownMinutes),
+            nameof(ExpectationTimingSettings.RepeatMinutes),
+        };
+        foreach (var name in propertyNames)
+        {
+            var property = typeof(ExpectationTimingSettings).GetProperty(name)!;
+            var original = (int)property.GetValue(settings.Timing)!;
+            property.SetValue(settings.Timing, 0);
+            Failures(validator.Validate(null, settings)).ShouldContain(name);
+            property.SetValue(settings.Timing, 1441);
+            Failures(validator.Validate(null, settings)).ShouldContain(name);
+            property.SetValue(settings.Timing, original + 1);
+            ExpectationDirectiveDigest.Compute(directive, settings.Timing).ShouldNotBe(baseline);
+            property.SetValue(settings.Timing, original);
+        }
+
+        settings.Timing.RepeatMinutes = settings.Timing.NudgeCooldownMinutes - 1;
+        Failures(validator.Validate(null, settings)).ShouldContain("RepeatMinutes must be at least");
+        settings.Timing.RepeatMinutes = 30;
+        validator.Validate(null, settings).Succeeded.ShouldBeTrue();
+
+        var changedDestination = ValidDirective();
+        changedDestination.OperatorChannelId = Guid.NewGuid();
+        ExpectationDirectiveDigest.Compute(changedDestination, settings.Timing).ShouldNotBe(baseline);
+        ExpectationDirectiveDigest.Compute(directive, settings.Timing, "telegram:one")
+            .ShouldNotBe(ExpectationDirectiveDigest.Compute(directive, settings.Timing, "telegram:two"));
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task C650_Disabled_or_expired_directive_has_no_effects()
     {
         var directive = ValidDirective();

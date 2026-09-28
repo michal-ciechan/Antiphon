@@ -30,13 +30,16 @@ public sealed class ExpectationSnapshotReader
     private readonly AppDbContext _db;
     private readonly DelegationSettings _delegation;
     private readonly SupervisionSettings _supervision;
+    private readonly ExpectationTimingSettings _timing;
 
     public ExpectationSnapshotReader(
-        AppDbContext db, DelegationSettings? delegation = null, SupervisionSettings? supervision = null)
+        AppDbContext db, DelegationSettings? delegation = null, SupervisionSettings? supervision = null,
+        ExpectationTimingSettings? timing = null)
     {
         _db = db;
         _delegation = delegation ?? new DelegationSettings();
         _supervision = supervision ?? new SupervisionSettings();
+        _timing = timing ?? new ExpectationTimingSettings();
     }
 
     public async Task<ExpectationSnapshot> ReadAsync(
@@ -87,7 +90,7 @@ public sealed class ExpectationSnapshotReader
         }
 
         var scope = new ExpectationScopeContext(board.Id, board.ProjectId, directive.AgentId);
-        var windowStart = asOf - ExpectationWindows.Queue;
+        var windowStart = asOf - TimeSpan.FromMinutes(_timing.QueuedMinutes);
         var cardBindings = await _db.Cards.AsNoTracking()
             .Where(card => card.BoardId == board.Id || card.Board.ProjectId == board.ProjectId)
             .Select(card => new { card.Id, card.BoardId, ProjectId = card.Board.ProjectId })
@@ -117,7 +120,8 @@ public sealed class ExpectationSnapshotReader
                 task.CreatedAt,
                 task.AgentSessionId,
                 task.DispatchedAt,
-                task.Result != null || task.ResultFilePath != null))
+                task.Result != null || task.ResultFilePath != null,
+                task.RemoteWorktreePath != null))
             .ToListAsync(ct);
 
         var parentIds = loaded
@@ -216,6 +220,17 @@ public sealed class ExpectationSnapshotReader
                 };
             }
 
+            var holdDetail = hold?.Detail;
+            if (holdClass is ExpectationHoldClass.RepositoryFenced or ExpectationHoldClass.RepositoryOwnerUnknown)
+            {
+                var journalDetail = probes.Journals is { } journals
+                    && journals.TryGetValue(task.RepositoryScope, out var journal)
+                    ? $"journal read-only alive={journal.Alive} dead={journal.Dead} unknown={journal.Unknown} as-of={journal.AsOf:O}"
+                    : "journal health unobserved; inspect read-only";
+                holdDetail = string.IsNullOrWhiteSpace(holdDetail)
+                    ? journalDetail : holdDetail + "; " + journalDetail;
+            }
+
             queued.Add(new ExpectationQueuedTask
             {
                 TaskId = task.Row.Id,
@@ -223,8 +238,9 @@ public sealed class ExpectationSnapshotReader
                 RepositoryScope = task.RepositoryScope,
                 StintStartedAt = stint,
                 HoldClass = holdClass,
-                HoldDetail = hold?.Detail,
+                HoldDetail = holdDetail,
                 HoldObservedAt = hold is null ? null : SpecifyUtc(hold.At),
+                RemotePrepared = task.Row.RemotePrepared,
             });
         }
 
@@ -259,6 +275,8 @@ public sealed class ExpectationSnapshotReader
                     task.Row.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working),
                 Queued = matching.Count(task => task.Row.Status == AgentTaskStatus.Queued),
                 Blocked = matching.Count(task => task.Row.Status == AgentTaskStatus.Blocked),
+                ObservationKnown = !probes.Runners.TryGetValue(key, out var laneProbe)
+                    || laneProbe.Available is not null,
                 DeficitSince = configChanged ? null : deficit?.FirstObservedAt,
                 RunningTaskIds = matching
                     .Where(task => task.Row.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
@@ -283,7 +301,7 @@ public sealed class ExpectationSnapshotReader
         var (capCount, capOccupants) = reasons.Any(reason => DispatchHoldDetails.ConcurrencyCapLimit(reason) is not null)
             ? await ReadCapOccupantsAsync(asOf, probes, ct)
             : (0, Array.Empty<ExpectationInFlightTask>());
-        var notes = await ReadNotesAsync(directive.AgentId, ct);
+        var notes = await ReadNotesAsync(directive.AgentId, configChanged ? null : state, ct);
         return new ExpectationSnapshot
         {
             AsOf = asOf,
@@ -300,7 +318,12 @@ public sealed class ExpectationSnapshotReader
             Admission = Admission(directive, probes, asOf),
             OpenEpisodes = episodes,
             InFlight = inFlight,
-            Notes = notes,
+            Notes = notes.Rows,
+            NoteCoverageIncomplete = notes.Incomplete,
+            NextNoteOutboxCursorAt = notes.OutboxAt,
+            NextNoteOutboxCursorId = notes.OutboxId,
+            NextNoteQueueCursorAt = notes.QueueAt,
+            NextNoteQueueCursorId = notes.QueueId,
             Lands = lands,
             LandProgressWindow = TimeSpan.FromSeconds(_delegation.LandWarningSeconds),
             CapOccupantCount = capCount,
@@ -385,7 +408,12 @@ public sealed class ExpectationSnapshotReader
         var transcriptActivity = sessionIds.Count == 0
             ? new Dictionary<Guid, DateTime>()
             : await _db.TranscriptEntries.AsNoTracking()
-                .Where(row => sessionIds.Contains(row.AgentSessionId))
+                .Where(row => sessionIds.Contains(row.AgentSessionId)
+                    && !((row.Kind == TranscriptKinds.UserPrompt
+                            || row.Kind == TranscriptKinds.QueuedUserPrompt)
+                        && row.Text != null && row.Text.StartsWith("[expectation-nudge:"))
+                    && !(row.Kind == TranscriptKinds.AssistantText
+                        && row.Text != null && row.Text.Contains("[expectation-ack:")))
                 .GroupBy(row => row.AgentSessionId)
                 .Select(group => new
                 {
@@ -480,7 +508,8 @@ public sealed class ExpectationSnapshotReader
                 task.CreatedAt,
                 task.AgentSessionId,
                 task.DispatchedAt,
-                task.Result != null || task.ResultFilePath != null))
+                task.Result != null || task.ResultFilePath != null,
+                task.RemoteWorktreePath != null))
             .ToListAsync(ct);
         return (rows.Count, await ReadInFlightAsync(rows, asOf, probes, ct));
     }
@@ -496,7 +525,12 @@ public sealed class ExpectationSnapshotReader
     private static ExpectationSessionState SessionState(
         TaskRow task, IReadOnlyDictionary<Guid, SessionStatus> sessions, ExpectationProbeInput probes)
     {
-        if (task.AgentSessionId is not Guid sessionId || !sessions.TryGetValue(sessionId, out var status))
+        if (task.AgentSessionId is not Guid sessionId)
+            return ExpectationSessionState.Missing;
+        if (probes.Runners.TryGetValue(ExpectationSubjects.RunnerKey(task.RunnerId), out var availability)
+            && availability.Available is null)
+            return ExpectationSessionState.Unknown;
+        if (!sessions.TryGetValue(sessionId, out var status))
             return ExpectationSessionState.Missing;
         if (status is SessionStatus.Stopped or SessionStatus.Failed)
             return ExpectationSessionState.Terminal;
@@ -527,9 +561,13 @@ public sealed class ExpectationSnapshotReader
     /// before or without that delivery, leaves the debt open. This read never settles or resends
     /// the note (CARD-0641 owns that).
     /// </summary>
-    private async Task<IReadOnlyList<ExpectationNoteDebt>> ReadNotesAsync(Guid agentId, CancellationToken ct)
+    private sealed record NotePage(IReadOnlyList<ExpectationNoteDebt> Rows, bool Incomplete,
+        DateTime? OutboxAt, Guid? OutboxId, DateTime? QueueAt, Guid? QueueId);
+
+    private async Task<NotePage> ReadNotesAsync(Guid agentId, ExpectationWatchState? state, CancellationToken ct)
     {
-        var rows = await _db.AgentTaskLandNotifications.AsNoTracking()
+        const int pageSize = 100;
+        var outboxQuery = _db.AgentTaskLandNotifications.AsNoTracking()
             .Where(note => !note.IsLegacy
                 && note.ConfirmedAt == null
                 && note.State != LandNotificationState.Confirmed
@@ -537,10 +575,15 @@ public sealed class ExpectationSnapshotReader
                 && note.State != LandNotificationState.LegacyUnverified
                 && note.ParentSessionId != null
                 && _db.AgentSessions.Any(session =>
-                    session.Id == note.ParentSessionId && session.StandingAgentId == agentId))
+                    session.Id == note.ParentSessionId && session.StandingAgentId == agentId));
+        var outboxCount = await outboxQuery.CountAsync(ct);
+        var seekOutbox = state?.NoteOutboxCursorAt is { } outboxAt && state.NoteOutboxCursorId is { } outboxId
+            ? outboxQuery.Where(note => note.CreatedAt > outboxAt
+                || note.CreatedAt == outboxAt && note.Id.CompareTo(outboxId) > 0)
+            : outboxQuery;
+        var rows = await seekOutbox
             .OrderBy(note => note.CreatedAt)
             .ThenBy(note => note.Id)
-            .Take(100)
             .Select(note => new NoteRow(
                 note.Id,
                 note.TaskId,
@@ -554,10 +597,16 @@ public sealed class ExpectationSnapshotReader
                 note.IsLegacy,
                 note.CompletionSnapshotJson != null,
                 note.CompletionDeliveryJson))
+            .Take(pageSize)
             .ToListAsync(ct);
-        if (rows.Count == 0)
-            return [];
-
+        if (rows.Count == 0 && outboxCount > 0 && state?.NoteOutboxCursorAt is not null)
+            rows = await outboxQuery.OrderBy(note => note.CreatedAt).ThenBy(note => note.Id)
+                .Select(note => new NoteRow(
+                    note.Id, note.TaskId, note.Kind, note.State, note.CreatedAt,
+                    note.ParentSessionId, note.LastErrorCode, note.QueueMessageId,
+                    note.Body, note.IsLegacy, note.CompletionSnapshotJson != null,
+                    note.CompletionDeliveryJson))
+                .Take(pageSize).ToListAsync(ct);
         var queueIds = rows.Where(row => row.QueueMessageId is not null)
             .Select(row => row.QueueMessageId!.Value)
             .ToList();
@@ -595,7 +644,122 @@ public sealed class ExpectationSnapshotReader
             });
         }
 
-        return results;
+        // Older completion/question and Check producers can own a caller obligation directly in
+        // SessionQueuedMessages. A linked land row remains one obligation under its outbox ID.
+        var linkedIds = rows.Select(row => row.Id).ToHashSet();
+        var linkedQueueIds = rows.Where(row => row.QueueMessageId is not null)
+            .Select(row => row.QueueMessageId!.Value).ToHashSet();
+        foreach (var row in rows.Where(row => row.HasCompletionSnapshot))
+        {
+            var delivery = TaskCompletionNotification.TryReadDelivery(row.CompletionDeliveryJson);
+            if (delivery is not null)
+                linkedQueueIds.UnionWith(delivery.MemberQueueIds);
+        }
+        var queueQuery = _db.SessionQueuedMessages.AsNoTracking()
+            .Where(message => message.SourceTaskId != null
+                && (message.Origin == QueuedMessageOrigin.Delegation
+                    || message.Origin == QueuedMessageOrigin.Check)
+                && message.SourceLandNotificationId == null
+                && (message.Origin != QueuedMessageOrigin.Delegation || message.NoteHeader != null)
+                && (message.Origin != QueuedMessageOrigin.Check || message.ConversationKey != null)
+                && message.Status != QueuedMessageStatus.Canceled
+                && message.CanceledAt == null
+                && _db.AgentSessions.Any(session => session.Id == message.AgentSessionId
+                    && session.StandingAgentId == agentId));
+        var queueCount = await queueQuery.CountAsync(ct);
+        var seekQueue = state?.NoteQueueCursorAt is { } queueAt && state.NoteQueueCursorId is { } cursorQueueId
+            ? queueQuery.Where(message => message.CreatedAt > queueAt
+                || message.CreatedAt == queueAt && message.Id.CompareTo(cursorQueueId) > 0)
+            : queueQuery;
+        var queueOnly = await seekQueue.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
+            .Select(message => new
+            {
+                message.Id,
+                message.SourceTaskId,
+                message.SourceLandNotificationId,
+                message.AgentSessionId,
+                message.Origin,
+                message.ConversationKey,
+                message.NoteHeader,
+                message.Body,
+                message.Status,
+                message.CreatedAt,
+                message.DeliveryAttempts,
+                message.LastDeliveryBaselineSequence,
+            })
+            .Take(pageSize)
+            .ToListAsync(ct);
+        if (queueOnly.Count == 0 && queueCount > 0 && state?.NoteQueueCursorAt is not null)
+            queueOnly = await queueQuery.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
+                .Select(message => new
+                {
+                    message.Id, message.SourceTaskId, message.SourceLandNotificationId,
+                    message.AgentSessionId, message.Origin, message.ConversationKey,
+                    message.NoteHeader, message.Body, message.Status, message.CreatedAt,
+                    message.DeliveryAttempts, message.LastDeliveryBaselineSequence,
+                }).Take(pageSize).ToListAsync(ct);
+        // Completion producers can link several queue members through their delivery snapshot.
+        // Deduplicate against those links even when the outbox cursor is on a different page.
+        var pageTaskIds = queueOnly.Where(message => message.SourceTaskId is not null)
+            .Select(message => message.SourceTaskId!.Value).Distinct().ToList();
+        if (pageTaskIds.Count > 0)
+        {
+            var completionLinks = await _db.AgentTaskLandNotifications.AsNoTracking()
+                .Where(note => pageTaskIds.Contains(note.TaskId) && note.CompletionDeliveryJson != null)
+                .Select(note => note.CompletionDeliveryJson)
+                .ToListAsync(ct);
+            foreach (var json in completionLinks)
+            {
+                var delivery = TaskCompletionNotification.TryReadDelivery(json);
+                if (delivery is not null)
+                    linkedQueueIds.UnionWith(delivery.MemberQueueIds);
+            }
+        }
+        foreach (var message in queueOnly)
+        {
+            if (linkedQueueIds.Contains(message.Id))
+                continue;
+            if (message.SourceLandNotificationId is Guid linked && linkedIds.Contains(linked))
+                continue;
+            if (message.SourceLandNotificationId is not null)
+                continue;
+            if (message.Origin == QueuedMessageOrigin.Delegation
+                && string.IsNullOrWhiteSpace(message.NoteHeader))
+                continue;
+            if (message.Origin == QueuedMessageOrigin.Check
+                && (!AgentTaskCheckService.TryParseCheckConversationKey(message.ConversationKey, out var checkTask)
+                    || checkTask != message.SourceTaskId))
+                continue;
+            if (message.DeliveryAttempts > 0 && message.LastDeliveryBaselineSequence is { } floor)
+            {
+                var typed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(message.Body.Trim());
+                var transcripts = await _db.TranscriptEntries.AsNoTracking()
+                    .Where(entry => entry.AgentSessionId == message.AgentSessionId
+                        && entry.Sequence > floor && entry.Kind == TranscriptKinds.UserPrompt)
+                    .Select(entry => entry.Text)
+                    .ToListAsync(ct);
+                if (transcripts.Any(body => PromptSubmissionMatch.IsConfirmedBy(typed, body)
+                    && PromptSubmissionMatch.IsCompleteIn(typed, body)))
+                    continue;
+            }
+
+            results.Add(new ExpectationNoteDebt
+            {
+                NotificationId = message.Id,
+                TaskId = message.SourceTaskId!.Value,
+                Kind = message.Origin == QueuedMessageOrigin.Check
+                    ? LandNotificationKind.LegacyCheckNote : LandNotificationKind.TaskCompletion,
+                State = message.Status == QueuedMessageStatus.Sent
+                    ? LandNotificationState.AwaitingReceipt : LandNotificationState.Queued,
+                CreatedAt = SpecifyUtc(message.CreatedAt),
+                ParentSessionId = message.AgentSessionId,
+                QueueStatus = message.Status,
+            });
+        }
+
+        return new NotePage(results, outboxCount > pageSize || queueCount > pageSize,
+            rows.LastOrDefault()?.CreatedAt, rows.LastOrDefault()?.Id,
+            queueOnly.LastOrDefault()?.CreatedAt, queueOnly.LastOrDefault()?.Id);
     }
 
     /// <summary>
@@ -686,7 +850,8 @@ public sealed class ExpectationSnapshotReader
         DateTime CreatedAt,
         Guid? AgentSessionId = null,
         DateTime? DispatchedAt = null,
-        bool HasReport = false);
+        bool HasReport = false,
+        bool RemotePrepared = false);
 
     private sealed record ScopedTask(TaskRow Row, string RepositoryScope);
 

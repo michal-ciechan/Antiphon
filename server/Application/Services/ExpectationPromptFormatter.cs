@@ -17,6 +17,43 @@ public static class ExpectationPromptFormatter
 
     public static string AckMarker(Guid nudgeId) => "[expectation-ack:" + nudgeId.ToString("D") + "]";
 
+    /// <summary>Formats a frozen prompt under the exact framed UTF-8 write ceiling.</summary>
+    public static string? FormatForWrite(
+        Guid nudgeId, string directiveId, Guid boardId,
+        IReadOnlyList<ExpectationCondition> conditions, DateTime asOf, int singleWriteMaxBytes)
+    {
+        var ordered = conditions.OrderBy(condition => Rank(condition.Kind))
+            .ThenBy(condition => condition.SubjectKey, StringComparer.Ordinal).ToList();
+        var header = $"[expectation-nudge:{nudgeId:D}] Directive {directiveId.Trim()}: "
+            + $"{ordered.Count} condition(s) need attention as of {asOf:O}.\n";
+        var footer = $"Status: GET /api/expectation-watchdog?boardId={boardId:D}\n"
+            + $"Reply with a line {AckMarker(nudgeId)} followed by the action you are taking or why you are waiting.";
+        var minimum = header + footer;
+        if (System.Text.Encoding.UTF8.GetByteCount(
+                Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(minimum)) > singleWriteMaxBytes)
+            return null;
+        var body = new StringBuilder(header);
+        foreach (var condition in ordered)
+        {
+            var line = Line(condition, ordered.Any(c => c.Kind == ExpectationEpisodeKind.DispatchFence));
+            var candidate = body.ToString() + line + footer;
+            if (System.Text.Encoding.UTF8.GetByteCount(
+                    Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(candidate)) > singleWriteMaxBytes)
+                break;
+            body.Append(line);
+        }
+        if (body.Length == header.Length && ordered.Count > 0)
+        {
+            var notice = $"- {ordered.Count} condition(s); see the status route.\n";
+            var candidate = body.ToString() + notice + footer;
+            if (System.Text.Encoding.UTF8.GetByteCount(
+                    Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(candidate)) <= singleWriteMaxBytes)
+                body.Append(notice);
+        }
+        body.Append(footer);
+        return body.ToString();
+    }
+
     public static string Format(
         Guid nudgeId,
         string directiveId,
@@ -75,7 +112,12 @@ public static class ExpectationPromptFormatter
             : string.Empty;
         var text = "- " + condition.Kind + " " + condition.ReasonCode + explained + ": " + condition.Evidence.Trim();
         if (text.Length > MaxLineChars)
-            text = text[..(MaxLineChars - 3)] + "...";
+        {
+            var cut = MaxLineChars - 3;
+            if (char.IsHighSurrogate(text[cut - 1]) && char.IsLowSurrogate(text[cut]))
+                cut--;
+            text = text[..cut] + "...";
+        }
         return text + "\n";
     }
 

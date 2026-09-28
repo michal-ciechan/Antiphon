@@ -35,13 +35,14 @@ internal sealed record ExpectationTestWorld(
         var agentId = Guid.NewGuid();
         var cardId = Guid.NewGuid();
         var sessionId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
         var directive = new ExpectationDirectiveSettings
         {
             Id = "tonight",
             AgentId = agentId,
             BoardId = boardId,
             AuditCardId = cardId,
-            OperatorChannelId = Guid.NewGuid(),
+            OperatorChannelId = channelId,
             Enabled = true,
             Targets =
             [
@@ -119,6 +120,17 @@ internal sealed record ExpectationTestWorld(
             WorkingDirectory = "/src/antiphon",
             BoardId = boardId,
             IsPoolDelegate = false,
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.ChatChannels.Add(new ChatChannel
+        {
+            Id = channelId,
+            Provider = "telegram",
+            ExternalId = "c650-operator-" + channelId.ToString("N"),
+            Kind = ChatChannelKind.Direct,
+            Enabled = true,
             CreatedAt = now,
             UpdatedAt = now,
         });
@@ -133,7 +145,8 @@ internal sealed record ExpectationTestWorld(
             cardId,
             sessionId,
             directive,
-            ExpectationDirectiveDigest.Compute(directive),
+            ExpectationDirectiveDigest.Compute(directive, resolvedOperatorAddress:
+                "telegram\u001fc650-operator-" + channelId.ToString("N")),
             now);
     }
 

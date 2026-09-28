@@ -18,6 +18,8 @@ public sealed class ExpectationWatchdogService
     private readonly ExpectationLedger _ledger;
     private readonly TimeProvider _time;
     private readonly IExpectationCatchUp _catchUp;
+    private readonly ExpectationTimingSettings _timing;
+    private readonly SessionDeliveryProfile? _deliveryProfile;
 
     public ExpectationWatchdogService(
         AppDbContext db,
@@ -25,10 +27,14 @@ public sealed class ExpectationWatchdogService
         TimeProvider time,
         DelegationSettings? delegation = null,
         IExpectationCatchUp? catchUp = null,
-        SupervisionSettings? supervision = null)
+        SupervisionSettings? supervision = null,
+        ExpectationTimingSettings? timing = null,
+        SessionDeliveryProfile? deliveryProfile = null)
     {
         _db = db;
-        _reader = new ExpectationSnapshotReader(db, delegation, supervision);
+        _timing = timing ?? new ExpectationTimingSettings();
+        _deliveryProfile = deliveryProfile;
+        _reader = new ExpectationSnapshotReader(db, delegation, supervision, _timing);
         _ledger = ledger;
         _time = time;
         _catchUp = catchUp ?? NoExpectationCatchUp.Instance;
@@ -66,7 +72,7 @@ public sealed class ExpectationWatchdogService
                 var asOf = DateTime.SpecifyKind(_time.GetUtcNow().UtcDateTime, DateTimeKind.Utc);
                 await _ledger.RecordObservationAsync(
                     directive.Id,
-                    ExpectationDirectiveDigest.Compute(directive),
+                    await ExpectationConfigIdentity.ResolveAsync(_db, directive, _timing, ct),
                     asOf,
                     successful: false,
                     "scan failed: " + ex.GetType().Name,
@@ -84,9 +90,9 @@ public sealed class ExpectationWatchdogService
         CancellationToken ct)
     {
         var asOf = DateTime.SpecifyKind(_time.GetUtcNow().UtcDateTime, DateTimeKind.Utc);
-        var digest = ExpectationDirectiveDigest.Compute(directive);
+        var digest = await ExpectationConfigIdentity.ResolveAsync(_db, directive, _timing, ct);
         var snapshot = await _reader.ReadAsync(directive, digest, asOf, probes, ct);
-        var evaluation = ExpectationWatchdogPolicy.Evaluate(snapshot, directive);
+        var evaluation = ExpectationWatchdogPolicy.Evaluate(snapshot, directive, _timing);
         if (snapshot.ProbeUnknown || evaluation.ObservationUnknown || !snapshot.DirectiveActive)
         {
             await _ledger.RecordObservationAsync(
@@ -134,10 +140,19 @@ public sealed class ExpectationWatchdogService
             asOf,
             ct);
 
-        await _ledger.RecordObservationAsync(directive.Id, digest, asOf, successful: true, error: null, ct);
+        await _ledger.RecordObservationAsync(directive.Id, digest, asOf,
+            successful: !snapshot.NoteCoverageIncomplete,
+            error: snapshot.NoteCoverageIncomplete ? "note page incomplete; cursor advanced" : null, ct);
         _db.ChangeTracker.Clear();
 
         var nudge = await NudgeAsync(directive, digest, asOf, probes, DueConditions(evaluation).ToList(), ct);
+        await _db.ExpectationWatchStates.Where(state => state.DirectiveId == directive.Id)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(state => state.ConfigDigest, digest)
+                .SetProperty(state => state.NoteOutboxCursorAt, snapshot.NextNoteOutboxCursorAt)
+                .SetProperty(state => state.NoteOutboxCursorId, snapshot.NextNoteOutboxCursorId)
+                .SetProperty(state => state.NoteQueueCursorAt, snapshot.NextNoteQueueCursorAt)
+                .SetProperty(state => state.NoteQueueCursorId, snapshot.NextNoteQueueCursorId), ct);
         return nudge is null
             ? new ExpectationScanResult(evaluation, 0)
             : new ExpectationScanResult(evaluation, 1, nudge.Value.Id, nudge.Value.Subjects);
@@ -173,22 +188,24 @@ public sealed class ExpectationWatchdogService
         var since = episodes.Min(row => row.FirstObservedAt);
         var history = await _db.ExpectationNudges.AsNoTracking()
             .Where(row => row.DirectiveId == directive.Id && row.CreatedAt >= since)
-            .Select(row => new { row.EpisodeIdsJson, row.CreatedAt })
+            .Select(row => new { row.EpisodeIdsJson, row.CreatedAt, row.AnsweredAt })
             .ToListAsync(ct);
-        var lastNudged = new Dictionary<Guid, DateTime>();
+        var lastNudged = new Dictionary<Guid, (DateTime Created, DateTime? Answered)>();
         foreach (var row in history)
         {
             foreach (var id in JsonSerializer.Deserialize<List<Guid>>(row.EpisodeIdsJson) ?? [])
             {
-                if (!lastNudged.TryGetValue(id, out var at) || row.CreatedAt > at)
-                    lastNudged[id] = row.CreatedAt;
+                if (!lastNudged.TryGetValue(id, out var at) || row.CreatedAt > at.Created)
+                    lastNudged[id] = (row.CreatedAt, row.AnsweredAt);
             }
         }
 
         var episodeBySubject = episodes.ToDictionary(row => row.SubjectKey, StringComparer.Ordinal);
         bool Eligible(ExpectationCondition condition) =>
             episodeBySubject.TryGetValue(condition.SubjectKey, out var episode)
-            && (!lastNudged.TryGetValue(episode.Id, out var at) || asOf - at >= ExpectationWindows.Repeat);
+            && (!lastNudged.TryGetValue(episode.Id, out var at)
+                || (at.Answered is { } answered
+                    && asOf - answered >= TimeSpan.FromMinutes(_timing.RepeatMinutes)));
         bool NeverNudged(ExpectationCondition condition) =>
             episodeBySubject.TryGetValue(condition.SubjectKey, out var episode) && !lastNudged.ContainsKey(episode.Id);
 
@@ -203,10 +220,10 @@ public sealed class ExpectationWatchdogService
             .Take(2)
             .ToListAsync(ct);
         var latest = recent.Count > 0 ? recent[0] : null;
-        if (latest is not null && asOf - latest.CreatedAt < ExpectationWindows.Cooldown)
+        if (latest is not null && asOf - latest.CreatedAt < TimeSpan.FromMinutes(_timing.NudgeCooldownMinutes))
         {
             var latestWasBypass = recent.Count > 1
-                && latest.CreatedAt - recent[1].CreatedAt < ExpectationWindows.Cooldown;
+                && latest.CreatedAt - recent[1].CreatedAt < TimeSpan.FromMinutes(_timing.NudgeCooldownMinutes);
             var urgent = eligible.Any(condition =>
                 condition.Kind == ExpectationEpisodeKind.DispatchFence && condition.Immediate && NeverNudged(condition));
             if (!urgent || latestWasBypass)
@@ -218,7 +235,7 @@ public sealed class ExpectationWatchdogService
         await _catchUp.CatchUpAsync(sessions, ct);
         _db.ChangeTracker.Clear();
         var fresh = await _reader.ReadAsync(directive, digest, asOf, probes, ct);
-        var freshEvaluation = ExpectationWatchdogPolicy.Evaluate(fresh, directive);
+        var freshEvaluation = ExpectationWatchdogPolicy.Evaluate(fresh, directive, _timing);
         if (fresh.ProbeUnknown || freshEvaluation.ObservationUnknown || !fresh.DirectiveActive)
             return null;
         var stillDue = DueConditions(freshEvaluation).ToDictionary(row => row.SubjectKey, StringComparer.Ordinal);
@@ -230,7 +247,20 @@ public sealed class ExpectationWatchdogService
             return null;
 
         var nudgeId = Guid.NewGuid();
-        var body = ExpectationPromptFormatter.Format(nudgeId, directive.Id, directive.BoardId, batch, asOf);
+        var maxBytes = ExpectationPromptFormatter.DefaultCeilingChars;
+        if (_deliveryProfile is not null)
+        {
+            var pointer = await _db.Agents.AsNoTracking().Where(a => a.Id == directive.AgentId)
+                .Select(a => a.PersistentSessionId).SingleOrDefaultAsync(ct);
+            if (Guid.TryParse(pointer, out var destination))
+                maxBytes = (await _deliveryProfile.ForSessionAsync(_db, destination, ct)).SingleWriteMaxBytes;
+        }
+        var fittedBody = ExpectationPromptFormatter.FormatForWrite(
+            nudgeId, directive.Id, directive.BoardId, batch, asOf, maxBytes);
+        // A committed nudge still provides a stable audit/operator identity when the destination
+        // cannot accept even the minimum marked prompt. It must never be typed with another body.
+        var body = fittedBody
+            ?? ExpectationPromptFormatter.Format(nudgeId, directive.Id, directive.BoardId, batch, asOf);
         var batchSubjects = batch.Select(condition => condition.SubjectKey).ToList();
         var evidence = string.Join("; ", batch.Select(condition => condition.Kind + " " + condition.ReasonCode));
         if (evidence.Length > ExpectationLedger.MaxEvidenceChars)
@@ -249,8 +279,26 @@ public sealed class ExpectationWatchdogService
                 body,
                 latest?.Id,
                 asOf,
-                asOf + ExpectationWindows.Cooldown),
+                asOf + TimeSpan.FromMinutes(_timing.NudgeCooldownMinutes)),
             ct);
+        if (commit is not null && fittedBody is null)
+        {
+            await using var refusal = await _db.Database.BeginTransactionAsync(ct);
+            await _db.ExpectationNudges.Where(n => n.Id == nudgeId && n.AttemptState == ExpectationAttemptState.None)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(n => n.AttemptState, ExpectationAttemptState.Refused)
+                    .SetProperty(n => n.OperatorOutboxState, ExpectationOperatorOutboxState.Due)
+                    .SetProperty(n => n.OperatorFirstDueAt, asOf)
+                    .SetProperty(n => n.OperatorNextAttemptAt, asOf), ct);
+            var audit = await _db.ExpectationNudges.AsNoTracking().Where(n => n.Id == nudgeId)
+                .Select(n => new { n.AuditCommentId, n.CheckEventIdsJson }).SingleAsync(ct);
+            await ExpectationHoldAudit.AddAsync(_db, audit.AuditCommentId, audit.CheckEventIdsJson,
+                $"[expectation-nudge:{nudgeId:D}] Minimum marked prompt exceeds the destination's "
+                + $"{maxBytes} byte write ceiling; operator page due without terminal input.",
+                ExpectationLedger.AuditAuthor, asOf, ct);
+            await _db.SaveChangesAsync(ct);
+            await refusal.CommitAsync(ct);
+        }
         _db.ChangeTracker.Clear();
         return commit is null ? null : (commit.NudgeId, batchSubjects);
     }
