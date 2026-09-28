@@ -309,7 +309,7 @@ public sealed class AgentTaskInternalDecisionLifecycleTests
     }
 
     private static CreateAgentTaskRequest NewRequest(string goal, AgentTaskRole role = AgentTaskRole.Custom) =>
-        new(Goal: goal, Kind: AgentTaskKind.Worker, Role: role);
+        new(Goal: goal, Kind: AgentTaskKind.Worker, Role: role, Workspace: WorkspaceMode.Shared);
 
     private static AgentTaskService.Caller ManualCaller(string directory) => new(null, null, directory);
 

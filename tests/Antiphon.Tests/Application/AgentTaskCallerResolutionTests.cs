@@ -222,6 +222,7 @@ public class AgentTaskCallerResolutionTests
         Goal: "Do the thing.",
         Kind: AgentTaskKind.Worker,
         Role: AgentTaskRole.Docs,
+        Workspace: WorkspaceMode.Shared,
         WorkingDirectory: directory);
 
     private static (AgentTaskService Service, Guid SessionId) CreateService(
