@@ -295,16 +295,16 @@ Ordinary Code floor is the sum of `EstimatedMinutes` (26). `Antiphon.Tests` and
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c654/` | budget-red | `/*/*/HostBudgetServiceTests/*` | V-1 red | all listed; effective/audit assertions red, no build/fixture errors | 7 | 3 |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c654/` | budget-green | `/*/*/HostBudgetServiceTests/*` | V-1 | all listed, 0 failed/skipped | 7 | 3 |
-| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c654/` | admission-red | `/*/*/HostBudgetAdmissionTests/*` | V-2, V-3 red | all listed; hold/trace/no-kill assertions red, no build/fixture errors | 6 | 3 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c654/` | admission-green | `/*/*/(HostBudgetAdmissionTests*)\|(AgentTaskPipelineStatusTests*)\|(DispatchHoldVisibilityTests*)/*` | V-2, V-3 | all listed, 0 failed/skipped | 6 | 4 |
-| CP-5 | S3-red | `tests/Antiphon.SessionRunner.Tests -> bin-c654/` | runner-red | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 red | all listed; `SetCapacity_*` and persisted-registration assertions red (unsupported-operation answer), no build errors | 3 | 2 |
-| CP-6 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c654/` | runner-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 | all listed, 0 failed/skipped | 3 | 2 |
-| CP-7 | S3 | `tests/Antiphon.Tests -> bin-c654/` | capacity-green | `/*/*/(RunnerCapacityEndpointTests*)\|(PhoneHomeDirectoryTests*)/*` | V-5, R-1 | all listed, 0 failed/skipped (its red run is the same filter on the S3-red commit, reported as CP-7 rerun 1) | 5 | 3 |
-| CP-8 | S4 | `tests/Antiphon.Tests -> bin-c654/` | hosts-api | `/*/*/HostEndpointTests/*` | V-6 | all listed, 0 failed/skipped | 4 | 2 |
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c654-s1-red/` | budget-red | `/*/*/HostBudgetServiceTests/*` | V-1 red | all listed; effective/audit assertions red, no build/fixture errors | 7 | 3 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c654-s1/` | budget-green | `/*/*/HostBudgetServiceTests/*` | V-1 | all listed, 0 failed/skipped | 7 | 3 |
+| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c654-s2-red/` | admission-red | `/*/*/HostBudgetAdmissionTests/*` | V-2, V-3 red | all listed; hold/trace/no-kill assertions red, no build/fixture errors | 6 | 3 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c654-s2/` | admission-green | `/*/*/(HostBudgetAdmissionTests*)\|(AgentTaskPipelineStatusTests*)\|(DispatchHoldVisibilityTests*)/*` | V-2, V-3 | all listed, 0 failed/skipped | 6 | 4 |
+| CP-5 | S3-red | `tests/Antiphon.SessionRunner.Tests -> bin-c654-s3-red/` | runner-red | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 red | all listed; `SetCapacity_*` and persisted-registration assertions red (unsupported-operation answer), no build errors | 3 | 2 |
+| CP-6 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c654-s3/` | runner-green | `/*/*/(PhoneHomeCommandDispatcherTests*)\|(PhoneHomeConnectionServiceTests*)/*` | V-4 | all listed, 0 failed/skipped | 3 | 2 |
+| CP-7 | S3 | `tests/Antiphon.Tests -> bin-c654-s3-server/` | capacity-green | `/*/*/(RunnerCapacityEndpointTests*)\|(PhoneHomeDirectoryTests*)/*` | V-5, R-1 | all listed, 0 failed/skipped (its red run is the same filter on the S3-red commit, reported as CP-7 rerun 1) | 5 | 3 |
+| CP-8 | S4 | `tests/Antiphon.Tests -> bin-c654-s4/` | hosts-api | `/*/*/HostEndpointTests/*` | V-6 | all listed, 0 failed/skipped | 4 | 2 |
 | CP-9 | S4 | n/a | client | `pwsh -File scripts/test-client.ps1 -Filter HostsPanel` | V-6 | 4 tests, 0 failed; lint 0 errors | n/a | 2 |
-| CP-10 | all | CP-8 | regressions | `/*/*/(RunnerSlotEndpointTests*)\|(RunnerSlotRulesTests*)\|(CapacityRecoveryTaskTests*)\|(AgentTaskConcurrencyLimitTests*)/*` | R-1, R-2 | all listed, 0 failed/skipped | 12 | 2 |
+| CP-10 | all | `tests/Antiphon.Tests -> bin-c654-all/` | regressions | `/*/*/(RunnerSlotEndpointTests*)\|(RunnerSlotRulesTests*)\|(CapacityRecoveryTaskTests*)\|(AgentTaskConcurrencyLimitTests*)/*` | R-1, R-2 | all listed, 0 failed/skipped | 12 | 2 |
 
 The Code brief points at this table as
 `checkpoints: docs/superpowers/plans/2026-09-24-card-0654-dynamic-host-budgets-plan.md@<plan commit> section "### Checkpoints"`.
