@@ -201,8 +201,9 @@ CP-1 executed 3440, passed 3439, failed one existing
 `ResilienceBudgetTests.Slow_first_attempt_consumes_the_same_budget` deadline
 under the concurrent run. Solo CP-1 `20260928-201110-617a` executed 3440,
 passed 3438, with that deadline and an unrelated checkpoint-ownership timeout;
-CP-1 had passed 3440/3440 at the preceding `a3e3437e` source slice. A final
-latest-tip Unit green remains to be recorded. Every listed run used the
+CP-1 had passed 3440/3440 at the preceding `a3e3437e` source slice. Latest-tip
+solo CP-1 `20260928-201623-fd74` passed 3440/3440, with 34 pre-existing
+skips. Every listed run used the
 checkpoint runner's build-slot gate. The EF tool restore and migration creation
 used `scripts/build-slot.ps1` as separate, necessary migration-generation work.
 
