@@ -139,9 +139,8 @@ public partial class AttentionServiceTests
         }
         var c4 = await CountEventsQueriesAsync([.. sessions.Select(s => Running(s))]);
 
-        c1.ShouldBeGreaterThan(0);
-        c4.ShouldBeGreaterThan(0);
-        c4.ShouldBe(c1, "one obligations query covers the whole open set");
+        c1.ShouldBe(1);
+        c4.ShouldBe(1, "one obligations query covers the whole open set");
     }
 
     private static async Task<int> CountEventsQueriesAsync(params SessionRunnerSessionDto[] running)
@@ -150,6 +149,6 @@ public partial class AttentionServiceTests
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions())
             .AddInterceptors(counter).Options);
         await BuildService(new FakeRunnerClient { Sessions = running }, db: db).GetAsync(CancellationToken.None);
-        return counter.Count("AgentTaskEvents");
+        return counter.Count("CommitRecoveryObligations.LoadUnresolved");
     }
 }
