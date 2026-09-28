@@ -1983,12 +1983,25 @@ public sealed class AgentTaskReplyService
         {
             using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
                 "settlement.save", task.Id);
-            if (services.GetService<LandDeliveryBoundary>() is { } beforeSave)
+            var boundary = services.GetService<LandDeliveryBoundary>();
+            if (task.Role == AgentTaskRole.Review)
             {
-                await beforeSave.ReachedAsync("settlement-before-save", task.Id, task.Id, ct);
-                await beforeSave.ReachedAsync("settlement-before-commit", task.Id, task.Id, ct);
+                // Keep the Review verdict, evidence and completion obligation in one transaction.
+                // The second boundary observes saved but still uncommitted rows on this connection.
+                await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                if (boundary is not null)
+                    await boundary.ReachedAsync("settlement-before-save", task.Id, task.Id, ct);
+                await db.SaveChangesAsync(ct);
+                if (boundary is not null)
+                    await boundary.ReachedAsync("settlement-before-commit", task.Id, task.Id, ct);
+                await transaction.CommitAsync(ct);
             }
-            await db.SaveChangesAsync(ct);
+            else
+            {
+                if (boundary is not null)
+                    await boundary.ReachedAsync("settlement-before-save", task.Id, task.Id, ct);
+                await db.SaveChangesAsync(ct);
+            }
             observation.Completed();
         }
         catch (DbUpdateConcurrencyException ex)

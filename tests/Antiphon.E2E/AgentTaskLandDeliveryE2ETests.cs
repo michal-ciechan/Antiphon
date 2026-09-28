@@ -329,7 +329,9 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C488_ReviewDeliveryCrashMatrix(string cut)
     {
         await using var f = new LandDeliveryFixture();
-        await f.InitializeAsync(cut: ReviewCut(cut));
+        await f.InitializeAsync();
+        // Settlement and queue workers must be owned by a killable process at the cut.
+        await f.UseChildAsync(ReviewCut(cut));
         await f.StartReviewDelegateAsync("raw");
         await f.ReleaseReviewReportAsync();
         if (cut == "enqueue-exception")
@@ -344,9 +346,13 @@ public class AgentTaskLandDeliveryE2ETests
         else if (cut != "idle-lost-wakeup")
         {
             await f.AssertReviewHeldAsync(cut);
-            await f.ReleaseBoundaryAsync(ReviewBarrier(cut));
+            await f.KillChildAsync();
+            if (cut is "settlement-before-save" or "settlement-before-commit")
+                await f.AssertReviewSettlementRolledBackAsync();
+            await f.UseChildAsync("none");
         }
         var receipt = await f.WaitForReviewReceiptAsync();
+        await f.AssertReviewSettledOnceAfterScansAsync(receipt);
         if (cut == "queue-inserted-before-outbox-link")
         {
             receipt.Note.QueueMessageId.ShouldBe(f.HeldReviewQueueId);
@@ -375,17 +381,17 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C488_ReviewEvidenceCrashRecovers()
     {
         await using var f = new LandDeliveryFixture();
-        await f.InitializeAsync(cut: "review-committed");
+        await f.InitializeAsync();
+        await f.UseChildAsync("review-committed");
         await f.StartReviewDelegateAsync("raw");
         await f.ReleaseReviewReportAsync();
         await f.AssertReviewHeldAsync("settlement-committed-before-enqueue");
+        await f.KillChildAsync();
         await f.UseChildAsync("none");
         var receipt = await f.WaitForReviewReceiptAsync();
         var again = await f.WaitForReviewReceiptAsync();
         again.EvidenceId.ShouldBe(receipt.EvidenceId);
-        await using var db = f.CreateContext();
-        (await db.StageOutcomes.CountAsync(o => o.Id == receipt.EvidenceId)).ShouldBe(1);
-        (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == receipt.Note.Id)).ShouldBe(1);
+        await f.AssertReviewSettledOnceAfterScansAsync(receipt);
     }
 
     [Test]
@@ -424,18 +430,6 @@ public class AgentTaskLandDeliveryE2ETests
         "idle-lost-wakeup" => "idle-lost-wakeup",
         "before-typing" => "attempt",
         "prompt-before-verdict" => "verdict",
-        _ => throw new ArgumentOutOfRangeException(nameof(cut)),
-    };
-
-    private static string ReviewBarrier(string cut) => cut switch
-    {
-        "settlement-before-save" => "settlement-before-save",
-        "settlement-before-commit" => "settlement-before-commit",
-        "queue-before-commit" => "queue-before-commit",
-        "queue-inserted-before-outbox-link" => "queue-inserted",
-        "queue-committed-before-wakeup" => "queue-committed-before-wakeup",
-        "before-typing" => "queue-before-typing",
-        "prompt-before-verdict" => "queue-before-verdict",
         _ => throw new ArgumentOutOfRangeException(nameof(cut)),
     };
 
