@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260928091422_AddHostBudgets")]
+    partial class AddHostBudgets
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1190,9 +1193,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
-                    b.Property<Guid?>("OutboundDeliveryId")
-                        .HasColumnType("uuid");
-
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
 
@@ -1473,10 +1473,6 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("LandRequestedAt")
                         .HasDatabaseName("IX_AgentTasks_LandRequestedAt")
                         .HasFilter("\"LandRequestedAt\" IS NOT NULL");
-
-                    b.HasIndex("OutboundDeliveryId")
-                        .IsUnique()
-                        .HasFilter("\"OutboundDeliveryId\" IS NOT NULL");
 
                     b.HasIndex("ParentTaskId")
                         .HasDatabaseName("IX_AgentTasks_ParentTaskId");
@@ -3851,137 +3847,6 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("ChannelIngressIncidents", (string)null);
                 });
 
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChannelOutboundDelivery", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ChannelId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ConversionOutcome")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<Guid?>("ConversionTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ConverterAgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("DeadlineAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<long>("FirstTextSequence")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("InboundAgentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("InputPath")
-                        .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.Property<string>("InputSha256")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<long>("LastTextSequence")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid?>("LeaseOwner")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("LeaseUntil")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("MaxPending")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("OutputPath")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.Property<string>("OutputSha256")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("ProfileName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<Guid>("ProjectId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("PromptRevision")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<long>("PromptSequence")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("PromptText")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("PublicationAttempts")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("PublishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SendKind")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("SourceKey")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid>("SourceSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("SourceTaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("State")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Trigger")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SourceKey")
-                        .IsUnique();
-
-                    b.HasIndex("ChannelId", "CreatedAt");
-
-                    b.HasIndex("State", "LeaseUntil");
-
-                    b.ToTable("ChannelOutboundDeliveries", (string)null);
-                });
-
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChatChannel", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4039,10 +3904,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<long>("MessageCount")
                         .HasColumnType("bigint");
-
-                    b.Property<string>("OutboundAgentProfile")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("Provider")
                         .IsRequired()
@@ -6037,9 +5898,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("CapacityWaitVersion")
                         .HasColumnType("integer");
 
-                    b.Property<Guid?>("ChannelOutboundDeliveryId")
-                        .HasColumnType("uuid");
-
                     b.Property<DateTime?>("ChannelReplySettledAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -6197,8 +6055,6 @@ namespace Antiphon.Server.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_SessionQueuedMessages_CapacityRecoveryActionKey")
                         .HasFilter("\"CapacityRecoveryActionKey\" IS NOT NULL");
-
-                    b.HasIndex("ChannelOutboundDeliveryId");
 
                     b.HasIndex("DeferredFromRunAttemptId")
                         .IsUnique()
@@ -8181,11 +8037,6 @@ namespace Antiphon.Server.Migrations
                         .HasForeignKey("CardWorkflowStageId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Antiphon.Server.Domain.Entities.ChannelOutboundDelivery", null)
-                        .WithMany()
-                        .HasForeignKey("OutboundDeliveryId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", "ParentTask")
                         .WithMany("Children")
                         .HasForeignKey("ParentTaskId")
@@ -8564,17 +8415,6 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("CardWorkflowRun");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChannelOutboundDelivery", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.ChatChannel", "Channel")
-                        .WithMany()
-                        .HasForeignKey("ChannelId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Channel");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChatChannel", b =>
@@ -8964,11 +8804,6 @@ namespace Antiphon.Server.Migrations
                         .HasForeignKey("AgentSessionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("Antiphon.Server.Domain.Entities.ChannelOutboundDelivery", null)
-                        .WithMany()
-                        .HasForeignKey("ChannelOutboundDeliveryId")
-                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("AgentSession");
                 });
