@@ -212,7 +212,11 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
     }
 
     [Test]
-    public async Task State_transition_committed_under_the_task_lock_precedes_the_check()
+    [Arguments(AgentTaskStatus.Canceled)]
+    [Arguments(AgentTaskStatus.Succeeded)]
+    [Arguments(AgentTaskStatus.Blocked)]
+    public async Task State_transition_committed_under_the_task_lock_precedes_the_check(
+        AgentTaskStatus settledStatus)
     {
         using var workspace = new DecisionTempWorkspace();
         var (taskId, sessionId) = await SeedAsync(workspace.Path);
@@ -229,7 +233,7 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
                 CancellationToken.None);
         });
         var task = await writer.AgentTasks.SingleAsync(t => t.Id == taskId);
-        task.Status = AgentTaskStatus.Canceled;
+        task.Status = settledStatus;
         await writer.SaveChangesAsync();
         await transaction.CommitAsync();
         await Should.ThrowAsync<ConflictException>(() => pending);
@@ -237,6 +241,39 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
             && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Retry_rebinding_committed_before_the_check_refuses_the_old_attempt()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        var replacement = Guid.NewGuid();
+        await using var writer = NewDb();
+        await using var transaction = await writer.Database.BeginTransactionAsync();
+        var task = await writer.AgentTasks.FromSqlInterpolated(
+            $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE").SingleAsync();
+        var pending = Task.Run(async () =>
+        {
+            await using var db = NewDb();
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.AsNoTracking()
+                .SingleAsync(t => t.Id == taskId), sessionId, workspace.Path);
+            return await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, Sample(), caller,
+                CancellationToken.None);
+        });
+        writer.AgentSessions.Add(new AgentSession
+        {
+            Id = replacement, DefinitionName = "retry", AgentKind = AgentKind.Grok,
+            Status = SessionStatus.Running, Cwd = workspace.Path,
+            CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+        });
+        task.Attempt = 2;
+        task.AgentSessionId = replacement;
+        await writer.SaveChangesAsync();
+        await transaction.CommitAsync();
+        await Should.ThrowAsync<ConflictException>(() => pending);
+        await using var verify = NewDb();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
     }
 
     [Test]
@@ -261,6 +298,28 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         await using var verify = NewDb();
         (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
             .InternalDecisionPolicyHash.ShouldBe(originalHash);
+    }
+
+    [Test]
+    public async Task Repository_link_retargeted_after_task_creation_cannot_escape_the_grant()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        using var outside = new DecisionTempWorkspace();
+        Directory.CreateDirectory(Path.Combine(outside.Path, "scripts"));
+        File.WriteAllText(Path.Combine(outside.Path, "scripts", "deploy-gym-stat.ps1"), "outside");
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        using var link = DirectoryLink.TryCreate(Path.Combine(workspace.Path, "scripts"),
+            Path.Combine(outside.Path, "scripts"));
+        link.ShouldNotBeNull("question-time containment requires a native directory link or junction");
+        await using var db = NewDb();
+        var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+            sessionId, workspace.Path);
+        var result = await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, Sample(), caller,
+            CancellationToken.None);
+        result.Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+        result.Reason.ShouldBe("path_not_granted");
+        (await db.AgentTaskDecisionQuestions.SingleAsync(q => q.AgentTaskId == taskId))
+            .Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
     }
 
     [Test]

@@ -203,8 +203,17 @@ public sealed class AgentTaskDecisionQuestionApiTests
         Add(j => j["impact"] = 0);
         Add(j => j["category"] = 99);
         Add(j => j["requestId"] = "bad-guid");
+        Add(j => j["requestId"] = Guid.Empty.ToString("D"));
         Add(j => j["attempt"] = 0);
+        Add(j => j.Remove("grantId"));
+        Add(j => j["grantId"] = " ");
+        Add(j => j.Remove("category"));
         Add(j => j["paths"] = new JsonArray());
+        Add(j => j["paths"] = new JsonArray(Enumerable.Range(0, 65)
+            .Select(i => (JsonNode?)JsonValue.Create($"scripts/file-{i}.ps1")).ToArray()));
+        Add(j => j["paths"] = new JsonArray(JsonValue.Create("../outside.ps1")));
+        Add(j => j["question"] = " ");
+        Add(j => j["proposedAction"] = null);
         Add(j => j["preservationEvidence"] = " ");
         Add(j => j["unknown"] = true);
         Add(j => j["question"] = new string('x', 501));
