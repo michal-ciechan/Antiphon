@@ -52,6 +52,10 @@ public class AntiphonAppFixture
     public bool UseMockExecutor { get; set; }
     internal DistillerCanaryOptions? DistillerCanary { get; init; }
     internal LandDeliveryOptions? LandDelivery { get; init; }
+    /// <summary>Fixture-owned configuration and registrations reapplied to every owned host generation.</summary>
+    internal Action<Dictionary<string, string?>>? ConfigureOwnedHost { get; init; }
+    internal Action<IServiceCollection>? ConfigureOwnedServices { get; init; }
+    internal bool UseModernPty { get; init; }
     internal string OwnedRunnerUrl => _isolatedSessionRunner?.BaseUrl ?? throw new InvalidOperationException("Runner not started");
     internal string OwnedRunnerDirectory => _isolatedSessionRunner?.RunDirectory ?? throw new InvalidOperationException("Runner not started");
     internal string OwnedDatabase => _container.GetConnectionString();
@@ -101,7 +105,7 @@ public class AntiphonAppFixture
             DiagnosticsDirectory = _diagnostics.Directory;
         }
 
-        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot(), modernPty: DistillerCanary is not null || LandDelivery is not null);
+        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot(), modernPty: UseModernPty || DistillerCanary is not null || LandDelivery is not null);
         var runnerStartup = _isolatedSessionRunner.StartAsync();
         var containerStartup = _container.StartAsync();
         try
@@ -131,7 +135,7 @@ public class AntiphonAppFixture
             _workspacePath!,
             DiagnosticsDirectory,
             _isolatedSessionRunner!.BaseUrl,
-            DistillerCanary, LandDelivery
+            DistillerCanary, LandDelivery, ConfigureOwnedHost, ConfigureOwnedServices
         );
 
         // Trigger host creation (WAF builds host on first access)
@@ -168,14 +172,24 @@ public class AntiphonAppFixture
         await RecordSessionRunnerReachabilityAsync();
     }
 
-    internal async Task RestartCanaryHostAsync()
+    internal async Task RestartOwnedHostAsync()
     {
-        if (DistillerCanary is null) throw new InvalidOperationException("Only a canary may retain its resources for host restart.");
+        if (_kestrelHost is null || _factory is null)
+            throw new InvalidOperationException("The owned host is not running.");
         HttpClient.Dispose();
-        await _kestrelHost!.StopAsync();
+        await _kestrelHost.StopAsync();
         _kestrelHost.Dispose();
-        await _factory!.DisposeAsync();
+        await _factory.DisposeAsync();
+        _kestrelHost = null;
+        _factory = null;
         await StartHostAsync(_container.GetConnectionString());
+    }
+
+    internal Task RestartCanaryHostAsync()
+    {
+        if (DistillerCanary is null)
+            throw new InvalidOperationException("Only a canary may use the canary restart helper.");
+        return RestartOwnedHostAsync();
     }
 
     internal async Task SuspendLandHostAsync()
@@ -579,6 +593,8 @@ public class AntiphonAppFixture
         private readonly string _sessionRunnerBaseUrl;
         private readonly DistillerCanaryOptions? _canary;
         private readonly LandDeliveryOptions? _land;
+        private readonly Action<Dictionary<string, string?>>? _configureOwnedHost;
+        private readonly Action<IServiceCollection>? _configureOwnedServices;
 
         public IHost? KestrelHost { get; private set; }
 
@@ -589,7 +605,9 @@ public class AntiphonAppFixture
             string workspacePath,
             string? diagnosticsDirectory,
             string sessionRunnerBaseUrl,
-            DistillerCanaryOptions? canary = null, LandDeliveryOptions? land = null
+            DistillerCanaryOptions? canary = null, LandDeliveryOptions? land = null,
+            Action<Dictionary<string, string?>>? configureOwnedHost = null,
+            Action<IServiceCollection>? configureOwnedServices = null
         )
         {
             _clientDistPath = clientDistPath;
@@ -600,6 +618,8 @@ public class AntiphonAppFixture
             _sessionRunnerBaseUrl = sessionRunnerBaseUrl;
             _canary = canary;
             _land = land;
+            _configureOwnedHost = configureOwnedHost;
+            _configureOwnedServices = configureOwnedServices;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -650,12 +670,14 @@ public class AntiphonAppFixture
 
                 _canary?.Configure(settings);
                 _land?.Configure(settings);
+                _configureOwnedHost?.Invoke(settings);
                 config.AddInMemoryCollection(settings);
             });
 
             builder.ConfigureServices(services =>
             {
                 _land?.ConfigureServices(services);
+                _configureOwnedServices?.Invoke(services);
                 if (_canary is not null)
                 {
                     services.AddSingleton(p => new Antiphon.Server.Application.Services.PtyDeliveryProfile(
