@@ -8,6 +8,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Shouldly;
 using TUnit.Core;
 
@@ -162,6 +164,13 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
     {
         using var workspace = new DecisionTempWorkspace();
         var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        await using (var setup = NewDb())
+        {
+            var task = await setup.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.StandingAuthority = "May continue after an explicit reply.";
+            task.AutoContinueOnWait = true;
+            await setup.SaveChangesAsync();
+        }
         await using var beforeDb = NewDb();
         var before = await beforeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
         var bus = new CommittedQuestionBus(taskId);
@@ -182,11 +191,16 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         after.Attempt.ShouldBe(before.Attempt);
         after.CompletedAt.ShouldBe(before.CompletedAt);
         after.Result.ShouldBe(before.Result);
+        after.NextStage.ShouldBe(before.NextStage);
+        after.NextHandoff.ShouldBe(before.NextHandoff);
+        after.CompletionNoteDigest.ShouldBe(before.CompletionNoteDigest);
         after.ReportEvidence.ShouldBe(before.ReportEvidence);
         after.ReportNudgedAt.ShouldBe(before.ReportNudgedAt);
         after.ReportNudgedSequence.ShouldBe(before.ReportNudgedSequence);
         after.ReportNudgeMessageId.ShouldBe(before.ReportNudgeMessageId);
         after.AutoContinuedAt.ShouldBe(before.AutoContinuedAt);
+        after.AutoContinueOnWait.ShouldBe(before.AutoContinueOnWait);
+        after.StandingAuthority.ShouldBe(before.StandingAuthority);
         after.ConcurrencyToken.ShouldBe(before.ConcurrencyToken);
         (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
@@ -301,6 +315,76 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
                 CancellationToken.None)).Disposition.ShouldBe(InternalDecisionDisposition.Continue);
         }
         bus.Publications.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Competing_binding_cannot_commit_between_admission_and_decision()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path, schema.ConnectionString);
+        var competitorId = Guid.NewGuid();
+        await using (var setup = NewDb(schema.ConnectionString))
+        {
+            setup.AgentTasks.Add(new AgentTask
+            {
+                Id = competitorId, RootTaskId = competitorId, Title = "Queued competitor",
+                Goal = "Wait for session.", Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
+                ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path, Status = AgentTaskStatus.Queued,
+                AgentSessionId = sessionId, CreatedAt = DateTime.UtcNow,
+            });
+            await setup.SaveChangesAsync();
+        }
+        var gate = new PauseDecisionInsertInterceptor();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var check = Task.Run(async () =>
+        {
+            var options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(schema.ConnectionString).AddInterceptors(gate).Options;
+            await using var db = new AppDbContext(options);
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.AsNoTracking()
+                .SingleAsync(t => t.Id == taskId), sessionId, workspace.Path);
+            return await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, Sample(), caller,
+                timeout.Token);
+        });
+        try
+        {
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await using var writer = NewDb(schema.ConnectionString);
+            await writer.Database.ExecuteSqlRawAsync("SET lock_timeout = '500ms'");
+            var blocked = await Should.ThrowAsync<PostgresException>(() =>
+                writer.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE \"AgentTasks\" SET \"Status\" = {(int)AgentTaskStatus.Working} WHERE \"Id\" = {competitorId}"));
+            blocked.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
+        }
+        finally
+        {
+            gate.Resume.TrySetResult();
+            await check.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        (await check).Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        await using var verify = NewDb(schema.ConnectionString);
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(1);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == competitorId)).Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    private sealed class PauseDecisionInsertInterceptor : DbCommandInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("INSERT INTO \"AgentTaskDecisionQuestions\"", StringComparison.Ordinal))
+            {
+                Entered.TrySetResult();
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     private sealed class CommittedQuestionBus(Guid taskId, string? connectionString = null) : IEventBus
