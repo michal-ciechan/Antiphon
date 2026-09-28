@@ -795,7 +795,8 @@ public static class DelegationReportFormatter
     /// </param>
     public static string BuildBriefPointer(
         AgentTask task, DelegationSettings settings, string? spillPath, int fullLength,
-        AgentKind agentKind = AgentKind.ClaudeCode, int? maxWireBytes = null)
+        AgentKind agentKind = AgentKind.ClaudeCode, int? maxWireBytes = null,
+        string? boundSpillPath = null)
     {
         var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var where = string.IsNullOrWhiteSpace(spillPath)
@@ -881,7 +882,11 @@ public static class DelegationReportFormatter
 
         sb.Append(TaskMarker(task.Id));
         var pointer = joins ? FlattenForJoiningComposer(sb.ToString()) : sb.ToString();
-        if (maxWireBytes is null || Encoding.UTF8.GetByteCount(pointer) <= maxWireBytes.Value)
+        // The queue replaces a staged runner path with its message-owned inbox path before
+        // delivery. Measure the bytes that will actually be typed, not the shorter staged path.
+        string Bound(string text) => boundSpillPath is null || string.IsNullOrWhiteSpace(spillPath)
+            ? text : text.Replace(spillPath, boundSpillPath, StringComparison.Ordinal);
+        if (maxWireBytes is null || Encoding.UTF8.GetByteCount(Bound(pointer)) <= maxWireBytes.Value)
             return pointer;
 
         // A runner brief has already been staged in its session cwd. Keep the typed pointer
@@ -891,7 +896,7 @@ public static class DelegationReportFormatter
             + $"Read the complete task brief at {where} before doing anything. Follow its reporting contract.\n"
             + TaskMarker(task.Id);
         compact = joins ? FlattenForJoiningComposer(compact) : compact;
-        if (Encoding.UTF8.GetByteCount(compact) > maxWireBytes.Value)
+        if (Encoding.UTF8.GetByteCount(Bound(compact)) > maxWireBytes.Value)
             throw new InvalidOperationException("The runner brief pointer exceeds its single-write ceiling.");
         return compact;
     }

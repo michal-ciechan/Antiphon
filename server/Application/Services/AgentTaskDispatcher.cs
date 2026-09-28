@@ -5497,7 +5497,11 @@ public sealed class AgentTaskDispatcher
 
         return DelegationReportFormatter.BuildBriefPointer(
             task, settings, spillPath, brief.Length, agentKind,
-            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd) ? null : limits.SingleWriteMaxBytes);
+            maxWireBytes: string.IsNullOrWhiteSpace(runnerCwd) ? null : limits.SingleWriteMaxBytes,
+            // The row id is assigned when the queue binds the staged spill. Its GUID is
+            // always the same length, so this projects the exact path length after binding.
+            boundSpillPath: string.IsNullOrWhiteSpace(runnerCwd) ? null
+                : TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D")));
     }
 
     /// <summary>

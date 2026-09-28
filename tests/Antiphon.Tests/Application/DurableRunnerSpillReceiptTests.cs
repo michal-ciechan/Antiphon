@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner;
@@ -16,6 +18,52 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class DurableRunnerSpillReceiptTests
 {
+    [Test]
+    public async Task Dispatcher_pointer_survives_queue_binding_and_reaches_a_complete_UserPrompt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => services.AddSingleton<RemoteSpillCourier>(),
+        });
+        const string cwd = "/runner/worktrees/task-bound-pointer";
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, cwd);
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(), Title = "runner pointer receipt", Goal = new string('g', 3000),
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
+            ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = h.TempRoot, Status = AgentTaskStatus.Dispatched,
+        };
+        var settings = new DelegationSettings();
+        var staged = new List<PhoneHomeInputSpill>();
+        var pointer = AgentTaskDispatcher.FitBriefForTyping(task, settings,
+            settings.CeilingsFor(Antiphon.Agents.Pty.PtyBackend.InboxConhost, "runner"),
+            runnerCwd: cwd, stageRemoteSpill: staged.Add);
+        staged.ShouldHaveSingleItem();
+        h.Queue.StageRemoteSpill(h.SessionId, cwd, staged[0]);
+        await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
+        await h.Queue.EnqueueAsync(h.SessionId, pointer, MessageSendMode.WhenIdle,
+            CancellationToken.None, QueuedMessageOrigin.Delegation);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId);
+        row.Body.ShouldContain(TypedBodySpill.InboxRelativePath(row.Id.ToString("D")));
+        row.Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id) + " YOUR BRIEF IS NOT IN THIS MESSAGE");
+        row.RemoteSpillBody.ShouldBe(staged[0].Body);
+        System.Text.Encoding.UTF8.GetByteCount(row.Body).ShouldBeLessThanOrEqualTo(1024);
+        await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
+            schema.ConnectionString, h, row, h.SessionId, busy: true, busyBeforeDelivery: true);
+
+        await using var after = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var prompt = await after.TranscriptEntries.AsNoTracking().SingleAsync(e =>
+            e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt);
+        PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(row.Body));
+        h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        h.Adapter.SubmittedBodies[0].ShouldBe(row.Body);
+    }
+
     [Test]
     public async Task Queued_runner_spill_keeps_its_bytes_and_receives_a_complete_UserPrompt()
     {
