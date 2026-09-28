@@ -104,10 +104,11 @@ internal sealed class ExpectationDeliveryFixture : IAsyncDisposable
         {
             Id = id,
             DirectiveId = World.Directive.Id,
+            ConfigDigest = World.Digest,
             Ordinal = Interlocked.Increment(ref _ordinal),
             EvidenceSnapshot = "StalledPipeline queue_age",
             Body = text,
-            BodyDigest = new string('a', 64),
+            BodyDigest = Antiphon.Server.Application.Settings.ExpectationDirectiveDigest.HashUtf8(text),
             DestinationSessionId = destination,
             DestinationGeneration = generation,
             BaselineSequence = baseline,

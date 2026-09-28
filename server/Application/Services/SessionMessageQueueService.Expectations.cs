@@ -103,7 +103,7 @@ public sealed partial class SessionMessageQueueService
                 if (await ExpectationBodyBlocksComposerAsync(db, sessionId, generation, ct))
                     return ExpectationSendResult.Refuse("unconfirmed_expectation_body");
 
-                if (System.Text.Encoding.UTF8.GetByteCount(PtyInputEncoding.NormalizeBody(trimmed)) > ceilings.SingleWriteMaxBytes)
+                if (System.Text.Encoding.UTF8.GetByteCount(PtyInputEncoding.EncodeBody(trimmed)) > ceilings.SingleWriteMaxBytes)
                     return ExpectationSendResult.Refuse("body_over_ceiling");
                 baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
             }
@@ -117,7 +117,7 @@ public sealed partial class SessionMessageQueueService
             try
             {
                 var outcome = await DeliverAsync(sessionId, trimmed, ct, baseline, ceilings, overlayRecovery: false);
-                result = ResultOf(outcome, baseline);
+                result = await ResultOfAsync(sessionId, trimmed, outcome, baseline, ct);
             }
             catch (Exception ex)
             {
@@ -143,8 +143,26 @@ public sealed partial class SessionMessageQueueService
     }
 
     /// <summary>The typed result of a delivery that ran after the attempt was committed.</summary>
-    private ExpectationSendResult ResultOf(DeliveryOutcome outcome, TranscriptBaseline baseline)
+    private async Task<ExpectationSendResult> ResultOfAsync(
+        Guid sessionId, string body, DeliveryOutcome outcome, TranscriptBaseline baseline, CancellationToken ct)
     {
+        (long Sequence, DateTime At)? userPrompt = null;
+        if (outcome.Verdict == DeliveryVerdict.Delivered
+            && outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript && baseline.Observable)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var typed = PtyInputEncoding.NormalizeBody(body.Trim());
+            var prompts = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == sessionId && t.Sequence > baseline.MaxSequence
+                    && t.Kind == TranscriptKinds.UserPrompt)
+                .Select(t => new { t.Text, t.Sequence, t.Timestamp, t.CreatedAt })
+                .ToListAsync(ct);
+            var match = prompts.FirstOrDefault(row => PromptSubmissionMatch.IsConfirmedBy(typed, row.Text)
+                && PromptSubmissionMatch.IsCompleteIn(typed, row.Text));
+            if (match is not null)
+                userPrompt = (match.Sequence, match.Timestamp ?? match.CreatedAt);
+        }
         // The hold follows the evidence each verdict carries. Submitted (no hold) needs a
         // submitted-prompt record carrying the body: whole past no floor, or Truncated. Its echo
         // stays in the conversation, where the screen hold cannot tell it from a standing body
@@ -154,8 +172,9 @@ public sealed partial class SessionMessageQueueService
         // the body is gone from the screen, or the generation changes, and they page the operator.
         return outcome.Verdict switch
         {
-            DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript && baseline.Observable =>
-                new ExpectationSendResult(ExpectationSendOutcome.Confirmed, "transcript", true, UtcNow()),
+            DeliveryVerdict.Delivered when userPrompt is { } receipt =>
+                new ExpectationSendResult(ExpectationSendOutcome.Confirmed, "transcript", true,
+                    receipt.At, ReceiptSequence: receipt.Sequence),
             DeliveryVerdict.Delivered when outcome.ConfirmedBy == DeliveryConfirmedBy.Transcript =>
                 new ExpectationSendResult(ExpectationSendOutcome.Unconfirmed, "no_observable_baseline", true, Submitted: true),
             DeliveryVerdict.Delivered =>

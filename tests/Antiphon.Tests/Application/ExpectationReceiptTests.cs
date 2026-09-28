@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 public sealed class ExpectationReceiptTests
 {
     [Test]
-    public async Task C650_Complete_submitted_prompt_confirms_both_supported_kinds()
+    public async Task C650_UserPrompt_confirms_but_queued_prompt_only_submits()
     {
         await using var f = await ExpectationDeliveryFixture.CreateAsync();
         var userPrompt = await f.NudgeAsync();
@@ -31,10 +31,15 @@ public sealed class ExpectationReceiptTests
             BridgeQueueHarness.InsertEntryAsync(f.SessionId, TranscriptKinds.QueuedUserPrompt, submitted,
                 timestamp: DateTime.UtcNow, connectionString: f.Schema.ConnectionString);
         var queuedPrompt = await f.NudgeAsync();
-        (await f.DeliverAsync(queuedPrompt.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Confirmed);
+        (await f.DeliverAsync(queuedPrompt.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Unconfirmed);
         var second = await f.ReloadAsync(queuedPrompt.Id);
-        second.AttemptState.ShouldBe(ExpectationAttemptState.Confirmed);
-        second.ReceiptAt.ShouldNotBeNull();
+        second.AttemptState.ShouldBe(ExpectationAttemptState.Submitted);
+        second.ReceiptAt.ShouldBeNull();
+        second.ReceiptSequence.ShouldBeNull();
+        second.AnsweredAt.ShouldBeNull();
+        await f.AppendTranscriptAsync(f.SessionId, TranscriptKinds.UserPrompt, queuedPrompt.Body);
+        (await f.DeliverAsync(queuedPrompt.Id)).Outcome.ShouldBe(ExpectationSendOutcome.Confirmed);
+        (await f.ReloadAsync(queuedPrompt.Id)).ReceiptAt.ShouldNotBeNull();
         f.Harness.Adapter.SubmittedBodies.ShouldBe([userPrompt.Body, queuedPrompt.Body]);
     }
 

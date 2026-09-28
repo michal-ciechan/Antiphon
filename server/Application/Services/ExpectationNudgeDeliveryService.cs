@@ -26,17 +26,20 @@ public sealed class ExpectationNudgeDeliveryService
     private readonly IExpectationPromptSender _sender;
     private readonly TimeProvider _time;
     private readonly IExpectationCatchUp _catchUp;
+    private readonly ExpectationTimingSettings _timing;
 
     public ExpectationNudgeDeliveryService(
         AppDbContext db,
         IExpectationPromptSender sender,
         TimeProvider time,
-        IExpectationCatchUp? catchUp = null)
+        IExpectationCatchUp? catchUp = null,
+        ExpectationTimingSettings? timing = null)
     {
         _db = db;
         _sender = sender;
         _time = time;
         _catchUp = catchUp ?? NoExpectationCatchUp.Instance;
+        _timing = timing ?? new ExpectationTimingSettings();
     }
 
     public async Task<ExpectationDeliveryResult> DeliverAsync(
@@ -46,6 +49,10 @@ public sealed class ExpectationNudgeDeliveryService
             ?? throw new InvalidOperationException($"Expectation nudge {nudgeId} does not exist.");
         if (!string.Equals(nudge.DirectiveId, directive.Id, StringComparison.Ordinal))
             throw new InvalidOperationException($"Expectation nudge {nudgeId} belongs to directive '{nudge.DirectiveId}'.");
+        if (!directive.Enabled || directive.ActiveUntilUtc <= _time.GetUtcNow()
+            || (nudge.ConfigDigest.Length > 0
+                && nudge.ConfigDigest != await ExpectationConfigIdentity.ResolveAsync(_db, directive, _timing, ct)))
+            return new ExpectationDeliveryResult(nudgeId, null, "directive_inactive_or_changed");
 
         if (nudge.AttemptState != ExpectationAttemptState.None)
             return await ReconcileAsync(nudge, ct);
@@ -69,6 +76,7 @@ public sealed class ExpectationNudgeDeliveryService
         var claimed = false;
         async Task<bool> CommitAttemptAsync(ExpectationSendAttempt attempt, CancellationToken token)
         {
+            var started = _time.GetUtcNow().UtcDateTime;
             var rows = await _db.ExpectationNudges
                 .Where(n => n.Id == nudgeId && n.AttemptState == ExpectationAttemptState.None)
                 .ExecuteUpdateAsync(u => u
@@ -76,6 +84,8 @@ public sealed class ExpectationNudgeDeliveryService
                     .SetProperty(n => n.DestinationSessionId, attempt.SessionId)
                     .SetProperty(n => n.DestinationGeneration, attempt.Generation)
                     .SetProperty(n => n.BaselineSequence, attempt.BaselineSequence)
+                    .SetProperty(n => n.AttemptStartedAt, started)
+                    .SetProperty(n => n.AnswerDueAt, started.AddMinutes(_timing.AnswerMinutes))
                     .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), token);
             claimed = rows == 1;
             return claimed;
@@ -87,7 +97,8 @@ public sealed class ExpectationNudgeDeliveryService
         async Task RecordOutcomeAsync(ExpectationSendResult sent, CancellationToken token)
         {
             var state = StateFor(sent);
-            if (await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, state, sent.ReceiptAt, token))
+            if (await RecordAsync(nudgeId, ExpectationAttemptState.Attempting, state, sent.ReceiptAt, token,
+                    sent.ReceiptSequence))
                 recorded = state;
         }
 
@@ -115,7 +126,8 @@ public sealed class ExpectationNudgeDeliveryService
     private async Task<ExpectationDeliveryResult> ReconcileAsync(ExpectationNudge nudge, CancellationToken ct)
     {
         var state = nudge.AttemptState;
-        if (state is ExpectationAttemptState.Confirmed or ExpectationAttemptState.Refused)
+        if (state == ExpectationAttemptState.Refused
+            || (state == ExpectationAttemptState.Confirmed && nudge.ReceiptSequence is not null))
             return new ExpectationDeliveryResult(nudge.Id, Outcome(state), "settled");
 
         if (state == ExpectationAttemptState.Attempting)
@@ -139,31 +151,38 @@ public sealed class ExpectationNudgeDeliveryService
         if (nudge.BaselineSequence is not { } floor)
             return new ExpectationDeliveryResult(nudge.Id, Outcome(state), "no_observable_baseline");
 
-        var receipt = await FindReceiptAsync(destination, floor, nudge.Body, ct);
+        var receipt = await FindReceiptAsync(destination, nudge.DestinationGeneration, floor, nudge.Body, ct);
         if (receipt is null)
             return new ExpectationDeliveryResult(nudge.Id, Outcome(state), "no_receipt");
 
-        await RecordAsync(nudge.Id, state, ExpectationAttemptState.Confirmed, receipt, ct);
+        await RecordAsync(nudge.Id, state, ExpectationAttemptState.Confirmed, receipt.Value.At, ct,
+            receipt.Value.Sequence);
         return new ExpectationDeliveryResult(nudge.Id, ExpectationSendOutcome.Confirmed, "late_receipt");
     }
 
     /// <summary>
-    /// A complete submitted prompt (UserPrompt or QueuedUserPrompt, never queue housekeeping)
+    /// A complete delivered UserPrompt (QueuedUserPrompt is submission only)
     /// in the frozen destination strictly past the committed floor.
     /// </summary>
-    private async Task<DateTime?> FindReceiptAsync(Guid sessionId, long floor, string body, CancellationToken ct)
+    private async Task<(DateTime At, long Sequence)?> FindReceiptAsync(
+        Guid sessionId, DateTime? generation, long floor, string body, CancellationToken ct)
     {
+        var current = await _db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
+        if (generation is not { } frozen || current is not { } started
+            || !SessionGeneration.Equal(frozen, SessionGeneration.Normalize(started)))
+            return null;
         var typed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body.Trim());
         var candidates = await _db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && t.Sequence > floor
-                && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
+                && t.Kind == TranscriptKinds.UserPrompt)
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Text, t.Timestamp, t.CreatedAt })
+            .Select(t => new { t.Text, t.Timestamp, t.CreatedAt, t.Sequence })
             .ToListAsync(ct);
         var match = candidates.FirstOrDefault(t => PromptSubmissionMatch.IsConfirmedBy(typed, t.Text)
             && PromptSubmissionMatch.IsCompleteIn(typed, t.Text));
-        return match is null ? null : match.Timestamp ?? match.CreatedAt;
+        return match is null ? null : (match.Timestamp ?? match.CreatedAt, match.Sequence);
     }
 
     private async Task<ExpectationDeliveryResult> RefuseUnclaimedAsync(Guid nudgeId, string reason, CancellationToken ct)
@@ -178,27 +197,52 @@ public sealed class ExpectationNudgeDeliveryService
     /// True when this pass made the transition.
     /// </summary>
     private async Task<bool> RecordAsync(
-        Guid nudgeId, ExpectationAttemptState from, ExpectationAttemptState to, DateTime? receiptAt, CancellationToken ct)
+        Guid nudgeId, ExpectationAttemptState from, ExpectationAttemptState to, DateTime? receiptAt, CancellationToken ct,
+        long? receiptSequence = null)
     {
         var now = _time.GetUtcNow().UtcDateTime;
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         var rows = _db.ExpectationNudges.Where(n => n.Id == nudgeId && n.AttemptState == from);
+        int changed;
         if (to == ExpectationAttemptState.Confirmed)
         {
-            return await rows.ExecuteUpdateAsync(u => u
+            changed = await rows.ExecuteUpdateAsync(u => u
                 .SetProperty(n => n.AttemptState, to)
                 .SetProperty(n => n.ReceiptAt, receiptAt ?? now)
-                .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct) == 1;
+                .SetProperty(n => n.ReceiptSequence, receiptSequence)
+                .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
         }
-
-        return await rows.ExecuteUpdateAsync(u => u
-            .SetProperty(n => n.AttemptState, to)
-            .SetProperty(n => n.OperatorOutboxState, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
-                ? ExpectationOperatorOutboxState.Due
-                : n.OperatorOutboxState)
-            .SetProperty(n => n.OperatorNextAttemptAt, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
-                ? now
-                : n.OperatorNextAttemptAt)
-            .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct) == 1;
+        else if (to == ExpectationAttemptState.Submitted)
+        {
+            changed = await rows.ExecuteUpdateAsync(u => u
+                .SetProperty(n => n.AttemptState, to)
+                .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
+        }
+        else
+        {
+            changed = await rows.ExecuteUpdateAsync(u => u
+                .SetProperty(n => n.AttemptState, to)
+                .SetProperty(n => n.OperatorOutboxState, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
+                    ? ExpectationOperatorOutboxState.Due
+                    : n.OperatorOutboxState)
+                .SetProperty(n => n.OperatorNextAttemptAt, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
+                    ? now
+                    : n.OperatorNextAttemptAt)
+                .SetProperty(n => n.OperatorFirstDueAt, n => n.OperatorFirstDueAt ?? now)
+                .SetProperty(n => n.ConcurrencyToken, Guid.NewGuid()), ct);
+        }
+        if (changed == 1)
+        {
+            var nudge = await _db.ExpectationNudges.AsNoTracking().Where(n => n.Id == nudgeId)
+                .Select(n => new { n.AuditCommentId, n.CheckEventIdsJson }).SingleAsync(ct);
+            await ExpectationHoldAudit.AddAsync(_db, nudge.AuditCommentId, nudge.CheckEventIdsJson,
+                $"[expectation-nudge:{nudgeId:D}] Attempt {from} -> {to}; receipt sequence "
+                + (receiptSequence?.ToString() ?? "none") + ".",
+                ExpectationLedger.AuditAuthor, now, ct);
+            await _db.SaveChangesAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return changed == 1;
     }
 
     /// <summary>
