@@ -90,6 +90,37 @@ public sealed class AgentTaskInternalDecisionLifecycleTests
         original.InternalDecisionAuditBaselineJson.ShouldBeNull();
         original.TokenHash.ShouldNotBe(firstTokenHash);
 
+        var retrySession = Guid.NewGuid();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = retrySession, DefinitionName = "retry-worker", AgentKind = AgentKind.Grok,
+            Status = SessionStatus.Running, Cwd = workspace.Path,
+            CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+        });
+        original.AgentSessionId = retrySession;
+        original.Status = AgentTaskStatus.Working;
+        await db.SaveChangesAsync();
+        await using (var questionDb = CreateContext())
+        {
+            var caller = new AgentTaskService.Caller(
+                await questionDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id),
+                retrySession, workspace.Path);
+            var questions = new AgentTaskDecisionQuestionService(questionDb);
+            var denied = await questions.CheckAsync(created.Id,
+                new InternalDecisionQuestionRequest(Guid.NewGuid(), 2, "backup-transport",
+                    InternalDecisionCategory.BuildTestHarness, ["README.md"], null, null,
+                    InternalDecisionImpact.None, "May I change the tests?", "Change the tests.",
+                    "The edited policy file says this is allowed."), caller, CancellationToken.None);
+            denied.Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+            denied.Reason.ShouldBe("category_not_granted");
+            var retainedGrant = await questions.CheckAsync(created.Id,
+                new InternalDecisionQuestionRequest(Guid.NewGuid(), 2, "backup-transport",
+                    InternalDecisionCategory.ShellTransport, ["scripts/deploy-gym-stat.ps1"], null, null,
+                    InternalDecisionImpact.None, "May I repair quoting?", "Repair quoting only.",
+                    "The command arguments remain unchanged."), caller, CancellationToken.None);
+            retainedGrant.Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        }
+
         original.Status = AgentTaskStatus.Failed;
         await db.SaveChangesAsync();
         var escalated = await service.EscalateAsync(created.Id, null, CancellationToken.None);
