@@ -363,7 +363,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             var epoch = ticket.Epoch;
             connection = new PhoneHomeLiveConnection(
                 runnerId, ticket.RunnerStoreId, ticket.ProcessBootId, epoch, socket, _settings.Limits, _clock,
-                ticket.Capacity, ticket.Platform, ticket.Capabilities);
+                ticket.Capacity, ticket.Platform, ticket.Capabilities, slot.Entry.MaxCapacity);
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;

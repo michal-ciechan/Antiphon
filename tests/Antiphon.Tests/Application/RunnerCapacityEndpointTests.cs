@@ -86,6 +86,11 @@ public sealed class RunnerCapacityEndpointTests
         response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
         peer.RequestCount(PhoneHomeOperation.SetCapacity).ShouldBe(0);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(2);
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
+            Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(3), PhoneHomeFraming.Json)));
+        await Task.Delay(50);
+        host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(2);
     }
 
     [Test]
@@ -135,6 +140,14 @@ public sealed class RunnerCapacityEndpointTests
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await response.Content.ReadAsStringAsync()).ShouldContain(PhoneHomeProblemTypes.RequestTimeout);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(10);
+        await peer.EmitAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Heartbeat, peer.Epoch, Guid.NewGuid(),
+            Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(6), PhoneHomeFraming.Json)));
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (host.Directory.DeclaredCapacity(host.AllowedRunnerId) != 6 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(6,
+            "the runner's applied value catches up even after the request timed out");
     }
 
     [Test]
