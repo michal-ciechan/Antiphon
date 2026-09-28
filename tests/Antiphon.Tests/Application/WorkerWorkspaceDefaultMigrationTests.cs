@@ -36,17 +36,19 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
             oldColumns.ShouldNotContain("WorkspaceSource");
 
             var now = DateTime.UtcNow;
+            const string launchEnv = "{\"KEEP\":\"yes\"}";
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "Projects" ("Id", "Name", "GitRepositoryUrl", "LocalRepositoryPath",
                     "BaseBranch", "ConstitutionPath", "GitHubIntegrationEnabled", "NotificationsEnabled",
                     "DefaultLaunchEnvJson", "CommitOnSettle", "CreatedAt", "UpdatedAt")
                 VALUES ({projectId}, {"C458-legacy-" + projectId.ToString("N")}, {"https://example.test/repo.git"},
                     {"/tmp/c458"}, {"release"}, {"AGENTS.md"}, {true}, {true},
-                    '{{"KEEP":"yes"}}'::jsonb, {false}, {now}, {now})
+                    {launchEnv}::jsonb, {false}, {now}, {now})
                 """);
             for (var index = 0; index < tasks.Length; index++)
             {
                 var (id, mode, status, linked) = tasks[index];
+                var branch = mode == WorkspaceMode.Worktree ? "legacy-branch" : null;
                 await db.Database.ExecuteSqlInterpolatedAsync($"""
                     INSERT INTO "AgentTasks" ("Id", "RootTaskId", "ProjectId", "Depth", "Title", "Goal",
                         "Kind", "Role", "ModelLevel", "Attempt", "MaxAttempts", "Workspace",
@@ -54,7 +56,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
                         "ConcurrencyToken", "CreatedAt", "TokensIn", "TokensOut", "CostUsd")
                     VALUES ({id}, {id}, CASE WHEN {linked} THEN {projectId} ELSE NULL END, {0},
                         {"legacy-" + index}, {"preserve"}, {0}, {0}, {0}, {1}, {2}, {(int)mode},
-                        {"/tmp/c458"}, {"/tmp/c458"}, {mode == WorkspaceMode.Worktree ? "legacy-branch" : null},
+                        {"/tmp/c458"}, {"/tmp/c458"}, {branch},
                         {false}, {(int)status}, {0}, {Guid.NewGuid()}, {now}, {0L}, {0L}, {0m})
                     """);
             }
