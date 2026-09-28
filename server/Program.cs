@@ -1058,6 +1058,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapSessionEndpoints();
     app.MapSessionRunnerEndpoints();
     app.MapHostStatsEndpoints();
+    app.MapHostEndpoints();
     app.MapOperatorEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
