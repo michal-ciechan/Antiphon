@@ -4804,6 +4804,31 @@ namespace Antiphon.Server.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.HostBudget", b =>
+                {
+                    b.Property<string>("HostId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int?>("MaxInFlight")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("HostId");
+
+                    b.ToTable("HostBudgets", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.LlmProvider", b =>
                 {
                     b.Property<Guid>("Id")
