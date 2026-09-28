@@ -3,6 +3,12 @@
 Plan task `79295e2c`, 2026-09-28. Inspected checkout:
 `a8cdf665f81ade954cc00eebf6df73270e7841de`.
 
+TestDesign task `d534fa92` inspected the continuation checkout
+`a8ccd73622a1ea94c7fe27c66ee7d71032df6139` and completed the
+[fixture inventory and guard-to-positive-control supplement](2026-09-28-card-0650-expectation-watchdog-positive-controls.md).
+That supplement is part of this plan's Code contract. It contains 187 designed PCs, not
+executed mutation evidence, and preserves these S1-S4 slices.
+
 Complete the existing watchdog with production observation adapters, configurable thresholds,
 answer detection, durable operator escalation, and a minute Hangfire job on the main instance.
 The watchdog must prompt a working orchestrator while ordinary caller notes cannot progress,
@@ -13,14 +19,19 @@ This is a documentation-only continuation plan. It supersedes the implementation
 checkpoint manifest in the [September 24 plan](2026-09-24-card-0650-expectation-watchdog-plan.md).
 That plan's S1-S4 code is already present; do not recreate it or repeat its historical red-first
 rounds. Source presence is not a claim of passing tests, deployment, or active protection.
-Verification is a separate **TestDesign** handoff; the closed ordinary checkpoint list below is
-the starting execution contract, not a claim that future methods already exist.
+TestDesign is complete as a source/fixture inspection and verification design. The closed
+ordinary checkpoint list below is the Code execution contract, not a claim that future methods
+already exist or that any checkpoint has run.
 
 ## Ground truth
 
 The full card and related cards were read using `scripts/card.ps1 get` on 2026-09-28:
 CARD-0650 is Review; CARD-0648 is **Backlog** (revision count 1); CARD-0641 is Review.
 These are observations, not workflow changes made by this task.
+TestDesign re-read CARD-0648 with `scripts/card.ps1 get CARD-0648 -Board Antiphon -Json`:
+still **Backlog**, revision count 1, updated `2026-09-24T15:06:03.50254Z`. Its boot/periodic
+recovery and restart integration are requested work, not available recovery capabilities.
+The supplement records the read-only inspector boundary and exact card identity; no card moved.
 
 | Requirement or assumption | Evidence at the inspected checkout | Consequence |
 |---|---|---|
@@ -231,13 +242,13 @@ and gateway delivery receipts are outside CARD-0650.
 
 These S1-S4 are continuation slices, not the old plan's similarly numbered rounds. Commit each
 slice before its checkpoint group, keep changes on the task branch, and use the immutable plan
-commit in the Code brief. TestDesign must inspect new seams/fixtures and finish the guard/PC
-inventory before Code. The slice table names proposed files, not files created by this Plan.
+commit in the Code brief. Follow the completed TestDesign supplement's fixture requirements
+and guard/PC inventory. The slice table names proposed files, not files created by this Plan.
 
 | Slice | Production files and boundary | Test files / completion |
 |---|---|---|
 | S1: real observations and full debt coverage | Extend `Application/Settings/ExpectationWatchdogSettings.cs`, validator and directive digest; `Application/Services/ExpectationObservation.cs`, `ExpectationSnapshotReader.cs`, `ExpectationWatchdogPolicy.cs`, `ExpectationWatchdogService.cs`; add `Infrastructure/Agents/ExpectationObservationAdapter.cs` and `ExpectationTranscriptCatchUp.cs`. Reuse existing runner/provider/journal/progress owners. Configurable clocks, independent unknowns, current dispatch applicability, queue-only notes and paging. | Extend directive tests; add `ExpectationObservationAdapterTests.cs`, `ExpectationNoteDebtTests.cs`; retain policy/snapshot/debt/episode/ledger/hold regressions. CP-1..3. |
-| S2: answer and attempt lifecycle | Extend `Domain/Entities/ExpectationNudge.cs`, mappings in `Infrastructure/Data/AppDbContext.cs`, CLI migration/snapshot; modify nudge delivery, ledger, formatter and narrow expectation send partial; add `Application/Services/ExpectationResponseMatcher.cs` and `ExpectationResponseService.cs`. Persist deadlines/floors, distinguish submission, implement ACK/suppression/repeat state and durable publication fields. | Add `ExpectationResponseTests.cs`, `ExpectationSchedulingTests.cs`; update inherited receipt-kind method; retain all direct delivery/hold-release/public queue regressions. CP-4..5. |
+| S2: answer and attempt lifecycle | Extend `Domain/Entities/ExpectationNudge.cs`, mappings in `Infrastructure/Data/AppDbContext.cs`, CLI migration/snapshot; modify nudge delivery, ledger, formatter and narrow expectation send partial; add `Application/Services/ExpectationResponseMatcher.cs` and `ExpectationResponseService.cs`. Persist deadlines/floors, distinguish submission, implement ACK/suppression/repeat state and durable publication fields. | Add `ExpectationResponseTests.cs`, `ExpectationSchedulingTests.cs`; update inherited receipt-kind and episode-recurrence methods; retain all direct delivery/hold-release/public queue regressions. CP-4..5, with episode regressions repeated in CP-4 after their S2 change. |
 | S3: operator delivery and scoped visibility | Add `Application/Services/ExpectationOperatorDeliveryService.cs`, status DTO/service and `Api/Endpoints/ExpectationWatchdogEndpoints.cs`. Claim/retry/recover publication, exact addressing, all state audits, status authorization. Extend existing outbox fields, not another notification system. | Add `ExpectationEscalationTests.cs`, `Api/ExpectationStatusTests.cs`. CP-6. |
 | S4: scheduled complete feature | Add `Infrastructure/Agents/ExpectationWatchdogJob.cs`; wire options, validators, concrete adapters and services in `Program.cs`, recurring registration in `HangfireConfiguration.cs`, inert appsettings. Update owners `docs/orchestration-loop.md`, `ops-http.md`, `antiphon-api.md`, `bootstrap.md`, `session-runtime-invariants.md`, `telegram.md`, and the ACK paragraph in `server/Bundles/orchestrator.md`. | Add `Infrastructure/ExpectationWatchdogJobTests.cs`, `Application/ExpectationWatchdogScenarioTests.cs`; production-composition and virtual overnight scenarios, existing startup safety. CP-7. |
 
@@ -248,11 +259,12 @@ Paths above are under `server/` unless prefixed `docs/`; test paths are under
 
 ### Inspection and delivery inventory
 
-Read current delivery fixture and its busy-caller test, receipt/debt/snapshot implementations,
-hold-release HTTP fixture, isolated `ExpectationTestWorld`, startup-safety DI fixture, nudge
-ledger/state, queue/outbox models and channel producer contract. Roster counts below are source
-counts, not execution evidence. TestDesign must inspect remaining test bodies and append a
-complete 1:1 safety-guard/PC mapping; do not hand Code an inferred mutation-clean claim.
+The [TestDesign supplement](2026-09-28-card-0650-expectation-watchdog-positive-controls.md)
+records inspection of the current delivery/receipt/debt/snapshot/ledger/episode test bodies,
+hold-release HTTP and public queue fixtures, startup-safety DI, isolated worlds, queue/outbox
+models and channel producer contract. It supplies the guard-to-PC mapping for CP-1..7, fixture
+amendments, exact method selections and separate mutation cost. Roster counts below are source
+counts, not execution evidence; no mutation-clean claim is made.
 
 | Path | Producer, destination and durable identity | Persistence, recovery and receipt |
 |---|---|---|
@@ -265,6 +277,11 @@ controlled runtime (`ExpectationDeliveryFixture`/`BridgeQueueHarness`), not an a
 test. Extend that fixture with deterministic time, a real enabled ChatChannel and recording/failing
 producer; its current world lacks the channel row. Inspect actual persisted UserPrompt bytes and
 sequence. Cover busy and already-eligible recipients and every persistence/I/O crash boundary.
+The delivery fixture currently mixes a fixed world clock and wall-clock send/helpers; wire the
+supplied clock consistently and explicitly drive fake queue timers. Its default fake submission
+writes UserPrompt even for Working, so add a queued-only submission followed by a later UserPrompt
+as a distinct scenario. Add a wired lease-refusal/recording seam: the inherited busy test does not
+actually acquire or fence a repository lease. Preserve no-call assertions on mutation/recovery.
 The controlled terminal does not prove native TUI behavior; preserve native input code. Any
 native input change needs a stated scope change and named native checkpoint before execution.
 Real Program test boots keep ProductionRunnerGuard/Hangfire disabled and never reach 17204.
@@ -286,22 +303,37 @@ Regressions: R-1 directive/ledger/pipeline/snapshot/debt/episode semantics (34 e
 R-2 direct delivery (14), receipt (6), hold-release HTTP (4) and four exact public queue methods
 (28 total); R-3 `DispatchHeldAttentionTests` (11 expanded executions); R-4
 `HangfireStartupSafetyTests` (12). The old manifest's counts for debt, direct delivery, hold
-attention and Hangfire are stale. Planned total is **129** = 85 existing + 44 new executions.
+attention and Hangfire are stale. Planned total is **134**: 85 existing unique, 44 new unique,
+and 5 episode executions repeated after S2 changes their recurrence contract. CP-4 includes R-1
+for that reason; it is not an extra eighth checkpoint.
 
-TestDesign's safety inventory must split independently bypassable scope/ownership/generation,
-attempt/receipt/answer floors, queue/lease independence, composer and no-recovery, audit atomicity,
-publication claim/address, config/cooldown, observation unknowns/fairness, and startup gates.
-Each receives a compiling, method-scoped PC-n with a decisive failure. Mutation is a separately
-commissioned post-land stage; neither a build error nor a test that only compares constants is red.
+Two inherited contract updates are required. Rename
+`ExpectationReceiptTests.C650_Complete_submitted_prompt_confirms_both_supported_kinds` to
+`C650_UserPrompt_confirms_but_queued_prompt_only_submits`, keeping its two positive transport
+branches but requiring null receipt/answer on queued submission. In S2 update
+`ExpectationEpisodeTests.C650_Cooldown_recurrence_and_config_change_keep_correct_clocks`:
+its current t+40 unanswered repeat conflicts with D-5. Seed a correlated receipt/ACK, assert
+repeat from AnsweredAt, and retain cooldown, single urgent bypass, recurrence and config-reset
+controls. SchedulingTests separately proves no unanswered repeat typing. Keep both methods;
+do not delete failing legacy expectations without replacing their discriminating branches.
+
+The supplement splits independently bypassable scope/ownership/generation, attempt/receipt/answer
+floors, queue/lease independence, composer/no-recovery, audit atomicity, publication claim/address,
+config/cooldown, observation unknowns/fairness and startup gates. Each PC names a production
+mutation, an exact method and a decisive failure. Mutation must record a compiling patch at the
+landed source; future seams are not claimed to compile today. Mutation is a separately commissioned
+post-land stage; neither a build error nor a test that only compares constants is red.
 
 ### Cost and execution rules
 
-Estimated ordinary Code checkpoint floor: **51 minutes** (8+6+1+8+6+10+12), including four
+Estimated ordinary Code checkpoint floor: **52 minutes** (8+6+1+9+6+10+12), including four
 isolated builds and three reused-build rows. Estimated authoring: 420 minutes; Code total about
-471 minutes, split into the four slices. These are estimates, not measurements or timeout targets.
+472 minutes, split into the four slices. These are estimates, not measurements or timeout targets.
 Reusing three builds saves three build invocations; no measured minute saving is claimed.
-TestDesign will cost the method-scoped positive-control battery separately after its guard
-inventory; this Plan does not commission it or hide it within the ordinary floor.
+TestDesign separately estimates the full 187-PC serial battery at **1,930 minutes**: 561 builds
+and 561 method invocations across baseline/red/restored-green, plus patch/restoration and evidence
+work. The supplement gives all assumptions and counts. This Plan does not commission that battery
+or hide it within the ordinary floor; actual independent batching savings require evidence.
 
 Use CARD-0723, one run per committed slice group. Build the checkpoint launcher once through
 the build-slot wrapper (report this tooling bootstrap separately from CP verification), then
@@ -317,7 +349,7 @@ When `run` or `wait` returns 75, continue
 `dotnet run --no-build --project tools/Antiphon.Checkpoints -- wait <run-id>` until final
 completion; never abandon a running executor. The four CP builds plus launcher bootstrap are
 the planned five builds; the bootstrap adds an estimated 2 minutes, so the overall Code budget
-is about 473 minutes while the ordinary CP floor remains 51.
+is about 474 minutes while the ordinary CP floor remains 52.
 Do not manually run the old checkpoint script for each row. Commit before each group, report
 CP/commit/build/filter/executed/passed/failed/skipped/TRX and reruns. Slot timeout is reported,
 never bypassed. CLI migration generation is required authoring; any prerequisite build is an
@@ -337,7 +369,7 @@ this does not replace in-assembly process-spawn limiters. Escaped pipes are Mark
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c650-observe/` | observations | `/*/*/(ExpectationDirectiveTests*)\|(ExpectationPipelineTests*)\|(ExpectationSnapshotTests*)\|(ExpectationObservationAdapterTests*)/*` | V-1, R-1 | all 26 listed executions, 0 failed/skipped | 26 | 8 | true |
 | CP-2 | S1 | CP-1 | note-debt-ledger | `/*/*/(ExpectationLedgerTests*)\|(ExpectationDebtTests*)\|(ExpectationEpisodeTests*)\|(ExpectationNoteDebtTests*)/*` | V-2, R-1 | all 19 listed executions, 0 failed/skipped | 19 | 6 | true |
 | CP-3 | S1 | CP-1 | dispatch-held | `/*/*/DispatchHeldAttentionTests*/*` | R-3 | all 11 expanded executions, 0 failed/skipped | 11 | 1 | true |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c650-answer/` | receipt-answer | `/*/*/(ExpectationResponseTests*)\|(ExpectationSchedulingTests*)\|(ExpectationReceiptTests*)/*` | V-3, R-2 | all 18 listed executions, 0 failed/skipped | 18 | 8 | true |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c650-answer/` | receipt-answer | `/*/*/(ExpectationResponseTests*)\|(ExpectationSchedulingTests*)\|(ExpectationReceiptTests*)\|(ExpectationEpisodeTests*)/*` | V-3, R-1, R-2 | all 23 listed executions, 0 failed/skipped | 23 | 9 | true |
 | CP-5 | S2 | CP-4 | direct-input | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)\|(SessionMessageQueueServiceTests*)/(C650_*)\|(Send_now_delivers_immediately_and_does_not_queue*)\|(Delivery_sends_body_then_a_separate_CR_not_one_combined_write*)\|(Multiline_delivery_is_wrapped_in_bracketed_paste*)\|(When_idle_message_is_held_while_the_agent_is_working*)` | R-2 | all 22 selected executions, 0 failed/skipped | 22 | 6 | true |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c650-operator/` | operator-status | `/*/*/(ExpectationEscalationTests*)\|(ExpectationStatusTests*)/*` | V-4 | all 11 listed executions, 0 failed/skipped | 11 | 10 | true |
 | CP-7 | S4 | `tests/Antiphon.Tests -> bin-c650-scheduled/` | scheduled-scenario | `/*/*/(ExpectationWatchdogJobTests*)\|(ExpectationWatchdogScenarioTests*)\|(HangfireStartupSafetyTests*)/*` | V-5, R-4 | all 22 listed executions, 0 failed/skipped | 22 | 12 | true |
@@ -361,7 +393,8 @@ Disable/expire the directive to stop further prompts/pages and preserve history;
 stops the dedicated worker/job. Re-enable only after fresh observation retires stale unsent debt.
 Do not call the five-hour stall fixed until this activation evidence exists.
 
-Next stage: **test-design**. Inspect touched test bodies and production seams, finish the complete
-guard-to-positive-control inventory and its cost, and validate/refine this closed checkpoint
-manifest. Preserve D-1..D-6 unless evidence requires an explicit plan amendment. No unresolved
-product decision blocks that work; actual production IDs and channel receipt belong to activation.
+Next stage: **code**. Implement S1-S4 with the TestDesign supplement's fixture and guard obligations;
+run the seven closed checkpoints once per committed slice group through CARD-0723. Pin this
+amended plan's immutable commit in the Code brief. Preserve D-1..D-6; no unresolved product
+decision blocks Code. Mutation remains a separate post-land commission. Actual production IDs,
+activation and channel receipt belong to the caller.
