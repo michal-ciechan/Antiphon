@@ -69,7 +69,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
     {
         await using (var db = NewDb(schema))
         {
-            var migrations = (await db.Database.GetMigrationsAsync()).ToArray();
+            var migrations = db.Database.GetMigrations().ToArray();
             migrations.Last().ShouldContain("Card0458WorkerWorkspaceDefault");
             var migrator = db.Database.GetService<IMigrator>();
             await migrator.MigrateAsync(migrations[^2]);
