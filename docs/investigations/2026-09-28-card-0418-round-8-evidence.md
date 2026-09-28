@@ -26,6 +26,8 @@ The checkpoint tool was provisioned under `scripts/build-slot.ps1` because its b
 | `20260928-115748-b176`, `4898519dbb2a88a732f12fad743505d732667f1f` | CP-3 | 29/29 passed, including ten trigger-shape rows. |
 | `20260928-120328-fcc6`, `cbe943b420b0b880fc6086f382088e6c3337111b` | CP-4 | 57/57 passed, including three staging fault rows. |
 | `20260928-120546-dbe4`, `8af6cdc58577318ab173a081098922621af365d6` | CP-5 | 5/5 passed, including the before-commit admission visibility barrier. |
+| `20260928-121014-a06d`, `54aa71b0af5b46ca8c988fb6fc14a2f493b2025a` | CP-10 | 1/1 real-browser PDF test passed on the current source tip; the same tool and four-source specimen were visually inspected in round 7. |
+| same run | CP-1 | 3464/3464 Unit cases passed, 33 platform skips. The build waited for a host slot; no test/build driver bypassed it. |
 
 TRX, command, roster and logs are retained under `.antiphon/checkpoints/<run-id>/`. The client row has no TRX; its console log says `Tests 26 passed (26)` and `CLIENT TESTS EXIT CODE: 0`.
 
