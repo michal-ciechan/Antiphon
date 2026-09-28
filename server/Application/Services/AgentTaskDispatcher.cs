@@ -432,7 +432,9 @@ public sealed class AgentTaskDispatcher
         // row's hold check; tests finish that mirror here. Production leaves the hook null.
         if (AfterQueuedSnapshotAsync is { } afterQueued)
             await afterQueued(_db, ct);
-        if (queued.Count == 0)
+        if (queued.Count == 0 && (_capacityRecovery is null || !await _db.AgentTasks.AnyAsync(
+                t => t.CapacityWaitRetained && t.Status == AgentTaskStatus.Working
+                    && t.CapacityWaitId != null, ct)))
         {
             _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>());
             return new TickResult(
