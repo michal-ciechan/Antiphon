@@ -27,6 +27,22 @@ public partial class AgentTaskPipelineStatusTests
     }
 
     [Test]
+    public async Task C654_Pipeline_local_in_flight_excludes_retained_capacity_wait()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var retained = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code,
+            AgentTaskStatus.Working, "retained");
+        retained.CapacityWaitRetained = true;
+        await db.SaveChangesAsync();
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        dto.InFlightAgainstCap.ShouldBe(0);
+        dto.Hosts.Single(h => h.HostId == "local").InFlight.ShouldBe(0);
+    }
+
+    [Test]
     public async Task C654_Pipeline_reports_local_and_runner_limits()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
