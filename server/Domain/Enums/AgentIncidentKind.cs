@@ -640,4 +640,10 @@ public enum AgentIncidentKind
 
     /// <summary>CARD-0727: an operator forced a draining runner to retire. Warning.</summary>
     RunnerForceRetired = 77,
+
+    /// <summary>CARD-0654: an operator changed an execution host's admission budget.</summary>
+    HostBudgetChanged = 78,
+
+    /// <summary>CARD-0654: a runner capacity push succeeded or was refused.</summary>
+    RunnerCapacityChanged = 79,
 }

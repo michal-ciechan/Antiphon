@@ -54,6 +54,7 @@ public class AppDbContext : DbContext
     public DbSet<CheckCompactionRecovery> CheckCompactionRecoveries => Set<CheckCompactionRecovery>();
     public DbSet<LegacyCheckNotePublication> LegacyCheckNotePublications => Set<LegacyCheckNotePublication>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
+    public DbSet<HostBudget> HostBudgets => Set<HostBudget>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
     public DbSet<FileSectionReview> FileSectionReviews => Set<FileSectionReview>();
     public DbSet<AgentReviewCheckpoint> AgentReviewCheckpoints => Set<AgentReviewCheckpoint>();
@@ -117,6 +118,15 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<HostBudget>(entity =>
+        {
+            entity.ToTable("HostBudgets");
+            entity.HasKey(b => b.HostId);
+            entity.Property(b => b.HostId).HasMaxLength(64);
+            entity.Property(b => b.Reason).IsRequired().HasMaxLength(400);
+            entity.Property(b => b.UpdatedAt).IsRequired();
+        });
 
         modelBuilder.Entity<SessionRunnerState>(entity =>
         {
