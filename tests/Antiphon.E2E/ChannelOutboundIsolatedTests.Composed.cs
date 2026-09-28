@@ -21,6 +21,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -32,12 +33,15 @@ namespace Antiphon.E2E;
 public sealed partial class ChannelOutboundIsolatedTests
 {
     [Test]
-    public async Task Four_sources_convert_only_for_the_selected_conversation()
+    // F-5 covers outbound admission after a source task settles. It does not exercise
+    // ChannelReplyDispatcher automatic routing, a second conversation, or tool failure;
+    // the full V-24 case remains pending.
+    public async Task Admitted_four_sources_convert_and_publish_after_host_restart()
     {
         RequireOptIn();
         if (!OperatingSystem.IsLinux())
             throw new TUnit.Core.Exceptions.SkipTestException("The owned container browser wrapper is Linux-only.");
-        await EnsureBrowserImageAsync();
+        var browserImage = await BuildBrowserImageAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
         var ct = deadline.Token;
         var checkout = AntiphonAppFixture.FindRepositoryRoot();
@@ -86,7 +90,7 @@ public sealed partial class ChannelOutboundIsolatedTests
         await File.WriteAllTextAsync(browser, "#!/bin/sh\nexec docker run --rm --network none -v /tmp:/tmp -v '"
             + ShellQuote(root) + ":" + ShellQuote(root)
             + "' --entrypoint /usr/bin/chromium "
-            + "antiphon-card0418-browser:latest --no-sandbox \"$@\"\n", ct);
+            + browserImage + " --no-sandbox \"$@\"\n", ct);
         File.SetUnixFileMode(browser, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var gate = Path.Combine(root, "converter-gate");
         var projectId = Guid.NewGuid();
@@ -271,6 +275,8 @@ public sealed partial class ChannelOutboundIsolatedTests
             var runnerUrl = app.OwnedRunnerUrl;
             await app.RestartOwnedHostAsync();
             app.OwnedRunnerUrl.ShouldBe(runnerUrl);
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger<ChannelOutboundIsolatedTests>()
+                .LogInformation("CARD-0418 post-restart conversion release for {DeliveryId}", deliveryId);
             await File.WriteAllTextAsync(gate + ".release", "release", ct);
             await UntilAsync(async () =>
             {
@@ -312,9 +318,17 @@ public sealed partial class ChannelOutboundIsolatedTests
             var pdf = uploads.Single(u => u.Title == "combined.pdf").Bytes;
             var producedPdf = await File.ReadAllBytesAsync(Path.Combine(storeRoot, deliveryId.ToString("N"), "output", "combined.pdf"), ct);
             pdf.ShouldBe(producedPdf);
-            var extracted = await ExtractPdfTextAsync(producedPdf, root, ct);
-            foreach (var sentinel in new[] { "Requirements sentinel", "Design sentinel", "External API sentinel", "Current snapshots sentinel" })
+            var extracted = await ExtractPdfTextAsync(producedPdf, root, browserImage, ct);
+            foreach (var sentinel in new[] { "Requirements sentinel", "Design sentinel", "External API sentinel", "Current snapshots sentinel",
+                "requirements middle sentinel", "design middle sentinel", "external API middle sentinel", "current snapshots middle sentinel",
+                "requirements final sentinel", "design final sentinel", "external API final sentinel", "current snapshots final sentinel" })
                 extracted.ShouldContain(sentinel);
+            app.Services.GetRequiredService<ILoggerFactory>().CreateLogger<ChannelOutboundIsolatedTests>()
+                .LogInformation("CARD-0418 post-restart delivery published for {DeliveryId}", deliveryId);
+            await UntilAsync(() => Task.FromResult(Directory.GetFiles(Path.Combine(root, "logs"), "antiphon-*.log")
+                .Select(File.ReadAllText)
+                .Any(log => log.Contains("post-restart conversion release for " + deliveryId, StringComparison.Ordinal)
+                    && log.Contains("post-restart delivery published for " + deliveryId, StringComparison.Ordinal))), ct);
             await using var verifyScope = app.Services.CreateAsyncScope();
             var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
             var final = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId, ct);
@@ -343,20 +357,18 @@ public sealed partial class ChannelOutboundIsolatedTests
     private static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
     private static string ShellQuote(string value) => value.Replace("'", "'\\''");
 
-    private static async Task EnsureBrowserImageAsync()
+    private static async Task<string> BuildBrowserImageAsync()
     {
-        const string image = "antiphon-card0418-browser:latest";
-        var check = new ProcessStartInfo("docker") { RedirectStandardError = true,
-            RedirectStandardOutput = true, UseShellExecute = false };
-        foreach (var arg in new[] { "run", "--rm", "--network", "none", "--entrypoint", "/usr/bin/chromium", image, "--version" })
-            check.ArgumentList.Add(arg);
-        if (await RunDockerAsync(check) == 0) return;
-        var fixture = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "tests", "Antiphon.E2E", "Fixtures");
+        // This context contains only the Dockerfile, so its digest identifies every build input.
+        var fixture = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "tests", "Antiphon.E2E", "Fixtures", "Card0418Browser");
+        var dockerfile = Path.Combine(fixture, "Dockerfile");
+        var image = "antiphon-card0418-browser:" + Hash(await File.ReadAllBytesAsync(dockerfile));
         var build = new ProcessStartInfo("docker") { RedirectStandardError = true,
             RedirectStandardOutput = true, UseShellExecute = false };
-        foreach (var arg in new[] { "build", "-t", image, "-f", Path.Combine(fixture, "Card0418Browser.Dockerfile"), fixture })
+        foreach (var arg in new[] { "build", "--pull", "-t", image, "-f", dockerfile, fixture })
             build.ArgumentList.Add(arg);
         (await RunDockerAsync(build)).ShouldBe(0, "the F-5 browser image must build before conversion");
+        return image;
     }
 
     private static async Task<int> RunDockerAsync(ProcessStartInfo start)
@@ -381,14 +393,14 @@ public sealed partial class ChannelOutboundIsolatedTests
         child.ExitCode.ShouldBe(0, (await stderr) + (await stdout));
     }
 
-    private static async Task<string> ExtractPdfTextAsync(byte[] pdf, string root, CancellationToken ct)
+    private static async Task<string> ExtractPdfTextAsync(byte[] pdf, string root, string image, CancellationToken ct)
     {
         var path = Path.Combine(root, "transported.pdf");
         await File.WriteAllBytesAsync(path, pdf, ct);
         var start = new ProcessStartInfo("docker") { RedirectStandardOutput = true,
             RedirectStandardError = true, UseShellExecute = false };
         foreach (var arg in new[] { "run", "--rm", "--network", "none", "-v", root + ":" + root,
-            "--entrypoint", "pdftotext", "antiphon-card0418-browser:latest", "-layout", path, "-" })
+            "--entrypoint", "pdftotext", image, "-layout", path, "-" })
             start.ArgumentList.Add(arg);
         using var child = Process.Start(start)!;
         var text = child.StandardOutput.ReadToEndAsync(ct);
