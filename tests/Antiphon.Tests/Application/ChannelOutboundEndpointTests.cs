@@ -31,7 +31,7 @@ public sealed class ChannelOutboundEndpointTests
 
             var logs = Directory.GetFiles(root, "antiphon-*.log");
             logs.ShouldNotBeEmpty();
-            var entries = logs.SelectMany(File.ReadAllLines)
+            var entries = logs.SelectMany(ReadLinesSharedWithWriter)
                 .Where(line => line.Contains("Legacy Deliverables renderer settings are ignored;", StringComparison.Ordinal))
                 .ToArray();
             entries.Length.ShouldBe(1);
@@ -40,6 +40,15 @@ public sealed class ChannelOutboundEndpointTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    // The live host's file sink still holds the log open; Windows refuses a non-sharing read.
+    private static string[] ReadLinesSharedWithWriter(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd().Split('\n');
     }
 
     [Test]

@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Messaging;
 using Antiphon.Server.Infrastructure.Files;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -92,6 +94,7 @@ public sealed class OutboundConversionManifestTests
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>] // linked_directory spawns mklink /J on unprivileged Windows
     [Arguments("missing_json")]
     [Arguments("malformed_json")]
     [Arguments("wrong_version")]
@@ -225,15 +228,25 @@ public sealed class OutboundConversionManifestTests
                     var outsideFile = Path.Combine(root, "outside-file.pdf");
                     await File.WriteAllBytesAsync(outsideFile, pdf);
                     try { File.CreateSymbolicLink(Path.Combine(snapshot.OutputDirectory, "linked.pdf"), outsideFile); }
-                    catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException)
-                    { throw new SkipTestException("A fixture-owned file link could not be created: " + ex.Message); }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException
+                        || IsWindowsPrivilegeDenied(ex))
+                    {
+                        // Windows has no unprivileged file link; this row runs on Linux.
+                        throw new SkipTestException("A fixture-owned file link could not be created: " + ex.Message);
+                    }
                     file["path"] = "linked.pdf";
                     break;
                 case "linked_directory":
                     var outsideDirectory = Path.Combine(root, "outside-directory");
                     Directory.CreateDirectory(outsideDirectory);
                     await File.WriteAllBytesAsync(Path.Combine(outsideDirectory, "combined.pdf"), pdf);
-                    try { Directory.CreateSymbolicLink(Path.Combine(snapshot.OutputDirectory, "linked"), outsideDirectory); }
+                    var linkedDirectory = Path.Combine(snapshot.OutputDirectory, "linked");
+                    try { Directory.CreateSymbolicLink(linkedDirectory, outsideDirectory); }
+                    catch (IOException ex) when (IsWindowsPrivilegeDenied(ex))
+                    {
+                        // A junction is the unprivileged Windows directory reparse point.
+                        await CreateJunctionAsync(linkedDirectory, outsideDirectory);
+                    }
                     catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException)
                     { throw new SkipTestException("A fixture-owned directory link could not be created: " + ex.Message); }
                     file["path"] = "linked/combined.pdf";
@@ -265,5 +278,23 @@ public sealed class OutboundConversionManifestTests
             File.Exists(valid.ReplyPath).ShouldBeFalse();
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    // ERROR_PRIVILEGE_NOT_HELD: symbolic links need Developer Mode or elevation on Windows.
+    private static bool IsWindowsPrivilegeDenied(Exception ex) =>
+        OperatingSystem.IsWindows() && ex is IOException && ex.HResult == unchecked((int)0x80070522);
+
+    private static async Task CreateJunctionAsync(string link, string target)
+    {
+        var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "/d", "/c", "mklink", "/J", link, target }) start.ArgumentList.Add(arg);
+        using var child = Process.Start(start)!;
+        var output = child.StandardOutput.ReadToEndAsync();
+        var error = child.StandardError.ReadToEndAsync();
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await child.WaitForExitAsync(budget.Token);
+        child.ExitCode.ShouldBe(0, await error + await output);
+        File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
     }
 }
