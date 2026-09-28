@@ -138,6 +138,7 @@ public sealed class ChannelOutboundDeliveryTests
         var inboundId = Guid.NewGuid();
         var converterId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
+        var otherChannelId = Guid.NewGuid();
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-limit-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert sources.");
@@ -163,44 +164,50 @@ public sealed class ChannelOutboundDeliveryTests
                 BoardId = boardId, WorkingDirectory = root },
             new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
                 BoardId = boardId, WorkingDirectory = root });
-        seed.ChatChannels.Add(new ChatChannel
-        {
-            Id = channelId, Provider = "slack", ExternalId = channelId.ToString("N"),
-            AgentId = inboundId, OutboundAgentProfile = "limited", CreatedAt = now, UpdatedAt = now,
-        });
+        seed.ChatChannels.AddRange(
+            new ChatChannel { Id = channelId, Provider = "slack", ExternalId = channelId.ToString("N"),
+                AgentId = inboundId, OutboundAgentProfile = "limited", CreatedAt = now, UpdatedAt = now },
+            new ChatChannel { Id = otherChannelId, Provider = "slack",
+                ExternalId = otherChannelId.ToString("N"), AgentId = inboundId,
+                OutboundAgentProfile = "limited", CreatedAt = now, UpdatedAt = now });
         await seed.SaveChangesAsync();
         try
         {
             var sourceSessionId = Guid.NewGuid();
             var sourceTaskId = Guid.NewGuid();
-            async Task SendOneAsync(int sequence)
+            async Task SendOneAsync(int sequence, Guid target, string kind = "main")
             {
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
                 var service = new ChannelOutboundService(db, new ChannelOutboundFileStore(
                     Path.Combine(root, "outbound")), new FakeAntiphonMessagingClient(), options,
                     TimeProvider.System);
                 var reply = new ChannelReply { Channel = "slack",
-                    ConversationId = channelId.ToString("N"), Text = "reply " + sequence };
+                    ConversationId = target.ToString("N"), Text = "reply " + sequence };
                 (await service.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
-                    new ChannelOutboundSource(sourceSessionId, sequence, 1, 2, "main", [], sourceTaskId),
+                    new ChannelOutboundSource(sourceSessionId, sequence, 1, 2, kind, [], sourceTaskId),
                     CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
             }
-            await Task.WhenAll(SendOneAsync(1), SendOneAsync(1));
+            await Task.WhenAll(SendOneAsync(1, channelId), SendOneAsync(1, channelId));
             (await seed.ChannelOutboundDeliveries.AsNoTracking()
                 .CountAsync(d => d.ChannelId == channelId)).ShouldBe(1);
-            await SendOneAsync(2);
+            await SendOneAsync(2, channelId);
+            await SendOneAsync(1, channelId, "trailing");
+            await SendOneAsync(1, otherChannelId);
             var deliveries = await seed.ChannelOutboundDeliveries.AsNoTracking()
-                .Where(d => d.ChannelId == channelId).ToListAsync();
-            deliveries.Count.ShouldBe(2);
-            deliveries.Select(d => d.SourceKey).Distinct().Count().ShouldBe(2);
+                .Where(d => d.ChannelId == channelId || d.ChannelId == otherChannelId).ToListAsync();
+            deliveries.Count.ShouldBe(4);
+            deliveries.Select(d => d.SourceKey).Distinct().Count().ShouldBe(4);
             deliveries.All(d => d.SourceTaskId == sourceTaskId).ShouldBeTrue();
-            deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Pending).ShouldBe(1);
-            deliveries.Count(d => d.ConversionOutcome == "QueueOverflow").ShouldBe(1);
+            deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Pending).ShouldBe(2);
+            deliveries.Count(d => d.ConversionOutcome == "QueueOverflow").ShouldBe(2);
+            deliveries.Single(d => d.SendKind == "trailing").ChannelId.ShouldBe(channelId);
         }
         finally
         {
-            await seed.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId).ExecuteDeleteAsync();
-            await seed.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
+            await seed.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId
+                || d.ChannelId == otherChannelId).ExecuteDeleteAsync();
+            await seed.ChatChannels.Where(c => c.Id == channelId || c.Id == otherChannelId)
+                .ExecuteDeleteAsync();
             await seed.Agents.Where(a => a.Id == inboundId || a.Id == converterId).ExecuteDeleteAsync();
             await seed.Boards.Where(b => b.Id == boardId).ExecuteDeleteAsync();
             await seed.Projects.Where(p => p.Id == projectId).ExecuteDeleteAsync();
