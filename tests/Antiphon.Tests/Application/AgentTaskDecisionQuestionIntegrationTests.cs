@@ -101,6 +101,18 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
             && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(1);
 
+        var (otherTaskId, otherSessionId) = await SeedAsync(workspace.Path);
+        await using (var otherDb = NewDb())
+        {
+            var otherCaller = new AgentTaskService.Caller(
+                await otherDb.AgentTasks.SingleAsync(t => t.Id == otherTaskId),
+                otherSessionId, workspace.Path);
+            var other = await new AgentTaskDecisionQuestionService(otherDb).CheckAsync(
+                otherTaskId, request, otherCaller, CancellationToken.None);
+            other.QuestionId.ShouldNotBe(parallel[0].QuestionId);
+            other.Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        }
+
         var original = await verify.AgentTaskDecisionQuestions.SingleAsync(q => q.AgentTaskId == taskId);
         verify.AgentTaskDecisionQuestions.Add(new AgentTaskDecisionQuestion
         {

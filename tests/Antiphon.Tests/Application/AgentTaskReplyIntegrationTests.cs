@@ -711,7 +711,14 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task a_narrow_policy_does_not_infer_design_approval_from_report_prose()
+    [Arguments(AgentKind.ClaudeCode, false)]
+    [Arguments(AgentKind.ClaudeCode, true)]
+    [Arguments(AgentKind.Codex, false)]
+    [Arguments(AgentKind.Codex, true)]
+    [Arguments(AgentKind.Grok, false)]
+    [Arguments(AgentKind.Grok, true)]
+    public async Task a_narrow_policy_does_not_infer_design_approval_from_report_prose(
+        AgentKind provider, bool hasPolicy)
     {
         using var workspace = new TempWorkspace();
         var policy = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(
@@ -723,9 +730,17 @@ public partial class AgentTaskReplyIntegrationTests
         {
             t.StandingAuthority = "Start the remaining epics one after another.";
             t.AutoContinueOnWait = false;
-            t.InternalDecisionPolicyJson = policyJson;
-            t.InternalDecisionPolicyHash = InternalDecisionPolicy.Hash(policyJson);
+            if (hasPolicy)
+            {
+                t.InternalDecisionPolicyJson = policyJson;
+                t.InternalDecisionPolicyHash = InternalDecisionPolicy.Hash(policyJson);
+            }
         });
+        await using (var setup = CreateContext())
+        {
+            (await setup.AgentSessions.SingleAsync(s => s.Id == sessionId)).AgentKind = provider;
+            await setup.SaveChangesAsync();
+        }
         const string approval = "Please approve this internal design and I'll begin the recorded TDD cycles. Yes (Recommended).";
         await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), approval,
             closingVerdict: false);
@@ -740,6 +755,16 @@ public partial class AgentTaskReplyIntegrationTests
         (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == task.Id)).ShouldBe(0);
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
             && e.Type == AgentTaskEventType.Replied)).ShouldBe(0);
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "Please approve this internal design? Yes (Recommended).\n"
+            + DelegationReportFormatter.ReportToken(task.Id, "blocked"), closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var blockedDb = CreateContext();
+        var blocked = await blockedDb.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.AutoContinuedAt.ShouldBeNull();
+        (await blockedDb.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == task.Id)).ShouldBe(0);
     }
 
     private static async Task SeedPriorInternalContinueAsync(Guid taskId, Guid sessionId)
