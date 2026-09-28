@@ -63,3 +63,19 @@ The original 60-second deadline still bounds the whole wait. Both measured modal
 - There was no live desktop Codex launch through Antiphon. The 409 refusal stands, and this task did not override it. The ConPTY probe used the same launch shape (node.exe, ModernConPty, 120x30, production flags) outside the runner.
 - No operator-approved diagnostic launch has yet proved that the active fallback reaches a
   real Codex `thread/start` and a matching `UserPrompt` on the desktop. CARD-0772's refusal remains.
+
+## Verification design
+
+### Checkpoints
+
+These rows cover the active-dismissal fix and the launch, classification, capture, and
+readiness changes that have not yet landed. All rows run serially so the two test
+assemblies never share a host test lane.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-c777-pty/` | codex-pty-classes | `/*/Antiphon.Agents.Pty.Tests/(CodexReadyWaitTests*)|(CodexStartupReadinessTests*)|(CodexReadyTrackerTests*)/*` | update picker, bare continue, timeout reason, readiness tracker | all listed, 0 failed | 3 | 5 | true |
+| CP-2 | all | CP-1 | pty-unit | `/*/*/*/*[Category=Unit]` | full Pty Unit lane | >= 1 executed, 0 failed | 1 | 10 | true |
+| CP-3 | all | `tests/Antiphon.Tests -> bin-c777-server/` | codex-dispatch-classes | `/*/Antiphon.Tests.Application/(CodexDelegateDispatchTests*)|(CardSpawnModelArgumentTests*)/*` | both Codex launch paths | all listed, 0 failed | 2 | 10 | true |
+| CP-4 | all | CP-3 | codex-adapter-ready | `/*/*/RunnerCodexAdapterReadyTests/*` | adapter Escape, R-34, capture | all listed, 0 failed | 1 | 5 | true |
+| CP-5 | all | CP-3 | server-unit | `/*/*/*/*[Category=Unit]` | full Antiphon.Tests Unit lane | >= 1 executed, 0 failed | 1 | 20 | true |

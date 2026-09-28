@@ -391,8 +391,10 @@ public class CodexReadyWaitTests
             });
 
         await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
-        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 2);
+        for (var step = 0; step < 10 && Volatile.Read(ref reads) < 2; step++)
+            await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+        Volatile.Read(ref reads).ShouldBeGreaterThanOrEqualTo(2,
+            "the update picker must be read after the loading frame");
         gate.IsCompleted.ShouldBeFalse("the update picker cannot be considered ready");
 
         for (var step = 0; step < 20 && !gate.IsCompleted; step++)
@@ -404,6 +406,60 @@ public class CodexReadyWaitTests
         readyAt.ShouldNotBeNull();
         (time.GetUtcNow() - readyAt.Value).ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(100),
             "the new ready frame needs a full settle");
+    }
+
+    [Test]
+    public async Task Bare_continue_prompt_does_not_send_escape()
+    {
+        var time = new FakeTimeProvider();
+        var screen = CodexStartupFixtures.InsertBeforeComposer(
+            CodexStartupFixtures.P3, "Press enter to continue");
+        var writes = new List<string>();
+        var reads = 0;
+        var gate = CodexReadyWait.WaitAsync(
+            _ =>
+            {
+                Interlocked.Increment(ref reads);
+                return Task.FromResult<CodexStartupSnapshot?>(Snap(screen));
+            },
+            Options(time, settleMs: 50, maxMs: 200),
+            (input, _) =>
+            {
+                writes.Add(input);
+                return Task.CompletedTask;
+            });
+
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
+        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(200));
+        (await gate).ShouldBeFalse();
+        writes.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Deadline_immediately_after_escape_reports_blocking_update()
+    {
+        var time = new FakeTimeProvider();
+        var diagnostics = new List<string>();
+        var writes = new List<string>();
+        var gate = CodexReadyWait.WaitAsync(
+            _ => Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.V0158UpdateModal)),
+            new CodexReadyWaitOptions
+            {
+                TimeProvider = time,
+                MaxWait = TimeSpan.FromMilliseconds(200),
+                OnDiagnostic = diagnostics.Add,
+            },
+            (input, _) =>
+            {
+                writes.Add(input);
+                time.Advance(TimeSpan.FromMilliseconds(200));
+                return Task.CompletedTask;
+            });
+
+        (await gate).ShouldBeFalse();
+        writes.ShouldBe(["\u001b"]);
+        string.Join('\n', diagnostics).ShouldContain("update-picker escape-sent");
+        string.Join('\n', diagnostics).ShouldContain("not-ready reason=BlockingUpdate");
     }
 
     [Test]

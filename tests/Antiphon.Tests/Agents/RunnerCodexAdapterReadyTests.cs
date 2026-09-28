@@ -73,6 +73,28 @@ public class RunnerCodexAdapterReadyTests
     }
 
     [Test]
+    public async Task Measured_update_picker_sends_one_escape_to_runner()
+    {
+        var client = new ScriptedCodexRunnerClient
+        {
+            StartupScreens =
+            [
+                CodexStartupFixtures.V0158UpdateModal,
+                CodexStartupFixtures.V0158UpdateModal,
+                CodexStartupFixtures.P3,
+                CodexStartupFixtures.P3,
+            ],
+        };
+        var logger = new CollectingLogger();
+        var adapter = NewAdapter(client, settleMs: 50, maxMs: 5_000, logger: logger);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
+        client.Writes.ShouldBe(["\u001b"]);
+        string.Join('\n', logger.Messages).ShouldContain("update-picker escape-sent");
+    }
+
+    [Test]
     public async Task Trust_acceptance_requires_both_current_labels()
     {
         var questionOnly = CodexStartupFixtures.InsertBeforeComposer(
