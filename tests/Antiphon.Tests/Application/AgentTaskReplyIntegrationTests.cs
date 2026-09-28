@@ -594,6 +594,28 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_prior_internal_continue_does_not_make_a_cancelled_turn_a_report()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        await SeedPriorInternalContinueAsync(task.Id, sessionId);
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "Continuing the local repair.", stopReason: TranscriptKinds.StopReasons.Cancelled,
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.Result.ShouldBeNull();
+        stored.CompletedAt.ShouldBeNull();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == task.Id)).ShouldBe(1);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Completed)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task the_interrupted_warning_is_written_once_per_boundary()
     {
         using var workspace = new TempWorkspace();
@@ -665,6 +687,74 @@ public partial class AgentTaskReplyIntegrationTests
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
                 && e.Detail.Contains("closing report line")))
             .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task a_prior_internal_continue_does_not_turn_unmarked_narration_into_completion()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        await SeedPriorInternalContinueAsync(task.Id, sessionId);
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "The local repair is under way.", closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.Result.ShouldBeNull();
+        stored.ReportNudgedAt.ShouldNotBeNull();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == task.Id)).ShouldBe(1);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Completed)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task a_narrow_policy_does_not_infer_design_approval_from_report_prose()
+    {
+        using var workspace = new TempWorkspace();
+        var policy = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(
+                categories: [InternalDecisionCategory.BuildTestHarness], paths: ["tests/helper.cs"]),
+            AgentTaskRole.Docs, WorkspaceMode.Shared,
+            InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        var policyJson = InternalDecisionPolicy.Serialize(policy);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.StandingAuthority = "Start the remaining epics one after another.";
+            t.AutoContinueOnWait = false;
+            t.InternalDecisionPolicyJson = policyJson;
+            t.InternalDecisionPolicyHash = InternalDecisionPolicy.Hash(policyJson);
+        });
+        const string approval = "Please approve this internal design and I'll begin the recorded TDD cycles. Yes (Recommended).";
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), approval,
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.Result.ShouldBeNull();
+        stored.ReportNudgedAt.ShouldNotBeNull();
+        stored.AutoContinuedAt.ShouldBeNull();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == task.Id)).ShouldBe(0);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Replied)).ShouldBe(0);
+    }
+
+    private static async Task SeedPriorInternalContinueAsync(Guid taskId, Guid sessionId)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        db.AgentTaskDecisionQuestions.Add(new AgentTaskDecisionQuestion
+        {
+            Id = Guid.NewGuid(), AgentTaskId = taskId, Attempt = task.Attempt,
+            AgentSessionId = sessionId, RequestId = Guid.NewGuid(),
+            CanonicalPayloadJson = "{}", PayloadHash = new string('a', 64),
+            GrantId = "repair", Disposition = InternalDecisionDisposition.Continue,
+            Reason = "dispatch_grant", Answer = "Proceed with repair.", CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     [Test]
