@@ -271,6 +271,30 @@ public sealed class AgentTaskDecisionQuestionApiTests
         (await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
     }
 
+    [Test]
+    public async Task Property_order_and_path_separator_normalize_to_one_durable_question()
+    {
+        await _factory.ResetAsync();
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, token) = await SeedAsync(workspace.Path);
+        var request = Sample();
+        var first = await PostAsync(taskId, token, request);
+        first.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var firstJson = await first.Content.ReadFromJsonAsync<JsonElement>();
+        var raw = JsonSerializer.Serialize(request with { Paths = [@"scripts\deploy.ps1"] },
+            InternalDecisionPolicy.JsonOptions);
+        using var document = JsonDocument.Parse(raw);
+        var reordered = "{" + string.Join(",", document.RootElement.EnumerateObject().Reverse()
+            .Select(p => JsonSerializer.Serialize(p.Name) + ":" + p.Value.GetRawText())) + "}";
+        var second = await PostRawAsync(taskId, token, reordered);
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var secondJson = await second.Content.ReadFromJsonAsync<JsonElement>();
+        secondJson.GetProperty("questionId").GetGuid().ShouldBe(firstJson.GetProperty("questionId").GetGuid());
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(1);
+    }
+
     private static InternalDecisionQuestionRequest Sample() => new(Guid.NewGuid(), 1,
         "repair", InternalDecisionCategory.ShellTransport, ["scripts/deploy.ps1"], null, null,
         InternalDecisionImpact.None, "May I repair quoting?", "Repair quoting only.",

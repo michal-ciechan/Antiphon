@@ -61,7 +61,13 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         await service.CheckAsync(taskId, request, caller, CancellationToken.None);
         await Should.ThrowAsync<ConflictException>(() => service.CheckAsync(taskId,
             request with { ProposedAction = "Change the backup target." }, caller, CancellationToken.None));
-        (await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(1);
+        var denied = request with { RequestId = Guid.NewGuid(), Impact = InternalDecisionImpact.Data };
+        (await service.CheckAsync(taskId, denied, caller, CancellationToken.None))
+            .Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+        var changedDenial = await Should.ThrowAsync<ConflictException>(() => service.CheckAsync(taskId,
+            denied with { ProposedAction = "Change retention too." }, caller, CancellationToken.None));
+        changedDenial.Code.ShouldBe("decision_question_changed");
+        (await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
     }
 
     [Test]
@@ -219,7 +225,85 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
             && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(0);
     }
 
-    private sealed class CommittedQuestionBus(Guid taskId) : IEventBus
+    [Test]
+    public async Task Question_time_uses_the_stored_snapshot_not_a_repository_policy_file()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        var expanded = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(
+                categories: [InternalDecisionCategory.ShellTransport], paths: ["tests/new-helper.cs"]),
+            AgentTaskRole.Code, WorkspaceMode.Worktree,
+            InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        File.WriteAllText(Path.Combine(workspace.Path, "internal-decision-policy.json"),
+            InternalDecisionPolicy.Serialize(expanded));
+        await using var db = NewDb();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        var originalHash = task.InternalDecisionPolicyHash;
+        var caller = new AgentTaskService.Caller(task, sessionId, workspace.Path);
+        var result = await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId,
+            Sample() with { Paths = ["tests/new-helper.cs"] }, caller, CancellationToken.None);
+        result.Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+        result.Reason.ShouldBe("path_not_granted");
+        await using var verify = NewDb();
+        (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
+            .InternalDecisionPolicyHash.ShouldBe(originalHash);
+    }
+
+    [Test]
+    public async Task Decision_and_event_commit_together_after_a_database_failure()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path, schema.ConnectionString);
+        await using (var setup = NewDb(schema.ConnectionString))
+        {
+            await setup.Database.ExecuteSqlRawAsync("""
+                CREATE FUNCTION card0407_fail_event() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW."AgentTaskId"::text = TG_ARGV[0] THEN
+                        RAISE EXCEPTION 'injected decision event failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+                """);
+            await setup.Database.ExecuteSqlRawAsync($"""
+                CREATE TRIGGER card0407_fail_event_before_insert
+                BEFORE INSERT ON "AgentTaskEvents"
+                FOR EACH ROW EXECUTE FUNCTION card0407_fail_event('{taskId:D}');
+                """);
+        }
+
+        var bus = new CommittedQuestionBus(taskId, schema.ConnectionString);
+        var request = Sample();
+        await using (var db = NewDb(schema.ConnectionString))
+        {
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                sessionId, workspace.Path);
+            await Should.ThrowAsync<DbUpdateException>(() => new AgentTaskDecisionQuestionService(db, bus)
+                .CheckAsync(taskId, request, caller, CancellationToken.None));
+        }
+        bus.Publications.ShouldBe(0);
+        await using (var verify = NewDb(schema.ConnectionString))
+        {
+            (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+                && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(0);
+            await verify.Database.ExecuteSqlRawAsync(
+                "DROP TRIGGER card0407_fail_event_before_insert ON \"AgentTaskEvents\"");
+            await verify.Database.ExecuteSqlRawAsync("DROP FUNCTION card0407_fail_event()");
+        }
+        await using (var db = NewDb(schema.ConnectionString))
+        {
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                sessionId, workspace.Path);
+            (await new AgentTaskDecisionQuestionService(db, bus).CheckAsync(taskId, request, caller,
+                CancellationToken.None)).Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        }
+        bus.Publications.ShouldBe(1);
+    }
+
+    private sealed class CommittedQuestionBus(Guid taskId, string? connectionString = null) : IEventBus
     {
         public int Publications { get; private set; }
 
@@ -229,7 +313,7 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         public async Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default)
         {
             eventName.ShouldBe("AgentTaskChanged");
-            await using var db = NewDb();
+            await using var db = NewDb(connectionString);
             var count = await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId, ct);
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
                 && e.Type == AgentTaskEventType.DecisionQuestion, ct)).ShouldBe(count);
@@ -244,9 +328,10 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         "May I repair shell quoting?", "Repair only the quoting of the existing command.",
         "Captured arguments remain byte-for-byte the same in an isolated fixture.");
 
-    private static AppDbContext NewDb() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext NewDb(string? connectionString = null) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
-    private static async Task<(Guid taskId, Guid sessionId)> SeedAsync(string root)
+    private static async Task<(Guid taskId, Guid sessionId)> SeedAsync(string root, string? connectionString = null)
     {
         var id = Guid.NewGuid();
         var sessionId = Guid.NewGuid();
@@ -254,7 +339,7 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
             AgentTaskRole.Code, WorkspaceMode.Worktree,
             InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
         var json = InternalDecisionPolicy.Serialize(policy);
-        await using var db = NewDb();
+        await using var db = NewDb(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId, DefinitionName = "test", AgentKind = AgentKind.Grok,

@@ -136,14 +136,18 @@ public sealed class AgentTaskDecisionQuestionTests
             .Disposition.ShouldBe(InternalDecisionDisposition.Continue);
         InternalDecisionQuestionPolicy.Evaluate(policy, request with { Paths = ["scripts"] }, repository.Path)
             .Reason.ShouldBe("path_not_granted");
-        File.CreateSymbolicLink(Path.Combine(repository.Path, "scripts", "target.ps1"),
-            Path.Combine(outside.Path, "outside.ps1"));
-        InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
-            .Reason.ShouldBe("path_not_granted");
-        File.Delete(Path.Combine(outside.Path, "outside.ps1"));
-        InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
-            .Reason.ShouldBe("path_not_granted");
-        Directory.CreateSymbolicLink(Path.Combine(repository.Path, "scripts", "linked"), outside.Path);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.CreateSymbolicLink(Path.Combine(repository.Path, "scripts", "target.ps1"),
+                Path.Combine(outside.Path, "outside.ps1"));
+            InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
+                .Reason.ShouldBe("path_not_granted");
+            File.Delete(Path.Combine(outside.Path, "outside.ps1"));
+            InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
+                .Reason.ShouldBe("path_not_granted");
+        }
+        using var link = DirectoryLink.TryCreate(Path.Combine(repository.Path, "scripts", "linked"), outside.Path);
+        link.ShouldNotBeNull("the native directory link or junction is required for this boundary test");
         foreach (var path in new[] { "scripts/linked/outside.ps1", "scripts/linked/new.ps1" })
             InternalDecisionQuestionPolicy.Evaluate(policy, request with { Paths = [path] }, repository.Path)
                 .Reason.ShouldBe("path_not_granted");
