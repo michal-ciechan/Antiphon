@@ -42,6 +42,18 @@ public static class Program
                     ? manifestRoot : manifestRoot + Path.DirectorySeparatorChar;
                 if (!input.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException("Staged document escaped the manifest directory.");
+                // Lexical containment is insufficient when an intermediate directory or
+                // the document itself is a link to a file outside the staged tree.
+                var cursor = manifestRoot;
+                if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
+                    throw new ArgumentException("Staged document path contains a link.");
+                foreach (var part in Path.GetRelativePath(manifestRoot, input)
+                    .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    cursor = Path.Combine(cursor, part);
+                    if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
+                        throw new ArgumentException("Staged document path contains a link.");
+                }
                 var length = new FileInfo(input).Length;
                 if (length > 64L * 1024 * 1024 - total)
                     throw new ArgumentException("Staged documents exceed 64 MiB.");

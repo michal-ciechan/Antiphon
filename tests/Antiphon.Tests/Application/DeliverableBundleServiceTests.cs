@@ -21,11 +21,21 @@ namespace Antiphon.Tests.Application;
 public class DeliverableBundleServiceTests
 {
     [Test]
-    public async Task Default_settlement_preserves_sources_without_conversion()
+    [Arguments(AgentTaskRole.Plan, false)]
+    [Arguments(AgentTaskRole.Plan, true)]
+    [Arguments(AgentTaskRole.Docs, false)]
+    [Arguments(AgentTaskRole.Docs, true)]
+    [Arguments(AgentTaskRole.Custom, false)]
+    [Arguments(AgentTaskRole.Custom, true)]
+    public async Task Default_settlement_preserves_sources_without_conversion(
+        AgentTaskRole role, bool secondProject)
     {
         using var workspace = new TempDir();
         WriteDocs(workspace.Path, "01-requirements.md", "02-design.md", "03-api.md", "04-test.md");
-        var task = NewTask(workspace.Path, AgentTaskRole.Custom, WorkspaceMode.Worktree);
+        var task = NewTask(workspace.Path, role, WorkspaceMode.Worktree);
+        task.ProjectId = secondProject
+            ? Guid.Parse("22222222-2222-2222-2222-222222222222")
+            : Guid.Parse("11111111-1111-1111-1111-111111111111");
         var report = """
             Wrote `docs/features/001-kalshi-ref-data-downloader/01-requirements.md`,
             `docs/features/001-kalshi-ref-data-downloader/02-design.md`,
@@ -45,6 +55,13 @@ public class DeliverableBundleServiceTests
         File.Exists(Path.Combine(task.DeliverableBundleDir, "render.log")).ShouldBeFalse();
         DeliverableBundleService.ListAttachableFiles(task).Count.ShouldBe(4);
         DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md");
+        foreach (var name in new[] { "01-requirements.md", "02-design.md", "03-api.md", "04-test.md" })
+        {
+            var original = Path.Combine(workspace.Path, "docs", "features",
+                "001-kalshi-ref-data-downloader", name);
+            var bundled = Path.Combine(task.DeliverableBundleDir, name);
+            (await File.ReadAllBytesAsync(bundled)).ShouldBe(await File.ReadAllBytesAsync(original));
+        }
     }
 
     [Test]
@@ -191,7 +208,10 @@ public class DeliverableBundleServiceTests
         using var repo = await GitRepo.CreateAsync();
         var relative = Path.Combine("docs", "superpowers", "plans", "plan.md");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(repo.Path, relative))!);
-        await File.WriteAllTextAsync(Path.Combine(repo.Path, relative), "# Plan on branch");
+        var expected = Encoding.UTF8.GetPreamble()
+            .Concat(Encoding.UTF8.GetBytes("# Plan on branch\r\nZażółć ✨  \r\n"))
+            .ToArray();
+        await File.WriteAllBytesAsync(Path.Combine(repo.Path, relative), expected);
         await repo.RunAsync("add", "-A");
         await repo.RunAsync("commit", "-m", "plan");
         await repo.RunAsync("branch", "feat/plan");
@@ -204,8 +224,8 @@ public class DeliverableBundleServiceTests
 
         task.DeliverableBundleDir.ShouldNotBeNull();
         task.DeliverableFileCount.ShouldBe(1);
-        (await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!, "plan.md")))
-            .ShouldContain("Plan on branch");
+        (await File.ReadAllBytesAsync(Path.Combine(task.DeliverableBundleDir!, "plan.md")))
+            .ShouldBe(expected);
     }
 
     [Test]
@@ -224,6 +244,25 @@ public class DeliverableBundleServiceTests
             CancellationToken.None);
 
         task.DeliverableBundleDir.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments(AgentTaskStatus.Failed)]
+    [Arguments(AgentTaskStatus.Canceled)]
+    public async Task Unsuccessful_source_tasks_do_not_create_bundles(AgentTaskStatus status)
+    {
+        using var workspace = new TempDir();
+        WriteDocs(workspace.Path, "01-requirements.md");
+        var task = NewTask(workspace.Path, AgentTaskRole.Docs, WorkspaceMode.Shared);
+        task.Status = status;
+
+        await CreateService().TryBuildAsync(task,
+            "`docs/features/001-kalshi-ref-data-downloader/01-requirements.md`",
+            db: null, CancellationToken.None);
+
+        task.DeliverableBundleDir.ShouldBeNull();
+        task.DeliverableFileCount.ShouldBe(0);
+        Directory.Exists(Path.Combine(workspace.Path, ".antiphon", "deliverables")).ShouldBeFalse();
     }
 
     private static DeliverableBundleService CreateService(DeliverablesSettings? settings = null)

@@ -59,6 +59,17 @@ public class MarkdownPdfRendererTests
     }
 
     [Test]
+    public void Cover_and_document_paths_are_html_escaped_without_losing_unicode()
+    {
+        var html = CreateRenderer().ToHtml("<script>✨ & cover</script>",
+            [new MarkdownPdfRenderer.DocumentSection("docs/<outside>&zażółć.md", "# Body ✨")]);
+        html.ShouldContain("&lt;script&gt;✨ &amp; cover&lt;/script&gt;");
+        html.ShouldContain("docs/&lt;outside&gt;&amp;zażółć.md");
+        html.ShouldNotContain("<script>✨");
+        html.ShouldContain("Body ✨");
+    }
+
+    [Test]
     public void BuildArguments_match_the_headless_print_to_pdf_contract()
     {
         var pdf = Path.Combine("C:", "tmp", "out.pdf");
@@ -134,7 +145,7 @@ public class MarkdownPdfRendererTests
         var root = Directory.CreateTempSubdirectory("c0418-pdf-no-output").FullName;
         var browser = Path.Combine(root, "fake browser.sh");
         var arguments = Path.Combine(root, "arguments.txt");
-        var pdf = Path.Combine(root, "stale.pdf");
+        var pdf = Path.Combine(root, "stale zażółć ✨.pdf");
         try
         {
             await File.WriteAllTextAsync(browser,
