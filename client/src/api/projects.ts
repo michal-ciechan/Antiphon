@@ -21,6 +21,7 @@ export interface ProjectDto {
   commitOnSettle?: string | null
   effectiveCommitOnSettle?: boolean
   defaultWorkerWorkspace?: 'Shared' | 'Worktree' | null
+  globalDefaultWorkerWorkspace?: 'Shared' | 'Worktree'
   effectiveWorkerWorkspace?: 'Shared' | 'Worktree'
 }
 
