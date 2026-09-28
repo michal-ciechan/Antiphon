@@ -12,6 +12,85 @@ namespace Antiphon.Tests.Application;
 public sealed class OutboundConversionManifestTests
 {
     [Test]
+    public async Task Valid_results_add_files_and_seal_bytes()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-output-positive-").FullName;
+        var store = new ChannelOutboundFileStore(root);
+        var source = new byte[] { 0, 10, 255, 42 };
+        var output = new Dictionary<string, (string Mime, byte[] Bytes)>
+        {
+            ["combined.pdf"] = ("application/pdf", [37, 80, 68, 70, 45, 49, 46, 55, 10]),
+            ["chart.png"] = ("image/png", [137, 80, 78, 71, 0, 255]),
+            ["notes.txt"] = ("text/plain", [1, 2, 3, 4]),
+        };
+        try
+        {
+            var id = Guid.NewGuid();
+            var original = new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", ReplyHandle = "C1|T1",
+                ReplyToMessageId = "T1", Text = "source text",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Content = source }],
+            };
+            var snapshot = await store.StageAsync(id, original, CancellationToken.None);
+            foreach (var (name, file) in output)
+                await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, name), file.Bytes);
+            await File.WriteAllTextAsync(Path.Combine(snapshot.OutputDirectory, "manifest.json"),
+                JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = id, disposition = "converted",
+                    replacementText = "converted text",
+                    files = output.Select(f => new
+                    {
+                        path = f.Key, name = f.Key, mime = f.Value.Mime,
+                        length = f.Value.Bytes.Length,
+                        sha256 = Convert.ToHexString(SHA256.HashData(f.Value.Bytes)).ToLowerInvariant(),
+                    }).ToArray(),
+                }));
+            var sealedOutput = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            sealedOutput.Outcome.ShouldBe("Converted");
+            foreach (var name in output.Keys)
+                await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, name), [99]);
+            File.Delete(snapshot.ReplyPath);
+            var frozen = await store.ReadReplyAsync(sealedOutput.ReplyPath,
+                sealedOutput.ReplySha256, CancellationToken.None);
+            frozen.Channel.ShouldBe("slack");
+            frozen.ConversationId.ShouldBe("C1");
+            frozen.ReplyHandle.ShouldBe("C1|T1");
+            frozen.ReplyToMessageId.ShouldBe("T1");
+            frozen.Text.ShouldBe("converted text");
+            frozen.Attachments.Count.ShouldBe(4);
+            frozen.Attachments[0].Name.ShouldBe("source.md");
+            frozen.Attachments[0].Content.ShouldBe(source);
+            foreach (var attachment in frozen.Attachments.Skip(1))
+                attachment.Content.ShouldBe(output[attachment.Name!].Bytes);
+            frozen.Attachments.Single(a => a.Name == "chart.png").Kind.ShouldBe(AttachmentKind.Image);
+
+            var unchangedId = Guid.NewGuid();
+            var unchanged = await store.StageAsync(unchangedId, original with
+                { ReplyHandle = "C2|T2", ConversationId = "C2" }, CancellationToken.None);
+            await File.WriteAllTextAsync(Path.Combine(unchanged.OutputDirectory, "manifest.json"),
+                JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = unchangedId, disposition = "unchanged",
+                    files = Array.Empty<object>(),
+                }));
+            var unchangedSeal = await store.ValidateAndSealAsync(unchangedId,
+                unchanged.ReplyPath, unchanged.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            unchangedSeal.Outcome.ShouldBe("Unchanged");
+            var unchangedReply = await store.ReadReplyAsync(unchangedSeal.ReplyPath,
+                unchangedSeal.ReplySha256, CancellationToken.None);
+            unchangedReply.Text.ShouldBe("source text");
+            unchangedReply.ReplyHandle.ShouldBe("C2|T2");
+            unchangedReply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(source);
+            unchangedReply.Attachments.ShouldNotContain(a => a.Name == "combined.pdf");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     [Arguments("missing_json")]
     [Arguments("malformed_json")]
     [Arguments("wrong_version")]
