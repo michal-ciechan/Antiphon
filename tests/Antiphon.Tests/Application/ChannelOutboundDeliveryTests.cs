@@ -440,6 +440,29 @@ public sealed class ChannelOutboundDeliveryTests
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
                 .ChannelReplySettledAt.ShouldNotBeNull();
 
+            var control = reply with { Text = "# Control notice", ReplyHandle = "control-thread" };
+            (await outbound.SendAsync(control, ChannelOutboundOrigin.Control, source,
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
+            producer.SentReplies[2].ReplyHandle.ShouldBe("control-thread");
+            (await verify.ChannelOutboundDeliveries.AsNoTracking()
+                .CountAsync(d => d.ChannelId == channelId)).ShouldBe(2);
+
+            var machine = reply with { Text = "# Machine completion", ReplyHandle = "machine-thread" };
+            (await outbound.SendAsync(machine, ChannelOutboundOrigin.AgentReply,
+                new ChannelOutboundSource(sessionId, 4, 9, 10, "machine", []),
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            var machineIntent = await verify.ChannelOutboundDeliveries
+                .SingleAsync(d => d.ChannelId == channelId && d.PromptSequence == 4);
+            machineIntent.SendKind.ShouldBe("machine");
+            machineIntent.State = ChannelOutboundDeliveryState.Ready;
+            machineIntent.ConversionOutcome = "Passthrough";
+            await verify.SaveChangesAsync();
+            (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            producer.SentReplies[3].ReplyHandle.ShouldBe("machine-thread");
+            producer.SentReplies[3].Text.ShouldBe("# Machine completion");
+            (await verify.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == machineIntent.Id)).State.ShouldBe(ChannelOutboundDeliveryState.Published);
+
             var revokedReply = reply with { Text = "sources after revocation" };
             (await outbound.SendAsync(revokedReply, ChannelOutboundOrigin.AgentReply,
                 new ChannelOutboundSource(sessionId, 3, 7, 8, "main", []), CancellationToken.None))
@@ -454,9 +477,9 @@ public sealed class ChannelOutboundDeliveryTests
             revoked.OutputSha256 = new string('a', 64);
             await verify.SaveChangesAsync();
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
-            producer.SentReplies.Count.ShouldBe(2);
+            producer.SentReplies.Count.ShouldBe(4);
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
-            producer.SentReplies[2].Text.ShouldBe("sources after revocation");
+            producer.SentReplies[4].Text.ShouldBe("sources after revocation");
             (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == revoked.Id))
                 .ConversionOutcome.ShouldBe("Revoked");
 
