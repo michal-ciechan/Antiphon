@@ -27,10 +27,19 @@ public sealed class KafkaAntiphonMessagingProducer : IAntiphonMessagingProducer,
     {
         var value = JsonSerializer.Serialize(reply, global::Antiphon.Messaging.MessagingJson.Options);
         var key = reply.ConversationId ?? reply.ReplyHandle ?? string.Empty;
-        await _producer.ProduceAsync(
-            _options.OutboundTopic,
-            new Message<string, string> { Key = key, Value = value },
-            cancellationToken);
+        try
+        {
+            await _producer.ProduceAsync(
+                _options.OutboundTopic,
+                new Message<string, string> { Key = key, Value = value },
+                cancellationToken);
+        }
+        catch (ProduceException<string, string> ex) when (ex.Error.Code == ErrorCode.MsgSizeTooLarge)
+        {
+            // The broker rejected this exact record for size. Other errors may have reached it;
+            // those retain an explicit unknown outcome in the server journal.
+            throw new ChannelPublicationRefusedException(ex.Error.Code.ToString(), ex);
+        }
     }
 
     public void Dispose()

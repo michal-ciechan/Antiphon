@@ -19,6 +19,7 @@ internal static class TestWorkerModes
         new(CheckCompactionCrashWorker.Marker, CheckCompactionCrashWorker.RunAsync),
         new(LandingRemovalCrashWorker.Marker, LandingRemovalCrashWorker.RunAsync),
         new(RepositoryJournalCrashWorker.Marker, RepositoryJournalCrashWorker.RunAsync),
+        new(ChannelOutboundCrashWorker.Marker, ChannelOutboundCrashWorker.RunAsync),
     ];
 
     internal static (Mode Mode, string Payload)? Requested()

@@ -30,6 +30,13 @@ public sealed class ChannelBridgeSettings
     /// <summary>Drop a pending reply correlation if no matching turn completes within this window.</summary>
     public int PendingReplyTtlMinutes { get; set; } = 30;
 
+    public int OutboundScanSeconds { get; set; } = 30;
+    public int OutboundRetrySeconds { get; set; } = 30;
+    public int OutboundSendTimeoutSeconds { get; set; } = 30;
+    public int OutboundAttemptLeaseSeconds { get; set; } = 90;
+    public int OutboundMaxAttempts { get; set; } = 3;
+    public int OutboundPageSize { get; set; } = 100;
+
     /// <summary>
     /// Max raw bytes for a single reply attachment. Attachments ride the Kafka message base64-encoded
     /// under the bus-wide 20 MB message cap, so the raw ceiling is 3/4 of that minus envelope slack.
@@ -80,15 +87,30 @@ public sealed class ChannelBridgeSettingsValidator : IValidateOptions<ChannelBri
 
     public ValidateOptionsResult Validate(string? name, ChannelBridgeSettings settings)
     {
+        var errors = new List<string>();
+        if (settings.PendingReplyTtlMinutes <= 0)
+            errors.Add("ChannelBridge:PendingReplyTtlMinutes must be positive.");
+        if (settings.OutboundScanSeconds <= 0)
+            errors.Add("ChannelBridge:OutboundScanSeconds must be positive.");
+        if (settings.OutboundRetrySeconds <= 0)
+            errors.Add("ChannelBridge:OutboundRetrySeconds must be positive.");
+        if (settings.OutboundSendTimeoutSeconds <= 0)
+            errors.Add("ChannelBridge:OutboundSendTimeoutSeconds must be positive.");
+        if (settings.OutboundAttemptLeaseSeconds <= 0)
+            errors.Add("ChannelBridge:OutboundAttemptLeaseSeconds must be positive.");
+        if (settings.OutboundMaxAttempts <= 0)
+            errors.Add("ChannelBridge:OutboundMaxAttempts must be positive.");
+        if (settings.OutboundPageSize <= 0 || settings.OutboundPageSize > 100)
+            errors.Add("ChannelBridge:OutboundPageSize must be between 1 and 100.");
+        if (settings.OutboundSendTimeoutSeconds >= settings.OutboundAttemptLeaseSeconds)
+            errors.Add("ChannelBridge:OutboundSendTimeoutSeconds must be shorter than "
+                + "OutboundAttemptLeaseSeconds.");
         var origins = settings.MachineTurnTextOrigins;
-        if (origins is null)
-            return ValidateOptionsResult.Success;
-        var rejected = origins.Where(o => Forbidden.Contains(o)).Distinct().ToList();
-        if (rejected.Count == 0)
-            return ValidateOptionsResult.Success;
-        return ValidateOptionsResult.Fail(
-            "ChannelBridge:MachineTurnTextOrigins must not include Channel, Ui, or Supervision "
-            + $"(got {string.Join(", ", rejected)}). The main path owns Channel; operator and "
-            + "supervision turns stay silent. Leave the list empty for attachments-only.");
+        var rejected = origins?.Where(o => Forbidden.Contains(o)).Distinct().ToList() ?? [];
+        if (rejected.Count > 0)
+            errors.Add("ChannelBridge:MachineTurnTextOrigins must not include Channel, Ui, or Supervision "
+                + $"(got {string.Join(", ", rejected)}). The main path owns Channel; operator and "
+                + "supervision turns stay silent. Leave the list empty for attachments-only.");
+        return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 }

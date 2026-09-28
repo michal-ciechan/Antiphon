@@ -44,6 +44,30 @@ existing incident policies.
 Capacity notices use the reply handle captured in that inbound envelope, even if the channel
 catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 
+## Durable outbound publication (CARD-0519)
+
+Main replies, late text and machine-turn follow-ups become `ChannelOutboundPublications` before
+producer I/O. Each record owns its source queue rows, completed turn and text interval, captured
+target, original response and frozen `ChannelReply` envelope, including attachment bytes. The
+database claim spends an attempt; it does not settle a source. Only confirmed producer acceptance
+commits `Published` and source settlement together. Catalog reply metadata and implied-bundle
+stamps are repaired after that commit without resending. Deliberate `NO_REPLY` remains silent.
+
+The outbound worker scans at startup and every `ChannelBridge:OutboundScanSeconds` (30 by
+default). It discovers completed source turns and retries due publications even when no new turn
+arrives. The default retry delay and send timeout are 30 seconds, attempt lease 90 seconds,
+maximum automatic attempts 3, and scan page size 100. The existing
+`PendingReplyTtlMinutes` (30) also bounds an obligation from its first creation. Expired or
+exhausted records remain `Held` with a Critical `ChannelReplyLost` incident and alert. A
+confirmed broker refusal stays retryable with a recorded reason. An exception, cancellation,
+timeout or expired lease with no durable outcome is `Unknown`: publication may already have
+happened, so the incident says so and a bounded retry may duplicate the same envelope. The
+stable publication ID and incident stamp survive restart and incident-history pruning. Retention
+preserves unresolved payloads and source evidence.
+
+`Published` means the messaging producer accepted the record into Kafka. The gateway's adapter
+may still refuse native delivery; it does not provide a durable Telegram or Slack receipt.
+
 ## What the chat sees
 
 Channel input is correlated by a persisted `[antiphon-channel:<full-guid>]` marker,

@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -226,8 +227,10 @@ public class ChannelFollowUpAttachmentTests
     [Test]
     public async Task A_produce_failure_un_claims_so_the_next_trigger_sends_once()
     {
+        var outboundClock = new FakeTimeProvider();
         await using var h = await CreateHarnessAsync(services =>
         {
+            services.AddSingleton(new ChannelOutboundClock(outboundClock));
             services.AddSingleton(sp =>
                 new ToggleFailProducer(sp.GetRequiredService<FakeAntiphonMessagingClient>()));
             services.AddSingleton<IAntiphonMessagingProducer>(sp =>
@@ -254,6 +257,7 @@ public class ChannelFollowUpAttachmentTests
         h.Messaging.SentReplies.Count.ShouldBe(1, "the failed produce must not leave a reply recorded");
         (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull(
             "un-claim on produce failure, or the attachment is lost forever");
+        outboundClock.Advance(TimeSpan.FromSeconds(30));
 
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 

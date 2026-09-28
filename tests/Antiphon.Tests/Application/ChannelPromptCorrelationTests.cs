@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -27,12 +28,17 @@ public class ChannelPromptCorrelationTests
     private const string Envelope = "[Telegram \"Family\" — Tester 10:10] ";
     private static readonly CancellationToken Ct = CancellationToken.None;
 
-    private static Task<BridgeQueueHarness> HarnessAsync() => BridgeQueueHarness.CreateAsync(new()
+    private static Task<BridgeQueueHarness> HarnessAsync(FakeTimeProvider? outboundClock = null) => BridgeQueueHarness.CreateAsync(new()
     {
         AlwaysOn = false,
         Bridge = new() { Enabled = true, DebounceWindowMs = 0 },
         // Ingest via the runtime but let each scenario choose when publication/sweep happens.
-        ConfigureServices = services => services.RemoveAll<ChannelReplyDispatcher>(),
+        ConfigureServices = services =>
+        {
+            services.RemoveAll<ChannelReplyDispatcher>();
+            if (outboundClock is not null)
+                services.AddSingleton(new ChannelOutboundClock(outboundClock));
+        },
     });
 
     private static ChannelReplyDispatcher Dispatcher(BridgeQueueHarness h,
@@ -366,7 +372,8 @@ public class ChannelPromptCorrelationTests
     [Test]
     public async Task C584_RestartAndProducerFailure()
     {
-        await using var h = await HarnessAsync();
+        var outboundClock = new FakeTimeProvider();
+        await using var h = await HarnessAsync(outboundClock);
         var chat = await h.BindChannelAsync();
         var id = await EnqueueAsync(h, chat, "please deploy\nthe latest build and verify");
         var body = (await RowAsync(h, id)).Body;
@@ -374,6 +381,7 @@ public class ChannelPromptCorrelationTests
         await Dispatcher(h, new FailingProducer()).OnTurnEndAsync(h.SessionId, Ct);
         (await RowAsync(h, id)).ChannelReplySettledAt.ShouldBeNull();
         h.Messaging.SentReplies.ShouldBeEmpty();
+        outboundClock.Advance(TimeSpan.FromSeconds(30));
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("Done.");
         await Dispatcher(h).OnTurnEndAsync(h.SessionId, Ct);

@@ -1,4 +1,7 @@
 #nullable enable
+Antiphon.Messaging.Client.ChannelPublicationRefusedException
+Antiphon.Messaging.Client.ChannelPublicationRefusedException.ChannelPublicationRefusedException(string! code, System.Exception! innerException) -> void
+Antiphon.Messaging.Client.ChannelPublicationRefusedException.Code.get -> string!
 Antiphon.Messaging.Client.InboundDelivery
 Antiphon.Messaging.Client.InboundDelivery.InboundDelivery(Antiphon.Messaging.ChannelMessage? message, string? diagnostic, System.Func<string!, System.Threading.CancellationToken, System.Threading.Tasks.Task!>! acknowledge) -> void
 Antiphon.Messaging.Client.InboundDelivery.Message.get -> Antiphon.Messaging.ChannelMessage?

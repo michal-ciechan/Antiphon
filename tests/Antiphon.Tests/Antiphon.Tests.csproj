@@ -17,6 +17,7 @@
     <PackageReference Include="TUnit" Version="1.44.0" />
     <PackageReference Include="Shouldly" Version="4.*" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.*" />
+    <PackageReference Include="Testcontainers.Redpanda" Version="4.14.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.*" />
     <PackageReference Include="Hangfire.AspNetCore" Version="1.8.25" />
     <PackageReference Include="Hangfire.InMemory" Version="1.0.0" />
@@ -61,6 +62,7 @@
     <ProjectReference Include="..\..\src\Antiphon.NightlyWatchdog\Antiphon.NightlyWatchdog.csproj" />
     <ProjectReference Include="..\..\tools\Antiphon.Checkpoints\Antiphon.Checkpoints.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
     <!-- Build the fake Claude (don't reference its assembly) so the end-to-end queue->PTY test can exec it. -->
     <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
                       ReferenceOutputAssembly="false" />

@@ -37,6 +37,8 @@ public class AppDbContext : DbContext
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
     public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
     public DbSet<SessionQueuedMessage> SessionQueuedMessages => Set<SessionQueuedMessage>();
+    public DbSet<ChannelOutboundPublication> ChannelOutboundPublications => Set<ChannelOutboundPublication>();
+    public DbSet<ChannelOutboundPublicationSource> ChannelOutboundPublicationSources => Set<ChannelOutboundPublicationSource>();
     public DbSet<RemoteControlModalEpisode> RemoteControlModalEpisodes => Set<RemoteControlModalEpisode>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
@@ -116,6 +118,41 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<ChannelOutboundPublication>(entity =>
+        {
+            entity.ToTable("ChannelOutboundPublications");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Path).HasMaxLength(16);
+            entity.Property(p => p.Provider).HasMaxLength(100);
+            entity.Property(p => p.ConversationId).HasMaxLength(500);
+            entity.Property(p => p.ReplyHandle).HasMaxLength(500);
+            entity.Property(p => p.State).HasMaxLength(24);
+            entity.Property(p => p.LastFailure).HasMaxLength(1000);
+            entity.Property(p => p.FailureStage).HasMaxLength(50);
+            entity.HasIndex(p => new { p.SessionId, p.PromptSequence, p.FirstTextSequence,
+                    p.LastTextSequence, p.Path, p.Provider, p.ConversationId })
+                .IsUnique().HasDatabaseName("IX_ChannelOutboundPublications_IntervalTarget");
+            entity.HasIndex(p => new { p.State, p.NextAttemptAt })
+                .HasDatabaseName("IX_ChannelOutboundPublications_Recovery");
+            entity.HasOne<AgentSession>().WithMany().HasForeignKey(p => p.SessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ChannelOutboundPublicationSource>(entity =>
+        {
+            entity.ToTable("ChannelOutboundPublicationSources");
+            entity.HasKey(s => new { s.PublicationId, s.QueueMessageId });
+            entity.Property(s => s.Path).HasMaxLength(16);
+            entity.HasIndex(s => new { s.QueueMessageId, s.Path, s.FirstTextSequence, s.LastTextSequence })
+                .IsUnique().HasDatabaseName("IX_ChannelOutboundPublicationSources_SourceInterval");
+            entity.HasIndex(s => new { s.QueueMessageId, s.Path })
+                .IsUnique().HasFilter("\"Path\" <> 'trailing'")
+                .HasDatabaseName("IX_ChannelOutboundPublicationSources_MainMachineOwner");
+            entity.HasOne(s => s.Publication).WithMany(p => p.Sources)
+                .HasForeignKey(s => s.PublicationId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<SessionQueuedMessage>().WithMany().HasForeignKey(s => s.QueueMessageId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<SessionRunnerState>(entity =>
         {

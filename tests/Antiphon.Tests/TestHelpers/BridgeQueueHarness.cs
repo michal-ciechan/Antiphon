@@ -167,6 +167,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<ModelAvailability>();
         services.AddSingleton<ChannelReplyDispatcher>();
+        services.AddSingleton<ChannelOutboundBoundary>();
+        services.AddSingleton<ChannelAttachmentReader>();
+        services.AddSingleton<ChannelOutboundPublicationService>();
+        services.AddChannelOutboundRecovery();
         services.AddScoped<ChatChannelService>();
         services.AddScoped<AgentSupervisorService>();
         services.AddScoped<IAlertService, AlertService>();

@@ -199,6 +199,10 @@ public sealed class DataRetentionService
             && !_db.AgentTaskDispatchWarningIntents.Any(i => i.ParentSessionId == s.Id
                 && i.MaterializedAt == null && i.InitialState != LandNotificationState.NotRequired)
             && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id)
+            && !_db.ChannelOutboundPublications.Any(p => p.SessionId == s.Id && p.State != "Published")
+            && !_db.SessionQueuedMessages.Any(m => m.AgentSessionId == s.Id
+                && m.Origin == QueuedMessageOrigin.Channel && m.Status == QueuedMessageStatus.Sent
+                && m.ChannelReplySettledAt == null)
             && !_db.SessionQueuedMessages.Any(m => m.AgentSessionId == s.Id && m.DeferredFromRunAttemptId != null)
             && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId != null
                 && _db.SessionQueuedMessages.Any(m => m.Id == i.QueueMessageId && m.AgentSessionId == s.Id))
@@ -243,6 +247,10 @@ public sealed class DataRetentionService
         var candidates = await _db.AgentSessions
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
                 && s.LastSeenAt < cutoff
+                && !_db.ChannelOutboundPublications.Any(p => p.SessionId == s.Id && p.State != "Published")
+                && !_db.SessionQueuedMessages.Any(m => m.AgentSessionId == s.Id
+                    && m.Origin == QueuedMessageOrigin.Channel && m.Status == QueuedMessageStatus.Sent
+                    && m.ChannelReplySettledAt == null)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
                 && !_db.LegacyCheckNotePublications.Any(p =>
@@ -285,6 +293,13 @@ public sealed class DataRetentionService
                     return 0;
                 if (await _db.ChannelInbounds.AnyAsync(i => i.EnvelopeJson != null && i.QueueMessageId != null
                     && _db.SessionQueuedMessages.Any(m => m.Id == i.QueueMessageId && m.AgentSessionId == sessionId), ct))
+                    return 0;
+                if (await _db.ChannelOutboundPublications.AnyAsync(p => p.SessionId == sessionId
+                    && p.State != "Published", ct))
+                    return 0;
+                if (await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
+                    && m.Origin == QueuedMessageOrigin.Channel && m.Status == QueuedMessageStatus.Sent
+                    && m.ChannelReplySettledAt == null, ct))
                     return 0;
                 return await _db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync(ct);
             }, ct);
@@ -349,6 +364,8 @@ public sealed class DataRetentionService
                 && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
                     n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
                 && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null)
+                && !_db.ChannelOutboundPublicationSources.Any(s => s.QueueMessageId == m.Id
+                    && s.Publication.State != "Published")
                 && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId == m.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == m.AgentSessionId || r.ResumeSessionId == m.AgentSessionId

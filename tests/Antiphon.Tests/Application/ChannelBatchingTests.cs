@@ -33,10 +33,15 @@ public class ChannelBatchingTests
             Bridge = new ChannelBridgeSettings { Enabled = true, BatchingEnabled = batching, DebounceWindowMs = 0 },
         });
 
-    private static async Task EnqueueChannelAsync(BridgeQueueHarness h, string body, string conversationKey = ConvKey)
-        => await h.Queue.EnqueueAsync(
+    private static async Task<Guid> EnqueueChannelAsync(BridgeQueueHarness h, string body, string conversationKey = ConvKey)
+    {
+        Guid id = default;
+        await h.Queue.EnqueueAsync(
             h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
-            origin: QueuedMessageOrigin.Channel, conversationKey: conversationKey);
+            origin: QueuedMessageOrigin.Channel, conversationKey: conversationKey,
+            onCreated: value => id = value);
+        return id;
+    }
 
     [Test]
     public async Task Multiple_pending_channel_messages_coalesce_into_one_batched_delivery_all_rows_sent()
@@ -44,9 +49,9 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync();
         await h.MarkWorkingAsync(); // hold messages pending until the turn ends
 
-        await EnqueueChannelAsync(h, "[T] first message");
-        await EnqueueChannelAsync(h, "[T] second message");
-        await EnqueueChannelAsync(h, "[T] third message");
+        var first = await EnqueueChannelAsync(h, "[T] first message");
+        var second = await EnqueueChannelAsync(h, "[T] second message");
+        var third = await EnqueueChannelAsync(h, "[T] third message");
 
         await h.InsertTranscriptEntryAsync(Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
@@ -54,9 +59,10 @@ public class ChannelBatchingTests
         var body = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
         body.ShouldBe(
             ChannelPromptFormat.BatchContextMarker + "\n"
-            + "[T] first message\n[T] second message\n\n"
+            + ChannelPromptCorrelation.Mark(first, "[T] first message") + "\n"
+            + ChannelPromptCorrelation.Mark(second, "[T] second message") + "\n\n"
             + ChannelPromptFormat.BatchCurrentMarker + "\n"
-            + "[T] third message");
+            + ChannelPromptCorrelation.Mark(third, "[T] third message"));
 
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId).ToListAsync())
@@ -110,7 +116,7 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync();
         await h.MarkWorkingAsync();
 
-        await EnqueueChannelAsync(h, "[T] chat one");
+        var first = await EnqueueChannelAsync(h, "[T] chat one");
         await h.Queue.EnqueueAsync(h.SessionId, "operator interjection", MessageSendMode.WhenIdle, CancellationToken.None);
         await EnqueueChannelAsync(h, "[T] chat two");
 
@@ -119,7 +125,7 @@ public class ChannelBatchingTests
 
         // The head run is just the first chat message — the UI message right behind it must NOT be
         // absorbed, and FIFO order must hold across the origins.
-        h.Adapter.SubmittedBodies.ShouldBe(["[T] chat one"]);
+        h.Adapter.SubmittedBodies.ShouldBe([ChannelPromptCorrelation.Mark(first, "[T] chat one")]);
     }
 
     [Test]
@@ -128,13 +134,13 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync();
         await h.MarkWorkingAsync();
 
-        await EnqueueChannelAsync(h, "[T] family chat", "telegram:-100777");
+        var first = await EnqueueChannelAsync(h, "[T] family chat", "telegram:-100777");
         await EnqueueChannelAsync(h, "[T] ops chat", "telegram:-100888");
 
         await h.InsertTranscriptEntryAsync(Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
-        h.Adapter.SubmittedBodies.ShouldBe(["[T] family chat"],
+        h.Adapter.SubmittedBodies.ShouldBe([ChannelPromptCorrelation.Mark(first, "[T] family chat")],
             "different conversations never coalesce — one reply cannot honestly answer two chats");
     }
 
@@ -210,12 +216,13 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync(batching: false);
         await h.MarkWorkingAsync();
 
-        await EnqueueChannelAsync(h, "[T] first");
+        var first = await EnqueueChannelAsync(h, "[T] first");
         await EnqueueChannelAsync(h, "[T] second");
 
         await h.InsertTranscriptEntryAsync(Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
-        h.Adapter.SubmittedBodies.ShouldBe(["[T] first"], "kill-switch: exact pre-epic one-per-turn behaviour");
+        h.Adapter.SubmittedBodies.ShouldBe([ChannelPromptCorrelation.Mark(first, "[T] first")],
+            "batching disabled delivers one marked Channel message per turn");
     }
 }

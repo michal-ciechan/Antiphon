@@ -704,6 +704,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
         .ValidateOnStart();
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
+    builder.Services.AddSingleton<ChannelOutboundBoundary>();
+    builder.Services.AddSingleton<ChannelAttachmentReader>();
+    builder.Services.AddSingleton<ChannelOutboundPublicationService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
     builder.Services.AddSingleton<GitProcessGate>(sp =>
         new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));
@@ -729,6 +732,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddSingleton<ReviewReplyDispatcher>();
     if (builder.Configuration.GetValue<bool>($"{ChannelBridgeSettings.SectionName}:Enabled"))
     {
+        builder.Services.AddChannelOutboundRecovery();
         builder.Services.AddHostedService<ChannelBridgeService>();
         builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Messaging.InboundUnconsumedEventConsumer>();
     }
