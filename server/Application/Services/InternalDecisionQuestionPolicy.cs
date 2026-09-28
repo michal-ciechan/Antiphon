@@ -145,6 +145,8 @@ public static class InternalDecisionQuestionPolicy
                 || Path.IsPathRooted(fromRoot))
                 return false;
         }
-        return true;
+        // A grant always names a file. An existing directory cannot become an exact-file
+        // authorization merely because its spelling has no trailing slash.
+        return !Directory.Exists(current);
     }
 }

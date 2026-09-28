@@ -77,6 +77,75 @@ public sealed class AgentTaskDecisionQuestionTests
             .Reason.ShouldBe("attribute_not_granted");
     }
 
+    [Test]
+    [Arguments(InternalDecisionCategory.LineEndings)]
+    [Arguments(InternalDecisionCategory.ShellTransport)]
+    [Arguments(InternalDecisionCategory.BuildTestHarness)]
+    public void Granted_category_returns_continue(InternalDecisionCategory category)
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var policy = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(
+                categories: [category], paths: ["scripts/deploy.ps1"]),
+            AgentTaskRole.Code, WorkspaceMode.Worktree,
+            InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        var answer = InternalDecisionQuestionPolicy.Evaluate(policy,
+            Sample() with { Category = category, Paths = ["scripts/deploy.ps1"],
+                AttributeTargets = null, Attributes = null }, workspace.Path);
+        answer.Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+    }
+
+    [Test]
+    public void One_named_grant_must_cover_all_effects()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var policy = InternalDecisionPolicy.Normalize(new InternalDecisionPolicyRequest(1,
+            [
+                new InternalDecisionGrantRequest("first", [InternalDecisionCategory.ShellTransport],
+                    ["scripts/first.ps1"], null, "Preserve arguments."),
+                new InternalDecisionGrantRequest("second", [InternalDecisionCategory.ShellTransport],
+                    ["scripts/second.ps1"], null, "Preserve arguments."),
+            ]), AgentTaskRole.Code, WorkspaceMode.Worktree,
+            InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        var request = Sample() with { GrantId = "first", Category = InternalDecisionCategory.ShellTransport,
+            Paths = ["scripts/first.ps1", "scripts/second.ps1"], AttributeTargets = null, Attributes = null };
+        InternalDecisionQuestionPolicy.Evaluate(null, request, workspace.Path).Reason.ShouldBe("no_grant");
+        InternalDecisionQuestionPolicy.Evaluate(policy, request with { GrantId = "unknown" }, workspace.Path)
+            .Reason.ShouldBe("no_grant");
+        InternalDecisionQuestionPolicy.Evaluate(policy, request with { Category = InternalDecisionCategory.LineEndings }, workspace.Path)
+            .Reason.ShouldBe("category_not_granted");
+        InternalDecisionQuestionPolicy.Evaluate(policy, request, workspace.Path).Reason.ShouldBe("path_not_granted");
+        InternalDecisionQuestionPolicy.Evaluate(policy, request with { RequestId = Guid.NewGuid() }, workspace.Path)
+            .Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+    }
+
+    [Test]
+    public void Repository_path_boundary_rechecks_links_and_rejects_directories()
+    {
+        using var repository = new DecisionTempWorkspace();
+        using var outside = new DecisionTempWorkspace();
+        Directory.CreateDirectory(Path.Combine(repository.Path, "scripts"));
+        File.WriteAllText(Path.Combine(outside.Path, "outside.ps1"), "outside");
+        var policy = InternalDecisionPolicy.Normalize(InternalDecisionFixtures.Sample(
+                categories: [InternalDecisionCategory.ShellTransport],
+                paths: ["scripts/target.ps1", "scripts/linked/outside.ps1", "scripts/linked/new.ps1", "scripts"]),
+            AgentTaskRole.Code, WorkspaceMode.Worktree,
+            InternalDecisionFixtures.ManualGrantor(), InternalDecisionFixtures.GrantedAt)!;
+        var request = Sample() with { Category = InternalDecisionCategory.ShellTransport,
+            Paths = ["scripts/target.ps1"], AttributeTargets = null, Attributes = null };
+        InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
+            .Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        InternalDecisionQuestionPolicy.Evaluate(policy, request with { Paths = ["scripts"] }, repository.Path)
+            .Reason.ShouldBe("path_not_granted");
+        File.CreateSymbolicLink(Path.Combine(repository.Path, "scripts", "target.ps1"),
+            Path.Combine(outside.Path, "outside.ps1"));
+        InternalDecisionQuestionPolicy.Evaluate(policy, request, repository.Path)
+            .Reason.ShouldBe("path_not_granted");
+        Directory.CreateSymbolicLink(Path.Combine(repository.Path, "scripts", "linked"), outside.Path);
+        foreach (var path in new[] { "scripts/linked/outside.ps1", "scripts/linked/new.ps1" })
+            InternalDecisionQuestionPolicy.Evaluate(policy, request with { Paths = [path] }, repository.Path)
+                .Reason.ShouldBe("path_not_granted");
+    }
+
     private static InternalDecisionQuestionRequest Sample() => new(
         Guid.NewGuid(), 1, "backup-transport", InternalDecisionCategory.LineEndings,
         ["scripts/deploy-gym-stat.ps1", ".gitattributes"],
