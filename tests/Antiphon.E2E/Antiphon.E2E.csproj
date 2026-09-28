@@ -18,6 +18,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.*" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.*" />
+    <PackageReference Include="Testcontainers.Redpanda" Version="4.14.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +31,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Slack\Antiphon.Messaging.Slack.csproj" />
+    <ProjectReference Include="..\..\tools\Antiphon.MarkdownPdf\Antiphon.MarkdownPdf.csproj" />
+    <Compile Include="..\Antiphon.Messaging.Tests\KestrelLoopback.cs" Link="FakeSlack\KestrelLoopback.cs" />
+    <Compile Include="..\Antiphon.Messaging.Tests\FakeSlack\FakeSlackServer.cs" Link="FakeSlack\FakeSlackServer.cs" />
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
     <Compile Include="..\Shared\TestAppHostPath.cs" Link="TestSupport\TestAppHostPath.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
@@ -42,5 +48,17 @@
     <PropertyGroup><_LandFakeGrokDir>@(_LandFakeGrokTarget->'%(RootDir)%(Directory)')</_LandFakeGrokDir></PropertyGroup>
     <ItemGroup><LandFakeGrokOutput Include="$(_LandFakeGrokDir)**\*" /></ItemGroup>
     <Copy SourceFiles="@(LandFakeGrokOutput)" DestinationFiles="@(LandFakeGrokOutput->'$(OutDir)fakegrok\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <!-- The pty-host relaunches itself using Environment.ProcessPath, so a shell/dotnet shim
+       cannot replace its native apphost in Linux checkpoint builds (UseAppHost=false). -->
+  <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
+    <PropertyGroup>
+      <_F5PtyHostNativeDir>$(TargetDir)ptyhost-native/</_F5PtyHostNativeDir>
+    </PropertyGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(_F5PtyHostNativeDir)" />
+    <Copy SourceFiles="$(_F5PtyHostNativeDir)Antiphon.PtyHost"
+          DestinationFiles="$(TargetDir)Antiphon.PtyHost" SkipUnchangedFiles="true" />
   </Target>
 </Project>

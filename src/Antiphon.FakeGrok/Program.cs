@@ -618,6 +618,26 @@ internal static class Program
             return;
         }
 
+        if (OutboundRequestMode.TryRun(text, out var toolResult, out var toolSucceeded))
+        {
+            write(toolResult + "\r\nWorked for 1.7s\r\n");
+            write(IdleTitle);
+            AppendSessionFiles(sessionDir, sessionId, text, WithReportLine(text, toolResult,
+                toolSucceeded ? "done" : "failed"));
+            return;
+        }
+
+        if (LastTaskMarkerId(text) is not null
+            && Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SOURCE_REPORT") is { Length: > 0 } reportPath
+            && File.Exists(reportPath))
+        {
+            var reportBody = File.ReadAllText(reportPath);
+            write("FAKE source report completed\r\nWorked for 1.7s\r\n");
+            write(IdleTitle);
+            AppendSessionFiles(sessionDir, sessionId, text, WithReportLine(text, reportBody));
+            return;
+        }
+
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
 
@@ -658,11 +678,15 @@ internal static class Program
     /// </summary>
     private static string AssistantText(string submitted, string echo)
     {
-        var body = $"FAKE response to: {echo}";
+        return WithReportLine(submitted, $"FAKE response to: {echo}");
+    }
+
+    private static string WithReportLine(string submitted, string body, string status = "done")
+    {
         if (!ReportLineEnabled)
             return body;
         var id = LastTaskMarkerId(submitted);
-        return id is null ? body : $"{body}\n[antiphon-report:{id} done]";
+        return id is null ? body : $"{body}\n[antiphon-report:{id} {status}]";
     }
 
     private static string? LastTaskMarkerId(string text)
