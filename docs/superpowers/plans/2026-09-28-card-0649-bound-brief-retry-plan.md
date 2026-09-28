@@ -12,7 +12,7 @@ Fix review defects D1-D3 and D5 on the pinned 7fb7bc5cb commit. Runner pointers 
 - R-2: The full Unit lane remains green, with unrelated host-load flakes named separately if observed.
 - PC-1: Method-scoped SourceLanding Mutation remains pending; ordinary tests and nightly do not discharge it.
 
-## Checkpoints
+### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
