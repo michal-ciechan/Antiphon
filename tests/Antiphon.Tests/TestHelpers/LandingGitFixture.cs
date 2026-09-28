@@ -172,8 +172,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         private readonly AsyncLocal<string?> _role = new();
         public string Role { get => _role.Value ?? role; set => _role.Value = value; }
         protected override void ObserveCompletedChild(ProcessStartInfo start, int processId,
-            long startedTimestamp, long finishedTimestamp, int exitCode, string output, string error)
-            => pilotTrace?.Child(Role, start, processId, startedTimestamp, finishedTimestamp,
+            long? processStartTicks, long startedTimestamp, long finishedTimestamp, int exitCode, string output, string error)
+            => pilotTrace?.Child(Role, start, processId, processStartTicks, startedTimestamp, finishedTimestamp,
                 exitCode, output, error);
         public List<string[]> Trace { get; } = [];
         public string? HooksPathOverride { get; set; }

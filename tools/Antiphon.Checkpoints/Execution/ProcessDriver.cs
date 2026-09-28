@@ -83,6 +83,7 @@ public sealed class ProcessDriver : IDriver
         }
 
         var outputGate = new object();
+        var processStartedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         var processTimer = System.Diagnostics.Stopwatch.StartNew();
         if (!process.Start())
         {
@@ -125,8 +126,11 @@ public sealed class ProcessDriver : IDriver
         }
 
         processTimer.Stop();
+        var processFinishedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         return new DriverResult(process.ExitCode, stdout.ToString(), stderr.ToString(),
-            ElapsedSeconds: processTimer.Elapsed.TotalSeconds);
+            ElapsedSeconds: processTimer.Elapsed.TotalSeconds,
+            StartedTimestamp: processStartedTimestamp, FinishedTimestamp: processFinishedTimestamp,
+            StopwatchFrequency: System.Diagnostics.Stopwatch.Frequency);
     }
 
     public void Kill(bool entireProcessTree)

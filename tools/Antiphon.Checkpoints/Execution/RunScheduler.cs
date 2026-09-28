@@ -329,7 +329,12 @@ public sealed class RunScheduler
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
             Deadline = TimeSpan.FromMinutes(minutes),
             BeforeLaunch = request.BeforeLaunch,
-            Environment = spec.Environment,
+            Environment = new Dictionary<string, string>(spec.Environment, StringComparer.OrdinalIgnoreCase)
+            {
+                ["ANTIPHON_CHECKPOINT_RUN_ID"] = Path.GetFileName(request.RunDirectory),
+                ["ANTIPHON_CHECKPOINT_ROW"] = spec.Id,
+                ["ANTIPHON_CHECKPOINT_SOURCE_SHA"] = request.Commit,
+            },
         }, TextWriter.Null, cancellationToken).ConfigureAwait(false);
         progress.LastOutputAt = DateTimeOffset.UtcNow;
         result.Id = spec.Id;

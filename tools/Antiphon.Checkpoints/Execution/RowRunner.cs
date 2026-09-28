@@ -40,6 +40,9 @@ public sealed class RowRunResult
     public string State { get; init; } = "";
     public double Seconds { get; set; }
     public double? TestProcessSeconds { get; set; }
+    public long? TestProcessStartedTimestamp { get; set; }
+    public long? TestProcessFinishedTimestamp { get; set; }
+    public long? TestProcessStopwatchFrequency { get; set; }
 }
 
 public sealed class RowRunner
@@ -281,6 +284,9 @@ public sealed class RowRunner
         var finished = Finish(exit, buildState, lineModel, buffer, reruns, rerunLines,
             Path.GetFullPath(trxPath), parsed, false, state);
         finished.TestProcessSeconds = testProcessSeconds;
+        finished.TestProcessStartedTimestamp = run.StartedTimestamp;
+        finished.TestProcessFinishedTimestamp = run.FinishedTimestamp;
+        finished.TestProcessStopwatchFrequency = run.StopwatchFrequency;
         return finished;
     }
 

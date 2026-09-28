@@ -49,12 +49,14 @@ internal sealed class LandingPilotTrace : IAsyncDisposable
                 ticks = Stopwatch.GetTimestamp() });
     }
 
-    public void Child(string role, ProcessStartInfo start, int pid, long startTicks, long finishTicks,
+    public void Child(string role, ProcessStartInfo start, int pid, long? processStartTicks,
+        long startTicks, long finishTicks,
         int exitCode, string stdout, string stderr)
     {
         lock (_gate)
             _children.Add(new { launchId = ++_sequence, role, cwd = start.WorkingDirectory,
-                argv = start.ArgumentList.ToArray(), pid, startTicks, finishTicks, exitCode, stdout, stderr });
+                argv = start.ArgumentList.ToArray(), pid, processStartTicks, startTicks, finishTicks,
+                exitCode, stdout, stderr });
     }
 
     public async ValueTask DisposeAsync()
@@ -70,9 +72,17 @@ internal sealed class LandingPilotTrace : IAsyncDisposable
             observations = _observations.ToArray();
         }
         var receipt = new { checkpoint = "CP-42", backend = "real", storage = "physical",
-            @class = "Antiphon.Tests.Application.AgentTaskLandBoundaryTests", caseId = _caseId,
+            runId = Environment.GetEnvironmentVariable("ANTIPHON_CHECKPOINT_RUN_ID"),
+            sourceSha = Environment.GetEnvironmentVariable("ANTIPHON_CHECKPOINT_SOURCE_SHA"),
+            testProcessId = Environment.ProcessId,
+            @class = "Antiphon.Tests.Application.AgentTaskLandBoundaryTests",
+            method = _caseId is "B16" or "B17" or "B18" or "B19"
+                ? "C448_V11_TargetMutationAfterFastForwardCannotBeAcknowledged"
+                : "C448_V10_EachAcknowledgedBoundaryRechecksSource",
+            caseId = _caseId, outcome = "completed", fixtureFailureLedger = Array.Empty<string>(),
             arguments = _arguments, startedAt = _startedAt, finishedAt = DateTimeOffset.UtcNow,
             startTicks = _started, finishTicks = Stopwatch.GetTimestamp(),
+            stopwatchFrequency = Stopwatch.Frequency,
             observedGitLaunches = children.Length, launchObserverPresent = true,
             children, phases, observations };
         await File.WriteAllTextAsync(Path.Combine(folder, _caseId + ".json"),

@@ -27,7 +27,7 @@ public class LandingGit : ILandingGit
 
     /// <summary>Fixture observation after the child and both redirected streams have drained.</summary>
     protected virtual void ObserveCompletedChild(ProcessStartInfo start, int processId,
-        long startedTimestamp, long finishedTimestamp, int exitCode, string output,
+        long? processStartTicks, long startedTimestamp, long finishedTimestamp, int exitCode, string output,
         string error) { }
 
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
@@ -91,6 +91,9 @@ public class LandingGit : ILandingGit
         // Any other start failure is ambiguous (Windows builds the redirected streams after
         // CreateProcess), so its record stands as a fence for recover-repository-children.ps1.
         using var process = child ?? throw new IOException("git_start_failed");
+        long? processStartTicks = null;
+        try { processStartTicks = process.StartTime.ToUniversalTime().Ticks; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         try
@@ -116,7 +119,7 @@ public class LandingGit : ILandingGit
             await Task.WhenAll(output, error);
             journal?.Exited(process);
             _cardFiles?.NoteServerGit(repository, arguments);
-            ObserveCompletedChild(start, process.Id, childStartedTimestamp, Stopwatch.GetTimestamp(),
+            ObserveCompletedChild(start, process.Id, processStartTicks, childStartedTimestamp, Stopwatch.GetTimestamp(),
                 process.ExitCode, await output, await error);
             if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
             throw;
@@ -127,7 +130,7 @@ public class LandingGit : ILandingGit
         var childFinishedTimestamp = Stopwatch.GetTimestamp();
         journal?.Exited(process);
         _cardFiles?.NoteServerGit(repository, arguments);
-        ObserveCompletedChild(start, process.Id, childStartedTimestamp, childFinishedTimestamp,
+        ObserveCompletedChild(start, process.Id, processStartTicks, childStartedTimestamp, childFinishedTimestamp,
             process.ExitCode, await output, await error);
         string? rebaseHead = null;
         if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))

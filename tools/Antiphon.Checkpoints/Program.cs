@@ -39,6 +39,12 @@ public static class Program
             return Hold(args);
         if (args[0] == "fakegit-pilot")
             return FakeGitMeasurement.EvaluateFromPointer(args[1]);
+        if (args[0] == "fakegit-landing-trace")
+        {
+            var verdict = LandingTraceMeasurement.Evaluate(args[1], args[2]);
+            Console.WriteLine(JsonSerializer.Serialize(verdict));
+            return verdict.Complete && verdict.Feasible ? 0 : 1;
+        }
 
         var verb = args[0];
         var options = Parse(args.Skip(1).ToArray());

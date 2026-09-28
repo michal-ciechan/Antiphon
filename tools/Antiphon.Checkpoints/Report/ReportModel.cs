@@ -61,6 +61,9 @@ public sealed class ReportRow
     public string? Trx { get; set; }
     public double Seconds { get; set; }
     public double? TestProcessSeconds { get; set; }
+    public long? TestProcessStartedTimestamp { get; set; }
+    public long? TestProcessFinishedTimestamp { get; set; }
+    public long? TestProcessStopwatchFrequency { get; set; }
     public string? Line { get; set; }
     public List<ReportFailure> Failures { get; set; } = [];
     public List<string> RerunLines { get; set; } = [];
