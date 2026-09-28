@@ -95,6 +95,7 @@ public sealed class ChannelOutboundPolicyTests
         if (fault == "raw_converter")
             await db.Agents.Where(a => a.Id == converterId)
                 .ExecuteUpdateAsync(s => s.SetProperty(a => a.Kind, AgentKind.Raw));
+        db.ChangeTracker.Clear();
         try
         {
             var service = new ChatChannelService(db, TimeProvider.System,
