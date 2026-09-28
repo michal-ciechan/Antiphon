@@ -107,6 +107,9 @@ public static class DispatchHoldDetails
     public static string RunnerAtCapacity(string runnerId, int occupied, int capacity) =>
         $"Held: runner '{runnerId}' at capacity {occupied}/{capacity}; the task stays Queued until a session slot frees.";
 
+    public static string HostBudget(string hostId, int occupied, int effective, int? configured, int? declared) =>
+        RunnerAtCapacity(hostId, occupied, effective);
+
     public static string StandingAgentNoSession(string agentName) =>
         $"Held: standing agent '{agentName}' (always-on) has no live session; waiting for supervision to restart it.";
 
