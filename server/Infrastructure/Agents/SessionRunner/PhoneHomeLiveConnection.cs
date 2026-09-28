@@ -11,6 +11,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
 {
     private readonly WebSocket _socket;
     private readonly PhoneHomeLimits _limits;
+    private readonly int _maxCapacity;
     private readonly SemaphoreSlim _send = new(1, 1);
     private readonly ConcurrentDictionary<Guid, Waiter> _waiters = new();
     private readonly Channel<PhoneHomeFrame> _events = Channel.CreateUnbounded<PhoneHomeFrame>();
@@ -46,7 +47,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         TimeProvider clock,
         int capacity = 1,
         string? platform = null,
-        RunnerCapabilitiesDto? capabilities = null)
+        RunnerCapabilitiesDto? capabilities = null,
+        int maxCapacity = int.MaxValue)
     {
         RunnerId = runnerId;
         RunnerStoreId = runnerStoreId;
@@ -54,6 +56,7 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
         Epoch = epoch;
         _socket = socket;
         _limits = limits;
+        _maxCapacity = maxCapacity;
         Clock = clock;
         _capacity = capacity;
         Platform = platform;
@@ -415,6 +418,14 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             if (frame.Kind == PhoneHomeFrameKind.Heartbeat)
             {
                 NoteHeartbeat(Clock.GetUtcNow());
+                // A timed-out capacity reply can arrive after the runner persisted its new value.
+                // Its next heartbeat is the runner's durable authority, bounded by this entry.
+                if (frame.Payload is { } payload)
+                {
+                    var reported = payload.Deserialize<PhoneHomeCapacityHeartbeat>(PhoneHomeFraming.Json);
+                    if (reported is { Capacity: >= 1 } && reported.Capacity <= _maxCapacity)
+                        SetCapacity(reported.Capacity);
+                }
                 continue;
             }
 

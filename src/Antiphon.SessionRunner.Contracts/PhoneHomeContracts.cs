@@ -101,6 +101,7 @@ public enum PhoneHomeOperation
 
 public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
 public sealed record PhoneHomeSetCapacityResponse(int Capacity, bool Persisted, string? Path);
+public sealed record PhoneHomeCapacityHeartbeat(int Capacity);
 
 public sealed record RunnerRetireRequest(bool Force, string Reason);
 

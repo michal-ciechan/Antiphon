@@ -354,6 +354,8 @@ public class PhoneHomeConnectionServiceTests
             var sent = socket.Sent;
             sent.Count.ShouldBe(2, name + " must send exactly the heartbeat and its own frame");
             sent[0].Kind.ShouldBe(PhoneHomeFrameKind.Heartbeat, name);
+            sent[0].Payload!.Value.Deserialize<PhoneHomeCapacityHeartbeat>(PhoneHomeFraming.Json)!
+                .Capacity.ShouldBe(1, name);
             sent[1].Kind.ShouldBe(kind, name);
             if (kind != PhoneHomeFrameKind.Event)
                 sent[1].RequestId.ShouldBe(id, name + " reply must carry its own request id");

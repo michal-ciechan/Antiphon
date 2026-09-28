@@ -491,6 +491,7 @@ public sealed class AgentTaskDispatcher
         // slot ahead of any newly Queued task, including an older CreatedAt queued row.
         if (_capacityRecovery is not null)
         {
+            var resumedRemote = new Dictionary<string, int>(StringComparer.Ordinal);
             var returning = await _db.AgentTasks
                 .Where(t => t.CapacityWaitRetained
                     && t.Status == AgentTaskStatus.Working
@@ -509,11 +510,15 @@ public sealed class AgentTaskDispatcher
                 {
                     var runnerLimit = _hostLimits.GetValueOrDefault(runnerId);
                     var limit = runnerLimit?.Effective ?? _runners?.DeclaredCapacity(runnerId);
-                    if (limit is null || await _db.AgentTasks
+                    var countedTasks = await _db.AgentTasks
                             .Where(AgentTaskRoles.NotSpecialist)
                             .CountAsync(t => t.RunnerId == runnerId
                                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                                && !t.CapacityWaitRetained, ct) >= limit.Value)
+                                && !t.CapacityWaitRetained, ct);
+                    var occupied = await CountRunnerOccupancyAsync(runnerId, retained.Id, ct,
+                        retained.AgentSessionId);
+                    if (limit is null || Math.Max(countedTasks, occupied)
+                        + resumedRemote.GetValueOrDefault(runnerId) >= limit.Value)
                         continue;
                 }
                 if (_capacityRecovery.IsEnabled
@@ -527,6 +532,10 @@ public sealed class AgentTaskDispatcher
                 if (string.IsNullOrEmpty(runnerId))
                 {
                     active++;
+                }
+                else
+                {
+                    resumedRemote[runnerId] = resumedRemote.GetValueOrDefault(runnerId) + 1;
                 }
             }
         }
@@ -1108,10 +1117,12 @@ public sealed class AgentTaskDispatcher
         return null;
     }
 
-    private async Task<int> CountRunnerOccupancyAsync(string runnerId, Guid exceptTaskId, CancellationToken ct)
+    private async Task<int> CountRunnerOccupancyAsync(
+        string runnerId, Guid exceptTaskId, CancellationToken ct, Guid? excludeSessionId = null)
     {
         var sessions = await _db.AgentSessions.CountAsync(
             s => s.RunnerId == runnerId
+                && (excludeSessionId == null || s.Id != excludeSessionId)
                 && (s.Status == SessionStatus.Created
                     || s.Status == SessionStatus.Starting
                     || s.Status == SessionStatus.Running
