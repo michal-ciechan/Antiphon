@@ -24,11 +24,11 @@ public static class OutputDistillation
     /// <summary>
     /// Bumped whenever the contract changes meaningfully. It rides IN the contract text so an
     /// operator reading the agent row can see which version that agent is running without diffing
-    /// prose. Held together with the literal <c>contract v3</c> in
+    /// prose. Held together with the literal <c>contract v4</c> in
     /// <c>server/Bundles/output-distiller.md</c> by <c>OutputDistillerProvisionerTests</c>
     /// and <c>InstructionBundleTests</c>.
     /// </summary>
-    public const string ContractVersion = "3";
+    public const string ContractVersion = "4";
 
     /// <summary>
     /// The standing contract. A FORWARD to bundle <c>output-distiller</c>: the text lives in
