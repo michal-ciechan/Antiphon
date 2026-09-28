@@ -116,7 +116,7 @@ public class ChannelOutboundPublicationTests
         (await f.ReadPublicationsAsync(sourceId, "trailing"))
             .ShouldHaveSingleItem().State.ShouldBe("Published");
         f.Producer.Accepted.Count.ShouldBe(2);
-        f.Producer.Accepted[1].Text.ShouldContain("Late middle sentinel; Late tail sentinel.");
+        f.Producer.Accepted.ToArray()[1].Text.ShouldContain("Late middle sentinel; Late tail sentinel.");
     }
 
     [Test]
