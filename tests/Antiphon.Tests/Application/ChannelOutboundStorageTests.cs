@@ -137,6 +137,45 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
+    public async Task Near_default_wire_cap_accepts_exact_serialized_size_and_refuses_one_more_byte()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-near-wire-cap-").FullName;
+        var store = new ChannelOutboundFileStore(root);
+        try
+        {
+            var content = new byte[13 * 1024 * 1024];
+            Random.Shared.NextBytes(content);
+            var reply = new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", ReplyHandle = "thread-✨",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "źródło.md", Mime = "text/markdown", Content = content }],
+            };
+            var fixedLength = JsonSerializer.SerializeToUtf8Bytes(reply, MessagingJson.Options).Length;
+            var cap = Antiphon.Messaging.Client.AntiphonMessagingOptions.MaxMessageBytesDefault;
+            fixedLength.ShouldBeLessThan(cap - 1);
+            // A string of ASCII characters contributes exactly one UTF-8 byte per char.
+            // The empty text property above is already serialized, so this derives the
+            // actual delta from the wire serializer rather than a raw-byte estimate.
+            var oneChar = reply with { Text = "x" };
+            var oneCharLength = JsonSerializer.SerializeToUtf8Bytes(oneChar, MessagingJson.Options).Length;
+            var exact = reply with { Text = new string('x', cap - oneCharLength + 1) };
+            JsonSerializer.SerializeToUtf8Bytes(exact, MessagingJson.Options).Length.ShouldBe(cap);
+            var snapshot = await store.StageAsync(Guid.NewGuid(), exact, CancellationToken.None);
+            (await store.ReadReplyAsync(snapshot.ReplyPath, snapshot.ReplySha256,
+                CancellationToken.None)).Text.ShouldBe(exact.Text);
+
+            var over = exact with { Text = exact.Text + "x" };
+            var rejectedId = Guid.NewGuid();
+            JsonSerializer.SerializeToUtf8Bytes(over, MessagingJson.Options).Length.ShouldBe(cap + 1);
+            await Should.ThrowAsync<InvalidDataException>(() =>
+                store.StageAsync(rejectedId, over, CancellationToken.None));
+            Directory.Exists(Path.Combine(root, rejectedId.ToString("N"))).ShouldBeFalse();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Converted_files_are_sealed_with_original_sources_and_frozen_routing()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-seal-" + Guid.NewGuid().ToString("N"));

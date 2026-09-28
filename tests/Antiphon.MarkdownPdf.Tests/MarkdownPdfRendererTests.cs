@@ -64,7 +64,7 @@ public class MarkdownPdfRendererTests
         var html = CreateRenderer().ToHtml("<script>✨ & cover</script>",
             [new MarkdownPdfRenderer.DocumentSection("docs/<outside>&zażółć.md", "# Body ✨")]);
         html.ShouldContain("&lt;script&gt;✨ &amp; cover&lt;/script&gt;");
-        html.ShouldContain("docs/&lt;outside&gt;&amp;zażółć.md");
+        html.ShouldContain("docs/&lt;outside&gt;&amp;zaż&#243;łć.md");
         html.ShouldNotContain("<script>✨");
         html.ShouldContain("Body ✨");
     }

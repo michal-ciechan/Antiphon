@@ -5,6 +5,7 @@ using Antiphon.Messaging;
 using Antiphon.Server.Infrastructure.Files;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -108,6 +109,14 @@ public sealed class OutboundConversionManifestTests
     [Arguments("parent_path")]
     [Arguments("backslash_path")]
     [Arguments("sibling_prefix_path")]
+    [Arguments("linked_file")]
+    [Arguments("linked_directory")]
+    [Arguments("unc_path")]
+    [Arguments("empty_name")]
+    [Arguments("empty_mime")]
+    [Arguments("unknown_manifest_field")]
+    [Arguments("unknown_file_field")]
+    [Arguments("long_replacement_text")]
     [Arguments("route_channel")]
     [Arguments("route_conversation_id")]
     [Arguments("route_reply_handle")]
@@ -212,6 +221,29 @@ public sealed class OutboundConversionManifestTests
                     await File.WriteAllBytesAsync(Path.Combine(sibling, "file.pdf"), pdf);
                     file["path"] = "../output-elsewhere/file.pdf";
                     break;
+                case "linked_file":
+                    var outsideFile = Path.Combine(root, "outside-file.pdf");
+                    await File.WriteAllBytesAsync(outsideFile, pdf);
+                    try { File.CreateSymbolicLink(Path.Combine(snapshot.OutputDirectory, "linked.pdf"), outsideFile); }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException)
+                    { throw new SkipTestException("A fixture-owned file link could not be created: " + ex.Message); }
+                    file["path"] = "linked.pdf";
+                    break;
+                case "linked_directory":
+                    var outsideDirectory = Path.Combine(root, "outside-directory");
+                    Directory.CreateDirectory(outsideDirectory);
+                    await File.WriteAllBytesAsync(Path.Combine(outsideDirectory, "combined.pdf"), pdf);
+                    try { Directory.CreateSymbolicLink(Path.Combine(snapshot.OutputDirectory, "linked"), outsideDirectory); }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException)
+                    { throw new SkipTestException("A fixture-owned directory link could not be created: " + ex.Message); }
+                    file["path"] = "linked/combined.pdf";
+                    break;
+                case "unc_path": file["path"] = @"\\server\share\combined.pdf"; break;
+                case "empty_name": file["name"] = ""; break;
+                case "empty_mime": file["mime"] = ""; break;
+                case "unknown_manifest_field": manifest["unrecognized"] = "x"; break;
+                case "unknown_file_field": file["unrecognized"] = "x"; break;
+                case "long_replacement_text": manifest["replacementText"] = new string('x', 20_001); break;
                 case "route_channel": manifest["channel"] = "attacker"; break;
                 case "route_conversation_id": manifest["conversationId"] = "C2"; break;
                 case "route_reply_handle": manifest["replyHandle"] = "C2|thread-2"; break;
