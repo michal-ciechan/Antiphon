@@ -52,3 +52,44 @@ CP-1 94/94, CP-2 63/63 and CP-3 59/59 are green at the same commit in run
 ## Pending
 
 CARD-0488 PCs and 494-PC-1..494-PC-32 stay pending for post-land Mutation.
+
+# Round 2: D1/D2 Windows verification (Code task 46c55ae6) - 2026-09-28
+
+Verified commit: `a5d6255c90470d07d0a57e17debc0554acfbee82` on `feat/card-task-46c55ae6`
+(started from D1/D2 at `206fca4c`). Two test-fixture fixes were needed before the D1 crash
+arms could pass on Windows; no production code changed in this round.
+
+- `96438f97` - `StartReviewDelegateAsync` read `AgentDetailDto` with default JSON options, which
+  reject the API's enum names (`$.assignmentPolicy`). Every `C488_Review*` case failed there
+  (run `20260928-141148-a8e5`, 14/16 at that line, 2 in fixture init under load).
+- `a5d6255c` - `AssertOnePromptAsync`, reused by D1 for Review, matched the note header against raw
+  `updates.jsonl` lines. FakeGrok escapes the header's `·` as `\u00B7`, so all 10 child-host review
+  cases failed at `native should be 1 but was 0` (run `20260928-142923-b4ea`: 16 executed, 6 passed,
+  10 failed). Each failed root held exactly one decoded native prompt. The helper now matches the
+  decoded `content.text`.
+
+Each child-host arm crashes and recovers for real. The fixture roots show the cut's
+`<barrier>.barrier.json` and two child PIDs: the first is killed at the cut and the second is a
+fresh `none` host. For the settlement cuts, the child log shows the first host reaching the
+barrier and the second host settling the Review `Succeeded` after the restart.
+
+```
+CHECKPOINT CP-4 commit=a5d6255c90470d07d0a57e17debc0554acfbee82 build=ok filter=/*/*/AgentTaskLandDeliveryE2ETests/* executed=52 passed=50 failed=2 skipped=0 trx=C:\Antiphon\worktrees\card-task-46c55ae6\.antiphon\checkpoints\20260928-152455-baab\rows\CP-4\run.trx slot=granted waited=0s
+CHECKPOINT CP-1 commit=a5d6255c90470d07d0a57e17debc0554acfbee82 build=ok filter=/*/*/AgentTaskLandApprovalRecoveryTests/* executed=94 passed=94 failed=0 skipped=0 trx=C:\Antiphon\worktrees\card-task-46c55ae6\.antiphon\checkpoints\20260928-173950-6967\rows\CP-1\run.trx slot=granted waited=0s
+CHECKPOINT CP-2 commit=a5d6255c90470d07d0a57e17debc0554acfbee82 build=ok filter=/*/*/AgentTaskLandPublicationTests/* executed=63 passed=63 failed=0 skipped=0 trx=C:\Antiphon\worktrees\card-task-46c55ae6\.antiphon\checkpoints\20260928-170815-1960\rows\CP-2\run.trx slot=granted waited=0s
+CHECKPOINT CP-3 commit=a5d6255c90470d07d0a57e17debc0554acfbee82 build=ok filter=/*/*/AgentTaskLandSourceFreshnessTests/* executed=59 passed=59 failed=0 skipped=0 trx=C:\Antiphon\worktrees\card-task-46c55ae6\.antiphon\checkpoints\20260928-170815-1960\rows\CP-3\run.trx slot=granted waited=0s
+CHECKPOINT UNIT commit=a5d6255c90470d07d0a57e17debc0554acfbee82 build=ok filter=/*/*/*/*[Category=Unit] executed=3434 passed=3433 failed=1 skipped=2 trx=C:\Antiphon\worktrees\card-task-46c55ae6\.antiphon\checkpoints\20260928-174522-79f3\rows\UNIT\run.trx slot=granted waited=0s
+```
+
+- CP-4 took 101m26s. All 24 V-3/R-3 review cases pass: `C488_ReviewToLandReceiptMatrix` 6/6,
+  `C488_ReviewDeliveryCrashMatrix` 9/9, `C488_ReviewEvidenceCrashRecovers` 1/1 and
+  `C494_ReviewReceiptRejectsFalseEvidence` 8/8. The only red is the inherited
+  `C467_V28_LostFlushWakeupRecoversOnIdleCaller` and its alias `C488_ApprovalLostFlushRecovers`.
+  They fail on the same missing `completion-scan-*.observation.json` assertion as in round 1 and
+  at base `2f050e3d` (CARD-0782).
+- CP-1's first attempt (run `20260928-170815-1960`) failed its build on a concurrent NuGet restore
+  race: `Cannot create a file when that file already exists`. It was then rerun alone and passed.
+- The Unit lane ran from a one-row scratch manifest, because it is not in the plan table. Its only
+  red was `ResilienceOptionsAndTelemetryTests.Retry_terminal_and_circuit_signals_are_exported_once`
+  (RetryAttempts seen 2, expected 1). The test passes 3/3 when run alone from the same build, and
+  the branch has no resilience diff, so this is a load flake outside the change.
