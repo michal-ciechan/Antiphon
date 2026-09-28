@@ -206,7 +206,6 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
             });
             var task = await setup.AgentTasks.SingleAsync(t => t.Id == taskId);
             task.ProjectId = projectId;
-            task.BoardId = boardId;
             task.CardId = cardId;
             task.StandingAuthority = "May continue after an explicit reply.";
             task.AutoContinueOnWait = true;
