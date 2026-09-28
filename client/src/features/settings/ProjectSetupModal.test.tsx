@@ -80,6 +80,30 @@ async function reachReview() {
 }
 
 describe('ProjectSetupModal', () => {
+  it('C458 new project submits worker workspace', async () => {
+    let submitted: ProjectSetupRequest | null = null
+    seed((request) => {
+      submitted = request
+      return HttpResponse.json({
+        project: { id: 'project-1', name: 'starter', localRepositoryPath: directory },
+        board: { id: 'board-1', projectId: 'project-1', projectName: 'starter', name: 'starter' },
+        agent: null, readiness, notes: [],
+      })
+    })
+    renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('textbox', { name: 'Default worker workspace' }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Shared' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByLabelText('Skip — no agent yet'))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    await waitFor(() => expect(submitted).not.toBeNull())
+    expect(submitted!.defaultWorkerWorkspace).toBe('Shared')
+  })
+
   it('submits the five-step setup and shows returned readiness and notes', async () => {
     let submitted: ProjectSetupRequest | null = null
     seed((request) => {

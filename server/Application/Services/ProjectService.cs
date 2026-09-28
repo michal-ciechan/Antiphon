@@ -103,6 +103,7 @@ public class ProjectService
     {
         ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
         ValidateVisibility(request.RepositoryVisibility);
+        var defaultWorkerWorkspace = ParseWorkerWorkspace(request.DefaultWorkerWorkspace);
         _cardFiles?.ValidateProjectTarget(request.LocalRepositoryPath);
 
         var project = new Project
@@ -118,6 +119,7 @@ public class ProjectService
             ConstitutionPath = request.ConstitutionPath ?? "AGENTS.md;CLAUDE.md;README.md",
             GitHubIntegrationEnabled = request.GitHubIntegrationEnabled,
             NotificationsEnabled = request.NotificationsEnabled,
+            DefaultWorkerWorkspace = defaultWorkerWorkspace,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
             DefaultLaunchEnvJson = request.DefaultLaunchEnv is null
@@ -148,6 +150,7 @@ public class ProjectService
 
         ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
         ValidateVisibility(request.RepositoryVisibility);
+        var defaultWorkerWorkspace = ParseWorkerWorkspace(request.DefaultWorkerWorkspace);
 
         await _db.Entry(project).ReloadAsync(cancellationToken);
         _cardFiles?.ValidateProjectTarget(request.LocalRepositoryPath);
@@ -186,6 +189,8 @@ public class ProjectService
             request.CommitOnSettle, leaveUnchangedWhenNull: true, out var leaveCommitOnSettle);
         if (!leaveCommitOnSettle)
             project.CommitOnSettle = parsedProjectCommit;
+        if (request.DefaultWorkerWorkspace is not null)
+            project.DefaultWorkerWorkspace = defaultWorkerWorkspace;
 
         project.UpdatedAt = DateTime.UtcNow;
 
@@ -536,8 +541,22 @@ public class ProjectService
             RepositoryVisibility = entity.RepositoryVisibility,
             CommitOnSettle = CommitOnSettlePolicyResolver.FormatProjectValue(entity.CommitOnSettle),
             EffectiveCommitOnSettle = entity.CommitOnSettle ?? _delegation.CommitOnSettle,
+            DefaultWorkerWorkspace = entity.DefaultWorkerWorkspace?.ToString(),
+            EffectiveWorkerWorkspace = (entity.DefaultWorkerWorkspace ?? _delegation.DefaultWorkerWorkspace).ToString(),
             DefaultPipelineDefinitionId = entity.DefaultPipelineDefinitionId,
         };
+
+    private static WorkspaceMode? ParseWorkerWorkspace(string? value)
+    {
+        if (value is null || string.Equals(value, "Inherit", StringComparison.OrdinalIgnoreCase))
+            return null;
+        if (Enum.TryParse<WorkspaceMode>(value, true, out var parsed)
+            && parsed is WorkspaceMode.Shared or WorkspaceMode.Worktree
+            && !int.TryParse(value, out _))
+            return parsed;
+        throw new ValidationException("DefaultWorkerWorkspace",
+            $"'{value}' is not a project defaultWorkerWorkspace value. Use Shared, Worktree, or Inherit.");
+    }
 }
 
 public record TestGitConnectivityResult(bool Success, string Message);

@@ -12,4 +12,5 @@ public record CreateProjectRequest(
     string? LocalRepositoryPath,
     string? BaseBranch,
     IReadOnlyDictionary<string, string>? DefaultLaunchEnv = null,
-    [property: JsonConverter(typeof(RepositoryVisibilityConverter))] RepositoryVisibility? RepositoryVisibility = null);
+    [property: JsonConverter(typeof(RepositoryVisibilityConverter))] RepositoryVisibility? RepositoryVisibility = null,
+    string? DefaultWorkerWorkspace = null);

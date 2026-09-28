@@ -19,4 +19,6 @@ public record UpdateProjectRequest(
     /// CARD-0527. On / Off / Inherit. Null leaves the stored value unchanged (the DefaultLaunchEnv
     /// rule). Inherit clears the column so the global default applies.
     /// </summary>
-    string? CommitOnSettle = null);
+    string? CommitOnSettle = null,
+    /// <summary>Shared, Worktree, or Inherit. Null leaves the stored value unchanged.</summary>
+    string? DefaultWorkerWorkspace = null);

@@ -96,6 +96,7 @@ export interface ProjectSetupAgentRequest {
 }
 
 export interface ProjectSetupRequest {
+  defaultWorkerWorkspace?: 'Shared' | 'Worktree' | 'Inherit'
   repositoryVisibility?: import('./cardFiles').RepositoryVisibility
   directory: string
   createDirectory?: boolean

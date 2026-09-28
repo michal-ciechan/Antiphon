@@ -140,6 +140,9 @@ public class AgentTask
     /// </summary>
     public WorkspaceMode Workspace { get; set; } = WorkspaceMode.Shared;
 
+    /// <summary>Why the create-time workspace was chosen. Null on historical rows.</summary>
+    public WorkspaceSource? WorkspaceSource { get; set; }
+
     /// <summary>
     /// Arm the PreToolUse deny hook in this orchestrator's worktree at dispatch. Null follows
     /// <c>Delegation:OrchestratorDenyHookEnabled</c>; workers never get the hook.

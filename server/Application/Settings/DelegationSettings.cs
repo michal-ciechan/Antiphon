@@ -11,6 +11,8 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class DelegationSettings
 {
+    /// <summary>Fresh unpinned tasks inherit this mode unless their project overrides it.</summary>
+    public WorkspaceMode DefaultWorkerWorkspace { get; set; } = WorkspaceMode.Worktree;
     public bool Enabled { get; set; } = true;
 
     public int PollIntervalSeconds { get; set; } = 5;
@@ -1174,6 +1176,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
+        if (options.DefaultWorkerWorkspace is not (WorkspaceMode.Shared or WorkspaceMode.Worktree))
+            failures.Add("Delegation:DefaultWorkerWorkspace must be Shared or Worktree.");
         if (options.LandWarningSeconds <= 0 || options.LandErrorSeconds <= options.LandWarningSeconds)
             failures.Add("Delegation land thresholds must be positive and Error must exceed Warning.");
         if (options.DispatchHeldWarningSeconds <= 0
@@ -1285,5 +1289,4 @@ public enum DiagnoseLabelMode
     Apply = 0,
     Shadow = 1,
 }
-
 
