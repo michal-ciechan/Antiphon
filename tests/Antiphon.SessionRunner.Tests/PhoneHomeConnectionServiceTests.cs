@@ -19,6 +19,45 @@ namespace Antiphon.SessionRunner.Tests;
 public class PhoneHomeConnectionServiceTests
 {
     [Test]
+    public async Task Registration_sends_the_persisted_capacity_over_the_compose_default()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c654-capacity-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(path, "3");
+        try
+        {
+            var registrationRequests = new List<int>();
+            var capacities = new List<int>();
+            var settings = Options.Create(new PhoneHomeSettings
+            {
+                Enabled = true, RunnerId = "grok-linux", ServerOrigin = "http://127.0.0.1:1",
+                SecretPath = WriteTemp("secret"),
+                StoreIdPath = Path.Combine(Path.GetTempPath(), "c654-store-" + Guid.NewGuid().ToString("N")),
+                AllowedCwd = "/work", Capacity = 1, CapacityStatePath = path,
+            });
+            var runtime = new SessionRunnerRuntime(
+                Options.Create(new SessionRunnerSettings
+                {
+                    SessionLogPath = Path.Combine(Path.GetTempPath(), "c654-runtime-" + Guid.NewGuid().ToString("N")),
+                }), NullLogger<SessionRunnerRuntime>.Instance);
+            var gate = new PhoneHomeAdoptionGate();
+            var service = new PhoneHomeConnectionService(settings, gate,
+                new PhoneHomeCommandDispatcher(new RecordingRuntime(), settings.Value), runtime,
+                new SingleHandlerFactory(new RecordingHandler(registrationRequests, capacities)),
+                TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance);
+            using var cts = new CancellationTokenSource();
+            gate.SignalReady();
+            var running = service.StartAsync(cts.Token);
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (DateTime.UtcNow < deadline && capacities.Count == 0)
+                await Task.Delay(25);
+            cts.Cancel();
+            try { await running; } catch (OperationCanceledException) { }
+            capacities.ShouldContain(3);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Test]
     public async Task Adoption_precedes_registration()
     {
         var gate = new PhoneHomeAdoptionGate();
@@ -786,16 +825,23 @@ public class PhoneHomeConnectionServiceTests
         }
     }
 
-    private sealed class RecordingHandler(List<int> registrations) : HttpMessageHandler
+    private sealed class RecordingHandler(List<int> registrations, List<int>? capacities = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri?.AbsolutePath.Contains("register", StringComparison.OrdinalIgnoreCase) == true)
+            {
                 registrations.Add(1);
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError)
+                if (capacities is not null)
+                {
+                    var body = await request.Content!.ReadFromJsonAsync<PhoneHomeRegistrationRequest>(PhoneHomeFraming.Json, cancellationToken);
+                    capacities.Add(body!.Capacity);
+                }
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError)
             {
                 Content = new StringContent("fail"),
-            });
+            };
         }
     }
 

@@ -73,6 +73,9 @@ public sealed class PhoneHomeSettings
     /// </summary>
     public int Capacity { get; set; } = 1;
 
+    /// <summary>Durable runtime capacity override; wins over <see cref="Capacity"/> after restart.</summary>
+    public string CapacityStatePath { get; set; } = "/state/runner-capacity";
+
     /// <summary>
     /// Image-owned executables a projected Raw launch may name, alongside "grok". Anything else,
     /// including a host path that happens to end in the same file name, is refused.

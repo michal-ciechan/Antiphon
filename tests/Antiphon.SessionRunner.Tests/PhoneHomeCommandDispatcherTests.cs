@@ -12,6 +12,50 @@ namespace Antiphon.SessionRunner.Tests;
 public class PhoneHomeCommandDispatcherTests
 {
     [Test]
+    public async Task SetCapacity_persists_and_bounds_the_next_launch()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c654-capacity-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var runtime = new RecordingRuntime { Owned = 2 };
+            var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
+            {
+                Enabled = true, AllowedCwd = "/work", Capacity = 3, CapacityStatePath = path,
+            });
+            var changed = await dispatcher.DispatchAsync(SetCapacity(2), CancellationToken.None);
+            changed.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            changed.Payload!.Value.Deserialize<PhoneHomeSetCapacityResponse>(PhoneHomeFraming.Json)!.Persisted.ShouldBeTrue();
+            File.ReadAllText(path).Trim().ShouldBe("2");
+            var refused = await dispatcher.DispatchAsync(Launch(Request("grok", "/work")), CancellationToken.None);
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.Capacity);
+            runtime.Owned.ShouldBe(2);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Test]
+    public async Task SetCapacity_below_one_is_refused_and_keeps_the_old_value()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "c654-capacity-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var dispatcher = new PhoneHomeCommandDispatcher(new RecordingRuntime(), new PhoneHomeSettings
+            {
+                Enabled = true, AllowedCwd = "/work", Capacity = 2, CapacityStatePath = path,
+            });
+            var refused = await dispatcher.DispatchAsync(SetCapacity(0), CancellationToken.None);
+            refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+            refused.ErrorCode.ShouldBe(PhoneHomeProblemTypes.Capacity);
+            File.Exists(path).ShouldBeFalse();
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    private static PhoneHomeFrame SetCapacity(int capacity) =>
+        new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.SetCapacity,
+            JsonSerializer.SerializeToElement(new PhoneHomeSetCapacityRequest(capacity, "operator test"), PhoneHomeFraming.Json));
+
+    [Test]
     public async Task Retire_refuses_while_sessions_are_owned_unless_forced()
     {
         var runtime = new RecordingRuntime { Owned = 1 };
