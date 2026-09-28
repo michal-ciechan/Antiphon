@@ -85,11 +85,15 @@ public sealed class ChannelOutboundDeliveryTests
             firstTick = first.TickAsync(CancellationToken.None);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             producer.SentReplies.ShouldBeEmpty();
+            (await second.TickAsync(CancellationToken.None)).ShouldBe(0);
+            (await secondDb.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == deliveryId)).State.ShouldBe(ChannelOutboundDeliveryState.Publishing);
             clock.Advance(TimeSpan.FromMinutes(6));
             (await second.TickAsync(CancellationToken.None)).ShouldBe(1);
             var taken = await secondDb.ChannelOutboundDeliveries.AsNoTracking()
                 .SingleAsync(d => d.Id == deliveryId);
             taken.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
+            taken.PublicationAttempts.ShouldBe(1);
             taken.PublishedAt.ShouldBeNull();
             release.TrySetResult();
             await firstTick.WaitAsync(TimeSpan.FromSeconds(5));
