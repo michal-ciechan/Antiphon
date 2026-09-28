@@ -127,14 +127,12 @@ public class MarkdownPdfRendererTests
     [Test]
     public async Task A_real_browser_timeout_stops_its_child_process()
     {
-        if (OperatingSystem.IsWindows()) return; // The Unix script is a real process-tree fixture.
         await AssertBrowserTreeStoppedAsync(cancelCaller: false);
     }
 
     [Test]
     public async Task Caller_cancellation_stops_the_real_browser_process_tree()
     {
-        if (OperatingSystem.IsWindows()) return;
         await AssertBrowserTreeStoppedAsync(cancelCaller: true);
     }
 
@@ -201,23 +199,29 @@ public class MarkdownPdfRendererTests
 
     private static async Task AssertBrowserTreeStoppedAsync(bool cancelCaller)
     {
-        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         var root = Directory.CreateTempSubdirectory("c0418-pdf-process").FullName;
-        var browser = Path.Combine(root, "fake browser.sh");
+        var browser = OperatingSystem.IsWindows()
+            ? Path.Combine(AppContext.BaseDirectory, "fake-browser", "Antiphon.MarkdownPdf.FakeBrowser.exe")
+            : Path.Combine(root, "fake browser.sh");
+        var fakeDll = Path.Combine(AppContext.BaseDirectory, "fake-browser", "Antiphon.MarkdownPdf.FakeBrowser.dll");
         var parentFile = Path.Combine(root, "parent.pid");
         var childFile = Path.Combine(root, "child.pid");
         var pdf = Path.Combine(root, "result.pdf");
+        var previousRoot = Environment.GetEnvironmentVariable("ANTIPHON_CARD0418_BROWSER_ROOT");
         int? parentPid = null, childPid = null;
         DateTime? parentStarted = null, childStarted = null;
         try
         {
-            await File.WriteAllTextAsync(browser, "#!/bin/sh\n"
-                + "printf '%s\\n' \"$$\" > \"" + parentFile + "\"\n"
-                + "sleep 30 &\n"
-                + "printf '%s\\n' \"$!\" > \"" + childFile + "\"\n"
-                + "wait\n");
-            File.SetUnixFileMode(browser, UnixFileMode.UserRead | UnixFileMode.UserWrite
-                | UnixFileMode.UserExecute);
+            File.Exists(fakeDll).ShouldBeTrue();
+            if (!OperatingSystem.IsWindows())
+            {
+                await File.WriteAllTextAsync(browser,
+                    "#!/bin/sh\nexec dotnet '" + fakeDll.Replace("'", "'\\''", StringComparison.Ordinal) + "' \"$@\"\n");
+                File.SetUnixFileMode(browser, UnixFileMode.UserRead | UnixFileMode.UserWrite
+                    | UnixFileMode.UserExecute);
+            }
+            File.Exists(browser).ShouldBeTrue();
+            Environment.SetEnvironmentVariable("ANTIPHON_CARD0418_BROWSER_ROOT", root);
             var renderer = CreateRenderer(browser, timeoutSeconds: cancelCaller ? 20 : 1);
             using var caller = new CancellationTokenSource();
             var render = renderer.RenderToPdfAsync("<html><body>x</body></html>", pdf, caller.Token);
@@ -251,6 +255,7 @@ public class MarkdownPdfRendererTests
                 parentPid = int.Parse(await File.ReadAllTextAsync(parentFile));
             if (childPid is int child) KillFixtureProcess(child, childStarted);
             if (parentPid is int parent) KillFixtureProcess(parent, parentStarted);
+            Environment.SetEnvironmentVariable("ANTIPHON_CARD0418_BROWSER_ROOT", previousRoot);
             Directory.Delete(root, recursive: true);
         }
     }
@@ -282,10 +287,14 @@ public class MarkdownPdfRendererTests
             using var process = Process.GetProcessById(pid);
             if (process.HasExited) return false;
             // Reparented child zombies are no longer executing, but may await init's reap.
-            var stat = File.ReadAllText($"/proc/{pid}/stat");
-            return !stat.Split(' ')[2].Equals("Z", StringComparison.Ordinal);
+            if (OperatingSystem.IsLinux())
+            {
+                var stat = File.ReadAllText($"/proc/{pid}/stat");
+                return !stat.Split(' ')[2].Equals("Z", StringComparison.Ordinal);
+            }
+            return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or IOException) { return false; }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { return false; }
     }
 
     private static void KillFixtureProcess(int pid, DateTime? started)
