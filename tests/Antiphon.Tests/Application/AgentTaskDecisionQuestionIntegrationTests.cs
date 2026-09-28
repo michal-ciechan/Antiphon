@@ -352,6 +352,8 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         {
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
             await using var writer = NewDb(schema.ConnectionString);
+            // SET is session-local; keep EF's connection open across the following UPDATE.
+            await writer.Database.OpenConnectionAsync();
             await writer.Database.ExecuteSqlRawAsync("SET lock_timeout = '500ms'");
             var blocked = await Should.ThrowAsync<PostgresException>(() =>
                 writer.Database.ExecuteSqlInterpolatedAsync(
