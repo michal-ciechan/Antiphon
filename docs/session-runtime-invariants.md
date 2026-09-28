@@ -4,8 +4,9 @@
   effective limit are evaluated when claiming new work. Lowering a budget or a runner's declared
   capacity below current occupancy leaves existing Working tasks and sessions running; it never
   authorizes a stop, kill, release or rebind. A held task remains Queued until a later tick finds
-  capacity. Retained capacity-wait returns take a local slot before newly queued tasks and do
-  not count while retained.
+  capacity. Retained capacity-wait returns take a slot on their bound host before newly queued
+  tasks, even on a tick with no queued tasks. They use the local limit or that runner's effective
+  limit and do not count while retained.
 
 - **A draining runner takes no new work and still serves its sessions (CARD-0727).**
   `ResolveForNewWork` refuses a draining or retired runner (`phone_home_runner_draining`,
