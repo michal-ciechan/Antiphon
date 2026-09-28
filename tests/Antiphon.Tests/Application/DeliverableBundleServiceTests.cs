@@ -370,6 +370,62 @@ public class DeliverableBundleServiceTests
     }
 
     [Test]
+    public async Task Branch_only_git_sources_survive_zip_with_exact_bytes_and_manifest_hashes()
+    {
+        using var repo = await GitRepo.CreateAsync();
+        await repo.RunAsync("config", "core.autocrlf", "false");
+        var expected = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        for (var i = 0; i < 6; i++)
+        {
+            var relative = $"docs/features/branch/source-{i}.md";
+            var bytes = Encoding.Unicode.GetPreamble()
+                .Concat(Encoding.Unicode.GetBytes($"# branch {i}\r\nZażółć ✨  \r\n"))
+                .ToArray();
+            expected.Add(relative, bytes);
+            var path = Path.Combine(repo.Path, relative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, bytes);
+        }
+
+        await repo.RunAsync("add", "-A");
+        await repo.RunAsync("commit", "-m", "branch sources");
+        await repo.RunAsync("branch", "feat/sources");
+        foreach (var relative in expected.Keys)
+            File.Delete(Path.Combine(repo.Path, relative.Replace('/', Path.DirectorySeparatorChar)));
+
+        var task = NewTask(repo.Path, AgentTaskRole.Docs, WorkspaceMode.Worktree);
+        task.WorktreeBranch = "feat/sources";
+        await CreateService().TryBuildAsync(task,
+            string.Join(' ', expected.Keys.Select(path => $"`{path}`")),
+            db: null, CancellationToken.None);
+
+        task.DeliverableFileCount.ShouldBe(6);
+        DeliverableBundleService.FormatNoteBit(task).ShouldBe("6 md, sources zip");
+        var zip = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
+        var manifest = JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(
+            await File.ReadAllTextAsync(Path.Combine(task.DeliverableBundleDir!,
+                DeliverableBundleService.SourceManifestName)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        manifest.Complete.ShouldBeTrue();
+        manifest.Omitted.ShouldBeEmpty();
+        manifest.Sources.Count.ShouldBe(expected.Count);
+        using var archive = ZipFile.OpenRead(zip);
+        archive.Entries.Count.ShouldBe(expected.Count);
+        foreach (var member in manifest.Sources)
+        {
+            var bytes = expected[member.OriginalRelativePath];
+            member.StoredFile.ShouldBe(Path.GetFileName(zip));
+            member.ZipEntry.ShouldBe(member.OriginalRelativePath);
+            member.Length.ShouldBe(bytes.LongLength);
+            member.Sha256.ShouldBe(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
+            await using var entry = archive.GetEntry(member.ZipEntry!)!.Open();
+            using var copied = new MemoryStream();
+            await entry.CopyToAsync(copied);
+            copied.ToArray().ShouldBe(bytes);
+        }
+    }
+
+    [Test]
     public async Task Enabled_false_is_a_no_op()
     {
         using var workspace = new TempDir();

@@ -1972,6 +1972,73 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    [Arguments(4)]
+    [Arguments(6)]
+    public async Task completed_sources_reach_the_parent_as_exact_inline_or_zip_attachments(int count)
+    {
+        using var workspace = new TempWorkspace();
+        var feature = Path.Combine(workspace.Path, "docs", "features", "completion");
+        Directory.CreateDirectory(feature);
+        var names = Enumerable.Range(1, count).Select(i => $"source-{i}.md").ToArray();
+        var expected = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var name in names)
+        {
+            var bytes = System.Text.Encoding.Unicode.GetPreamble()
+                .Concat(System.Text.Encoding.Unicode.GetBytes($"# {name}\r\nZażółć ✨  \r\n"))
+                .ToArray();
+            expected.Add(name, bytes);
+            await File.WriteAllBytesAsync(Path.Combine(feature, name), bytes);
+        }
+        var report = "Wrote " + string.Join(", ", names.Select(n => $"`docs/features/completion/{n}`")) + ".";
+        var parent = await SeedSessionAsync(workspace.Path);
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t =>
+        {
+            t.Role = AgentTaskRole.Docs;
+            t.RepoPath = workspace.Path;
+        });
+        using var factory = NewDeliveryFactory();
+        var terminal = AttachTerminal(factory, parent);
+        await SeedParentHistoryAsync(parent);
+
+        await SeedTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(session, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(parent, CancellationToken.None);
+
+        var (note, prompt) = await AssertParentReceivedNoteAsync(parent, task, report);
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
+        prompt.Text.ShouldBe(note.Body);
+        note.Body.ShouldContain($"deliverable={count} md" + (count == 6 ? ", sources zip" : ""));
+        note.Body.ShouldNotContain("[antiphon-report:");
+        note.Body.ShouldNotContain("[antiphon-task:");
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        settled.DeliverableFileCount.ShouldBe(count);
+        settled.DeliverablePdfPath.ShouldBeNull();
+        settled.DeliverableRenderError.ShouldBeNull();
+        var attached = DeliverableBundleService.ListAttachableFiles(settled);
+        attached.Count.ShouldBe(count == 6 ? 1 : count);
+        foreach (var path in attached)
+            note.Body.ShouldContain($"[[attach: {path}]]");
+        if (count == 6)
+        {
+            using var archive = System.IO.Compression.ZipFile.OpenRead(attached.Single());
+            archive.Entries.Count.ShouldBe(count);
+            foreach (var entry in archive.Entries)
+            {
+                await using var stream = entry.Open();
+                using var copy = new MemoryStream();
+                await stream.CopyToAsync(copy);
+                copy.ToArray().ShouldBe(expected[Path.GetFileName(entry.FullName)]);
+            }
+        }
+        else
+        {
+            foreach (var path in attached)
+                (await File.ReadAllBytesAsync(path)).ShouldBe(expected[Path.GetFileName(path)]);
+        }
+    }
+
+    [Test]
     public async Task a_report_with_no_resolving_markdown_path_leaves_no_deliverable_pointer()
     {
         using var workspace = new TempWorkspace();
