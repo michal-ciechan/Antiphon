@@ -38,11 +38,9 @@ using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 // Startup writes PROCESS-GLOBAL state: Serilog's static Log.Logger. WebApplicationFactory runs
 // this entry point once per factory, and the test assembly holds several of them (the shared
 // AntiphonWebAppFactory, its per-suite subclasses, and SmokeTests' own bare factory), so two
-// invocations can be inside startup at the same time. The bootstrap logger is a ReloadableLogger
-// parked on Log.Logger and builder.Build() FREEZES it: interleaved, the second invocation
-// overwrites Log.Logger, the first freezes what the second parked there, and the second's Build()
-// throws "The logger is already frozen." The gate covers assignment-through-Build only - it is
-// released before app.Run() blocks - and is a no-op for the single invocation a real server makes.
+// invocations can be inside startup at the same time. Each host now has an independent configured
+// logger; the gate still protects the static bootstrap logger assignment and startup sequence.
+// It is released before app.Run() blocks and is a no-op for a single real server invocation.
 //
 // It covers the whole of startup, not just Build(), because the same overlap breaks the seeder:
 // DatabaseSeeder is check-then-insert against a database both invocations share, so a second one
@@ -62,6 +60,8 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     // Serilog — structured logging with correlation enrichment (NFR19)
+    // Each host owns its configured logger. A WebApplicationFactory host can stop while a
+    // restarted host is running in this process; closing Log.Logger must not close that host's sink.
     builder.Host.UseSerilog((ctx, lc) =>
     {
         var logPath = ctx.Configuration["Serilog:LogPath"] ?? "logs";
@@ -102,7 +102,7 @@ try
             )
             // Alert log tap (armed after build via AlertingLogSink.Attach; disabled by default).
             .WriteTo.Sink(Antiphon.Server.Infrastructure.Supervision.AlertingLogSink.Instance);
-    });
+    }, preserveStaticLogger: true);
 
     // Database
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
