@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.IO.Compression;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Services;
@@ -219,6 +220,103 @@ public sealed class ChannelOutboundStorageTests
             request.RootElement.GetProperty("sourceFiles").GetArrayLength().ShouldBe(1);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public async Task Source_zip_expansion_accepts_exact_budget_and_refuses_one_extra_byte()
+    {
+        const int budget = 64 * 1024 * 1024;
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-zip-budget-" + Guid.NewGuid().ToString("N"));
+        var store = new ChannelOutboundFileStore(root);
+
+        static async Task<(byte[] Zip, string Hash)> CreateSourceZipAsync(int length)
+        {
+            using var stream = new MemoryStream();
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+            await using (var entry = zip.CreateEntry("docs/source.md", CompressionLevel.Optimal).Open())
+            {
+                var block = new byte[64 * 1024];
+                Array.Fill(block, (byte)'A');
+                for (var remaining = length; remaining > 0;)
+                {
+                    var count = Math.Min(remaining, block.Length);
+                    await entry.WriteAsync(block.AsMemory(0, count));
+                    hash.AppendData(block.AsSpan(0, count));
+                    remaining -= count;
+                }
+            }
+            return (stream.ToArray(), Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant());
+        }
+
+        try
+        {
+            foreach (var length in new[] { budget, budget + 1 })
+            {
+                var (zip, hash) = await CreateSourceZipAsync(length);
+                zip.Length.ShouldBeLessThan(14 * 1024 * 1024);
+                var reply = new ChannelReply
+                {
+                    Channel = "slack", ConversationId = "C1",
+                    Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                        Name = "sources.zip", Mime = "application/zip", Content = zip }],
+                };
+                var manifest = JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+                    [new("docs/source.md", "sources.zip", "docs/source.md", length, hash)], []),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                var id = Guid.NewGuid();
+                if (length == budget)
+                {
+                    var snapshot = await store.StageAsync(id, reply, CancellationToken.None, manifest);
+                    var staged = Path.Combine(Path.GetDirectoryName(snapshot.RequestPath)!, "input", "source-001.md");
+                    new FileInfo(staged).Length.ShouldBe(budget);
+                    Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(staged)))
+                        .ToLowerInvariant().ShouldBe(hash);
+                }
+                else
+                {
+                    await Should.ThrowAsync<InvalidDataException>(() => store.StageAsync(id, reply,
+                        CancellationToken.None, manifest));
+                    Directory.Exists(Path.Combine(root, id.ToString("N"))).ShouldBeFalse();
+                }
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
+    public async Task Attachment_source_url_does_not_supply_worker_input()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-source-authority-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        const string sourceUrl = "https://source.invalid/unrelated-secret.md";
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "outbound"));
+        var authorized = "# Authorized\n"u8.ToArray();
+        var manifest = JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+            [new("docs/source.md", "source.md", null, authorized.Length,
+                Convert.ToHexString(SHA256.HashData(authorized)).ToLowerInvariant())], []),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        try
+        {
+            foreach (var content in new byte[]?[] { authorized, null })
+            {
+                var reply = new ChannelReply
+                {
+                    Channel = "slack", ConversationId = "C1",
+                    Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                        Name = "source.md", Mime = "text/markdown", Source = sourceUrl, Content = content }],
+                };
+                var snapshot = await store.StageAsync(Guid.NewGuid(), reply, CancellationToken.None, manifest);
+                using var request = JsonDocument.Parse(await File.ReadAllTextAsync(snapshot.RequestPath));
+                request.RootElement.GetProperty("sourceFiles").GetArrayLength()
+                    .ShouldBe(content is null ? 0 : 1);
+                var input = Path.Combine(Path.GetDirectoryName(snapshot.RequestPath)!, "input");
+                Directory.GetFiles(input, "attachment-*").Length.ShouldBe(content is null ? 0 : 1);
+                if (content is not null)
+                    (await File.ReadAllBytesAsync(Path.Combine(input, "attachment-001.md"))).ShouldBe(authorized);
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }
 
     [Test]
