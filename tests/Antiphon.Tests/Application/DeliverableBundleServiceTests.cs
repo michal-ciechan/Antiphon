@@ -7,6 +7,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -62,6 +63,43 @@ public class DeliverableBundleServiceTests
             var bundled = Path.Combine(task.DeliverableBundleDir, name);
             (await File.ReadAllBytesAsync(bundled)).ShouldBe(await File.ReadAllBytesAsync(original));
         }
+    }
+
+    [Test]
+    public async Task Legacy_browser_configuration_does_not_launch_a_renderer()
+    {
+        using var workspace = new TempDir();
+        WriteDocs(workspace.Path, "01-requirements.md", "02-design.md", "03-api.md", "04-test.md");
+        var browserLog = Path.Combine(workspace.Path, "browser-called.txt");
+        var browser = Path.Combine(workspace.Path, OperatingSystem.IsWindows() ? "fake-browser.cmd" : "fake-browser.sh");
+        await File.WriteAllTextAsync(browser, OperatingSystem.IsWindows()
+            ? $"@echo off\r\necho invoked > \"{browserLog}\"\r\nexit /b 1\r\n"
+            : $"#!/bin/sh\nprintf invoked > '{browserLog}'\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(browser, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Deliverables:Enabled"] = "true",
+            ["Deliverables:BrowserPath"] = browser,
+            ["Deliverables:RenderTimeoutSeconds"] = "1",
+        }).Build();
+        var settings = new DeliverablesSettings();
+        config.GetSection(DeliverablesSettings.SectionName).Bind(settings);
+        var task = NewTask(workspace.Path, AgentTaskRole.Docs, WorkspaceMode.Worktree);
+
+        await CreateService(settings).TryBuildAsync(task, """
+            Wrote `docs/features/001-kalshi-ref-data-downloader/01-requirements.md`,
+            `docs/features/001-kalshi-ref-data-downloader/02-design.md`,
+            `docs/features/001-kalshi-ref-data-downloader/03-api.md`,
+            `docs/features/001-kalshi-ref-data-downloader/04-test.md`.
+            """, db: null, CancellationToken.None);
+
+        task.DeliverableFileCount.ShouldBe(4);
+        task.DeliverablePdfPath.ShouldBeNull();
+        task.DeliverableRenderError.ShouldBeNull();
+        File.Exists(browserLog).ShouldBeFalse();
+        File.Exists(Path.Combine(task.DeliverableBundleDir!, "render.log")).ShouldBeFalse();
+        DeliverableBundleService.FormatNoteBit(task).ShouldBe("4 md");
     }
 
     [Test]
