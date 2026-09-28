@@ -23,6 +23,114 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundDeliveryTests
 {
     [Test]
+    public async Task Deferred_is_returned_only_after_intent_and_correlation_commit()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-admission-boundary-").FullName;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var entered = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sendCancellation = new CancellationTokenSource();
+        var producer = new FakeAntiphonMessagingClient();
+        await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert sources.");
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["convert"] = new() { ProjectId = projectId, AgentId = converterId,
+                    PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.EveryAgentReply },
+            },
+        });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        db.Projects.Add(new Project { Id = projectId, Name = "admission-" + projectId.ToString("N"),
+            CreatedAt = now, UpdatedAt = now });
+        db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "admission",
+            CreatedAt = now, UpdatedAt = now });
+        db.Agents.AddRange(
+            new Agent { Id = inboundId, Name = "inbound", Slug = "inbound-" + inboundId.ToString("N"),
+                BoardId = boardId, WorkingDirectory = root },
+            new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
+                BoardId = boardId, WorkingDirectory = root });
+        db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "slack",
+            ExternalId = channelId.ToString("N"), AgentId = inboundId,
+            OutboundAgentProfile = "convert", CreatedAt = now, UpdatedAt = now });
+        db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "inbound", Cwd = root,
+            CreatedAt = now, StartedAt = now, LastSeenAt = now });
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = correlationId, AgentSessionId = sessionId, Body = "asked", Sequence = 1,
+            Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+            ConversationKey = "slack:" + channelId.ToString("N"), CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        Task<ChannelOutboundSendOutcome>? pendingSend = null;
+        try
+        {
+            var service = new ChannelOutboundService(db,
+                new ChannelOutboundFileStore(Path.Combine(root, "outbound")), producer,
+                settings, TimeProvider.System);
+            service.ProbeBarrierAsync = async (boundary, id, ct) =>
+            {
+                if (boundary != "admission-before-commit") return;
+                entered.TrySetResult(id);
+                await release.Task.WaitAsync(ct);
+            };
+            pendingSend = service.SendAsync(new ChannelReply
+            {
+                Channel = "slack", ConversationId = channelId.ToString("N"), Text = "source answer",
+            }, ChannelOutboundOrigin.AgentReply,
+                new ChannelOutboundSource(sessionId, 1, 2, 3, "main", [correlationId]),
+                sendCancellation.Token);
+            var deliveryId = await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            pendingSend.IsCompleted.ShouldBeFalse();
+            await using (var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                (await observer.ChannelOutboundDeliveries.AsNoTracking()
+                    .CountAsync(d => d.Id == deliveryId)).ShouldBe(0);
+                (await observer.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId)).ChannelOutboundDeliveryId.ShouldBeNull();
+            }
+            producer.SentReplies.ShouldBeEmpty();
+            release.TrySetResult();
+            (await pendingSend.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            await using (var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var intent = await observer.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == deliveryId);
+                intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+                intent.InputSha256.Length.ShouldBe(64);
+                (await observer.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId)).ChannelOutboundDeliveryId.ShouldBe(deliveryId);
+            }
+            producer.SentReplies.ShouldBeEmpty();
+        }
+        finally
+        {
+            release.TrySetResult();
+            sendCancellation.Cancel();
+            if (pendingSend is not null)
+            {
+                try { await pendingSend.WaitAsync(TimeSpan.FromSeconds(15)); }
+                catch (Exception) { /* Preserve the original test failure and release fixture ownership. */ }
+            }
+            await db.SessionQueuedMessages.Where(m => m.Id == correlationId).ExecuteDeleteAsync();
+            await db.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId).ExecuteDeleteAsync();
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            await db.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
+            await db.Agents.Where(a => a.Id == inboundId || a.Id == converterId).ExecuteDeleteAsync();
+            await db.Boards.Where(b => b.Id == boardId).ExecuteDeleteAsync();
+            await db.Projects.Where(p => p.Id == projectId).ExecuteDeleteAsync();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Concurrent_admission_respects_max_pending_per_channel()
     {
         var projectId = Guid.NewGuid();
