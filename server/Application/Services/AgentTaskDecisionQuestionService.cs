@@ -33,8 +33,16 @@ public sealed class AgentTaskDecisionQuestionService(
             ?? throw new ConflictException("The task no longer exists.", "decision_question_stale");
 
         if (caller.Task is null && caller.SessionId != task.AgentSessionId)
+        {
+            // A session credential from another task is an identity failure. A previously
+            // recorded binding of this session to this task is a stale attempt instead.
+            var previouslyBound = await db.AgentTaskDecisionQuestions.AsNoTracking().AnyAsync(q =>
+                q.AgentTaskId == taskId && q.AgentSessionId == caller.SessionId, ct);
+            if (previouslyBound)
+                throw new ConflictException("The worker session changed.", "decision_question_stale");
             throw new ForbiddenException("This session is not this task's worker.",
                 "decision_question_self_only");
+        }
         if (caller.Task is not null && caller.SessionId != task.AgentSessionId)
             throw new ConflictException("The worker session changed.", "decision_question_stale");
 

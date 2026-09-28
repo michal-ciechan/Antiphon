@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -60,6 +61,93 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         await Should.ThrowAsync<ConflictException>(() => service.CheckAsync(taskId,
             request with { ProposedAction = "Change the backup target." }, caller, CancellationToken.None));
         (await db.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Idempotency_survives_independent_scopes_and_restart()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        var request = Sample();
+        async Task<InternalDecisionQuestionResponse> CheckAsync(InternalDecisionQuestionRequest input)
+        {
+            await using var db = NewDb();
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                sessionId, workspace.Path);
+            return await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, input, caller, CancellationToken.None);
+        }
+
+        var parallel = await Task.WhenAll(CheckAsync(request), CheckAsync(request));
+        parallel[0].ShouldBe(parallel[1]);
+        var afterRestart = await CheckAsync(request with { Paths = [@"scripts\deploy-gym-stat.ps1"] });
+        afterRestart.ShouldBe(parallel[0]);
+        var changed = await Should.ThrowAsync<ConflictException>(() => CheckAsync(request with
+        {
+            ProposedAction = "Change the backup target.",
+        }));
+        changed.Code.ShouldBe("decision_question_changed");
+
+        await using var verify = NewDb();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(1);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId
+            && e.Type == AgentTaskEventType.DecisionQuestion)).ShouldBe(1);
+
+        var original = await verify.AgentTaskDecisionQuestions.SingleAsync(q => q.AgentTaskId == taskId);
+        verify.AgentTaskDecisionQuestions.Add(new AgentTaskDecisionQuestion
+        {
+            Id = Guid.NewGuid(), AgentTaskId = taskId, Attempt = original.Attempt,
+            AgentSessionId = sessionId, RequestId = original.RequestId,
+            CanonicalPayloadJson = original.CanonicalPayloadJson, PayloadHash = original.PayloadHash,
+            GrantId = original.GrantId, Disposition = original.Disposition,
+            Reason = original.Reason, CreatedAt = DateTime.UtcNow,
+        });
+        var duplicate = await Should.ThrowAsync<DbUpdateException>(() => verify.SaveChangesAsync());
+        (duplicate.InnerException as PostgresException)?.SqlState.ShouldBe(PostgresErrorCodes.UniqueViolation);
+    }
+
+    [Test]
+    public async Task Later_attempt_rechecks_grants_and_never_replays_an_old_answer()
+    {
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, sessionId) = await SeedAsync(workspace.Path);
+        var request = Sample();
+        await using (var db = NewDb())
+        {
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                sessionId, workspace.Path);
+            (await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, request, caller,
+                CancellationToken.None)).Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        }
+        var newSession = Guid.NewGuid();
+        await using (var db = NewDb())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            task.Attempt = 2;
+            task.AgentSessionId = newSession;
+            task.InternalDecisionPolicyJson = null;
+            task.InternalDecisionPolicyHash = null;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = newSession, DefinitionName = "retry", AgentKind = AgentKind.Grok,
+                Status = SessionStatus.Running, Cwd = workspace.Path,
+                CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        await using (var db = NewDb())
+        {
+            var caller = new AgentTaskService.Caller(await db.AgentTasks.SingleAsync(t => t.Id == taskId),
+                newSession, workspace.Path);
+            await Should.ThrowAsync<ConflictException>(() => new AgentTaskDecisionQuestionService(db)
+                .CheckAsync(taskId, request, caller, CancellationToken.None));
+            var later = await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId,
+                request with { Attempt = 2 }, caller, CancellationToken.None);
+            later.Disposition.ShouldBe(InternalDecisionDisposition.NeedsHuman);
+            later.Reason.ShouldBe("no_grant");
+            later.QuestionId.ShouldNotBe(Guid.Empty);
+        }
+        await using var verify = NewDb();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(2);
     }
 
     private static InternalDecisionQuestionRequest Sample() => new(
