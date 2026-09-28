@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.E2E.Fixtures;
+using Serilog;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -14,6 +15,42 @@ namespace Antiphon.E2E;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class ChannelOutboundIsolatedTests
 {
+    [Test]
+    public async Task Static_logger_reaches_owned_host_file_after_restart()
+    {
+        RequireOptIn();
+        var root = Path.Combine(Path.GetTempPath(), "c0784-static-log-" + Guid.NewGuid().ToString("N"));
+        var logPath = Path.Combine(root, "logs");
+        var app = new AntiphonAppFixture
+        {
+            DiagnosticsDirectory = logPath,
+            ConfigureOwnedHost = settings =>
+            {
+                settings["Delegation:CheckInterpreterEnabled"] = "false";
+                settings["Delegation:DiagnoseEnabled"] = "false";
+                settings["Delegation:OutputDistillerEnabled"] = "false";
+                settings["Hangfire:ServerEnabled"] = "false";
+            },
+        };
+        try
+        {
+            await app.InitializeAsync();
+            await app.RestartOwnedHostAsync();
+
+            var marker = "CARD-0784 static logger after restart " + Guid.NewGuid().ToString("N");
+            Log.Information("{Marker}", marker);
+
+            Directory.GetFiles(logPath, "antiphon-*.log")
+                .Select(File.ReadAllText)
+                .Any(contents => contents.Contains(marker, StringComparison.Ordinal))
+                .ShouldBeTrue("the static logger must use the restarted host's file sink");
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
     [Test]
     public async Task FakeGrok_outbound_mode_reads_frozen_request_and_invokes_a_tool()
     {
