@@ -329,7 +329,7 @@ public sealed class ChannelReplyDispatcher
                         || (t.Kind == TranscriptKinds.QueuedUserPrompt
                             && db.TranscriptEntries.Any(end => end.AgentSessionId == p.SessionId
                                 && end.Kind == TranscriptKinds.TurnEnd
-                                && end.Sequence > p.PromptSequence && end.Sequence < t.Sequence)))
+                                && end.Sequence > p.PromptSequence && end.Sequence < t.Sequence))))
                 || db.TranscriptEntries.Any(text =>
                     text.AgentSessionId == p.SessionId && text.Kind == TranscriptKinds.AssistantText
                     && text.Sequence > p.LastTextSequence
@@ -340,7 +340,7 @@ public sealed class ChannelReplyDispatcher
                                 && db.TranscriptEntries.Any(end => end.AgentSessionId == p.SessionId
                                     && end.Kind == TranscriptKinds.TurnEnd
                                     && end.Sequence > p.PromptSequence
-                                    && end.Sequence < opening.Sequence))))));
+                                    && end.Sequence < opening.Sequence)))))));
 
     /// <summary>
     /// The global abandon sweep, for the periodic supervision tick. The per-session sweep inside
