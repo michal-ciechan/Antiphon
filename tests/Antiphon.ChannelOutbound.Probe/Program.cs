@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
@@ -8,6 +9,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -18,8 +20,11 @@ var config = JsonSerializer.Deserialize<ProbeConfig>(await File.ReadAllTextAsync
 if (config is null || config.DeliveryId == Guid.Empty && config.Mode != "admit") return 2;
 try
 {
-    await using var db = new AppDbContext(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<AppDbContext>()
-        .UseNpgsql(config.ConnectionString).Options);
+    var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(config.ConnectionString);
+    if (config.FailPublishCommit)
+        options.AddInterceptors(new RefusingCommitInterceptor(
+            Path.Combine(Path.GetDirectoryName(config.MarkerPath)!, "commit-injected")));
+    await using var db = new AppDbContext(options.Options);
     Func<string, Guid, CancellationToken, Task> barrier = async (point, id, ct) =>
     {
         if (point != config.Barrier || (config.DeliveryId != Guid.Empty && id != config.DeliveryId)) return;
@@ -75,13 +80,21 @@ try
             runner = new OutboundConversionTaskRunner(db, tasks);
             if (config.Barrier is not null) runner.ProbeBarrierAsync = barrier;
         }
+        using var kafka = config.Mode == "broker"
+            ? new KafkaAntiphonMessagingProducer(Options.Create(new AntiphonMessagingOptions
+            {
+                BootstrapServers = config.BootstrapServers!, OutboundTopic = config.Topic!,
+            })) : null;
         var pump = new ChannelOutboundDeliveryPump(db, runner!, files,
             config.Mode == "prepare" && !config.AllowPublication
-                ? new RefusingProducer() : new EvidenceProducer(config.EvidencePath),
+                ? new RefusingProducer() : (IAntiphonMessagingProducer?)kafka
+                    ?? new EvidenceProducer(config.EvidencePath),
             Options.Create(new AntiphonMessagingOptions()), clock,
             NullLogger<ChannelOutboundDeliveryPump>.Instance, profiles);
         if (config.Barrier is not null) pump.ProbeBarrierAsync = barrier;
         await pump.TickAsync(CancellationToken.None);
+        if (config.FailPublishCommit)
+            await barrier("commit-failed", config.DeliveryId, CancellationToken.None);
     }
     return 0;
 }
@@ -99,7 +112,8 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     string EvidencePath, string MarkerPath, string? Barrier, int ClockOffsetSeconds,
     string? Mode = null, string WorkspaceRoot = "", Guid ProjectId = default,
     Guid ConverterAgentId = default, Guid ChannelId = default, Guid SessionId = default,
-    Guid CorrelationId = default, bool AllowPublication = false);
+    Guid CorrelationId = default, bool AllowPublication = false,
+    bool FailPublishCommit = false, string? BootstrapServers = null, string? Topic = null);
 
 internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
 {
@@ -123,6 +137,25 @@ internal sealed class RefusingProducer : IAntiphonMessagingProducer
 {
     public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("Unexpected external publication from an admission/worker probe.");
+}
+
+internal sealed class RefusingCommitInterceptor(string markerPath) : DbTransactionInterceptor
+{
+    public override InterceptionResult TransactionCommitting(
+        DbTransaction transaction, TransactionEventData eventData, InterceptionResult result)
+    {
+        File.WriteAllText(markerPath, "before-commit");
+        throw new IOException("Injected database commit refusal after broker acceptance.");
+    }
+
+    public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+        DbTransaction transaction, TransactionEventData eventData,
+        InterceptionResult result, CancellationToken cancellationToken = default)
+    {
+        File.WriteAllText(markerPath, "before-commit");
+        return ValueTask.FromException<InterceptionResult>(
+            new IOException("Injected database commit refusal after broker acceptance."));
+    }
 }
 
 internal sealed class ProbeEventBus : IEventBus
