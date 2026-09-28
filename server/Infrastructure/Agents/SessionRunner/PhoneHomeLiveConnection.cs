@@ -302,7 +302,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     {
         PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceRemove => TimeSpan.FromMinutes(5),
         PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained => TimeSpan.FromMinutes(2),
-        PhoneHomeOperation.SetCapacity => TimeSpan.FromSeconds(3),
+        // Workspace mutation can occupy the runner's command lock for five minutes.
+        // Keep the waiter until that lock can release and the persisted value is confirmed.
+        PhoneHomeOperation.SetCapacity => TimeSpan.FromMinutes(6),
         _ => TimeSpan.FromSeconds(60),
     };
 

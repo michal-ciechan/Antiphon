@@ -92,6 +92,87 @@ public sealed partial class DispatchHoldVisibilityTests
     }
 
     [Test]
+    public async Task C654_Runner_budget_holds_a_queued_task_until_a_seat_opens()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var at = UtcMs();
+        await using var world = CreateWorld(schema.ConnectionString,
+            new FakeTimeProvider(new DateTimeOffset(at, TimeSpan.Zero)), new FakeLease());
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        var active = await SeedDispatchedAsync(schema, workspace.Path, at, runnerId: "server2");
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, at, runnerId: "server2");
+        await world.Budgets.UpsertAsync("server2", 1, "reserve", CancellationToken.None);
+
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).Dispatched.ShouldBe(0);
+        await using (var db = CreateContext(schema))
+        {
+            (await HeldAsync(db, queued.Id)).Single().Detail
+                .ShouldContain("server2 1/1 (configured 1, runner declares 10)");
+            (await db.AgentTasks.SingleAsync(t => t.Id == queued.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
+        }
+
+        await SettleAsync(schema, active.Id, at);
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).Dispatched.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C654_Local_budget_gates_resuming_a_retained_capacity_wait()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var at = UtcMs();
+        await using var world = CreateWorld(schema.ConnectionString,
+            new FakeTimeProvider(new DateTimeOffset(at, TimeSpan.Zero)), new FakeLease());
+        var retained = await SeedDispatchedAsync(schema, workspace.Path, at);
+        await MarkRetainedAsync(schema, retained.Id);
+        await world.Budgets.UpsertAsync("local", 0, "drain", CancellationToken.None);
+
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        await using (var db = CreateContext(schema))
+            (await db.AgentTasks.SingleAsync(t => t.Id == retained.Id)).CapacityWaitRetained.ShouldBeTrue();
+
+        await world.Budgets.UpsertAsync("local", 1, "resume", CancellationToken.None);
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        await using (var db = CreateContext(schema))
+            (await db.AgentTasks.SingleAsync(t => t.Id == retained.Id)).CapacityWaitRetained.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C654_Runner_budget_gates_resuming_a_retained_capacity_wait()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var at = UtcMs();
+        await using var world = CreateWorld(schema.ConnectionString,
+            new FakeTimeProvider(new DateTimeOffset(at, TimeSpan.Zero)), new FakeLease());
+        var retained = await SeedDispatchedAsync(schema, workspace.Path, at, runnerId: "server2");
+        await MarkRetainedAsync(schema, retained.Id);
+        var active = await SeedDispatchedAsync(schema, workspace.Path, at, runnerId: "server2");
+        await world.Budgets.UpsertAsync("server2", 1, "reserve", CancellationToken.None);
+
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        await using (var db = CreateContext(schema))
+            (await db.AgentTasks.SingleAsync(t => t.Id == retained.Id)).CapacityWaitRetained.ShouldBeTrue();
+
+        await SettleAsync(schema, active.Id, at);
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        await using (var db = CreateContext(schema))
+            (await db.AgentTasks.SingleAsync(t => t.Id == retained.Id)).CapacityWaitRetained.ShouldBeFalse();
+    }
+
+    private static async Task MarkRetainedAsync(IsolatedTestSchema schema, Guid taskId)
+    {
+        await using var db = CreateContext(schema);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Status = AgentTaskStatus.Working;
+        task.CapacityWaitRetained = true;
+        task.CapacityWaitId = Guid.NewGuid();
+        await db.SaveChangesAsync();
+    }
+
+    [Test]
     public void C654_Host_budget_detail_names_configured_and_declared_limits()
     {
         DispatchHoldDetails.HostBudget("server2", 3, 3, 3, 10)

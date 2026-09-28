@@ -33,6 +33,7 @@ public class RunnerMultilinePromptDeliveryTests
             Enabled = true,
             AllowedCwd = "/work",
             Capacity = 2,
+            CapacityStatePath = Path.Combine(Path.GetTempPath(), "antiphon-runner-tests", Guid.NewGuid().ToString("N"), "capacity"),
         });
         var sessionId = Guid.NewGuid();
         var generation = SessionGeneration.Normalize(DateTime.UtcNow);

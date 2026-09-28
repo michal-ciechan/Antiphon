@@ -77,7 +77,7 @@ public class PhoneHomeCommandDispatcherTests
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 0, 0, 0, TimeSpan.Zero));
         var lifetime = new RecordingLifetime(clock);
-        var dispatcher = new PhoneHomeCommandDispatcher(new RecordingRuntime(), new PhoneHomeSettings(),
+        var dispatcher = new PhoneHomeCommandDispatcher(new RecordingRuntime(), new PhoneHomeSettings { CapacityStatePath = TestCapacityPath() },
             lifetime: lifetime, time: clock);
         var reply = await dispatcher.DispatchAsync(Retire(false), CancellationToken.None);
         reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
@@ -113,6 +113,7 @@ public class PhoneHomeCommandDispatcherTests
             Enabled = true,
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
         });
 
         var herdr = await dispatcher.DispatchAsync(Launch(new RunnerLaunchRequest(
@@ -156,6 +157,7 @@ public class PhoneHomeCommandDispatcherTests
             Enabled = true,
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
         });
         var result = await dispatcher.DispatchAsync(Launch(new RunnerLaunchRequest(
             Guid.NewGuid(), "grok", [], new Dictionary<string, string>(), "/work", 80, 24)), CancellationToken.None);
@@ -1170,6 +1172,7 @@ public class PhoneHomeCommandDispatcherTests
             Enabled = true,
             AllowedCwd = "/work",
             Capacity = 1,
+            CapacityStatePath = TestCapacityPath(),
         });
         foreach (var operation in new[] { PhoneHomeOperation.HostStats, PhoneHomeOperation.HostStatsSeries })
         {
@@ -1189,7 +1192,7 @@ public class PhoneHomeCommandDispatcherTests
         store.Add(HostStatsStoreTests.Sample(1, cpu: 30) with { At = time.GetUtcNow() });
         var dispatcher = new PhoneHomeCommandDispatcher(
             new RecordingRuntime(),
-            new PhoneHomeSettings { Enabled = true, AllowedCwd = "/work", Capacity = 1 },
+            new PhoneHomeSettings { Enabled = true, AllowedCwd = "/work", Capacity = 1, CapacityStatePath = TestCapacityPath() },
             hostStats: store);
         return (dispatcher, store);
     }
@@ -1241,6 +1244,7 @@ public class PhoneHomeCommandDispatcherTests
             AllowedCwd = "/work",
             RunnerRepository = "/work/repos/antiphon",
             Capacity = capacity,
+            CapacityStatePath = TestCapacityPath(),
             ClaudeAuthProbeEnabled = claudeAuthProbeEnabled,
             GrokAuthProbeEnabled = grokAuthProbeEnabled,
             CodexAuthProbeEnabled = codexAuthProbeEnabled,
@@ -1253,6 +1257,9 @@ public class PhoneHomeCommandDispatcherTests
                 .Build().Bind(settings);
         return new(runtime, settings, probe, logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
     }
+
+    private static string TestCapacityPath() =>
+        Path.Combine(Path.GetTempPath(), "antiphon-runner-tests", Guid.NewGuid().ToString("N"), "capacity");
 
     private static PhoneHomeFrame ReleaseSlot(Guid sessionId) =>
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ReleaseSlot,

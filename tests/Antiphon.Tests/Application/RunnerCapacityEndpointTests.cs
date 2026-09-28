@@ -11,6 +11,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -61,6 +62,33 @@ public sealed class RunnerCapacityEndpointTests
     }
 
     [Test]
+    public async Task C654_PUT_uses_runner_entry_bound_when_top_level_is_higher()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(
+            connectionString: schema.ConnectionString,
+            configureServices: services =>
+            {
+                services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<Antiphon.Server.Infrastructure.Agents.SessionRunner.PhoneHomeRunnerDirectory>());
+                services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 }));
+                services.AddScoped<HostBudgetService>();
+            },
+            configureRunnerSettings: settings =>
+            {
+                settings.MaxCapacity = 10;
+                settings.Runners["grok-linux"] = PhoneHomeRunnerCatalog.FromLegacy(settings);
+                settings.Runners["grok-linux"].MaxCapacity = 2;
+            });
+        host.Capacity = 2;
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        using var response = await host.Http.PutAsJsonAsync(Path(host), new { capacity = 3, reason = "above entry" });
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        peer.RequestCount(PhoneHomeOperation.SetCapacity).ShouldBe(0);
+        host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(2);
+    }
+
+    [Test]
     public async Task C654_PUT_offline_is_a_409_and_does_not_change_capacity()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -94,19 +122,41 @@ public sealed class RunnerCapacityEndpointTests
     public async Task C654_PUT_silent_peer_times_out_without_changing_capacity()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var host = await Host(schema);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var host = await Host(schema, clock);
         host.Capacity = 10;
         await using var peer = await host.ConnectPeerAsync();
         host.Directory.MarkRecovered(await host.WaitLiveAsync());
         peer.SilentFor(PhoneHomeOperation.SetCapacity);
-        using var response = await host.Http.PutAsJsonAsync(Path(host), new { capacity = 6, reason = "scale" });
+        var pending = host.Http.PutAsJsonAsync(Path(host), new { capacity = 6, reason = "scale" });
+        await peer.WaitForAsync(PhoneHomeOperation.SetCapacity);
+        clock.Advance(TimeSpan.FromMinutes(7));
+        using var response = await pending;
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await response.Content.ReadAsStringAsync()).ShouldContain(PhoneHomeProblemTypes.RequestTimeout);
         host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(10);
     }
 
-    private static async Task<PhoneHomeTestHost> Host(IsolatedTestSchema schema) =>
-        await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString,
+    [Test]
+    public async Task C654_PUT_waits_for_a_late_persisted_confirmation()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await Host(schema);
+        host.Capacity = 10;
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        peer.SilentFor(PhoneHomeOperation.SetCapacity);
+        var pushing = host.Http.PutAsJsonAsync(Path(host), new { capacity = 6, reason = "busy runner" });
+        var request = await peer.WaitForAsync(PhoneHomeOperation.SetCapacity);
+        await Task.Delay(TimeSpan.FromSeconds(3.2));
+        await peer.EmitAsync(Success(request));
+        using var response = await pushing;
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        host.Directory.DeclaredCapacity(host.AllowedRunnerId).ShouldBe(6);
+    }
+
+    private static async Task<PhoneHomeTestHost> Host(IsolatedTestSchema schema, TimeProvider? clock = null) =>
+        await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString, clock: clock,
             configureServices: services =>
             {
                 services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<Antiphon.Server.Infrastructure.Agents.SessionRunner.PhoneHomeRunnerDirectory>());
