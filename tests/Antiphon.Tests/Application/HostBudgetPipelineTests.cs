@@ -37,7 +37,9 @@ public partial class AgentTaskPipelineStatusTests
         retained.CapacityWaitRetained = true;
         await db.SaveChangesAsync();
 
-        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        var options = Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 });
+        var budgets = new HostBudgetService(db, new PipelineDirectory(), options, TimeProvider.System);
+        var dto = await CreateService(db, options.Value, budgets: budgets).GetAsync(CancellationToken.None);
         dto.InFlightAgainstCap.ShouldBe(0);
         dto.Hosts.Single(h => h.HostId == "local").InFlight.ShouldBe(0);
     }
