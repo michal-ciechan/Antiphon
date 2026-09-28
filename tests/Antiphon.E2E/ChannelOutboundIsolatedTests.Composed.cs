@@ -33,10 +33,7 @@ namespace Antiphon.E2E;
 public sealed partial class ChannelOutboundIsolatedTests
 {
     [Test]
-    // F-5 covers outbound admission after a source task settles. It does not exercise
-    // ChannelReplyDispatcher automatic routing, a second conversation, or tool failure;
-    // the full V-24 case remains pending.
-    public async Task Admitted_four_sources_convert_and_publish_after_host_restart()
+    public async Task Four_sources_convert_only_for_the_selected_conversation()
     {
         RequireOptIn();
         if (!OperatingSystem.IsLinux())
@@ -184,6 +181,9 @@ public sealed partial class ChannelOutboundIsolatedTests
                 db.ChatChannels.Add(new ChatChannel { Id = Guid.NewGuid(), Provider = "slack", ExternalId = "C0418F5",
                     ReplyHandle = "C0418F5|1700000000.000100", AgentId = sourceAgentId,
                     OutboundAgentProfile = "pdf", Enabled = true, CreatedAt = now, UpdatedAt = now });
+                db.ChatChannels.Add(new ChatChannel { Id = Guid.NewGuid(), Provider = "slack", ExternalId = "C0418Y",
+                    ReplyHandle = "C0418Y|1700000000.000300", AgentId = sourceAgentId,
+                    Enabled = true, CreatedAt = now, UpdatedAt = now });
                 await db.SaveChangesAsync(ct);
             }
             Guid sourceTaskId;
@@ -220,23 +220,13 @@ public sealed partial class ChannelOutboundIsolatedTests
             sentSources.Select(Hash).Order(StringComparer.Ordinal).ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
             if (sourceTask.WorktreePath is { } tree && Directory.Exists(tree))
                 await GitAsync(repo, ct, "worktree", "remove", "--force", tree);
-            var reply = new ChannelReply
-            {
-                Channel = "slack", ConversationId = "C0418F5", ReplyHandle = "C0418F5|1700000000.000100",
-                Text = "Four synthetic sources complete.",
-                Attachments = sourcePaths.Select(path => new OutboundAttachment
-                {
-                    Kind = AttachmentKind.File, Name = Path.GetFileName(path), Mime = "text/markdown",
-                    Content = File.ReadAllBytes(path),
-                }).ToArray(),
-            };
-            await using (var scope = app.Services.CreateAsyncScope())
-            {
-                var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
-                (await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
-                    new ChannelOutboundSource(Guid.NewGuid(), 1, 2, 3, "main", [], sourceTaskId), ct))
-                    .ShouldBe(ChannelOutboundSendOutcome.Deferred);
-            }
+            sourceTask.AgentSessionId.ShouldNotBeNull();
+            var sourceSessionId = sourceTask.AgentSessionId!.Value;
+            var attachmentAnswer = "Four synthetic sources complete.\n" + string.Join('\n',
+                sourcePaths.Select(path => "[[attach: " + path + "]]") );
+            var xCorrelationId = await DispatchChannelTurnAsync(app, sourceSessionId, sourceTaskId,
+                "C0418F5", "C0418F5|1700000000.000100", attachmentAnswer,
+                ChannelReplyDispatchOutcome.Deferred, ct);
             Guid deliveryId;
             await using (var scope = app.Services.CreateAsyncScope())
             {
@@ -245,6 +235,11 @@ public sealed partial class ChannelOutboundIsolatedTests
                 deliveryId = delivery.Id;
                 delivery.State.ShouldNotBe(ChannelOutboundDeliveryState.Published);
                 delivery.SourceTaskId.ShouldBe(sourceTaskId);
+                (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == xCorrelationId, ct))
+                    .ChannelReplySettledAt.ShouldBeNull();
+                (await db.ChatChannels.SingleAsync(c => c.ExternalId == "C0418F5", ct)).ReplyHandle =
+                    "C0418F5|1700000000.000200";
+                await db.SaveChangesAsync(ct);
             }
             await UntilAsync(async () =>
             {
@@ -312,7 +307,7 @@ public sealed partial class ChannelOutboundIsolatedTests
                 .ShouldBe(uploads.Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal));
             observedBroker.Consume(TimeSpan.FromMilliseconds(750)).ShouldBeNull("one frozen reply must publish once");
             uploads.All(u => u.ThreadTs == "1700000000.000100" && u.ChannelId == "C0418F5").ShouldBeTrue();
-            uploads.Where(u => u.Title.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            uploads.Where(u => u.Title?.EndsWith(".md", StringComparison.OrdinalIgnoreCase) == true)
                 .Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
                 .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
             var pdf = uploads.Single(u => u.Title == "combined.pdf").Bytes;
@@ -337,12 +332,112 @@ public sealed partial class ChannelOutboundIsolatedTests
             (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == final.ConversionTaskId, ct))
                 .Status.ShouldBe(AgentTaskStatus.Succeeded);
             (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId, ct)).ShouldBe(1);
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == xCorrelationId, ct))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+
+            // The same source answer for an unbound conversation takes the direct path.
+            var yCorrelationId = await DispatchChannelTurnAsync(app, sourceSessionId, sourceTaskId,
+                "C0418Y", "C0418Y|1700000000.000300", attachmentAnswer,
+                ChannelReplyDispatchOutcome.Published, ct);
+            await UntilAsync(() => Task.FromResult(fakeSlack.UploadedFiles.Count == 9), ct);
+            (await verify.ChannelOutboundDeliveries.AsNoTracking().CountAsync(ct)).ShouldBe(1);
+            fakeSlack.SentMessages.Count.ShouldBe(2);
+            fakeSlack.SentMessages[1].Channel.ShouldBe("C0418Y");
+            fakeSlack.SentMessages[1].ThreadTs.ShouldBe("1700000000.000300");
+            fakeSlack.UploadedFiles.Skip(5).Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
+                .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == yCorrelationId, ct))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+
+            // A real worker/tool failure publishes the sealed originals with a degraded note.
+            await File.WriteAllTextAsync(browser, "#!/bin/sh\nexit 42\n", ct);
+            var failedCorrelationId = await DispatchChannelTurnAsync(app, sourceSessionId, sourceTaskId,
+                "C0418F5", "C0418F5|1700000000.000400", attachmentAnswer,
+                ChannelReplyDispatchOutcome.Deferred, ct);
+            await UntilAsync(async () =>
+            {
+                await using var scope = app.Services.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                return await db.ChannelOutboundDeliveries.AsNoTracking().CountAsync(d =>
+                    d.ChannelId == final.ChannelId && d.State == ChannelOutboundDeliveryState.Published, ct) == 2
+                    && fakeSlack.UploadedFiles.Count == 13;
+            }, ct);
+            fakeSlack.SentMessages.Count.ShouldBe(3);
+            fakeSlack.SentMessages[2].ThreadTs.ShouldBe("1700000000.000400");
+            fakeSlack.SentMessages[2].Text.ShouldNotBeNull();
+            fakeSlack.SentMessages[2].Text!.ShouldContain(
+                "Conversion unavailable; original attachments retained.");
+            fakeSlack.UploadedFiles.Skip(9).Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
+                .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
+            (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d =>
+                d.ChannelId == final.ChannelId && d.Id != deliveryId, ct))
+                .ConversionOutcome.ShouldBe("Fallback");
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == failedCorrelationId, ct))
+                .ChannelReplySettledAt.ShouldNotBeNull();
         }
         finally
         {
             if (initialized) await app.DisposeAsync();
             await gateway.StopAsync(CancellationToken.None);
         }
+    }
+
+    private static async Task<Guid> DispatchChannelTurnAsync(AntiphonAppFixture app, Guid sessionId,
+        Guid sourceTaskId, string conversationId, string inboundHandle, string answer,
+        ChannelReplyDispatchOutcome expected, CancellationToken ct)
+    {
+        var correlationId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var prompt = $"[antiphon-channel:{correlationId:N}] Please send the completed sources.";
+        await using (var scope = app.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0) + 1;
+            var queueSequence = (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId)
+                .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
+            using var raw = JsonDocument.Parse("{}");
+            var envelope = new ChannelMessage
+            {
+                Id = inboundId.ToString("D"), Channel = "slack", ChannelMessageId = inboundId.ToString("D"),
+                Conversation = new Conversation { Id = conversationId, Kind = ConversationKind.Channel },
+                Author = new Participant { Id = "f5-sender" }, Timestamp = new DateTimeOffset(now),
+                Text = prompt, ReplyHandle = inboundHandle,
+                Raw = raw.RootElement.Clone(),
+            };
+            db.ChannelInbounds.Add(new ChannelInbound
+            {
+                Id = inboundId, Provider = "slack", ConversationId = conversationId,
+                NativeMessageId = inboundId.ToString("D"), EnvelopeJson = JsonSerializer.Serialize(envelope, MessagingJson.Options),
+                QueueMessageId = correlationId, AcceptedAt = now, TransferredAt = now,
+            });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = correlationId, AgentSessionId = sessionId, Body = prompt,
+                Sequence = queueSequence, Origin = QueuedMessageOrigin.Channel,
+                ConversationKey = "slack:" + conversationId, SourceChannelInboundId = inboundId,
+                SourceTaskId = sourceTaskId, Status = QueuedMessageStatus.Sent,
+                CreatedAt = now, SentAt = now, DeliveryAttempts = 1,
+                LastDeliveryStartedAt = now, LastDeliveryBaselineSequence = sequence - 1,
+            });
+            db.TranscriptEntries.AddRange(
+                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt,
+                    Text = prompt, Timestamp = now, CreatedAt = now },
+                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence + 1,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText,
+                    Text = answer, Timestamp = now, CreatedAt = now },
+                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence + 2,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd,
+                    StopReason = Antiphon.SessionRunner.Contracts.TranscriptKinds.StopReasons.EndTurn,
+                    Timestamp = now, CreatedAt = now });
+            await db.SaveChangesAsync(ct);
+        }
+        var result = await app.Services.GetRequiredService<ChannelReplyDispatcher>()
+            .OnTurnEndAsync(sessionId, ct);
+        result.OutcomeFor(correlationId).ShouldBe(expected);
+        return correlationId;
     }
 
     private static async Task UntilAsync(Func<Task<bool>> predicate, CancellationToken ct)
