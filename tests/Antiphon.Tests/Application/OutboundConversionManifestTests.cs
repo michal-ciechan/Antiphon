@@ -134,6 +134,7 @@ public sealed class OutboundConversionManifestTests
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-manifest-" + Guid.NewGuid().ToString("N"));
         var store = new ChannelOutboundFileStore(root);
         var id = Guid.NewGuid();
+        string? junction = null;
         try
         {
             var snapshot = await store.StageAsync(id, new ChannelReply
@@ -246,6 +247,7 @@ public sealed class OutboundConversionManifestTests
                     {
                         // A junction is the unprivileged Windows directory reparse point.
                         await CreateJunctionAsync(linkedDirectory, outsideDirectory);
+                        junction = linkedDirectory;
                     }
                     catch (Exception ex) when (ex is UnauthorizedAccessException or PlatformNotSupportedException)
                     { throw new SkipTestException("A fixture-owned directory link could not be created: " + ex.Message); }
@@ -277,7 +279,12 @@ public sealed class OutboundConversionManifestTests
             else await Should.ThrowAsync<InvalidDataException>(invalid);
             File.Exists(valid.ReplyPath).ShouldBeFalse();
         }
-        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        finally
+        {
+            // A recursive delete of the junction's parent is refused; remove the link itself first.
+            if (junction is not null && Directory.Exists(junction)) Directory.Delete(junction, recursive: false);
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
     }
 
     // ERROR_PRIVILEGE_NOT_HELD: symbolic links need Developer Mode or elevation on Windows.
