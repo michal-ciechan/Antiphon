@@ -147,7 +147,7 @@ public sealed class ExpectationPipelineTests
             Snap(Now, [Fenced(LocalTaskId, null, stint), Open(RemoteTaskId, "server2", stint)]),
             Directive());
         oneOpen.DispatchFence.ShouldBeNull();
-        oneOpen.ScopedFences.ShouldBeEmpty();
+        oneOpen.ScopedFences.ShouldHaveSingleItem().Scope.ShouldBe("runner:local");
 
         var oneUnknown = ExpectationWatchdogPolicy.Evaluate(
             Snap(Now,

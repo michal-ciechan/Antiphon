@@ -17,15 +17,26 @@ public sealed record ExpectationConfigurationFault(string Code, string Detail);
 /// <summary>Normalized sha256 of a directive. Order and surrounding whitespace are not semantic.</summary>
 public static class ExpectationDirectiveDigest
 {
-    public static string Compute(ExpectationDirectiveSettings directive)
+    public static string Compute(ExpectationDirectiveSettings directive, ExpectationTimingSettings? timing = null,
+        string? resolvedOperatorAddress = null)
     {
+        timing ??= new ExpectationTimingSettings();
         var builder = new StringBuilder();
-        builder.Append("v1\n");
+        builder.Append("v2\n");
         builder.Append("id=").Append((directive.Id ?? string.Empty).Trim()).Append('\n');
         builder.Append("agent=").Append(directive.AgentId.ToString("D")).Append('\n');
         builder.Append("board=").Append(directive.BoardId.ToString("D")).Append('\n');
         builder.Append("card=").Append(directive.AuditCardId.ToString("D")).Append('\n');
         builder.Append("channel=").Append(directive.OperatorChannelId.ToString("D")).Append('\n');
+        builder.Append("address=").Append(resolvedOperatorAddress ?? "unresolved").Append('\n');
+        builder.Append("timing=")
+            .Append(timing.QueuedMinutes).Append(':')
+            .Append(timing.CapacityMinutes).Append(':')
+            .Append(timing.MissingSessionMinutes).Append(':')
+            .Append(timing.NoteMinutes).Append(':')
+            .Append(timing.AnswerMinutes).Append(':')
+            .Append(timing.NudgeCooldownMinutes).Append(':')
+            .Append(timing.RepeatMinutes).Append('\n');
         builder.Append("enabled=").Append(directive.Enabled ? "true" : "false").Append('\n');
         builder.Append("until=");
         if (directive.ActiveUntilUtc is { } until)

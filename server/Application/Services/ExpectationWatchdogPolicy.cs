@@ -11,8 +11,10 @@ public static class ExpectationWatchdogPolicy
     public const int MaxEvidenceChars = 2000;
     public const int MaxExamples = 3;
 
-    public static ExpectationEvaluation Evaluate(ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+    public static ExpectationEvaluation Evaluate(ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive,
+        ExpectationTimingSettings? timing = null)
     {
+        timing ??= new ExpectationTimingSettings();
         if (!snapshot.DirectiveActive)
         {
             return new ExpectationEvaluation
@@ -31,17 +33,23 @@ public static class ExpectationWatchdogPolicy
             };
         }
 
-        var pipelines = Pipelines(snapshot, directive);
+        var pipelines = Pipelines(snapshot, directive, timing);
         var (global, scoped) = Fences(snapshot, directive);
         global ??= AdmissionFence(snapshot, directive);
-        var capacity = Capacity(snapshot, directive);
+        var capacity = Capacity(snapshot, directive, timing);
         var fenceKnown = snapshot.Queued.All(task => task.HoldClass != ExpectationHoldClass.Unknown);
         var fencePresent = global is not null || scoped.Count > 0;
         var deficitRemains = capacity.Any(lane => lane.InDeficit);
         var hadOpen = snapshot.OpenEpisodes.Count > 0;
-        var (silent, unknownSubjects) = Silent(snapshot, directive);
-        var notes = Notes(snapshot, directive);
-        var observedClear = hadOpen && fenceKnown && !fencePresent && pipelines.Count == 0 && !deficitRemains
+        var (silent, unknownSubjects) = Silent(snapshot, directive, timing);
+        unknownSubjects.AddRange(snapshot.Lanes.Where(lane => !lane.ObservationKnown)
+            .Select(lane => ExpectationSubjects.Capacity(directive.Id, lane.RunnerId)));
+        if (snapshot.NoteCoverageIncomplete)
+            unknownSubjects.AddRange(snapshot.OpenEpisodes.Where(episode => episode.Kind == ExpectationEpisodeKind.UndeliveredNote)
+                .Select(episode => episode.SubjectKey));
+        var notes = Notes(snapshot, directive, timing);
+        var observedClear = hadOpen && fenceKnown && !snapshot.NoteCoverageIncomplete
+            && !fencePresent && pipelines.Count == 0 && !deficitRemains
             && silent.Count == 0 && notes.Count == 0 && unknownSubjects.Count == 0;
 
         return new ExpectationEvaluation
@@ -51,7 +59,7 @@ public static class ExpectationWatchdogPolicy
             ScopedFences = scoped,
             Capacity = capacity,
             ObservedClear = observedClear,
-            PreservesOpenEpisodes = hadOpen && !fenceKnown,
+            PreservesOpenEpisodes = hadOpen && (!fenceKnown || snapshot.NoteCoverageIncomplete),
             SilentInFlight = silent,
             UndeliveredNotes = notes,
             UnknownSubjectKeys = unknownSubjects,
@@ -59,14 +67,14 @@ public static class ExpectationWatchdogPolicy
     }
 
     private static List<ExpectationCondition> Pipelines(
-        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive, ExpectationTimingSettings timing)
     {
         var due = new List<ExpectationCondition>();
         if (snapshot.Queued.Count == 0)
             return due;
 
         var recent = snapshot.LastScopedDispatchAt is { } dispatched
-            && snapshot.AsOf - dispatched < ExpectationWindows.Queue;
+            && snapshot.AsOf - dispatched < TimeSpan.FromMinutes(timing.QueuedMinutes);
         foreach (var group in snapshot.Queued.GroupBy(task => task.RepositoryScope, StringComparer.Ordinal))
         {
             // A land or a cap hold is ordinary occupancy only with current evidence about that
@@ -80,7 +88,7 @@ public static class ExpectationWatchdogPolicy
             if (ordered.Count == 0)
                 continue;
             var oldest = ordered[0].StintStartedAt;
-            if (snapshot.AsOf - oldest < ExpectationWindows.Queue || recent)
+            if (snapshot.AsOf - oldest < TimeSpan.FromMinutes(timing.QueuedMinutes) || recent)
                 continue;
 
             var examples = Examples(ordered.Select(task => task.TaskId));
@@ -164,9 +172,32 @@ public static class ExpectationWatchdogPolicy
         {
             foreach (var group in queued.GroupBy(task => ExpectationSubjects.RunnerKey(task.RunnerId), StringComparer.Ordinal))
             {
+                var runner = group.Key;
+                if (group.All(task => (task.HoldClass is ExpectationHoldClass.RepositoryFenced
+                    or ExpectationHoldClass.RepositoryOwnerUnknown) && !task.RemotePrepared))
+                {
+                    var repo = group.First().RepositoryScope;
+                    if (group.All(task => task.RepositoryScope == repo))
+                    {
+                        var repoExamples = Examples(group.OrderBy(task => task.TaskId).Select(task => task.TaskId));
+                        scoped.Add(new ExpectationCondition
+                        {
+                            Kind = ExpectationEpisodeKind.DispatchFence,
+                            SubjectKey = ExpectationSubjects.Fence(directive.Id, "runner:" + runner),
+                            Scope = "runner:" + runner,
+                            ReasonCode = "repository-fenced",
+                            Evidence = Clip("repository fence on runner " + runner + " at " + repo
+                                + "; not an all-board fence; tasks " + FormatIds(repoExamples)
+                                + "; inspect the recorded fence read-only"),
+                            IsDue = true, Immediate = true,
+                            ExampleTaskIds = repoExamples,
+                            AffectedTaskIds = group.Select(task => task.TaskId).Distinct().ToList(),
+                        });
+                    }
+                    continue;
+                }
                 if (!group.All(task => task.HoldClass == ExpectationHoldClass.RunnerUnavailable))
                     continue;
-                var runner = group.Key;
                 var examples = Examples(group.OrderBy(task => task.TaskId).Select(task => task.TaskId));
                 scoped.Add(new ExpectationCondition
                 {
@@ -229,12 +260,12 @@ public static class ExpectationWatchdogPolicy
     }
 
     private static List<ExpectationCapacityVerdict> Capacity(
-        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive, ExpectationTimingSettings timing)
     {
         var results = new List<ExpectationCapacityVerdict>(snapshot.Lanes.Count);
         foreach (var lane in snapshot.Lanes)
         {
-            var inDeficit = snapshot.EligibleBacklog > 0 && lane.Running < lane.Target;
+            var inDeficit = lane.ObservationKnown && snapshot.EligibleBacklog > 0 && lane.Running < lane.Target;
             DateTime? clock = null;
             var due = false;
             if (inDeficit)
@@ -246,7 +277,7 @@ public static class ExpectationWatchdogPolicy
                 else
                 {
                     clock = lane.DeficitSince;
-                    due = snapshot.AsOf - lane.DeficitSince.Value >= ExpectationWindows.Capacity;
+                    due = snapshot.AsOf - lane.DeficitSince.Value >= TimeSpan.FromMinutes(timing.CapacityMinutes);
                 }
             }
 
@@ -297,7 +328,7 @@ public static class ExpectationWatchdogPolicy
     /// verdict. An unreachable runner is Unknown and never proves a missing session.
     /// </summary>
     private static (List<ExpectationCondition> Silent, List<string> Unknown) Silent(
-        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+        ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive, ExpectationTimingSettings timing)
     {
         var silent = new List<ExpectationCondition>();
         var unknown = new List<string>();
@@ -313,7 +344,7 @@ public static class ExpectationWatchdogPolicy
                 case ExpectationSessionState.Missing or ExpectationSessionState.Terminal:
                 {
                     var quiet = snapshot.AsOf - task.LastActivityAt;
-                    if (quiet < ExpectationWindows.MissingSession)
+                    if (quiet < TimeSpan.FromMinutes(timing.MissingSessionMinutes))
                         continue;
                     var reason = task.SessionState == ExpectationSessionState.Missing
                         ? "missing-session"
@@ -376,13 +407,14 @@ public static class ExpectationWatchdogPolicy
     /// V-3b. Age runs from CreatedAt; a retry, a new NextAttemptAt or a Sent queue row never
     /// resets it.
     /// </summary>
-    private static List<ExpectationCondition> Notes(ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive)
+    private static List<ExpectationCondition> Notes(ExpectationSnapshot snapshot, ExpectationDirectiveSettings directive,
+        ExpectationTimingSettings timing)
     {
         var due = new List<ExpectationCondition>();
         foreach (var note in snapshot.Notes.OrderBy(row => row.CreatedAt).ThenBy(row => row.NotificationId))
         {
             var age = snapshot.AsOf - note.CreatedAt;
-            if (age < ExpectationWindows.Note)
+            if (age < TimeSpan.FromMinutes(timing.NoteMinutes))
                 continue;
             due.Add(new ExpectationCondition
             {
@@ -474,6 +506,7 @@ public static class ExpectationWatchdogPolicy
         var scope = queued[0].RepositoryScope;
         return queued.All(task =>
             task.RepositoryScope == scope
+            && !(task.RemotePrepared && !string.IsNullOrWhiteSpace(task.RunnerId))
             && task.HoldClass is ExpectationHoldClass.RepositoryFenced
                 or ExpectationHoldClass.RepositoryOwnerUnknown);
     }

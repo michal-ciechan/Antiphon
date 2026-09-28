@@ -2848,11 +2848,16 @@ public class AppDbContext : DbContext
             });
             entity.HasKey(n => n.Id);
             entity.Property(n => n.DirectiveId).IsRequired().HasMaxLength(100);
+            entity.Property(n => n.ConfigDigest).IsRequired().HasMaxLength(64).HasDefaultValue("");
             entity.Property(n => n.EpisodeIdsJson).IsRequired().HasColumnType("text");
             entity.Property(n => n.EvidenceSnapshot).IsRequired().HasMaxLength(2000);
             entity.Property(n => n.Body).IsRequired().HasMaxLength(8000);
             entity.Property(n => n.BodyDigest).IsRequired().HasMaxLength(64);
             entity.Property(n => n.OperatorLastError).HasMaxLength(400);
+            entity.Property(n => n.OperatorPageProvider).HasMaxLength(100);
+            entity.Property(n => n.OperatorPageConversationId).HasMaxLength(300);
+            entity.Property(n => n.OperatorPageBody).HasColumnType("text");
+            entity.Property(n => n.OperatorPageDigest).HasMaxLength(64);
             entity.Property(n => n.CheckEventIdsJson).IsRequired().HasColumnType("text");
             entity.Property(n => n.CreatedAt).IsRequired();
             entity.Property(n => n.ConcurrencyToken).IsConcurrencyToken();

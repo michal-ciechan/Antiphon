@@ -198,6 +198,7 @@ public sealed class ExpectationLedger
                 {
                     Id = nudgeId,
                     DirectiveId = directiveId,
+                    ConfigDigest = request.ConfigDigest,
                     Ordinal = ordinal,
                     EpisodeIdsJson = JsonSerializer.Serialize(new[] { episodeId }),
                     EvidenceSnapshot = request.Evidence.Trim(),
@@ -339,6 +340,7 @@ public sealed class ExpectationLedger
                 {
                     Id = request.NudgeId,
                     DirectiveId = directiveId,
+                    ConfigDigest = request.ConfigDigest,
                     Ordinal = ordinal,
                     EpisodeIdsJson = JsonSerializer.Serialize(open),
                     EvidenceSnapshot = request.Evidence.Trim(),

@@ -11,6 +11,10 @@ public class ExpectationWatchState
     public DateTime? LastSuccessfulScanAt { get; set; }
     public DateTime? NextNudgeAt { get; set; }
     public string? LastObservationError { get; set; }
+    public DateTime? NoteOutboxCursorAt { get; set; }
+    public Guid? NoteOutboxCursorId { get; set; }
+    public DateTime? NoteQueueCursorAt { get; set; }
+    public Guid? NoteQueueCursorId { get; set; }
     public DateTime UpdatedAt { get; set; }
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
 }

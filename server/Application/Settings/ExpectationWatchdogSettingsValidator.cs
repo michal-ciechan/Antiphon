@@ -20,6 +20,32 @@ public sealed class ExpectationWatchdogSettingsValidator : IValidateOptions<Expe
             return ValidateOptionsResult.Fail("ExpectationWatchdog settings are required.");
 
         var failures = new List<string>();
+        var timing = options.Timing;
+        if (timing is null)
+        {
+            failures.Add("ExpectationWatchdog:Timing is required.");
+        }
+        else
+        {
+            var windows = new (string Name, int Value)[]
+            {
+                (nameof(timing.QueuedMinutes), timing.QueuedMinutes),
+                (nameof(timing.CapacityMinutes), timing.CapacityMinutes),
+                (nameof(timing.MissingSessionMinutes), timing.MissingSessionMinutes),
+                (nameof(timing.NoteMinutes), timing.NoteMinutes),
+                (nameof(timing.AnswerMinutes), timing.AnswerMinutes),
+                (nameof(timing.NudgeCooldownMinutes), timing.NudgeCooldownMinutes),
+                (nameof(timing.RepeatMinutes), timing.RepeatMinutes),
+            };
+            foreach (var (window, value) in windows)
+            {
+                if (value is < 1 or > 1440)
+                    failures.Add($"ExpectationWatchdog:Timing:{window} must be between 1 and 1440.");
+            }
+
+            if (timing.RepeatMinutes < timing.NudgeCooldownMinutes)
+                failures.Add("ExpectationWatchdog:Timing:RepeatMinutes must be at least NudgeCooldownMinutes.");
+        }
         var directives = options.Directives ?? [];
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
         var enabledBoards = new HashSet<Guid>();

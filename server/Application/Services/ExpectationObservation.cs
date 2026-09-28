@@ -203,6 +203,7 @@ public sealed record ExpectationQueuedTask
     public ExpectationHoldClass? HoldClass { get; init; }
     public string? HoldDetail { get; init; }
     public DateTime? HoldObservedAt { get; init; }
+    public bool RemotePrepared { get; init; }
 }
 
 public sealed record ExpectationLaneSnapshot
@@ -212,6 +213,7 @@ public sealed record ExpectationLaneSnapshot
     public int Running { get; init; }
     public int Queued { get; init; }
     public int Blocked { get; init; }
+    public bool ObservationKnown { get; init; } = true;
     public DateTime? DeficitSince { get; init; }
     public IReadOnlyList<Guid> RunningTaskIds { get; init; } = [];
     public IReadOnlyList<Guid> QueuedTaskIds { get; init; } = [];
@@ -297,6 +299,11 @@ public sealed record ExpectationSnapshot
     public IReadOnlyList<ExpectationOpenEpisode> OpenEpisodes { get; init; } = [];
     public IReadOnlyList<ExpectationInFlightTask> InFlight { get; init; } = [];
     public IReadOnlyList<ExpectationNoteDebt> Notes { get; init; } = [];
+    public bool NoteCoverageIncomplete { get; init; }
+    public DateTime? NextNoteOutboxCursorAt { get; init; }
+    public Guid? NextNoteOutboxCursorId { get; init; }
+    public DateTime? NextNoteQueueCursorAt { get; init; }
+    public Guid? NextNoteQueueCursorId { get; init; }
 
     /// <summary>Pending lands, read only when a queued hold names one. Each carries its own progress clock.</summary>
     public IReadOnlyList<ExpectationLandProgress> Lands { get; init; } = [];
@@ -368,6 +375,9 @@ public sealed record ExpectationRunnerProbe(bool? Available, DateTime? AsOf, str
 /// <summary>Runner answer for one session. Live null means the runner could not be asked.</summary>
 public sealed record ExpectationSessionProbe(bool? Live, DateTime? AsOf, string? Detail);
 
+/// <summary>Read-only child-journal counts at an already persisted common directory.</summary>
+public sealed record ExpectationJournalProbe(int Alive, int Dead, int Unknown, DateTime AsOf, string Detail);
+
 public sealed record ExpectationCandidateProbe(
     string? RunnerId,
     AgentKind AgentKind,
@@ -384,7 +394,8 @@ public sealed record ExpectationProbeInput(
     bool Unavailable,
     string? Error,
     IReadOnlyDictionary<Guid, ExpectationSessionProbe>? Sessions = null,
-    IReadOnlyDictionary<Guid, WorkspaceProgressArm>? Workspace = null)
+    IReadOnlyDictionary<Guid, WorkspaceProgressArm>? Workspace = null,
+    IReadOnlyDictionary<string, ExpectationJournalProbe>? Journals = null)
 {
     public static ExpectationProbeInput None { get; } = new(
         null,

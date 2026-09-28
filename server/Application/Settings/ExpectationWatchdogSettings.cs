@@ -12,7 +12,21 @@ public sealed class ExpectationWatchdogSettings
 
     public bool Enabled { get; set; }
 
+    public ExpectationTimingSettings Timing { get; set; } = new();
+
     public List<ExpectationDirectiveSettings> Directives { get; set; } = [];
+}
+
+/// <summary>All watchdog durations are UTC elapsed-time windows, in minutes.</summary>
+public sealed class ExpectationTimingSettings
+{
+    public int QueuedMinutes { get; set; } = 10;
+    public int CapacityMinutes { get; set; } = 10;
+    public int MissingSessionMinutes { get; set; } = 10;
+    public int NoteMinutes { get; set; } = 10;
+    public int AnswerMinutes { get; set; } = 5;
+    public int NudgeCooldownMinutes { get; set; } = 10;
+    public int RepeatMinutes { get; set; } = 30;
 }
 
 public sealed class ExpectationDirectiveSettings
