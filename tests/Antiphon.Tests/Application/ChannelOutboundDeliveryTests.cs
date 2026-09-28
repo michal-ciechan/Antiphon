@@ -13,6 +13,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -22,6 +23,90 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class ChannelOutboundDeliveryTests
 {
+    [Test]
+    public async Task Expired_lease_takeover_fences_the_old_owner_before_producer_invocation()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-stale-producer-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        await using var firstDb = new AppDbContext(options);
+        await using var secondDb = new AppDbContext(options);
+        var now = DateTime.UtcNow;
+        var clock = new FakeTimeProvider(new DateTimeOffset(now));
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int>? firstTick = null;
+        try
+        {
+            var snapshot = await files.StageAsync(deliveryId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"), Text = "frozen source",
+            }, CancellationToken.None);
+            firstDb.Projects.Add(new Project { Id = projectId, Name = "stale-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            firstDb.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "stale",
+                CreatedAt = now, UpdatedAt = now });
+            firstDb.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "stale",
+                Slug = "stale-" + agentId.ToString("N"), WorkingDirectory = root });
+            firstDb.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = agentId,
+                CreatedAt = now, UpdatedAt = now });
+            firstDb.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"),
+                ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "",
+                PromptRevision = new string('a', 64), InputPath = snapshot.ReplyPath,
+                InputSha256 = snapshot.ReplySha256, Trigger = "Passthrough",
+                State = ChannelOutboundDeliveryState.Ready, CreatedAt = now,
+                DeadlineAt = now.AddHours(1),
+            });
+            await firstDb.SaveChangesAsync();
+
+            var first = new ChannelOutboundDeliveryPump(firstDb, null!, files, producer,
+                Options.Create(new AntiphonMessagingOptions()), clock,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            first.ProbeBarrierAsync = async (name, id, ct) =>
+            {
+                if (name != "before-producer-call" || id != deliveryId) return;
+                entered.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            };
+            var second = new ChannelOutboundDeliveryPump(secondDb, null!, files, producer,
+                Options.Create(new AntiphonMessagingOptions()), clock,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            firstTick = first.TickAsync(CancellationToken.None);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            producer.SentReplies.ShouldBeEmpty();
+            clock.Advance(TimeSpan.FromMinutes(6));
+            (await second.TickAsync(CancellationToken.None)).ShouldBe(1);
+            var taken = await secondDb.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == deliveryId);
+            taken.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
+            taken.PublishedAt.ShouldBeNull();
+            release.TrySetResult();
+            await firstTick.WaitAsync(TimeSpan.FromSeconds(5));
+            producer.SentReplies.ShouldBeEmpty();
+            (await secondDb.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == deliveryId)).State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (firstTick is not null)
+                try { await firstTick.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { /* Preserve the assertion failure after releasing the fixture barrier. */ }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public async Task Deferred_is_returned_only_after_intent_and_correlation_commit()
     {

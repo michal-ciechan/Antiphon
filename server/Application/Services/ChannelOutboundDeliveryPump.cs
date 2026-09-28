@@ -273,6 +273,8 @@ public sealed class ChannelOutboundDeliveryPump
             delivery.PublicationAttempts++;
             delivery.Version++;
             await _db.SaveChangesAsync(ct);
+            if (ProbeBarrierAsync is { } beforeCallBarrier)
+                await beforeCallBarrier("before-producer-call", delivery.Id, ct);
             try
             {
                 await _producer.SendAsync(reply, ct);
