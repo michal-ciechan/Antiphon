@@ -257,6 +257,44 @@ public sealed class AgentTaskDecisionQuestionApiTests
     }
 
     [Test]
+    public async Task Retired_session_credential_without_a_prior_question_is_stale()
+    {
+        await _factory.ResetAsync();
+        using var workspace = new DecisionTempWorkspace();
+        var (taskId, _) = await SeedAsync(workspace.Path);
+        var oldToken = Guid.NewGuid().ToString("N");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            var oldSession = task.AgentSessionId!.Value;
+            (await db.AgentSessions.SingleAsync(s => s.Id == oldSession)).DelegationTokenHash =
+                AgentTaskService.HashToken(oldToken);
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = taskId, AgentSessionId = oldSession,
+                Type = AgentTaskEventType.Dispatched, Detail = "Bound old worker session",
+                At = DateTime.UtcNow,
+            });
+            var replacement = Guid.NewGuid();
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = replacement, DefinitionName = "replacement", AgentKind = AgentKind.Grok,
+                Status = SessionStatus.Running, Cwd = workspace.Path,
+                CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
+            });
+            task.Attempt = 2;
+            task.AgentSessionId = replacement;
+            await db.SaveChangesAsync();
+        }
+        (await PostAsync(taskId, oldToken, Sample() with { Attempt = 2 })).StatusCode
+            .ShouldBe(HttpStatusCode.Conflict);
+        using var verifyScope = _factory.Services.CreateScope();
+        var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Text_and_whole_document_boundaries_are_enforced()
     {
         await _factory.ResetAsync();

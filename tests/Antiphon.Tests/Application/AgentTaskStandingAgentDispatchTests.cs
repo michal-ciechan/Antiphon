@@ -76,6 +76,8 @@ public class AgentTaskStandingAgentDispatchTests
             .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched)
             .ToListAsync();
         events.ShouldContain(e => e.Detail!.Contains("standing agent 'standing-specialist'"));
+        events.ShouldContain(e => e.AgentSessionId == sessionId,
+            "a retired standing session must remain identifiable after task rebinding");
     }
 
     [Test]
