@@ -25,8 +25,11 @@ public sealed class AgentTaskDecisionQuestionService(
         var payloadHash = InternalDecisionPolicy.Hash(canonical);
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        // The lock serializes checks with other checks. State writers in this service family must
-        // also take the task row lock before changing attempt/binding to close admission races.
+        // Task writers take PostgreSQL's ROW EXCLUSIVE table lock. Acquire the compatible SHARE
+        // lock before the row lock so another task cannot become bound to this session between
+        // the binding count and our commit, including a status-only update of an existing row.
+        // A writer that committed first is rechecked below; a later writer waits for this check.
+        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"AgentTasks\" IN SHARE MODE", ct);
         var task = await db.AgentTasks.FromSqlInterpolated(
                 $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE")
             .AsNoTracking().SingleOrDefaultAsync(ct)
