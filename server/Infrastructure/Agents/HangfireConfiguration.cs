@@ -57,4 +57,14 @@ internal static class HangfireConfiguration
                 TimeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId)
             });
     }
+
+    public static void AddOrUpdateExpectationWatchdogJob(IRecurringJobManager manager)
+    {
+        manager.AddOrUpdate<ExpectationWatchdogJob>(
+            ExpectationWatchdogJob.RecurringJobId,
+            job => job.ExecuteAsync(CancellationToken.None),
+            "* * * * *",
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+        manager.Trigger(ExpectationWatchdogJob.RecurringJobId);
+    }
 }

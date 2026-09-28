@@ -1486,3 +1486,18 @@ feature ships disabled with every card `FullOnly` and no enablement path; do not
 Completion notes of profile-v1 tasks are durable obligations (see
 [session-runtime-invariants.md](session-runtime-invariants.md)); dispatch from the header's
 `next=`, never re-read the body.
+
+## Expectation watchdog (CARD-0650)
+
+An enabled, explicit board directive can run a minute Hangfire observation sweep independently
+of tracker ticks and ordinary caller-note delivery. It watches queued pipeline age, a proven
+dispatch-wide fence, in-flight capacity below the configured runner targets, dispatched tasks
+without usable sessions or task-local activity, and undelivered caller notes. It records durable
+episodes and Check/card audits, prompts the standing orchestrator through the direct session
+input path, and pages the configured operator conversation if the prompt is unsafe, uncertain or
+unanswered by its persisted deadline. The orchestrator answers with a whole line
+`[expectation-ack:<nudge-guid>]` followed by the action or reason; that answer does not clear a
+still-observed condition. An unanswered episode receives operator reminders within the configured
+repeat bound and no periodic retyping. This watcher observes repository journals only; CARD-0648
+owns recovery. Check `GET /api/expectation-watchdog?boardId=<guid>` for actual scan and delivery
+state before relying on it.

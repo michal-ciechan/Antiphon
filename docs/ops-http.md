@@ -487,3 +487,13 @@ Missing/unsupported/unknown custody, live owners, dirty source or unknown output
 Repeat cleanup through this endpoint after resolving evidence; never force-remove or delete the
 external verification/runner ledgers. A restored Failed/Canceled run can clean without changing
 its verdict. See [testing-and-build.md](testing-and-build.md#verification-restoration-contract-card-0478).
+
+## Expectation watchdog status (CARD-0650)
+
+`GET /api/expectation-watchdog?boardId=<guid>&skip=0&take=20` requires `boardId`. It returns the
+configured directive's enabled/expiry state, reference faults and digest, last successful scan
+and error, lane counts, paged episodes, nudge attempt/receipt/answer sequences and timestamps,
+operator debt/publish state and audit comment IDs. A task or capability token can read only its
+authorized board/project. The response omits the operator conversation address, secrets and
+transcript bodies. An absent or stale successful scan is not proof that the minute Hangfire job is
+protecting the board. The route is read-only; ACKs come from the standing agent transcript.

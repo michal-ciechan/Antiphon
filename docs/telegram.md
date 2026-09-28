@@ -14,6 +14,13 @@ long-poll pattern), normalizes updates onto the `channels.inbound` Kafka topic, 
 `src/Antiphon.Messaging.Telegram/TelegramChannelAdapter.cs` — raw Bot API over `HttpClient`, no
 third-party client.
 
+CARD-0650 operator escalation publishes a durable `ChannelReply` directly to the explicitly
+configured enabled `ChatChannel` provider and conversation. It has no inbound reply handle and
+does not pass through an agent reply, digest timer or outbound preparation profile. The watchdog
+records its page claim and audit before broker I/O, retries a frozen page after 1, 5 and then
+15 minutes on failure, and may duplicate that same page after a lost broker answer. `Published`
+means broker acceptance; it does not prove Telegram arrival or a human read.
+
 ## Durable inbound handoff (CARD-0593)
 
 The bridge records each non-self native message identity in `ChannelInbounds`. For an enabled,
