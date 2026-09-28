@@ -406,8 +406,11 @@ red in one path as proof the other implementations are protected.
 | G-47 -> PC-47: non-overlapping interval reservation (D-3) | Reserve trailing ranges from the published watermark while ignoring a previously reserved pending range; keep exact-range uniqueness, and append more text between captures so the overlapping ranges differ. | O.`C519_Trailing_interval_survives_restart_and_a_newer_prompt`: intervals must not overlap and no fragment may appear twice. |
 | G-48 -> PC-48: committed attempt before I/O (D-1) | Leave publication commit intact but enter producer before the attempt transaction commits. | O.`C519_Refusal_preserves_the_original_obligation`: attempt-commit refusal producer entries must be 0. |
 | G-49 -> PC-49: captured incident owner (D-6) | Resolve incident owner only from the current session pointer/catalog, ignoring the persisted obligation owner. | O.`C519_Failure_incident_survives_its_own_refusal`: missing-owner argument still has its original owner's incident and alert. |
+| G-50 -> PC-50: discovery cursor advances past withheld rows (D-4) | Restart source discovery at the first page on every pass instead of resuming after the last examined row. | O.`C519_Discovery_pages_past_withheld_rows_without_replaying_pre_chat_attachments`: the owed channel reply behind the withheld backlog must publish on the next pass. |
+| G-51 -> PC-51: discovery has a per-pass budget (D-4) | Continue source discovery beyond its ten-page budget in one pass. | O.`C519_Discovery_pages_past_withheld_rows_without_replaying_pre_chat_attachments`: the later owed reply must remain unpublished after the first budgeted pass. |
+| G-52 -> PC-52: trailing discovery ranks recent transcripts first (D-4) | Rank open trailing windows by publication time and omit transcript recency. | O.`C519_Trailing_discovery_prioritizes_recent_transcript_over_idle_publications`: with more idle windows than one page and older transcript rows in each, the trailing fragment must publish on startup. |
 
-Inventory: **49 guards, 49 distinct PCs, missing=0, duplicate PC maps=0**.
+Inventory: **52 guards, 52 distinct PCs, missing=0, duplicate PC maps=0**.
 PC-37 guards reuse of the existing complete matcher, not a claim of requalifying
 each untouched matcher conjunct; R-5 retains that owner's cases. Bound settings
 validation is one rejection entry point with independently invalid inputs. If Code
@@ -463,18 +466,18 @@ Same committed S1-S3 group, one isolated test build reused by the remaining rows
 
 All times are estimates, not measured. Ordinary execution floor **47 minutes**:
 CP-1 15 (including an estimated 6-minute build), CP-2 12, CP-3 8, CP-4 12.
-Min execution floor **189** = 69 + 18 + 3 + 99; counts are not minutes.
+Min execution floor **191** = 71 + 18 + 3 + 99; counts are not minutes.
 Three reused rows save an estimated **18 build minutes** compared with four builds.
 No omitted test class or native qualification is charged as a saving.
 
 Code authoring/schema/fixture allowance **300 minutes**, plus ordinary floor 47:
 **347 minutes** before separate Review. Estimated Review **25 minutes**.
-Mutation floor: 45 non-crash PCs x 6 minutes + 4 crash PCs (20/23/24/40) x 12
-minutes = **318 minutes**, including each method's baseline/red/restored-green
-build and run. **147 phase invocations** total. Add **25 minutes** discovery,
+Mutation floor: 48 non-crash PCs x 6 minutes + 4 crash PCs (20/23/24/40) x 12
+minutes = **336 minutes**, including each method's baseline/red/restored-green
+build and run. **156 phase invocations** total. Add **25 minutes** discovery,
 schema regeneration and evidence/restoration reporting: commission Mutation for
-at least **343 minutes**. Implementation through Mutation total **715 minutes**
-(347 + 25 + 343), plus build-slot wait/cold pulls and repair. The new schema and
+at least **361 minutes**. Implementation through Mutation total **733 minutes**
+(347 + 25 + 361), plus build-slot wait/cold pulls and repair. The new schema and
 actual crash cuts are why a single existing “producer throws” test is insufficient.
 
 ### Code run and reporting contract
@@ -502,11 +505,11 @@ has neither `dotnet` nor `pwsh` on PATH, so no importer, build, test or PC ran h
 This does not block the documentation deliverable; Code needs the normal .NET,
 PowerShell and owned-Docker test lane.
 The static document audit passed: one checkpoint table, four valid-width rows with
-the same reuse group, 189 minimum results, 47 ordinary minutes, 49 unique guard/PC
+the same reuse group, 191 minimum results, 47 ordinary minutes, 52 unique guard/PC
 mappings, and no named PC target absent from the V matrix. This is a document
 consistency check, not execution evidence or official ManifestLoader validation.
 
 --- next stage ---
 next: code
-handoff: Implement S1-S3 and the ratified V/R roster for durable main, trailing and machine reply publication. Cover all refusal/cancellation/crash cuts, autonomous recovery and loud uncertainty; run CP-1..CP-4 after committed slices and report actual counts. Leave the 49 method-scoped PCs pending for post-land Mutation.
+handoff: Implement S1-S3 and the ratified V/R roster for durable main, trailing and machine reply publication. Cover all refusal/cancellation/crash cuts, autonomous recovery and loud uncertainty; run CP-1..CP-4 after committed slices and report actual counts. Leave the 52 method-scoped PCs pending for post-land Mutation.
 artifact: docs/superpowers/plans/2026-09-28-card-0519-stranded-reply-test-design.md

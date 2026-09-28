@@ -97,8 +97,9 @@ internal static class ChannelOutboundCrashWorker
             var receipt = new ChannelOutboundCutReceipt(
                 Environment.ProcessId, typeof(ChannelOutboundCrashWorker).Module.ModuleVersionId,
                 publicationId, boundary);
-            await File.WriteAllTextAsync(Path.Combine(root, "cut.json"),
-                JsonSerializer.Serialize(receipt), ct);
+            var temporary = Path.Combine(root, "cut.json.tmp");
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(receipt), ct);
+            File.Move(temporary, Path.Combine(root, "cut.json"));
             await Task.Delay(Timeout.Infinite, ct);
         }
     }

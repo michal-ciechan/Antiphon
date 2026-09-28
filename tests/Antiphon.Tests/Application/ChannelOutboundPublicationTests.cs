@@ -90,7 +90,9 @@ public class ChannelOutboundPublicationTests
             await db.ChannelOutboundPublications.Where(p => p.SessionId == f.SessionId)
                 .ExecuteUpdateAsync(set => set.SetProperty(p => p.PublishedAt,
                     DateTime.UtcNow.AddDays(-1)));
-            for (var i = 0; i < 2; i++)
+            // More idle windows than one page, each with an older transcript but a newer
+            // publication. Publication-time ranking would omit the trailing session.
+            for (var i = 0; i < 3; i++)
             {
                 var sessionId = Guid.NewGuid();
                 var now = DateTime.UtcNow;
@@ -99,6 +101,12 @@ public class ChannelOutboundPublicationTests
                     Id = sessionId, DefinitionName = "idle", AgentKind = AgentKind.ClaudeCode,
                     Status = SessionStatus.Running, Cwd = f.Harness.TempRoot, Cols = 120, Rows = 30,
                     CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                });
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 2,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText,
+                    Text = "Old idle answer", CreatedAt = f.Harness.Now.AddMinutes(-10),
                 });
                 db.ChannelOutboundPublications.Add(new ChannelOutboundPublication
                 {

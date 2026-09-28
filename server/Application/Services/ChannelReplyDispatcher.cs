@@ -336,9 +336,13 @@ public sealed class ChannelReplyDispatcher
             .Select(group => new
             {
                 SessionId = group.Key,
+                // Sequence is indexed per session; CreatedAt is not. The last row is the
+                // latest persisted transcript activity without scanning the whole session.
                 LastTranscriptAt = db.TranscriptEntries
                     .Where(t => t.AgentSessionId == group.Key)
-                    .Max(t => (DateTime?)t.CreatedAt),
+                    .OrderByDescending(t => t.Sequence)
+                    .Select(t => (DateTime?)t.CreatedAt)
+                    .FirstOrDefault(),
                 LastPublishedAt = group.Max(p => p.PublishedAt),
             })
             .OrderByDescending(group => group.LastTranscriptAt != null)
