@@ -195,7 +195,8 @@ public sealed class GrokRulesRefreshService(
         var options = scope.ServiceProvider.GetRequiredService<IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>().Value;
         var profile = scope.ServiceProvider.GetService<PtyDeliveryProfile>();
         var brief = AgentTaskDispatcher.FitBriefForTyping(
-            task, options, profile?.Ceilings, null, session.AgentKind,
+            task, options, AgentTaskDispatcher.CeilingsForBrief(profile?.Ceilings, session.RunnerCwd, options),
+            null, session.AgentKind,
             runnerCwd: session.RunnerCwd,
             stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
                 ? null

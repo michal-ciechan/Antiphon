@@ -10,6 +10,8 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -31,17 +33,39 @@ public sealed class DurableRunnerSpillReceiptTests
         await BindRunnerAsync(schema.ConnectionString, h.SessionId, cwd);
         var task = new AgentTask
         {
-            Id = Guid.NewGuid(), Title = "runner pointer receipt", Goal = new string('g', 3000),
+            Id = Guid.NewGuid(), Goal = new string('g', 3000),
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
             ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = h.TempRoot, Status = AgentTaskStatus.Dispatched,
         };
         var settings = new DelegationSettings();
+        var inbox = settings.CeilingsFor(Antiphon.Agents.Pty.PtyBackend.InboxConhost, "runner");
+        var relative = ".antiphon/task-" + DelegationReportFormatter.Short(task.Id) + "-brief.md";
+        var bound = TypedBodySpill.InboxRelativePath(Guid.Empty.ToString("D"));
+        // Pick a real boundary: the old pointer fits before queue binding, but the
+        // message-owned inbox path makes it exceed one runner write.
+        var boundaryFound = false;
+        for (var length = 1; length <= 300; length++)
+        {
+            task.Title = new string('t', length);
+            var fullLength = DelegationReportFormatter.BuildBrief(task, settings, inbox.ReplyInlineMaxChars).Length;
+            var verbose = DelegationReportFormatter.BuildBriefPointer(task, settings, relative, fullLength);
+            if (System.Text.Encoding.UTF8.GetByteCount(verbose) > inbox.SingleWriteMaxBytes ||
+                System.Text.Encoding.UTF8.GetByteCount(verbose.Replace(relative, bound, StringComparison.Ordinal))
+                    <= inbox.SingleWriteMaxBytes)
+                continue;
+            boundaryFound = true;
+            break;
+        }
+        boundaryFound.ShouldBeTrue("the queued test must cross the limit only after binding");
         var staged = new List<PhoneHomeInputSpill>();
         var pointer = AgentTaskDispatcher.FitBriefForTyping(task, settings,
-            settings.CeilingsFor(Antiphon.Agents.Pty.PtyBackend.InboxConhost, "runner"),
+            inbox,
             runnerCwd: cwd, stageRemoteSpill: staged.Add);
         staged.ShouldHaveSingleItem();
+        pointer.ShouldContain("Read the complete task brief at");
+        System.Text.Encoding.UTF8.GetByteCount(pointer.Replace(relative, bound, StringComparison.Ordinal))
+            .ShouldBeLessThanOrEqualTo(inbox.SingleWriteMaxBytes);
         h.Queue.StageRemoteSpill(h.SessionId, cwd, staged[0]);
         await QueuedReceiptAssertions.HoldRecipientBusyAsync(schema.ConnectionString, h.SessionId);
         await h.Queue.EnqueueAsync(h.SessionId, pointer, MessageSendMode.WhenIdle,
@@ -50,8 +74,11 @@ public sealed class DurableRunnerSpillReceiptTests
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId);
         row.Body.ShouldContain(TypedBodySpill.InboxRelativePath(row.Id.ToString("D")));
-        row.Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id) + " YOUR BRIEF IS NOT IN THIS MESSAGE");
+        row.Body.ShouldBe(pointer.Replace(relative, row.RemoteSpillRelativePath!, StringComparison.Ordinal));
+        row.Body.ShouldStartWith(DelegationReportFormatter.TaskMarker(task.Id));
+        row.Body.ShouldNotContain(TypedBodySpill.PointerHeadline);
         row.RemoteSpillBody.ShouldBe(staged[0].Body);
+        row.RemoteSpillRelativePath.ShouldBe(TypedBodySpill.InboxRelativePath(row.Id.ToString("D")));
         System.Text.Encoding.UTF8.GetByteCount(row.Body).ShouldBeLessThanOrEqualTo(1024);
         await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
             schema.ConnectionString, h, row, h.SessionId, busy: true, busyBeforeDelivery: true);
@@ -62,6 +89,58 @@ public sealed class DurableRunnerSpillReceiptTests
         PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(row.Body));
         h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
         h.Adapter.SubmittedBodies[0].ShouldBe(row.Body);
+    }
+
+    [Test]
+    public async Task Grok_rules_launch_brief_uses_runner_ceiling_despite_a_modern_desktop_profile()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<RemoteSpillCourier>();
+                services.AddSingleton(sp => new PtyDeliveryProfile(
+                    sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PtyDeliveryProfile>.Instance,
+                    sp.GetRequiredService<IOptions<DelegationSettings>>(), backendOverride: "modern"));
+                services.AddSingleton<SessionDeliveryProfile>();
+            },
+        });
+        const string cwd = "/runner/worktrees/task-grok-rules-brief";
+        h.Runner.Capabilities = new("ModernConPty", "test", "test", false);
+        await BindRunnerAsync(schema.ConnectionString, h.SessionId, cwd);
+        var taskId = Guid.NewGuid();
+        var goal = new string('g', 3000);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+        session.AgentKind = AgentKind.Grok;
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, AgentSessionId = session.Id, AgentId = h.AgentId,
+            Title = new string('t', 300), Scope = new string('s', 600), Goal = goal,
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok,
+            ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = h.TempRoot, Status = AgentTaskStatus.Dispatched,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var profile = h.Provider.GetRequiredService<PtyDeliveryProfile>();
+        (await profile.RefreshAsync(CancellationToken.None)).SingleWriteMaxBytes.ShouldBe(86_400);
+        var rules = new GrokRulesRefreshService(h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System, Options.Create(new GrokRulesSettings()));
+        await rules.QueueLaunchBriefAsync(db, session, h.Queue, CancellationToken.None);
+
+        var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m =>
+            m.AgentSessionId == session.Id && m.SourceTaskId == taskId);
+        var relative = TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+        row.RemoteSpillBody.ShouldNotBeNull().ShouldContain(goal);
+        row.RemoteSpillRelativePath.ShouldBe(relative);
+        row.Body.ShouldStartWith(DelegationReportFormatter.TaskMarker(taskId));
+        row.Body.ShouldContain(relative);
+        row.Body.ShouldNotContain(TypedBodySpill.PointerHeadline);
+        System.Text.Encoding.UTF8.GetByteCount(row.Body).ShouldBeLessThanOrEqualTo(1024);
     }
 
     [Test]
