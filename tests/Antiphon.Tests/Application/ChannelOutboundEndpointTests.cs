@@ -4,7 +4,9 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -15,6 +17,31 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class ChannelOutboundEndpointTests
 {
+    [Test]
+    public async Task Legacy_renderer_keys_warn_once_on_fresh_host_without_browser()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-legacy-startup-").FullName;
+        try
+        {
+            await using var factory = new LegacyRendererKeysFactory(root);
+            using var client = factory.CreateClient();
+            using var response = await client.GetAsync("/health");
+            response.EnsureSuccessStatusCode();
+            factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();
+
+            var logs = Directory.GetFiles(root, "antiphon-*.log");
+            logs.ShouldNotBeEmpty();
+            var entries = logs.SelectMany(File.ReadAllLines)
+                .Where(line => line.Contains("Legacy Deliverables renderer settings are ignored;", StringComparison.Ordinal))
+                .ToArray();
+            entries.Length.ShouldBe(1);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public async Task Profile_patch_clear_and_rebind()
     {
@@ -90,6 +117,21 @@ public sealed class ChannelOutboundEndpointTests
                     ProjectId = projectId, AgentId = converterId,
                     PromptFile = "conversion.md", Trigger = ChannelOutboundTrigger.MarkdownSources,
                 });
+        }
+    }
+
+    private sealed class LegacyRendererKeysFactory(string logRoot) : AntiphonWebAppFactory
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["Deliverables:BrowserPath"] = Path.Combine(logRoot, "missing-browser"),
+                    ["Deliverables:RenderTimeoutSeconds"] = "1",
+                    ["Serilog:LogPath"] = logRoot,
+                }));
         }
     }
 }
