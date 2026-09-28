@@ -173,6 +173,32 @@ public class MarkdownPdfRendererTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Test]
+    public async Task Browser_nonzero_exit_cannot_reuse_a_stale_pdf()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Directory.CreateTempSubdirectory("c0418-pdf-nonzero-").FullName;
+        try
+        {
+            var browser = Path.Combine(root, "browser with space.sh");
+            var pdf = Path.Combine(root, "old ✨.pdf");
+            await File.WriteAllTextAsync(browser,
+                "#!/bin/sh\nprintf 'browser refused\\n' >&2\nexit 7\n");
+            File.SetUnixFileMode(browser, UnixFileMode.UserRead | UnixFileMode.UserWrite
+                | UnixFileMode.UserExecute);
+            await File.WriteAllBytesAsync(pdf, [37, 80, 68, 70]);
+
+            var result = await CreateRenderer(browser).RenderToPdfAsync("<html>x</html>",
+                pdf, CancellationToken.None);
+
+            result.Succeeded.ShouldBeFalse();
+            result.Error.ShouldContain("browser exited 7");
+            result.Log.ShouldContain("browser refused");
+            File.Exists(pdf).ShouldBeFalse();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private static async Task AssertBrowserTreeStoppedAsync(bool cancelCaller)
     {
         if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
