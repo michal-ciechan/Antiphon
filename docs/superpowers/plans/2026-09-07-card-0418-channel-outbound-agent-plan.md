@@ -642,8 +642,9 @@ claim/retry regressions rather than rewriting them to assume every send defers.
 
 ### Checkpoints
 
-Round-7 Final selection below covers the ordinary V-1..V-23 and R-1..R-14
-scope. F-5/V-24 belongs to CARD-0784's owned-host fixture and V-25 is the
+Round-7 Final selection below runs the affected classes for the ordinary
+V-1..V-23 and R-1..R-14 scope; each matrix assertion still needs independent
+coverage accounting. F-5/V-24 belongs to CARD-0784's owned-host fixture and V-25 is the
 separate live gate. Run rows after the implementation slice is committed. The
 source and routing groups are separate so the shared PostgreSQL host does not
 turn a connection-capacity failure into an apparent product failure. A red row

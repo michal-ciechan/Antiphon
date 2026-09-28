@@ -44,7 +44,8 @@ public sealed class MarkdownPdfRealBrowserTests
             + "exec docker run --rm --network none --cidfile '" + containerIdFile + "' "
             + "--mount type=bind,src=/tmp,dst=/tmp "
             + "--mount type=bind,src='" + root + "',dst='" + root + "' "
-            + Image + " --no-sandbox --disable-dev-shm-usage \"$@\"\n");
+            + "--entrypoint /usr/bin/chromium " + Image
+            + " --no-sandbox --disable-dev-shm-usage \"$@\"\n");
         File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
         var pdf = Path.Combine(root, "combined.pdf");
