@@ -49,15 +49,9 @@ public partial class AgentTaskPipelineStatusTests
         using var workspace = new TempWorkspace();
         var options = Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 });
         var budgets = new HostBudgetService(db, new PipelineDirectory(), options, TimeProvider.System);
-        await budgets.UpsertAsync("server2", 3, "reserve", CancellationToken.None);
-        for (var i = 0; i < 3; i++)
-        {
-            var row = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code,
-                AgentTaskStatus.Working, $"remote {i}");
-            row.RunnerId = "server2";
-        }
+        await budgets.UpsertAsync("server2", 0, "drain", CancellationToken.None);
         var queued = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code,
-            AgentTaskStatus.Queued, "remote queued");
+            AgentTaskStatus.Queued, "remote queued", workspace: WorkspaceMode.ReadOnly);
         queued.RunnerId = "server2";
         await db.SaveChangesAsync();
 
