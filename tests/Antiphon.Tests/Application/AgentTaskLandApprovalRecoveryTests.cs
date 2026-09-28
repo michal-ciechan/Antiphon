@@ -1054,7 +1054,7 @@ public sealed class AgentTaskLandApprovalRecoveryTests
         await using var observer = h.CreateContext();
         (await observer.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Git.TaskId && e.IsLandTerminal))
             .Detail.ShouldContain("Publication is unconfirmed. Inspect the saved target");
-        (await observer.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Git.TaskId
+        (await observer.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == saved.ApprovalLandRequestId
             && n.Kind == LandNotificationKind.Outcome)).Body
             .ShouldContain("Publication is unconfirmed. Inspect the saved target");
     }
