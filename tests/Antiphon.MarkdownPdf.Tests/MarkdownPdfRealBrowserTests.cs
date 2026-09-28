@@ -13,6 +13,8 @@ namespace Antiphon.MarkdownPdf.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class MarkdownPdfRealBrowserTests
 {
+    // Build the Card0418 browser-base image, then the browser image from the
+    // adjacent Dockerfiles. The second layer supplies the specimen's emoji font.
     private const string Image = "antiphon-card0418-browser:latest";
 
     [Test]
@@ -22,6 +24,11 @@ public sealed class MarkdownPdfRealBrowserTests
             throw new SkipTestException("Set ANTIPHON_HEADED_TESTS=1 for the real browser PDF gate.");
         if (!OperatingSystem.IsLinux())
             throw new SkipTestException("The Docker browser fixture is available on the Linux test host.");
+
+        var font = await RunAsync("docker", ["run", "--rm", "--network", "none",
+            "--entrypoint", "fc-match", Image, "Noto Color Emoji"], TimeSpan.FromSeconds(20));
+        font.ExitCode.ShouldBe(0, font.Stderr);
+        font.Stdout.ShouldContain("Noto Color Emoji");
 
         var repo = FindRepository();
         var specimen = Path.Combine(repo, "tests", "Antiphon.Tests", "Fixtures", "Card0418");
