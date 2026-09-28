@@ -638,6 +638,17 @@ internal static class Program
             return;
         }
 
+        if (text.Contains("[antiphon-channel:", StringComparison.Ordinal)
+            && Environment.GetEnvironmentVariable("ANTIPHON_FAKE_CHANNEL_ANSWER") is { Length: > 0 } answerPath
+            && File.Exists(answerPath))
+        {
+            var answer = File.ReadAllText(answerPath);
+            write("FAKE channel answer completed\r\nWorked for 1.7s\r\n");
+            write(IdleTitle);
+            AppendSessionFiles(sessionDir, sessionId, text, answer);
+            return;
+        }
+
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
 

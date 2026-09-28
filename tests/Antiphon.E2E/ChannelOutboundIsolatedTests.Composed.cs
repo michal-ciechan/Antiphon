@@ -39,15 +39,17 @@ public sealed partial class ChannelOutboundIsolatedTests
         if (!OperatingSystem.IsLinux())
             throw new TUnit.Core.Exceptions.SkipTestException("The owned container browser wrapper is Linux-only.");
         var browserImage = await BuildBrowserImageAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(25));
         var ct = deadline.Token;
         var checkout = AntiphonAppFixture.FindRepositoryRoot();
         var root = Path.Combine(checkout, ".antiphon", "test-output", "card-0418", "f5", Guid.NewGuid().ToString("N"));
         var repo = Path.Combine(root, "repo");
+        var repoQ = Path.Combine(root, "repo-q");
         var converter = Path.Combine(root, "converter");
         var native = Path.Combine(root, "native");
         var storeRoot = Path.Combine(root, "outbound");
         Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(repoQ);
         Directory.CreateDirectory(converter);
         var relative = new[]
         {
@@ -65,12 +67,21 @@ public sealed partial class ChannelOutboundIsolatedTests
             var path = Path.Combine(repo, relative[i]);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllBytesAsync(path, expected[i], ct);
+            var pathQ = Path.Combine(repoQ, relative[i]);
+            Directory.CreateDirectory(Path.GetDirectoryName(pathQ)!);
+            await File.WriteAllBytesAsync(pathQ, expected[i], ct);
         }
         await GitAsync(repo, ct, "init", "-b", "main");
         await GitAsync(repo, ct, "add", ".");
         await GitAsync(repo, ct, "-c", "user.name=F5 Fixture", "-c", "user.email=f5@example.invalid",
             "commit", "-m", "four synthetic sources");
+        await GitAsync(repoQ, ct, "init", "-b", "main");
+        await GitAsync(repoQ, ct, "add", ".");
+        await GitAsync(repoQ, ct, "-c", "user.name=F5 Fixture", "-c", "user.email=f5@example.invalid",
+            "commit", "-m", "four synthetic sources in Q");
         var report = Path.Combine(root, "source-report.md");
+        var channelAnswer = Path.Combine(root, "channel-answer.md");
+        var channelAnswerQ = Path.Combine(root, "channel-answer-q.md");
         await File.WriteAllTextAsync(report,
             "Four synthetic source documents completed.\n" + string.Join('\n', relative) + "\n", ct);
         await File.WriteAllTextAsync(Path.Combine(converter, "convert.md"),
@@ -92,13 +103,20 @@ public sealed partial class ChannelOutboundIsolatedTests
         var gate = Path.Combine(root, "converter-gate");
         var projectId = Guid.NewGuid();
         var boardId = Guid.NewGuid();
+        var projectQId = Guid.NewGuid();
+        var boardQId = Guid.NewGuid();
         var sourceAgentId = Guid.NewGuid();
+        var sourceAgentQId = Guid.NewGuid();
         var converterId = Guid.NewGuid();
         var topic = "c0418-f5-" + Guid.NewGuid().ToString("N");
+        var inboundTopic = topic + "-inbound";
         await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
         await broker.StartAsync(ct);
         using (var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = broker.GetBootstrapAddress() }).Build())
-            await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+            await admin.CreateTopicsAsync([
+                new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 },
+                new TopicSpecification { Name = inboundTopic, NumPartitions = 1, ReplicationFactor = 1 },
+            ]);
         await using var fakeSlack = new FakeSlackServer();
         await fakeSlack.StartAsync();
         using var slackHttp = new HttpClient();
@@ -127,20 +145,27 @@ public sealed partial class ChannelOutboundIsolatedTests
                 settings["Agents:Definitions:f5-grok:Env:GROK_HOME"] = native;
                 settings["Agents:Definitions:f5-grok:Env:ANTIPHON_FAKE_REPORT_LINE"] = "1";
                 settings["Agents:Definitions:f5-grok:Env:ANTIPHON_FAKE_SOURCE_REPORT"] = report;
+                settings["Agents:Definitions:f5-grok:Env:ANTIPHON_FAKE_CHANNEL_ANSWER"] = channelAnswer;
                 settings["Agents:Definitions:f5-grok:Env:ANTIPHON_FAKE_OUTBOUND_TOOL"] = toolDll;
                 settings["Agents:Definitions:f5-grok:Env:ANTIPHON_FAKE_OUTBOUND_BROWSER"] = browser;
                 settings["Agents:Definitions:f5-grok:Env:ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"] = gate;
                 var names = new[] { "GROK_HOME", "ANTIPHON_FAKE_REPORT_LINE", "ANTIPHON_FAKE_SOURCE_REPORT",
+                    "ANTIPHON_FAKE_CHANNEL_ANSWER",
                     "ANTIPHON_FAKE_OUTBOUND_TOOL", "ANTIPHON_FAKE_OUTBOUND_BROWSER", "ANTIPHON_FAKE_OUTBOUND_TOOL_GATE" };
                 for (var i = 0; i < names.Length; i++)
                     settings[$"Agents:Definitions:f5-grok:NonSecretEnvironmentNames:{i}"] = names[i];
                 settings["Delegation:CheckInterpreterEnabled"] = "false";
                 settings["Delegation:DiagnoseEnabled"] = "false";
                 settings["Delegation:OutputDistillerEnabled"] = "false";
-                settings["ChannelBridge:Enabled"] = "false";
+                settings["ChannelBridge:Enabled"] = "true";
+                settings["ChannelBridge:AgentReadyDelaySeconds"] = "0";
+                settings["ChannelBridge:DebounceWindowMs"] = "0";
+                settings["ChannelBridge:BatchingEnabled"] = "false";
                 settings["Hangfire:ServerEnabled"] = "false";
                 settings["AntiphonMessaging:BootstrapServers"] = broker.GetBootstrapAddress();
+                settings["AntiphonMessaging:InboundTopic"] = inboundTopic;
                 settings["AntiphonMessaging:OutboundTopic"] = topic;
+                settings["AntiphonMessaging:ConsumerGroup"] = "c0418-f5-bridge-" + projectId.ToString("N");
                 settings["ChannelOutbound:Profiles:pdf:ProjectId"] = projectId.ToString("D");
                 settings["ChannelOutbound:Profiles:pdf:AgentId"] = converterId.ToString("D");
                 settings["ChannelOutbound:Profiles:pdf:PromptFile"] = "convert.md";
@@ -148,7 +173,10 @@ public sealed partial class ChannelOutboundIsolatedTests
             },
             ConfigureOwnedServices = services =>
             {
-                services.PostConfigure<DelegationSettings>(s => s.AllowedRoots = [repo, converter]);
+                services.PostConfigure<DelegationSettings>(s => s.AllowedRoots = [repo, repoQ, converter]);
+                // WebApplicationFactory applies ConfigureAppConfiguration after Program's
+                // conditional hosted-service registration, so opt in explicitly here.
+                services.AddHostedService<ChannelBridgeService>();
                 services.RemoveAll<IChannelOutboundFileStore>();
                 services.AddSingleton<IChannelOutboundFileStore>(new ChannelOutboundFileStore(storeRoot));
             },
@@ -171,11 +199,19 @@ public sealed partial class ChannelOutboundIsolatedTests
                 var now = DateTime.UtcNow;
                 db.Projects.Add(new Project { Id = projectId, Name = "f5-" + projectId.ToString("N"),
                     LocalRepositoryPath = repo, BaseBranch = "main", CreatedAt = now, UpdatedAt = now });
+                db.Projects.Add(new Project { Id = projectQId, Name = "f5-q-" + projectQId.ToString("N"),
+                    LocalRepositoryPath = repoQ, BaseBranch = "main", CreatedAt = now, UpdatedAt = now });
                 db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "f5",
+                    CreatedAt = now, UpdatedAt = now });
+                db.Boards.Add(new Board { Id = boardQId, ProjectId = projectQId, Name = "f5-q",
                     CreatedAt = now, UpdatedAt = now });
                 db.Agents.AddRange(
                     new Agent { Id = sourceAgentId, BoardId = boardId, Name = "source", Slug = "f5-source-" + sourceAgentId.ToString("N"),
                         Kind = AgentKind.Grok, ModelLevel = AgentModelLevel.Low, WorkingDirectory = repo },
+                    new Agent { Id = sourceAgentQId, BoardId = boardQId, Name = "source-q", Slug = "f5-source-q-" + sourceAgentQId.ToString("N"),
+                        Kind = AgentKind.Grok, ModelLevel = AgentModelLevel.Low, WorkingDirectory = repoQ,
+                        LaunchEnvJson = JsonSerializer.Serialize(new Dictionary<string, string>
+                            { ["ANTIPHON_FAKE_CHANNEL_ANSWER"] = channelAnswerQ }) },
                     new Agent { Id = converterId, BoardId = boardId, Name = "converter", Slug = "f5-converter-" + converterId.ToString("N"),
                         Kind = AgentKind.Grok, ModelLevel = AgentModelLevel.Low, WorkingDirectory = converter });
                 db.ChatChannels.Add(new ChatChannel { Id = Guid.NewGuid(), Provider = "slack", ExternalId = "C0418F5",
@@ -183,6 +219,9 @@ public sealed partial class ChannelOutboundIsolatedTests
                     OutboundAgentProfile = "pdf", Enabled = true, CreatedAt = now, UpdatedAt = now });
                 db.ChatChannels.Add(new ChatChannel { Id = Guid.NewGuid(), Provider = "slack", ExternalId = "C0418Y",
                     ReplyHandle = "C0418Y|1700000000.000300", AgentId = sourceAgentId,
+                    Enabled = true, CreatedAt = now, UpdatedAt = now });
+                db.ChatChannels.Add(new ChatChannel { Id = Guid.NewGuid(), Provider = "slack", ExternalId = "C0418Z",
+                    ReplyHandle = "C0418Z|1700000000.000500", AgentId = sourceAgentQId,
                     Enabled = true, CreatedAt = now, UpdatedAt = now });
                 await db.SaveChangesAsync(ct);
             }
@@ -218,15 +257,74 @@ public sealed partial class ChannelOutboundIsolatedTests
             sourcePaths.Count.ShouldBe(4);
             var sentSources = sourcePaths.Select(File.ReadAllBytes).ToArray();
             sentSources.Select(Hash).Order(StringComparer.Ordinal).ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
+            Guid noChannelTaskId;
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                    new CreateAgentTaskRequest("Report the four completed Markdown paths in your final response.",
+                        Title: "Separate no-channel source task", Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Docs,
+                        AgentKind: AgentKind.Grok, Workspace: WorkspaceMode.Worktree,
+                        WorkingDirectory: repo, CommitOnSettle: "Never"),
+                    new AgentTaskService.Caller(null, null, repo, ProjectId: projectId, BoardId: boardId), ct);
+                noChannelTaskId = created.Id;
+            }
+            await UntilAsync(async () =>
+            {
+                await using var scope = app.Services.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == noChannelTaskId, ct);
+                if (task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked or AgentTaskStatus.Canceled)
+                    throw new InvalidOperationException("The no-channel source task failed: " + task.FailureReason);
+                return task.Status == AgentTaskStatus.Succeeded && task.DeliverableFileCount == 4;
+            }, ct);
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == noChannelTaskId, ct);
+                DeliverableBundleService.ListAttachableFiles(task).Select(File.ReadAllBytes).Select(Hash)
+                    .Order(StringComparer.Ordinal).ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
+                task.DeliverablePdfPath.ShouldBeNull();
+                (await db.ChannelOutboundDeliveries.CountAsync(ct)).ShouldBe(0);
+            }
+            Guid sourceTaskQId;
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                    new CreateAgentTaskRequest("Report the four completed Markdown paths in your final response.",
+                        Title: "Project Q synthetic sources", Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Docs,
+                        AgentKind: AgentKind.Grok, Workspace: WorkspaceMode.Worktree,
+                        WorkingDirectory: repoQ, CommitOnSettle: "Never"),
+                    new AgentTaskService.Caller(null, null, repoQ, ProjectId: projectQId, BoardId: boardQId), ct);
+                sourceTaskQId = created.Id;
+            }
+            await UntilAsync(async () =>
+            {
+                await using var scope = app.Services.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskQId, ct);
+                if (task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked or AgentTaskStatus.Canceled)
+                    throw new InvalidOperationException("Project Q source task failed: " + task.FailureReason);
+                return task.Status == AgentTaskStatus.Succeeded && task.DeliverableFileCount == 4;
+            }, ct);
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskQId, ct);
+                var paths = DeliverableBundleService.ListAttachableFiles(task);
+                paths.Select(File.ReadAllBytes).Select(Hash).Order(StringComparer.Ordinal)
+                    .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
+                await File.WriteAllTextAsync(channelAnswerQ, "Project Q sources complete.\n" + string.Join('\n',
+                    paths.Select(path => "[[attach: " + path + "]]")), ct);
+                task.DeliverablePdfPath.ShouldBeNull();
+                (await db.ChannelOutboundDeliveries.CountAsync(ct)).ShouldBe(0);
+            }
             if (sourceTask.WorktreePath is { } tree && Directory.Exists(tree))
                 await GitAsync(repo, ct, "worktree", "remove", "--force", tree);
-            sourceTask.AgentSessionId.ShouldNotBeNull();
-            var sourceSessionId = sourceTask.AgentSessionId!.Value;
             var attachmentAnswer = "Four synthetic sources complete.\n" + string.Join('\n',
                 sourcePaths.Select(path => "[[attach: " + path + "]]") );
-            var xCorrelationId = await DispatchChannelTurnAsync(app, sourceSessionId, sourceTaskId,
-                "C0418F5", "C0418F5|1700000000.000100", attachmentAnswer,
-                ChannelReplyDispatchOutcome.Deferred, ct);
+            await File.WriteAllTextAsync(channelAnswer, attachmentAnswer, ct);
+            var xCorrelationId = await SendInboundAndAwaitTurnAsync(app, broker.GetBootstrapAddress(), inboundTopic,
+                "C0418F5", "C0418F5|1700000000.000100", ct);
             Guid deliveryId;
             await using (var scope = app.Services.CreateAsyncScope())
             {
@@ -234,7 +332,7 @@ public sealed partial class ChannelOutboundIsolatedTests
                 var delivery = await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(ct);
                 deliveryId = delivery.Id;
                 delivery.State.ShouldNotBe(ChannelOutboundDeliveryState.Published);
-                delivery.SourceTaskId.ShouldBe(sourceTaskId);
+                delivery.SourceTaskId.ShouldBeNull();
                 (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == xCorrelationId, ct))
                     .ChannelReplySettledAt.ShouldBeNull();
                 (await db.ChatChannels.SingleAsync(c => c.ExternalId == "C0418F5", ct)).ReplyHandle =
@@ -336,9 +434,8 @@ public sealed partial class ChannelOutboundIsolatedTests
                 .ChannelReplySettledAt.ShouldNotBeNull();
 
             // The same source answer for an unbound conversation takes the direct path.
-            var yCorrelationId = await DispatchChannelTurnAsync(app, sourceSessionId, sourceTaskId,
-                "C0418Y", "C0418Y|1700000000.000300", attachmentAnswer,
-                ChannelReplyDispatchOutcome.Published, ct);
+            var yCorrelationId = await SendInboundAndAwaitTurnAsync(app, broker.GetBootstrapAddress(), inboundTopic,
+                "C0418Y", "C0418Y|1700000000.000300", ct);
             await UntilAsync(() => Task.FromResult(fakeSlack.UploadedFiles.Count == 9), ct);
             (await verify.ChannelOutboundDeliveries.AsNoTracking().CountAsync(ct)).ShouldBe(1);
             fakeSlack.SentMessages.Count.ShouldBe(2);
@@ -349,25 +446,36 @@ public sealed partial class ChannelOutboundIsolatedTests
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == yCorrelationId, ct))
                 .ChannelReplySettledAt.ShouldNotBeNull();
 
+            var zCorrelationId = await SendInboundAndAwaitTurnAsync(app, broker.GetBootstrapAddress(), inboundTopic,
+                "C0418Z", "C0418Z|1700000000.000500", ct);
+            await UntilAsync(() => Task.FromResult(fakeSlack.UploadedFiles.Count == 13), ct);
+            (await verify.ChannelOutboundDeliveries.AsNoTracking().CountAsync(ct)).ShouldBe(1);
+            fakeSlack.SentMessages.Count.ShouldBe(3);
+            fakeSlack.SentMessages[2].Channel.ShouldBe("C0418Z");
+            fakeSlack.SentMessages[2].ThreadTs.ShouldBe("1700000000.000500");
+            fakeSlack.UploadedFiles.Skip(9).Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
+                .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == zCorrelationId, ct))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+
             // A real worker/tool failure publishes the sealed originals with a degraded note.
             await File.WriteAllTextAsync(browser, "#!/bin/sh\nexit 42\n", ct);
-            var failedCorrelationId = await DispatchChannelTurnAsync(app, sourceSessionId, sourceTaskId,
-                "C0418F5", "C0418F5|1700000000.000400", attachmentAnswer,
-                ChannelReplyDispatchOutcome.Deferred, ct);
+            var failedCorrelationId = await SendInboundAndAwaitTurnAsync(app, broker.GetBootstrapAddress(), inboundTopic,
+                "C0418F5", "C0418F5|1700000000.000400", ct);
             await UntilAsync(async () =>
             {
                 await using var scope = app.Services.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 return await db.ChannelOutboundDeliveries.AsNoTracking().CountAsync(d =>
                     d.ChannelId == final.ChannelId && d.State == ChannelOutboundDeliveryState.Published, ct) == 2
-                    && fakeSlack.UploadedFiles.Count == 13;
+                    && fakeSlack.UploadedFiles.Count == 17;
             }, ct);
-            fakeSlack.SentMessages.Count.ShouldBe(3);
-            fakeSlack.SentMessages[2].ThreadTs.ShouldBe("1700000000.000400");
-            fakeSlack.SentMessages[2].Text.ShouldNotBeNull();
-            fakeSlack.SentMessages[2].Text!.ShouldContain(
+            fakeSlack.SentMessages.Count.ShouldBe(4);
+            fakeSlack.SentMessages[3].ThreadTs.ShouldBe("1700000000.000400");
+            fakeSlack.SentMessages[3].Text.ShouldNotBeNull();
+            fakeSlack.SentMessages[3].Text!.ShouldContain(
                 "Conversion unavailable; original attachments retained.");
-            fakeSlack.UploadedFiles.Skip(9).Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
+            fakeSlack.UploadedFiles.Skip(13).Select(u => Hash(u.Bytes)).Order(StringComparer.Ordinal)
                 .ShouldBe(expected.Select(Hash).Order(StringComparer.Ordinal));
             (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d =>
                 d.ChannelId == final.ChannelId && d.Id != deliveryId, ct))
@@ -382,62 +490,55 @@ public sealed partial class ChannelOutboundIsolatedTests
         }
     }
 
-    private static async Task<Guid> DispatchChannelTurnAsync(AntiphonAppFixture app, Guid sessionId,
-        Guid sourceTaskId, string conversationId, string inboundHandle, string answer,
-        ChannelReplyDispatchOutcome expected, CancellationToken ct)
+    private static async Task<Guid> SendInboundAndAwaitTurnAsync(AntiphonAppFixture app, string bootstrap,
+        string topic, string conversationId, string inboundHandle, CancellationToken ct)
     {
-        var correlationId = Guid.NewGuid();
-        var inboundId = Guid.NewGuid();
-        var now = DateTime.UtcNow;
-        var prompt = $"[antiphon-channel:{correlationId:N}] Please send the completed sources.";
-        await using (var scope = app.Services.CreateAsyncScope())
+        var nativeId = Guid.NewGuid().ToString("N");
+        using var raw = JsonDocument.Parse("{}");
+        var inbound = new ChannelMessage
         {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
-                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0) + 1;
-            var queueSequence = (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId)
-                .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
-            using var raw = JsonDocument.Parse("{}");
-            var envelope = new ChannelMessage
+            Id = nativeId, Channel = "slack", ChannelMessageId = nativeId,
+            Conversation = new Conversation { Id = conversationId, Kind = ConversationKind.Channel },
+            Author = new Participant { Id = "f5-sender" }, Timestamp = DateTimeOffset.UtcNow,
+            Text = "Please send the four completed Markdown sources.", ReplyHandle = inboundHandle,
+            Raw = raw.RootElement.Clone(),
+        };
+        using (var producer = new ProducerBuilder<string, string>(new ProducerConfig
+            { BootstrapServers = bootstrap }).Build())
+        {
+            await producer.ProduceAsync(topic, new Message<string, string>
             {
-                Id = inboundId.ToString("D"), Channel = "slack", ChannelMessageId = inboundId.ToString("D"),
-                Conversation = new Conversation { Id = conversationId, Kind = ConversationKind.Channel },
-                Author = new Participant { Id = "f5-sender" }, Timestamp = new DateTimeOffset(now),
-                Text = prompt, ReplyHandle = inboundHandle,
-                Raw = raw.RootElement.Clone(),
-            };
-            db.ChannelInbounds.Add(new ChannelInbound
-            {
-                Id = inboundId, Provider = "slack", ConversationId = conversationId,
-                NativeMessageId = inboundId.ToString("D"), EnvelopeJson = JsonSerializer.Serialize(envelope, MessagingJson.Options),
-                QueueMessageId = correlationId, AcceptedAt = now, TransferredAt = now,
-            });
-            db.SessionQueuedMessages.Add(new SessionQueuedMessage
-            {
-                Id = correlationId, AgentSessionId = sessionId, Body = prompt,
-                Sequence = queueSequence, Origin = QueuedMessageOrigin.Channel,
-                ConversationKey = "slack:" + conversationId, SourceChannelInboundId = inboundId,
-                SourceTaskId = sourceTaskId, Status = QueuedMessageStatus.Sent,
-                CreatedAt = now, SentAt = now, DeliveryAttempts = 1,
-                LastDeliveryStartedAt = now, LastDeliveryBaselineSequence = sequence - 1,
-            });
-            db.TranscriptEntries.AddRange(
-                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence,
-                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt,
-                    Text = prompt, Timestamp = now, CreatedAt = now },
-                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence + 1,
-                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText,
-                    Text = answer, Timestamp = now, CreatedAt = now },
-                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence + 2,
-                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd,
-                    StopReason = Antiphon.SessionRunner.Contracts.TranscriptKinds.StopReasons.EndTurn,
-                    Timestamp = now, CreatedAt = now });
-            await db.SaveChangesAsync(ct);
+                Key = conversationId,
+                Value = JsonSerializer.Serialize(inbound, MessagingJson.Options),
+            }, ct);
         }
-        var result = await app.Services.GetRequiredService<ChannelReplyDispatcher>()
-            .OnTurnEndAsync(sessionId, ct);
-        result.OutcomeFor(correlationId).ShouldBe(expected);
-        return correlationId;
+        Guid? queueId = null;
+        await UntilAsync(async () =>
+        {
+            await using var scope = app.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var accepted = await db.ChannelInbounds.AsNoTracking()
+                .SingleOrDefaultAsync(i => i.Provider == "slack" && i.ConversationId == conversationId
+                    && i.NativeMessageId == nativeId, ct);
+            if (accepted?.QueueMessageId is not Guid id) return false;
+            var queue = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == id, ct);
+            if (queue.Status != QueuedMessageStatus.Sent || queue.SentAt is null) return false;
+            var prompts = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == queue.AgentSessionId
+                    && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt)
+                .Select(t => new { t.Sequence, t.Text }).ToListAsync(ct);
+            var marker = "[antiphon-channel:" + id.ToString("N") + "]";
+            var prompt = prompts.LastOrDefault(p => p.Text != null && p.Text.Contains(marker, StringComparison.Ordinal));
+            if (prompt is null || !prompt.Text!.Contains(inbound.Text!, StringComparison.Ordinal)) return false;
+            var ended = await db.TranscriptEntries.AsNoTracking().AnyAsync(t =>
+                t.AgentSessionId == queue.AgentSessionId && t.Sequence > prompt.Sequence
+                && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, ct);
+            if (!ended || queue.ChannelOutboundDeliveryId is null && queue.ChannelReplySettledAt is null)
+                return false;
+            queueId = id;
+            return true;
+        }, ct);
+        return queueId!.Value;
     }
 
     private static async Task UntilAsync(Func<Task<bool>> predicate, CancellationToken ct)
