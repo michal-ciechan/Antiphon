@@ -503,6 +503,7 @@ public class AgentTaskPoolTests
         var dispatched = await after.AgentTaskEvents
             .SingleAsync(e => e.AgentTaskId == seeded.FollowUp.Id && e.Type == AgentTaskEventType.Dispatched);
         dispatched.Detail.ShouldStartWith("Reused warm delegate");
+        dispatched.AgentSessionId.ShouldBe((await after.AgentTasks.SingleAsync(t => t.Id == seeded.FollowUp.Id)).AgentSessionId);
     }
 
     [Test]

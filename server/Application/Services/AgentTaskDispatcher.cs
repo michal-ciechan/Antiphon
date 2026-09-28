@@ -4839,6 +4839,7 @@ public sealed class AgentTaskDispatcher
         {
             Id = Guid.NewGuid(),
             AgentTaskId = claimed.Id,
+            AgentSessionId = session.Id,
             Type = AgentTaskEventType.Dispatched,
             ModelLevel = claimed.ModelLevel,
             Detail = $"Dispatched to agent '{agent.Name}' "
@@ -6585,6 +6586,7 @@ public sealed class AgentTaskDispatcher
         {
             Id = Guid.NewGuid(),
             AgentTaskId = claimed.Id,
+            AgentSessionId = session,
             Type = AgentTaskEventType.Dispatched,
             ModelLevel = claimed.ModelLevel,
             Detail = $"Reused warm delegate '{agent.Name}' "
@@ -6781,6 +6783,7 @@ public sealed class AgentTaskDispatcher
         {
             Id = Guid.NewGuid(),
             AgentTaskId = claimed.Id,
+            AgentSessionId = session,
             Type = AgentTaskEventType.Dispatched,
             ModelLevel = claimed.ModelLevel,
             Detail = $"Delivered into standing agent '{standing.Name}'s live session",

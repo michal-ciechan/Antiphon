@@ -21,6 +21,46 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskInternalDecisionMigrationTests
 {
     private const string FirstMigrationSuffix = "_AddAgentTaskInternalDecisionPolicy";
+    private const string DispatchEvidenceMigrationSuffix = "_AddAgentTaskDispatchSessionEvidence";
+
+    [Test]
+    public async Task Old_dispatch_event_upgrades_with_no_invented_session_binding()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var taskId = Guid.NewGuid();
+        var eventId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "legacy", Goal = "legacy",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
+            ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
+        var index = Array.FindIndex(migrations, m => m.EndsWith(DispatchEvidenceMigrationSuffix,
+            StringComparison.Ordinal));
+        index.ShouldBeGreaterThan(0);
+        var migrator = db.GetService<IMigrator>();
+        await migrator.MigrateAsync(migrations[index - 1]);
+        (await db.Database.SqlQueryRaw<string>(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'AgentTaskEvents' AND column_name = 'AgentSessionId'")
+            .ToListAsync()).ShouldBeEmpty();
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO \"AgentTaskEvents\" (\"Id\", \"AgentTaskId\", \"Type\", \"Detail\", \"At\") VALUES ({eventId}, {taskId}, {(int)AgentTaskEventType.Dispatched}, {"Legacy dispatch"}, {DateTime.UtcNow})");
+        await migrator.MigrateAsync();
+        db.ChangeTracker.Clear();
+        var legacy = await db.AgentTaskEvents.SingleAsync(e => e.Id == eventId);
+        legacy.AgentSessionId.ShouldBeNull();
+        legacy.AgentSessionId = Guid.NewGuid();
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        (await db.AgentTaskEvents.SingleAsync(e => e.Id == eventId)).AgentSessionId.ShouldNotBeNull();
+        (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+        db.Database.HasPendingModelChanges().ShouldBeFalse();
+    }
 
     [Test]
     public async Task Card0407_V05_pre_feature_row_upgrades_to_a_null_policy_with_legacy_fields_intact()

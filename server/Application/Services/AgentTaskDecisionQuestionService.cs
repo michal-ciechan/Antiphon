@@ -66,6 +66,10 @@ public sealed class AgentTaskDecisionQuestionService(
             // recorded binding of this session to this task is a stale attempt instead.
             var previouslyBound = await db.AgentTaskDecisionQuestions.AsNoTracking().AnyAsync(q =>
                 q.AgentTaskId == taskId && q.AgentSessionId == caller.SessionId, ct);
+            if (!previouslyBound)
+                previouslyBound = await db.AgentTaskEvents.AsNoTracking().AnyAsync(e =>
+                    e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched
+                    && e.AgentSessionId == caller.SessionId, ct);
             if (previouslyBound)
                 throw new ConflictException("The worker session changed.", "decision_question_stale");
             throw new ForbiddenException("This session is not this task's worker.",

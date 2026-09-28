@@ -666,6 +666,8 @@ public class AgentTaskEvent
 {
     public Guid Id { get; set; }
     public Guid AgentTaskId { get; set; }
+    /// <summary>Worker session bound by a Dispatched event; null on older and other events.</summary>
+    public Guid? AgentSessionId { get; set; }
     public AgentTaskEventType Type { get; set; }
     public AgentModelLevel? ModelLevel { get; set; }
     public string Detail { get; set; } = string.Empty;
