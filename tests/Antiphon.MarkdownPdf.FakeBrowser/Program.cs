@@ -16,14 +16,17 @@ if (Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparis
     start.ArgumentList.Add(System.Reflection.Assembly.GetExecutingAssembly().Location);
 start.ArgumentList.Add("--fixture-child");
 using var child = Process.Start(start) ?? throw new InvalidOperationException("Child did not start.");
+await WriteAtomicAsync("arguments.txt", string.Join('\n', args));
 await WritePidAsync("parent.pid");
 await Task.Delay(Timeout.InfiniteTimeSpan);
 
-async Task WritePidAsync(string name)
+Task WritePidAsync(string name) => WriteAtomicAsync(name,
+    Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+async Task WriteAtomicAsync(string name, string content)
 {
     var target = Path.Combine(root, name);
     var temporary = target + ".tmp";
-    await File.WriteAllTextAsync(temporary,
-        Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    await File.WriteAllTextAsync(temporary, content);
     File.Move(temporary, target);
 }

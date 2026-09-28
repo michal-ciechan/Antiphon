@@ -232,6 +232,10 @@ public class MarkdownPdfRendererTests
             childPid = int.Parse(await File.ReadAllTextAsync(childFile));
             parentStarted = Process.GetProcessById(parentPid.Value).StartTime;
             childStarted = Process.GetProcessById(childPid.Value).StartTime;
+            // The renderer's staged HTML is live while the browser runs and is removed afterwards.
+            var arguments = await File.ReadAllLinesAsync(Path.Combine(root, "arguments.txt"));
+            var stagedHtml = new Uri(arguments.Single(arg => arg.StartsWith("file://", StringComparison.Ordinal))).LocalPath;
+            File.Exists(stagedHtml).ShouldBeTrue();
             if (cancelCaller)
             {
                 caller.Cancel();
@@ -246,6 +250,7 @@ public class MarkdownPdfRendererTests
             await WaitForExitAsync(parentPid.Value);
             await WaitForExitAsync(childPid.Value);
             File.Exists(pdf).ShouldBeFalse();
+            File.Exists(stagedHtml).ShouldBeFalse();
         }
         finally
         {
