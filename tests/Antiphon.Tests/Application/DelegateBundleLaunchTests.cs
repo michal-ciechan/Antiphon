@@ -71,9 +71,9 @@ public class DelegateBundleLaunchTests
         text.ShouldContain("Report every PC-n/variant pending for Mutation");
         text.ShouldContain("next: review when implementation and ordinary V/R are complete");
         text.ShouldContain("""
-            For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
-            and terminal-only replies, follow their own contracts; the phone rules below do
-            not apply. Do not pass these phone rules to delegates.
+            checks, and scheduled prompts. Worker/delegate reports, briefs, stage artifacts,
+            specialist outputs, and terminal-only replies follow their own contracts. Do not
+            pass this style to delegates.
             """.ReplaceLineEndings("\n"));
         text.ShouldEndWith("Write the complete internal report.");
     }
