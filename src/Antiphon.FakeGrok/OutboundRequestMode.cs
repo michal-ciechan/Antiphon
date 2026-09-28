@@ -47,6 +47,17 @@ internal static class OutboundRequestMode
                     File = "input/" + source.GetProperty("localName").GetString()!,
                 }).ToArray();
             if (sourceFiles.Length == 0)
+            {
+                sourceFiles = root.GetProperty("attachments").EnumerateArray()
+                    .Where(attachment => attachment.GetProperty("name").GetString()!
+                        .EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+                    .Select(attachment => new
+                    {
+                        Path = attachment.GetProperty("name").GetString()!,
+                        File = "input/" + attachment.GetProperty("localName").GetString()!,
+                    }).ToArray();
+            }
+            if (sourceFiles.Length == 0)
                 throw new InvalidDataException("The frozen request contains no Markdown sources.");
             foreach (var source in sourceFiles)
                 if (!File.Exists(Path.Combine(requestDirectory, source.File)))
