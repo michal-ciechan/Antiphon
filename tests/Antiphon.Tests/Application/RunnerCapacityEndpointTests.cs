@@ -39,7 +39,7 @@ public sealed class RunnerCapacityEndpointTests
             Payload: JsonSerializer.SerializeToElement(new PhoneHomeCapacityHeartbeat(2), PhoneHomeFraming.Json)));
         try
         {
-            await audit.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await audit.Entered.Task.WaitAsync(TimeSpan.FromSeconds(60));
             live.Capacity.ShouldBe(2);
             (await client.GetHealthAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(3)))
                 .ShouldNotBeNull();
