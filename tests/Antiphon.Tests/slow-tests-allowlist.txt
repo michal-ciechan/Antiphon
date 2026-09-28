@@ -81,6 +81,10 @@ Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 Antiphon.Tests.Application.ChannelBridgeTests
 # CARD-0593: isolated migrated database, wake deadline and recovery boundaries.
 Antiphon.Tests.Application.ChannelInboundRecoveryTests
+# CARD-0519: owned process-death boundaries and database re-adoption for outbound publication.
+Antiphon.Tests.Application.ChannelOutboundCrashTests
+# CARD-0519: real Redpanda broker and gateway adapter receipt boundaries.
+Antiphon.Tests.Application.ChannelOutboundTransportTests
 # CARD-0495: default version-probe timeout is 5s by contract (C495_VersionProbeDefaultTimeoutIsFiveSeconds).
 Antiphon.Tests.Application.DelegateScriptLandCompatibilityTests
 # CARD-0476 fresh-process lazy DB probes, Docker cold start
