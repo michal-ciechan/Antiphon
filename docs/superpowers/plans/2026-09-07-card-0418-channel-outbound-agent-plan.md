@@ -653,7 +653,7 @@ another.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c0418-r7/` | unit | `/*/*/*/*[Category=Unit]` | V-2, V-5, V-12, V-13, V-19, V-21; R-1, R-2, R-8, R-12 | whole Unit lane, 0 failed | 3450 | 7 | true | n/a |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c0418-r7/` | unit | `/*/*/*/*[Category=Unit]` | V-2, V-5, V-12, V-13, V-19, V-21; R-1, R-2, R-8, R-12 | whole Unit lane, 0 failed | 3450 | 7 | true | TUNIT_MAX_PARALLEL_TESTS=2 |
 | CP-2 | all | CP-1 | source-settlement | `/*/*/(DeliverableBundleServiceTests*)\|(SourceBundleManifestTests*)\|(AgentTaskReplyIntegrationTests*)\|(ChannelFollowUpAttachmentTests*)/*` | V-1..V-4, V-16, V-21; R-1, R-2 | all four classes, 0 failed | 320 | 7 | true | n/a |
 | CP-3 | all | CP-1 | policy-schema | `/*/*/(ChannelOutboundPolicyTests*)\|(ChannelOutboundEndpointTests*)\|(ChannelOutboundMigrationTests*)\|(ChannelOutboundContractTests*)/*` | V-5, V-18, V-21; R-3, R-12 | all four classes, 0 failed | 8 | 3 | true | n/a |
 | CP-4 | all | CP-1 | file-boundary | `/*/*/(ChannelOutboundStorageTests*)\|(OutboundConversionManifestTests*)/*` | V-2, V-3, V-12, V-13, V-23; R-2, R-8, R-9 | both classes and every data row, 0 failed | 40 | 5 | true | n/a |

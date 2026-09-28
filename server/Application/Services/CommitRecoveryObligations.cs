@@ -67,6 +67,7 @@ public static class CommitRecoveryObligations
             return new Dictionary<Guid, IReadOnlyList<Pending>>();
         var ids = taskIds.Distinct().ToArray();
         var events = await db.AgentTaskEvents.AsNoTracking()
+            .TagWith("CommitRecoveryObligations.LoadUnresolved")
             .Where(e => ids.Contains(e.AgentTaskId) && RelevantTypes.Contains(e.Type))
             .ToListAsync(ct);
         return Unresolved(events)

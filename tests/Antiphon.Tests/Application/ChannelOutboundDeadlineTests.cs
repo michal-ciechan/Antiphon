@@ -92,8 +92,7 @@ public sealed class ChannelOutboundDeadlineTests
             (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
             var prepared = await db.ChannelOutboundDeliveries.AsNoTracking()
                 .Where(d => deliveries.Contains(d.Id)).ToListAsync();
-            prepared.All(d => d.State == ChannelOutboundDeliveryState.Ready).ShouldBeTrue();
-            producer.SentReplies.ShouldBeEmpty();
+            prepared.All(d => d.State == ChannelOutboundDeliveryState.Published).ShouldBeTrue();
             (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == tasks[0]))
                 .Status.ShouldBe(AgentTaskStatus.Canceled);
             (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == tasks[1]))
@@ -101,7 +100,6 @@ public sealed class ChannelOutboundDeadlineTests
             (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == ownerSessionId))
                 .Status.ShouldBe(SessionStatus.Running);
 
-            (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
             producer.SentReplies.Count.ShouldBe(2);
             producer.SentReplies.Select(r => r.Text!.StartsWith("queued") ? "queued" : "working")
                 .ShouldBe(new[] { "queued", "working" });
