@@ -24,6 +24,172 @@ namespace Antiphon.Tests.Application;
 public sealed partial class ChannelOutboundDeliveryTests
 {
     [Test]
+    [Arguments("corrupt")]
+    [Arguments("missing")]
+    public async Task Accepted_original_storage_failure_is_terminal_without_a_false_send(string fault)
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-original-storage-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        try
+        {
+            var snapshot = await files.StageAsync(deliveryId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"), Text = "original",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Content = "# Source"u8.ToArray() }],
+            }, CancellationToken.None);
+            await using var db = new AppDbContext(options);
+            db.Projects.Add(new Project { Id = projectId, Name = "storage-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "storage",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "storage",
+                Slug = "storage-" + agentId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = agentId,
+                CreatedAt = now, UpdatedAt = now });
+            db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"),
+                ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "",
+                PromptRevision = new string('a', 64), InputPath = snapshot.ReplyPath,
+                InputSha256 = snapshot.ReplySha256, Trigger = "Passthrough",
+                State = ChannelOutboundDeliveryState.Ready, CreatedAt = now,
+                DeadlineAt = now.AddHours(1),
+            });
+            await db.SaveChangesAsync();
+            if (fault == "corrupt")
+                await File.WriteAllTextAsync(snapshot.ReplyPath, "corrupted original");
+            else
+                File.Delete(snapshot.ReplyPath);
+
+            var pump = new ChannelOutboundDeliveryPump(db, null!, files, producer,
+                Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            await using var observer = new AppDbContext(options);
+            var failed = await observer.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == deliveryId);
+            failed.State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+            failed.PublishedAt.ShouldBeNull();
+            failed.PublicationAttempts.ShouldBe(0);
+            failed.FailureReason.ShouldNotBeNullOrWhiteSpace();
+            producer.SentReplies.ShouldBeEmpty();
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(0);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
+    public async Task Staging_io_failure_leaves_correlation_owed_and_same_source_retry_admits_once()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-stage-retry-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+        var producer = new FakeAntiphonMessagingClient();
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert sources.");
+            var settings = Options.Create(new ChannelOutboundSettings
+            {
+                Profiles = new Dictionary<string, ChannelOutboundProfile>
+                {
+                    ["convert"] = new() { ProjectId = projectId, AgentId = converterId,
+                        PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.EveryAgentReply },
+                },
+            });
+            await using var db = new AppDbContext(options);
+            db.Projects.Add(new Project { Id = projectId, Name = "retry-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "retry",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.AddRange(
+                new Agent { Id = inboundId, Name = "inbound", Slug = "inbound-" + inboundId.ToString("N"),
+                    BoardId = boardId, WorkingDirectory = root },
+                new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
+                    BoardId = boardId, WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "slack",
+                ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                OutboundAgentProfile = "convert", CreatedAt = now, UpdatedAt = now });
+            db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "inbound", Cwd = root,
+                CreatedAt = now, StartedAt = now, LastSeenAt = now });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = correlationId, AgentSessionId = sessionId, Body = "asked", Sequence = 1,
+                Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                ConversationKey = "slack:" + channelId.ToString("N"), CreatedAt = now,
+            });
+            await db.SaveChangesAsync();
+            var service = new ChannelOutboundService(db, files, producer, settings, TimeProvider.System);
+            var reply = new ChannelReply
+            {
+                Channel = "slack", ConversationId = channelId.ToString("N"), Text = "original answer",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Content = "# Source"u8.ToArray() }],
+            };
+            var source = new ChannelOutboundSource(sessionId, 1, 2, 3, "main", [correlationId]);
+            var faulted = false;
+            files.ProbeBarrierAsync = (boundary, _, _) =>
+            {
+                if (boundary == "input-temporary-complete")
+                {
+                    faulted = true;
+                    throw new IOException("fixture-owned disk full");
+                }
+                return Task.CompletedTask;
+            };
+            await Should.ThrowAsync<IOException>(() => service.SendAsync(reply,
+                ChannelOutboundOrigin.AgentReply, source, CancellationToken.None));
+            faulted.ShouldBeTrue();
+            await using (var observer = new AppDbContext(options))
+            {
+                (await observer.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == channelId))
+                    .ShouldBe(0);
+                var owed = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == correlationId);
+                owed.ChannelOutboundDeliveryId.ShouldBeNull();
+                owed.ChannelReplySettledAt.ShouldBeNull();
+            }
+            Directory.GetDirectories(Path.Combine(root, "store"), ".stage-*").ShouldBeEmpty();
+            producer.SentReplies.ShouldBeEmpty();
+
+            files.ProbeBarrierAsync = null;
+            (await service.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source,
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            (await service.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source,
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            await using var fresh = new AppDbContext(options);
+            var intent = (await fresh.ChannelOutboundDeliveries.AsNoTracking()
+                .Where(d => d.ChannelId == channelId).ToListAsync()).ShouldHaveSingleItem();
+            intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+            var correlation = await fresh.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.Id == correlationId);
+            correlation.ChannelOutboundDeliveryId.ShouldBe(intent.Id);
+            correlation.ChannelReplySettledAt.ShouldBeNull();
+            producer.SentReplies.ShouldBeEmpty();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Fallback_annotation_uses_actual_wire_budget_and_overcap_keeps_stamps_null()
     {
         const int cap = 2048;

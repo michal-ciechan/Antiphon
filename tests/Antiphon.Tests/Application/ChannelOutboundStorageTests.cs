@@ -16,6 +16,8 @@ public sealed class ChannelOutboundStorageTests
     [Arguments("partial_write")]
     [Arguments("complete_write")]
     [Arguments("rename_refusal")]
+    [Arguments("disk_full")]
+    [Arguments("access_denied")]
     public async Task Failed_staging_never_exposes_a_partial_snapshot(string fault)
     {
         var root = Directory.CreateTempSubdirectory("c0418-stage-fault-").FullName;
@@ -37,7 +39,10 @@ public sealed class ChannelOutboundStorageTests
                         File.WriteAllText(Path.Combine(blocker, "owner.txt"), "fixture-owned collision");
                         return Task.CompletedTask;
                     }
-                    throw new IOException("fixture-owned staging refusal");
+                    if (fault == "access_denied")
+                        throw new UnauthorizedAccessException("fixture-owned access denial");
+                    throw new IOException(fault == "disk_full"
+                        ? "fixture-owned disk full" : "fixture-owned staging refusal");
                 }
                 return Task.CompletedTask;
             };
@@ -47,8 +52,12 @@ public sealed class ChannelOutboundStorageTests
                 Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
                     Name = "source.md", Mime = "text/markdown", Content = [1, 2, 3, 255] }],
             };
-            await Should.ThrowAsync<IOException>(() =>
-                store.StageAsync(id, reply, CancellationToken.None));
+            if (fault == "access_denied")
+                await Should.ThrowAsync<UnauthorizedAccessException>(() =>
+                    store.StageAsync(id, reply, CancellationToken.None));
+            else
+                await Should.ThrowAsync<IOException>(() =>
+                    store.StageAsync(id, reply, CancellationToken.None));
             reached.ShouldBeTrue();
             Directory.GetDirectories(root, ".stage-*", SearchOption.TopDirectoryOnly).ShouldBeEmpty();
             var final = Path.Combine(root, id.ToString("N"));
