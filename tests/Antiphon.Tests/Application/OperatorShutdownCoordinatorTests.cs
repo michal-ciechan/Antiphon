@@ -48,7 +48,8 @@ public class OperatorShutdownCoordinatorTests
         await coordinator.StopAsync("test");
 
         life.StopCalls.ShouldBe(1);
-        life.ElapsedAtStop.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(1));
+        // CancelAfter's timer and the wall-clock sample can differ by a few microseconds.
+        life.ElapsedAtStop.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(995));
         var line = logs.Entries.Single(e => e.Level == LogLevel.Information);
         line.Message.ShouldContain("drained=False");
     }
