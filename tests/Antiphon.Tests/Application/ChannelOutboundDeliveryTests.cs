@@ -712,10 +712,17 @@ public sealed partial class ChannelOutboundDeliveryTests
         try
         {
             var outbound = new ChannelOutboundService(db, files, producer, options, TimeProvider.System);
+            using var routeMetadata = JsonDocument.Parse("""{"parse_mode":"MarkdownV2","thread_marker":"T1"}""");
+            var sourceBytes = "# Original source"u8.ToArray();
             var reply = new ChannelReply
             {
                 Channel = "slack", ConversationId = channelId.ToString("N"),
-                ReplyHandle = "thread-1", Text = "Here are the sources.",
+                ReplyHandle = "thread-1", ReplyToMessageId = "message-T1",
+                Kind = ChannelReplyKind.Question, RawOverrides = routeMetadata.RootElement.Clone(),
+                Text = "Here are the sources.",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Caption = "T1 source",
+                    Source = "fixture://source.md", Content = sourceBytes }],
             };
             var source = new ChannelOutboundSource(sessionId, 2, 3, 4, "main", [correlationId]);
             (await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source,
@@ -747,6 +754,15 @@ public sealed partial class ChannelOutboundDeliveryTests
             var plainIntent = intents[2];
             intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
             intent.PromptText.ShouldBe("Convert the supplied sources.");
+            var frozen = await files.ReadReplyAsync(intent.InputPath, intent.InputSha256,
+                CancellationToken.None);
+            frozen.Channel.ShouldBe("slack");
+            frozen.ConversationId.ShouldBe(channelId.ToString("N"));
+            frozen.ReplyHandle.ShouldBe("thread-1");
+            frozen.ReplyToMessageId.ShouldBe("message-T1");
+            frozen.Kind.ShouldBe(ChannelReplyKind.Question);
+            frozen.RawOverrides!.Value.GetProperty("thread_marker").GetString().ShouldBe("T1");
+            frozen.Attachments.ShouldHaveSingleItem().Content.ShouldBe(sourceBytes);
             plainIntent.Trigger.ShouldBe("Passthrough");
             plainIntent.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
             var row = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == correlationId);
@@ -788,8 +804,6 @@ public sealed partial class ChannelOutboundDeliveryTests
                         mime = "application/pdf", length = pdf.Length,
                         sha256 = Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant() } },
                 }));
-            conversionTask.Status = AgentTaskStatus.Succeeded;
-            conversionTask.CompletedAt = DateTime.UtcNow;
             later.State = ChannelOutboundDeliveryState.Ready;
             later.ConversionOutcome = "Passthrough";
             await verify.SaveChangesAsync();
@@ -798,11 +812,28 @@ public sealed partial class ChannelOutboundDeliveryTests
                 Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
                 NullLogger<ChannelOutboundDeliveryPump>.Instance, options);
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            producer.SentReplies.Count.ShouldBe(1);
+            (await verify.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == later.Id)).State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+            var completedTask = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+            completedTask.Status = AgentTaskStatus.Succeeded;
+            completedTask.CompletedAt = DateTime.UtcNow;
+            await verify.SaveChangesAsync();
+            (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
             producer.SentReplies.Count.ShouldBe(4);
             var sent = producer.SentReplies[1];
             sent.ReplyHandle.ShouldBe("thread-1");
             sent.Text.ShouldBe("converted answer");
-            sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(pdf);
+            sent.Channel.ShouldBe("slack");
+            sent.ConversationId.ShouldBe(channelId.ToString("N"));
+            sent.ReplyToMessageId.ShouldBe("message-T1");
+            sent.Kind.ShouldBe(ChannelReplyKind.Question);
+            sent.RawOverrides!.Value.GetProperty("thread_marker").GetString().ShouldBe("T1");
+            sent.Attachments.Count.ShouldBe(2);
+            sent.Attachments[0].Content.ShouldBe(sourceBytes);
+            sent.Attachments[0].Source.ShouldBe("fixture://source.md");
+            sent.Attachments[0].Caption.ShouldBe("T1 source");
+            sent.Attachments[1].Content.ShouldBe(pdf);
             producer.SentReplies[2].ReplyHandle.ShouldBe("thread-2");
             producer.SentReplies[2].Text.ShouldBe("second answer");
             producer.SentReplies[3].ReplyHandle.ShouldBe("thread-3");
