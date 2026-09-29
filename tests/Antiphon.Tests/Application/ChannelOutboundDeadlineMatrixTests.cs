@@ -16,8 +16,6 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-[Category("Integration")]
-[NotInParallel]
 public sealed partial class ChannelOutboundDeadlineTests
 {
     [Test]
