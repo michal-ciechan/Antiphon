@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
@@ -60,7 +61,7 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
         RegisterCheckpointChild(executor);
         try
         {
-            await Stop(starter);
+            NativeKill(-starter.Id, 15).ShouldBe(0);
             var deadline = DateTime.UtcNow.AddSeconds(10);
             while (!File.Exists(marker) && DateTime.UtcNow < deadline) await Task.Delay(50);
             File.Exists(marker).ShouldBeTrue();
@@ -214,9 +215,10 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
         var hash = SHA256.HashData(File.ReadAllBytes(data));
         var root = Root(sandbox, alive: false);
         Directory.CreateSymbolicLink(Path.Combine(root, "linked"), target);
-        Sweep(sandbox).SweepOnce().CompletedRoots.ShouldBe(0);
-        SHA256.HashData(File.ReadAllBytes(data)).ShouldBe(hash);
-        Directory.Exists(root).ShouldBeTrue();
+            Sweep(sandbox).SweepOnce().CompletedRoots.ShouldBe(0);
+            SHA256.HashData(File.ReadAllBytes(data)).ShouldBe(hash);
+            Directory.Exists(root).ShouldBeTrue();
+            Directory.Delete(Path.Combine(root, "linked"));
     }
 
     [Test]
@@ -277,7 +279,7 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
         RunOwnershipStore.Write(run, new RunOwnership
         {
             RunId = Path.GetFileName(run), RunDirectory = Path.GetFullPath(run),
-            Phase = phase, Starter = probe.Current(),
+            Phase = phase, Starter = phase == "preparing" ? probe.Capture(child.Id) : probe.Current(),
             Launched = includeLaunch ? probe.Capture(child.Id) : null,
         });
     }
@@ -300,4 +302,7 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
         Sweep(sandbox).Register(root);
         return root;
     }
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "kill")]
+    private static extern int NativeKill(int pid, int signal);
 }
