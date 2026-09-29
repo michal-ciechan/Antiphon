@@ -68,12 +68,20 @@ function Invoke-C589Wrapper {
     if ($DisableCommandShim) { Remove-Item Env:C589_COMMAND_SHIM -ErrorAction SilentlyContinue }
     try {
         $psi = [Diagnostics.ProcessStartInfo]::new()
-        $psi.FileName = (Get-Command pwsh).Source
+        $pwshPath = (Get-Command pwsh).Source
+        $psi.FileName = $pwshPath
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.WorkingDirectory = $WorkingDirectory
-        foreach ($token in @('-NoProfile', '-NonInteractive', '-File', $script:Wrapper) + @($WrapperArgs)) {
+        $launchArgs = @('-NoProfile', '-NonInteractive', '-File', $script:Wrapper) + @($WrapperArgs)
+        if ($NoWait -and $IsLinux) {
+            # The TUnit host ignores SIGINT, and its children inherit that disposition.
+            # Perl resets it before exec, keeping the wrapper pid and literal argv.
+            $psi.FileName = (Get-Command perl).Source
+            $launchArgs = @('-e', '$SIG{INT} = "DEFAULT"; exec @ARGV', '--', $pwshPath) + $launchArgs
+        }
+        foreach ($token in $launchArgs) {
             [void]$psi.ArgumentList.Add([string]$token)
         }
         $proc = [Diagnostics.Process]::Start($psi)
