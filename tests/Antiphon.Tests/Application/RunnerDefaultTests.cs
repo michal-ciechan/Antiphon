@@ -38,6 +38,27 @@ public sealed class RunnerDefaultsWireTests
     };
 
     [Test]
+    public async Task Public_create_cannot_assign_an_outbound_conversion_purpose()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, null);
+        var forgedDeliveryId = Guid.NewGuid();
+        using var response = await host.Client.PostAsJsonAsync("/api/agent-tasks", new
+        {
+            goal = "An ordinary public task with a forged internal purpose",
+            workspace = "Shared",
+            workingDirectory = host.RepoRoot,
+            outboundDeliveryId = forgedDeliveryId,
+        }, Json);
+        var created = await Read<AgentTaskCreatedDto>(response, HttpStatusCode.Created);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created!.Id);
+        task.OutboundDeliveryId.ShouldBeNull();
+        (await verify.ChannelOutboundDeliveries.AsNoTracking()
+            .CountAsync(d => d.Id == forgedDeliveryId)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Put_global_affects_next_create_without_restart()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
