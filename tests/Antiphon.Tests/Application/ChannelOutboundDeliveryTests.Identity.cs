@@ -135,6 +135,14 @@ public sealed partial class ChannelOutboundDeliveryTests
         var deliveryId = Guid.NewGuid();
         var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
         var producer = new FakeAntiphonMessagingClient();
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["convert"] = new() { ProjectId = projectId, AgentId = converterId,
+                    PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.EveryAgentReply },
+            },
+        });
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<int>? firstTick = null;
@@ -192,10 +200,10 @@ public sealed partial class ChannelOutboundDeliveryTests
             };
             var first = new ChannelOutboundDeliveryPump(firstDb, firstRunner, files, producer,
                 Options.Create(new AntiphonMessagingOptions()), clock,
-                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
             var second = new ChannelOutboundDeliveryPump(secondDb, Runner(secondDb), files, producer,
                 Options.Create(new AntiphonMessagingOptions()), clock,
-                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
             firstTick = first.TickAsync(CancellationToken.None);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
             (await second.TickAsync(CancellationToken.None)).ShouldBe(0);
