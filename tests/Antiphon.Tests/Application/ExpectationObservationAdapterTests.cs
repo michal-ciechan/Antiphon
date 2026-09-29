@@ -216,7 +216,15 @@ public sealed class ExpectationObservationAdapterTests
         await using (var db = world.Db())
         {
             db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, world.Now.AddMinutes(-30)));
-            db.SessionQueuedMessages.AddRange(Enumerable.Range(1, historySize).Select(i => Note(world, taskId, i)));
+            db.SessionQueuedMessages.AddRange(Enumerable.Range(1, historySize).Select(i =>
+            {
+                var note = Note(world, taskId, i);
+                note.Status = QueuedMessageStatus.Sent;
+                note.DeliveryAttempts = 1;
+                note.LastDeliveryBaselineSequence = 0;
+                note.LastDeliveryStartedAt = world.Now.AddMinutes(-1);
+                return note;
+            }));
             await db.SaveChangesAsync();
         }
 
