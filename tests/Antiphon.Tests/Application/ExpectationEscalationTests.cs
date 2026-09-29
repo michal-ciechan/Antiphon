@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -137,6 +138,40 @@ public sealed class ExpectationEscalationTests
         f.Producer.Sent[1].Text.ShouldContain(":2]");
         await using var db = f.World.Db();
         (await db.CardComments.CountAsync(c => c.Body.Contains("Broker accepted page"))).ShouldBe(2);
+    }
+
+    [Test]
+    public async Task C650_Ack_after_page_stops_reminders()
+    {
+        await using var f = await Fixture.CreateAsync();
+        await f.MarkDueAsync();
+        (await f.PublishAsync()).ShouldBe(1);
+        await using (var db = f.World.Db())
+        {
+            var started = await db.AgentSessions.Where(s => s.Id == f.World.OwnedSessionId)
+                .Select(s => s.StartedAt).SingleAsync();
+            await db.ExpectationNudges.Where(n => n.Id == f.Nudge.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(n => n.DestinationSessionId, f.World.OwnedSessionId)
+                .SetProperty(n => n.DestinationGeneration, SessionGeneration.Normalize(started))
+                .SetProperty(n => n.BaselineSequence, 0L));
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(f.World.OwnedSessionId, 1,
+                TranscriptKinds.UserPrompt, f.World.Now, f.Nudge.Body));
+            db.TranscriptEntries.Add(ExpectationTestWorld.Transcript(f.World.OwnedSessionId, 2,
+                TranscriptKinds.AssistantText, f.World.Now.AddSeconds(1),
+                ExpectationPromptFormatter.AckMarker(f.Nudge.Id) + "\nI will inspect the queue."));
+            await db.SaveChangesAsync();
+        }
+        await using (var db = f.World.Db())
+            await new ExpectationResponseService(db, f.Clock, NoExpectationCatchUp.Instance,
+                new ExpectationTimingSettings()).ReconcileAsync(f.World.Directive, CancellationToken.None);
+        var answered = await f.ReloadAsync();
+        answered.ReceiptSequence.ShouldBe(1);
+        answered.AnsweredSequence.ShouldBe(2);
+        answered.AnsweredAt.ShouldNotBeNull();
+        answered.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Published);
+        f.Clock.Advance(TimeSpan.FromMinutes(30));
+        (await f.PublishAsync()).ShouldBe(0);
+        f.Producer.Sent.Count.ShouldBe(1);
     }
 
     [Test]

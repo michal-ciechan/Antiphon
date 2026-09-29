@@ -290,6 +290,66 @@ public sealed class ExpectationObservationAdapterTests
         (await read.ExpectationWatchStates.SingleAsync()).LastSuccessfulScanAt.ShouldBe(world.Now.AddMinutes(2));
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C650_Confirmed_and_canceled_notes_clear_even_outside_the_page(bool pagedHistory)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        var (source, outbox) = ExpectationTestWorld.Note(taskId, world.OwnedSessionId,
+            LandNotificationState.AwaitingReceipt, world.Now.AddMinutes(-11));
+        var queueOnly = Note(world, taskId, 1);
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, world.Now.AddMinutes(-30)));
+            db.AgentTaskEvents.Add(source);
+            db.AgentTaskLandNotifications.Add(outbox);
+            db.SessionQueuedMessages.Add(queueOnly);
+            await db.SaveChangesAsync();
+        }
+        var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+        await using (var db = world.Db())
+        {
+            (await db.ExpectationEpisodes.CountAsync(e => e.ResolvedAt == null
+                && e.Kind == ExpectationEpisodeKind.UndeliveredNote)).ShouldBe(2);
+            await db.AgentTaskLandNotifications.Where(n => n.Id == outbox.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(n => n.State, LandNotificationState.Confirmed)
+                .SetProperty(n => n.ConfirmedAt, world.Now));
+            await db.SessionQueuedMessages.Where(n => n.Id == queueOnly.Id).ExecuteUpdateAsync(u => u
+                .SetProperty(n => n.Status, QueuedMessageStatus.Canceled)
+                .SetProperty(n => n.CanceledAt, world.Now));
+            if (pagedHistory)
+            {
+                db.SessionQueuedMessages.AddRange(Enumerable.Range(2, 105).Select(i =>
+                {
+                    var note = Note(world, taskId, i);
+                    note.CreatedAt = world.Now.AddMinutes(-20);
+                    return note;
+                }));
+                await db.SaveChangesAsync();
+            }
+        }
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using (var db = world.Db())
+            await world.Service(db, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
+        await using var read = world.Db();
+        var targets = new[] { ExpectationSubjects.Note(world.Directive.Id, outbox.Id),
+            ExpectationSubjects.Note(world.Directive.Id, queueOnly.Id) };
+        (await read.ExpectationEpisodes.AsNoTracking()
+            .Where(e => targets.Contains(e.SubjectKey)).ToListAsync())
+            .ShouldAllBe(e => e.ResolvedAt == world.Now.AddMinutes(2));
+        if (pagedHistory)
+            (await read.ExpectationEpisodes.CountAsync(e => e.ResolvedAt == null
+                && e.Kind == ExpectationEpisodeKind.UndeliveredNote)).ShouldBe(105);
+    }
+
     private static SessionQueuedMessage Note(ExpectationTestWorld world, Guid taskId, int sequence)
     {
         var row = ExpectationTestWorld.Queued(Guid.NewGuid(), world.OwnedSessionId,

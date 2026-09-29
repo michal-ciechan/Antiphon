@@ -301,6 +301,7 @@ public sealed record ExpectationSnapshot
     public IReadOnlyList<ExpectationNoteDebt> Notes { get; init; } = [];
     public bool NoteCoverageIncomplete { get; init; }
     public IReadOnlySet<Guid> CheckedNoteIds { get; init; } = new HashSet<Guid>();
+    public IReadOnlySet<string> UnobservedNoteSubjects { get; init; } = new HashSet<string>();
     public DateTime? NextNoteOutboxCursorAt { get; init; }
     public Guid? NextNoteOutboxCursorId { get; init; }
     public DateTime? NextNoteQueueCursorAt { get; init; }
