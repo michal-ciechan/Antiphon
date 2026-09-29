@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
-public sealed class ChannelOutboundDeliveryTests
+public sealed partial class ChannelOutboundDeliveryTests
 {
     [Test]
     public async Task Fallback_annotation_uses_actual_wire_budget_and_overcap_keeps_stamps_null()
