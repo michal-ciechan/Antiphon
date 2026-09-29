@@ -97,7 +97,7 @@ public sealed partial class ChannelOutboundDeliveryTests
                 {
                     var bundle = Path.Combine(root, "bundle");
                     Directory.CreateDirectory(bundle);
-                    var sourceZip = Path.Combine(bundle, "sources.zip");
+                    var sourceZip = Path.Combine(bundle, "round24-sources.zip");
                     using (var archive = ZipFile.Open(sourceZip, ZipArchiveMode.Create))
                     {
                         var entry = archive.CreateEntry("docs/source.md");
@@ -106,7 +106,7 @@ public sealed partial class ChannelOutboundDeliveryTests
                     }
                     if (shape == "manifest-zip") zip = sourceZip;
                     var member = new DeliverableBundleService.SourceMember("docs/source.md",
-                        "sources.zip", "docs/source.md", source.Length,
+                        Path.GetFileName(sourceZip), "docs/source.md", source.Length,
                         Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant());
                     var manifest = new DeliverableBundleService.SourceManifest(1, true, [member], []);
                     await File.WriteAllTextAsync(Path.Combine(bundle,
