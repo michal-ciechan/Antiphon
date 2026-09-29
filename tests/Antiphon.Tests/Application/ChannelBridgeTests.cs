@@ -93,6 +93,8 @@ public class ChannelBridgeTests
         channel.ExternalId.ShouldBe(h.ChatId);
         channel.Title.ShouldBe("Family");
         channel.AgentId.ShouldBeNull();
+        channel.OutboundAgentProfile.ShouldBeNull();
+        channel.OutboundProfile.ShouldBeNull();
         channel.MessageCount.ShouldBe(1);
         channel.LastMessagePreview.ShouldBe("hello there");
         h.Adapter.SentInput.ShouldBeEmpty("unbound channels must not route");
