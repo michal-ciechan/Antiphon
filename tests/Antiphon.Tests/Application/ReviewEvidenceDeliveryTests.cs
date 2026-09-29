@@ -104,7 +104,8 @@ public sealed class ReviewEvidenceDeliveryTests
         {
             var (taskId, _) = await rig.SettleReviewAsync(transformReport: (id, report) =>
                 Presented(report, "fence").Replace("Reviewed the owner.",
-                    $"Reviewed the owner.\n[antiphon-report:{id.ToString("N")[..8]} done]"));
+                    $"Reviewed the owner.\n[antiphon-report:{id.ToString("N")[..8]} done]")
+                + "\n" + DelegationReportFormatter.ReportToken(id, "done"));
             (await rig.NotificationAsync(taskId))!.CompletionSnapshotJson.ShouldNotBeNull();
             await rig.DeliverAsync("embedded token");
             await rig.ScanAsync();
