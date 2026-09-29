@@ -101,23 +101,33 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return new RemotePushResult(false, null, "could not read the desktop worktree HEAD: " + Tail(head.Diagnostic));
         var sha = head.Output.Trim();
 
+        var origin = await _git.RunAsync(task.WorktreePath, ["remote", "get-url", "origin"], ct);
+        if (origin.ExitCode != 0 || !RepositoryCloneSource.TryNormalize(origin.Output, out var repository))
+            return new RemotePushResult(false, sha, "the desktop worktree origin could not be read");
+
         var push = await _git.RunAsync(
             task.WorktreePath, ["push", "-u", "origin", task.WorktreeBranch], ct);
         if (push.ExitCode != 0)
             return new RemotePushResult(false, sha, "git push failed: " + Tail(push.Diagnostic));
-        return new RemotePushResult(true, sha, null);
+        return new RemotePushResult(true, sha, null, repository);
     }
 
     /// <summary>
     /// Asks the runner for a mirror of the pushed branch at the exact sha. Returns the POSIX path
     /// the session's cwd becomes.
     /// </summary>
-    public async Task<string> MirrorAsync(AgentTask task, string sha, CancellationToken ct)
+    public async Task<string> MirrorAsync(AgentTask task, string sha, string repository, CancellationToken ct)
     {
         var client = Remote(task.RunnerId);
         var response = await client.MirrorWorkspaceAsync(
-            new PhoneHomeWorkspaceMirrorRequest(task.WorktreeBranch!, sha, MirrorName(task.Id)), ct);
+            new PhoneHomeWorkspaceMirrorRequest(task.WorktreeBranch!, sha, MirrorName(task.Id), repository), ct);
         return response.Path;
+    }
+
+    public async Task<bool> SupportsRepositoryMirrorsAsync(string? runnerId, CancellationToken ct)
+    {
+        var descriptor = await _runners.DescribeAsync(runnerId, ct);
+        return descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceRepositoryV1) == true;
     }
 
     /// <summary>
@@ -550,5 +560,4 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 }
 
-public sealed record RemotePushResult(bool Pushed, string? Sha, string? Warning);
-
+public sealed record RemotePushResult(bool Pushed, string? Sha, string? Warning, string? Repository = null);

@@ -34,6 +34,30 @@ public sealed class RemoteWorkspacePreparerTests
         PhoneHomeLiveConnection.RequestTimeoutFor(PhoneHomeOperation.WorkspaceMirror);
 
     [Test]
+    public async Task A_mirror_request_carries_the_desktop_origin_and_a_legacy_runner_failure_names_the_missing_feature()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var taskId = await rig.SeedAsync();
+        await rig.TickAsync().WaitAsync(TickBound);
+        var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var mirror = request.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json);
+        mirror.ShouldNotBeNull();
+        mirror.Repository.ShouldBe("https://github.com/michal-ciechan/antiphon.git");
+        await rig.Peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Error, request.Epoch,
+            request.RequestId, request.Operation, ErrorCode: PhoneHomeProblemTypes.UnsupportedTarget,
+            ErrorDetail: "legacy primary checkout", StatusCode: 409));
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        var task = await rig.ReadTaskAsync(taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Queued);
+        task.RemotePrepFailures.ShouldBe(1);
+        task.DispatchNotBeforeAt.ShouldNotBeNull();
+        var warning = (await rig.EventsAsync(taskId, AgentTaskEventType.Warning)).Single().Detail;
+        warning.ShouldContain("workspaceRepositoryV1");
+        warning.ShouldContain("mirrors only its primary repository");
+    }
+
+    [Test]
     public async Task Mirror_runs_outside_the_claim_and_the_task_stays_queued_with_an_in_flight_hold()
     {
         await using var rig = await Rig.StartAsync();
@@ -964,6 +988,7 @@ public sealed class RemoteWorkspacePreparerTests
             Task.FromResult(arguments[0] switch
             {
                 "rev-parse" => new LandingGitResult(0, new string('1', 40), ""),
+                "remote" => new LandingGitResult(0, "https://github.com/michal-ciechan/Antiphon.git", ""),
                 "push" => new LandingGitResult(0, "", ""),
                 _ => throw new NotSupportedException(arguments[0]),
             });
