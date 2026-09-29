@@ -71,14 +71,14 @@ public sealed class TaskPlatformGuidanceTests
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
         text.ShouldContain("self-compare, constant, no outcome assertion");
-        text.ShouldContain("check the build against the plan");
+        text.ShouldContain("Review build vs plan.");
         text.ShouldContain("reject empty variable components with nonzero exit");
         text.ShouldContain("quote variable expansions");
         text.ShouldContain("resolve target inside intended scratch root");
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("bare, unfenced, unindented, unquoted lines");
-        text.ShouldContain("original Code/Worktree landing owner");
-        text.ShouldContain("adoption subject: source");
+        text.ShouldContain("Carry original Code landing owner.");
+        text.ShouldContain("adoption: source");
         text.ShouldContain("Review ID/`-StartRef` cannot identify source");
         foreach (var flag in new[] { "-Land <owner>", "-FromTask <source>", "-ExpectedSourceSha <sha>",
                      "-ReviewEvidenceId <evidence>", "-RecoverReviewedSource", "-Card", "-StartRef" })
@@ -90,82 +90,124 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("GET /api/session-runners");
         text.ShouldContain("embed no fleet location");
         text.ShouldContain("the brief's verification profile governs");
-        text.ShouldContain("ordinary V/R evidence via real queue");
-        text.ShouldContain("Acceptance needs matching complete UserPrompt transcript.");
+        text.ShouldContain("V/R evidence via real queue");
+        text.ShouldContain("Require matching complete UserPrompt transcript");
         text.ShouldContain("Re-run claimed Unit + named affected integration classes");
         text.ShouldContain("Reject missing tests or evidence.");
-        text.ShouldContain("code when there are defects (name them in handoff:)");
+        text.ShouldContain("code for defects (name in handoff:)");
     }
 
     [Test]
     public void Review_guidance_preserves_every_instruction()
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
-        foreach (var obligation in new[]
+        AssertBaseInstructions(text);
+
+        // Temporarily remove a base instruction in memory. The production assertion must go red;
+        // the file remains intact for other Unit tests and for the checkpoint's bundle parser.
+        var missingCheckpointInstruction = text.Replace(
+            "use it for repeated class runs.", "", StringComparison.Ordinal);
+        missingCheckpointInstruction.ShouldNotBe(text);
+        Should.Throw<ShouldAssertException>(() => AssertBaseInstructions(missingCheckpointInstruction));
+    }
+
+    private static void AssertBaseInstructions(string text)
+    {
+        // Checklist mechanically transcribed from each instruction in
+        // `git show 16da56da5:server/Bundles/stage-review.md`. Left is the base instruction;
+        // right is its required place in the current bundle. The subject placeholder is mapped
+        // to the reviewed source identity under CARD-0807 D-3.
+        foreach (var (baseInstruction, currentPin) in new (string Base, string Pin)[]
         {
-            // Review role and checkpoint scope.
-            "Read-only.",
-            "Do not fix anything.",
-            "Defects: Where/Failure/Why/Fix.",
-            "Re-run claimed Unit + named affected integration classes in one checkpoint-tool run.",
-            "CP-n lines vs ### Checkpoints",
-            "check the build against the plan.",
-            "missing row, zero count",
-            "unlisted build/test run without a reason",
-            "build or test driver outside the slot gate",
-            "broad run lacks invariant/cost",
-            "test cannot go red (self-compare, constant, no outcome assertion)",
-            // Scratch cleanup safety.
-            "`rm`: reject empty variable components with nonzero exit",
-            "quote variable expansions",
-            "resolve target inside intended scratch root",
-            // Verification profile, evidence standards, and pending work.
-            "the brief's verification profile governs.",
-            "A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred;",
-            "an Interim pass never discharges it.",
-            "Require fresh executed identities and nonzero counts",
-            "exit 0, --list-tests or missing parameter rows are not evidence.",
-            "Required manual work stays pending",
-            "nightly green never satisfies manual or PC checks.",
-            "Executed PCs are not a prerequisite.",
-            "Check V/R",
-            "judge PC evidence read-only (PCs stay pending)",
-            "Carry original Code landing owner.",
-            "Reject missing tests or evidence.",
-            // Delivery evidence must reach the actual recipient.
-            "Audit producer/destination/persistence/recovery/receipt/identity.",
-            "Trace ordinary V/R evidence via real queue: busy/eligible, crash/enqueue.",
-            "Acceptance needs matching complete UserPrompt transcript.",
-            "Reject a missing producer-to-recipient test/recipient evidence",
-            "queue/event/Sent/ack fails.",
-            // Parser-compatible Review evidence and source identity.
-            "Emit bare, unfenced, unindented, unquoted lines before next-stage:",
-            "--- review evidence ---",
-            "subjectTaskId: <full GUID of task whose exact pushed tip was reviewed>",
-            "reviewedSourceSha: <full SHA actually reviewed>",
-            "ordinaryScopeCompleted: <Full|Interim|None>",
-            "Full only when the whole required selection ran.",
-            "Ordinary/recovery: original Code/Worktree landing owner; adoption subject: source.",
-            "Adopt: `-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`",
-            "owner: no `-FromTask`",
-            "recovery: `-RecoverReviewedSource`",
-            "Review ID/`-StartRef` cannot identify source",
-            "brief names both.",
-            "Use `-Card`",
-            "follow-up must match FollowUpOfTaskId",
-            "else fresh same-card Review.",
-            // Runtime placement and stage routing.
-            "Platform: GET /api/runner-defaults, GET /api/session-runners",
-            "embed no fleet location.",
-            "Omit -Runner unless pinning one host.",
-            "Omit -Platform unless OS needed",
-            "-Platform Any unpins.",
-            "next: land when there are no defects and this was a Final Review",
-            "review (Final) when a clean Interim",
-            "code when there are defects (name them in handoff:)",
-            "decide for choices."
+            // Base line 1: role.
+            ("reviewing the build against its plan", "Review build vs plan."),
+            // Base line 3: scope, checkpoint audit, and every defect case.
+            ("Unit plus named affected integration classes", "Re-run claimed Unit + named affected integration classes"),
+            ("one checkpoint-tool run", "in one checkpoint-tool run"),
+            ("Executed PCs are not a prerequisite", "Executed PCs are not a prerequisite."),
+            ("Code report's CP-n lines against plan table", "CP-n vs ### Checkpoints:"),
+            ("missing row", "missing row"),
+            ("zero count", "zero count"),
+            ("unlisted build/test run without a reason", "unlisted build/test run without a reason"),
+            ("build or test driver outside the slot gate", "build or test driver outside the slot gate"),
+            ("broad run without named invariant/cost", "broad run without named invariant/cost"),
+            ("new test that cannot go red", "test cannot go red (self-compare, constant, no outcome assertion)"),
+            // Base line 5: repeated classes and destructive cleanup.
+            ("Use checkpoint tool for repeated class runs", "use it for repeated class runs."),
+            ("reject empty variables before rm", "reject empty variable components with nonzero exit"),
+            ("quote expansions before rm", "quote variable expansions"),
+            ("confine resolved target to scratch root", "resolve target inside intended scratch root"),
+            // Base line 7: round and evidence floor.
+            ("brief's verification profile governs", "the brief's verification profile governs."),
+            ("Final reruns complete ordinary scope", "Final Review reruns all ordinary scope"),
+            ("include every Interim-deferred row", "including Interim-deferred rows"),
+            ("Interim never discharges Final", "an Interim pass never discharges it."),
+            ("fresh executed identities", "fresh executed identities"),
+            ("nonzero counts", "nonzero counts"),
+            ("exit 0 is not evidence", "exit 0, --list-tests or missing parameter rows are not evidence."),
+            ("--list-tests is not evidence", "--list-tests or missing parameter rows are not evidence."),
+            ("missing parameter rows are not evidence", "missing parameter rows are not evidence."),
+            ("required manual work stays pending", "Manual work stays pending"),
+            ("nightly never satisfies manual or PC checks", "nightly green never satisfies manual or PC checks."),
+            // Base line 9: review invariants and defect format.
+            ("Read-only", "Read-only."),
+            ("Do not fix anything", "Do not fix anything."),
+            ("Check V/R", "Check V/R"),
+            ("judge PC evidence read-only; PCs pending", "judge PC evidence read-only (PCs stay pending)"),
+            ("Reject missing tests or evidence", "Reject missing tests or evidence."),
+            ("Carry original Code landing owner", "Carry original Code landing owner."),
+            ("Defects: Where/Failure/Why/Fix", "Defects: Where/Failure/Why/Fix."),
+            // Base line 11: producer-to-recipient delivery evidence.
+            ("producer", "Audit producer/"),
+            ("destination", "/destination/"),
+            ("persistence", "/persistence/"),
+            ("recovery", "/recovery/"),
+            ("observable receipt", "/observable receipt and durable identity."),
+            ("durable identity", "observable receipt and durable identity."),
+            ("ordinary V/R through real queue", "Trace V/R evidence via real queue"),
+            ("busy and eligible recipients", "busy/eligible recipients"),
+            ("crash and enqueue failures", "crash/enqueue failures"),
+            ("matching complete UserPrompt transcript", "matching complete UserPrompt transcript"),
+            ("queue insert insufficient", "queue insert/event/Sent flag/ack insufficient."),
+            ("event insufficient", "insert/event/Sent flag/ack insufficient."),
+            ("Sent flag insufficient", "event/Sent flag/ack insufficient."),
+            ("ack insufficient", "Sent flag/ack insufficient."),
+            ("missing producer-to-recipient test", "Reject missing producer-to-recipient test"),
+            ("missing recipient evidence", "or recipient evidence"),
+            // Base lines 13-22: one bare evidence block and landing identity.
+            ("emit one review-evidence block before next-stage", "Emit one review-evidence block as bare, unfenced, unindented, unquoted lines before next-stage:"),
+            ("review evidence heading", "--- review evidence ---"),
+            ("full subject GUID (D-3: reviewed source)", "subjectTaskId: <full GUID of task whose exact pushed tip was reviewed>"),
+            ("full reviewed SHA", "reviewedSourceSha: <full SHA actually reviewed>"),
+            ("Full|Interim|None scope", "ordinaryScopeCompleted: <Full|Interim|None>"),
+            ("Full only after whole required selection", "Full only when the whole required selection ran."),
+            ("original Code owner for ordinary/recovery", "Ordinary/recovery: Code owner"),
+            ("caller lands Code owner", "Land owner with `-ExpectedSourceSha`."),
+            ("ExpectedSourceSha from evidence", "-ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>"),
+            // D-3 additions retain the original owner while identifying an adopted source.
+            ("adoption source identity", "adoption: source"),
+            ("adoption command", "-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>"),
+            ("ordinary owner omits FromTask", "owner: no `-FromTask`"),
+            ("recovery flag", "recovery: `-RecoverReviewedSource`"),
+            ("StartRef cannot identify source", "Review ID/`-StartRef` cannot identify source"),
+            ("brief names owner and source", "name both."),
+            ("explicit card binding", "Use `-Card`"),
+            ("follow-up matches subject", "follow-up must match FollowUpOfTaskId"),
+            ("otherwise fresh same-card Review", "else fresh same-card Review."),
+            // Base line 24: runtime placement.
+            ("runner defaults endpoint", "GET /api/runner-defaults"),
+            ("session runners endpoint", "GET /api/session-runners"),
+            ("embed no fleet location", "embed no fleet location."),
+            ("Runner only to pin one host", "Omit -Runner unless pinning one host."),
+            ("Platform only when OS needed", "Omit -Platform unless OS needed"),
+            ("Platform Any unpins", "-Platform Any unpins."),
+            // Base line 26: all next-stage routes.
+            ("land for clean Final", "next: land if clean Final"),
+            ("review Final for clean Interim", "review (Final) if clean Interim"),
+            ("code for defects named in handoff", "code for defects (name in handoff:)"),
+            ("decide when a human choice blocks", "decide when a human choice blocks.")
         })
-            text.ShouldContain(obligation);
+            text.ShouldContain(currentPin, $"Missing base Review instruction: {baseInstruction}");
     }
 
     private static string RepoRoot()
