@@ -142,8 +142,13 @@ public sealed class TaskPlatformDispatchTests
             spec.Args.ShouldNotContain(a => a.Contains(sourceSentinel, StringComparison.Ordinal));
             var brief = await verify.SessionQueuedMessages.AsNoTracking()
                 .SingleAsync(m => m.ExecutionTaskId == taskId);
-            brief.Body.ShouldContain("Do not dispatch child tasks or send to a channel");
-            brief.Body.ShouldNotContain(sourceSentinel);
+            var spillPath = Path.Combine(workspace.Path, ".antiphon",
+                $"task-{DelegationReportFormatter.Short(taskId)}-brief.md");
+            File.Exists(spillPath).ShouldBeTrue("the normal dispatcher spills the long conversion brief");
+            brief.Body.ShouldContain(spillPath);
+            var deliveredBrief = await File.ReadAllTextAsync(spillPath);
+            deliveredBrief.ShouldContain("Do not dispatch child tasks or send to a channel");
+            deliveredBrief.ShouldNotContain(sourceSentinel);
             producer.SentReplies.ShouldBeEmpty();
         }
         finally { await world.Provider.DisposeAsync(); }
