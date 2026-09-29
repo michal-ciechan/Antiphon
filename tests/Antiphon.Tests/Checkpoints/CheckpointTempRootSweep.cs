@@ -65,6 +65,11 @@ internal sealed class CheckpointTempRootSweep
     {
         if (!IsCandidate(root) || ReadMarker(root) is null)
             throw new InvalidOperationException("checkpoint root marker is invalid");
+        WriteIndexEntry(root);
+    }
+
+    private void WriteIndexEntry(string root)
+    {
         var pending = "";
         try
         {
@@ -307,8 +312,8 @@ internal sealed class CheckpointTempRootSweep
                 string root;
                 try { root = JsonSerializer.Deserialize<string>(line) ?? ""; }
                 catch (JsonException) { continue; }
-                if (IsCandidate(root) && Directory.Exists(root) && ReadMarker(root) is not null)
-                    Register(root);
+                if (IsCandidate(root) && Directory.Exists(root))
+                    WriteIndexEntry(root);
             }
             if (state.LegacyCursor < legacy.Length) return;
         }
