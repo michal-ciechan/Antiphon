@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Services;
@@ -8,6 +9,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -18,6 +21,109 @@ namespace Antiphon.Tests.Application;
 
 public sealed partial class ChannelOutboundDeadlineTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Linked_worker_expires_before_selection_or_at_the_final_dispatch_claim(
+        bool afterSelection)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var delivery = await fixture.AddAsync(0, "dispatch deadline original",
+            TimeSpan.FromMinutes(1), attachment: true);
+        Guid taskId;
+        await using (var create = fixture.Open())
+        {
+            (await fixture.Pump(create).TickAsync(CancellationToken.None)).ShouldBe(1);
+            taskId = (await create.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == delivery.Id)).ConversionTaskId!.Value;
+        }
+        var probe = new DeadlineClaimProbe { TaskId = taskId };
+        await using var services = BuildDeadlineDispatcher(fixture.ConnectionString, fixture.Clock, probe);
+        await using var db = fixture.Open();
+        await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
+            .SetProperty(t => t.ExecutionDeadlineAt,
+                fixture.Clock.GetUtcNow().AddSeconds(afterSelection ? 5 : -1).UtcDateTime));
+        await using var blocker = fixture.Open();
+        await using var transaction = await blocker.Database.BeginTransactionAsync();
+        if (afterSelection)
+            await blocker.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE");
+        await using var scope = services.CreateAsyncScope();
+        var tick = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+            .TickAsync(CancellationToken.None);
+        if (afterSelection)
+        {
+            await probe.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            fixture.Clock.Advance(TimeSpan.FromSeconds(6));
+        }
+        await transaction.RollbackAsync();
+        await tick.WaitAsync(TimeSpan.FromSeconds(15));
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Canceled);
+        task.AgentSessionId.ShouldBeNull();
+        task.FailureReason.ShouldContain("expired before execution");
+        (await db.SessionQueuedMessages.AsNoTracking()
+            .AnyAsync(m => m.ExecutionTaskId == taskId)).ShouldBeFalse();
+        (await db.AgentSessions.AsNoTracking().CountAsync()).ShouldBe(0);
+        // The pump owns publication after a dispatch refusal; the dispatcher cannot send.
+        fixture.Producer.SentReplies.ShouldBeEmpty();
+        fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+        (await fixture.Pump(db).TickAsync(CancellationToken.None)).ShouldBe(1);
+        fixture.Producer.SentReplies.ShouldHaveSingleItem().Text
+            .ShouldContain("dispatch deadline original");
+        (await fixture.Pump(db).TickAsync(CancellationToken.None)).ShouldBe(0);
+        fixture.Producer.SentReplies.Count.ShouldBe(1);
+    }
+
+    private static ServiceProvider BuildDeadlineDispatcher(string connectionString,
+        TimeProvider clock, DeadlineClaimProbe probe)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString).AddInterceptors(probe));
+        services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
+        services.AddSingleton(clock);
+        services.AddOptions<SupervisionSettings>();
+        services.AddOptions<ChannelBridgeSettings>();
+        services.AddOptions<AgentSessionSettings>();
+        services.AddSingleton(Options.Create(new DelegationSettings { MaxConcurrentTasks = 512 }));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper,
+            RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.GetTempPath() });
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<ModelAvailability>();
+        services.AddScoped<AgentTaskDispatcher>();
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class DeadlineClaimProbe : DbCommandInterceptor
+    {
+        public Guid TaskId;
+        public TaskCompletionSource Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FOR UPDATE") && command.CommandText.Contains("AgentTasks")
+                && command.Parameters.Cast<DbParameter>()
+                    .Any(p => p.Value is Guid id && id == TaskId))
+                Entered.TrySetResult();
+            return ValueTask.FromResult(result);
+        }
+    }
+
     [Test]
     public async Task One_converter_and_two_global_seats_hold_pending_work_until_its_original_deadline()
     {
@@ -268,6 +374,7 @@ public sealed partial class ChannelOutboundDeadlineTests
         private int _sequence;
 
         public string Root { get; }
+        public string ConnectionString => _schema.ConnectionString;
         public DateTime Now { get; }
         public FakeTimeProvider Clock { get; }
         public Guid ProjectId { get; } = Guid.NewGuid();
