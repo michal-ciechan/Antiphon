@@ -81,12 +81,34 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         var dir = Path.Combine(work, "sampled");
         Directory.CreateDirectory(Path.Combine(dir, "nested"));
         await File.WriteAllBytesAsync(Path.Combine(dir, "nested", "payload.bin"), RandomNumberGenerator.GetBytes(128 * 1024));
-        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, work,
-            $"@{{ bytes = Get-Allocated {UsageLibrary.Quote(dir)}; absent = Get-Allocated {UsageLibrary.Quote(Path.Combine(dir, "absent"))} }} | ConvertTo-Json");
+        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, work, $$"""
+            $bytes = Get-Allocated {{UsageLibrary.Quote(dir)}}
+            $absent = Get-Allocated {{UsageLibrary.Quote(Path.Combine(dir, "absent"))}}
+            $script:duCalls = 0
+            function du {
+                $script:duCalls++
+                if ($script:duCalls -eq 1) {
+                    $global:LASTEXITCODE = 1
+                    "du: cannot access '/gone': No such file or directory"
+                } else {
+                    $global:LASTEXITCODE = 0
+                    "8192`t$($args[-1])"
+                }
+            }
+            $retried = Get-Allocated {{UsageLibrary.Quote(dir)}}
+            function du { $global:LASTEXITCODE = 1; 'du: Permission denied' }
+            $denied = $false
+            try { [void](Get-Allocated {{UsageLibrary.Quote(dir)}}) }
+            catch { $denied = $_.Exception.Message -like 'Allocated-byte sample failed*' }
+            @{ bytes = $bytes; absent = $absent; retried = $retried; calls = $script:duCalls; denied = $denied } | ConvertTo-Json
+            """);
         var allocated = result.RootElement.GetProperty("bytes").GetInt64();
         allocated.ShouldBeGreaterThanOrEqualTo(128 * 1024);
         allocated.ShouldBeLessThan(192 * 1024);
         result.RootElement.GetProperty("absent").GetInt64().ShouldBe(0);
+        result.RootElement.GetProperty("retried").GetInt64().ShouldBe(8192);
+        result.RootElement.GetProperty("calls").GetInt32().ShouldBe(2);
+        result.RootElement.GetProperty("denied").GetBoolean().ShouldBeTrue();
     }
 
     [Test]

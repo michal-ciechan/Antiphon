@@ -5,12 +5,18 @@
 function Get-Allocated([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return [long]0 }
     if ($IsLinux) {
-        $line = & du -s -B1 -- $path 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        for ($attempt = 0; $attempt -lt 5; $attempt++) {
+            $line = & du -s -B1 -- $path 2>&1
+            if ($LASTEXITCODE -eq 0) { return [long]([string]$line).Split([char]9)[0] }
             if (-not (Test-Path -LiteralPath $path)) { return [long]0 }
+            # A test may remove a descendant after du discovers it. Only accept a
+            # later complete sample; persistent errors and every other errno stay red.
+            if ($attempt -lt 4 -and ([string]($line -join ' ')) -match 'cannot access .+: No such file or directory') {
+                Start-Sleep -Milliseconds 20
+                continue
+            }
             throw "Allocated-byte sample failed for $path : $line"
         }
-        return [long]([string]$line).Split([char]9)[0]
     }
     if ($IsWindows) { return Get-WindowsAllocated $path }
     throw 'Native allocated-byte sampling is not implemented for this OS.'
