@@ -558,6 +558,10 @@ public sealed partial class ChannelOutboundDeliveryTests
             row.ChannelReplySettledAt.ShouldBeNull();
             var channel = await verify.ChatChannels.SingleAsync(c => c.Id == channelId);
             channel.ReplyHandle = "thread-2";
+            intent.LeaseOwner = Guid.NewGuid();
+            intent.LeaseUntil = DateTime.UtcNow.AddMinutes(5);
+            intent.Version++;
+            await verify.SaveChangesAsync();
             var tasks = new AgentTaskService(verify,
                 new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
                 Options.Create(new DelegationSettings { AllowedRoots = [root] }),
