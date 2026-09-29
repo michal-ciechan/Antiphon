@@ -151,16 +151,16 @@ public sealed class RunnerWorkspaceServiceTests
 
         Directory.Exists(mirror.Path).ShouldBeTrue();
         AssertPushProbe(starts.Single(psi => psi.ArgumentList.FirstOrDefault() == "push"), secondary);
-        Scratch.Git(secondary, "for-each-ref", "refs/heads/antiphon-push-access-probe-").ShouldBeEmpty();
+        Scratch.Git(secondary, "for-each-ref", "refs/heads/antiphon-push-access-probe-*").ShouldBeEmpty();
     }
 
     private static void AssertPushProbe(ProcessStartInfo start, string pushUrl)
     {
-        start.ArgumentList.Count.ShouldBe(6);
-        start.ArgumentList.Take(5).ShouldBe(new[] { "push", "--dry-run", "--porcelain", "--", pushUrl });
+        start.ArgumentList.Count.ShouldBe(7);
+        start.ArgumentList.Take(6).ShouldBe(new[] { "push", "--dry-run", "--no-verify", "--porcelain", "--", pushUrl });
         const string prefix = "HEAD:refs/heads/antiphon-push-access-probe-";
-        start.ArgumentList[5].ShouldStartWith(prefix);
-        Guid.TryParseExact(start.ArgumentList[5][prefix.Length..], "N", out _).ShouldBeTrue();
+        start.ArgumentList[6].ShouldStartWith(prefix);
+        Guid.TryParseExact(start.ArgumentList[6][prefix.Length..], "N", out _).ShouldBeTrue();
     }
 
     private static RunnerWorkspaceService RepositoryService(Scratch scratch, string root,

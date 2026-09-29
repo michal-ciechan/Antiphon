@@ -191,7 +191,7 @@ public sealed partial class RunnerWorkspaceService
             // for public repositories when the deploy key has no permission to push.
             // The random destination cannot overlap a task branch, and -- keeps the URL positional.
             var probeRef = "HEAD:refs/heads/antiphon-push-access-probe-" + Guid.NewGuid().ToString("N");
-            var probe = await GitAsync(repository, ct, "push", "--dry-run", "--porcelain", "--",
+            var probe = await GitAsync(repository, ct, "push", "--dry-run", "--no-verify", "--porcelain", "--",
                 pushUrl.Stdout.Trim(), probeRef);
             if (probe.ExitCode == 0)
                 return;
