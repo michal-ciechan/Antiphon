@@ -3676,8 +3676,7 @@ public sealed class AgentTaskReplyService
     private sealed record CommitOnSettleNote(string Header, string? Warning, bool Durable = false);
 
     private async Task<CommitOnSettleNote?> TryCommitOnSettleAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, string report,
-        ReviewEvidence.Result reviewEvidence, DateTime now,
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,
         CancellationToken ct)
     {
         if (!CommitOnSettleEligibility.IsEligible(task))
@@ -4308,7 +4307,8 @@ public sealed class AgentTaskReplyService
     /// stay Unreported if the line was absent.
     /// </summary>
     private async Task RecordDelegateStageOutcomeAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,
+        IServiceProvider services, AppDbContext db, AgentTask task, string report,
+        ReviewEvidence.Result reviewEvidence, DateTime now,
         CancellationToken ct)
     {
         if (task.Stage is not { } stage)
