@@ -162,7 +162,7 @@ refusal, and that is documented as out of scope.
 Default on (`PhoneHome:ProbeSecondaryRepositoryPushAccess = true`). After D-4 and before the
 fetch, for a non-primary repository the runner reads `git remote get-url --push origin` in the
 checkout (git applies the image's `pushInsteadOf`, so this is the SSH URL the session's `git push`
-will use) and runs `git push --dry-run --porcelain -- <push-url> HEAD:refs/heads/antiphon-push-access-probe-<random-guid>`
+will use) and runs `git push --dry-run --no-verify --porcelain -- <push-url> HEAD:refs/heads/antiphon-push-access-probe-<random-guid>`
 with the deploy key. The unique destination avoids a task branch and sends no ref update. A non-zero exit
 is `phone_home_repository_push_unauthorized` (409, new `RepositoryPushUnauthorized`) whose message
 names the repository and the remedy: register a push credential for it on server2. No mirror is
