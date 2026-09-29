@@ -71,6 +71,10 @@ public sealed class TaskPlatformGuidanceTests
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
         text.ShouldContain("self-compare, constant, no outcome assertion");
+        text.ShouldContain("check the build against the plan");
+        text.ShouldContain("reject empty variable components with nonzero exit");
+        text.ShouldContain("quote variable expansions");
+        text.ShouldContain("resolve the target inside the intended scratch root");
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("bare, unfenced, unindented, unquoted lines");
         text.ShouldContain("original Code/Worktree landing owner");
