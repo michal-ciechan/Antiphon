@@ -14,6 +14,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -2081,6 +2082,72 @@ public partial class AgentTaskReplyIntegrationTests
             foreach (var path in attached)
                 (await File.ReadAllBytesAsync(path)).ShouldBe(expected[Path.GetFileName(path)]);
         }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task completion_receipt_respects_legacy_renderer_keys_and_source_kill_switch(bool enabled)
+    {
+        using var workspace = new TempWorkspace();
+        var feature = Path.Combine(workspace.Path, "docs", "features", "legacy");
+        Directory.CreateDirectory(feature);
+        var relative = "docs/features/legacy/spec.md";
+        var bytes = System.Text.Encoding.UTF8.GetBytes("# Legacy config source\r\nZażółć ✨  \r\n");
+        await File.WriteAllBytesAsync(Path.Combine(feature, "spec.md"), bytes);
+        var browserLog = Path.Combine(workspace.Path, "browser-called.txt");
+        var browser = Path.Combine(workspace.Path,
+            OperatingSystem.IsWindows() ? "fake-browser.cmd" : "fake-browser.sh");
+        await File.WriteAllTextAsync(browser, OperatingSystem.IsWindows()
+            ? $"@echo off\r\necho invoked > \"{browserLog}\"\r\nexit /b 1\r\n"
+            : $"#!/bin/sh\nprintf invoked > '{browserLog}'\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(browser, UnixFileMode.UserRead | UnixFileMode.UserWrite
+                | UnixFileMode.UserExecute);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Deliverables:Enabled"] = enabled.ToString(),
+            ["Deliverables:BrowserPath"] = browser,
+            ["Deliverables:RenderTimeoutSeconds"] = "1",
+        }).Build();
+        var deliverables = new DeliverablesSettings();
+        config.GetSection(DeliverablesSettings.SectionName).Bind(deliverables);
+        var parent = await SeedSessionAsync(workspace.Path);
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent,
+            t => { t.Role = AgentTaskRole.Docs; t.RepoPath = workspace.Path; });
+        using var factory = NewDeliveryFactory(deliverables);
+        var terminal = AttachTerminal(factory, parent);
+        await SeedParentHistoryAsync(parent);
+        var report = $"Wrote `{relative}`.";
+        await SeedTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(session, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(parent, CancellationToken.None);
+        var (note, _) = await AssertParentReceivedNoteAsync(parent, task, report);
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        if (enabled)
+        {
+            settled.DeliverableFileCount.ShouldBe(1);
+            settled.DeliverablePdfPath.ShouldBeNull();
+            settled.DeliverableRenderError.ShouldBeNull();
+            note.Body.ShouldContain("deliverable=1 md");
+            var attached = DeliverableBundleService.ListAttachableFiles(settled).ShouldHaveSingleItem();
+            note.Body.ShouldContain($"[[attach: {attached}]]");
+            (await File.ReadAllBytesAsync(attached)).ShouldBe(bytes);
+        }
+        else
+        {
+            settled.DeliverableBundleDir.ShouldBeNull();
+            settled.DeliverableFileCount.ShouldBe(0);
+            note.Body.ShouldNotContain("deliverable=");
+            note.Body.ShouldNotContain("[[attach:");
+            Directory.Exists(Path.Combine(workspace.Path, ".antiphon", "deliverables"))
+                .ShouldBeFalse();
+        }
+        File.Exists(browserLog).ShouldBeFalse();
+        (await verify.AgentTasks.CountAsync(t => t.RootTaskId == task.Id
+            && t.OutboundDeliveryId != null)).ShouldBe(0);
     }
 
     [Test]
@@ -5075,7 +5142,7 @@ public partial class AgentTaskReplyIntegrationTests
     /// (SessionMessageQueueSpillTests), but one that would hide the thing V-5 has to show: the
     /// report text itself arriving in the parent's transcript.
     /// </summary>
-    private static TestScopeFactory NewDeliveryFactory() => new(
+    private static TestScopeFactory NewDeliveryFactory(DeliverablesSettings? deliverables = null) => new(
         supervision: new SupervisionSettings
         {
             DeliveryVerification = new DeliveryVerificationSettings
@@ -5088,7 +5155,9 @@ public partial class AgentTaskReplyIntegrationTests
                 ReEnterIntervalSeconds = 1,
             },
         },
-        delegation: new DelegationSettings { PtySingleChunkBytes = 43_200 });
+        delegation: new DelegationSettings { PtySingleChunkBytes = 43_200 },
+        configureServices: deliverables is null ? null : services =>
+            services.AddSingleton<IOptions<DeliverablesSettings>>(Options.Create(deliverables)));
 
     /// <summary>
     /// Gives <paramref name="sessionId"/> a live terminal whose submitted bodies become UserPrompt
