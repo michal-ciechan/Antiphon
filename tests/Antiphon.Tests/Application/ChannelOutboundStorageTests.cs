@@ -631,6 +631,54 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
+    public async Task Output_rename_and_link_swap_after_inspection_seals_the_opened_file()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-output-swap-").FullName;
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "outbound"));
+        var id = Guid.NewGuid();
+        var original = "trusted output"u8.ToArray();
+        var sentinel = Path.Combine(root, "unrelated-sentinel.pdf");
+        var reached = false;
+        try
+        {
+            await File.WriteAllBytesAsync(sentinel, "malicious bytes"u8.ToArray());
+            var snapshot = await store.StageAsync(id, new ChannelReply
+            {
+                Channel = "slack", ConversationId = "C1", Text = "source",
+            }, CancellationToken.None);
+            var output = Path.Combine(snapshot.OutputDirectory, "result.pdf");
+            await File.WriteAllBytesAsync(output, original);
+            await File.WriteAllTextAsync(Path.Combine(snapshot.OutputDirectory, "manifest.json"),
+                JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = id, disposition = "converted",
+                    files = new[] { new { path = "result.pdf", name = "result.pdf",
+                        mime = "application/pdf", length = original.Length,
+                        sha256 = Convert.ToHexString(SHA256.HashData(original)).ToLowerInvariant() } },
+                }));
+            store.ProbeBarrierAsync = (boundary, _, _) =>
+            {
+                if (boundary == "output-before-sealed-copy")
+                {
+                    reached = true;
+                    File.Move(output, Path.Combine(snapshot.OutputDirectory, "trusted-backup.pdf"));
+                    File.CreateSymbolicLink(output, sentinel);
+                }
+                return Task.CompletedTask;
+            };
+
+            var sealedReply = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            reached.ShouldBeTrue();
+            var reply = await store.ReadReplyAsync(sealedReply.ReplyPath,
+                sealedReply.ReplySha256, CancellationToken.None);
+            reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(original);
+            (await File.ReadAllBytesAsync(sentinel)).ShouldBe("malicious bytes"u8.ToArray());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Complete_source_stamp_requires_every_manifested_attachment()
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-stamp-" + Guid.NewGuid().ToString("N"));
