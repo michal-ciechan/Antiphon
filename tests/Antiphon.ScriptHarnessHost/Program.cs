@@ -95,6 +95,17 @@ static Task WriteFrame(Stream stream, string message, CancellationToken token) =
 
 static void CloseOwnOutputWriters(bool closeStdout = true, bool closeStderr = true)
 {
+    if (OperatingSystem.IsWindows())
+    {
+        // Windows has no fd-duplication concept; this process holds at most one
+        // inherited copy of each std handle. Closing it directly, and clearing the
+        // std-handle slot so nothing reopens it, is the exact Windows equivalent of
+        // closing the POSIX duplicate write descriptors below.
+        if (closeStdout) CloseStdHandleWindows(-11); // STD_OUTPUT_HANDLE
+        if (closeStderr) CloseStdHandleWindows(-12); // STD_ERROR_HANDLE
+        return;
+    }
+
     // dotnet's redirected-process launch can leave duplicate write descriptors
     // (for example 6/7) in the supervisor in addition to fd 1/2. They must all
     // be closed or a completed pwsh never gives the host stream EOF.
@@ -121,6 +132,19 @@ static string? ReadFdTarget(int fd)
     var count = readlink($"/proc/self/fd/{fd}", bytes, (nuint)bytes.Length);
     return count > 0 ? Encoding.UTF8.GetString(bytes, 0, (int)count) : null;
 }
+
+static void CloseStdHandleWindows(int handleId)
+{
+    var handle = GetStdHandle(handleId);
+    if (handle == IntPtr.Zero || handle == new IntPtr(-1)) return;
+    if (!CloseHandle(handle)) throw new IOException($"Failed to close inherited output handle {handleId}.");
+    if (!SetStdHandle(handleId, new IntPtr(-1)))
+        throw new IOException($"Failed to clear std-handle slot {handleId} after closing it.");
+}
+
+[DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetStdHandle(int handle);
+[DllImport("kernel32.dll", SetLastError = true)] static extern bool SetStdHandle(int handle, IntPtr value);
+[DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
 
 static async Task<int> FixtureChild(string directory, string heldStream)
 {

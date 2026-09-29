@@ -60,8 +60,14 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     {
         _faults = faults;
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        // App Execution Alias stubs live only under the per-user alias directory and are reparse
+        // points; a real MSIX-packaged executable (e.g. Store-installed pwsh.exe) legitimately
+        // lives under the machine-wide "Program Files\WindowsApps\<package>\" tree and must not
+        // be rejected by a bare "\WindowsApps\" substring match.
+        var aliasDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps");
         if (!Path.IsPathFullyQualified(request.Executable) ||
-            request.Executable.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetDirectoryName(request.Executable), aliasDirectory, StringComparison.OrdinalIgnoreCase) ||
             (File.GetAttributes(request.Executable) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidOperationException("ScriptHarness requires a real pwsh.exe path, not an App Execution Alias; set ExecutablePath to the installed PowerShell executable.");
         _job = CreateJobObjectW(IntPtr.Zero, null);
@@ -138,8 +144,8 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                         CreateSuspended | ExtendedStartupInfoPresent, IntPtr.Zero,
                         Directory.GetCurrentDirectory(), ref startup, out var information))
                     throw NativeError("CreateProcessW");
-                _process = information.Process;
-                _thread = information.Thread;
+                _process = new SafeFileHandle(information.Process, ownsHandle: true);
+                _thread = new SafeFileHandle(information.Thread, ownsHandle: true);
                 ProcessId = information.ProcessId;
                 faults?.RootProcessIds.Add(information.ProcessId);
                 faults?.Trace.Add("Assign:attempt");
@@ -162,8 +168,10 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
             }
         }
-        _stdout = new StreamReader(new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: true), Encoding.UTF8);
-        _stderr = new StreamReader(new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: true), Encoding.UTF8);
+        // CreatePipe hands back a synchronous (non-overlapped) handle; isAsync:true is rejected
+        // by FileStream's handle validation, so ReadAsync falls back to thread-pool reads here.
+        _stdout = new StreamReader(new FileStream(stdoutRead, FileAccess.Read, 4096, isAsync: false), Encoding.UTF8);
+        _stderr = new StreamReader(new FileStream(stderrRead, FileAccess.Read, 4096, isAsync: false), Encoding.UTF8);
         }
         catch
         {
@@ -274,8 +282,10 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     }
     [StructLayout(LayoutKind.Sequential)] private struct StartupInfoEx
     { public StartupInfo StartupInfo; public IntPtr AttributeList; }
+    // Raw handles, not SafeFileHandle: the CLR interop marshaler cannot construct a SafeHandle
+    // from a struct field populated by native code (out-parameter struct fields are unsupported).
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation
-    { public SafeFileHandle Process; public SafeFileHandle Thread; public int ProcessId; public int ThreadId; }
+    { public IntPtr Process; public IntPtr Thread; public int ProcessId; public int ThreadId; }
     [StructLayout(LayoutKind.Sequential)] private struct JobBasicLimitInformation
     {
         public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags;
