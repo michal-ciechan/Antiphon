@@ -22,6 +22,7 @@ public static class ReviewEvidence
         VerificationScope Scope = VerificationScope.Unknown);
 
     public const string ScopeKey = "ordinaryScopeCompleted";
+    public const string NotStandaloneWarning = "review_evidence_not_standalone";
 
     public static Result TryParse(string? report)
     {
@@ -30,9 +31,9 @@ public static class ReviewEvidence
 
         var normalized = report.ReplaceLineEndings("\n");
         var searchable = TextBeforeClosingReportToken(normalized);
-        var headings = StandaloneHeadingIndexes(searchable);
+        var (headings, ignoredHeading) = ScanHeadings(searchable);
         if (headings.Count == 0)
-            return default;
+            return ignoredHeading ? new(true, false, null, null, NotStandaloneWarning) : default;
         if (headings.Count > 1)
             return new(true, false, null, null, "review_evidence_duplicate");
 
@@ -97,9 +98,10 @@ public static class ReviewEvidence
     public static VerificationScope CapToRound(VerificationScope declared, VerificationRound round) =>
         round == VerificationRound.Interim && declared == VerificationScope.Full ? VerificationScope.Interim : declared;
 
-    private static List<int> StandaloneHeadingIndexes(string text)
+    private static (List<int> Standalone, bool Ignored) ScanHeadings(string text)
     {
         var found = new List<int>();
+        var ignored = false;
         var inFence = false;
         var offset = 0;
         foreach (var line in text.Split('\n'))
@@ -107,15 +109,31 @@ public static class ReviewEvidence
             var trimmed = line.Trim();
             if (trimmed.StartsWith("```", StringComparison.Ordinal))
                 inFence = !inFence;
-            else if (!inFence
-                     && line.Length == line.TrimStart().Length
-                     && !line.StartsWith('>')
-                     && trimmed.Equals(Heading, StringComparison.OrdinalIgnoreCase))
-                found.Add(offset);
+            else if (EvidenceHeadingAfterPresentationPrefix(line))
+            {
+                if (!inFence && line.Length == line.TrimStart().Length
+                    && trimmed.Equals(Heading, StringComparison.OrdinalIgnoreCase))
+                    found.Add(offset);
+                else
+                    ignored = true;
+            }
             offset += line.Length + 1;
         }
 
-        return found;
+        return (found, ignored);
+    }
+
+    private static bool EvidenceHeadingAfterPresentationPrefix(string line)
+    {
+        var remaining = line.AsSpan();
+        while (true)
+        {
+            remaining = remaining.TrimStart(' ', '\t');
+            if (remaining.IsEmpty || remaining[0] != '>')
+                break;
+            remaining = remaining[1..];
+        }
+        return remaining.Trim().Equals(Heading.AsSpan(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TextBeforeClosingReportToken(string normalized)
