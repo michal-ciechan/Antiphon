@@ -23,6 +23,28 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void C807_ShippedReviewExampleParses()
+    {
+        var text = InstructionBundles.TextOf(InstructionBundles.StageReview);
+        const string subjectPlaceholder = "<full GUID of task whose exact pushed tip was reviewed>";
+        const string shaPlaceholder = "<full SHA actually reviewed>";
+        const string scopePlaceholder = "<Full|Interim|None>";
+        foreach (var placeholder in new[] { subjectPlaceholder, shaPlaceholder, scopePlaceholder })
+            text.Split(placeholder, StringSplitOptions.None).Length.ShouldBe(2, placeholder);
+
+        var subject = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var sha = new string('A', 40);
+        var parsed = ReviewEvidence.TryParse(text.Replace(subjectPlaceholder, subject.ToString("D"))
+            .Replace(shaPlaceholder, sha).Replace(scopePlaceholder, "Full"));
+        parsed.Found.ShouldBeTrue();
+        parsed.Usable.ShouldBeTrue();
+        parsed.SubjectTaskId.ShouldBe(subject);
+        parsed.ReviewedSourceSha.ShouldBe(sha.ToLowerInvariant());
+        parsed.Scope.ShouldBe(VerificationScope.Full);
+        parsed.Warning.ShouldBeNull();
+    }
+
+    [Test]
     public void Channel_sources_do_not_instruct_universal_pdf_conversion()
     {
         ChannelPreamble.TelegramPresetTemplate.ShouldNotContain("Prefer PDF for documents");

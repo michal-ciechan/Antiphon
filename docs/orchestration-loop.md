@@ -76,10 +76,20 @@ does none of those git operations itself.
 
 **Reviewed owner recovery (CARD-0753).** A Code/Worktree owner that settled Failed or Blocked can
 land only through an explicit Clean Final/Full Review of the exact current pushed source tip.
-Use `-Land <owner> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <guid>
--RecoverReviewedSource` when the reviewed tip is on the owner's branch, or `-FromTask <repair-id>`
-when a `-StartRef` repair pushed its own branch. The latter retains the repair branch and lands
-through the original owner. The server validates the Review's subject, ref, repository and SHA,
+The Review evidence's `subjectTaskId` names the task whose exact current pushed tip was reviewed:
+
+| Operation | Evidence subject | Landing command |
+|---|---|---|
+| Ordinary owner review | Original Code/Worktree landing owner | `-Land <owner> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>` |
+| Recover reviewed owner branch | Same owner | Same flags plus `-RecoverReviewedSource` |
+| Adopt another eligible task's reviewed branch | Source task named by `-FromTask` | `-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>` |
+
+The Review's own task ID and `-StartRef` do not establish source identity. The caller's brief
+must name both owner and source when they differ. Keep explicit `-Card`: a fresh same-card Review
+may name the source. A follow-up Review must name its `FollowUpOfTaskId` as the evidence subject;
+commission a fresh same-card Review when an old-owner follow-up conflicts. An adopted source
+retains its branch and lands through the original owner. The server validates subject, ref,
+repository and SHA,
 then pins and aligns the owner source under the repository lease; adoption pushes the owner ref
 with an exact `--force-with-lease`. A NeedsResolution request may be superseded by a new reviewed
 request; Queued, Held and Running requests cannot. The original task status stays historical.
@@ -102,9 +112,10 @@ Code/Worktree landing owner). Antiphon records that owner, routes the repair ont
 branch at the owner's recorded SHA, and attributes a claimed post-dispatch commit on the owner's
 ref. `-RepairSource` alone sets no merge target and grants no Land: a repair task's
 `-Land` is refused `repair_source_landing_owner_required`. Integrate through the original owner
-(or an explicit merge target equal to the owner's branch). A reviewed repair that pushed its
-own branch is adopted with `-Land <owner> -FromTask <repair-id>` and the exact SHA and Review ID;
-the repair task never becomes the landing owner. Historical Failed status is preserved.
+(or an explicit merge target equal to the owner's branch). A task tagged `-RepairSource` is not
+eligible for `-FromTask` adoption. A separate Code/Worktree source started with `-StartRef` can
+be adopted after its pushed tip is reviewed; the original owner remains the landing target.
+Historical Failed status is preserved.
 
 **Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
 default base - continuing an interrupted stage, or picking up where another task's branch got to -
