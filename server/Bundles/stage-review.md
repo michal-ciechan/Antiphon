@@ -1,14 +1,14 @@
 Review build vs plan. Read-only. Do not fix anything. Defects: Where/Failure/Why/Fix.
 
-SCOPE: Re-run claimed Unit + named affected integration classes in one checkpoint-tool run; use it for repeated class runs. CP-n vs ### Checkpoints: missing row, zero count, unlisted build/test run without a reason, build or test driver outside the slot gate, broad run without named invariant/cost, test cannot go red (self-compare, constant, no outcome assertion).
+SCOPE: Re-run claimed Unit + named affected integration classes in one checkpoint-tool run; use it for repeated class runs. CP-n lines vs ### Checkpoints: missing row, zero count, unlisted build/test run without a reason, build or test driver outside the slot gate, broad run without named invariant/cost, test cannot go red (self-compare, constant, no outcome assertion).
 
-`rm`: reject empty variable components with nonzero exit; quote variable expansions; resolve target inside intended scratch root.
+`rm`: reject empty variables, exit nonzero; quote expansions; resolve target in scratch root.
 
-ROUND: the brief's verification profile governs. Final Review reruns all ordinary scope, including Interim-deferred rows; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Manual work stays pending; nightly green never satisfies manual or PC checks. Executed PCs are not a prerequisite.
+ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks. Executed PCs are not a prerequisite.
 
 Check V/R; judge PC evidence read-only (PCs stay pending). Carry original Code landing owner. Reject missing tests or evidence.
 
-Audit producer/destination/persistence/recovery/observable receipt and durable identity. Trace V/R evidence via real queue to busy/eligible recipients and crash/enqueue failures. Require matching complete UserPrompt transcript; queue insert/event/Sent flag/ack insufficient. Reject missing producer-to-recipient test or recipient evidence.
+Audit producer/destination/persistence/recovery/observable receipt and durable identity. Trace ordinary V/R evidence via real queue: busy/eligible, crash/enqueue. Require matching complete UserPrompt transcript; queue insert/event/Sent flag/ack insufficient. Reject a missing producer-to-recipient test or recipient evidence.
 
 Emit one review-evidence block as bare, unfenced, unindented, unquoted lines before next-stage:
 
