@@ -128,6 +128,7 @@ public sealed class ChannelOutboundPolicyTests
         var projectId = Guid.NewGuid();
         var boardId = Guid.NewGuid();
         var inboundId = Guid.NewGuid();
+        var replacementInboundId = Guid.NewGuid();
         var converterId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
         var directory = Path.Combine(Path.GetTempPath(), "antiphon-outbound-policy-" + Guid.NewGuid().ToString("N"));
@@ -143,6 +144,7 @@ public sealed class ChannelOutboundPolicyTests
         {
             Profiles = new Dictionary<string, ChannelOutboundProfile> { ["pdf-project"] = profile },
         });
+        new ChannelOutboundSettings().Profiles.ShouldBeEmpty();
 
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         db.Projects.Add(new Project { Id = projectId, Name = "outbound-" + projectId.ToString("N"),
@@ -151,6 +153,9 @@ public sealed class ChannelOutboundPolicyTests
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
         db.Agents.AddRange(
             new Agent { Id = inboundId, Name = "inbound", Slug = "inbound-" + inboundId.ToString("N"),
+                WorkingDirectory = directory, BoardId = boardId },
+            new Agent { Id = replacementInboundId, Name = "replacement inbound",
+                Slug = "inbound-" + replacementInboundId.ToString("N"),
                 WorkingDirectory = directory, BoardId = boardId },
             new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
                 WorkingDirectory = directory, BoardId = boardId });
@@ -192,6 +197,13 @@ public sealed class ChannelOutboundPolicyTests
             await service.UpdateAsync(channelId,
                 new UpdateChatChannelRequest(AgentId: inboundId, OutboundAgentProfile: "pdf-project"),
                 CancellationToken.None);
+            var rebound = await service.UpdateAsync(channelId,
+                new UpdateChatChannelRequest(AgentId: replacementInboundId), CancellationToken.None);
+            rebound.AgentId.ShouldBe(replacementInboundId);
+            rebound.OutboundAgentProfile.ShouldBeNull();
+            await service.UpdateAsync(channelId,
+                new UpdateChatChannelRequest(AgentId: inboundId, OutboundAgentProfile: "pdf-project"),
+                CancellationToken.None);
             await db.Agents.Where(a => a.Id == converterId).ExecuteDeleteAsync();
             var producer = new FakeAntiphonMessagingClient();
             var outbound = new ChannelOutboundService(db,
@@ -217,7 +229,8 @@ public sealed class ChannelOutboundPolicyTests
         finally
         {
             await db.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
-            await db.Agents.Where(a => a.Id == inboundId || a.Id == converterId).ExecuteDeleteAsync();
+            await db.Agents.Where(a => a.Id == inboundId || a.Id == replacementInboundId
+                || a.Id == converterId).ExecuteDeleteAsync();
             await db.Boards.Where(b => b.Id == boardId).ExecuteDeleteAsync();
             await db.Projects.Where(p => p.Id == projectId).ExecuteDeleteAsync();
             Directory.Delete(directory, recursive: true);
