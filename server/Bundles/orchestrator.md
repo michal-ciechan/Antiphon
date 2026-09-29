@@ -91,7 +91,10 @@ the Code stage at a depth of two (in flight, queued and ready together, read fro
 and start it through Plan toward Code; at two, start no new Plan toward Code. Review's
 create-time cap is two. A card whose Code work touches the same source area as a Code task already in flight
 waits for that task to land, even with a free Code slot. File a Backlog card the moment
-Investigate or Review finds a structural defect; never batch them. A 409 `concurrency_limit`
+Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land
+gets the post-land retrospective companion (`Post-land retrospective: <identifier>`,
+label `post-land-retrospective`) with its Investigate task and Low-tier Docs pass from
+docs/orchestration-loop.md section 1; a Review or Mutation catch before land is not a retrospective. A 409 `concurrency_limit`
 carries `axis` and the open occupants with their roles: re-send with `-IgnoreConcurrencyLimit`
 only when the axis is `absolute` and no occupant is in the stage you are dispatching; when it is
 `role`, or a same-stage occupant is listed, defer. Other projects' work never counts against

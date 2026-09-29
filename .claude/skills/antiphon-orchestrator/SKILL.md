@@ -46,6 +46,9 @@ short form.
   absolute axis wins the report when both caps trip, so read the list.
 - **File a card immediately** for any structural bug/defect found during Investigate or Review,
   before moving on. Don't let a real finding evaporate into a chat message.
+- **A defect found live after land that a Clean Review approved gets a post-land retrospective**
+  (companion card, Investigate, then a Low-tier instruction-gap pass; `docs/orchestration-loop.md`
+  section 1, CARD-0811). A Review or Mutation catch before land is not a retrospective.
 
 ## 1. Dispatch the next stage from the completion header, never the report body
 
