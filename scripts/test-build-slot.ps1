@@ -203,7 +203,7 @@ function Test-C800_WrapperInterruptKillsChildAndReleasesLease {
             }
             Start-Sleep -Milliseconds 100
         }
-        if ($childPid -gt 0) { & /bin/kill -INT $running.Process.Id }
+        if ($childPid -gt 0) { & /bin/sh -c 'kill -INT "$1"' _ $running.Process.Id }
         $quickExit = $running.Process.WaitForExit(5000)
         $gone = $false
         if ($childPid -gt 0) {
