@@ -701,9 +701,13 @@ The CARD-0804/0805 plan's CP-9..CP-13 commands call
 `scripts/verify-checkpoint-temp-usage.ps1` from inside the checkpoint row's build
 slot. Namespace and Full passes use a shared sandbox per pair and a pinned DLL
 digest; their reports and event logs are under `.antiphon/c804-usage/<sha>/`.
-The observer samples Linux allocated blocks at one-second intervals and records
-created/deleted root IDs, copied logical bytes, TRX/roster counts, peaks and final
-residuals. A missing TRX, event tail, owner exit or byte sample is red evidence.
-CP-13 uses a separate owner-death sandbox and preserves protected live, uncertain
-and unmarked fixtures until its bounded sweep checks finish. These reports do not
-replace the method-scoped SourceLanding Mutation PCs.
+The observer samples allocated bytes at one-second intervals (Linux `du` blocks;
+Windows cluster-rounded `GetCompressedFileSizeW` that never follows a reparse
+point, the sampled root included, and fails on any error but a vanished path) and
+records created/deleted root IDs, copied logical bytes, TRX/roster counts, peaks
+and final residuals. A missing TRX, event tail, owner exit or byte sample is red
+evidence. The sampler and the roster/TRX/event gates live in
+`scripts/lib/checkpoint-usage.ps1`, which `CheckpointTempUsageTests` drives with
+supplied inputs. CP-13 uses a separate owner-death sandbox and preserves protected
+live, uncertain and unmarked fixtures until its bounded sweep checks finish. These
+reports do not replace the method-scoped SourceLanding Mutation PCs.

@@ -451,7 +451,7 @@ methods and one lifecycle method also listed below. Supplemental methods complet
 | CheckpointTempUsageTests | 5 | `incomplete_trx_never_accepts_residue`, `allocated_bytes_include_written_payload`, `repeated_pass_manifest_is_exact`, `assembly_and_allocation_invoke_bounded_sweep` |
 | CheckpointTempLifecycleTests | 6 | `passing_test_runs_teardown`, `assertion_failure_runs_teardown` (PC-57), `cancellation_runs_teardown`, `setup_failure_runs_teardown`, `multiple_roots_run_teardown`, `early_assertion_still_joins_owned_child` |
 | CheckpointRecoveryLinuxTests | 10 | Native inventory below (including PC-55 method) |
-| CheckpointRecoveryWindowsTests | 11 | Native inventory below (including PC-56 method) |
+| CheckpointRecoveryWindowsTests | 14 | Native inventory below (including PC-56 method); Review 953ac836 fix round adds `allocation_sample_fails_on_access_denied_subfolder`, `allocation_sample_does_not_follow_junction_root`, `drifted_boot_reading_is_still_the_local_boot` |
 
 Scope/probe/policy/launch/sweep/source classes are Unit. Lifecycle, usage script/observer tests
 and both native classes are Integration with the assembly-local ProcessSpawnLimit; register
@@ -517,7 +517,9 @@ not the number of child assertions. A killed child is the V-9 orphan case, not V
 - **R-4 (complete selection):** base has 24 checkpoint test classes, 144 Test methods and 150
   argument-expanded cases (ExitCodeTests contributes seven). Four TimeoutTests are Windows-only;
   DetachedLauncherTests has one Linux-only case. With this exact 100-case addition, namespace
-  selection is 250 cases: Linux 235 executed + 15 declared OS skips, Windows 239 + 11. Reclassifying
+  selection is 250 cases: Linux 235 executed + 15 declared OS skips, Windows 239 + 11. The fix
+  round after Review 953ac836 adds four (three Windows-native, one BuildSlotClient), so it is 254:
+  Linux 236 + 18, Windows 243 + 11. Reclassifying
   Unit/Integration does not change the namespace total. Any count/name delta needs reconciliation
   before the checkpoint runs; do not silently lower these floors.
 - **R-5 (test infrastructure):** run the full default Unit category plus
@@ -728,8 +730,8 @@ is a completeness inventory, never execution proof. Join every eligible selected
 terminal TRX result, assert no missing/duplicate/wrong-SHA result, preserve all skips and require
 zero unexplained skips. A numeric floor alone does not establish full selection. The Unit/full
 floor of 1000 is the conservative existing checkpoint lane floor, not a fresh full-suite count;
-the compiled roster equality is the stricter acceptance gate. Namespace uses the exact 235
-Linux execution floor and 250 selected cases derived above. Full must contain all 235 eligible
+the compiled roster equality is the stricter acceptance gate. Namespace uses the exact 236
+Linux execution floor and 254 selected cases derived above. Full must contain all 236 eligible
 checkpoint cases, all other eligible compiled cases, and at least 1000 executions. Both full
 passes must have the same eligible roster and argument expansion. Record actual counts, not 1000
 as if it were measured. `--list-tests` output is not an executed roster.
@@ -855,10 +857,10 @@ is exact failing methods, not another full suite. No retries are silently labele
 | CP-4 | all | `tests/Antiphon.Tests -> bin-c804-final/` | sweep-and-classification | `/*/*/(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-7, R-1, R-4, R-5 | all 21 executions, 0 failed/skipped | 21 | 12 | true |
 | CP-5 | all | CP-4 | tunit-lifecycle-linux | `/*/Antiphon.Tests.Checkpoints/CheckpointTempLifecycleTests/*` | V-1, V-5 | all 6 parent executions, complete expected child outcomes, 0 parent failed/skipped | 6 | 8 | true |
 | CP-6 | all | CP-4 | native-linux | `/*/Antiphon.Tests.Checkpoints/(CheckpointRecoveryLinuxTests*)\|(DetachedLauncherTests*)/*` | V-2, V-3, V-4, V-6 | Linux only; all 11 executions, 0 failed/skipped | 11 | 12 | true |
-| CP-7 | all | `tests/Antiphon.Tests -> bin-c804-windows/` | native-and-policy-windows | `/*/*/(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(CheckpointTempScopeTests*)\|(CheckpointToolSourceTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(CheckpointTempLifecycleTests*)\|(CheckpointRecoveryWindowsTests*)\|(EvidenceFolderTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-2, R-5 | Windows only; all 101 executions, 0 failed/skipped | 101 | 25 | true |
+| CP-7 | all | `tests/Antiphon.Tests -> bin-c804-windows/` | native-and-policy-windows | `/*/*/(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(CheckpointTempScopeTests*)\|(CheckpointToolSourceTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(CheckpointTempLifecycleTests*)\|(CheckpointRecoveryWindowsTests*)\|(EvidenceFolderTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-2, R-5 | Windows only; all 104 executions, 0 failed/skipped | 104 | 25 | true |
 | CP-8 | all | CP-4 | unit-linux | `/*/*/*/*[Category=Unit]` | R-3, R-5 | >= 1000 executed, 0 failed; complete Unit roster; declared OS skips accounted | 1000 | 8 | true |
-| CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 235 executed / 250 selected; 0 failed; exact 15 OS skips | n/a | 6 | true |
-| CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 235 executed / 250 selected; 0 failed; exact 15 OS skips | n/a | 6 | true |
-| CP-11 | all | n/a | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-final/` | V-8, R-4, R-5 | exit 0; all 5 gates; child >=1000 executed including all 235 checkpoint cases; full compiled roster equality; 0 failed | n/a | 90 | true |
+| CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 236 executed / 254 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
+| CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 236 executed / 254 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
+| CP-11 | all | n/a | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-final/` | V-8, R-4, R-5 | exit 0; all 5 gates; child >=1000 executed including all 236 checkpoint cases; full compiled roster equality; 0 failed | n/a | 90 | true |
 | CP-12 | all | n/a | full-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 2 -OutputPath bin-c804-final/` | V-8, R-4, R-5 | exit 0; all 5 gates and pass delta; same full roster as pass1; child >=1000 executed; 0 failed | n/a | 90 | true |
 | CP-13 | all | n/a | owner-death-usage | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Orphans -Pass 1 -OutputPath bin-c804-final/` | V-7, V-9 | exit 0; 18/18 named harness checks; eligible <=32 roots AND <=256 MiB then zero; 6 excluded fixtures intact | n/a | 8 | true |
