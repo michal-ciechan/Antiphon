@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
@@ -78,7 +80,9 @@ public sealed partial class ChannelOutboundDeliveryTests
                 await release.Task.WaitAsync(ct);
             };
             var x = new ChannelReply { Channel = "fake", ConversationId = xId.ToString("N"),
-                Text = "same frozen answer" };
+                Text = "same frozen answer", Attachments =
+                [new OutboundAttachment { Kind = AttachmentKind.File, Name = "source.md",
+                    Mime = "text/markdown", Content = "# source\n"u8.ToArray() }] };
             var sourceTaskId = Guid.NewGuid();
             var source = new ChannelOutboundSource(sessionId, 10, 11, 12, "trailing", [], sourceTaskId);
             firstCall = first.SendAsync(x, ChannelOutboundOrigin.AgentReply, source, CancellationToken.None);
@@ -97,6 +101,58 @@ public sealed partial class ChannelOutboundDeliveryTests
             (await second.SendAsync(x with { ConversationId = yId.ToString("N") },
                 ChannelOutboundOrigin.AgentReply, source, CancellationToken.None))
                 .ShouldBe(ChannelOutboundSendOutcome.Deferred);
+
+            var pumpDb = new AppDbContext(options);
+            await using (pumpDb)
+            {
+                var tasks = new AgentTaskService(pumpDb,
+                    new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                    Options.Create(new DelegationSettings { AllowedRoots = [root] }),
+                    new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+                    NullLogger<AgentTaskService>.Instance);
+                var pump = new ChannelOutboundDeliveryPump(pumpDb,
+                    new OutboundConversionTaskRunner(pumpDb, tasks), store, producer,
+                    Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+                pumpDb.ChangeTracker.Clear();
+                var xDelivery = await pumpDb.ChannelOutboundDeliveries.SingleAsync(d => d.ChannelId == xId);
+                var yDelivery = await pumpDb.ChannelOutboundDeliveries.SingleAsync(d => d.ChannelId == yId);
+                xDelivery.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+                yDelivery.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+                var pdf = "%PDF-1.4 X-only\n"u8.ToArray();
+                var output = Path.Combine(Path.GetDirectoryName(xDelivery.InputPath)!, "output");
+                await File.WriteAllBytesAsync(Path.Combine(output, "x.pdf"), pdf);
+                await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = xDelivery.Id, disposition = "converted",
+                    files = new[] { new { path = "x.pdf", name = "x.pdf", mime = "application/pdf",
+                        length = pdf.Length,
+                        sha256 = Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant() } },
+                }));
+                var xTask = await pumpDb.AgentTasks.SingleAsync(t => t.Id == xDelivery.ConversionTaskId);
+                xTask.Status = AgentTaskStatus.Succeeded;
+                xTask.CompletedAt = DateTime.UtcNow;
+                await pumpDb.SaveChangesAsync();
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+                pumpDb.ChangeTracker.Clear();
+                yDelivery = await pumpDb.ChannelOutboundDeliveries.SingleAsync(d => d.ChannelId == yId);
+                yDelivery.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+                var yTask = await pumpDb.AgentTasks.SingleAsync(t => t.Id == yDelivery.ConversionTaskId);
+                yTask.Status = AgentTaskStatus.Failed;
+                yTask.CompletedAt = DateTime.UtcNow;
+                await pumpDb.SaveChangesAsync();
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            }
+            producer.SentReplies.Count.ShouldBe(2);
+            var xReply = producer.SentReplies.Single(r => r.ConversationId == xId.ToString("N"));
+            var yReply = producer.SentReplies.Single(r => r.ConversationId == yId.ToString("N"));
+            xReply.Attachments.Count.ShouldBe(2);
+            xReply.Attachments[0].Content.ShouldBe("# source\n"u8.ToArray());
+            xReply.Attachments[1].Content.ShouldBe("%PDF-1.4 X-only\n"u8.ToArray());
+            yReply.Attachments.ShouldHaveSingleItem().Content.ShouldBe("# source\n"u8.ToArray());
+            yReply.Text.ShouldContain("Conversion unavailable");
+
             (await second.SendAsync(x, ChannelOutboundOrigin.AgentReply,
                 source with { LastTextSequence = 13 }, CancellationToken.None))
                 .ShouldBe(ChannelOutboundSendOutcome.Deferred);
@@ -116,9 +172,12 @@ public sealed partial class ChannelOutboundDeliveryTests
             deliveries.Count(d => d.ChannelId == yId).ShouldBe(1);
             deliveries.Select(d => d.InputSha256).Distinct().Count().ShouldBe(2);
             deliveries.ShouldAllBe(d => d.SourceTaskId == sourceTaskId);
-            deliveries.ShouldAllBe(d => d.State == ChannelOutboundDeliveryState.Pending
-                && d.PublishedAt == null && d.ConversionTaskId == null);
-            producer.SentReplies.ShouldBeEmpty();
+            deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Published).ShouldBe(2);
+            deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Pending).ShouldBe(4);
+            deliveries.Single(d => d.ChannelId == xId && d.State == ChannelOutboundDeliveryState.Published)
+                .ConversionOutcome.ShouldBe("Converted");
+            deliveries.Single(d => d.ChannelId == yId).ConversionOutcome.ShouldBe("Fallback");
+            producer.SentReplies.Count.ShouldBe(2);
         }
         finally
         {
