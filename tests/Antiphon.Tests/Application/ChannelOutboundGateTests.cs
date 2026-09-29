@@ -1,3 +1,4 @@
+using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Interfaces;
@@ -57,6 +58,50 @@ public sealed partial class ChannelOutboundDeliveryTests
             correlation = await world.Harness.SeedChannelCorrelationAsync(prompt, world.ConversationKey);
         }
         await world.Harness.InsertTurnAsync(prompt, "A healthy matched answer.");
+        await world.Harness.Dispatcher.OnTurnEndAsync(world.Harness.SessionId, CancellationToken.None);
+        await world.AssertOneConversionAsync(correlation);
+    }
+
+    [Test]
+    public async Task Disallowed_plain_text_machine_turn_stays_out_of_admission()
+    {
+        await using var world = await OutboundGateWorld.CreateAsync();
+        var prior = await world.Harness.SeedChannelCorrelationAsync(
+            "[Telegram] earlier accepted request", world.ConversationKey);
+        var note = "[system] source.md maintenance note";
+        var machineId = Guid.NewGuid();
+        await using (var db = world.Db())
+        {
+            await db.SessionQueuedMessages.Where(m => m.Id == prior)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.ChannelReplySettledAt, DateTime.UtcNow));
+            var sequence = (await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == world.Harness.SessionId)
+                .MaxAsync(m => (long?)m.Sequence) ?? 0) + 1;
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = machineId, AgentSessionId = world.Harness.SessionId,
+                Body = note, Sequence = sequence, Origin = QueuedMessageOrigin.System,
+                Status = QueuedMessageStatus.Sent, ConversationKey = world.ConversationKey,
+                CreatedAt = DateTime.UtcNow, SentAt = DateTime.UtcNow,
+                DeliveryAttempts = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+        await world.Harness.InsertTurnAsync(note, "Plain system text with source.md in prose.");
+        await world.Harness.Dispatcher.OnTurnEndAsync(world.Harness.SessionId, CancellationToken.None);
+        await world.AssertNoConversionAsync();
+        world.Harness.Messaging.SentReplies.ShouldBeEmpty();
+        await using (var db = world.Db())
+        {
+            var machine = await db.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.Id == machineId);
+            machine.ChannelReplySettledAt.ShouldBeNull();
+            machine.ChannelOutboundDeliveryId.ShouldBeNull();
+        }
+
+        var prompt = "[Telegram] healthy after machine " + Guid.NewGuid().ToString("N");
+        var correlation = await world.Harness.SeedChannelCorrelationAsync(prompt, world.ConversationKey);
+        await world.Harness.InsertTurnAsync(prompt, "Healthy matched answer.");
         await world.Harness.Dispatcher.OnTurnEndAsync(world.Harness.SessionId, CancellationToken.None);
         await world.AssertOneConversionAsync(correlation);
     }
@@ -157,11 +202,31 @@ public sealed partial class ChannelOutboundDeliveryTests
             else channel.LastReplyAt.ShouldNotBeNull();
         }
 
+        await using (var db = world.Db())
+        {
+            var control = new ChannelReply
+            {
+                Channel = "telegram", ConversationId = world.Conversation,
+                Text = "Conversion failure notice",
+                Attachments = [new OutboundAttachment
+                {
+                    Kind = AttachmentKind.File, Name = "original.md",
+                    Mime = "text/markdown", Content = "# Original source\n"u8.ToArray(),
+                }],
+            };
+            (await world.Outbound(db).SendAsync(control, ChannelOutboundOrigin.Control,
+                source: null, CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
+            var direct = world.Harness.Messaging.SentReplies.Last();
+            direct.Attachments.ShouldHaveSingleItem().Content.ShouldBe("# Original source\n"u8.ToArray());
+            direct.Text.ShouldBe("Conversion failure notice");
+        }
+        await world.AssertNoConversionAsync();
+
         var prompt = "[Telegram] healthy control companion " + Guid.NewGuid().ToString("N");
         var correlation = await world.Harness.SeedChannelCorrelationAsync(prompt, world.ConversationKey);
         await world.Harness.InsertTurnAsync(prompt, "Healthy companion after " + caller);
         await world.Harness.Dispatcher.OnTurnEndAsync(world.Harness.SessionId, CancellationToken.None);
-        await world.AssertOneConversionAsync(correlation, priorControlSends: 1);
+        await world.AssertOneConversionAsync(correlation, priorControlSends: 2);
     }
 
     private sealed class OutboundGateWorld : IAsyncDisposable
