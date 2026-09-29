@@ -64,7 +64,7 @@ public sealed partial class ChannelOutboundDeliveryTests
                     Source = sourcePath, Content = sourceBytes,
                 }],
             };
-            var expectedWire = JsonSerializer.SerializeToUtf8Bytes(original, MessagingJson.Options);
+            var expectedWire = JsonSerializer.SerializeToUtf8Bytes(original, Antiphon.Messaging.MessagingJson.Options);
             var snapshot = await files.StageAsync(deliveryId, original, CancellationToken.None);
             await using (var seed = new AppDbContext(options))
             {
@@ -201,7 +201,7 @@ public sealed partial class ChannelOutboundDeliveryTests
                     "fixture queue refused before acceptance"), new DeliveryResult<string, string>());
             if (outcome == "ambiguous")
                 throw new IOException("fixture producer gave no acceptance verdict");
-            Accepted.Add(JsonSerializer.SerializeToUtf8Bytes(reply, MessagingJson.Options));
+            Accepted.Add(JsonSerializer.SerializeToUtf8Bytes(reply, Antiphon.Messaging.MessagingJson.Options));
         }
     }
 }
