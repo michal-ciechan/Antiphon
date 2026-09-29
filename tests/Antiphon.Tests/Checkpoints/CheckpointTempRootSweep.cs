@@ -287,4 +287,20 @@ internal static class CheckpointTempSweepAssemblyHook
 {
     [Before(Assembly)]
     public static void Sweep() => new CheckpointTempRootSweep().SweepOnce(Console.Out);
+
+    [Before(Assembly)]
+    public static void RecordSelectedRoster(AssemblyHookContext context)
+    {
+        var target = Environment.GetEnvironmentVariable("C804_ROSTER_FILE");
+        if (string.IsNullOrWhiteSpace(target)) return;
+        var selected = context.AllTests.Select(test => new
+        {
+            id = test.Id,
+            className = test.Metadata.TestDetails.ClassType.FullName,
+            method = test.Metadata.TestDetails.MethodName,
+            displayName = test.Metadata.TestDetails.TestName,
+        }).OrderBy(test => test.id).ToArray();
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(target, JsonSerializer.Serialize(selected));
+    }
 }

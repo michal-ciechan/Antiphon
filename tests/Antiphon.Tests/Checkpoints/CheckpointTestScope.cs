@@ -52,6 +52,7 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
             coordinator.Register(path);
             // Registration precedes the caller's first observation of the root.
             _roots.Add(path);
+            CheckpointUsageEvent.Write("root-create", path);
             _beforeReturn?.Invoke(path, _roots);
             coordinator.SweepOnce(Console.Out);
             return path;
@@ -134,6 +135,7 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
                 }
                 _beforeDelete?.Invoke(root);
                 Directory.Delete(root, recursive: true);
+                CheckpointUsageEvent.Write("root-delete", root);
             }
             catch (Exception ex) { failures.Add(root + ": " + ex.Message); }
         }

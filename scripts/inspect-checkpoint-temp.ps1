@@ -1,6 +1,7 @@
 param(
     [int]$MaxEntries = 512,
     [int]$MaxDescendants = 10000,
+    [string]$TempRoot,
     [string]$OutputFile
 )
 
@@ -9,7 +10,7 @@ if ($MaxEntries -lt 1 -or $MaxEntries -gt 10000 -or $MaxDescendants -lt 1 -or $M
     throw 'Inspection bounds are outside the supported range.'
 }
 
-$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$tempRoot = [IO.Path]::GetFullPath($(if ($TempRoot) { $TempRoot } else { [IO.Path]::GetTempPath() }))
 $result = [ordered]@{
     schemaVersion = 1
     tempRoot = $tempRoot
