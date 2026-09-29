@@ -132,9 +132,35 @@ public sealed class RunnerWorkspaceServiceTests
         var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(request, CancellationToken.None));
         refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryPushUnauthorized);
         Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-deadbeef")).ShouldBeFalse();
-        starts.ShouldContain(psi => psi.ArgumentList.FirstOrDefault() == "ls-remote");
+        AssertPushProbe(starts.Single(psi => psi.ArgumentList.FirstOrDefault() == "push"), secondary);
         var allowed = RepositoryService(scratch, root, probe: false);
         Directory.Exists((await allowed.MirrorAsync(request, CancellationToken.None)).Path).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Mirror_accepts_a_secondary_repository_when_push_dry_run_succeeds()
+    {
+        using var scratch = Scratch.Create();
+        var secondary = Path.Combine(scratch.Root, "secondary");
+        Scratch.Git(scratch.Root, "clone", "--bare", scratch.Origin, secondary);
+        var starts = new List<ProcessStartInfo>();
+        var service = RepositoryService(scratch, Path.Combine(scratch.Root, "repos"), starts);
+
+        var mirror = await service.MirrorAsync(new PhoneHomeWorkspaceMirrorRequest(
+            Scratch.Branch, scratch.Sha, "task-deadbeef", secondary), CancellationToken.None);
+
+        Directory.Exists(mirror.Path).ShouldBeTrue();
+        AssertPushProbe(starts.Single(psi => psi.ArgumentList.FirstOrDefault() == "push"), secondary);
+        Scratch.Git(secondary, "for-each-ref", "refs/heads/antiphon-push-access-probe-").ShouldBeEmpty();
+    }
+
+    private static void AssertPushProbe(ProcessStartInfo start, string pushUrl)
+    {
+        start.ArgumentList.Count.ShouldBe(6);
+        start.ArgumentList.Take(5).ShouldBe(new[] { "push", "--dry-run", "--porcelain", "--", pushUrl });
+        const string prefix = "HEAD:refs/heads/antiphon-push-access-probe-";
+        start.ArgumentList[5].ShouldStartWith(prefix);
+        Guid.TryParseExact(start.ArgumentList[5][prefix.Length..], "N", out _).ShouldBeTrue();
     }
 
     private static RunnerWorkspaceService RepositoryService(Scratch scratch, string root,
@@ -147,8 +173,13 @@ public sealed class RunnerWorkspaceServiceTests
             psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             psi.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(scratch.Root, "empty.gitconfig");
             starts?.Add(psi);
-            if (failProbe && psi.ArgumentList.FirstOrDefault() == "ls-remote")
-                psi.ArgumentList[2] = Path.Combine(scratch.Root, "no-such-origin");
+            if (failProbe && psi.ArgumentList.FirstOrDefault() == "push")
+            {
+                // The local bare origin remains readable, but this transport refuses push.
+                psi.Environment["GIT_CONFIG_COUNT"] = "1";
+                psi.Environment["GIT_CONFIG_KEY_0"] = "protocol.file.allow";
+                psi.Environment["GIT_CONFIG_VALUE_0"] = "never";
+            }
             return Process.Start(psi);
         });
     }

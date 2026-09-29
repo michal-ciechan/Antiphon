@@ -250,9 +250,10 @@ registering zero times in 304 attempts while `/health` still answered healthy (C
 HTTPS and only pushes go over SSH, on `ssh.github.com:443`.
 
 CARD-0812 allows secondary runner checkouts, but this deploy key grants write access to Antiphon
-only. Each secondary repository needs its own server2 push credential before a runner mirror is
-created; the default push-access probe returns `phone_home_repository_push_unauthorized` until
-that credential is present. Credential provisioning is a separate operator follow-up.
+only. Before creating a secondary mirror, the runner sends a receive-pack dry-run to its push URL;
+a repository that refuses the probe gets `phone_home_repository_push_unauthorized`. Each secondary
+repository needs a server2 push credential to pass that probe. Credential provisioning is a
+separate operator follow-up.
 
 Grok's OAuth store on the runner is provisioned once, interactively, inside the persistent container
 (`docker exec -it -u 1654:1654 <container> grok login`). It is never copied from the desktop and

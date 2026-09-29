@@ -53,7 +53,7 @@ primary, for example `/work/repos/markdown-package`, while task worktrees remain
 `/work/worktrees/`. The desktop worktree's `origin` supplies the repository identity. The runner
 admits identities under `PhoneHome:AllowedCloneSources` (default
 `https://github.com/michal-ciechan/`), verifies an existing checkout's origin, and probes
-secondary push access before making a mirror. Typed 409 refusals are
+secondary push access with a receive-pack dry-run before making a mirror. Typed 409 refusals are
 `phone_home_repository_not_admitted`, `phone_home_repository_mismatch`, and
 `phone_home_repository_push_unauthorized`; the last calls for a server2 push credential. The
 probe defaults on through `PhoneHome:ProbeSecondaryRepositoryPushAccess`. A legacy request with
