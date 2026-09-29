@@ -3,6 +3,8 @@ using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
+using Antiphon.Messaging.Slack;
+using Antiphon.Messaging.Tests.FakeSlack;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -711,13 +713,29 @@ public sealed partial class ChannelOutboundDeliveryTests
 
         try
         {
+            await using var fakeSlack = new FakeSlackServer();
+            await fakeSlack.StartAsync();
+            using var slackHttp = new HttpClient();
+            var slack = new SlackChannelAdapter(slackHttp, new SlackSettings
+            {
+                ApiBaseUrl = fakeSlack.ApiBaseUrl, BotToken = fakeSlack.BotToken,
+                AppToken = fakeSlack.AppToken, ErrorBackoffSeconds = 0,
+            }, NullLogger<SlackChannelAdapter>.Instance);
+            using var inboundTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await using var inbound = slack.ReceiveAsync(inboundTimeout.Token).GetAsyncEnumerator();
+            fakeSlack.EnqueueMessage(channelId.ToString("N"), "U1", "prompt T1",
+                threadTs: "1700000000.000100", ts: "1700000001.000200");
+            (await inbound.MoveNextAsync()).ShouldBeTrue();
+            var t1 = inbound.Current;
+            t1.Conversation.Id.ShouldBe(channelId.ToString("N"));
+            t1.ReplyHandle.ShouldBe(channelId.ToString("N") + "|1700000000.000100");
             var outbound = new ChannelOutboundService(db, files, producer, options, TimeProvider.System);
             using var routeMetadata = JsonDocument.Parse("""{"parse_mode":"MarkdownV2","thread_marker":"T1"}""");
             var sourceBytes = "# Original source"u8.ToArray();
             var reply = new ChannelReply
             {
                 Channel = "slack", ConversationId = channelId.ToString("N"),
-                ReplyHandle = "thread-1", ReplyToMessageId = "message-T1",
+                ReplyHandle = t1.ReplyHandle, ReplyToMessageId = t1.ChannelMessageId,
                 Kind = ChannelReplyKind.Question, RawOverrides = routeMetadata.RootElement.Clone(),
                 Text = "Here are the sources.",
                 Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
@@ -729,7 +747,13 @@ public sealed partial class ChannelOutboundDeliveryTests
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
             (await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source,
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
-            var second = reply with { ReplyHandle = "thread-2", Text = "second answer" };
+            fakeSlack.EnqueueMessage(channelId.ToString("N"), "U1", "prompt T2",
+                threadTs: "1700001000.000300", ts: "1700001001.000400");
+            (await inbound.MoveNextAsync()).ShouldBeTrue();
+            var t2 = inbound.Current;
+            t2.ReplyHandle.ShouldBe(channelId.ToString("N") + "|1700001000.000300");
+            var second = reply with { ReplyHandle = t2.ReplyHandle,
+                ReplyToMessageId = t2.ChannelMessageId, Text = "second answer" };
             (await outbound.SendAsync(second, ChannelOutboundOrigin.AgentReply,
                 new ChannelOutboundSource(sessionId, 2, 5, 6, "trailing", []),
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
@@ -759,8 +783,8 @@ public sealed partial class ChannelOutboundDeliveryTests
                 CancellationToken.None);
             frozen.Channel.ShouldBe("slack");
             frozen.ConversationId.ShouldBe(channelId.ToString("N"));
-            frozen.ReplyHandle.ShouldBe("thread-1");
-            frozen.ReplyToMessageId.ShouldBe("message-T1");
+            frozen.ReplyHandle.ShouldBe(t1.ReplyHandle);
+            frozen.ReplyToMessageId.ShouldBe(t1.ChannelMessageId);
             frozen.Kind.ShouldBe(ChannelReplyKind.Question);
             frozen.RawOverrides!.Value.GetProperty("thread_marker").GetString().ShouldBe("T1");
             frozen.Attachments.ShouldHaveSingleItem().Content.ShouldBe(sourceBytes);
@@ -770,7 +794,7 @@ public sealed partial class ChannelOutboundDeliveryTests
             row.ChannelOutboundDeliveryId.ShouldBe(intent.Id);
             row.ChannelReplySettledAt.ShouldBeNull();
             var channel = await verify.ChatChannels.SingleAsync(c => c.Id == channelId);
-            channel.ReplyHandle = "thread-2";
+            channel.ReplyHandle = t2.ReplyHandle;
             intent.LeaseOwner = Guid.NewGuid();
             intent.LeaseUntil = DateTime.UtcNow.AddMinutes(5);
             intent.Version++;
@@ -823,11 +847,11 @@ public sealed partial class ChannelOutboundDeliveryTests
             (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
             producer.SentReplies.Count.ShouldBe(4);
             var sent = producer.SentReplies[1];
-            sent.ReplyHandle.ShouldBe("thread-1");
+            sent.ReplyHandle.ShouldBe(t1.ReplyHandle);
             sent.Text.ShouldBe("converted answer");
             sent.Channel.ShouldBe("slack");
             sent.ConversationId.ShouldBe(channelId.ToString("N"));
-            sent.ReplyToMessageId.ShouldBe("message-T1");
+            sent.ReplyToMessageId.ShouldBe(t1.ChannelMessageId);
             sent.Kind.ShouldBe(ChannelReplyKind.Question);
             sent.RawOverrides!.Value.GetProperty("thread_marker").GetString().ShouldBe("T1");
             sent.Attachments.Count.ShouldBe(2);
@@ -835,7 +859,8 @@ public sealed partial class ChannelOutboundDeliveryTests
             sent.Attachments[0].Source.ShouldBe("fixture://source.md");
             sent.Attachments[0].Caption.ShouldBe("T1 source");
             sent.Attachments[1].Content.ShouldBe(pdf);
-            producer.SentReplies[2].ReplyHandle.ShouldBe("thread-2");
+            producer.SentReplies[2].ReplyHandle.ShouldBe(t2.ReplyHandle);
+            producer.SentReplies[2].ReplyToMessageId.ShouldBe(t2.ChannelMessageId);
             producer.SentReplies[2].Text.ShouldBe("second answer");
             producer.SentReplies[3].ReplyHandle.ShouldBe("thread-3");
             producer.SentReplies[3].Text.ShouldBe("plain follow-up");
