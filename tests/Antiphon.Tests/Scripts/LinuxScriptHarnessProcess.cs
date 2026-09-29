@@ -102,11 +102,13 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
     {
         if (_terminated) return;
         _terminated = true;
-        if (_supervisor.HasExited)
+        _supervisor.Refresh();
+        var observed = _faults?.IdentityReader?.Invoke(_supervisor.Id);
+        var mismatch = observed is not null && observed.Value.Start != _supervisorStart;
+        if (_supervisor.HasExited || mismatch)
         {
-            var observed = _faults?.IdentityReader?.Invoke(_supervisor.Id);
-            var mismatch = observed is not null && observed.Value.Start != _supervisorStart ? " identity mismatch;" : "";
-            throw new IOException($"Linux ScriptHarness supervisor exited before explicit stop;{mismatch} group custody is unknown.");
+            throw new IOException($"Linux ScriptHarness supervisor exited before explicit stop;" +
+                (mismatch ? " identity mismatch;" : "") + " group custody is unknown.");
         }
         if (_control is null)
         {
