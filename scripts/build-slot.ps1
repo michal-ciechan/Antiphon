@@ -86,9 +86,11 @@ function Start-AntiphonWrappedCommand {
     $psi.UseShellExecute = $false
     $psi.WorkingDirectory = (Get-Location).ProviderPath
     foreach ($token in $Arguments) { [void]$psi.ArgumentList.Add([string]$token) }
-    $script:WrappedProcess = [Diagnostics.Process]::new()
-    $script:WrappedProcess.StartInfo = $psi
-    [void]$script:WrappedProcess.Start()
+    $proc = [Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    try { [void]$proc.Start() }
+    catch { $proc.Dispose(); throw }
+    $script:WrappedProcess = $proc
     while (-not $script:WrappedProcess.WaitForExit(250)) { }
     return $script:WrappedProcess.ExitCode
 }
