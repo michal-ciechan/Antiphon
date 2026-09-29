@@ -734,7 +734,8 @@ public sealed partial class ChannelOutboundDeliveryTests
                 new ChannelOutboundSource(sessionId, 2, 5, 6, "trailing", []),
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
             options.Value.Profiles["conversion"].Trigger = ChannelOutboundTrigger.MarkdownSources;
-            var plain = reply with { ReplyHandle = "thread-3", Text = "plain follow-up" };
+            var plain = reply with { ReplyHandle = "thread-3", Text = "plain follow-up",
+                Attachments = [] };
             (await outbound.SendAsync(plain, ChannelOutboundOrigin.AgentReply,
                 new ChannelOutboundSource(sessionId, 2, 7, 8, "trailing", []),
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
