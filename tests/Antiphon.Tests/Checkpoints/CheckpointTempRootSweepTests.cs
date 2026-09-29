@@ -22,7 +22,7 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         gate.Dispose();
         var roots = await allocations;
         roots.Length.ShouldBe(200);
-        roots.ShouldAllBe(Directory.Exists);
+        roots.ShouldAllBe(root => Directory.Exists(root));
         completedWhileGateHeld.ShouldBeTrue("registration must not queue behind the sweep gate");
     }
 
