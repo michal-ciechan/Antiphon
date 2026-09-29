@@ -187,6 +187,8 @@ public class CodexReadyWaitTests
     public async Task A_stalled_trust_write_finishes_at_the_gate_deadline()
     {
         var time = new FakeTimeProvider();
+        var timerObserved = new TimerObservedTimeProvider(time);
+        var started = time.GetUtcNow();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cts = new CancellationTokenSource();
         var gate = CodexReadyWait.WaitAsync(
@@ -194,7 +196,7 @@ public class CodexReadyWaitTests
                 CodexStartupFixtures.InsertBeforeComposer(
                     CodexStartupFixtures.P3,
                     "Do you trust the contents of this directory? Yes, continue"))),
-            Options(time, settleMs: 1000, maxMs: 2_000),
+            Options(timerObserved, settleMs: 1000, maxMs: 2_000),
             async (_, ct) =>
             {
                 entered.TrySetResult();
@@ -204,8 +206,12 @@ public class CodexReadyWaitTests
         try
         {
             await entered.Task.WaitAsync(RealTimeout);
+            // The callback signals before WriteBoundedAsync registers its timeout.
+            await timerObserved.WriteTimeoutCreated.WaitAsync(RealTimeout);
             time.Advance(TimeSpan.FromMilliseconds(2_000));
             (await gate.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBeFalse("R-26: gate finishes at the virtual deadline");
+            (time.GetUtcNow() - started).ShouldBe(TimeSpan.FromMilliseconds(2_000),
+                "R-26: the stalled write finishes at the exact virtual deadline");
             cts.IsCancellationRequested.ShouldBeFalse("R-26: no caller cancellation");
         }
         finally
@@ -629,7 +635,7 @@ public class CodexReadyWaitTests
     private static TimeSpan PollStep => TimeSpan.FromMilliseconds(50);
 
     private static CodexReadyWaitOptions Options(
-        FakeTimeProvider time, int settleMs = 1000, int maxMs = 60_000) => new()
+        TimeProvider time, int settleMs = 1000, int maxMs = 60_000) => new()
     {
         TimeProvider = time,
         Settle = TimeSpan.FromMilliseconds(settleMs),
@@ -711,6 +717,30 @@ public class CodexReadyWaitTests
         catch (OperationCanceledException) when (caller.IsCancellationRequested)
         {
             // The dedicated caller token was canceled only to release a held test callback.
+        }
+    }
+
+    private sealed class TimerObservedTimeProvider(FakeTimeProvider clock) : TimeProvider
+    {
+        private int _timerCount;
+        private readonly TaskCompletionSource _writeTimeoutCreated =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task WriteTimeoutCreated => _writeTimeoutCreated.Task;
+        public override DateTimeOffset GetUtcNow() => clock.GetUtcNow();
+        public override long GetTimestamp() => clock.GetTimestamp();
+        public override long TimestampFrequency => clock.TimestampFrequency;
+        public override TimeZoneInfo LocalTimeZone => clock.LocalTimeZone;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = clock.CreateTimer(callback, state, dueTime, period);
+            // ReadBoundedAsync registers the first timer; the stalled trust write
+            // registers the second timer after signaling its callback entry.
+            if (Interlocked.Increment(ref _timerCount) == 2)
+                _writeTimeoutCreated.TrySetResult();
+            return timer;
         }
     }
 }
