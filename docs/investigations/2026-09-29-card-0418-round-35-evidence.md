@@ -89,3 +89,6 @@ two-channel send from one source task: A accepts once, B returns three definite
 pre-acceptance queue refusals, and a repeated pump tick must not replay A.
 It compares each delivery's state, attempt count, correlation stamp and the
 source task stamp. Receipt pending.
+The first CP-5 build on `bca86d551` did not run tests: the two-target fixture
+declared `ChannelOutboundSnapshot` without importing its Application.Interfaces
+namespace. That import is now explicit.
