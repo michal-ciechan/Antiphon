@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -14,6 +15,7 @@ public class CodexReadyWaitTests
         var second = new TaskCompletionSource<CodexStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var reads = 0;
+        using var cts = new CancellationTokenSource();
         var gate = CodexReadyWait.WaitAsync(
             async ct =>
             {
@@ -23,14 +25,23 @@ public class CodexReadyWaitTests
                 secondStarted.TrySetResult();
                 return await second.Task.WaitAsync(ct);
             },
-            Options(time, settleMs: 1000, maxMs: 60_000));
+            Options(time, settleMs: 1000, maxMs: 60_000), ct: cts.Token);
 
-        await WaitUntilAsync(() => reads >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(1000));
-        await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        gate.IsCompleted.ShouldBeFalse("R-18: after a full settle when only the first positive snapshot has completed and the second read is held");
-        second.TrySetResult(Snap(CodexStartupFixtures.P3));
-        (await gate).ShouldBeTrue("R-18: releasing the second fresh positive frame permits success");
+        try
+        {
+            await AdvanceUntilAsync(time, () => secondStarted.Task.IsCompleted, 20, "R-18 second read");
+            time.Advance(TimeSpan.FromMilliseconds(1000));
+            gate.IsCompleted.ShouldBeFalse("R-18: after a full settle when only the first positive snapshot has completed and the second read is held");
+            second.TrySetResult(Snap(CodexStartupFixtures.P3));
+            await AdvanceUntilAsync(time, () => gate.IsCompleted, 20, "R-18 readiness after second read");
+            (await gate.WaitAsync(RealTimeout)).ShouldBeTrue("R-18: releasing the second fresh positive frame permits success");
+        }
+        finally
+        {
+            second.TrySetResult(null);
+            cts.Cancel();
+            await DrainAfterCleanupAsync(gate, cts.Token);
+        }
     }
 
     [Test]
@@ -41,24 +52,24 @@ public class CodexReadyWaitTests
 
         var secondHold = new TaskCompletionSource<CodexStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
         var secondWait = CodexReadyWait.WaitAsync(
             ct =>
             {
                 started.TrySetResult();
                 return secondHold.Task.WaitAsync(ct);
             },
-            Options(time, settleMs: 1000, maxMs: 60_000));
+            Options(time, settleMs: 1000, maxMs: 60_000), ct: cts.Token);
         try
         {
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await started.Task.WaitAsync(RealTimeout);
             secondWait.IsCompleted.ShouldBeFalse("R-21: secondWait.IsCompleted.ShouldBeFalse() before its own settle");
         }
         finally
         {
             secondHold.TrySetResult(null);
-            time.Advance(TimeSpan.FromMilliseconds(60_000));
-            try { await secondWait; }
-            catch (Exception) { /* deadline or unavailable snapshot */ }
+            cts.Cancel();
+            await DrainAfterCleanupAsync(secondWait, cts.Token);
         }
     }
 
@@ -68,22 +79,32 @@ public class CodexReadyWaitTests
         var time = new FakeTimeProvider();
         (await CodexReadyWait.WaitAsync(
             _ => Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.N1)),
-            Options(time, settleMs: 1000, maxMs: 0)))
+            Options(time, settleMs: 1000, maxMs: 0)).WaitAsync(RealTimeout))
             .ShouldBeFalse("R-22: zero total wait");
 
+        var blockedReads = 0;
         var blocked = CodexReadyWait.WaitAsync(
-            _ => Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.N1)),
+            _ =>
+            {
+                Interlocked.Increment(ref blockedReads);
+                return Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.N1));
+            },
             Options(time, settleMs: 1000, maxMs: 1_000));
-        await WaitUntilAsync(() => blocked.IsCompleted is false);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(1000));
-        (await blocked).ShouldBeFalse("R-22: permanent blockers");
+        await WaitUntilAsync(() => Volatile.Read(ref blockedReads) >= 1, "R-22 blocked first read");
+        await AdvanceUntilAsync(time, () => blocked.IsCompleted, 22, "R-22 permanent blocker deadline");
+        (await blocked.WaitAsync(RealTimeout)).ShouldBeFalse("R-22: permanent blockers");
 
+        var expiryReads = 0;
         var atExpiry = CodexReadyWait.WaitAsync(
-            _ => Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.P3)),
+            _ =>
+            {
+                Interlocked.Increment(ref expiryReads);
+                return Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.P3));
+            },
             Options(time, settleMs: 1000, maxMs: 500));
-        await WaitUntilAsync(() => !atExpiry.IsCompleted);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(500));
-        (await atExpiry).ShouldBeFalse("R-22: ready-at-expiry");
+        await WaitUntilAsync(() => Volatile.Read(ref expiryReads) >= 1, "R-22 ready first read");
+        await AdvanceUntilAsync(time, () => atExpiry.IsCompleted, 12, "R-22 ready-at-expiry deadline");
+        (await atExpiry.WaitAsync(RealTimeout)).ShouldBeFalse("R-22: ready-at-expiry");
     }
 
     [Test]
@@ -92,13 +113,14 @@ public class CodexReadyWaitTests
         var time = new FakeTimeProvider();
         var origin = time.GetUtcNow();
         var writes = new List<string>();
+        var writeCount = 0;
         var reads = 0;
         var gate = CodexReadyWait.WaitAsync(
             _ =>
             {
                 Interlocked.Increment(ref reads);
                 var elapsed = time.GetUtcNow() - origin;
-                if (writes.Count == 0 && elapsed >= TimeSpan.FromMilliseconds(600))
+                if (Volatile.Read(ref writeCount) == 0 && elapsed >= TimeSpan.FromMilliseconds(600))
                 {
                     return Task.FromResult<CodexStartupSnapshot?>(Snap(
                         CodexStartupFixtures.InsertBeforeComposer(
@@ -106,7 +128,7 @@ public class CodexReadyWaitTests
                             "Do you trust the contents of this directory? Yes, continue")));
                 }
 
-                if (writes.Count == 0)
+                if (Volatile.Read(ref writeCount) == 0)
                 {
                     return Task.FromResult<CodexStartupSnapshot?>(Snap(
                         CodexStartupFixtures.ReplaceModelValue(CodexStartupFixtures.P3, "loading")));
@@ -118,13 +140,17 @@ public class CodexReadyWaitTests
             (input, _) =>
             {
                 writes.Add(input);
+                Interlocked.Increment(ref writeCount);
                 return Task.CompletedTask;
             });
-        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(600));
-        await WaitUntilAsync(() => writes.Count > 0);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(900));
-        (await gate).ShouldBeFalse("R-23: result.ShouldBeFalse() when trust leaves less than a settle");
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "R-23 first read");
+        time.Advance(TimeSpan.FromMilliseconds(600));
+        await AdvanceUntilAsync(time, () => Volatile.Read(ref writeCount) > 0, 17, "R-23 trust write");
+        (time.GetUtcNow() - origin).ShouldBeLessThan(TimeSpan.FromMilliseconds(1500),
+            "R-23: trust input must precede the original deadline");
+        var remainingSteps = (int)Math.Ceiling((origin + TimeSpan.FromMilliseconds(1500) - time.GetUtcNow()).TotalMilliseconds / 50) + 2;
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, remainingSteps, "R-23 original total deadline");
+        (await gate.WaitAsync(RealTimeout)).ShouldBeFalse("R-23: result.ShouldBeFalse() when trust leaves less than a settle");
         writes.ShouldBe(["\r"]);
     }
 
@@ -143,12 +169,18 @@ public class CodexReadyWaitTests
             },
             Options(time, settleMs: 1000, maxMs: 2_000),
             ct: cts.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(2_000));
-        var finished = await Task.WhenAny(gate, Task.Delay(TimeSpan.FromSeconds(2)));
-        finished.ShouldBe(gate, "R-25: gate.IsCompleted.ShouldBeTrue() at virtual deadline with no caller cancellation");
-        (await gate).ShouldBeFalse("R-25");
-        cts.IsCancellationRequested.ShouldBeFalse("R-25: no caller cancellation");
+        try
+        {
+            await entered.Task.WaitAsync(RealTimeout);
+            time.Advance(TimeSpan.FromMilliseconds(2_000));
+            (await gate.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBeFalse("R-25: gate finishes at the virtual deadline");
+            cts.IsCancellationRequested.ShouldBeFalse("R-25: no caller cancellation");
+        }
+        finally
+        {
+            cts.Cancel();
+            await DrainAfterCleanupAsync(gate, cts.Token);
+        }
     }
 
     [Test]
@@ -169,11 +201,18 @@ public class CodexReadyWaitTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             },
             ct: cts.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(2_000));
-        var finished = await Task.WhenAny(gate, Task.Delay(TimeSpan.FromSeconds(2)));
-        finished.ShouldBe(gate, "R-26: gate.IsCompleted.ShouldBeTrue() at virtual deadline");
-        (await gate).ShouldBeFalse("R-26");
+        try
+        {
+            await entered.Task.WaitAsync(RealTimeout);
+            time.Advance(TimeSpan.FromMilliseconds(2_000));
+            (await gate.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBeFalse("R-26: gate finishes at the virtual deadline");
+            cts.IsCancellationRequested.ShouldBeFalse("R-26: no caller cancellation");
+        }
+        finally
+        {
+            cts.Cancel();
+            await DrainAfterCleanupAsync(gate, cts.Token);
+        }
     }
 
     [Test]
@@ -183,7 +222,7 @@ public class CodexReadyWaitTests
         var reads = 0;
         var writes = new List<string>();
         using var cts = new CancellationTokenSource();
-        await cts.CancelAsync();
+        cts.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(async () =>
             await CodexReadyWait.WaitAsync(
                 _ =>
@@ -197,7 +236,7 @@ public class CodexReadyWaitTests
                     writes.Add(input);
                     return Task.CompletedTask;
                 },
-                ct: cts.Token));
+                ct: cts.Token).WaitAsync(RealTimeout));
         reads.ShouldBe(0, "R-27: readCalls.ShouldBe(0)");
         writes.ShouldBeEmpty("R-27: writes.ShouldBeEmpty()");
     }
@@ -224,7 +263,7 @@ public class CodexReadyWaitTests
                 return Task.CompletedTask;
             },
             ct: cts.Token);
-        await Should.ThrowAsync<OperationCanceledException>(async () => await gate);
+        await Should.ThrowAsync<OperationCanceledException>(async () => await gate.WaitAsync(RealTimeout));
         writes.ShouldBeEmpty("R-28: writes.ShouldBeEmpty() when the snapshot delegate cancels the caller then returns trust");
     }
 
@@ -244,9 +283,10 @@ public class CodexReadyWaitTests
             },
             Options(time, settleMs: 50, maxMs: 5_000),
             ct: cts.Token);
-        await WaitUntilAsync(() => reads >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
-        await Should.ThrowAsync<OperationCanceledException>(async () => await gate, "R-29");
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "R-29 first read");
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, 20, "R-29 final snapshot cancellation");
+        Volatile.Read(ref reads).ShouldBeGreaterThanOrEqualTo(2, "R-29: final snapshot must cancel the caller");
+        await Should.ThrowAsync<OperationCanceledException>(async () => await gate.WaitAsync(RealTimeout), "R-29");
     }
 
     [Test]
@@ -265,7 +305,7 @@ public class CodexReadyWaitTests
                 writes.Add(input);
                 return Task.CompletedTask;
             },
-            isExited: () => true);
+            isExited: () => true).WaitAsync(RealTimeout);
         writes.ShouldBeEmpty("R-30");
         result.ShouldBeFalse("R-30");
     }
@@ -281,14 +321,15 @@ public class CodexReadyWaitTests
             {
                 var n = Interlocked.Increment(ref reads);
                 if (n >= 2)
-                    exited = true;
+                    Volatile.Write(ref exited, true);
                 return Task.FromResult<CodexStartupSnapshot?>(Snap(CodexStartupFixtures.P3));
             },
             Options(time, settleMs: 50, maxMs: 5_000),
-            isExited: () => exited);
-        await WaitUntilAsync(() => reads >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
-        (await gate).ShouldBeFalse("R-31");
+            isExited: () => Volatile.Read(ref exited));
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "R-31 first read");
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, 20, "R-31 final snapshot exit");
+        Volatile.Read(ref reads).ShouldBeGreaterThanOrEqualTo(2, "R-31: the final snapshot must observe exit");
+        (await gate.WaitAsync(RealTimeout)).ShouldBeFalse("R-31");
     }
 
     [Test]
@@ -299,21 +340,25 @@ public class CodexReadyWaitTests
         var result = CodexReadyWait.WaitAsync(
             _ => throw injected,
             Options(time, settleMs: 50, maxMs: 1_000));
-        var ex = await Should.ThrowAsync<InvalidOperationException>(async () => await result);
+        var ex = await Should.ThrowAsync<InvalidOperationException>(async () => await result.WaitAsync(RealTimeout));
         ex.ShouldBe(injected, "R-32: snapshot exception remains the injected exception");
 
         var reads = 0;
         var nulls = CodexReadyWait.WaitAsync(
             _ =>
             {
-                Interlocked.Increment(ref reads);
+                var read = Interlocked.Increment(ref reads);
                 return Task.FromResult<CodexStartupSnapshot?>(
-                    reads == 1 ? Snap(CodexStartupFixtures.P3) : null);
+                    read == 1 ? Snap(CodexStartupFixtures.P3) : null);
             },
             Options(time, settleMs: 50, maxMs: 200));
-        await WaitUntilAsync(() => reads >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(200));
-        (await nulls).ShouldBeFalse("R-32: no successful result");
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "R-32 first ready read");
+        var started = time.GetUtcNow();
+        await AdvanceUntilAsync(time, () => Volatile.Read(ref reads) >= 2, 3, "R-32 null observation");
+        (time.GetUtcNow() - started).ShouldBeLessThan(TimeSpan.FromMilliseconds(200),
+            "R-32: a null snapshot must be observed before expiry");
+        await AdvanceUntilAsync(time, () => nulls.IsCompleted, 5, "R-32 null snapshot deadline");
+        (await nulls.WaitAsync(RealTimeout)).ShouldBeFalse("R-32: no successful result");
     }
 
     [Test]
@@ -323,33 +368,47 @@ public class CodexReadyWaitTests
         var writes = 0;
         var readyHold = new TaskCompletionSource<CodexStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var readyStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readyReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
         var gate = CodexReadyWait.WaitAsync(
-            ct =>
+            async ct =>
             {
                 if (Volatile.Read(ref writes) == 0)
                 {
-                    return Task.FromResult<CodexStartupSnapshot?>(Snap(
+                    return Snap(
                         CodexStartupFixtures.InsertBeforeComposer(
                             CodexStartupFixtures.P3,
-                            "Do you trust the contents of this directory? Yes, continue")));
+                            "Do you trust the contents of this directory? Yes, continue"));
                 }
 
                 readyStarted.TrySetResult();
-                return readyHold.Task.WaitAsync(ct);
+                var snapshot = await readyHold.Task.WaitAsync(ct);
+                readyReturned.TrySetResult();
+                return snapshot;
             },
             Options(time, settleMs: 1000, maxMs: 60_000),
             (_, _) =>
             {
                 Interlocked.Exchange(ref writes, 1);
                 return Task.CompletedTask;
-            });
-        await WaitUntilAsync(() => Volatile.Read(ref writes) == 1);
-        readyHold.TrySetResult(Snap(CodexStartupFixtures.P3));
-        await readyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(999));
-        gate.IsCompleted.ShouldBeFalse("R-37: ready.IsCompleted.ShouldBeFalse() until the post-action full settle");
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
-        (await gate).ShouldBeTrue();
+            }, ct: cts.Token);
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref writes) == 1, "R-37 trust write");
+            await readyStarted.Task.WaitAsync(RealTimeout);
+            readyHold.TrySetResult(Snap(CodexStartupFixtures.P3));
+            await readyReturned.Task.WaitAsync(RealTimeout);
+            time.Advance(TimeSpan.FromMilliseconds(999));
+            gate.IsCompleted.ShouldBeFalse("R-37: ready.IsCompleted.ShouldBeFalse() until the post-action full settle");
+            await AdvanceUntilAsync(time, () => gate.IsCompleted, 40, "R-37 post-trust full settle");
+            (await gate.WaitAsync(RealTimeout)).ShouldBeTrue();
+        }
+        finally
+        {
+            readyHold.TrySetResult(null);
+            cts.Cancel();
+            await DrainAfterCleanupAsync(gate, cts.Token);
+        }
     }
 
     [Test]
@@ -390,17 +449,15 @@ public class CodexReadyWaitTests
                 return Task.CompletedTask;
             });
 
-        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        for (var step = 0; step < 10 && Volatile.Read(ref reads) < 2; step++)
-            await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "update picker first read");
+        await AdvanceUntilAsync(time, () => Volatile.Read(ref reads) >= 2, 10, "update picker second read");
         Volatile.Read(ref reads).ShouldBeGreaterThanOrEqualTo(2,
             "the update picker must be read after the loading frame");
         gate.IsCompleted.ShouldBeFalse("the update picker cannot be considered ready");
 
-        for (var step = 0; step < 20 && !gate.IsCompleted; step++)
-            await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, 20, "update picker fresh readiness");
 
-        (await gate).ShouldBeTrue("without an Escape write, the picker remains until the deadline");
+        (await gate.WaitAsync(RealTimeout)).ShouldBeTrue("without an Escape write, the picker remains until the deadline");
         writes.ShouldBe(["\u001b"]);
         postWriteReads.ShouldBeGreaterThanOrEqualTo(2, "a stale modal is polled after Escape");
         readyAt.ShouldNotBeNull();
@@ -429,9 +486,9 @@ public class CodexReadyWaitTests
                 return Task.CompletedTask;
             });
 
-        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(200));
-        (await gate).ShouldBeFalse();
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "bare continue first read");
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, 6, "bare continue deadline");
+        (await gate.WaitAsync(RealTimeout)).ShouldBeFalse();
         writes.ShouldBeEmpty();
     }
 
@@ -456,7 +513,7 @@ public class CodexReadyWaitTests
                 return Task.CompletedTask;
             });
 
-        (await gate).ShouldBeFalse();
+        (await gate.WaitAsync(RealTimeout)).ShouldBeFalse();
         writes.ShouldBe(["\u001b"]);
         string.Join('\n', diagnostics).ShouldContain("update-picker escape-sent");
         string.Join('\n', diagnostics).ShouldContain("not-ready reason=BlockingUpdate");
@@ -487,14 +544,14 @@ public class CodexReadyWaitTests
                 OnDiagnostic = diagnostics.Add,
                 OnNotReadyFrame = frames.Add,
             });
-        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        for (var step = 0; step < 10 && Volatile.Read(ref reads) < 2; step++)
-            await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "frame diagnostic first read");
+        await AdvanceUntilAsync(time, () => Volatile.Read(ref reads) >= 2, 10, "frame diagnostic second read");
         Volatile.Read(ref reads).ShouldBeGreaterThanOrEqualTo(2,
             "the update picker must be classified before the timeout diagnostic");
-        await AdvanceAfterWaitStartedAsync(time, maxWait);
+        time.Advance(maxWait);
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, 2, "frame diagnostic deadline");
 
-        (await gate).ShouldBeFalse();
+        (await gate.WaitAsync(RealTimeout)).ShouldBeFalse();
         frames.Count.ShouldBe(1);
         frames[0].ShouldNotBeNull().RenderedScreen.ShouldBe(modal);
         string.Join('\n', diagnostics).ShouldContain("reason=BlockingUpdate");
@@ -516,11 +573,60 @@ public class CodexReadyWaitTests
                 PollInterval = TimeSpan.FromMilliseconds(50),
                 OnNotReadyFrame = readyFrames.Add,
             });
-        await WaitUntilAsync(() => Volatile.Read(ref readyReads) >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(100));
-        (await ready).ShouldBeTrue();
+        await WaitUntilAsync(() => Volatile.Read(ref readyReads) >= 1, "ready frame first read");
+        await AdvanceUntilAsync(time, () => ready.IsCompleted, 20, "ready frame full settle");
+        (await ready.WaitAsync(RealTimeout)).ShouldBeTrue();
         readyFrames.ShouldBeEmpty();
     }
+
+    [Test]
+    public async Task Snapshot_released_after_the_first_clock_advance_still_reaches_readiness()
+    {
+        var time = new FakeTimeProvider();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = new TaskCompletionSource<CodexStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completedReads = 0;
+        using var cts = new CancellationTokenSource();
+        var gate = CodexReadyWait.WaitAsync(
+            async ct =>
+            {
+                CodexStartupSnapshot? snapshot;
+                if (Volatile.Read(ref completedReads) == 0)
+                {
+                    entered.TrySetResult();
+                    snapshot = await first.Task.WaitAsync(ct);
+                }
+                else
+                {
+                    snapshot = Snap(CodexStartupFixtures.P3);
+                }
+
+                Interlocked.Increment(ref completedReads);
+                return snapshot;
+            },
+            Options(time, settleMs: 50, maxMs: 5_000), ct: cts.Token);
+
+        try
+        {
+            await entered.Task.WaitAsync(RealTimeout);
+            time.Advance(TimeSpan.FromMilliseconds(50));
+            gate.IsCompleted.ShouldBeFalse("the first snapshot is still held when the clock advances");
+            first.TrySetResult(Snap(CodexStartupFixtures.P3));
+            await AdvanceUntilAsync(time, () => gate.IsCompleted, 20, "late first snapshot readiness");
+            (await gate.WaitAsync(RealTimeout)).ShouldBeTrue();
+            Volatile.Read(ref completedReads).ShouldBeGreaterThanOrEqualTo(2,
+                "readiness requires two completed positive snapshots after the held first read");
+        }
+        finally
+        {
+            first.TrySetResult(null);
+            cts.Cancel();
+            await DrainAfterCleanupAsync(gate, cts.Token);
+        }
+    }
+
+    private static TimeSpan RealTimeout => TimeSpan.FromSeconds(5);
+    private static TimeSpan PollStep => TimeSpan.FromMilliseconds(50);
 
     private static CodexReadyWaitOptions Options(
         FakeTimeProvider time, int settleMs = 1000, int maxMs = 60_000) => new()
@@ -545,26 +651,66 @@ public class CodexReadyWaitTests
                 return Task.FromResult<CodexStartupSnapshot?>(Snap(screen));
             },
             Options(time, settleMs, maxMs));
-        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        await Task.Delay(25);
-        time.Advance(TimeSpan.FromMilliseconds(settleMs + 50));
-        return await gate;
+        await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1, "shared readiness first read");
+        await AdvanceUntilAsync(time, () => gate.IsCompleted, 20, "shared readiness completion");
+        return await gate.WaitAsync(RealTimeout);
     }
 
-    private static async Task WaitUntilAsync(Func<bool> predicate)
+    private static async Task AdvanceUntilAsync(
+        FakeTimeProvider time, Func<bool> predicate, int maxSteps, string phase)
     {
-        var start = DateTime.UtcNow;
-        while (!predicate())
+        var watch = Stopwatch.StartNew();
+        var virtualStart = time.GetUtcNow();
+        for (var step = 0; step < maxSteps; step++)
         {
-            if (DateTime.UtcNow - start > TimeSpan.FromSeconds(5))
-                throw new TimeoutException("condition not met");
-            await Task.Yield();
+            if (predicate())
+                return;
+
+            time.Advance(PollStep);
+            await DelayWithinPhaseAsync(watch, phase, step + 1, time.GetUtcNow() - virtualStart, 25);
+            if (predicate())
+                return;
+        }
+
+        await WaitForPredicateAsync(predicate, watch, phase, maxSteps, time.GetUtcNow() - virtualStart);
+    }
+
+    private static Task WaitUntilAsync(Func<bool> predicate, string phase) =>
+        WaitForPredicateAsync(predicate, Stopwatch.StartNew(), phase, 0, TimeSpan.Zero);
+
+    private static async Task WaitForPredicateAsync(
+        Func<bool> predicate, Stopwatch watch, string phase, int steps, TimeSpan fakeElapsed)
+    {
+        while (!predicate())
+            await DelayWithinPhaseAsync(watch, phase, steps, fakeElapsed, 10);
+    }
+
+    private static async Task DelayWithinPhaseAsync(
+        Stopwatch watch, string phase, int steps, TimeSpan fakeElapsed, int delayMs)
+    {
+        var remaining = RealTimeout - watch.Elapsed;
+        if (remaining <= TimeSpan.Zero)
+            throw new TimeoutException($"{phase}: no progress after {steps} clock steps and {fakeElapsed.TotalMilliseconds} fake ms");
+
+        try
+        {
+            await Task.Delay(delayMs).WaitAsync(remaining);
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"{phase}: no progress after {steps} clock steps and {fakeElapsed.TotalMilliseconds} fake ms");
         }
     }
 
-    private static async Task AdvanceAfterWaitStartedAsync(FakeTimeProvider time, TimeSpan delta)
+    private static async Task DrainAfterCleanupAsync(Task<bool> gate, CancellationToken caller)
     {
-        await Task.Delay(25);
-        time.Advance(delta);
+        try
+        {
+            await gate.WaitAsync(RealTimeout);
+        }
+        catch (OperationCanceledException) when (caller.IsCancellationRequested)
+        {
+            // The dedicated caller token was canceled only to release a held test callback.
+        }
     }
 }
