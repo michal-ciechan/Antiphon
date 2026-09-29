@@ -17,7 +17,7 @@ internal sealed record ScriptHarnessOptions(
 
 internal sealed record ScriptProcessRequest(string Executable, string Script, string CaseName,
     string ResultsDirectory, string ControlDirectory, TimeSpan ExecutionBudget, TimeSpan CleanupBudget,
-    IReadOnlyList<string>? AdditionalArguments);
+    IReadOnlyList<string>? AdditionalArguments, bool KeepStdinOpen = false);
 
 internal sealed record ScriptHarnessResult(int ExitCode, string Stdout, string Stderr);
 

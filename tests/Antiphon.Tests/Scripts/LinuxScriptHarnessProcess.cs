@@ -52,6 +52,7 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
             if (request.AdditionalArguments is not null)
                 foreach (var arg in request.AdditionalArguments) start.ArgumentList.Add(arg);
             _supervisor = Process.Start(start) ?? throw new InvalidOperationException("Linux ScriptHarness owner did not start.");
+            if (!request.KeepStdinOpen) _supervisor.StandardInput.Close();
         }
         catch
         {
