@@ -252,6 +252,7 @@ public static class CheckpointApp
             {
                 OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null);
+                model.CleanedOutputs = model.ExitCode == 0 || request.CleanOnRed;
             }
         }
         catch (OperationCanceledException) when (owner.Ended.IsCancellationRequested)
@@ -276,6 +277,7 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
             ReportWriter.WriteFiles(runDirectory, model);
         }
+        ReportWriter.WriteFiles(runDirectory, model);
         Note("done exit=" + model.ExitCode);
         await logWriter.FlushAsync().ConfigureAwait(false);
         await logWriter.DisposeAsync().ConfigureAwait(false);

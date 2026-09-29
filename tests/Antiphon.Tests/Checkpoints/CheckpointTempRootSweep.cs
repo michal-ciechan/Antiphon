@@ -286,7 +286,11 @@ internal sealed class CheckpointTempRootSweep
 internal static class CheckpointTempSweepAssemblyHook
 {
     [Before(Assembly)]
-    public static void Sweep() => new CheckpointTempRootSweep().SweepOnce(Console.Out);
+    public static void Sweep()
+    {
+        if (Environment.GetEnvironmentVariable("C804_ORPHAN_SWEEP_ROOT") is not null) return;
+        new CheckpointTempRootSweep().SweepOnce(Console.Out);
+    }
 
     [Before(Assembly)]
     public static void RecordSelectedRoster(AssemblyHookContext context)
