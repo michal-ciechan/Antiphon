@@ -74,7 +74,7 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("check the build against the plan");
         text.ShouldContain("reject empty variable components with nonzero exit");
         text.ShouldContain("quote variable expansions");
-        text.ShouldContain("resolve the target inside the intended scratch root");
+        text.ShouldContain("resolve target inside intended scratch root");
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("bare, unfenced, unindented, unquoted lines");
         text.ShouldContain("original Code/Worktree landing owner");
@@ -90,11 +90,82 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("GET /api/session-runners");
         text.ShouldContain("embed no fleet location");
         text.ShouldContain("the brief's verification profile governs");
-        text.ShouldContain("through the real queue");
-        text.ShouldContain("Acceptance needs");
-        text.ShouldContain("Re-run the claimed checks (Unit plus named affected integration classes)");
+        text.ShouldContain("ordinary V/R evidence via real queue");
+        text.ShouldContain("Acceptance needs matching complete UserPrompt transcript.");
+        text.ShouldContain("Re-run claimed Unit + named affected integration classes");
         text.ShouldContain("Reject missing tests or evidence.");
         text.ShouldContain("code when there are defects (name them in handoff:)");
+    }
+
+    [Test]
+    public void Review_guidance_preserves_every_instruction()
+    {
+        var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
+        foreach (var obligation in new[]
+        {
+            // Review role and checkpoint scope.
+            "Read-only.",
+            "Do not fix anything.",
+            "Defects: Where/Failure/Why/Fix.",
+            "Re-run claimed Unit + named affected integration classes in one checkpoint-tool run.",
+            "CP-n lines vs ### Checkpoints",
+            "check the build against the plan.",
+            "missing row, zero count",
+            "unlisted build/test run without a reason",
+            "build or test driver outside the slot gate",
+            "broad run lacks invariant/cost",
+            "test cannot go red (self-compare, constant, no outcome assertion)",
+            // Scratch cleanup safety.
+            "`rm`: reject empty variable components with nonzero exit",
+            "quote variable expansions",
+            "resolve target inside intended scratch root",
+            // Verification profile, evidence standards, and pending work.
+            "the brief's verification profile governs.",
+            "A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred;",
+            "an Interim pass never discharges it.",
+            "Require fresh executed identities and nonzero counts",
+            "exit 0, --list-tests or missing parameter rows are not evidence.",
+            "Required manual work stays pending",
+            "nightly green never satisfies manual or PC checks.",
+            "Executed PCs are not a prerequisite.",
+            "Check V/R",
+            "judge PC evidence read-only (PCs stay pending)",
+            "Carry original Code landing owner.",
+            "Reject missing tests or evidence.",
+            // Delivery evidence must reach the actual recipient.
+            "Audit producer/destination/persistence/recovery/receipt/identity.",
+            "Trace ordinary V/R evidence via real queue: busy/eligible, crash/enqueue.",
+            "Acceptance needs matching complete UserPrompt transcript.",
+            "Reject a missing producer-to-recipient test/recipient evidence",
+            "queue/event/Sent/ack fails.",
+            // Parser-compatible Review evidence and source identity.
+            "Emit bare, unfenced, unindented, unquoted lines before next-stage:",
+            "--- review evidence ---",
+            "subjectTaskId: <full GUID of task whose exact pushed tip was reviewed>",
+            "reviewedSourceSha: <full SHA actually reviewed>",
+            "ordinaryScopeCompleted: <Full|Interim|None>",
+            "Full only when the whole required selection ran.",
+            "Ordinary/recovery: original Code/Worktree landing owner; adoption subject: source.",
+            "Adopt: `-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`",
+            "owner: no `-FromTask`",
+            "recovery: `-RecoverReviewedSource`",
+            "Review ID/`-StartRef` cannot identify source",
+            "brief names both.",
+            "Use `-Card`",
+            "follow-up must match FollowUpOfTaskId",
+            "else fresh same-card Review.",
+            // Runtime placement and stage routing.
+            "Platform: GET /api/runner-defaults, GET /api/session-runners",
+            "embed no fleet location.",
+            "Omit -Runner unless pinning one host.",
+            "Omit -Platform unless OS needed",
+            "-Platform Any unpins.",
+            "next: land when there are no defects and this was a Final Review",
+            "review (Final) when a clean Interim",
+            "code when there are defects (name them in handoff:)",
+            "decide for choices."
+        })
+            text.ShouldContain(obligation);
     }
 
     private static string RepoRoot()
