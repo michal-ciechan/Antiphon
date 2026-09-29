@@ -1,8 +1,8 @@
 # CARD-0788: make review-evidence misattribution visible at settlement and land, and keep same-card base inspection inside its budget
 
-Date: 2026-09-29. Stage: Plan; verification design is a separate TestDesign dispatch (the brief
-did not fold it in). Baseline inspected: `15b66136a6d2081754935bfdc88139e761ed4e57`
-(origin/master at planning time; this branch is at the same commit).
+Date: 2026-09-29. Stage: Plan with separate TestDesign completed below.
+Planning baseline: `15b66136a6d2081754935bfdc88139e761ed4e57` (origin/master at planning time).
+TestDesign baseline: plan commit `f23a0bde93300b33c1ba341fc7acb04c6ea75071`.
 
 ## Outcome and scope
 
@@ -241,56 +241,353 @@ Read the bodies before fixing names, V/R ids, floors and positive controls:
 5. **Do not schedule** all of `AgentTaskReplyIntegrationTests`, the full land suite, or the
    full assembly; name the classes. A broad run needs a named invariant and its cost first.
 
-## Verification design (draft; TestDesign finalizes ids, floors and PCs)
+## Verification design
 
-Ordinary coverage map:
+Finalized 2026-09-29 by TestDesign at plan commit
+f23a0bde93300b33c1ba341fc7acb04c6ea75071. This is source-inspected design, not executed
+test/PC evidence. D-1 through D-7 remain the fix design; D-4 is accepted. This section
+supersedes the draft roster assumptions in the handoff above.
 
-| Id | Proves | Where |
+**Dispatch gate:** group A closes S1/S3/S4/S5 and D-6. Group B closes S2 only after CARD-0807
+has landed. Its Code round 8/task c5973812 edits the same evidence area. The locally available
+origin/feat/card-task-c5973812 was inspected at 712e6984f959e0bd75ecc9256902d89e62e986b4:
+a fixture reference, not proof of eventual landing or round 8 completion. Before commissioning
+B, record CARD-0807's confirmed landing operation and landed SHA, verify that SHA is an
+ancestor of B's starting HEAD, and recheck the landed settlement-test roster. Do not use the
+in-flight branch as B's base. If A lands first, keep B and its PCs pending on this card.
+
+### Inspection
+
+| Bodies/seams inspected | Boundaries assigned |
+|---|---|
+| LandApproval evidence loaders; C488 admission evidence tests; AgentTaskLandAdoptionTests recovery fixtures; LandingSafetyHarness; resolver/protocol evidence catches | V-1, R-1: identity labels and all three asynchronous detail producers. |
+| AgentTaskReplyService warning composition, binding and completion obligation; TaskProgressDtos; C544World; CARD-0807 ReviewEvidenceSettlementTests.SettleAsync/adoption fixture | V-2, R-2: authorized report coordinates versus independently persisted facts. |
+| Base resolver ResolveAsync/inspection accounting; ScratchGitRepo; T0442 V02-V10/V29; V30 dispatch/deadline fixture; C508/C540 partial rosters | V-3/V-4, R-3/R-4: status, pending requests, explicit source, Git identity, containment, unsafe checkouts and incomplete inventory. |
+| ProgressWarning; runner no-push/unmarked settlement bodies; RunnerSettlementWorld.SettleAsync/NoteAsync/obligations; continuation roster | V-5, R-5/R-6: NoteAsync returns a queue row, not a recipient receipt. |
+| VerificationRoundDeliveryTests.C544_CompletionReceipt/Recovery and C544_LandRefusalReceipt/Recovery, including RefusalRig; C544DeliveryRig/faults; LandOutcomeDeliveryHarness | V-6/V-7/V-8: real producer/queue/complete caller prompt and provider recreation. |
+
+Fixture work required in Code:
+
+- Record actual Git argv and repository through a LandingGit decorator forwarding to real Git;
+  clear traces after fixture construction. Count safety commands separately. Retarget
+  CandidateDeadlineGit to the new batch operation with the intended branch in its arguments.
+  Assert the injection fired and advance past the configured timeout, now five seconds;
+  V29's explicitly configured two-second budget stays two seconds. V08's row-local git_error
+  must remain a row-local failure: replace RefLookupFailureGit with a failed common-directory
+  probe on that candidate's distinct linked checkout, preserving Target plus an unknown-row
+  warning. A failed whole batch is instead git_inspection_error/Incomplete and belongs to V4.
+  Landed-row cases assert the excluded branch is never inspected. An obsolete rev-parse hook
+  that never fires is not green deadline/error coverage.
+- C544World's default Review is ReadOnly and has no base. For S2 create a Worktree Review with
+  explicit start, or seed the Review's persisted base before settlement for a DB-fact case.
+  Seed full distinct A/B/C SHAs. Never substitute the subject's base for the Review's base.
+  No additional settlement ls-remote is permitted.
+- Strengthen CARD-0807's existing C807_SourceReviewFeedsAdoption with a stale confirmed subject
+  tip before settlement. Its inspected fixture has no progress evidence: without this addition,
+  it cannot kill "skip binding when warning". Keep its real adoption admission assertions and
+  add the warning assertion; do not duplicate its settlement-to-admission test.
+- Reuse C544/RefusalRig services for delivery, adding setup callbacks before settlement and
+  extracting helpers where needed. New CompletionWarningDeliveryTests and
+  LandEvidenceWarningDeliveryTests hold only the scoped cases below. A real local Plan Worktree
+  settlement supplies no_movement delivery; RunnerSettlementWorld separately proves real
+  runner_no_pushed_progress. Do not insert a fake warning, header or expected receipt.
+- New integration classes use Integration, Slow, ParallelLimiter<ProcessSpawnLimit>, and
+  NotInParallel("MessageQueue") for queue rigs. Register fully qualified Slow names in
+  slow-tests-allowlist.txt, including ReviewEvidenceConsistencyTests. Preserve existing
+  categories/limiters. Shape tests stay in Unit TaskCompletionContinuationTests.
+  Every DB assertion scopes to fixture-owned IDs.
+
+### Delivery inventory
+
+| Path / producer | Destination and durable identity | Persistence, recovery and receipt |
 |---|---|---|
-| V-1 | Adoption and owner refusals name both identities and the fitting flag; codes unchanged | `AgentTaskLandApprovalRequestTests` C788_* and extended C488_* |
-| V-2 | Settlement warns on subject-tip and review-base contradictions, binds anyway, stays idempotent, and the caller's header carries the code | `ReviewEvidenceConsistencyTests` |
-| V-3 | Pruned rows cost no git; contained branches classify in one query; the safety probe runs only for maximal tips; decisions unchanged | `AgentTaskWorktreeBaseResolverTests` C788_*, `WorktreeBaseSelectionTests` |
-| V-4 | Incomplete Auto-mode inspection blocks for a previewed source or a Review; fresh Code keeps the safe base | `AgentTaskDispatchBaseGuardTests` |
-| V-5 | A non-Code runner settlement with no push settles Succeeded with `progress=none` in the event and the note header; Code is unchanged | `RunnerTaskSettlementTests`, `TaskCompletionContinuationTests` |
-| R-1 | Landing boundary unchanged (adoption CAS/lease/refusal-before-publication) | `AgentTaskLandAdoptionTests` |
-| R-2 | CARD-0807 settlement/adoption feed unchanged | `ReviewEvidenceSettlementTests`, `AgentTaskReviewEvidenceTests` |
-| R-3 | CARD-0442/0508/0540 selection semantics unchanged | `T0442_V02`-`V10`, `V29`; C508/C540 |
-| R-4 | Other dispatch base guards unchanged | remaining `AgentTaskDispatchBaseGuardTests` |
-| R-5 | Runner sync and progress evaluation unchanged | `RunnerCompletionProgressTests` |
-| R-6 | Unit lane green | `[Category=Unit]` |
+| S1 synchronous RequestAsync | HTTP caller; evidence ID + required owner/source ID + expected SHA | Conflict code/message before admission; no new request or publication. No queue on this path. |
+| S1 asynchronous resolver and both protocol evidence rechecks | Original caller session; task + land request + refusal event + notification + SourceLandNotificationId | Real refusal transaction owns event/outcome obligation. Recreated notification service reuses keyed queue row. V-7 requires complete detail in caller UserPrompt above attempt floor, with confirmation naming that sequence. |
+| S2 Review consistency warnings / reply settlement | Caller; Review task + stage outcome + completion event + notification + keyed row | Warning events, bound evidence and immutable completion snapshot commit with settlement. Scanner recovers enqueue; queue preserves header through rendering. V-8 proves receipt and replay idempotence. |
+| S5 no-progress warning / reply settlement | Caller; non-Code task + completion event + notification + keyed row | Same completion outbox/recovery. V-5 proves runner facts enter event/header; V-6 follows real no-movement settlement to receipt. |
+
+Completion cases cover already eligible and busy callers (zero writes before TurnEnd), raw
+inline and distilled/spilled output. Recovery cuts are obligation-insert, settled-committed,
+note-insert, note-committed, wakeup-dropped, render-committed, spill-written, attempt-committed
+and prompt-accepted, using C544's existing hooks. Assert each cut fired, recreate providers and
+drive actual scan/flush. Obligation insertion failure rolls back settlement; replay the same
+turn. Other cuts retain the warning snapshot and one logical note. Reconciliation after receipt
+must not type again.
+
+S1 refusal cuts: refusal transaction failure; terminal refusal committed before enqueue;
+before-enqueue; queue-inserted; prompt accepted before confirmation. Use landing save/boundary
+hooks, then retry the owning land/reconcile path without manually advancing notification/queue
+state. Inspect persisted request/event/notification detail after recreation and delivered text,
+not just the refusal code.
+
+The controlled protocol adapter records actual queue submission in its OnSubmitted UserPrompt.
+It proves producer, persistence, content, ordering and receipt matching; it does not prove
+physical ConPTY, a live provider or deployment. A queued row, Sent flag, event, ack, or pointer
+without verified spill content is insufficient. No expected prompt is seeded independently of
+submission. No new transport mechanism is proposed.
+
+### Proves it works now
+
+Exact Code targets follow. Argument rows are separate TUnit results; internal loops are not.
+
+**V-1 — S1 identity and asynchronous detail.**
+
+Extend AgentTaskLandApprovalRequestTests.C488_EvidenceSubjectMatches, C488_EvidenceRefMatches,
+C488_EvidenceShaMatches: unchanged conflict code; evidence ID, actual/required IDs and full refs,
+claimed/expected SHA and correct mode-specific corrective text. Use distinct refs when IDs agree.
+
+Add C788_AdoptionSubjectMismatchNamesSourceAndFlag and
+C788_OwnerMismatchNamesSiblingAndAdoptionShape (one result each). Adoption must explicitly label
+the required identity as adoption source and associate its ID with subjectTaskId/FromTask.
+Checking that "-FromTask" occurs anywhere is insufficient: owner guidance also contains it.
+Owner guidance names direct sibling land or owner adoption. Include RecoveryOwner in fixture
+loops with -RecoverReviewedSource and no suggestion to adopt a RepairSourceTaskId task.
+
+Add AgentTaskLandAdoptionTests.C788_RecoveryMismatchDetailSurvivesRestart: six arguments,
+{source_resolver, protocol_prepare, protocol_resume} × {owner_recovery, adoption}.
+Admit valid evidence, inject a fixture-only evidence mismatch at the relevant recheck and prove
+the hook was reached. Product code never rewrites immutable evidence. Fresh-provider reads
+retain identities/refs/SHAs/flag, original code and request ID; no target publication. Protocol
+rows reach their own catches rather than failing at source resolution. V-7 covers receipt.
+
+**V-2 — S2 persisted comparisons, binding and warning composition.**
+
+New ReviewEvidenceConsistencyTests uses C544 create/dispatch/turn/reply settlement:
+
+| Exact method | Arguments/results | Decisive assertion |
+|---|---:|---|
+| C788_SubjectTipMismatchWarnsAndBinds | 2: remote confirmed, Primary fallback | Review base = claim B, subject tip A. Only tip code; event/header carry A/B, subject/ref and "as confirmed at its settlement". Outcome still binds subject/ref/repo/B. |
+| C788_ReviewBaseMismatchWarnsAndBinds | 2: full 40, full 64 | Review base A, subject confirmed B, claim B. Only base code; coordinates remain bound. Full-64 case seeds persisted facts, not a claimed SHA-256 Git checkout. |
+| C788_ConsistentOrMissingFactsStaySilent | 8: all equal, null base, short base, absent JSON, malformed JSON, missing tips, invalid tips, equal full-64 | Other fact equal/absent, so it cannot mask the case. Zero consistency codes; usable block still binds. Non-full remote with no usable Primary is silent. |
+| C788_RemoteConfirmedTipPrecedesPrimary | 2: remote matches/Primary differs; remote differs/Primary matches | Warning iff valid confirmed remote differs. Internal rows cover absent/non-full remote fallback to valid Primary; never use ObservedSha, ClaimedSha or alternate origin. |
+| C788_BothWarningsCoexistWithOtherHeaderWarnings | 1 | Review base A, claim B, tip C. Each code once in events and immutable header alongside a real dirty-file warning as in C807. |
+| C788_RepeatedSettlementKeepsOneWarningPerCode | 1 | Replay OnTurnEnd with both mismatches: same outcome/notification IDs, one event per code, unchanged status/finding/scope/next/handoff. |
+| C788_UnauthorizedOrUnusableEvidenceHasNoConsistencyWarning | 4: failed, blocked, foreign card, unusable block | No bound coordinates or new consistency codes; existing refusal/parser behavior unchanged. |
+
+Subtotal **20** results. Binding cases also loop Clean/Found and preserve routed handoff;
+C807 covers follow-up authorization. Strengthened C807_SourceReviewFeedsAdoption proves the
+accepted stale-tip warning still binds and permits actual admission against a current pushed
+source. Landing retains its normal fresh gates. V-8 adds eleven results to this class.
+
+**V-3 — S3 avoided Git work and unchanged source eligibility.**
+
+New AgentTaskWorktreeBaseResolverTests methods:
+
+| Exact method | Arguments/results | Decisive assertion |
+|---|---:|---|
+| C788_PrunedRowsCostNoGitCommandsAndKeepWarnings | 6: Failed, Canceled, Blocked, Queued, Dispatched, Working | Compare one eligible source with/without pruned rows: same decision/source and identical GitCommands/actual command trace. A within-warning-cap case checks every pruned status/branch warning without "@ sha"; a separate over-candidate-cap case proves no refusal from pruned rows without requiring an unbounded warning list. Zero means zero added Git work, not zero global commands with an eligible source. |
+| C788_ContainedSiblingBranchesAreClassifiedInOneQuery | 1 | Twelve Review-style branches at target plus one clean uncontained Code checkout, all same repo: one tips query, one merged query, no per-branch commit lookup, Continue selects Code, at most 11 commands (4 fixed + 2 containment + 5 safety). Internal positive roles Plan/TestDesign/Review with actual commits remain eligible. |
+| C788_CheckoutSafetyProbesOnlyMaximalTips | 2: clean nonmaximal, dirty nonmaximal | Chain A < B, both registered, B clean. Only B probed: one worktree list, one status, three git-path calls; safety-command ceiling 5; no safety call on A. |
+| C788_UnsafeMaximalRecomputesCandidates | 3: dirty descendant, dirty divergent tip, dirty preferred equal-SHA label | Exclude unsafe branch, preserve warning, recompute clean ancestor/other tip/alias. No early Target, dirty selection or false Ambiguous. T0442 V07 retains all five dirty/in-progress and explicit-source forms. |
+| C788_PendingLandRowStillHoldsWithoutInspection | 3: Queued, Held, Running request | Non-Succeeded same-destination source plus candidate cap/deadline/unavailable-repo internal arms yields WaitForLand. Never prune into Target/Continue. |
+| C788_RequestedNonSucceededRowStillValidated | 6: Blocked, Failed, Canceled, Queued, Dispatched, Working | Explicit quiescent row inspected/accepted only if safe; active row refused. Dirty/open-writer cases refuse; pending land wins. |
+
+Subtotal **21** new results. Trace assertions must fail the old algorithm even under a generous
+total budget. Probe-all can exclude dirty A early and save ancestry work: PC-11 therefore uses
+the **safety-command** ceiling and paths, not just an overall command ceiling.
+
+**V-4 — S4 precise dispatch block predicate; D-4 accepted.**
+
+- Rename/update T0442_V30_incomplete_dispatch_inspection_keeps_safe_base_and_land_hold to
+  T0442_V30_incomplete_dispatch_inspection_blocks_previewed_source_and_keeps_land_hold.
+  Five arguments: deadline, candidate_cap, git_command_limit, git_inspection_error,
+  pending_land_budget (adds two results). First four start with persisted Continue/source
+  preview and finish Blocked, no worktree/branch/session, original preview retained; reason,
+  source ID/SHA and applicable retry options visible. Pending land remains Queued and resumes
+  correctly after completion. Drive real dispatch, not a fabricated selection.
+- C788_ReviewWithIncompleteInspectionBlocks: four incomplete reasons above; Review with initial
+  Target preview. Add candidates/fault after create so dispatch genuinely inspects. Same
+  blocked/no-launch assertions.
+- C788_FreshCodeWithTargetPreviewKeepsSafeBase: four reasons; fresh Code remains Dispatched at
+  actual target SHA with warning intent and no borrowed source.
+- C788_ExplicitBaseOverridesIncompleteAutoGuard: two arguments, FreshWorktree and StartRef,
+  Review role. Explicit Target retains existing behavior; StartRef bypasses inspection.
+- C788_NonIncompleteUnknownKeepsExistingBehavior: one result, Code/Review internal cases;
+  target_missing/unusable-source diagnostics remain outside the new incomplete predicate.
+  Assert Incomplete false; V29 and four dispatch faults assert it true for budget/error
+  results. Existing explicit Task invalid-source refusals remain authoritative.
+
+Subtotal **13** added results in AgentTaskDispatchBaseGuardTests. Decision, role, preview
+mode/source and Incomplete are asserted, not just warning text.
+
+**V-5 — S5 role/evidence gates and runner settlement.**
+
+- Unit TaskCompletionContinuationTests.C788_NoPushedProgressWarningShape: seven arguments,
+  runner_no_pushed_progress, branch_not_pushed, no_movement, claim-warning-present,
+  ProgressObserved, Indeterminate, missing coordinates. First three emit prefix/reason/full
+  ref and available confirmed tip, using RemoteSync then Primary facts. Missing facts must
+  not invent a confirmed tip (an unpushed branch has none); mark unknown/absent if rendered.
+  Other assessment/claim cases emit no new line.
+- RunnerTaskSettlementTests.No_push_on_a_plan_role_settles_succeeded_with_a_visible_warning
+  (one): real unchanged remote, Succeeded/NoAttributedProgress, exactly one warning, same line
+  in note header above report, correct ref/baseline, no no-progress incident.
+- C788_NonCodeNoPushRoleMatrix (four: Investigate, TestDesign, Review, Custom): same real
+  settlement assertions; internal absent-remote-branch arm retains branch_not_pushed.
+- C788_ClaimWarningDoesNotDuplicateNoPush (one): real Plan no-push settlement with a malformed
+  or foreign-task progress token sets ClaimWarning to claim_malformed_or_quoted or
+  claim_not_for_this_task, retains progress=unavailable, and adds no progress=none. Assert
+  ClaimWarning is populated before checking suppression. A valid but unpushed commit claim
+  alone does not set ClaimWarning and is not this fixture. Successful pushed control is silent.
+- C788_NonWorktreeDoesNotGetNoPushWarning (two: ReadOnly, Shared): real local create/settle,
+  no new warning; do not relabel a runner fixture after capturing its Worktree baseline.
+- Strengthen existing Unmarked_completion_gets_the_code_progress_policy **arm (b)** with no
+  progress=none in warning events or note header and unchanged Failed/CompletedWithoutProgress.
+  The no-claim arm is necessary for PC-19. Apply absence checks to marked
+  No_push_settles_with_specific_reason too.
+
+Adds **8** runner results and **7** Unit results. V-6 provides separate recipient evidence.
+
+**V-6/V-7/V-8 — warning receipt and recovery.**
+
+| Coverage / class | Exact methods/arguments | Results |
+|---|---|---:|
+| V-6 / new CompletionWarningDeliveryTests | C788_ProgressWarningReceipt (busy false/true); C788_ProgressWarningRecovery (nine completion cuts) | 11 |
+| V-7 / new LandEvidenceWarningDeliveryTests | C788_LandEvidenceRefusalReceipt (busy false/true); C788_LandEvidenceRefusalRecovery (five refusal cuts) | 7 |
+| V-8 / ReviewEvidenceConsistencyTests | C788_ConsistencyWarningReceipt (busy false/true); C788_ConsistencyWarningRecovery (nine completion cuts) | 11 |
+
+Receipt methods loop raw-inline/distilled-spill where supported. Recovery methods loop both
+caller states; completion cases also loop both renderings. S2 produces both codes plus another
+warning and retains bound evidence. S1 loops owner/adoption and three mismatch kinds. Fresh
+fixture IDs per internal combination. Assert complete wire/spill content, exact warning values,
+durable correlation, confirmation sequence above attempt floor and one keyed note; reconciling
+again adds no prompt. Extract helpers rather than schedule the whole heavy delivery class.
+Do not call existing [Test] methods as verification oracles.
+
+### Guards the regression
+
+| ID | Named coverage / decisive regression |
+|---|---|
+| R-1 | Existing AgentTaskLandAdoptionTests 15 results: local CAS, remote lease, dirty-source refusal, recovery authority and no publication after refusal. |
+| R-2 | CARD-0807 ReviewEvidenceSettlementTests 11 inspected results and AgentTaskReviewEvidenceTests 16: original source identity, parser/authorization/scope, adoption feed. Parser/formatter tests are supplementary, not S2 settlement proof. |
+| R-3 | Resolver T0442 V02-V10/V29 (46) and WorktreeBaseSelectionTests partials (16): Git identity, ancestry/cherry, equal tips, writers, explicit/fresh modes, cancellation/budgets. |
+| R-4 | Existing dispatch guard partials (74): create/dispatch races, pending land, retained worktree, C540 sibling warnings. |
+| R-5 | RunnerCompletionProgressTests (8) and original runner settlement (15): one remote observation, local/repair attribution, uncertainty/deferred/recovered settlement, no destructive rescue. |
+| R-6 | Unit lane floor stays 3000, including shape/classification guards. This is a lane floor, not an exact source census. |
+
+### Guard inventory and positive controls
+
+Each G-n maps 1:1 to PC-n: **23 guards, 23 mapped, missing 0, duplicate maps 0**.
+Unchanged authority/transport guards stay covered by R-1 through R-5 and receipt assertions;
+this plan authorizes no change to those mechanics.
+
+Mutation alone runs these after the relevant group's confirmed land. Code runs ordinary V/R;
+Review judges those results and pending PCs before land. Exact method filter:
+`/*/Antiphon.Tests.Application/<Class>/<Method>*` (trailing wildcard belongs to the method).
+Expand the class shorthands below. Min counts the whole method's arguments; where a subset goes
+red the decisive arguments are identified. Never filter on a literal parameter suffix.
+
+| Guard / PC | Group; compiling defect | Exact red method; decisive assertion; Min | Cycle minutes |
+|---|---|---|---:|
+| G-1 / PC-1 | A, S1: pass Owner instead of AdoptionSource at adoption admission | Approval.C788_AdoptionSubjectMismatchNamesSourceAndFlag; source identity label/ID association wrong; 1 | 6 |
+| G-2 / PC-2 | A, S1: omit ex.Message at resolver recovery refusal only | Adoption.C788_RecoveryMismatchDetailSurvivesRestart; source_resolver rows lose persisted detail; 6 | 12 |
+| G-3 / PC-3 | A, S1: discard protocol preparation catch detail only | Same method; protocol_prepare rows lose detail after restart; 6 | 12 |
+| G-4 / PC-4 | A, S1: discard protocol resumed-authority catch detail only | Same method; protocol_resume rows lose detail; 6 | 12 |
+| G-5 / PC-5 | B, S2: compare claim to subject tip in review-base check | Consistency.C788_ReviewBaseMismatchWarnsAndBinds; base-only code missing; 2 | 8 |
+| G-6 / PC-6 | B, S2: compare subject-tip claim to Review base instead | Consistency.C788_SubjectTipMismatchWarnsAndBinds; tip-only code missing; 2 | 8 |
+| G-7 / PC-7 | B, S2: accept non-full persisted fact as comparable | Consistency.C788_ConsistentOrMissingFactsStaySilent; invalid-fact row gains forbidden code; 8 | 10 |
+| G-8 / PC-8 | B, S2: prefer Primary over valid RemoteSync confirmed tip | Consistency.C788_RemoteConfirmedTipPrecedesPrimary; opposing-fact arms get wrong warning verdict; 2 | 8 |
+| G-9 / PC-9 | B, S2: suppress bound coordinates when consistency warning exists | Settlement.C807_SourceReviewFeedsAdoption; strengthened stale-tip case loses binding/adoption admission; 1 | 10 |
+| G-10 / PC-10 | A, S3: remove status pruning, retain later eligibility check | Resolver.C788_PrunedRowsCostNoGitCommandsAndKeepWarnings; added-command equality/candidate cap fails; 6 | 10 |
+| G-11 / PC-11 | A, S3: probe every eligible checkout | Resolver.C788_CheckoutSafetyProbesOnlyMaximalTips; safety-command ceiling 5/path census fails; 2 | 8 |
+| G-12 / PC-12 | A, S3: treat unsafe maximal checkout as safe | Resolver.T0442_V07_dirty_or_in_progress_checkout_is_excluded; dirty source selected; 5 | 10 |
+| G-13 / PC-13 | A, S3: return Target after unsafe maximal instead of recomputing | Resolver.C788_UnsafeMaximalRecomputesCandidates; clean ancestor/alias missing; 3 | 10 |
+| G-14 / PC-14 | A, S3: prune non-Succeeded pending rows from the retained inspection/hold inventory | Resolver.C788_PendingLandRowStillHoldsWithoutInspection; pending source fails to hold; 3 | 10 |
+| G-15 / PC-15 | A, S3: remove explicit-source exception from pruning | Resolver.C788_RequestedNonSucceededRowStillValidated; quiescent explicit source not inspected/accepted; 6 | 10 |
+| G-16 / PC-16 | A, S4: remove Review role arm | Dispatch.C788_ReviewWithIncompleteInspectionBlocks; Dispatched/worktree instead of Blocked/no launch; 4 | 10 |
+| G-17 / PC-17 | A, S4: remove preview-Continue/source arm | Dispatch.T0442_V30_incomplete_dispatch_inspection_blocks_previewed_source_and_keeps_land_hold; first four rows silently cut target; 5 | 12 |
+| G-18 / PC-18 | A, S4: drop Incomplete restriction, retain Unknown/Auto/role-preview | Dispatch.C788_NonIncompleteUnknownKeepsExistingBehavior; non-incomplete Review incorrectly blocked; 1 | 8 |
+| G-19 / PC-19 | A, S5: invoke new warning for Code too | Runner.Unmarked_completion_gets_the_code_progress_policy arm (b); forbidden progress=none in event/header; 1 | 8 |
+| G-20 / PC-20 | A, S5: remove ClaimWarning suppression | Continuation.C788_NoPushedProgressWarningShape; claim-warning row must return null; 7 | 6 |
+| G-21 / PC-21 | B, S2: keep events, omit callerWarning consistency append | Consistency.C788_ConsistencyWarningReceipt; complete recipient prompt/spill lacks codes; 2 | 12 |
+| G-22 / PC-22 | A, S5: keep event, omit caller-header progress append | CompletionDelivery.C788_ProgressWarningReceipt; recipient lacks progress=none; 2 | 12 |
+| G-23 / PC-23 | B, S2 delivery: strip consistency lines from recovered snapshot rendering only | Consistency.C788_ConsistencyWarningRecovery; reached cut loses warning content on recovery; 9 | 20 |
+
+Shorthands: Approval = AgentTaskLandApprovalRequestTests; Adoption = AgentTaskLandAdoptionTests;
+Consistency = ReviewEvidenceConsistencyTests; Settlement = ReviewEvidenceSettlementTests;
+Resolver = AgentTaskWorktreeBaseResolverTests; Dispatch = AgentTaskDispatchBaseGuardTests;
+Runner = RunnerTaskSettlementTests; Continuation = TaskCompletionContinuationTests;
+CompletionDelivery = CompletionWarningDeliveryTests.
+
+Mutate the actual equivalent seam if a landed refactor changes its spelling; record the diff.
+Build failure, unreached hook, wrong/zero roster or infrastructure error is never intended red.
+PCs sharing a file/method run separately. Preserve exact bytes, refresh restored timestamps,
+build fresh phase outputs, await every owned command and retain baseline/red/restored-green
+TRX with expected assertions. Use the copied unchanged checkpoint driver and external
+SourceLanding evidence root per docs/testing-and-build.md. No snapshot commit/push/land or
+external executor. Record C/O/L, argument counts, logs and restoration; run missing-control
+discovery. A's PCs use A's L and B's PCs B's L; never relabel earlier evidence.
+
+### Out of scope
+
+No evidence inference/rewriting, parser/Review bundle, schema, adoption mechanics, live provider
+or push debugging, broad reply/land/full-assembly run. CARD-0807 owns its diagnostic and repair
+prose. An unusable block cannot simultaneously bind: coexistence tests use another real warning.
+Native Windows transport is excluded because content/selection changes do not alter transport;
+the controlled adapter's limit is explicit above. Live activation/canaries remain caller-owned.
 
 ### Cost
 
-Ordinary Code floor is the sum of `EstimatedMinutes` below: group A 70 minutes, group B 20
-minutes, plus authoring. Windows estimates are not given; every row runs on Linux.
+All times are Linux estimates. Ordinary Code floor is the checkpoint-minute sum: A =
+15+15+30+18+25+25 = **128 minutes**, B = **35 minutes**, total **163 minutes**, including
+two isolated builds. Authoring and host-slot waiting are additional, separately quoted.
+PC cycle estimates include method baseline, compiling-defect build/red and fresh restored
+build/green: **232 minutes** (A **156**, B **76**). Add 20 minutes for two snapshot
+setups/restoration records and 20 for discovery/reporting: Mutation floor **272 minutes**;
+ordinary plus Mutation floor **435 minutes**. No measured savings claimed. Reusing CP-1
+across five A filters avoids five redundant assembly builds; required delivery coverage adds cost.
+
+Expected ordinary baseline reds: new S1 messages/detail fail on missing identities; S2
+mismatch/receipt cases fail on absent warnings; S3 trace ceilings fail on redundant commands;
+updated V30/Review cases fail on silent target dispatch; S5 no-push/receipt cases fail on absent
+progress=none. Supporting negative/regression cases may already pass; their assertions must
+still detect the specified guard mutations. Code does not run deliberate mutation cycles.
+
+### Roster
+
+Source-expanded counts include partial files. Future minimum executions are not execution
+claims. Methods invoking tests or looping assertions still count once.
+
+| Class | Baseline methods/results | Added results | Final results |
+|---|---:|---:|---:|
+| AgentTaskLandApprovalRequestTests | 19 / 21 | 2 | 23 |
+| AgentTaskLandAdoptionTests | 9 / 15 | 6 | 21 |
+| AgentTaskWorktreeBaseResolverTests | 10 / 46 | 21 | 67 |
+| WorktreeBaseSelectionTests (both partials) | 14 / 16 | 0 | 16 |
+| AgentTaskDispatchBaseGuardTests (both partials) | 39 / 74 | 13 | 87 |
+| RunnerTaskSettlementTests | 15 / 15 | 8 | 23 |
+| RunnerCompletionProgressTests | 8 / 8 | 0 | 8 |
+| TaskCompletionContinuationTests (Unit) | 24 / 41 | 7 | 48 |
+| AgentTaskReviewEvidenceTests | 16 / 16 | 0 | 16 |
+| ReviewEvidenceSettlementTests (CARD-0807 inspected ref) | 11 / 11 | 0 | 11 |
+| ReviewEvidenceConsistencyTests | 0 / 0 | 31 | 31 |
+| CompletionWarningDeliveryTests | 0 / 0 | 11 | 11 |
+| LandEvidenceWarningDeliveryTests | 0 / 0 | 7 | 7 |
+
+CP floors rise: CP-2 **36 -> 44**, CP-3 **55 -> 170**, CP-4 **24 -> 31**,
+CP-5 **33 -> 58**. CP-1 retains **3000**; all seven new shape rows and existing 41 continuation
+rows must execute. CP-6/CP-7 floors are 11/7. Check each intended method/argument roster, not
+just totals. If CARD-0807/base adds cases, raise floors before B's commit; never lower them or
+allow unrelated added cases to hide missing required methods.
 
 ### Checkpoints
 
-Group A rows (`After` S1, S3, S4, S5) run once after group A is committed; group B (`After` S2)
-runs once after S2 is committed on a CARD-0807-inclusive base. Every row is Linux-capable
-(real git via `ScratchGitRepo`; `UseAppHost=false` is the tool's Linux default). No row pins a
-runner or platform; the lane is whatever `GET /api/runner-defaults` names (server2, linux, at
-planning time). Serial rows spawn processes.
+Commit each complete group before its one tool run. Through scripts/build-slot.ps1 launch
+dotnet run --project tools/Antiphon.Checkpoints -- run --plan <this-plan> with
+--rows CP-1,CP-2,CP-3,CP-4,CP-6,CP-7 for A; --rows CP-5 for B after the landing dependency.
+Each row acquires its own driver lease. Resume tool wait while exit is 75; retain/report
+CP lines, actual counts, failures/skips and reruns. Linux UseAppHost=false is the tool default;
+no runner/platform pin. Serial rows run alone. Missing named cases or unreached fault hooks
+fail even when the count floor passes. These are the closed ordinary rows.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1,S3,S4,S5 | `tests/Antiphon.Tests -> bin-c788a/` | unit | `/*/*/*/*[Category=Unit]` | R-6, V-5 (shape) | >= 3000 executed, 0 failed | 3000 | 15 | false |
-| CP-2 | S1,S3,S4,S5 | CP-1 | land-admission | `/*/Antiphon.Tests.Application/(AgentTaskLandApprovalRequestTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1, R-1 | all listed, 0 failed | 36 | 12 | true |
-| CP-3 | S1,S3,S4,S5 | CP-1 | base-inspection | `/*/Antiphon.Tests.Application/(AgentTaskWorktreeBaseResolverTests*)\|(WorktreeBaseSelectionTests*)\|(AgentTaskDispatchBaseGuardTests*)/*` | V-3, V-4, R-3, R-4 | all listed, 0 failed | 55 | 25 | true |
-| CP-4 | S1,S3,S4,S5 | CP-1 | progress-warning | `/*/Antiphon.Tests.Application/(RunnerTaskSettlementTests*)\|(RunnerCompletionProgressTests*)/*` | V-5, R-5 | all listed, 0 failed | 24 | 18 | true |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c788b/` | evidence-consistency | `/*/Antiphon.Tests.Application/(ReviewEvidenceConsistencyTests*)\|(ReviewEvidenceSettlementTests*)\|(AgentTaskReviewEvidenceTests*)/*` | V-2, R-2 | all listed, 0 failed | 33 | 20 | true |
-
-Red/green expectations per row: CP-1 is green before and after (S5's Unit shape test is the only
-new Unit method and must first fail against the production line by asserting the `progress=none`
-prefix). CP-2's two C788 tests fail on the baseline message text; the extended C488 assertions
-fail on the baseline as well. CP-3's `C788_PrunedRows*` and `C788_CheckoutSafety*` fail on the
-baseline by command count; `T0442_V30`'s updated arms fail on the baseline by status (Dispatched
-vs Blocked). CP-4's new Plan-role test fails on the baseline because no `progress=none` warning
-exists. CP-5's mismatch tests fail on the baseline because no warning event is written. A new
-test that cannot be made red this way is a stub.
-
-Positive controls are executed by the Mutation stage after land, method-scoped, from the list
-in the handoff section; Code and Review report only the rows above.
+| CP-1 | S1,S3,S4,S5 | `tests/Antiphon.Tests -> bin-c788a/` | unit | `/*/*/*/*[Category=Unit]` | R-6, V-5 (shape) | >= 3000 executed, 0 failed; all named shape rows | 3000 | 15 | false |
+| CP-2 | S1,S3,S4,S5 | `CP-1` | land-admission | `/*/Antiphon.Tests.Application/(AgentTaskLandApprovalRequestTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1, R-1 | all listed, 0 failed/skipped | 44 | 15 | true |
+| CP-3 | S1,S3,S4,S5 | `CP-1` | base-inspection | `/*/Antiphon.Tests.Application/(AgentTaskWorktreeBaseResolverTests*)\|(WorktreeBaseSelectionTests*)\|(AgentTaskDispatchBaseGuardTests*)/*` | V-3, V-4, R-3, R-4 | all listed, 0 failed/skipped | 170 | 30 | true |
+| CP-4 | S1,S3,S4,S5 | `CP-1` | progress-warning | `/*/Antiphon.Tests.Application/(RunnerTaskSettlementTests*)\|(RunnerCompletionProgressTests*)/*` | V-5, R-5 | all listed, 0 failed/skipped | 31 | 18 | true |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c788b/` | evidence-consistency | `/*/Antiphon.Tests.Application/(ReviewEvidenceConsistencyTests*)\|(ReviewEvidenceSettlementTests*)\|(AgentTaskReviewEvidenceTests*)/*` | V-2, V-8, R-2 | all listed, 0 failed/skipped | 58 | 35 | true |
+| CP-6 | S1,S3,S4,S5 | `CP-1` | progress-delivery | `/*/Antiphon.Tests.Application/CompletionWarningDeliveryTests/*` | V-6 | all listed, 0 failed/skipped | 11 | 25 | true |
+| CP-7 | S1,S3,S4,S5 | `CP-1` | refusal-delivery | `/*/Antiphon.Tests.Application/LandEvidenceWarningDeliveryTests/*` | V-7 | all listed, 0 failed/skipped | 7 | 25 | true |
 
 ## Platform, execution and rollout
 
