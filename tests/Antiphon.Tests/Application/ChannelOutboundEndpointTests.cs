@@ -62,6 +62,7 @@ public sealed class ChannelOutboundEndpointTests
         var inboundId = Guid.NewGuid();
         var converterId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
+        var companionIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
         await using var factory = new OutboundEndpointFactory(projectId, converterId);
         using var client = factory.CreateClient();
         await using var scope = factory.Services.CreateAsyncScope();
@@ -79,6 +80,10 @@ public sealed class ChannelOutboundEndpointTests
         db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
             ExternalId = channelId.ToString("N"), AgentId = inboundId,
             CreatedAt = now, UpdatedAt = now });
+        foreach (var companionId in companionIds)
+            db.ChatChannels.Add(new ChatChannel { Id = companionId, Provider = "fake",
+                ExternalId = companionId.ToString("N"), AgentId = inboundId,
+                CreatedAt = now, UpdatedAt = now });
         await db.SaveChangesAsync();
         try
         {
@@ -89,6 +94,11 @@ public sealed class ChannelOutboundEndpointTests
                 profiles.RootElement.GetArrayLength().ShouldBe(1);
                 profiles.RootElement[0].GetProperty("name").GetString().ShouldBe("conversion");
                 profiles.RootElement[0].GetProperty("projectId").GetGuid().ShouldBe(projectId);
+                profiles.RootElement[0].GetProperty("agentId").GetGuid().ShouldBe(converterId);
+                profiles.RootElement[0].GetProperty("promptRevision").GetString()!.Length.ShouldBe(64);
+                profiles.RootElement[0].GetProperty("trigger").GetString().ShouldBe("MarkdownSources");
+                profiles.RootElement[0].GetProperty("timeoutSeconds").GetInt32().ShouldBe(120);
+                profiles.RootElement[0].GetProperty("authorization").GetString().ShouldContain("metered");
             }
             using (var bind = await client.PatchAsJsonAsync($"/api/channels/{channelId:D}",
                        new { outboundAgentProfile = "conversion" }))
@@ -96,7 +106,29 @@ public sealed class ChannelOutboundEndpointTests
                 bind.EnsureSuccessStatusCode();
                 using var body = JsonDocument.Parse(await bind.Content.ReadAsStringAsync());
                 body.RootElement.GetProperty("outboundAgentProfile").GetString().ShouldBe("conversion");
+                body.RootElement.GetProperty("outboundProfile").GetProperty("projectId").GetGuid()
+                    .ShouldBe(projectId);
             }
+            using (var list = await client.GetAsync("/api/channels"))
+            {
+                list.EnsureSuccessStatusCode();
+                using var body = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+                foreach (var item in body.RootElement.EnumerateArray()
+                             .Where(item => item.GetProperty("id").GetGuid() == channelId
+                                 || companionIds.Contains(item.GetProperty("id").GetGuid())))
+                {
+                    var id = item.GetProperty("id").GetGuid();
+                    if (id == channelId)
+                        item.GetProperty("outboundAgentProfile").GetString().ShouldBe("conversion");
+                    else
+                        item.GetProperty("outboundAgentProfile").ValueKind.ShouldBe(JsonValueKind.Null);
+                }
+            }
+            using (var invalid = await client.PatchAsJsonAsync($"/api/channels/{channelId:D}",
+                       new { outboundAgentProfile = "unknown" }))
+                invalid.StatusCode.ShouldBe(System.Net.HttpStatusCode.BadRequest);
+            (await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                .OutboundAgentProfile.ShouldBe("conversion");
             using (var clear = await client.PatchAsJsonAsync($"/api/channels/{channelId:D}",
                        new { clearOutboundAgentProfile = true }))
             {
@@ -104,11 +136,20 @@ public sealed class ChannelOutboundEndpointTests
                 using var body = JsonDocument.Parse(await clear.Content.ReadAsStringAsync());
                 body.RootElement.GetProperty("outboundAgentProfile").ValueKind.ShouldBe(JsonValueKind.Null);
             }
+            using (var list = await client.GetAsync("/api/channels"))
+            {
+                list.EnsureSuccessStatusCode();
+                using var body = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+                body.RootElement.EnumerateArray().Single(item =>
+                    item.GetProperty("id").GetGuid() == channelId)
+                    .GetProperty("outboundAgentProfile").ValueKind.ShouldBe(JsonValueKind.Null);
+            }
             factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();
         }
         finally
         {
-            await db.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
+            await db.ChatChannels.Where(c => c.Id == channelId || companionIds.Contains(c.Id))
+                .ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == inboundId || a.Id == converterId).ExecuteDeleteAsync();
             await db.Boards.Where(b => b.Id == boardId).ExecuteDeleteAsync();
             await db.Projects.Where(p => p.Id == projectId).ExecuteDeleteAsync();

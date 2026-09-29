@@ -64,11 +64,15 @@ describe('ChannelsPage', () => {
       maxPending: 8, authorization: 'One metered worker invocation per matching agent reply',
     }
     let selected: string | null = null
+    let channelReads = 0
     const requests: unknown[] = []
     server.use(
-      http.get('/api/channels', () => HttpResponse.json([channel({
-        agentId: 'agent-1', outboundAgentProfile: selected, outboundProfile: selected ? profile : null,
-      })])),
+      http.get('/api/channels', () => {
+        channelReads++
+        return HttpResponse.json([channel({
+          agentId: 'agent-1', outboundAgentProfile: selected, outboundProfile: selected ? profile : null,
+        })])
+      }),
       http.get('/api/channels/outbound-profiles', () => HttpResponse.json([profile])),
       http.get('/api/agents', () => HttpResponse.json([{ id: 'agent-1', name: 'Inbound agent' }])),
       http.patch('/api/channels/ch-1', async ({ request }) => {
@@ -85,11 +89,15 @@ describe('ChannelsPage', () => {
     await userEvent.click(await screen.findByText('pdf-project'))
     await waitFor(() => expect(requests).toEqual([{ outboundAgentProfile: 'pdf-project' }]))
     expect(await screen.findByText(/PDF converter · MarkdownSources/)).toBeInTheDocument()
+    await waitFor(() => expect(channelReads).toBeGreaterThanOrEqual(2))
     await waitFor(() => expect(selector).not.toBeDisabled())
     await userEvent.click(screen.getByRole('button', { name: 'Clear outbound profile for Family' }))
     await waitFor(() => expect(requests).toEqual([
       { outboundAgentProfile: 'pdf-project' }, { clearOutboundAgentProfile: true },
     ]))
+    await waitFor(() => expect(channelReads).toBeGreaterThanOrEqual(3))
+    await waitFor(() => expect(screen.queryByText(/PDF converter · MarkdownSources/)).not.toBeInTheDocument())
+    expect(selector).toHaveValue('')
   })
 
   it('shows an API validation refusal without displaying an unsaved profile', async () => {

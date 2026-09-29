@@ -142,6 +142,8 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == intent.ConversionTaskId);
                 task.OutboundDeliveryId.ShouldBe(deliveryId);
                 task.ReplyTo.ShouldBe(AgentTaskReplyTo.None);
+                (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
+                (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId != xId)).ShouldBe(0);
                 var pdf = "%PDF-1.4 synthetic conversion"u8.ToArray();
                 var output = Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "output");
                 await File.WriteAllBytesAsync(Path.Combine(output, "combined.pdf"), pdf);
@@ -161,6 +163,7 @@ public sealed class ChannelOutboundDispatchIntegrationTests
                 published.State.ShouldBe(ChannelOutboundDeliveryState.Published);
                 (await db.SessionQueuedMessages.SingleAsync(m => m.Id == xCorrelation))
                     .ChannelReplySettledAt.ShouldNotBeNull();
+                (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
             }
             h.Messaging.SentReplies.Count.ShouldBe(2);
             var xReply = h.Messaging.SentReplies[1];
