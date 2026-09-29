@@ -110,7 +110,8 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
 
     /// <summary>A settled profile-v1 Review whose completion obligation targets the caller.</summary>
     public async Task<(Guid TaskId, string Report)> SettleReviewAsync(Antiphon.Server.Application.Dtos.CreateAgentTaskRequest? request = null,
-        string scope = "Full", string next = "land", int padding = 0, AgentTask? root = null)
+        string scope = "Full", string next = "land", int padding = 0, AgentTask? root = null,
+        Func<Guid, string, string>? transformReport = null)
     {
         var caller = root is null ? null : World.Caller() with { Task = root };
         var created = await World.CreateTaskAsync(request ?? World.FinalReview(), caller);
@@ -120,6 +121,8 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
         if (padding > 0)
             report = report.Replace("Reviewed the owner.", "Reviewed the owner.\n\n" + string.Join("\n",
                 Enumerable.Range(0, padding).Select(i => $"evidence line {i:D4}: preserved review detail")));
+        if (transformReport is not null)
+            report = transformReport(created.Id, report);
         await World.SeedTurnAsync(sessionId, created.Id, report);
         await World.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(sessionId, CancellationToken.None);
         return (created.Id, report);

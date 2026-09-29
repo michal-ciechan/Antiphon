@@ -2267,6 +2267,15 @@ public sealed class AgentTaskReplyService
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
         string? warning = null, string? drift = null, string? git = null, AppDbContext? settlementDb = null)
     {
+        if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
+            && ReviewEvidence.TryParse(report).Warning == ReviewEvidence.NotStandaloneWarning)
+        {
+            const string evidenceWarning = "review-evidence-warning=review_evidence_not_standalone: "
+                + "Evidence was ignored because it was fenced, quoted or indented; "
+                + "submit the evidence block as bare lines before the next-stage block.";
+            warning = string.IsNullOrWhiteSpace(warning) ? evidenceWarning : warning.Trim() + "\n\n" + evidenceWarning;
+        }
+
         if (BlockedNote.IsQuestionBlock(task))
         {
             var bits = BlockedNote.Format(task, report, _settings);
