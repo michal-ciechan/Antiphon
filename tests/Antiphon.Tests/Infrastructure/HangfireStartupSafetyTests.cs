@@ -95,8 +95,10 @@ public class HangfireStartupSafetyTests
         using var scope = host.Services.CreateScope();
         scope.ServiceProvider.GetRequiredService<IExpectationPromptSender>()
             .ShouldBeOfType<SessionQueueExpectationPromptSender>();
+        host.Services.GetRequiredService<IOptions<HangfireSettings>>().Value.ServerEnabled.ShouldBeTrue();
+        host.Services.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value.Enabled.ShouldBeTrue();
         host.Services.GetServices<IHostedService>()
-            .Count(service => service.GetType().Name.Contains("BackgroundJobServer", StringComparison.Ordinal))
+            .Count(service => (service.GetType().FullName ?? "").Contains("Hangfire", StringComparison.Ordinal))
             .ShouldBe(2);
         using var connection = host.Services.GetRequiredService<JobStorage>().GetConnection();
         connection.GetRecurringJobs().Select(job => job.Id)
