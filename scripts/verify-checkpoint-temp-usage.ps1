@@ -64,7 +64,55 @@ function Get-Allocated([string]$path) {
         }
         return [long]([string]$line).Split([char]9)[0]
     }
+    if ($IsWindows) { return Get-WindowsAllocated $path }
     throw 'Native allocated-byte sampling is not implemented for this OS.'
+}
+
+# Windows allocated bytes: per file, GetCompressedFileSizeW (compressed/sparse aware) rounded up to the
+# volume cluster size. Reparse points are counted as zero and never followed, so a link cannot inflate or hide a root.
+if ($IsWindows) {
+    if (-not ('C804.NativeAlloc' -as [type])) {
+        Add-Type -Namespace C804 -Name NativeAlloc -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+public static extern uint GetCompressedFileSizeW(string name, out uint high);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+public static extern bool GetDiskFreeSpaceW(string root, out uint sectorsPerCluster, out uint bytesPerSector, out uint freeClusters, out uint totalClusters);
+'@
+    }
+    $script:clusterBytes = @{}
+}
+
+function Get-ClusterBytes([string]$path) {
+    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($path))
+    if (-not $script:clusterBytes.ContainsKey($root)) {
+        [uint32]$spc = 0; [uint32]$bps = 0; [uint32]$free = 0; [uint32]$total = 0
+        if (-not [C804.NativeAlloc]::GetDiskFreeSpaceW($root, [ref]$spc, [ref]$bps, [ref]$free, [ref]$total)) {
+            throw "Cluster size probe failed for $root"
+        }
+        $script:clusterBytes[$root] = [long]$spc * [long]$bps
+    }
+    return $script:clusterBytes[$root]
+}
+
+function Get-WindowsAllocated([string]$path) {
+    $cluster = Get-ClusterBytes $path
+    [long]$total = 0
+    $stack = [Collections.Generic.Stack[string]]::new()
+    $stack.Push($path)
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        try { $entries = [IO.DirectoryInfo]::new($dir).GetFileSystemInfos() } catch [IO.IOException] { continue } catch [UnauthorizedAccessException] { continue }
+        foreach ($entry in $entries) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::Directory) { $stack.Push($entry.FullName); continue }
+            [uint32]$high = 0
+            $low = [C804.NativeAlloc]::GetCompressedFileSizeW('\\?\' + $entry.FullName, [ref]$high)
+            if ($low -eq [uint32]::MaxValue -and [Runtime.InteropServices.Marshal]::GetLastWin32Error() -ne 0) { continue }
+            $size = ([long]$high -shl 32) + [long]$low
+            $total += [long]([Math]::Ceiling($size / $cluster) * $cluster)
+        }
+    }
+    return $total
 }
 
 function Get-Snapshot([string]$temp) {
