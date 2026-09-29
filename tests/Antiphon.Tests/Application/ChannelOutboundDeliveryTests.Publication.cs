@@ -23,6 +23,136 @@ namespace Antiphon.Tests.Application;
 public sealed partial class ChannelOutboundDeliveryTests
 {
     [Test]
+    public async Task Accepted_target_is_not_retried_when_a_second_target_fails()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-two-targets-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var channelIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var deliveryIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var correlationIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new SplitTargetProducer(channelIds[1].ToString("N"));
+        try
+        {
+            var bundle = Path.Combine(root, "bundle");
+            Directory.CreateDirectory(bundle);
+            var sourcePath = Path.Combine(bundle, "source.md");
+            var sourceBytes = "# Same source for A and B\n"u8.ToArray();
+            await File.WriteAllBytesAsync(sourcePath, sourceBytes);
+            await File.WriteAllTextAsync(Path.Combine(bundle, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true,
+                    [new DeliverableBundleService.SourceMember("docs/source.md", "source.md", null,
+                        sourceBytes.Length, Convert.ToHexStringLower(SHA256.HashData(sourceBytes)))], []),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var frozen = new ChannelOutboundSnapshot[2];
+            for (var i = 0; i < 2; i++)
+                frozen[i] = await store.StageAsync(deliveryIds[i], new ChannelReply
+                {
+                    Channel = "fake", ConversationId = channelIds[i].ToString("N"),
+                    ReplyHandle = "thread-" + i, Text = "Same source",
+                    Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                        Name = "source.md", Mime = "text/markdown", Source = sourcePath,
+                        Content = sourceBytes }],
+                }, CancellationToken.None);
+            await using (var seed = new AppDbContext(options))
+            {
+                seed.Projects.Add(new Project { Id = projectId, Name = "targets-" + projectId.ToString("N"),
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "targets",
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "targets",
+                    Slug = "targets-" + agentId.ToString("N"), WorkingDirectory = root });
+                seed.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "targets",
+                    Cwd = root, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+                seed.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, ProjectId = projectId,
+                    AgentId = agentId, Title = "Source", Goal = "Write source",
+                    WorkingDirectory = root, RepoPath = root,
+                    Status = AgentTaskStatus.Succeeded, DeliverableBundleDir = bundle,
+                    CreatedAt = now, CompletedAt = now,
+                });
+                for (var i = 0; i < 2; i++)
+                {
+                    seed.ChatChannels.Add(new ChatChannel { Id = channelIds[i], Provider = "fake",
+                        ExternalId = channelIds[i].ToString("N"), AgentId = agentId,
+                        CreatedAt = now, UpdatedAt = now });
+                    seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                    {
+                        Id = deliveryIds[i], SourceKey = "same-source",
+                        ChannelId = channelIds[i], ProjectId = projectId, InboundAgentId = agentId,
+                        SourceSessionId = sessionId, SourceTaskId = taskId, SendKind = "main",
+                        ProfileName = "", PromptRevision = new string('a', 64),
+                        InputPath = frozen[i].ReplyPath, InputSha256 = frozen[i].ReplySha256,
+                        Trigger = "Passthrough", State = ChannelOutboundDeliveryState.Ready,
+                        CreatedAt = now.AddMilliseconds(i), DeadlineAt = now.AddMinutes(10),
+                    });
+                }
+                await seed.SaveChangesAsync();
+                for (var i = 0; i < 2; i++)
+                    seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+                    {
+                        Id = correlationIds[i], AgentSessionId = sessionId,
+                        Body = "asked in target " + i, Sequence = i + 1,
+                        Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+                        ConversationKey = "fake:" + channelIds[i].ToString("N"),
+                        ChannelOutboundDeliveryId = deliveryIds[i], CreatedAt = now,
+                    });
+                await seed.SaveChangesAsync();
+            }
+            await using (var db = new AppDbContext(options))
+            {
+                var pump = new ChannelOutboundDeliveryPump(db, null!, store, producer,
+                    Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(0);
+            }
+            producer.Calls[channelIds[0].ToString("N")].ShouldBe(1);
+            producer.Calls[channelIds[1].ToString("N")].ShouldBe(3);
+            producer.Accepted.ShouldHaveSingleItem().ConversationId.ShouldBe(channelIds[0].ToString("N"));
+            await using var verify = new AppDbContext(options);
+            var rows = await verify.ChannelOutboundDeliveries.AsNoTracking()
+                .Where(d => deliveryIds.Contains(d.Id)).ToListAsync();
+            rows.Single(d => d.Id == deliveryIds[0]).State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            rows.Single(d => d.Id == deliveryIds[0]).PublicationAttempts.ShouldBe(1);
+            rows.Single(d => d.Id == deliveryIds[1]).State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+            rows.Single(d => d.Id == deliveryIds[1]).PublicationAttempts.ShouldBe(3);
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationIds[0]))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+            (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationIds[1]))
+                .ChannelReplySettledAt.ShouldBeNull();
+            (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
+                .DeliverableDeliveredAt.ShouldNotBeNull();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private sealed class SplitTargetProducer(string refusedConversation) : IAntiphonMessagingProducer
+    {
+        public Dictionary<string, int> Calls { get; } = new(StringComparer.Ordinal);
+        public List<ChannelReply> Accepted { get; } = [];
+
+        public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default)
+        {
+            var conversation = reply.ConversationId;
+            Calls[conversation] = Calls.GetValueOrDefault(conversation) + 1;
+            if (conversation == refusedConversation)
+                throw new ProduceException<string, string>(new Error(ErrorCode.Local_QueueFull,
+                    "target B refused before acceptance"), new DeliveryResult<string, string>());
+            Accepted.Add(reply);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

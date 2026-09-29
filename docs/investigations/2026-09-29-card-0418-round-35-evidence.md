@@ -80,3 +80,12 @@ executed 61 / passed 60 / failed 1 at `.antiphon/checkpoints/r35-cp5-c/`:
 the complete-zip fixture used a name outside `IsSafeStoredSourceName`'s
 `*-sources.zip` contract, so it could not be counted as a source file. The
 fixture now uses `fixture-sources.zip` consistently.
+CP-5 rerun on `1dffdd6fa737d0fb88c9ce0fce9b944e512f55d6` executed 61 /
+passed 61 / failed 0 at
+`.antiphon/checkpoints/r35-cp5-d/CP-5-20260929-234312-5c50/run.trx`.
+
+`Accepted_target_is_not_retried_when_a_second_target_fails` now adds a
+two-channel send from one source task: A accepts once, B returns three definite
+pre-acceptance queue refusals, and a repeated pump tick must not replay A.
+It compares each delivery's state, attempt count, correlation stamp and the
+source task stamp. Receipt pending.
