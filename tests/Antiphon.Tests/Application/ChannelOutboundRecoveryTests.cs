@@ -993,7 +993,8 @@ public sealed class ChannelOutboundRecoveryTests
         if (count == 0) return;
         var row = rows.Single();
         row.Kind.ShouldBe(AttentionKind.ChannelOutboundDelivery);
-        row.Headline.ShouldContain(state!.Value.ToString());
+        row.Title.ShouldContain(state!.Value.ToString());
+        row.Headline.ShouldNotBeNullOrWhiteSpace();
         row.Evidence.ShouldContain(deliveryId.ToString("D"));
         row.Evidence.ShouldContain(channelId!.Value.ToString("D"));
         row.Evidence.ShouldContain(taskId?.ToString("D") ?? "none");
