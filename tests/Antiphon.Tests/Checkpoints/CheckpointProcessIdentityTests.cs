@@ -10,6 +10,14 @@ public sealed class CheckpointProcessIdentityTests : CheckpointTestBase
     [Test]
     public void same_live_generation_is_a_veto()
     {
+        var probe = new ProcessIdentityProbe();
+        var first = probe.Current();
+        for (var i = 0; i < 32; i++)
+        {
+            var repeat = probe.Capture(Environment.ProcessId);
+            repeat.StartUtcTicks.ShouldBe(first.StartUtcTicks);
+            probe.Observe(repeat).Verdict.ShouldBe(ProcessVerdict.AliveSame);
+        }
         var run = Run(alive: true);
         var receipt = new ToolCopyCleanup().Remove(run);
         receipt.Outcome.ShouldBe("Retained");

@@ -38,8 +38,10 @@ function Allocated([string]$path) {
 }
 
 function Identity([Diagnostics.Process]$process) {
+    $stat = [IO.File]::ReadAllText("/proc/$($process.Id)/stat")
+    $fields = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
     return [ordered]@{
-        Pid = $process.Id; StartUtcTicks = $process.StartTime.ToUniversalTime().Ticks
+        Pid = $process.Id; StartUtcTicks = [long]$fields[19]
         Host = [Environment]::MachineName
         Boot = ([IO.File]::ReadAllText('/proc/sys/kernel/random/boot_id')).Trim()
         PidNamespace = (& readlink /proc/self/ns/pid).Trim()
