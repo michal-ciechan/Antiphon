@@ -89,7 +89,7 @@ public sealed partial class ChannelOutboundDeadlineTests
     [Test]
     [Arguments("quota", "subscription")]
     [Arguments("authentication", "sign")]
-    [Arguments("model", "held")]
+    [Arguments("model", "disabled")]
     public async Task Real_create_refusals_keep_the_original_without_provider_reroute(
         string scenario, string expectedReason)
     {
