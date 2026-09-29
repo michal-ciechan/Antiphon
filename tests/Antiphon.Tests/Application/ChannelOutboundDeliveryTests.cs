@@ -56,18 +56,19 @@ public sealed class ChannelOutboundDeliveryTests
             {
                 Text = ChannelOutboundService.AnnotateFallback("x", hasAttachments: true),
             };
-            var oneCharLength = JsonSerializer.SerializeToUtf8Bytes(oneChar, MessagingJson.Options).Length;
+            var oneCharLength = JsonSerializer.SerializeToUtf8Bytes(oneChar,
+                global::Antiphon.Messaging.MessagingJson.Options).Length;
             var sourceText = new string('x', cap - oneCharLength + 1);
             var fitting = template with { Text = sourceText };
             var over = template with { Text = sourceText + "x" };
             JsonSerializer.SerializeToUtf8Bytes(fitting with
             {
                 Text = ChannelOutboundService.AnnotateFallback(fitting.Text, true),
-            }, MessagingJson.Options).Length.ShouldBe(cap);
+            }, global::Antiphon.Messaging.MessagingJson.Options).Length.ShouldBe(cap);
             JsonSerializer.SerializeToUtf8Bytes(over with
             {
                 Text = ChannelOutboundService.AnnotateFallback(over.Text, true),
-            }, MessagingJson.Options).Length.ShouldBe(cap + 1);
+            }, global::Antiphon.Messaging.MessagingJson.Options).Length.ShouldBe(cap + 1);
 
             await using var db = new AppDbContext(options);
             db.Projects.Add(new Project { Id = projectId, Name = "fallback-" + projectId.ToString("N"),
@@ -114,7 +115,8 @@ public sealed class ChannelOutboundDeliveryTests
             var sent = producer.SentReplies.ShouldHaveSingleItem();
             sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(original);
             sent.Text.ShouldBe(ChannelOutboundService.AnnotateFallback(sourceText, true));
-            JsonSerializer.SerializeToUtf8Bytes(sent, MessagingJson.Options).Length.ShouldBe(cap);
+            JsonSerializer.SerializeToUtf8Bytes(sent,
+                global::Antiphon.Messaging.MessagingJson.Options).Length.ShouldBe(cap);
             await using var observer = new AppDbContext(options);
             var published = await observer.ChannelOutboundDeliveries.AsNoTracking()
                 .SingleAsync(d => d.Id == ids[0]);
