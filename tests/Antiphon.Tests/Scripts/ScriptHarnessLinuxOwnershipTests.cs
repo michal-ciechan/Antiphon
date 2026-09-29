@@ -150,7 +150,7 @@ public sealed class ScriptHarnessLinuxOwnershipTests
             Path.Combine(Path.GetTempPath(), "c806-direct-results-" + id),
             Path.Combine(Path.GetTempPath(), "c806-direct-control-" + id),
             TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2),
-            ["-HelperPath", ScriptHarnessProcessFixture.HelperPath]);
+            ["-HelperPath", ScriptHarnessProcessFixture.HelperPath], KeepStdinOpen: caseName == "Stdin");
     }
 
     private static void DeletePaths(ScriptProcessRequest request)
