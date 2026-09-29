@@ -53,6 +53,30 @@ public sealed class RunnerWorkspaceServiceTests
     }
 
     [Test]
+    public async Task Mirror_refuses_credentialed_request_without_echoing_credentials()
+    {
+        using var scratch = Scratch.Create();
+        var starts = new List<ProcessStartInfo>();
+        var policy = new RunnerRepositoryPolicy(scratch.Clone, scratch.Origin,
+            Path.Combine(scratch.Root, "repos"), ["https://github.com/owner/"], true);
+        var service = new RunnerWorkspaceService(policy, scratch.Work,
+            psi => { starts.Add(psi); return Process.Start(psi); });
+        foreach (var (source, secret) in new[]
+        {
+            ("https://x-access-token:secret-https@github.com/owner/repo.git", "secret-https"),
+            ("ssh://git:secret-ssh@github.com/owner/repo.git", "secret-ssh")
+        })
+        {
+            var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(
+                new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef", source),
+                CancellationToken.None));
+            refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryNotAdmitted);
+            refused.Message.ShouldNotContain(secret);
+        }
+        starts.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task Mirror_refuses_an_existing_checkout_whose_origin_is_another_repository()
     {
         using var scratch = Scratch.Create();
@@ -72,6 +96,27 @@ public sealed class RunnerWorkspaceServiceTests
         var primary = await service.MirrorAsync(new PhoneHomeWorkspaceMirrorRequest(
             Scratch.Branch, scratch.Sha, "task-cafef00d", scratch.Origin), CancellationToken.None);
         Directory.Exists(primary.Path).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Mirror_mismatch_does_not_echo_credentialed_origin()
+    {
+        using var scratch = Scratch.Create();
+        var service = RepositoryService(scratch, Path.Combine(scratch.Root, "repos"));
+        foreach (var (source, secret) in new[]
+        {
+            ("https://x-access-token:secret-https@github.com/owner/repo.git", "secret-https"),
+            ("ssh://git:secret-ssh@github.com/owner/repo.git", "secret-ssh")
+        })
+        {
+            Scratch.Git(scratch.Clone, "remote", "set-url", "origin", source);
+            var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(
+                new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef", scratch.Origin),
+                CancellationToken.None));
+            refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryMismatch);
+            refused.Message.ShouldNotContain(secret);
+            refused.Message.ShouldContain("<invalid origin>");
+        }
     }
 
     [Test]

@@ -161,23 +161,25 @@ public sealed partial class RunnerWorkspaceService
             || !RepositoryCloneSource.TryNormalize(_cloneSource, out var primary)
             || !RepositoryCloneSource.IsAdmitted(identity, _policy.AllowedCloneSources, primary))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryNotAdmitted,
-                $"Repository '{requested}' is not admitted by this runner.", 409);
+                "Repository is not admitted by this runner.", 409);
         if (identity == primary)
             return (_repository, primary, true, false);
         if (!RepositoryCloneSource.TryDeriveName(identity, out var name))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryNotAdmitted,
-                $"Repository '{requested}' has no admitted checkout name.", 409);
+                "Repository has no admitted checkout name.", 409);
         return (Path.Combine(_policy.RepositoriesRoot, name), identity, true, true);
     }
 
     private async Task VerifyOriginAsync(string repository, string requested, CancellationToken ct)
     {
         var origin = await GitAsync(repository, ct, "remote", "get-url", "origin");
-        if (origin.ExitCode == 0 && RepositoryCloneSource.TryNormalize(origin.Stdout, out var found)
-            && found == requested)
+        var found = "";
+        var hasIdentity = origin.ExitCode == 0
+            && RepositoryCloneSource.TryNormalize(origin.Stdout, out found);
+        if (hasIdentity && found == requested)
             return;
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryMismatch,
-            $"Runner checkout {repository} has origin '{origin.Stdout.Trim()}', expected '{requested}'.", 409);
+            $"Runner checkout {repository} has origin '{(hasIdentity ? found : "<invalid origin>")}', expected '{requested}'.", 409);
     }
 
     private async Task ProbePushAccessAsync(string repository, string identity, CancellationToken ct)

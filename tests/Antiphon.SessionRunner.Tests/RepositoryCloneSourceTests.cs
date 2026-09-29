@@ -25,6 +25,8 @@ public sealed class RepositoryCloneSourceTests
     [Arguments("http://github.com/owner/repo")]
     [Arguments("https://github.com/owner/../repo")]
     [Arguments("git@github.com:repo")]
+    [Arguments("https://x-access-token:secret-https@example.com/owner/repo.git")]
+    [Arguments("ssh://git:secret-ssh@example.com/owner/repo.git")]
     public void Refuses_spellings_that_are_not_a_repository(string source) =>
         RepositoryCloneSource.TryNormalize(source, out _).ShouldBeFalse();
 
@@ -40,6 +42,14 @@ public sealed class RepositoryCloneSourceTests
         var derived = RepositoryCloneSource.TryDeriveName(source, out var name);
         derived.ShouldBe(expected.Length > 0);
         if (derived) name.ShouldBe(expected);
+    }
+
+    [Test]
+    public void Derives_the_last_segment_of_a_local_path()
+    {
+        var source = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "parent", "secondary"));
+        RepositoryCloneSource.TryDeriveName(source, out var name).ShouldBeTrue();
+        name.ShouldBe("secondary");
     }
 
     [Test]

@@ -67,7 +67,8 @@ public static partial class RepositoryCloneSource
         name = "";
         if (!TryNormalize(identity, out var normalized))
             return false;
-        var segment = normalized.TrimEnd('/').Split('/').Last();
+        // Local identities retain their native separator, including Windows paths.
+        var segment = normalized.TrimEnd('/', '\\').Split('/', '\\').Last();
         if (segment.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
             segment = segment[..^4];
         segment = segment.ToLowerInvariant();

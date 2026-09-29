@@ -248,10 +248,10 @@ explained source change and report the actual roster.
 
 | ID | Evidence | Class and method |
 |---|---|---|
-| V-1 | Every admitted spelling normalises to one identity; non-repositories are refused; names derive or refuse; allow-list matching is ordinal and slash-bounded | `RepositoryCloneSourceTests`: `Normalizes_every_admitted_spelling_to_one_https_identity` (6 arguments), `Refuses_spellings_that_are_not_a_repository` (5), `Derives_a_directory_name_or_refuses` (6), `Allow_list_prefix_matching_is_ordinal_and_slash_bounded` (1): 18 results |
+| V-1 | Every admitted spelling normalises to one identity; credentialed URLs are refused; names derive from either local path separator or refuse; allow-list matching is ordinal and slash-bounded | `RepositoryCloneSourceTests`: `Normalizes_every_admitted_spelling_to_one_https_identity` (6 arguments), `Refuses_spellings_that_are_not_a_repository` (7), `Derives_a_directory_name_or_refuses` (6), `Derives_the_last_segment_of_a_local_path` (1), `Allow_list_prefix_matching_is_ordinal_and_slash_bounded` (1): 21 results |
 | V-2 | A second repository is cloned beside the primary with the pinned argv, both mirrors sit flat under `worktrees/`, a same-sha replay reuses the mirror, and removing the secondary mirror runs `worktree remove` and `prune` in its own checkout | `RunnerWorkspaceServiceTests.Mirror_of_a_second_repository_clones_beside_the_primary_and_removes_through_its_own_checkout` |
-| V-3 | A repository outside the allow-list is refused before any git process starts (`starts` empty) | `RunnerWorkspaceServiceTests.Mirror_refuses_a_repository_outside_the_allowed_clone_sources` |
-| V-4 | An existing checkout at the derived path whose origin is another repository is refused `phone_home_repository_mismatch`, untouched; the same request naming the primary against a primary checkout passes | `RunnerWorkspaceServiceTests.Mirror_refuses_an_existing_checkout_whose_origin_is_another_repository` |
+| V-3 | A repository outside the allow-list is refused before any git process starts (`starts` empty); credentialed requests do not echo credentials | `RunnerWorkspaceServiceTests.Mirror_refuses_a_repository_outside_the_allowed_clone_sources`, `Mirror_refuses_credentialed_request_without_echoing_credentials` |
+| V-4 | An existing checkout at the derived path whose origin is another repository is refused `phone_home_repository_mismatch`, untouched; the same request naming the primary against a primary checkout passes; credentialed origins do not echo credentials | `RunnerWorkspaceServiceTests.Mirror_refuses_an_existing_checkout_whose_origin_is_another_repository`, `Mirror_mismatch_does_not_echo_credentialed_origin` |
 | V-5 | A secondary repository whose push probe fails (process-start seam makes `ls-remote` fail) is refused `phone_home_repository_push_unauthorized` with no mirror directory; the same repository with the probe disabled mirrors | `RunnerWorkspaceServiceTests.Mirror_refuses_a_secondary_repository_the_deploy_key_cannot_push_to` |
 | V-6 | The dispatcher refuses a mirror naming an unadmitted repository with the typed error frame and no process; the adapter advertises `workspaceRepositoryV1` | `PhoneHomeCommandDispatcherTests.Workspace_mirror_naming_an_unadmitted_repository_is_refused_before_any_git_runs`; `RunnerCapabilitiesTests.Phone_home_adapter_advertises_workspaceRepositoryV1` |
 | V-7 | The server reads the desktop `origin`, normalises SSH and HTTPS spellings identically, and the mirror request carries the identity; an unreadable origin fails the push step without inventing a repository | `RemoteWorktreeMirrorTests.Push_reads_the_desktop_origin_and_the_mirror_request_carries_its_https_identity`, `RemoteWorktreeMirrorTests.Push_refuses_when_the_desktop_origin_cannot_be_read` |
@@ -278,10 +278,10 @@ explained source change and report the actual roster.
 ### Platform per row
 
 Both rows are platform-neutral: `RunnerWorkspaceServiceTests` already runs real git and symlink
-cases on Windows and Linux, and the preparer tests use the test project's shared Postgres. Run them
-on whichever lane the orchestrator dispatches Code to (the runtime default is `server2`, Linux;
-omit `-Platform`). On Linux the checkpoint tool adds `UseAppHost=false` itself. Do not co-schedule
-`tests/Antiphon.Agents.Pty.Tests`.
+cases on Windows and Linux, and the preparer tests use the test project's shared Postgres. Run CP-1
+on both Linux and Windows so the local-path separator check executes against a native Windows path.
+Run CP-2 on the Linux lane. On Linux the checkpoint tool adds `UseAppHost=false` itself. Do not
+co-schedule `tests/Antiphon.Agents.Pty.Tests`.
 
 ### Positive controls for the later Mutation stage
 
@@ -323,7 +323,7 @@ is the slow one). Authoring and audit: about 2.5-3 hours across three slices. Co
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c812-a/` | runner-repository | `/*/*/(RunnerWorkspaceServiceTests*)\|(RepositoryCloneSourceTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all 85 results: 19 workspace (15 + 4) + 18 clone-source + 42 dispatcher (41 + 1) + 6 capabilities (5 + 1); 0 failed, 0 skipped | 85 | 8 |
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c812-a/` | runner-repository | `/*/*/(RunnerWorkspaceServiceTests*)\|(RepositoryCloneSourceTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all 90 results: 21 workspace (15 + 6) + 21 clone-source + 42 dispatcher (41 + 1) + 6 capabilities (5 + 1); 0 failed, 0 skipped | 90 | 8 |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c812-b/` | server-identity | `/*/*/(RemoteWorktreeMirrorTests*)\|(RemoteWorkspacePreparerTests*)\|(RemoteScriptContractTests*)/*` | V-7, V-8, R-3, R-4 | all 55 results: 8 mirror (6 + 2) + 19 preparer (18 + 1) + 28 script contract; 0 failed, 0 skipped | 55 | 12 |
 
 ## Post-land server activation and live check
