@@ -75,3 +75,8 @@ V-16 remains open for source completeness and multi-target outcomes.
 actual publication variants (one/four Markdown attachments and incomplete/complete
 zip), comparing the accepted serialized payload to the frozen original and
 checking the source delivery stamp after publication. Receipt pending.
+The first CP-5 run on `68535c0630ed04f77032d63297d742ab8c7630f4`
+executed 61 / passed 60 / failed 1 at `.antiphon/checkpoints/r35-cp5-c/`:
+the complete-zip fixture used a name outside `IsSafeStoredSourceName`'s
+`*-sources.zip` contract, so it could not be counted as a source file. The
+fixture now uses `fixture-sources.zip` consistently.
