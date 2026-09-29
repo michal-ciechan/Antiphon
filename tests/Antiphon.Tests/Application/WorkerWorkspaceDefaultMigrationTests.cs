@@ -60,7 +60,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
                         {false}, {(int)status}, {0}, {Guid.NewGuid()}, {now}, {0L}, {0L}, {0m})
                     """);
             }
-            await migrator.MigrateAsync(migrations[migration]);
+            await migrator.MigrateAsync();
         }
 
         await using var fresh = NewDb(schema);
@@ -178,7 +178,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
             var oldColumns = await ColumnsAsync(db);
             oldColumns.ShouldNotContain("DefaultWorkerWorkspace");
             oldColumns.ShouldNotContain("WorkspaceSource");
-            await migrator.MigrateAsync(migrations[migration]);
+            await migrator.MigrateAsync();
         }
 
         await using var fresh = NewDb(schema);
