@@ -24,6 +24,121 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundDeliveryTests
 {
     [Test]
+    public async Task Fallback_annotation_uses_actual_wire_budget_and_overcap_keeps_stamps_null()
+    {
+        const int cap = 2048;
+        var root = Directory.CreateTempSubdirectory("c0418-fallback-wire-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        try
+        {
+            using var raw = JsonDocument.Parse("""{"note":"zażółć ✨"}""");
+            var original = new byte[] { 0, 1, 2, 255 };
+            var template = new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"),
+                ReplyHandle = "thread-✨", RawOverrides = raw.RootElement.Clone(),
+                Attachments = [new OutboundAttachment
+                {
+                    Kind = AttachmentKind.File, Name = "źródło.md", Mime = "text/markdown",
+                    Content = original,
+                }],
+            };
+            var oneChar = template with
+            {
+                Text = ChannelOutboundService.AnnotateFallback("x", hasAttachments: true),
+            };
+            var oneCharLength = JsonSerializer.SerializeToUtf8Bytes(oneChar, MessagingJson.Options).Length;
+            var sourceText = new string('x', cap - oneCharLength + 1);
+            var fitting = template with { Text = sourceText };
+            var over = template with { Text = sourceText + "x" };
+            JsonSerializer.SerializeToUtf8Bytes(fitting with
+            {
+                Text = ChannelOutboundService.AnnotateFallback(fitting.Text, true),
+            }, MessagingJson.Options).Length.ShouldBe(cap);
+            JsonSerializer.SerializeToUtf8Bytes(over with
+            {
+                Text = ChannelOutboundService.AnnotateFallback(over.Text, true),
+            }, MessagingJson.Options).Length.ShouldBe(cap + 1);
+
+            await using var db = new AppDbContext(options);
+            db.Projects.Add(new Project { Id = projectId, Name = "fallback-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "fallback",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "fallback",
+                Slug = "fallback-" + agentId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = agentId,
+                CreatedAt = now, UpdatedAt = now });
+            db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fallback",
+                Cwd = root, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+            var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+            for (var i = 0; i < ids.Length; i++)
+            {
+                var reply = i == 0 ? fitting : over;
+                var snapshot = await files.StageAsync(ids[i], reply, CancellationToken.None);
+                db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                {
+                    Id = ids[i], SourceKey = Guid.NewGuid().ToString("N"),
+                    ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                    SourceSessionId = sessionId, SendKind = "main", ProfileName = "",
+                    PromptRevision = new string('a', 64), InputPath = snapshot.ReplyPath,
+                    InputSha256 = snapshot.ReplySha256, Trigger = "Passthrough",
+                    ConversionOutcome = "Fallback", State = ChannelOutboundDeliveryState.Ready,
+                    CreatedAt = now.AddSeconds(i), DeadlineAt = now.AddHours(1),
+                });
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Body = "asked",
+                    Sequence = i + 1, Origin = QueuedMessageOrigin.Channel,
+                    Status = QueuedMessageStatus.Sent,
+                    ConversationKey = "fake:" + channelId.ToString("N"),
+                    ChannelOutboundDeliveryId = ids[i], CreatedAt = now.AddSeconds(i),
+                });
+            }
+            await db.SaveChangesAsync();
+            var pump = new ChannelOutboundDeliveryPump(db, null!, files, producer,
+                Options.Create(new AntiphonMessagingOptions { MaxMessageBytes = cap }),
+                TimeProvider.System, NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+
+            var sent = producer.SentReplies.ShouldHaveSingleItem();
+            sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(original);
+            sent.Text.ShouldBe(ChannelOutboundService.AnnotateFallback(sourceText, true));
+            JsonSerializer.SerializeToUtf8Bytes(sent, MessagingJson.Options).Length.ShouldBe(cap);
+            await using var observer = new AppDbContext(options);
+            var published = await observer.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == ids[0]);
+            var failed = await observer.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == ids[1]);
+            published.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            published.PublishedAt.ShouldNotBeNull();
+            failed.State.ShouldBe(ChannelOutboundDeliveryState.Failed);
+            failed.PublishedAt.ShouldBeNull();
+            failed.PublicationAttempts.ShouldBe(0);
+            failed.FailureReason.ShouldContain("messaging size cap");
+            var links = await observer.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == sessionId).ToListAsync();
+            links.Single(m => m.ChannelOutboundDeliveryId == ids[0])
+                .ChannelReplySettledAt.ShouldBe(published.PublishedAt);
+            links.Single(m => m.ChannelOutboundDeliveryId == ids[1])
+                .ChannelReplySettledAt.ShouldBeNull();
+            (await observer.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                .LastReplyAt.ShouldBe(published.PublishedAt);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Expired_lease_takeover_fences_the_old_owner_before_producer_invocation()
     {
         var root = Directory.CreateTempSubdirectory("c0418-stale-producer-").FullName;
