@@ -688,3 +688,36 @@ repository lease before output/ref/tree deletion; unknown custody remains residu
 Publication, report disposition and cleanup are independent verdicts. Deploy all source/custody/
 cleanup/contracts together and directly inspect loaded selector, bundle hashes and runner/host
 tracking before commissioning the feature's own PCs; caller-owned rollout cannot be fixture proof.
+
+## Checkpoint temp custody and usage (CARD-0804/0805)
+
+Checkpoint tests allocate `c723-<guid>` roots through `CheckpointTestBase.TempDir()`.
+The per-test TUnit hooks register a marker and root index before returning the path,
+join registered work and exact child processes, and remove owned roots after each test.
+A failed teardown is a test failure. A linked tree, live or uncertain nested executor,
+or failed delete leaves the marked root visible for a later guarded retry. Do not use
+`CheckpointFixtures.TempDir()` or an unmarked test root.
+
+The assembly startup hook admits a bounded sweep every five minutes. It considers
+only exact indexed direct children of the OS temp directory, waits ten minutes from
+marker creation, and requires confirmed owner and nested executor death. One pass
+is bounded by 512 index entries, 10000 descendants per root, 16 completed roots,
+256 MiB of payload and two seconds. A partially deleted root keeps its marker and
+is rechecked on resumption. Unknown identities, linked paths, malformed/unmarked
+roots and launch attempts without a proven executor outcome remain visible.
+
+`pwsh -NoProfile -File scripts/inspect-checkpoint-temp.ps1` inventories candidates
+without deleting them. `-TempRoot` scopes inspection to a test-owned sandbox;
+`-OutputFile` writes the JSON inventory outside the candidates. Never infer a
+cleanup verdict from name or age alone.
+
+The CARD-0804/0805 plan's CP-9..CP-13 commands call
+`scripts/verify-checkpoint-temp-usage.ps1` from inside the checkpoint row's build
+slot. Namespace and Full passes use a shared sandbox per pair and a pinned DLL
+digest; their reports and event logs are under `.antiphon/c804-usage/<sha>/`.
+The observer samples Linux allocated blocks at one-second intervals and records
+created/deleted root IDs, copied logical bytes, TRX/roster counts, peaks and final
+residuals. A missing TRX, event tail, owner exit or byte sample is red evidence.
+CP-13 uses a separate owner-death sandbox and preserves protected live, uncertain
+and unmarked fixtures until its bounded sweep checks finish. These reports do not
+replace the method-scoped SourceLanding Mutation PCs.
