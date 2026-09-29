@@ -76,10 +76,10 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("quote expansions");
         text.ShouldContain("confine the resolved target to the scratch root before `rm`");
         text.ShouldContain("Full only when the whole required selection ran.");
-        text.ShouldContain("Before the next-stage block, emit one review-evidence block:");
+        text.ShouldContain("Before next-stage, emit one bare block (unfenced, unindented, not quoted):");
+        text.ShouldContain("subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>");
         text.ShouldContain("Carry the original Code landing owner.");
         text.ShouldContain("The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.");
-        text.ShouldContain("See docs/orchestration-loop.md");
         var ownerDoc = File.ReadAllText(Path.Combine(RepoRoot(), "docs", "orchestration-loop.md"));
         ownerDoc.ShouldContain("| Adopt another eligible task's reviewed branch | Source task named by `-FromTask` |");
         ownerDoc.ShouldContain("A follow-up Review must name its `FollowUpOfTaskId`");
@@ -114,8 +114,9 @@ public sealed class TaskPlatformGuidanceTests
     private static void AssertBaseInstructions(string text)
     {
         // Each nonempty base line is pinned verbatim from
-        // git show 16da56da5:server/Bundles/stage-review.md. Only the example's
-        // Markdown fences and blank separator lines are omitted in the shipped bundle.
+        // git show 16da56da5:server/Bundles/stage-review.md. The evidence
+        // instruction and subject placeholder are updated; only the example's
+        // Markdown fences, blank separators and final pointer are omitted.
         foreach (var baseLine in new[]
         {
             "You are reviewing the build against its plan.",
@@ -124,9 +125,9 @@ public sealed class TaskPlatformGuidanceTests
             "ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks.",
             "INVARIANTS: Read-only. Do not fix anything. Check V/R; judge PC evidence read-only (PCs stay pending). Reject missing tests or evidence. Carry the original Code landing owner. Defects: Where/Failure/Why/Fix.",
             "Audit producer, destination, persistence, recovery, observable receipt and durable identity. Trace ordinary V/R evidence through the real queue to busy/eligible recipients and crash/enqueue failures. Acceptance needs matching complete UserPrompt transcript evidence; a queue insert, event, Sent flag or ack is insufficient. Reject a missing producer-to-recipient test or recipient evidence.",
-            "Before the next-stage block, emit one review-evidence block:",
+            "Before next-stage, emit one bare block (unfenced, unindented, not quoted):",
             "--- review evidence ---",
-            "subjectTaskId: <full GUID of the original Code/Worktree landing owner>",
+            "subjectTaskId: <reviewed source task's full GUID: owner unless brief names -FromTask>",
             "reviewedSourceSha: <full SHA actually reviewed>",
             "ordinaryScopeCompleted: <Full|Interim|None>",
             "Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.",
