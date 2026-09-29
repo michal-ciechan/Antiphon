@@ -128,10 +128,12 @@ public sealed partial class ChannelOutboundDeadlineTests
     public async Task One_converter_and_two_global_seats_hold_pending_work_until_its_original_deadline()
     {
         await using var fixture = await Fixture.CreateAsync();
-        var first = await fixture.AddAsync(0, "first", TimeSpan.FromMinutes(3));
-        var sameConverter = await fixture.AddAsync(0, "same converter", TimeSpan.FromSeconds(30));
-        var second = await fixture.AddAsync(1, "second", TimeSpan.FromMinutes(3));
-        var globalOverflow = await fixture.AddAsync(2, "global overflow", TimeSpan.FromSeconds(30));
+        var first = await fixture.AddAsync(0, "first", TimeSpan.FromMinutes(3), useProfile: true);
+        var sameConverter = await fixture.AddAsync(0, "same converter", TimeSpan.FromSeconds(30),
+            useProfile: true);
+        var second = await fixture.AddAsync(1, "second", TimeSpan.FromMinutes(3), useProfile: true);
+        var globalOverflow = await fixture.AddAsync(2, "global overflow", TimeSpan.FromSeconds(30),
+            useProfile: true);
         var deliveryIds = new[] { first.Id, sameConverter.Id, second.Id, globalOverflow.Id };
 
         await using var db = fixture.Open();
@@ -370,7 +372,8 @@ public sealed partial class ChannelOutboundDeadlineTests
         private readonly IsolatedTestSchema _schema;
         private readonly DbContextOptions<AppDbContext> _options;
         private readonly ChannelOutboundFileStore _files;
-        private readonly Guid _channelId = Guid.NewGuid();
+        private readonly Guid[] _channelIds = [Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()];
+        private readonly Guid _inboundId = Guid.NewGuid();
         private int _sequence;
 
         public string Root { get; }
@@ -396,21 +399,22 @@ public sealed partial class ChannelOutboundDeadlineTests
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var fixture = new Fixture(schema, Directory.CreateTempSubdirectory("c0418-v11-").FullName);
             var boardId = Guid.NewGuid();
-            var inboundId = Guid.NewGuid();
             await using var db = fixture.Open();
             db.Projects.Add(new Project { Id = fixture.ProjectId,
                 Name = "v11-" + fixture.ProjectId.ToString("N"),
                 CreatedAt = fixture.Now, UpdatedAt = fixture.Now });
             db.Boards.Add(new Board { Id = boardId, ProjectId = fixture.ProjectId,
                 Name = "v11", CreatedAt = fixture.Now, UpdatedAt = fixture.Now });
-            db.Agents.Add(new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
-                Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = fixture.Root });
+            db.Agents.Add(new Agent { Id = fixture._inboundId, BoardId = boardId, Name = "inbound",
+                Slug = "inbound-" + fixture._inboundId.ToString("N"), WorkingDirectory = fixture.Root });
             foreach (var converter in fixture.Converters)
                 db.Agents.Add(new Agent { Id = converter, BoardId = boardId, Name = "converter",
                     Slug = "converter-" + converter.ToString("N"), WorkingDirectory = fixture.Root });
-            db.ChatChannels.Add(new ChatChannel { Id = fixture._channelId, Provider = "fake",
-                ExternalId = fixture._channelId.ToString("N"), AgentId = inboundId,
-                CreatedAt = fixture.Now, UpdatedAt = fixture.Now });
+            for (var i = 0; i < fixture._channelIds.Length; i++)
+                db.ChatChannels.Add(new ChatChannel { Id = fixture._channelIds[i], Provider = "fake",
+                    ExternalId = fixture._channelIds[i].ToString("N"), AgentId = fixture._inboundId,
+                    OutboundAgentProfile = "profile-" + i,
+                    CreatedAt = fixture.Now, UpdatedAt = fixture.Now });
             await db.SaveChangesAsync();
             return fixture;
         }
@@ -419,6 +423,13 @@ public sealed partial class ChannelOutboundDeadlineTests
 
         public ChannelOutboundDeliveryPump Pump(AppDbContext db, bool guarded = false)
         {
+            var profiles = new ChannelOutboundSettings();
+            for (var i = 0; i < Converters.Length; i++)
+                profiles.Profiles["profile-" + i] = new ChannelOutboundProfile
+                {
+                    ProjectId = ProjectId, AgentId = Converters[i], PromptFile = "convert.md",
+                    Trigger = ChannelOutboundTrigger.EveryAgentReply,
+                };
             var quota = guarded ? new SubscriptionQuotaGate(
                 new SubscriptionUsageReader(db, Clock),
                 Options.Create(new SubscriptionQuotaGateSettings()), Clock,
@@ -443,26 +454,29 @@ public sealed partial class ChannelOutboundDeadlineTests
                 registrySettings: guarded ? Options.Create(registry) : null);
             return new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
                 _files, Producer, Options.Create(new Antiphon.Messaging.Client.AntiphonMessagingOptions()),
-                Clock, NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                Clock, NullLogger<ChannelOutboundDeliveryPump>.Instance, Options.Create(profiles));
         }
 
         public async Task<ChannelOutboundDelivery> AddAsync(int converterIndex, string text,
-            TimeSpan timeout, bool attachment = false, Guid? converterId = null)
+            TimeSpan timeout, bool attachment = false, Guid? converterId = null,
+            bool useProfile = false)
         {
             var id = Guid.NewGuid();
             var sequence = _sequence++;
+            var channelId = _channelIds[converterIndex];
             var reply = new ChannelReply { Channel = "fake",
-                ConversationId = _channelId.ToString("N"), Text = text,
+                ConversationId = channelId.ToString("N"), Text = text,
                 Attachments = attachment ? [new OutboundAttachment { Kind = AttachmentKind.File,
                     Name = text + ".md", Mime = "text/markdown",
                     Content = [0, (byte)sequence, 255] }] : [] };
             var snapshot = await _files.StageAsync(id, reply, CancellationToken.None);
             var delivery = new ChannelOutboundDelivery
             {
-                Id = id, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = _channelId,
-                ProjectId = ProjectId, InboundAgentId = await InboundIdAsync(),
+                Id = id, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                ProjectId = ProjectId, InboundAgentId = _inboundId,
                 ConverterAgentId = converterId ?? Converters[converterIndex], SourceSessionId = Guid.NewGuid(),
-                SendKind = "main", ProfileName = "", PromptRevision = new string('a', 64),
+                SendKind = "main", ProfileName = useProfile ? "profile-" + converterIndex : "",
+                PromptRevision = new string('a', 64),
                 PromptText = "Convert.", Trigger = "EveryAgentReply",
                 InputPath = snapshot.ReplyPath, InputSha256 = snapshot.ReplySha256,
                 State = ChannelOutboundDeliveryState.Pending,
@@ -472,12 +486,6 @@ public sealed partial class ChannelOutboundDeadlineTests
             db.ChannelOutboundDeliveries.Add(delivery);
             await db.SaveChangesAsync();
             return delivery;
-        }
-
-        private async Task<Guid> InboundIdAsync()
-        {
-            await using var db = Open();
-            return (await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == _channelId)).AgentId!.Value;
         }
 
         public async ValueTask DisposeAsync()
