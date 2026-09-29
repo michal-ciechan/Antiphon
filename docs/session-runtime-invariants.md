@@ -265,6 +265,12 @@
   (`GetProviderAuthAsync`) runs before that claim opens, on a 5-second budget; a timeout does not
   fail the task and does not hold `FOR UPDATE`.
 
+- **A runner mirror belongs to the task's repository (CARD-0812).** The desktop worktree's
+  `origin`, normalized to a repository identity, travels with the mirror request. The runner
+  creates the mirror through the checkout at that origin. An unadmitted identity, an existing
+  checkout at another origin, or a secondary repository without push access is a typed refusal,
+  never a fetch into the wrong checkout.
+
 - **A runner session never writes the desktop checkout (CARD-0672 I-A).** The session writes its
   runner mirror; only the leased settlement sync moves the desktop worktree. That is why a
   prepared runner task (worktree cut, mirror recorded) launches without the repository mutation

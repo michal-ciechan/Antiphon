@@ -48,6 +48,18 @@ The last line must print `1654:1654 600 regular file` (metadata only). The secon
 
 ### Runner checkout: lazy clone and deploy verification (CARD-0631)
 
+CARD-0812 mirrors each admitted task repository through its own blobless checkout beside the
+primary, for example `/work/repos/markdown-package`, while task worktrees remain flat under
+`/work/worktrees/`. The desktop worktree's `origin` supplies the repository identity. The runner
+admits identities under `PhoneHome:AllowedCloneSources` (default
+`https://github.com/michal-ciechan/`), verifies an existing checkout's origin, and probes
+secondary push access before making a mirror. Typed 409 refusals are
+`phone_home_repository_not_admitted`, `phone_home_repository_mismatch`, and
+`phone_home_repository_push_unauthorized`; the last calls for a server2 push credential. The
+probe defaults on through `PhoneHome:ProbeSecondaryRepositoryPushAccess`. A legacy request with
+no `repository` still uses the primary checkout. `deploy-parent` seeds and verifies only the
+primary checkout; secondary checkouts are lazily cloned and never seeded or verified there.
+
 The runner's repository (`PhoneHome__RunnerRepository`, default `/work/repos/antiphon` on the `work` volume) is created lazily by the runner on the first workspace mirror: an anonymous `git clone --filter=blob:none --no-checkout https://github.com/michal-ciechan/Antiphon.git` as uid 1654. Fetches stay anonymous HTTPS; only pushes go over SSH with the deploy key.
 
 `deploy-parent` **seeds a fresh volume, then verifies** that checkout. Before `compose up` starts the runner (so no lazy mirror can be in flight), it runs `state-init` once and then a one-off `session-runner` container as uid 1654 that clones anonymously with the same command into the configured repository, only when that destination is absent or empty (`runner-checkout-seed.txt` records `seeded`, `present` or `occupied`; failures refuse `StateInitFailed` / `RunnerCheckoutSeedFailed`). The lazy clone cannot bootstrap a first deploy on its own, because phone-home may still be disabled on the server at that gate. Verification follows the health and phone-home probes and precedes any image retirement or acceptance. Every probe is `docker exec -u 1654:1654` inside the runner, against the configured repository, never the host's identically named `/work/repos/antiphon` checkout and never a child volume. Named refusals: `RunnerCheckoutMissing` (no `.git`), `RunnerCheckoutInvalid` (not a worktree rooted at that path), `RunnerCheckoutOriginMismatch` (origin is not the anonymous HTTPS URL), `RunnerCheckoutFetchFailed` (`GIT_TERMINAL_PROMPT=0 timeout --kill-after=5s 120s git fetch --no-tags origin <branch>` failed or timed out). The receipt is `runner-checkout.txt`: path, origin, branch and `FETCH_HEAD` SHA.
