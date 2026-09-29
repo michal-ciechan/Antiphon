@@ -212,7 +212,11 @@ public partial class AgentTaskReplyIntegrationTests
             if (pumpTask is not null)
                 try { await pumpTask.WaitAsync(TimeSpan.FromSeconds(10)); }
                 catch (Exception) { /* Preserve the primary assertion failure after barrier release. */ }
-            if (h is not null) await h.DisposeAsync();
+            if (h is not null)
+            {
+                await h.DisposeAsync();
+                if (Directory.Exists(h.TempRoot)) Directory.Delete(h.TempRoot, recursive: true);
+            }
             if (Directory.Exists(storeRoot)) Directory.Delete(storeRoot, recursive: true);
         }
     }
