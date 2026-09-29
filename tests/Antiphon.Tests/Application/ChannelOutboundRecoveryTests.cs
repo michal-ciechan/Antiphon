@@ -267,7 +267,7 @@ public sealed class ChannelOutboundRecoveryTests
                 var length = BitConverter.ToInt32(bytes, offset);
                 offset += sizeof(int);
                 replies.Add(JsonSerializer.Deserialize<ChannelReply>(bytes.AsSpan(offset, length),
-                    MessagingJson.Options)!);
+                    Antiphon.Messaging.MessagingJson.Options)!);
                 offset += length;
             }
             replies.Count.ShouldBe(2);
