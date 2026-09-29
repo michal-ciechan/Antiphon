@@ -34,6 +34,7 @@ public sealed class ChannelOutboundPolicyTests
     [Arguments("converter_is_inbound_elsewhere")]
     [Arguments("missing_prompt")]
     [Arguments("escaping_prompt")]
+    [Arguments("missing_workspace")]
     public async Task Invalid_profile_bindings_are_atomic_failures(string fault)
     {
         var root = Directory.CreateTempSubdirectory("c0418-policy-matrix-").FullName;
@@ -72,7 +73,8 @@ public sealed class ChannelOutboundPolicyTests
                 WorkingDirectory = root },
             new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
                 BoardId = fault == "converter_project" ? otherBoardId : boardId,
-                WorkingDirectory = root, Kind = fault == "raw_converter" ? AgentKind.Raw : AgentKind.ClaudeCode,
+                WorkingDirectory = fault == "missing_workspace" ? Path.Combine(root, "absent") : root,
+                Kind = fault == "raw_converter" ? AgentKind.Raw : AgentKind.ClaudeCode,
                 IsPoolDelegate = fault == "pool_converter", AlwaysOn = fault == "always_on_converter" });
         db.ChatChannels.Add(new ChatChannel
         {
