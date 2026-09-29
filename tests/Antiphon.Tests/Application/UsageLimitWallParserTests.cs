@@ -73,6 +73,7 @@ public class UsageLimitWallParserTests
 
     [Test]
     [Arguments("You've reached your Sonnet 5 limit.", "sonnet")]
+    [Arguments("You've reached your Sonnet 5.5 limit.", "sonnet")]
     [Arguments("You've reached your Haiku 4.5 limit.", "haiku")]
     [Arguments("You've reached your Opus 5 limit.", "opus")]
     public void Named_family_limits_map_to_canonical_aliases(string text, string alias)

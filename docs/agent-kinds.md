@@ -228,6 +228,12 @@ Three things worth knowing about that table:
   model known by the installed CLI without a code change. Claude Code 2.1.280+ is required for
   `opus` to resolve to Opus 5.5; a live `--model opus` probe on this Linux host on 2026-09-27
   returned `claude-opus-5-5` in `modelUsage`.
+  Claude Code 2.1.284+ is likewise required for `sonnet` (the Medium tier) to resolve to
+  Sonnet 5.5: on 2026-09-29 on the server2 runner, `--model sonnet` returned `claude-sonnet-5` in
+  `modelUsage` on the image's pinned 2.1.280 (2.1.281-2.1.283 carry the same mapping) and
+  `claude-sonnet-5-5` on 2.1.284. The runner image pins the CLI by version and SHA-256
+  (`docker/session-runner-grok/Dockerfile`), so server2's Medium tier reaches Sonnet 5.5 only
+  after that pin is bumped and the image redeployed.
 - **Grok is collapsed to `grok-4.7` at every tier** (CARD-0169 collapse; 2026-09-21 bump from
   `grok-4.6`) — the operator's instruction, not a capability judgement. `grok-4.6` and `grok-4.5`
   remain selectable model ids in the profile catalogue and in historical records; they are only

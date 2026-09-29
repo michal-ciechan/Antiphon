@@ -154,8 +154,11 @@ public static class ModelAlias
         folded is "opus" or "opus 5" or "opus 5 5"
             or "claude opus" or "claude opus 5" or "claude opus 5 5";
 
+    // "sonnet 5 5" / "claude sonnet 5 5" are the same fold for a "Sonnet 5.5" hold line and for
+    // "claude-sonnet-5-5" (Claude Code 2.1.284+ resolves the sonnet alias to it).
     private static bool IsSonnet(string folded) =>
-        folded is "sonnet" or "sonnet 5" or "claude sonnet" or "claude sonnet 5";
+        folded is "sonnet" or "sonnet 5" or "sonnet 5 5"
+            or "claude sonnet" or "claude sonnet 5" or "claude sonnet 5 5";
 
     private static bool IsHaiku(string folded) =>
         folded is "haiku" or "haiku 4 5" or "haiku 45" or "claude haiku" or "claude haiku 4 5" or "claude haiku 45";

@@ -23,6 +23,9 @@ public class ModelAliasTests
     [Arguments("sonnet", "sonnet")]
     [Arguments("Sonnet 5", "sonnet")]
     [Arguments("claude-sonnet-5", "sonnet")]
+    [Arguments("Sonnet 5.5", "sonnet")]
+    [Arguments("claude-sonnet-5.5", "sonnet")]
+    [Arguments("claude-sonnet-5-5", "sonnet")]
     [Arguments("haiku", "haiku")]
     [Arguments("Haiku 4.5", "haiku")]
     [Arguments("claude-haiku-4-5", "haiku")]
@@ -61,6 +64,23 @@ public class ModelAliasTests
     }
 
     /// <summary>
+    /// Sonnet 5.5 mirrors the Opus 5.5 arms: Claude Code 2.1.284+ resolves the <c>sonnet</c> alias
+    /// to <c>claude-sonnet-5-5</c>, so a <c>Sonnet 5.5</c> usage-limit hold line must still key on
+    /// <c>sonnet</c>.
+    /// </summary>
+    [Test]
+    [Arguments("Sonnet 5.5")]
+    [Arguments("sonnet 5.5")]
+    [Arguments("sonnet-5-5")]
+    [Arguments("Claude Sonnet 5.5")]
+    [Arguments("claude-sonnet-5.5")]
+    [Arguments("claude_sonnet_5_5")]
+    public void Normalize_maps_sonnet_5_5_hold_text(string raw)
+    {
+        ModelAlias.Normalize(AgentKind.ClaudeCode, raw).ShouldBe(ModelAlias.Sonnet);
+    }
+
+    /// <summary>
     /// The 5.5 arms must stay exact: an unreleased point release is still unknown text, so the
     /// caller falls back to the session's launch alias instead of holding a guessed model.
     /// </summary>
@@ -69,6 +89,15 @@ public class ModelAliasTests
     [Arguments("opus 5.6")]
     [Arguments("claude-opus-5-9")]
     public void Normalize_returns_null_for_unrecognised_opus_point_release(string raw)
+    {
+        ModelAlias.Normalize(AgentKind.ClaudeCode, raw).ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("Sonnet 6")]
+    [Arguments("sonnet 5.6")]
+    [Arguments("claude-sonnet-5-9")]
+    public void Normalize_returns_null_for_unrecognised_sonnet_point_release(string raw)
     {
         ModelAlias.Normalize(AgentKind.ClaudeCode, raw).ShouldBeNull();
     }
