@@ -198,6 +198,10 @@ public sealed class ReviewEvidenceSettlementTests
         await using var db = world.CreateContext();
         (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == result.Id && e.Type == AgentTaskEventType.Warning
             && e.Detail!.Contains("not an authorized Worktree"))).ShouldBeTrue();
+        var unbound = await SeedSubjectAsync(world, null, WorkspaceMode.Worktree);
+        var unboundResult = await SettleAsync(world, subject: unbound.Id);
+        unboundResult.Outcome.ReviewedSourceSha.ShouldBeNull();
+        unboundResult.Outcome.SubjectTaskId.ShouldBeNull();
     }
 
     [Test]
@@ -328,9 +332,19 @@ public sealed class ReviewEvidenceSettlementTests
         }
     }
 
-    private static async Task<AgentTask> SeedSubjectAsync(C544World world, Guid cardId, WorkspaceMode workspace)
+    private static async Task<AgentTask> SeedSubjectAsync(C544World world, Guid? cardId, WorkspaceMode workspace)
     {
         await using var db = world.CreateContext();
+        if (cardId is { } foreign && foreign != world.Card.Id)
+        {
+            var column = await db.BoardColumns.FirstAsync(c => c.BoardId == world.Board.Id);
+            db.Cards.Add(new Card
+            {
+                Id = foreign, BoardId = world.Board.Id, BoardColumnId = column.Id,
+                Identifier = "CARD-0807-F", Title = "foreign", CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            });
+        }
         var id = Guid.NewGuid();
         var task = new AgentTask
         {

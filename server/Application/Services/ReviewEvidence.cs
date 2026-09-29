@@ -128,7 +128,8 @@ public static class ReviewEvidence
         var remaining = line.AsSpan();
         while (true)
         {
-            remaining = remaining.TrimStart(' ', '\t');
+            while (!remaining.IsEmpty && remaining[0] is ' ' or '\t')
+                remaining = remaining[1..];
             if (remaining.IsEmpty || remaining[0] != '>')
                 break;
             remaining = remaining[1..];
