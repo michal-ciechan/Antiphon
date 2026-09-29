@@ -2301,6 +2301,197 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    [Arguments("X", 4)]
+    [Arguments("Y", 4)]
+    [Arguments("Z", 4)]
+    [Arguments("X", 6)]
+    public async Task actual_task_done_turn_dispatches_implied_sources_by_channel_policy(
+        string selected, int count)
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var fileRoot = Directory.CreateTempSubdirectory("c0418-completion-route-").FullName;
+        var files = new ChannelOutboundFileStore(fileRoot);
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["pdf"] = new() { ProjectId = projectId, AgentId = converterId,
+                    PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.MarkdownSources },
+            },
+        });
+        var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = isolated.ConnectionString,
+            PreserveDatabaseOnDispose = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+            Delegation = new DelegationSettings { PtySingleChunkBytes = 43_200 },
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IOptions<ChannelOutboundSettings>>(settings);
+                services.AddSingleton<IChannelOutboundFileStore>(files);
+                services.AddScoped<ChannelOutboundService>();
+            },
+        });
+        try
+        {
+            var now = DateTime.UtcNow;
+            var relative = Enumerable.Range(0, count).Select(i =>
+                $"docs/features/{(i == 0 ? "one" : i == 1 ? "two" : "other")}/{(i < 2 ? "shared" : $"source-{i}")}.md")
+                .ToArray();
+            var expected = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var path in relative)
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes($"# {path}\r\nsource {selected}  \r\n");
+                expected.Add(path, bytes);
+                var disk = Path.Combine(h.TempRoot, path.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(disk)!);
+                await File.WriteAllBytesAsync(disk, bytes);
+            }
+            await File.WriteAllTextAsync(Path.Combine(h.TempRoot, "convert.md"), "Convert these sources.");
+            await using (var seed = CreateContext(isolated.ConnectionString))
+            {
+                seed.Projects.Add(new Project { Id = projectId, Name = "route-" + projectId.ToString("N"),
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "routing",
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Agents.Add(new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = h.TempRoot });
+                await seed.SaveChangesAsync();
+                await seed.Agents.Where(a => a.Id == h.AgentId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(a => a.BoardId, boardId));
+            }
+            var conversation = await h.BindChannelAsync();
+            await using (var binding = CreateContext(isolated.ConnectionString))
+            {
+                await binding.ChatChannels.Where(c => c.ExternalId == conversation)
+                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.OutboundAgentProfile,
+                        selected == "X" ? "pdf" : null));
+            }
+            var inboundPrompt = "[Telegram source request] Please send the documents.";
+            await h.SeedChannelCorrelationAsync(inboundPrompt, "telegram:" + conversation);
+            await h.InsertTurnAsync(inboundPrompt, "I am preparing the documents.");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            h.Messaging.SentReplies.Count.ShouldBe(1);
+
+            var (task, childSession) = await SeedDispatchedTaskAsync(h.TempRoot, h.SessionId,
+                t => { t.Role = AgentTaskRole.Docs; t.ProjectId = projectId; t.RepoPath = h.TempRoot; },
+                isolated.ConnectionString);
+            var report = "Wrote " + string.Join(", ", relative.Select(p => $"`{p}`")) + ".";
+            await SeedTurnAsync(childSession, DelegationReportFormatter.TaskMarker(task.Id), report,
+                connectionString: isolated.ConnectionString);
+            using var factory = new TestScopeFactory(connectionString: isolated.ConnectionString);
+            await CreateService(factory).OnTurnEndAsync(childSession, CancellationToken.None);
+            await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+            await using var db = CreateContext(isolated.ConnectionString);
+            var note = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m =>
+                m.AgentSessionId == h.SessionId && m.Origin == QueuedMessageOrigin.Delegation);
+            note.Status.ShouldBe(QueuedMessageStatus.Sent);
+            note.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            note.SourceTaskId.ShouldBe(task.Id);
+            note.Body.ShouldContain($"deliverable={count} md" + (count == 6 ? ", sources zip" : ""));
+            var settled = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+            settled.DeliverablePdfPath.ShouldBeNull();
+            settled.DeliverableRenderError.ShouldBeNull();
+            var manifest = System.Text.Json.JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(
+                await File.ReadAllTextAsync(Path.Combine(settled.DeliverableBundleDir!,
+                    DeliverableBundleService.SourceManifestName)),
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+            manifest.Complete.ShouldBeTrue();
+            manifest.Sources.Count.ShouldBe(count);
+            foreach (var path in DeliverableBundleService.ListAttachableFiles(settled))
+                note.Body.ShouldContain($"[[attach: {path}]]");
+
+            // The parent writes prose only. The dispatcher must recover the source bundle from
+            // the task-done injection, preserve its conversation, and apply that channel's policy.
+            await h.InsertTurnAsync(note.Body, "The four source documents are ready.");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            var injected = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == note.Id);
+            if (selected != "X")
+            {
+                h.Messaging.SentReplies.Count.ShouldBe(2);
+                var published = h.Messaging.SentReplies[1];
+                published.ConversationId.ShouldBe(conversation);
+                published.ReplyHandle.ShouldBe(conversation);
+                AssertPublishedSources(published, manifest, expected, false);
+                injected.ChannelReplySettledAt.ShouldNotBeNull();
+                (await db.ChannelOutboundDeliveries.CountAsync()).ShouldBe(0);
+                return;
+            }
+
+            h.Messaging.SentReplies.Count.ShouldBe(1);
+            injected.ChannelReplySettledAt.ShouldBeNull();
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
+                .DeliverableDeliveredAt.ShouldBeNull();
+            var intent = await db.ChannelOutboundDeliveries.SingleAsync();
+            intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+            var frozen = await files.ReadReplyAsync(intent.InputPath, intent.InputSha256,
+                CancellationToken.None);
+            frozen.ConversationId.ShouldBe(conversation);
+            frozen.ReplyHandle.ShouldBe(conversation);
+            AssertPublishedSources(frozen, manifest, expected, false);
+            using (var request = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(
+                       Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "request.json"))))
+            {
+                var staged = request.RootElement.GetProperty("sourceFiles").EnumerateArray().ToArray();
+                staged.Length.ShouldBe(count);
+                foreach (var member in staged)
+                {
+                    var path = member.GetProperty("originalRelativePath").GetString()!;
+                    var bytes = await File.ReadAllBytesAsync(Path.Combine(
+                        Path.GetDirectoryName(intent.InputPath)!, "input",
+                        member.GetProperty("localName").GetString()!));
+                    bytes.ShouldBe(expected[path]);
+                }
+            }
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new DelegationSettings { AllowedRoots = [h.TempRoot] }),
+                new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+                NullLogger<AgentTaskService>.Instance);
+            var runner = new OutboundConversionTaskRunner(db, tasks);
+            var conversionId = await runner.CreateAsync(intent, CancellationToken.None);
+            var conversion = await db.AgentTasks.SingleAsync(t => t.Id == conversionId);
+            conversion.OutboundDeliveryId.ShouldBe(intent.Id);
+            var pdf = "%PDF-1.4 routed source fixture\n"u8.ToArray();
+            var output = Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "output");
+            await File.WriteAllBytesAsync(Path.Combine(output, "combined.pdf"), pdf);
+            await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"),
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId = intent.Id, disposition = "converted",
+                    files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                        mime = "application/pdf", length = pdf.Length,
+                        sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pdf))
+                            .ToLowerInvariant() } },
+                }));
+            conversion.Status = AgentTaskStatus.Succeeded;
+            conversion.CompletedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            var pump = new ChannelOutboundDeliveryPump(db, runner, files, h.Messaging,
+                Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            h.Messaging.SentReplies.Count.ShouldBe(2);
+            AssertPublishedSources(h.Messaging.SentReplies[1], manifest, expected, true);
+            h.Messaging.SentReplies[1].Attachments.Single(a => a.Name == "combined.pdf")
+                .Content.ShouldBe(pdf);
+            (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == note.Id))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
+                .DeliverableDeliveredAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            await h.DisposeAsync();
+            if (Directory.Exists(h.TempRoot)) Directory.Delete(h.TempRoot, recursive: true);
+            if (Directory.Exists(fileRoot)) Directory.Delete(fileRoot, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task a_report_with_no_resolving_markdown_path_leaves_no_deliverable_pointer()
     {
         using var workspace = new TempWorkspace();
@@ -4985,9 +5176,10 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     private static async Task<(AgentTask Task, Guid SessionId)> SeedDispatchedTaskAsync(
-        string workingDirectory, Guid? parentSessionId = null, Action<AgentTask>? configure = null)
+        string workingDirectory, Guid? parentSessionId = null, Action<AgentTask>? configure = null,
+        string? connectionString = null)
     {
-        var sessionId = await SeedSessionAsync(workingDirectory);
+        var sessionId = await SeedSessionAsync(workingDirectory, connectionString);
         var id = Guid.NewGuid();
         var task = new AgentTask
         {
@@ -5009,7 +5201,7 @@ public partial class AgentTaskReplyIntegrationTests
         };
         configure?.Invoke(task);
 
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return (task, sessionId);
@@ -5069,11 +5261,11 @@ public partial class AgentTaskReplyIntegrationTests
         return agent.Id;
     }
 
-    private static async Task<Guid> SeedSessionAsync(string cwd)
+    private static async Task<Guid> SeedSessionAsync(string cwd, string? connectionString = null)
     {
         var sessionId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -5107,10 +5299,10 @@ public partial class AgentTaskReplyIntegrationTests
         Guid sessionId, string prompt, string? assistantText, int? inputTokens = null, int? outputTokens = null,
         int? cacheReadTokens = null, int? cacheCreationTokens = null, int entriesPerApiCall = 1,
         DateTime? timestamp = null, string? turnEndApiCallId = null, string? stopReason = null,
-        bool closingVerdict = true)
+        bool closingVerdict = true, string? connectionString = null)
     {
         assistantText = TurnSeeding.ApplyClosingVerdict(prompt, assistantText, closingVerdict);
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence) ?? 0;
@@ -5490,7 +5682,8 @@ public partial class AgentTaskReplyIntegrationTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string? connectionString = null) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     /// <summary>
     /// The reply service is a singleton that opens a DI scope per operation. This supplies the two
@@ -5505,7 +5698,7 @@ public partial class AgentTaskReplyIntegrationTests
 
         /// <summary>Records what the settle path asked to stop — the ephemeral-cleanup assertion.</summary>
         /// <remarks>Its kills close the session row like the real stopper does (CARD-0691 D-3).</remarks>
-        public RecordingSessionStopper Stopper { get; } = new() { StopsSessionsIn = TestDbFixture.ConnectionString };
+        public RecordingSessionStopper Stopper { get; }
 
         public TestScopeFactory(
             string? worktreeRoot = null,
@@ -5515,14 +5708,17 @@ public partial class AgentTaskReplyIntegrationTests
             RecordingGitWorkspaceService? gitSpy = null,
             Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor? saveInterceptor = null,
             LandDeliveryBoundary? boundary = null,
-            Action<IServiceCollection>? configureServices = null)
+            Action<IServiceCollection>? configureServices = null,
+            string? connectionString = null)
         {
+            connectionString ??= TestDbFixture.ConnectionString;
+            Stopper = new RecordingSessionStopper { StopsSessionsIn = connectionString };
             var services = new ServiceCollection();
             services.AddLogging();
             if (boundary is not null) services.AddSingleton<LandDeliveryBoundary>(boundary);
             services.AddDbContext<AppDbContext>(o =>
             {
-                o.UseNpgsql(TestDbFixture.ConnectionString);
+                o.UseNpgsql(connectionString);
                 if (saveInterceptor is not null)
                     o.AddInterceptors(saveInterceptor);
             });
