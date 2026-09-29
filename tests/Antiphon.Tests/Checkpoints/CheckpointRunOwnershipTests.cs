@@ -37,7 +37,7 @@ public sealed class CheckpointRunOwnershipTests : CheckpointTestBase
         var receipt = Sweeper(sandbox).SweepOnce();
         receipt.CompletedRoots.ShouldBe(0);
         receipt.Skips["marker-invalid"].ShouldBe(3);
-        paths.ShouldAllBe(Directory.Exists);
+        paths.ShouldAllBe(path => Directory.Exists(path));
     }
 
     [Test]
