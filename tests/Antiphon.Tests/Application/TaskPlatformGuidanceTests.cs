@@ -72,9 +72,9 @@ public sealed class TaskPlatformGuidanceTests
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
         text.ShouldContain("self-compare, constant, no outcome assertion");
         text.ShouldContain("Review build vs plan.");
-        text.ShouldContain("reject empty variable components with nonzero exit");
-        text.ShouldContain("quote variable expansions");
-        text.ShouldContain("resolve target inside intended scratch root");
+        text.ShouldContain("reject empty variables, exit nonzero");
+        text.ShouldContain("quote expansions");
+        text.ShouldContain("resolve target in scratch root");
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("bare, unfenced, unindented, unquoted lines");
         text.ShouldContain("Carry original Code landing owner.");
@@ -125,7 +125,7 @@ public sealed class TaskPlatformGuidanceTests
             ("Unit plus named affected integration classes", "Re-run claimed Unit + named affected integration classes"),
             ("one checkpoint-tool run", "in one checkpoint-tool run"),
             ("Executed PCs are not a prerequisite", "Executed PCs are not a prerequisite."),
-            ("Code report's CP-n lines against plan table", "CP-n vs ### Checkpoints:"),
+            ("Code report's CP-n lines against plan table", "CP-n lines vs ### Checkpoints:"),
             ("missing row", "missing row"),
             ("zero count", "zero count"),
             ("unlisted build/test run without a reason", "unlisted build/test run without a reason"),
@@ -134,20 +134,20 @@ public sealed class TaskPlatformGuidanceTests
             ("new test that cannot go red", "test cannot go red (self-compare, constant, no outcome assertion)"),
             // Base line 5: repeated classes and destructive cleanup.
             ("Use checkpoint tool for repeated class runs", "use it for repeated class runs."),
-            ("reject empty variables before rm", "reject empty variable components with nonzero exit"),
-            ("quote expansions before rm", "quote variable expansions"),
-            ("confine resolved target to scratch root", "resolve target inside intended scratch root"),
+            ("reject empty variables before rm", "reject empty variables, exit nonzero"),
+            ("quote expansions before rm", "quote expansions"),
+            ("confine resolved target to scratch root", "resolve target in scratch root"),
             // Base line 7: round and evidence floor.
             ("brief's verification profile governs", "the brief's verification profile governs."),
-            ("Final reruns complete ordinary scope", "Final Review reruns all ordinary scope"),
-            ("include every Interim-deferred row", "including Interim-deferred rows"),
+            ("Final reruns complete ordinary scope", "A Final Review reruns the complete ordinary scope itself"),
+            ("include every Interim-deferred row", "including every row an Interim round deferred;"),
             ("Interim never discharges Final", "an Interim pass never discharges it."),
             ("fresh executed identities", "fresh executed identities"),
             ("nonzero counts", "nonzero counts"),
             ("exit 0 is not evidence", "exit 0, --list-tests or missing parameter rows are not evidence."),
             ("--list-tests is not evidence", "--list-tests or missing parameter rows are not evidence."),
             ("missing parameter rows are not evidence", "missing parameter rows are not evidence."),
-            ("required manual work stays pending", "Manual work stays pending"),
+            ("required manual work stays pending", "Required manual work stays pending"),
             ("nightly never satisfies manual or PC checks", "nightly green never satisfies manual or PC checks."),
             // Base line 9: review invariants and defect format.
             ("Read-only", "Read-only."),
@@ -164,15 +164,15 @@ public sealed class TaskPlatformGuidanceTests
             ("recovery", "/recovery/"),
             ("observable receipt", "/observable receipt and durable identity."),
             ("durable identity", "observable receipt and durable identity."),
-            ("ordinary V/R through real queue", "Trace V/R evidence via real queue"),
-            ("busy and eligible recipients", "busy/eligible recipients"),
-            ("crash and enqueue failures", "crash/enqueue failures"),
+            ("ordinary V/R through real queue", "Trace ordinary V/R evidence via real queue"),
+            ("busy and eligible recipients", "busy/eligible"),
+            ("crash and enqueue failures", "crash/enqueue"),
             ("matching complete UserPrompt transcript", "matching complete UserPrompt transcript"),
             ("queue insert insufficient", "queue insert/event/Sent flag/ack insufficient."),
             ("event insufficient", "insert/event/Sent flag/ack insufficient."),
             ("Sent flag insufficient", "event/Sent flag/ack insufficient."),
             ("ack insufficient", "Sent flag/ack insufficient."),
-            ("missing producer-to-recipient test", "Reject missing producer-to-recipient test"),
+            ("missing producer-to-recipient test", "Reject a missing producer-to-recipient test"),
             ("missing recipient evidence", "or recipient evidence"),
             // Base lines 13-22: one bare evidence block and landing identity.
             ("emit one review-evidence block before next-stage", "Emit one review-evidence block as bare, unfenced, unindented, unquoted lines before next-stage:"),
