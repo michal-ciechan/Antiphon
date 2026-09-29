@@ -47,6 +47,25 @@ public sealed class ChannelOutboundContractTests
         ChannelPreamble.SlackPresetTemplate.ShouldNotContain("Prefer PDF for documents");
         InstructionBundles.All["orchestrator"].Text.ShouldContain("configured channel step");
         InstructionBundles.All["orchestrator"].Text.ShouldNotContain("Prefer PDF");
+        var workspaceInstructions = File.ReadAllText(Path.Combine(root, "server", "Application",
+            "Services", "AgentWorkspaceProvisioner.cs"));
+        workspaceInstructions.ShouldContain("Completed document tasks attach their Markdown sources automatically");
+        workspaceInstructions.ShouldContain("a configured channel delivery step may add a converted file");
+        workspaceInstructions.ShouldNotContain("Prefer PDF for documents");
+
+        var program = File.ReadAllText(Path.Combine(root, "server", "Program.cs"));
+        program.ShouldContain("AddSingleton<DeliverableBundleService>()");
+        program.ShouldNotContain("MarkdownPdfRenderer");
+        program.ShouldNotContain("AddSingleton<MarkdownPdf");
+        program.ShouldNotContain("AddScoped<MarkdownPdf");
+        var endpointRoot = Path.Combine(root, "server", "Api", "Endpoints");
+        foreach (var endpoint in Directory.EnumerateFiles(endpointRoot, "*.cs"))
+        {
+            var source = File.ReadAllText(endpoint);
+            source.ShouldNotContain("MarkdownPdfRenderer");
+            source.ShouldNotContain("MapPost(\"/render-pdf");
+            source.ShouldNotContain("MapGet(\"/render-pdf");
+        }
         ((int)AttentionKind.RepositoryChildJournalStale).ShouldBe(50);
         ((int)AttentionKind.ChannelOutboundDelivery).ShouldBe(51);
     }
