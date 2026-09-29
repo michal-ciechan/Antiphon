@@ -307,7 +307,23 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
             if (!File.Exists(path) || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)
                 || new FileInfo(path).Length != file.Length || rawBytes + file.Length > MaxRawAttachmentBytes)
                 throw new InvalidDataException("A converted file is missing, linked or oversized.");
-            var bytes = await File.ReadAllBytesAsync(path, ct);
+            // Open the inspected file itself, without following a link introduced
+            // between inspection and opening. Keep that handle through the copy:
+            // a later rename cannot redirect the read to another file.
+            await using var reader = new FileStream(path, new FileStreamOptions
+            {
+                Mode = FileMode.Open, Access = FileAccess.Read,
+                Share = FileShare.Read | FileShare.Delete,
+                Options = FileOptions.OpenReparsePoint | FileOptions.Asynchronous,
+            });
+            if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                throw new InvalidDataException("A converted file became linked before sealing.");
+            if (ProbeBarrierAsync is { } copyBarrier)
+                await copyBarrier("output-before-sealed-copy", deliveryId, ct);
+            if (reader.Length != file.Length)
+                throw new InvalidDataException("A converted file length changed before sealing.");
+            var bytes = new byte[checked((int)file.Length)];
+            await reader.ReadExactlyAsync(bytes, ct);
             var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             if (!string.Equals(hash, file.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("A converted file hash does not match its descriptor.");
