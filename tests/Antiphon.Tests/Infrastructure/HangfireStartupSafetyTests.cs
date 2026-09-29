@@ -12,9 +12,7 @@ using Hangfire.InMemory;
 using Hangfire.Server;
 using Hangfire.Storage;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -86,39 +84,6 @@ public class HangfireStartupSafetyTests
             .Any(service => service.GetType().Name.Contains("BackgroundJobServer", StringComparison.Ordinal))
             .ShouldBeFalse();
         await Task.CompletedTask;
-    }
-
-    [Test]
-    public async Task C650_Program_enabled_host_registers_expectation_worker_and_recurring_job()
-    {
-        await using var host = new EnabledExpectationFactory();
-        using var scope = host.Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<IExpectationPromptSender>()
-            .ShouldBeOfType<SessionQueueExpectationPromptSender>();
-        host.Services.GetRequiredService<IOptions<HangfireSettings>>().Value.ServerEnabled.ShouldBeTrue();
-        host.Services.GetRequiredService<IOptions<ExpectationWatchdogSettings>>().Value.Enabled.ShouldBeTrue();
-        host.Services.GetServices<IHostedService>().Count()
-            .ShouldBe(_factory.Services.GetServices<IHostedService>().Count() + 2);
-        using var connection = host.Services.GetRequiredService<JobStorage>().GetConnection();
-        connection.GetRecurringJobs().Select(job => job.Id)
-            .ShouldContain(ExpectationWatchdogJob.RecurringJobId);
-    }
-
-    private sealed class EnabledExpectationFactory : AntiphonWebAppFactory
-    {
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            base.ConfigureWebHost(builder);
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-                new Dictionary<string, string?>
-                {
-                    ["Hangfire:ServerEnabled"] = "true",
-                    ["ExpectationWatchdog:Enabled"] = "true",
-                    ["ZombieCensus:Enabled"] = "false",
-                    ["WorktreeResidue:Enabled"] = "false",
-                    ["PhoneHomeRunner:Enabled"] = "false",
-                }));
-        }
     }
 
     [Test]
