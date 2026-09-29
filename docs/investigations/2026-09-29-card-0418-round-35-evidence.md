@@ -54,3 +54,12 @@ abrupt process-death C-3 receipt.
 
 Pending. PC-1–PC-30 remain reserved for method-scoped SourceLanding Mutation;
 ordinary and nightly green do not discharge them.
+
+## V-16 publication outcomes
+
+The plan-named `Only_acceptance_stamps_complete_actual_payload` has four
+producer outcomes under a real isolated database: blocked before acceptance,
+two definite queue refusals then acceptance, three definite refusals, and an
+ambiguous exception. It hashes the actual serialized payload and checks that
+delivery, correlation, source and channel stamps agree only after acceptance;
+inbound routing fields stay frozen. Checkpoint receipt pending.
