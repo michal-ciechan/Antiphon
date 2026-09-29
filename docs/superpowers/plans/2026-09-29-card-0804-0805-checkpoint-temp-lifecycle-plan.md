@@ -825,32 +825,26 @@ ExpectAbout to 295 plus authoring/bootstrap, Mutation to its own floor, not the 
 
 ### Execution and platform routing
 
-Code commits each closed slice before its single tool run. Required row subsets:
-Linux S1 = CP-1; Linux S1-S2 = CP-2; Linux S1-S3 = CP-3; Linux all =
-CP-4,CP-5,CP-6,CP-8,CP-9,CP-10,CP-13; Windows all = CP-7,CP-11,CP-12.
-Use explicit `--rows` lists: selecting `--after all` would also start the other OS's row.
+Code commits each closed slice before verification. Required row order:
+Linux runs CP-1, CP-2, CP-3, CP-4, CP-5, CP-6, CP-8, CP-9, CP-10, CP-13
+in that order. Windows runs CP-7, then CP-11, then CP-12. Submit each row
+separately: the current multirow tool eagerly starts independent builds and a
+command row before its reused output is ready, despite `Serial=true`. The
+single-row `scripts/run-checkpoint.ps1` driver is the repair-round path for
+test rows; command rows run through `scripts/build-slot.ps1`. Preserve each
+row's exact filter, output path, minimum and fresh results directory.
 Platform qualifier checks at native test entry fail/skip visibly; the selected native row
 requires zero skips. Re-read dispatch eligibility; request the OS, not a hard-coded runner.
 Windows is qualification of the same Code owner's committed SHA, not another implementation.
 
-Bootstrap the tool once under build-slot, before it holds any row slot:
-
-```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c804-checkpoint-bootstrap -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c804-launcher/ --nologo
-$checkpointDll = Join-Path (Get-Location) 'tools/Antiphon.Checkpoints/bin-c804-launcher/net9.0/Antiphon.Checkpoints.dll'
-$plan = 'docs/superpowers/plans/2026-09-29-card-0804-0805-checkpoint-temp-lifecycle-plan.md'
-# Example final Linux slice; earlier slice row lists are specified above.
-dotnet $checkpointDll run --plan $plan --rows CP-4,CP-5,CP-6,CP-8,CP-9,CP-10,CP-13 --keep-outputs --max-wait 570s
-# While exit is 75, repeat wait with the exact returned run directory:
-# dotnet $checkpointDll wait --run <returned-absolute-run-directory> --max-wait 570s
-```
-
-Resolve the bootstrap DLL from the actual GetTargetPath if this SDK's OutputPath adds/removes
-TFM segments; verify its informational/source SHA. Record this necessary bootstrap build as such.
-Rebuild bootstrap only after tool changes, with the stated changed-source reason. Do not run
-`dotnet run --project` implicitly building the launcher inside an already held slot.
-KeepOutputs preserves test binaries for command rows; evidence remains outside OS temp. Await
-all terminal row exits, and repeat wait on 75. Slot exit 4 is not permission to run unleased.
+The original tool bootstrap was run under `scripts/build-slot.ps1`; the tool
+reported `build=failed` when the new test had a compile error. Its multirow
+invocation also started CP-9 before `bin-c804-final/` was built. For this repair,
+run each test row with `pwsh -NoProfile -File scripts/run-checkpoint.ps1` using the
+table's exact filter (Markdown's `\|` cell escape is passed as `|`), and `-NoBuild`
+only after the same output's build succeeds. Wrap CP-9/10/13 commands in
+`scripts/build-slot.ps1`. Keep their reports and TRX under `.antiphon/`.
+Slot exit 4 is not permission to run unleased.
 
 All rows serial at the outer scheduler to avoid shared-obj races, two acceptance samplers at
 once, or overlap with another row during a native boundary. TUnit's own limiters/concurrency
@@ -875,6 +869,6 @@ is exact failing methods, not another full suite. No retries are silently labele
 | CP-8 | all | CP-4 | unit-linux | `/*/*/*/*[Category=Unit]` | R-3, R-5 | >= 1000 executed, 0 failed; complete Unit roster; declared OS skips accounted | 1000 | 8 | true |
 | CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 238 executed / 256 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
 | CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 238 executed / 256 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
-| CP-11 | all | CP-7 | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only; exit 0; all 5 gates; child >=1000 executed including every eligible checkpoint case; full compiled roster equality; 0 failed | n/a | 90 | true |
-| CP-12 | all | CP-7 | full-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 2 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only; exit 0; all 5 gates and pass delta; same full roster as pass1; child >=1000 executed; 0 failed | n/a | 90 | true |
+| CP-11 | all | n/a | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only, after CP-7; exit 0; all 5 gates; child >=1000 executed including every eligible checkpoint case; full compiled roster equality; 0 failed | n/a | 90 | true |
+| CP-12 | all | n/a | full-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 2 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only, after CP-11; exit 0; all 5 gates and pass delta; same full roster as pass1; child >=1000 executed; 0 failed | n/a | 90 | true |
 | CP-13 | all | n/a | owner-death-usage | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Orphans -Pass 1 -OutputPath bin-c804-final/` | V-7, V-9 | exit 0; 18/18 named harness checks; eligible <=32 roots AND <=256 MiB then zero; 6 excluded fixtures intact | n/a | 8 | true |
