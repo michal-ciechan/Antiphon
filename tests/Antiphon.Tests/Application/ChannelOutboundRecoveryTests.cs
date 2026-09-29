@@ -13,6 +13,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -453,7 +454,7 @@ public sealed class ChannelOutboundRecoveryTests
     [Arguments("admission-committed")]
     [Arguments("conversion-task-committed")]
     [Arguments("conversion-dispatched")]
-    public async Task Process_death_preserves_admission_and_one_owned_conversion_task(string cut)
+    public async Task Process_death_preserves_ownership_at_each_boundary(string cut)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-admission-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -474,6 +475,18 @@ public sealed class ChannelOutboundRecoveryTests
         var probeDll = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
             "Antiphon.ChannelOutbound.Probe.dll");
         File.Exists(probeDll).ShouldBeTrue();
+        var expectedReply = new ChannelReply
+        {
+            Channel = "fake", ConversationId = channelId.ToString("N"),
+            ReplyHandle = "thread-1", Text = "admission-frozen-source",
+            Attachments = [new OutboundAttachment
+            {
+                Kind = AttachmentKind.File, Name = "source.md", Mime = "text/markdown",
+                Content = "# crash source"u8.ToArray(),
+            }],
+        };
+        var expectedInputHash = Sha256(JsonSerializer.SerializeToUtf8Bytes(expectedReply,
+            Antiphon.Messaging.MessagingJson.Options));
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
         {
             db.Projects.Add(new Project { Id = projectId, Name = "admission-" + projectId.ToString("N"),
@@ -570,10 +583,35 @@ public sealed class ChannelOutboundRecoveryTests
             {
                 var count = await verify.ChannelOutboundDeliveries.CountAsync();
                 count.ShouldBe(cut.StartsWith("input-temporary-", StringComparison.Ordinal) ? 0 : 1);
-                (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
-                    .ChannelOutboundDeliveryId.HasValue.ShouldBe(count == 1);
+                var correlation = await verify.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId);
+                correlation.ChannelOutboundDeliveryId.HasValue.ShouldBe(count == 1);
+                correlation.ChannelReplySettledAt.ShouldBeNull();
                 (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId != null))
                     .ShouldBe(afterTaskCreation ? 1 : 0);
+                if (count == 1)
+                {
+                    var intent = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
+                    intent.Id.ShouldBe(acceptedId == Guid.Empty ? intent.Id : acceptedId);
+                    intent.InputSha256.ShouldBe(expectedInputHash);
+                    Sha256(await File.ReadAllBytesAsync(intent.InputPath)).ShouldBe(expectedInputHash);
+                    intent.OutputPath.ShouldBeNull();
+                    intent.OutputSha256.ShouldBeNull();
+                    intent.PublishedAt.ShouldBeNull();
+                    intent.PublicationAttempts.ShouldBe(0);
+                    intent.ConversionTaskId.HasValue.ShouldBe(afterTaskCreation);
+                    correlation.ChannelOutboundDeliveryId.ShouldBe(intent.Id);
+                    if (afterTaskCreation)
+                    {
+                        var task = await verify.AgentTasks.AsNoTracking()
+                            .SingleAsync(t => t.OutboundDeliveryId == intent.Id);
+                        intent.ConversionTaskId.ShouldBe(task.Id);
+                        task.AgentId.ShouldBe(converterId);
+                        task.ProjectId.ShouldBe(projectId);
+                    }
+                }
+                (await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                    .LastReplyAt.ShouldBeNull();
                 if (cut == "conversion-dispatched")
                 {
                     var dispatched = await verify.AgentTasks.AsNoTracking()
@@ -601,6 +639,9 @@ public sealed class ChannelOutboundRecoveryTests
                 File.Exists(Path.Combine(staged, "reply.json")).ShouldBeFalse();
             }
             File.Exists(evidencePath).ShouldBeFalse();
+            await AssertDeliveryAttentionAsync(isolated.ConnectionString, 0,
+                cut.StartsWith("input-temporary-", StringComparison.Ordinal)
+                    ? Guid.Empty : await ReadDeliveryIdAsync());
 
             if (cut != "conversion-task-committed")
                 await RunToExitAsync("admit");
@@ -610,17 +651,28 @@ public sealed class ChannelOutboundRecoveryTests
             await using var final = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
             var intent = await final.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
             intent.Id.ShouldBe(acceptedId);
+            intent.InputSha256.ShouldBe(expectedInputHash);
+            Sha256(await File.ReadAllBytesAsync(intent.InputPath)).ShouldBe(expectedInputHash);
             intent.State.ShouldBe(afterTaskCreation
                 ? ChannelOutboundDeliveryState.Published : ChannelOutboundDeliveryState.Converting);
-            (await final.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId == acceptedId))
-                .ShouldBe(1);
-            (await final.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
-                .ChannelOutboundDeliveryId.ShouldBe(acceptedId);
+            var ownedTask = await final.AgentTasks.AsNoTracking()
+                .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
+            intent.ConversionTaskId.ShouldBe(ownedTask.Id);
+            ownedTask.AgentId.ShouldBe(converterId);
+            ownedTask.ProjectId.ShouldBe(projectId);
+            var finalCorrelation = await final.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.Id == correlationId);
+            finalCorrelation.ChannelOutboundDeliveryId.ShouldBe(acceptedId);
+            finalCorrelation.ChannelReplySettledAt.HasValue.ShouldBe(afterTaskCreation);
+            intent.PublishedAt.HasValue.ShouldBe(afterTaskCreation);
+            (await final.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                .LastReplyAt.HasValue.ShouldBe(afterTaskCreation);
             var frozen = await new ChannelOutboundFileStore(storeRoot).ReadReplyAsync(
                 intent.InputPath, intent.InputSha256, CancellationToken.None);
             frozen.ReplyHandle.ShouldBe("thread-1");
             frozen.Attachments.ShouldHaveSingleItem().Content.ShouldBe("# crash source"u8.ToArray());
             File.Exists(evidencePath).ShouldBe(afterTaskCreation);
+            await AssertDeliveryAttentionAsync(isolated.ConnectionString, 0, acceptedId);
             if (cut == "conversion-dispatched")
             {
                 var retained = await final.AgentTasks.AsNoTracking()
@@ -803,20 +855,51 @@ public sealed class ChannelOutboundRecoveryTests
             child.Dispose();
             child = null;
 
-            if (barrier == "publication-commit-failed")
+            await using (var cutDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
             {
-                await using var rolledBack = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
-                var pending = await rolledBack.ChannelOutboundDeliveries.AsNoTracking()
+                var atCut = await cutDb.ChannelOutboundDeliveries.AsNoTracking()
                     .SingleAsync(d => d.Id == deliveryId);
-                pending.State.ShouldBe(ChannelOutboundDeliveryState.Publishing);
-                pending.PublishedAt.ShouldBeNull();
-                (await rolledBack.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
-                    .ChannelReplySettledAt.ShouldBeNull();
-                (await rolledBack.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
-                    .LastReplyAt.ShouldBeNull();
-                (await rolledBack.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskId))
-                    .DeliverableDeliveredAt.ShouldBeNull();
+                atCut.InputSha256.ShouldBe(frozen.ReplySha256);
+                Sha256(await File.ReadAllBytesAsync(atCut.InputPath)).ShouldBe(frozen.ReplySha256);
+                atCut.State.ShouldBe(barrier switch
+                {
+                    "before-conversion-observation" => ChannelOutboundDeliveryState.Converting,
+                    "ready-committed" => ChannelOutboundDeliveryState.Ready,
+                    "published-committed" => ChannelOutboundDeliveryState.Published,
+                    _ => ChannelOutboundDeliveryState.Publishing,
+                });
+                atCut.PublicationAttempts.ShouldBe(barrier is "producer-accepted"
+                    or "published-committed" or "publication-commit-failed" ? 1 : 0);
+                if (barrier == "ready-committed")
+                {
+                    atCut.OutputPath.ShouldNotBeNull();
+                    atCut.OutputSha256.ShouldNotBeNull();
+                    Sha256(await File.ReadAllBytesAsync(atCut.OutputPath)).ShouldBe(atCut.OutputSha256);
+                }
+                if (hasSettledWorker)
+                {
+                    var task = await cutDb.AgentTasks.AsNoTracking()
+                        .SingleAsync(t => t.OutboundDeliveryId == deliveryId);
+                    task.Id.ShouldBe(workerTaskId);
+                    task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+                    atCut.ConversionTaskId.ShouldBe(workerTaskId);
+                }
+                else
+                    (await cutDb.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId))
+                        .ShouldBe(0);
+                var cutPublished = barrier == "published-committed";
+                atCut.PublishedAt.HasValue.ShouldBe(cutPublished);
+                var correlation = await cutDb.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId);
+                correlation.ChannelOutboundDeliveryId.ShouldBe(deliveryId);
+                correlation.ChannelReplySettledAt.HasValue.ShouldBe(cutPublished);
+                (await cutDb.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
+                    .LastReplyAt.HasValue.ShouldBe(cutPublished);
+                if (hasSource)
+                    (await cutDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskId))
+                        .DeliverableDeliveredAt.HasValue.ShouldBe(cutPublished);
             }
+            await AssertDeliveryAttentionAsync(isolated.ConnectionString, 0, deliveryId);
 
             // The second launch receives only the original database and durable files.
             // It does not reconstruct or seed the expected state in memory.
@@ -834,6 +917,19 @@ public sealed class ChannelOutboundRecoveryTests
             var row = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId);
             row.State.ShouldBe(expectedState);
             row.InputSha256.ShouldBe(frozen.ReplySha256);
+            Sha256(await File.ReadAllBytesAsync(row.InputPath)).ShouldBe(frozen.ReplySha256);
+            if (hasSettledWorker)
+            {
+                row.ConversionTaskId.ShouldBe(workerTaskId);
+                (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.OutboundDeliveryId == deliveryId))
+                    .Status.ShouldBe(AgentTaskStatus.Succeeded);
+                row.OutputPath.ShouldNotBeNull();
+                row.OutputSha256.ShouldNotBeNull();
+                Sha256(await File.ReadAllBytesAsync(row.OutputPath)).ShouldBe(row.OutputSha256);
+            }
+            else
+                (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId))
+                    .ShouldBe(0);
             row.PublishedAt.HasValue.ShouldBe(expectedState == ChannelOutboundDeliveryState.Published);
             var accepted = File.Exists(evidencePath) ? await File.ReadAllBytesAsync(evidencePath) : [];
             (accepted.Length == 0 ? 0 : 1).ShouldBe(expectedAcceptances);
@@ -858,6 +954,15 @@ public sealed class ChannelOutboundRecoveryTests
             if (hasSource)
                 (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceTaskId))
                     .DeliverableDeliveredAt.HasValue.ShouldBe(expectedState == ChannelOutboundDeliveryState.Published);
+            if (expectedState == ChannelOutboundDeliveryState.PublishUncertain)
+            {
+                row.FailureReason.ShouldNotBeNullOrWhiteSpace();
+                row.FailureReason.Length.ShouldBeLessThanOrEqualTo(550);
+                row.PublicationAttempts.ShouldBe(barrier == "publishing-committed" ? 0 : 1);
+            }
+            await AssertDeliveryAttentionAsync(isolated.ConnectionString,
+                expectedState == ChannelOutboundDeliveryState.PublishUncertain ? 1 : 0,
+                deliveryId, expectedState, channelId, hasSettledWorker ? workerTaskId : null);
         }
         finally
         {
@@ -869,6 +974,31 @@ public sealed class ChannelOutboundRecoveryTests
             }
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static string Sha256(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    private static async Task AssertDeliveryAttentionAsync(string connectionString, int count,
+        Guid deliveryId, ChannelOutboundDeliveryState? state = null,
+        Guid? channelId = null, Guid? taskId = null)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+        var attention = await AttentionServiceTests.BuildService(
+            new AttentionServiceTests.FakeRunnerClient(), db: db).GetAsync(CancellationToken.None);
+        var rows = attention.Items.Where(i =>
+            i.ConditionKey == $"channel-outbound:{deliveryId:N}").ToList();
+        rows.Count.ShouldBe(count);
+        if (count == 0) return;
+        var row = rows.Single();
+        row.Kind.ShouldBe(AttentionKind.ChannelOutboundDelivery);
+        row.Headline.ShouldContain(state!.Value.ToString());
+        row.Evidence.ShouldContain(deliveryId.ToString("D"));
+        row.Evidence.ShouldContain(channelId!.Value.ToString("D"));
+        row.Evidence.ShouldContain(taskId?.ToString("D") ?? "none");
+        row.TaskId.ShouldBe(taskId);
+        row.Severity.ShouldBe(state == ChannelOutboundDeliveryState.PublishUncertain
+            ? AlertSeverity.Critical : AlertSeverity.Error);
     }
 
     private static Process StartProbe(string dll, string config)
