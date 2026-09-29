@@ -59,10 +59,13 @@ public sealed class ChannelOutboundDeliveryPump
                     || d.State == ChannelOutboundDeliveryState.Publishing)
                 && (d.LeaseUntil == null || d.LeaseUntil <= now))
             .OrderBy(d => d.CreatedAt).ThenBy(d => d.Id)
-            .Take(32).Select(d => new { d.Id, d.Version }).ToListAsync(ct);
+            .Take(32).Select(d => new { d.Id, d.Version, d.State }).ToListAsync(ct);
         var processed = 0;
         foreach (var candidate in candidates)
         {
+            if (candidate.State == ChannelOutboundDeliveryState.Converting
+                && ProbeBarrierAsync is { } beforeClaim)
+                await beforeClaim("before-conversion-claim", candidate.Id, ct);
             if (await ClaimAsync(candidate.Id, candidate.Version, ct))
             {
                 processed++;
