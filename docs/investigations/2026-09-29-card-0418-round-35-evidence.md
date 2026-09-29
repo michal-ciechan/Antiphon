@@ -92,3 +92,7 @@ source task stamp. Receipt pending.
 The first CP-5 build on `bca86d551` did not run tests: the two-target fixture
 declared `ChannelOutboundSnapshot` without importing its Application.Interfaces
 namespace. That import is now explicit.
+CP-5 rerun on `09d76205b` executed 62 / passed 61 / failed 1 at
+`.antiphon/checkpoints/r35-cp5-f/`: the two-target fixture reused the
+globally unique `SourceKey`. It now uses a distinct intent key for each
+destination while retaining the same source task id and source bytes.
