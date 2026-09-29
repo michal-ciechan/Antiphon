@@ -207,7 +207,7 @@ public sealed class TaskPlatformGuidanceTests
             ("code for defects named in handoff", "code for defects (name in handoff:)"),
             ("decide when a human choice blocks", "decide when a human choice blocks.")
         })
-            text.ShouldContain(currentPin, $"Missing base Review instruction: {baseInstruction}");
+            text.ShouldContain(currentPin, Case.Sensitive, $"Missing base Review instruction: {baseInstruction}");
     }
 
     private static string RepoRoot()
