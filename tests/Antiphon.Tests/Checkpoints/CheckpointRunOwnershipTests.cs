@@ -79,7 +79,7 @@ public sealed class CheckpointRunOwnershipTests : CheckpointTestBase
         var sandbox = TempDir();
         var target = TempDir();
         var link = Path.Combine(sandbox, "c723-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateSymbolicLink(link, target);
+        DirectoryLinkHelper.Create(link, target);
         try
         {
             Index(sandbox, [link]);
@@ -96,7 +96,7 @@ public sealed class CheckpointRunOwnershipTests : CheckpointTestBase
         var actual = Path.Combine(parent, "actual");
         Directory.CreateDirectory(actual);
         var link = Path.Combine(parent, "link");
-        Directory.CreateSymbolicLink(link, actual);
+        DirectoryLinkHelper.Create(link, actual);
         var tool = Path.Combine(actual, "run", "tool");
         Directory.CreateDirectory(tool);
         File.WriteAllText(Path.Combine(tool, "sentinel"), "keep");
@@ -115,7 +115,7 @@ public sealed class CheckpointRunOwnershipTests : CheckpointTestBase
         var run = Run();
         var target = TempDir();
         var link = Path.Combine(run, "tool", "linked");
-        Directory.CreateSymbolicLink(link, target);
+        DirectoryLinkHelper.Create(link, target);
         try
         {
             new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Retained");

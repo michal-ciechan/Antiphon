@@ -196,7 +196,7 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         var hash = SHA256.HashData(File.ReadAllBytes(data));
         var root = Root(sandbox, alive: false);
         var link = Path.Combine(root, "linked");
-        Directory.CreateSymbolicLink(link, target);
+        DirectoryLinkHelper.Create(link, target);
         Sweep(sandbox).SweepOnce().CompletedRoots.ShouldBe(0);
         SHA256.HashData(File.ReadAllBytes(data)).ShouldBe(hash);
         Directory.Delete(link);
