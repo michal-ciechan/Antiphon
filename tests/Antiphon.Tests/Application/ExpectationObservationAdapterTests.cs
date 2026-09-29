@@ -350,6 +350,36 @@ public sealed class ExpectationObservationAdapterTests
                 && e.Kind == ExpectationEpisodeKind.UndeliveredNote)).ShouldBe(105);
     }
 
+    [Test]
+    public async Task C650_Three_pages_of_still_owed_notes_never_resolve_between_scans()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        var notes = Enumerable.Range(1, 205).Select(i => Note(world, taskId, i)).ToList();
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, world.Now.AddMinutes(-30)));
+            db.SessionQueuedMessages.AddRange(notes);
+            await db.SaveChangesAsync();
+        }
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
+        for (var scan = 0; scan < 3; scan++)
+        {
+            await using (var db = world.Db())
+                await world.Service(db, clock).ScanAsync(world.Directive,
+                    ExpectationProbeInput.None, CancellationToken.None);
+            clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        await using var read = world.Db();
+        (await read.ExpectationEpisodes.CountAsync(e => e.Kind == ExpectationEpisodeKind.UndeliveredNote
+            && e.ResolvedAt == null)).ShouldBe(notes.Count);
+        (await read.ExpectationEpisodes.CountAsync(e => e.Kind == ExpectationEpisodeKind.UndeliveredNote
+            && e.ResolvedAt != null)).ShouldBe(0);
+    }
+
     private static SessionQueuedMessage Note(ExpectationTestWorld world, Guid taskId, int sequence)
     {
         var row = ExpectationTestWorld.Queued(Guid.NewGuid(), world.OwnedSessionId,

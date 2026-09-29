@@ -169,6 +169,14 @@ public sealed class ExpectationEscalationTests
         answered.AnsweredSequence.ShouldBe(2);
         answered.AnsweredAt.ShouldNotBeNull();
         answered.OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Published);
+        await using (var db = f.World.Db())
+        {
+            var audit = await db.CardComments.AsNoTracking()
+                .Where(c => c.Body.Contains($"[expectation-nudge:{f.Nudge.Id:D}] Assistant ACK"))
+                .Select(c => c.Body).SingleAsync();
+            audit.ShouldContain("reply after page 1; page already sent; reminders stop");
+            audit.ShouldNotContain("unpublished operator debt suppressed");
+        }
         f.Clock.Advance(TimeSpan.FromMinutes(30));
         (await f.PublishAsync()).ShouldBe(0);
         f.Producer.Sent.Count.ShouldBe(1);
