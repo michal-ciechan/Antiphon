@@ -187,3 +187,7 @@ Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests
 Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests
 # CARD-0442: real delegate.ps1 POST and service-backed worktree preview.
 Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests
+# CARD-0807: real Git, isolated database and reply settlement matrix.
+Antiphon.Tests.Application.ReviewEvidenceSettlementTests
+# CARD-0807: real queue, recovery and complete caller receipt matrix.
+Antiphon.Tests.Application.ReviewEvidenceDeliveryTests
