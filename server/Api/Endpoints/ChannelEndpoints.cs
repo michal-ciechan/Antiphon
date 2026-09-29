@@ -37,6 +37,13 @@ public static class ChannelEndpoints
             return Results.Accepted();
         });
 
+        channels.MapPost("/outbound-deliveries/{id:guid}/resume", async (
+            Guid id, ChannelOutboundService service, CancellationToken cancellationToken) =>
+        {
+            await service.ResumeHeldAsync(id, cancellationToken);
+            return Results.Accepted();
+        });
+
         channels.MapPatch("/{id:guid}", async (
             Guid id,
             UpdateChatChannelRequest request,
