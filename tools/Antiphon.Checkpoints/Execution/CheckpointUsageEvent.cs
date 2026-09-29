@@ -13,9 +13,23 @@ public static class CheckpointUsageEvent
             kind, path = Path.GetFullPath(path), bytes,
             at = DateTimeOffset.UtcNow, pid = Environment.ProcessId,
         }) + "\n";
-        using var stream = new FileStream(target, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
         var data = System.Text.Encoding.UTF8.GetBytes(line);
-        stream.Write(data);
-        stream.Flush(flushToDisk: true);
+        var wait = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                // FileShare.None serializes separate TUnit child hosts as well as
+                // parallel tests in one host. A single append is one complete event.
+                using var stream = new FileStream(target, FileMode.Append, FileAccess.Write, FileShare.None);
+                stream.Write(data);
+                stream.Flush(flushToDisk: true);
+                return;
+            }
+            catch (IOException) when (wait.Elapsed < TimeSpan.FromSeconds(10))
+            {
+                Thread.Sleep(2);
+            }
+        }
     }
 }
