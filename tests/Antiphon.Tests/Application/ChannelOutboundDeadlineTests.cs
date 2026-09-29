@@ -20,6 +20,102 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundDeadlineTests
 {
     [Test]
+    public async Task Deadline_crossing_the_final_creation_barrier_never_launches_a_worker()
+    {
+        var now = DateTime.UtcNow;
+        var clock = new FakeTimeProvider(new DateTimeOffset(now));
+        var root = Directory.CreateTempSubdirectory("c0418-precreate-deadline-").FullName;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "outbound"));
+        var producer = new FakeAntiphonMessagingClient();
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int>? tick = null;
+        try
+        {
+            var snapshot = await files.StageAsync(deliveryId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"), Text = "frozen source",
+            }, CancellationToken.None);
+            await using (var seed = new AppDbContext(options))
+            {
+                seed.Projects.Add(new Project { Id = projectId, Name = "deadline-" + projectId.ToString("N"),
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "deadline",
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Agents.AddRange(
+                    new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                        Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = root },
+                    new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                        Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = root });
+                seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                    ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                    CreatedAt = now, UpdatedAt = now });
+                seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                {
+                    Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                    ProjectId = projectId, InboundAgentId = inboundId, ConverterAgentId = converterId,
+                    SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "",
+                    PromptRevision = new string('a', 64), PromptText = "Convert.",
+                    Trigger = "EveryAgentReply", InputPath = snapshot.ReplyPath,
+                    InputSha256 = snapshot.ReplySha256, State = ChannelOutboundDeliveryState.Pending,
+                    CreatedAt = now, DeadlineAt = now.AddSeconds(30),
+                });
+                await seed.SaveChangesAsync();
+            }
+
+            await using var db = new AppDbContext(options);
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new Antiphon.Server.Application.Settings.DelegationSettings { AllowedRoots = [root] }),
+                new MockEventBus(), new RecordingSessionStopper(), clock,
+                NullLogger<AgentTaskService>.Instance);
+            var pump = new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
+                files, producer, Options.Create(new Antiphon.Messaging.Client.AntiphonMessagingOptions()),
+                clock, NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            pump.ProbeBarrierAsync = async (boundary, _, ct) =>
+            {
+                if (boundary != "before-conversion-create") return;
+                entered.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            };
+            tick = pump.TickAsync(CancellationToken.None);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            clock.Advance(TimeSpan.FromMinutes(1));
+            release.TrySetResult();
+            (await tick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
+            await using (var verify = new AppDbContext(options))
+            {
+                var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == deliveryId);
+                delivery.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+                delivery.ConversionTaskId.ShouldBeNull();
+                delivery.FailureReason.ShouldContain("deadline elapsed before worker creation");
+                (await verify.AgentTasks.AsNoTracking()
+                    .CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(0);
+            }
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            producer.SentReplies.ShouldHaveSingleItem().Text.ShouldContain("frozen source");
+            await using var published = new AppDbContext(options);
+            (await published.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (tick is not null) try { await tick.WaitAsync(TimeSpan.FromSeconds(15)); } catch { }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Deadline_equality_cancels_only_queued_worker_and_ignores_late_success()
     {
         var now = new DateTime(2030, 1, 1, 12, 0, 0, DateTimeKind.Utc);
