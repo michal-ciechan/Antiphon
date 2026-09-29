@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -19,15 +20,15 @@ public sealed class ExpectationResponseService(AppDbContext db, TimeProvider tim
         // A long-lived standing agent can accumulate unacknowledged history indefinitely.
         // Rotate a bounded page each minute so old rows cannot consume the whole job budget.
         const int pageSize = 25;
-        var query = db.ExpectationNudges.AsNoTracking()
-            .Where(n => n.DirectiveId == directive.Id && n.AnsweredAt == null
-                && n.OperatorOutboxState != ExpectationOperatorOutboxState.Published
-                && n.OperatorOutboxState != ExpectationOperatorOutboxState.Suppressed);
-        var count = await query.CountAsync(ct);
-        var pageCount = Math.Max(1, (count + pageSize - 1) / pageSize);
-        var page = (int)((now.Ticks / TimeSpan.TicksPerMinute) % pageCount);
-        var nudges = await query.OrderBy(n => n.CreatedAt).ThenBy(n => n.Id)
-            .Skip(page * pageSize).Take(pageSize).ToListAsync(ct);
+        var unanswered = db.ExpectationNudges.AsNoTracking()
+            .Where(n => n.DirectiveId == directive.Id && n.AnsweredAt == null);
+        var unpublished = unanswered.Where(n => n.OperatorOutboxState != ExpectationOperatorOutboxState.Published
+            && n.OperatorOutboxState != ExpectationOperatorOutboxState.Suppressed);
+        var published = unanswered.Where(n => n.OperatorOutboxState == ExpectationOperatorOutboxState.Published);
+        var nudges = await RotatedPageAsync(unpublished, now, pageSize, ct);
+        // Published history has its own budget. It cannot crowd fresh deadlines out, but a
+        // post-publication ACK must still be observed to stop reminders and start recurrence.
+        nudges.AddRange(await RotatedPageAsync(published, now, pageSize, ct));
         foreach (var nudge in nudges)
         {
             if (!active || nudge.ConfigDigest != digest)
@@ -124,6 +125,16 @@ public sealed class ExpectationResponseService(AppDbContext db, TimeProvider tim
             if (now >= dueAt)
                 await DueAsync(nudge.Id, now, ct);
         }
+    }
+
+    private static async Task<List<ExpectationNudge>> RotatedPageAsync(
+        IQueryable<ExpectationNudge> query, DateTime now, int pageSize, CancellationToken ct)
+    {
+        var count = await query.CountAsync(ct);
+        var pageCount = Math.Max(1, (count + pageSize - 1) / pageSize);
+        var page = (int)((now.Ticks / TimeSpan.TicksPerMinute) % pageCount);
+        return await query.OrderBy(n => n.CreatedAt).ThenBy(n => n.Id)
+            .Skip(page * pageSize).Take(pageSize).ToListAsync(ct);
     }
 
     private async Task DueAsync(Guid nudgeId, DateTime now, CancellationToken ct)

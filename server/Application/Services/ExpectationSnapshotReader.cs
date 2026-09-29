@@ -304,6 +304,8 @@ public sealed class ExpectationSnapshotReader
             ? await ReadCapOccupantsAsync(asOf, probes, ct)
             : (0, Array.Empty<ExpectationInFlightTask>());
         var notes = await ReadNotesAsync(directive.AgentId, configChanged ? null : state, asOf, ct);
+        var unobservedNotes = await ReadUnobservedNoteSubjectsAsync(
+            directive.Id, directive.AgentId, episodes, notes.CheckedIds, ct);
         return new ExpectationSnapshot
         {
             AsOf = asOf,
@@ -323,6 +325,7 @@ public sealed class ExpectationSnapshotReader
             Notes = notes.Rows,
             NoteCoverageIncomplete = notes.Incomplete,
             CheckedNoteIds = notes.CheckedIds,
+            UnobservedNoteSubjects = unobservedNotes,
             NextNoteOutboxCursorAt = notes.OutboxAt,
             NextNoteOutboxCursorId = notes.OutboxId,
             NextNoteQueueCursorAt = notes.QueueAt,
@@ -567,6 +570,51 @@ public sealed class ExpectationSnapshotReader
     private sealed record NotePage(IReadOnlyList<ExpectationNoteDebt> Rows, bool Incomplete,
         IReadOnlySet<Guid> CheckedIds,
         DateTime? OutboxAt, Guid? OutboxId, DateTime? QueueAt, Guid? QueueId);
+
+    private async Task<IReadOnlySet<string>> ReadUnobservedNoteSubjectsAsync(
+        string directiveId, Guid agentId, IReadOnlyList<ExpectationOpenEpisode> episodes,
+        IReadOnlySet<Guid> checkedIds, CancellationToken ct)
+    {
+        var prefix = "note:" + directiveId.Trim() + ":";
+        var candidates = episodes
+            .Where(episode => episode.Kind == ExpectationEpisodeKind.UndeliveredNote
+                && episode.SubjectKey.StartsWith(prefix, StringComparison.Ordinal)
+                && Guid.TryParse(episode.SubjectKey.AsSpan(prefix.Length), out _))
+            .Select(episode => (episode.SubjectKey, Id: Guid.Parse(episode.SubjectKey.AsSpan(prefix.Length))))
+            .Where(episode => !checkedIds.Contains(episode.Id))
+            .ToList();
+        if (candidates.Count == 0)
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        var ids = candidates.Select(episode => episode.Id).ToList();
+        // A missing page row is only unknown while it still belongs to a debt-eligible source.
+        // Confirmed outbox notes and canceled queue notes must be allowed through the clear gap.
+        var outboxIds = await _db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(note => ids.Contains(note.Id) && !note.IsLegacy
+                && note.ConfirmedAt == null
+                && note.State != LandNotificationState.Confirmed
+                && note.State != LandNotificationState.NotRequired
+                && note.State != LandNotificationState.LegacyUnverified
+                && note.ParentSessionId != null
+                && _db.AgentSessions.Any(session =>
+                    session.Id == note.ParentSessionId && session.StandingAgentId == agentId))
+            .Select(note => note.Id).ToListAsync(ct);
+        var queueIds = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(message => ids.Contains(message.Id) && message.SourceTaskId != null
+                && (message.Origin == QueuedMessageOrigin.Delegation
+                    || message.Origin == QueuedMessageOrigin.Check)
+                && message.SourceLandNotificationId == null
+                && (message.Origin != QueuedMessageOrigin.Delegation || message.NoteHeader != null)
+                && (message.Origin != QueuedMessageOrigin.Check || message.ConversationKey != null)
+                && message.Status != QueuedMessageStatus.Canceled
+                && message.CanceledAt == null
+                && _db.AgentSessions.Any(session => session.Id == message.AgentSessionId
+                    && session.StandingAgentId == agentId))
+            .Select(message => message.Id).ToListAsync(ct);
+        var eligibleIds = outboxIds.Concat(queueIds).ToHashSet();
+        return candidates.Where(episode => eligibleIds.Contains(episode.Id))
+            .Select(episode => episode.SubjectKey).ToHashSet(StringComparer.Ordinal);
+    }
 
     private async Task<NotePage> ReadNotesAsync(Guid agentId, ExpectationWatchState? state, DateTime asOf, CancellationToken ct)
     {

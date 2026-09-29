@@ -138,9 +138,7 @@ public sealed class ExpectationWatchdogService
             evaluation.PreservesOpenEpisodes,
             previousScan,
             asOf,
-            snapshot.OpenEpisodes.Where(episode => episode.Kind == ExpectationEpisodeKind.UndeliveredNote
-                    && !snapshot.CheckedNoteIds.Any(id => episode.SubjectKey == ExpectationSubjects.Note(directive.Id, id)))
-                .Select(episode => episode.SubjectKey).ToHashSet(StringComparer.Ordinal),
+            snapshot.UnobservedNoteSubjects,
             ct);
 
         await _ledger.RecordObservationAsync(directive.Id, digest, asOf,
