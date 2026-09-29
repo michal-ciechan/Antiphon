@@ -305,6 +305,16 @@ internal static class CheckpointTempSweepAssemblyHook
             displayName = test.Metadata.TestDetails.TestName,
         }).OrderBy(test => test.id).ToArray();
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        File.WriteAllText(target, JsonSerializer.Serialize(selected));
+        try
+        {
+            using var stream = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            JsonSerializer.Serialize(stream, selected);
+            stream.Flush(flushToDisk: true);
+        }
+        catch (IOException) when (File.Exists(target))
+        {
+            // A nested TUnit child inherits the observer environment. The first
+            // assembly owns this roster; a later child cannot replace it.
+        }
     }
 }

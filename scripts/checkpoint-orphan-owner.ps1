@@ -3,9 +3,11 @@ param([Parameter(Mandatory)][string]$Sandbox, [Parameter(Mandatory)][string]$Rea
 $ErrorActionPreference = 'Stop'
 $sandbox = [IO.Path]::GetFullPath($Sandbox)
 $current = [Diagnostics.Process]::GetCurrentProcess()
+$stat = [IO.File]::ReadAllText("/proc/$($current.Id)/stat")
+$fields = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
 $owner = [ordered]@{
     Pid = $current.Id
-    StartUtcTicks = $current.StartTime.ToUniversalTime().Ticks
+    StartUtcTicks = [long]$fields[19]
     Host = [Environment]::MachineName
     Boot = ([IO.File]::ReadAllText('/proc/sys/kernel/random/boot_id')).Trim()
     PidNamespace = (& readlink /proc/self/ns/pid).Trim()

@@ -91,7 +91,10 @@ $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
 $psi.WorkingDirectory = $repo
 foreach ($arg in @($dll, '--treenode-filter', $filter, '--report-trx', '--report-trx-filename', 'run.trx',
-        '--results-directory', $evidence)) { [void]$psi.ArgumentList.Add($arg) }
+        '--results-directory', $evidence, '--output', 'Detailed', '--diagnostic',
+        '--diagnostic-output-directory', $evidence, '--diagnostic-verbosity', 'Information')) {
+    [void]$psi.ArgumentList.Add($arg)
+}
 $psi.Environment['TMPDIR'] = $sandbox
 $psi.Environment['TEMP'] = $sandbox
 $psi.Environment['TMP'] = $sandbox
