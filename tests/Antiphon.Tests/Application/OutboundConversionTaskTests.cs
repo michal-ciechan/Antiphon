@@ -31,6 +31,8 @@ public sealed class OutboundConversionTaskTests
         var converterId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
         var deliveryId = Guid.NewGuid();
+        var sourceTaskId = Guid.NewGuid();
+        const string sourceSentinel = "SOURCE_TASK_PRIVATE_SENTINEL";
         var now = new DateTime(DateTime.UtcNow.Ticks / 10 * 10, DateTimeKind.Utc);
         var deadline = now.AddMinutes(2);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
@@ -46,6 +48,15 @@ public sealed class OutboundConversionTaskTests
         db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
             ExternalId = channelId.ToString("N"), AgentId = inboundId,
             CreatedAt = now, UpdatedAt = now });
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = sourceTaskId, RootTaskId = sourceTaskId, ProjectId = projectId,
+            AgentId = inboundId, Title = "Source task", Goal = sourceSentinel,
+            WorkingDirectory = root, RepoPath = root, Status = AgentTaskStatus.Succeeded,
+            LaunchEnvOverrideJson = "{\"SOURCE_ONLY\":\"" + sourceSentinel + "\"}",
+            InheritedLaunchEnvJson = "{\"SOURCE_INHERITED\":\"" + sourceSentinel + "\"}",
+            CreatedAt = now,
+        });
         var snapshot = await files.StageAsync(deliveryId, new ChannelReply
         {
             Channel = "fake", ConversationId = channelId.ToString("N"), Text = "source text",
@@ -54,7 +65,7 @@ public sealed class OutboundConversionTaskTests
         {
             Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
             ProjectId = projectId, InboundAgentId = inboundId, ConverterAgentId = converterId,
-            SourceSessionId = Guid.NewGuid(), SourceTaskId = Guid.NewGuid(),
+            SourceSessionId = Guid.NewGuid(), SourceTaskId = sourceTaskId,
             SendKind = "main", ProfileName = "test", PromptRevision = new string('b', 64),
             PromptText = "Use the local converter tool.", Trigger = "MarkdownSources",
             InputPath = snapshot.ReplyPath, InputSha256 = snapshot.ReplySha256,
@@ -84,6 +95,7 @@ public sealed class OutboundConversionTaskTests
             task.ParentSessionId.ShouldBeNull();
             task.ParentTaskId.ShouldBeNull();
             task.CardId.ShouldBeNull();
+            task.StandingAuthority.ShouldBeNull();
             task.ExecutionDeadlineAt.ShouldBe(deadline);
             task.MaxAttempts.ShouldBe(1);
             task.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
@@ -93,6 +105,14 @@ public sealed class OutboundConversionTaskTests
             task.Goal.ShouldContain("Do not dispatch child tasks or send to a channel");
             task.Goal.ShouldContain("Use the local converter tool.");
             task.Goal.ShouldNotContain(delivery.SourceTaskId!.Value.ToString("D"));
+            task.Goal.ShouldNotContain(sourceSentinel);
+            task.LaunchEnvOverrideJson.ShouldNotContain(sourceSentinel);
+            task.InheritedLaunchEnvJson.ShouldNotContain(sourceSentinel);
+            var bundleKeys = InstructionBundles.ForDelegate(task.Kind, task.Role);
+            bundleKeys.ShouldBe(["delegate-basics"]);
+            var instructions = InstructionBundleComposer.Compose(bundleKeys).Text;
+            instructions.ShouldContain("DO NOT SUB-DELEGATE");
+            instructions.ShouldNotContain(sourceSentinel);
             var rejected = await Should.ThrowAsync<ForbiddenException>(() => tasks.CreateAsync(
                 new CreateAgentTaskRequest("Attempt a child conversion task.",
                     WorkingDirectory: root, Workspace: WorkspaceMode.Shared),
@@ -114,6 +134,7 @@ public sealed class OutboundConversionTaskTests
         {
             await db.AgentTasks.Where(t => t.OutboundDeliveryId == deliveryId).ExecuteDeleteAsync();
             await db.ChannelOutboundDeliveries.Where(d => d.Id == deliveryId).ExecuteDeleteAsync();
+            await db.AgentTasks.Where(t => t.Id == sourceTaskId).ExecuteDeleteAsync();
             await db.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == inboundId || a.Id == converterId).ExecuteDeleteAsync();
             await db.Boards.Where(b => b.Id == boardId).ExecuteDeleteAsync();

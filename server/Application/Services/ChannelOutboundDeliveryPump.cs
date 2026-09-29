@@ -176,6 +176,14 @@ public sealed class ChannelOutboundDeliveryPump
             {
                 if (ProbeBarrierAsync is { } beforeCreateBarrier)
                     await beforeCreateBarrier("before-conversion-create", delivery.Id, ct);
+                // The advisory lock and the final pre-create work can outlive the
+                // frozen deadline. Do not create a worker after that wait.
+                if (delivery.DeadlineAt <= UtcNow())
+                {
+                    Fallback(delivery, "Conversion deadline elapsed before worker creation.");
+                    await _db.SaveChangesAsync(ct);
+                    return;
+                }
                 await _runner.CreateAsync(delivery, ct);
             }
             catch (DbUpdateConcurrencyException)
