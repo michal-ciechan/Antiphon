@@ -225,9 +225,16 @@ public sealed class ChannelOutboundDeliveryPump
         }
         var task = delivery.ConversionTaskId is Guid id
             ? await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id, ct) : null;
-        if (task is null || task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked or AgentTaskStatus.Canceled)
+        if (task is null)
         {
-            Fallback(delivery, "Conversion worker did not complete successfully.");
+            Fallback(delivery, "Conversion worker task is missing.");
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+        if (task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked or AgentTaskStatus.Canceled)
+        {
+            Fallback(delivery, $"Conversion worker {task.Status}: "
+                + Bound(task.FailureReason ?? "no reason was recorded."));
             await _db.SaveChangesAsync(ct);
             return;
         }
