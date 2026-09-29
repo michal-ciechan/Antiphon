@@ -1,5 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json;
+using Antiphon.Messaging;
+using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -8,12 +10,14 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -26,6 +30,125 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class TaskPlatformDispatchTests
 {
+    [Test]
+    public async Task Outbound_conversion_uses_the_normal_worker_dispatch_without_source_privileges()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var sourceTaskId = Guid.NewGuid();
+        const string sourceSentinel = "SOURCE_ONLY_DISPATCH_SENTINEL";
+        var store = new ChannelOutboundFileStore(Path.Combine(workspace.Path, "outbound"));
+        var snapshot = await store.StageAsync(deliveryId, new ChannelReply
+        {
+            Channel = "fake", ConversationId = channelId.ToString("N"), Text = "frozen",
+        }, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.Path, "convert.md"), "Convert locally.");
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["convert"] = new() { ProjectId = projectId, AgentId = converterId,
+                    PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.EveryAgentReply },
+            },
+        });
+        await using (var seed = new AppDbContext(options))
+        {
+            seed.Projects.Add(new Project { Id = projectId, Name = "purpose-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "purpose",
+                CreatedAt = now, UpdatedAt = now });
+            seed.Agents.AddRange(
+                new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                    Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = workspace.Path,
+                    LaunchEnvJson = "{\"SOURCE_ONLY\":\"" + sourceSentinel + "\"}" },
+                new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = workspace.Path,
+                    Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium });
+            seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                OutboundAgentProfile = "convert", CreatedAt = now, UpdatedAt = now });
+            seed.AgentTasks.Add(new AgentTask
+            {
+                Id = sourceTaskId, RootTaskId = sourceTaskId, Title = "source", Goal = sourceSentinel,
+                ProjectId = projectId, AgentId = inboundId, WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Succeeded, CreatedAt = now,
+                InheritedLaunchEnvJson = "{\"SOURCE_INHERITED\":\"" + sourceSentinel + "\"}",
+            });
+            seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                ProjectId = projectId, InboundAgentId = inboundId, ConverterAgentId = converterId,
+                SourceSessionId = Guid.NewGuid(), SourceTaskId = sourceTaskId,
+                SendKind = "main", ProfileName = "convert", PromptRevision = new string('a', 64),
+                PromptText = "Convert locally.", Trigger = ChannelOutboundTrigger.EveryAgentReply.ToString(),
+                InputPath = snapshot.ReplyPath, InputSha256 = snapshot.ReplySha256,
+                State = ChannelOutboundDeliveryState.Pending, CreatedAt = now,
+                DeadlineAt = now.AddMinutes(10),
+            });
+            await seed.SaveChangesAsync();
+        }
+        var producer = new FakeAntiphonMessagingClient();
+        await using (var db = new AppDbContext(options))
+        {
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new DelegationSettings { AllowedRoots = [workspace.Path] }),
+                new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+                NullLogger<AgentTaskService>.Instance);
+            var pump = new ChannelOutboundDeliveryPump(db,
+                new OutboundConversionTaskRunner(db, tasks), store, producer,
+                Options.Create(new Antiphon.Messaging.Client.AntiphonMessagingOptions()),
+                TimeProvider.System, NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+        }
+        Guid taskId;
+        await using (var db = new AppDbContext(options))
+        {
+            var delivery = await db.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == deliveryId);
+            delivery.ConversionTaskId.ShouldNotBeNull();
+            taskId = delivery.ConversionTaskId.Value;
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
+                .Status.ShouldBe(AgentTaskStatus.Queued);
+        }
+        var world = CreateDispatcher(schema, new StableDesktopDirectory());
+        try
+        {
+            await world.Dispatcher.TickAsync(CancellationToken.None);
+            await using var verify = new AppDbContext(options);
+            var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            task.AgentSessionId.ShouldNotBeNull();
+            task.OutboundDeliveryId.ShouldBe(deliveryId);
+            task.Kind.ShouldBe(AgentTaskKind.Worker);
+            task.Role.ShouldBe(AgentTaskRole.Custom);
+            task.ParentTaskId.ShouldBeNull();
+            task.ParentSessionId.ShouldBeNull();
+            task.CardId.ShouldBeNull();
+            var spec = world.Sink.Specs.ShouldHaveSingleItem();
+            spec.Kind.ShouldBe(AgentKind.ClaudeCode);
+            spec.Cwd.ShouldBe(workspace.Path);
+            spec.Env["ANTIPHON_TASK_KIND"].ShouldBe("Worker");
+            spec.Env.Values.ShouldNotContain(sourceSentinel);
+            spec.Args.ShouldContain(a => a.Contains("DO NOT SUB-DELEGATE", StringComparison.Ordinal));
+            spec.Args.ShouldNotContain(a => a.Contains(sourceSentinel, StringComparison.Ordinal));
+            var brief = await verify.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.ExecutionTaskId == taskId);
+            brief.Body.ShouldContain("Do not dispatch child tasks or send to a channel");
+            brief.Body.ShouldNotContain(sourceSentinel);
+            producer.SentReplies.ShouldBeEmpty();
+        }
+        finally { await world.Provider.DisposeAsync(); }
+    }
+
     [Test]
     public async Task C772_Legacy_desktop_codex_blocks_before_claim()
     {
