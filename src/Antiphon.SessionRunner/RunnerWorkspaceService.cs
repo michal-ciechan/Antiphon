@@ -187,7 +187,12 @@ public sealed partial class RunnerWorkspaceService
         var pushUrl = await GitAsync(repository, ct, "remote", "get-url", "--push", "origin");
         if (pushUrl.ExitCode == 0 && pushUrl.Stdout.Trim().Length > 0)
         {
-            var probe = await GitAsync(repository, ct, "ls-remote", "--exit-code", pushUrl.Stdout.Trim(), "HEAD");
+            // Use receive-pack to check write access. A read through the push URL also succeeds
+            // for public repositories when the deploy key has no permission to push.
+            // The random destination cannot overlap a task branch, and -- keeps the URL positional.
+            var probeRef = "HEAD:refs/heads/antiphon-push-access-probe-" + Guid.NewGuid().ToString("N");
+            var probe = await GitAsync(repository, ct, "push", "--dry-run", "--porcelain", "--",
+                pushUrl.Stdout.Trim(), probeRef);
             if (probe.ExitCode == 0)
                 return;
         }

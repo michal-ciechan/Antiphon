@@ -162,16 +162,17 @@ refusal, and that is documented as out of scope.
 Default on (`PhoneHome:ProbeSecondaryRepositoryPushAccess = true`). After D-4 and before the
 fetch, for a non-primary repository the runner reads `git remote get-url --push origin` in the
 checkout (git applies the image's `pushInsteadOf`, so this is the SSH URL the session's `git push`
-will use) and runs `git ls-remote --exit-code <push-url> HEAD` with the deploy key. A non-zero exit
+will use) and runs `git push --dry-run --porcelain -- <push-url> HEAD:refs/heads/antiphon-push-access-probe-<random-guid>`
+with the deploy key. The unique destination avoids a task branch and sends no ref update. A non-zero exit
 is `phone_home_repository_push_unauthorized` (409, new `RepositoryPushUnauthorized`) whose message
 names the repository and the remedy: register a push credential for it on server2. No mirror is
 created.
 
 Why: without it a markdown-package session on server2 would fetch, work, commit, fail to push, and
-`RemoveAsync` (clean tree, unpushed commits) would delete the only copy at retirement. GitHub
-answers a deploy key that is not registered on the repository with "Repository not found", so the
-probe is a true authorisation check; a read-only deploy key would pass it and still fail the push,
-which is acceptable because the runner's keys are write keys by policy. The primary is not probed:
+`RemoveAsync` (clean tree, unpushed commits) would delete the only copy at retirement. An
+`ls-remote` check catches a missing private repository, but GitHub allows an unregistered deploy
+key to read a public one. The receive-pack dry-run checks whether this push identity can send a
+ref update, including when the repository is public. The primary is not probed:
 deploy-parent verifies it, and a probe on every Antiphon mirror would add a network round trip and
 a new transient failure to the hot path. In tests the scratch checkouts have no rewrite, so the
 push URL is the local origin and the probe passes; the refusal is exercised through the existing
@@ -252,7 +253,7 @@ explained source change and report the actual roster.
 | V-2 | A second repository is cloned beside the primary with the pinned argv, both mirrors sit flat under `worktrees/`, a same-sha replay reuses the mirror, and removing the secondary mirror runs `worktree remove` and `prune` in its own checkout | `RunnerWorkspaceServiceTests.Mirror_of_a_second_repository_clones_beside_the_primary_and_removes_through_its_own_checkout` |
 | V-3 | A repository outside the allow-list is refused before any git process starts (`starts` empty); credentialed requests do not echo credentials | `RunnerWorkspaceServiceTests.Mirror_refuses_a_repository_outside_the_allowed_clone_sources`, `Mirror_refuses_credentialed_request_without_echoing_credentials` |
 | V-4 | An existing checkout at the derived path whose origin is another repository is refused `phone_home_repository_mismatch`, untouched; the same request naming the primary against a primary checkout passes; credentialed origins do not echo credentials | `RunnerWorkspaceServiceTests.Mirror_refuses_an_existing_checkout_whose_origin_is_another_repository`, `Mirror_mismatch_does_not_echo_credentialed_origin` |
-| V-5 | A secondary repository whose push probe fails (process-start seam makes `ls-remote` fail) is refused `phone_home_repository_push_unauthorized` with no mirror directory; the same repository with the probe disabled mirrors | `RunnerWorkspaceServiceTests.Mirror_refuses_a_secondary_repository_the_deploy_key_cannot_push_to` |
+| V-5 | A readable secondary bare repository whose push transport refuses the dry-run is refused `phone_home_repository_push_unauthorized` with no mirror directory; the same repository with the probe disabled mirrors. Exact push argv is pinned. A bare repository accepting the dry-run mirrors without creating a probe ref | `RunnerWorkspaceServiceTests.Mirror_refuses_a_secondary_repository_the_deploy_key_cannot_push_to`, `Mirror_accepts_a_secondary_repository_when_push_dry_run_succeeds` |
 | V-6 | The dispatcher refuses a mirror naming an unadmitted repository with the typed error frame and no process; the adapter advertises `workspaceRepositoryV1` | `PhoneHomeCommandDispatcherTests.Workspace_mirror_naming_an_unadmitted_repository_is_refused_before_any_git_runs`; `RunnerCapabilitiesTests.Phone_home_adapter_advertises_workspaceRepositoryV1` |
 | V-7 | The server reads the desktop `origin`, normalises SSH and HTTPS spellings identically, and the mirror request carries the identity; an unreadable origin fails the push step without inventing a repository | `RemoteWorktreeMirrorTests.Push_reads_the_desktop_origin_and_the_mirror_request_carries_its_https_identity`, `RemoteWorktreeMirrorTests.Push_refuses_when_the_desktop_origin_cannot_be_read` |
 | V-8 | Through the real preparer and scripted peer: the `WorkspaceMirror` payload has `repository`; when the peer registered without the feature and answers an error, the Warning event names `workspaceRepositoryV1` and the task stays Queued with backoff | `RemoteWorkspacePreparerTests.A_mirror_request_carries_the_desktop_origin_and_a_legacy_runner_failure_names_the_missing_feature` |
@@ -323,7 +324,7 @@ is the slow one). Authoring and audit: about 2.5-3 hours across three slices. Co
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c812-a/` | runner-repository | `/*/*/(RunnerWorkspaceServiceTests*)\|(RepositoryCloneSourceTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all 90 results: 21 workspace (15 + 6) + 21 clone-source + 42 dispatcher (41 + 1) + 6 capabilities (5 + 1); 0 failed, 0 skipped | 90 | 8 |
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c812-a/` | runner-repository | `/*/*/(RunnerWorkspaceServiceTests*)\|(RepositoryCloneSourceTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all 91 results: 22 workspace (15 + 7) + 21 clone-source + 42 dispatcher (41 + 1) + 6 capabilities (5 + 1); 0 failed, 0 skipped | 91 | 8 |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c812-b/` | server-identity | `/*/*/(RemoteWorktreeMirrorTests*)\|(RemoteWorkspacePreparerTests*)\|(RemoteScriptContractTests*)/*` | V-7, V-8, R-3, R-4 | all 55 results: 8 mirror (6 + 2) + 19 preparer (18 + 1) + 28 script contract; 0 failed, 0 skipped | 55 | 12 |
 
 ## Post-land server activation and live check
