@@ -63,3 +63,6 @@ two definite queue refusals then acceptance, three definite refusals, and an
 ambiguous exception. It hashes the actual serialized payload and checks that
 delivery, correlation, source and channel stamps agree only after acceptance;
 inbound routing fields stay frozen. Checkpoint receipt pending.
+The first CP-5 build on `51bd3ba3a` did not reach tests: two references to
+`MessagingJson` were ambiguous between the Messaging and Client namespaces.
+Both now select the actual `Antiphon.Messaging.MessagingJson.Options` wire contract.
