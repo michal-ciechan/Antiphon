@@ -41,7 +41,8 @@ public static class CheckpointApp
         }
         catch (Exception ex)
         {
-            var reason = "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message;
+            var reason = "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message
+                + (ex.InnerException is null ? "" : " <- " + ex.InnerException.ToString().Replace("\n", " | "));
             var statePath = Path.Combine(runDirectory, "state.json");
             var store = new RunStateStore();
             var state = store.TryRead(statePath) ?? new RunState { RunId = Path.GetFileName(runDirectory) };
