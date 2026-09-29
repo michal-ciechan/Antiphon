@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Messaging;
@@ -19,9 +20,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-[Category("Integration")]
-[NotInParallel]
-public sealed class ChannelOutboundSendShapeTests
+public sealed partial class ChannelOutboundDeliveryTests
 {
     [Test]
     [Arguments("main", "explicit-md", "MarkdownSources", true)]
@@ -93,12 +92,18 @@ public sealed class ChannelOutboundSendShapeTests
                 channelId = channel.Id;
                 if (trigger != "none") channel.OutboundAgentProfile = "conversion";
                 await db.SaveChangesAsync();
-                if (shape == "manifest-zip")
+                if (shape is "manifest-zip" or "unrelated-zip")
                 {
                     var bundle = Path.Combine(root, "bundle");
                     Directory.CreateDirectory(bundle);
-                    zip = Path.Combine(bundle, "sources.zip");
-                    await File.WriteAllBytesAsync(zip, [1, 2, 3]);
+                    var sourceZip = Path.Combine(bundle, "sources.zip");
+                    using (var archive = ZipFile.Open(sourceZip, ZipArchiveMode.Create))
+                    {
+                        var entry = archive.CreateEntry("docs/source.md");
+                        await using var stream = entry.Open();
+                        await stream.WriteAsync(source);
+                    }
+                    if (shape == "manifest-zip") zip = sourceZip;
                     var member = new DeliverableBundleService.SourceMember("docs/source.md",
                         "sources.zip", "docs/source.md", source.Length,
                         Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant());
@@ -126,7 +131,14 @@ public sealed class ChannelOutboundSendShapeTests
             var prompt = "[Telegram X] send sources";
             if (sendKind == "main")
             {
-                await h.SeedChannelCorrelationAsync(prompt, "telegram:" + conversation);
+                var correlationId = await h.SeedChannelCorrelationAsync(prompt,
+                    "telegram:" + conversation);
+                if (shape == "unrelated-zip")
+                {
+                    await using var db = Db(h);
+                    await db.SessionQueuedMessages.Where(m => m.Id == correlationId)
+                        .ExecuteUpdateAsync(u => u.SetProperty(m => m.SourceTaskId, taskId));
+                }
                 await h.InsertTurnAsync(prompt, "Source answer\n" + marker);
                 await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
             }
