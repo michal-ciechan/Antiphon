@@ -88,6 +88,9 @@ public sealed class OutboundConversionTaskTests
             task.OutboundDeliveryId.ShouldBe(deliveryId);
             task.ProjectId.ShouldBe(projectId);
             task.AgentId.ShouldBe(converterId);
+            task.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+            task.ModelLevel.ShouldBe(AgentModelLevel.High);
+            task.WorkingDirectory.ShouldBe(root);
             task.Kind.ShouldBe(AgentTaskKind.Worker);
             task.Role.ShouldBe(AgentTaskRole.Custom);
             task.Workspace.ShouldBe(WorkspaceMode.Shared);
@@ -96,6 +99,9 @@ public sealed class OutboundConversionTaskTests
             task.ParentTaskId.ShouldBeNull();
             task.CardId.ShouldBeNull();
             task.StandingAuthority.ShouldBeNull();
+            task.AutoContinueOnWait.ShouldBeFalse();
+            (await db.ChatChannels.AsNoTracking().CountAsync(c => c.AgentId == converterId))
+                .ShouldBe(0);
             task.ExecutionDeadlineAt.ShouldBe(deadline);
             task.MaxAttempts.ShouldBe(1);
             task.CommitOnSettle.ShouldBe(CommitOnSettlePolicy.Never);
