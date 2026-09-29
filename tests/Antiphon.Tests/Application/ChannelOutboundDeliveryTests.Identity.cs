@@ -217,6 +217,7 @@ public sealed partial class ChannelOutboundDeliveryTests
         });
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstOwnerCreatedTasks = 0;
         Task<int>? firstTick = null;
         try
         {
@@ -266,7 +267,9 @@ public sealed partial class ChannelOutboundDeliveryTests
             var firstRunner = Runner(firstDb);
             firstRunner.ProbeBarrierAsync = async (boundary, _, ct) =>
             {
-                if (barrier != "conversion-task-committed" || boundary != barrier) return;
+                if (boundary != "conversion-task-committed") return;
+                Interlocked.Increment(ref firstOwnerCreatedTasks);
+                if (barrier != boundary) return;
                 entered.TrySetResult();
                 await release.Task.WaitAsync(ct);
             };
@@ -298,6 +301,7 @@ public sealed partial class ChannelOutboundDeliveryTests
             release.TrySetResult();
             (await firstTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
             (await secondTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
+            firstOwnerCreatedTasks.ShouldBe(barrier == "conversion-task-committed" ? 1 : 0);
             await using (var verify = new AppDbContext(options))
             {
                 var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
