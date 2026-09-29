@@ -242,6 +242,8 @@ public sealed partial class ChannelOutboundDeliveryTests
         var now = DateTime.UtcNow;
         var entered = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var committed = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCommitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var sendCancellation = new CancellationTokenSource();
         var producer = new FakeAntiphonMessagingClient();
         await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Convert sources.");
@@ -283,9 +285,16 @@ public sealed partial class ChannelOutboundDeliveryTests
                 settings, TimeProvider.System);
             service.ProbeBarrierAsync = async (boundary, id, ct) =>
             {
-                if (boundary != "admission-before-commit") return;
-                entered.TrySetResult(id);
-                await release.Task.WaitAsync(ct);
+                if (boundary == "admission-before-commit")
+                {
+                    entered.TrySetResult(id);
+                    await release.Task.WaitAsync(ct);
+                }
+                else if (boundary == "admission-committed")
+                {
+                    committed.TrySetResult(id);
+                    await releaseCommitted.Task.WaitAsync(ct);
+                }
             };
             pendingSend = service.SendAsync(new ChannelReply
             {
@@ -304,21 +313,48 @@ public sealed partial class ChannelOutboundDeliveryTests
             }
             producer.SentReplies.ShouldBeEmpty();
             release.TrySetResult();
-            (await pendingSend.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            (await committed.Task.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(deliveryId);
+            pendingSend.IsCompleted.ShouldBeFalse();
             await using (var observer = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
                 var intent = await observer.ChannelOutboundDeliveries.AsNoTracking()
                     .SingleAsync(d => d.Id == deliveryId);
                 intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
                 intent.InputSha256.Length.ShouldBe(64);
-                (await observer.SessionQueuedMessages.AsNoTracking()
-                    .SingleAsync(m => m.Id == correlationId)).ChannelOutboundDeliveryId.ShouldBe(deliveryId);
+                var frozen = await new ChannelOutboundFileStore(Path.Combine(root, "outbound"))
+                    .ReadReplyAsync(intent.InputPath, intent.InputSha256, CancellationToken.None);
+                frozen.Text.ShouldBe("source answer");
+                var correlation = await observer.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId);
+                correlation.ChannelOutboundDeliveryId.ShouldBe(deliveryId);
+                correlation.ChannelReplySettledAt.ShouldBeNull();
+                (await observer.ChatChannels.AsNoTracking()
+                    .SingleAsync(c => c.Id == channelId)).LastReplyAt.ShouldBeNull();
+
+                // The sender is paused after commit. A second connection must be able to
+                // claim the durable intent and update an unrelated row without waiting for it.
+                await observer.Database.OpenConnectionAsync();
+                await using (var claim = observer.Database.GetDbConnection().CreateCommand())
+                {
+                    claim.CommandText = "SELECT \"Id\" FROM \"ChannelOutboundDeliveries\" WHERE \"Id\" = @id FOR UPDATE NOWAIT";
+                    var parameter = claim.CreateParameter();
+                    parameter.ParameterName = "id";
+                    parameter.Value = deliveryId;
+                    claim.Parameters.Add(parameter);
+                    (await claim.ExecuteScalarAsync()).ShouldBe(deliveryId);
+                }
+                (await observer.Projects.Where(p => p.Id == projectId)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(p => p.UpdatedAt, now.AddSeconds(1))))
+                    .ShouldBe(1);
             }
             producer.SentReplies.ShouldBeEmpty();
+            releaseCommitted.TrySetResult();
+            (await pendingSend.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(ChannelOutboundSendOutcome.Deferred);
         }
         finally
         {
             release.TrySetResult();
+            releaseCommitted.TrySetResult();
             sendCancellation.Cancel();
             if (pendingSend is not null)
             {
