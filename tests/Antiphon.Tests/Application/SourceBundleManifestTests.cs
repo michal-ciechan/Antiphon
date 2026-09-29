@@ -103,8 +103,10 @@ public sealed class SourceBundleManifestTests
             await WriteAsync(root, "docs/good/one.md", Encoding.UTF8.GetBytes("# one"));
             await WriteAsync(root, "docs/cards/CARD-0001.md", Encoding.UTF8.GetBytes("# generated"));
             await WriteAsync(root, ".antiphon/secret.md", Encoding.UTF8.GetBytes("# excluded"));
+            await WriteAsync(root, "outside.md", Encoding.UTF8.GetBytes("# traversal"));
             var task = await BuildAsync(root,
-                ["docs/good/one.md", "docs/cards/CARD-0001.md", ".antiphon/secret.md"]);
+                ["docs/good/one.md", "docs/cards/CARD-0001.md", ".antiphon/secret.md",
+                    "docs/../outside.md"]);
             var source = DeliverableBundleService.ListAttachableFiles(task).ShouldHaveSingleItem();
             var bundle = task.DeliverableBundleDir!;
             foreach (var name in new[] { "stale.pdf", "render.html", "render.log", "unlisted.md",

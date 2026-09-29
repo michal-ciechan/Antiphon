@@ -1,4 +1,6 @@
 using Antiphon.Messaging;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Services;
@@ -547,6 +549,71 @@ public class ChannelFollowUpAttachmentTests
         var followUp = h.Messaging.SentReplies[1];
         followUp.Attachments.Count.ShouldBe(3, "pdf + 2 md, not a duplicate pdf");
         followUp.Attachments[0].Name.ShouldBe(Path.GetFileName(pdf));
+    }
+
+    [Test]
+    [Arguments("valid")]
+    [Arguments("corrupt")]
+    [Arguments("unknown")]
+    [Arguments("legacy")]
+    public async Task Historical_pdf_is_explicit_once_and_manifest_custody_survives_reply(string mode)
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:33] historical bundle";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 2, withPdf: true);
+        var pdf = files[0];
+        var bundle = Path.GetDirectoryName(pdf)!;
+        var stale = Path.Combine(bundle, "stale.pdf");
+        var unlisted = Path.Combine(bundle, "unlisted.md");
+        var unrelatedZip = Path.Combine(bundle, "unrelated.zip");
+        var legacyZip = Path.Combine(bundle, "old-sources.zip");
+        File.WriteAllBytes(stale, "%PDF-stale"u8.ToArray());
+        File.WriteAllText(unlisted, "# unlisted");
+        File.WriteAllText(unrelatedZip, "unrelated");
+        File.WriteAllText(Path.Combine(bundle, "render.html"), "stale");
+        File.WriteAllText(Path.Combine(bundle, "part.tmp"), "stale");
+        File.WriteAllText(legacyZip, "legacy zip");
+        var manifestPath = Path.Combine(bundle, DeliverableBundleService.SourceManifestName);
+        if (mode == "valid")
+        {
+            var bytes = File.ReadAllBytes(files[1]);
+            var member = new DeliverableBundleService.SourceMember("docs/one.md",
+                Path.GetFileName(files[1]), null, bytes.Length,
+                Convert.ToHexString(SHA256.HashData(bytes)));
+            var manifest = new DeliverableBundleService.SourceManifest(1, true, [member], []);
+            File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        }
+        else if (mode == "corrupt")
+            File.WriteAllText(manifestPath, "{broken");
+        else if (mode == "unknown")
+            File.WriteAllText(manifestPath, "{\"version\":2,\"complete\":true,\"sources\":[]}");
+
+        var note = "[task cd34ef56 done] historical file";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, $"Here.\n[[attach: {pdf}]]");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var reply = h.Messaging.SentReplies[1];
+        var names = reply.Attachments.Select(a => a.Name).ToArray();
+        var expected = mode switch
+        {
+            "valid" => new[] { Path.GetFileName(pdf), Path.GetFileName(files[1]) },
+            "legacy" => new[] { Path.GetFileName(pdf), Path.GetFileName(files[1]),
+                Path.GetFileName(files[2]), Path.GetFileName(legacyZip), Path.GetFileName(unlisted) },
+            _ => new[] { Path.GetFileName(pdf) },
+        };
+        names.ShouldBe(expected);
+        reply.Attachments[0].Content.ShouldBe(File.ReadAllBytes(pdf));
+        names.ShouldNotContain(Path.GetFileName(stale));
+        names.ShouldNotContain(Path.GetFileName(unrelatedZip));
+        names.ShouldNotContain("render.html");
+        names.ShouldNotContain("part.tmp");
     }
 
     [Test]
