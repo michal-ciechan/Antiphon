@@ -31,15 +31,17 @@ public sealed class ExpectationSnapshotReader
     private readonly DelegationSettings _delegation;
     private readonly SupervisionSettings _supervision;
     private readonly ExpectationTimingSettings _timing;
+    private readonly RetentionSettings _retention;
 
     public ExpectationSnapshotReader(
         AppDbContext db, DelegationSettings? delegation = null, SupervisionSettings? supervision = null,
-        ExpectationTimingSettings? timing = null)
+        ExpectationTimingSettings? timing = null, RetentionSettings? retention = null)
     {
         _db = db;
         _delegation = delegation ?? new DelegationSettings();
         _supervision = supervision ?? new SupervisionSettings();
         _timing = timing ?? new ExpectationTimingSettings();
+        _retention = retention ?? new RetentionSettings();
     }
 
     public async Task<ExpectationSnapshot> ReadAsync(
@@ -301,7 +303,7 @@ public sealed class ExpectationSnapshotReader
         var (capCount, capOccupants) = reasons.Any(reason => DispatchHoldDetails.ConcurrencyCapLimit(reason) is not null)
             ? await ReadCapOccupantsAsync(asOf, probes, ct)
             : (0, Array.Empty<ExpectationInFlightTask>());
-        var notes = await ReadNotesAsync(directive.AgentId, configChanged ? null : state, ct);
+        var notes = await ReadNotesAsync(directive.AgentId, configChanged ? null : state, asOf, ct);
         return new ExpectationSnapshot
         {
             AsOf = asOf,
@@ -320,6 +322,7 @@ public sealed class ExpectationSnapshotReader
             InFlight = inFlight,
             Notes = notes.Rows,
             NoteCoverageIncomplete = notes.Incomplete,
+            CheckedNoteIds = notes.CheckedIds,
             NextNoteOutboxCursorAt = notes.OutboxAt,
             NextNoteOutboxCursorId = notes.OutboxId,
             NextNoteQueueCursorAt = notes.QueueAt,
@@ -562,9 +565,10 @@ public sealed class ExpectationSnapshotReader
     /// the note (CARD-0641 owns that).
     /// </summary>
     private sealed record NotePage(IReadOnlyList<ExpectationNoteDebt> Rows, bool Incomplete,
+        IReadOnlySet<Guid> CheckedIds,
         DateTime? OutboxAt, Guid? OutboxId, DateTime? QueueAt, Guid? QueueId);
 
-    private async Task<NotePage> ReadNotesAsync(Guid agentId, ExpectationWatchState? state, CancellationToken ct)
+    private async Task<NotePage> ReadNotesAsync(Guid agentId, ExpectationWatchState? state, DateTime asOf, CancellationToken ct)
     {
         const int pageSize = 100;
         var outboxQuery = _db.AgentTaskLandNotifications.AsNoTracking()
@@ -576,8 +580,11 @@ public sealed class ExpectationSnapshotReader
                 && note.ParentSessionId != null
                 && _db.AgentSessions.Any(session =>
                     session.Id == note.ParentSessionId && session.StandingAgentId == agentId));
-        // Read every page in this observation. A cursor across scans cannot establish a clear
-        // observation: an undelivered subject on an earlier page would look absent on the last.
+        var outboxCursor = state?.NoteOutboxCursorAt;
+        var outboxCursorId = state?.NoteOutboxCursorId;
+        if (outboxCursor is { } outboxAt && outboxCursorId is { } outboxId)
+            outboxQuery = outboxQuery.Where(note => note.CreatedAt > outboxAt
+                || (note.CreatedAt == outboxAt && note.Id.CompareTo(outboxId) > 0));
         var rows = await outboxQuery
             .OrderBy(note => note.CreatedAt)
             .ThenBy(note => note.Id)
@@ -594,20 +601,10 @@ public sealed class ExpectationSnapshotReader
                 note.IsLegacy,
                 note.CompletionSnapshotJson != null,
                 note.CompletionDeliveryJson))
-            .Take(pageSize)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
-        for (var offset = pageSize; rows.Count == offset; offset += pageSize)
-        {
-            var page = await outboxQuery.OrderBy(note => note.CreatedAt).ThenBy(note => note.Id)
-                .Select(note => new NoteRow(
-                    note.Id, note.TaskId, note.Kind, note.State, note.CreatedAt,
-                    note.ParentSessionId, note.LastErrorCode, note.QueueMessageId,
-                    note.Body, note.IsLegacy, note.CompletionSnapshotJson != null,
-                    note.CompletionDeliveryJson))
-                .Skip(offset).Take(pageSize).ToListAsync(ct);
-            rows.AddRange(page);
-            if (page.Count < pageSize) break;
-        }
+        var outboxMore = rows.Count > pageSize;
+        if (outboxMore) rows.RemoveAt(pageSize);
         var queueIds = rows.Where(row => row.QueueMessageId is not null)
             .Select(row => row.QueueMessageId!.Value)
             .ToList();
@@ -667,6 +664,11 @@ public sealed class ExpectationSnapshotReader
                 && message.CanceledAt == null
                 && _db.AgentSessions.Any(session => session.Id == message.AgentSessionId
                     && session.StandingAgentId == agentId));
+        var queueCursor = state?.NoteQueueCursorAt;
+        var queueCursorId = state?.NoteQueueCursorId;
+        if (queueCursor is { } queueAt && queueCursorId is { } queuePageId)
+            queueQuery = queueQuery.Where(message => message.CreatedAt > queueAt
+                || (message.CreatedAt == queueAt && message.Id.CompareTo(queuePageId) > 0));
         var queueOnly = await queueQuery.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
             .Select(message => new
             {
@@ -685,22 +687,23 @@ public sealed class ExpectationSnapshotReader
                 message.LastDeliveryBaselineSequence,
                 message.LastDeliveryStartedAt,
             })
-            .Take(pageSize)
+            .Take(pageSize + 1)
             .ToListAsync(ct);
-        for (var offset = pageSize; queueOnly.Count == offset; offset += pageSize)
-        {
-            var page = await queueQuery.OrderBy(message => message.CreatedAt).ThenBy(message => message.Id)
-                .Select(message => new
-                {
-                    message.Id, message.SourceTaskId, message.SourceLandNotificationId,
-                    message.AgentSessionId, message.Origin, message.ConversationKey,
-                    message.NoteHeader, message.Body, message.Status, message.DeliveryVerdict, message.CreatedAt,
-                    message.DeliveryAttempts, message.LastDeliveryBaselineSequence,
-                    message.LastDeliveryStartedAt,
-                }).Skip(offset).Take(pageSize).ToListAsync(ct);
-            queueOnly.AddRange(page);
-            if (page.Count < pageSize) break;
-        }
+        var queueMore = queueOnly.Count > pageSize;
+        if (queueMore) queueOnly.RemoveAt(pageSize);
+        var checkedIds = rows.Select(row => row.Id).Concat(queueOnly.Select(row => row.Id)).ToHashSet();
+        var pruneCutoff = asOf.AddDays(-_retention.TranscriptRetentionDays);
+        var oldSentSessions = queueOnly.Where(message => _retention.TranscriptRetentionDays > 0
+                && message.Status == QueuedMessageStatus.Sent
+                && message.LastDeliveryStartedAt < pruneCutoff)
+            .Select(message => message.AgentSessionId).Distinct().ToList();
+        var prunedSessions = oldSentSessions.Count == 0 ? new HashSet<Guid>()
+            : (await _db.AgentSessions.AsNoTracking()
+                .Where(session => oldSentSessions.Contains(session.Id)
+                    && (session.Status == SessionStatus.Stopped || session.Status == SessionStatus.Failed)
+                    && session.LastSeenAt < pruneCutoff
+                    && !_db.TranscriptEntries.Any(entry => entry.AgentSessionId == session.Id))
+                .Select(session => session.Id).ToListAsync(ct)).ToHashSet();
         // Completion producers can link several queue members through their delivery snapshot.
         // Deduplicate against those links even when the outbox cursor is on a different page.
         var pageTaskIds = queueOnly.Where(message => message.SourceTaskId is not null)
@@ -736,7 +739,8 @@ public sealed class ExpectationSnapshotReader
             // LateConfirmed is persisted only after a complete UserPrompt matched this keyed
             // attempt. It remains proof after retention removes a stopped session's transcript.
             if (message.Status == QueuedMessageStatus.Sent
-                && message.DeliveryVerdict == DeliveryVerdict.LateConfirmed)
+                && (message.DeliveryVerdict == DeliveryVerdict.LateConfirmed
+                    || prunedSessions.Contains(message.AgentSessionId)))
                 continue;
             if (message.DeliveryAttempts > 0)
             {
@@ -764,9 +768,12 @@ public sealed class ExpectationSnapshotReader
             });
         }
 
-        return new NotePage(results, false,
-            rows.LastOrDefault()?.CreatedAt, rows.LastOrDefault()?.Id,
-            queueOnly.LastOrDefault()?.CreatedAt, queueOnly.LastOrDefault()?.Id);
+        return new NotePage(results, outboxMore || queueMore || outboxCursor is not null || queueCursor is not null,
+            checkedIds,
+            outboxMore ? rows.LastOrDefault()?.CreatedAt : null,
+            outboxMore ? rows.LastOrDefault()?.Id : null,
+            queueMore ? queueOnly.LastOrDefault()?.CreatedAt : null,
+            queueMore ? queueOnly.LastOrDefault()?.Id : null);
     }
 
     /// <summary>

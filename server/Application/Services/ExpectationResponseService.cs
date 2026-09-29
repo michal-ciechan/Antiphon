@@ -20,7 +20,9 @@ public sealed class ExpectationResponseService(AppDbContext db, TimeProvider tim
         // Rotate a bounded page each minute so old rows cannot consume the whole job budget.
         const int pageSize = 25;
         var query = db.ExpectationNudges.AsNoTracking()
-            .Where(n => n.DirectiveId == directive.Id && n.AnsweredAt == null);
+            .Where(n => n.DirectiveId == directive.Id && n.AnsweredAt == null
+                && n.OperatorOutboxState != ExpectationOperatorOutboxState.Published
+                && n.OperatorOutboxState != ExpectationOperatorOutboxState.Suppressed);
         var count = await query.CountAsync(ct);
         var pageCount = Math.Max(1, (count + pageSize - 1) / pageSize);
         var page = (int)((now.Ticks / TimeSpan.TicksPerMinute) % pageCount);

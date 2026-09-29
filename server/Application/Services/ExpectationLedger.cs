@@ -392,6 +392,7 @@ public sealed class ExpectationLedger
         bool preserveAll,
         DateTime? previousSuccessfulScanAt,
         DateTime observedAt,
+        IReadOnlyCollection<string> unobservedSubjects,
         CancellationToken ct)
     {
         ValidateIdentity(directiveId, configDigest, "scan", "scan");
@@ -413,12 +414,15 @@ public sealed class ExpectationLedger
                 .ToListAsync(ct);
             var observed = observedSubjects.ToHashSet(StringComparer.Ordinal);
             var unknown = unknownSubjects.ToHashSet(StringComparer.Ordinal);
+            var unobserved = unobservedSubjects.ToHashSet(StringComparer.Ordinal);
             var previous = AsUtc(previousSuccessfulScanAt);
             var canResolve = !preserveAll && previous is not null && now - previous.Value >= ExpectationWindows.ClearGap;
             var resolved = 0;
             foreach (var row in rows)
             {
                 if (observed.Contains(row.SubjectKey))
+                    continue;
+                if (unobserved.Contains(row.SubjectKey))
                     continue;
                 if (preserveAll || unknown.Contains(row.SubjectKey))
                 {
