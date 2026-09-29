@@ -19,8 +19,10 @@
     Everything after `--` is the command, passed on verbatim: under `pwsh -File` the script reads
     its own raw command line, because the PowerShell binder would split -m:2 into -m and 2.
 
-    Offline seam (tests only): C589_COMMAND_SHIM runs `pwsh -File <shim> <command...>` instead of
-    the command. Owner: docs/testing-and-build.md "Build slots (CARD-0589)". ASCII-only.
+    Native executables start with literal argv in the caller's working directory. PowerShell
+    scripts and Windows command shims keep the call operator. Offline seam (tests only):
+    C589_COMMAND_SHIM runs `pwsh -File <shim> <command...>` through the native launcher.
+    Owner: docs/testing-and-build.md "Build slots (CARD-0589)". ASCII-only.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -77,18 +79,46 @@ if ($noSlot) {
     }
 }
 
+function Start-AntiphonWrappedCommand {
+    param([string]$FileName, [string[]]$Arguments)
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $FileName
+    $psi.UseShellExecute = $false
+    $psi.WorkingDirectory = (Get-Location).ProviderPath
+    foreach ($token in $Arguments) { [void]$psi.ArgumentList.Add([string]$token) }
+    $script:WrappedProcess = [Diagnostics.Process]::new()
+    $script:WrappedProcess.StartInfo = $psi
+    [void]$script:WrappedProcess.Start()
+    while (-not $script:WrappedProcess.WaitForExit(250)) { }
+    return $script:WrappedProcess.ExitCode
+}
+
 $code = 1
+$script:WrappedProcess = $null
 try {
     if (-not [string]::IsNullOrWhiteSpace($env:C589_COMMAND_SHIM)) {
-        & pwsh -NoProfile -NonInteractive -File $env:C589_COMMAND_SHIM @command
+        $shimArgs = @('-NoProfile', '-NonInteractive', '-File', $env:C589_COMMAND_SHIM) + $command
+        $code = Start-AntiphonWrappedCommand -FileName (Get-Command pwsh).Source -Arguments $shimArgs
     } else {
         $rest = @()
         if ($command.Count -gt 1) { $rest = @($command[1..($command.Count - 1)]) }
-        & $command[0] @rest
+        $resolved = Get-Command -Name ([string]$command[0]) -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($resolved -and $resolved.CommandType -eq 'Application' -and
+            (-not $IsWindows -or $resolved.Source -notmatch '\.(cmd|bat)$')) {
+            $code = Start-AntiphonWrappedCommand -FileName $resolved.Source -Arguments $rest
+        } else {
+            & $command[0] @rest
+            $code = $LASTEXITCODE
+            if ($null -eq $code) { $code = $(if ($?) { 0 } else { 1 }) }
+        }
     }
-    $code = $LASTEXITCODE
-    if ($null -eq $code) { $code = $(if ($?) { 0 } else { 1 }) }
 } finally {
+    if ($null -ne $script:WrappedProcess) {
+        if (-not $script:WrappedProcess.HasExited) {
+            try { $script:WrappedProcess.Kill($true) } catch { }
+        }
+        $script:WrappedProcess.Dispose()
+    }
     Exit-AntiphonBuildSlot -Lease $slot
 }
 exit $code
