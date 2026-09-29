@@ -5,6 +5,11 @@ using System.Text;
 
 namespace Antiphon.Tests.Scripts;
 
+internal sealed record LinuxOwnerFaults(
+    string? HelperMode = null,
+    Func<int, LinuxScriptHarnessProcess.LinuxIdentity>? IdentityReader = null,
+    Func<Stream, string, CancellationToken, Task>? StopWriter = null);
+
 internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
 {
     private readonly ScriptProcessRequest _request;
@@ -19,6 +24,7 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
     private int _rootPid;
     private long _rootStart;
     private bool _terminated;
+    private readonly LinuxOwnerFaults? _faults;
 
     public StreamReader Stdout => _supervisor.StandardOutput;
     public StreamReader Stderr => _supervisor.StandardError;
@@ -27,10 +33,13 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
     internal bool SupervisorHasExited => _supervisor.HasExited;
     internal StreamWriter RootStdin => _supervisor.StandardInput;
     internal void DisconnectControl() { _control?.Dispose(); _socket?.Dispose(); }
+    internal Task SendStopForTestAsync(CancellationToken token) =>
+        WriteFrameAsync(_control ?? throw new InvalidOperationException("Control is not connected."), "STOP " + _nonce, token);
 
-    internal LinuxScriptHarnessProcess(ScriptProcessRequest request)
+    internal LinuxScriptHarnessProcess(ScriptProcessRequest request, LinuxOwnerFaults? faults = null)
     {
         _request = request;
+        _faults = faults;
         var helper = Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
         if (!File.Exists(helper)) throw new FileNotFoundException("ScriptHarness Linux owner helper was not staged.", helper);
         Directory.CreateDirectory(request.ControlDirectory);
@@ -47,7 +56,8 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
             };
             foreach (var arg in new[] { helper, "linux-owner", socketPath, _nonce, request.Executable,
                          request.Script, request.CaseName, request.ResultsDirectory,
-                         ((long)(request.ExecutionBudget + request.CleanupBudget).TotalMilliseconds).ToString(CultureInfo.InvariantCulture), "v1" })
+                         ((long)(request.ExecutionBudget + request.CleanupBudget).TotalMilliseconds).ToString(CultureInfo.InvariantCulture),
+                         faults?.HelperMode ?? "v1" })
                 start.ArgumentList.Add(arg);
             if (request.AdditionalArguments is not null)
                 foreach (var arg in request.AdditionalArguments) start.ArgumentList.Add(arg);
@@ -64,33 +74,28 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
 
     public async Task<int> StartAndWaitForRootAsync(CancellationToken cancellationToken)
     {
-        _socket = await _listener.AcceptAsync(cancellationToken);
+        var accept = _listener.AcceptAsync(cancellationToken).AsTask();
+        var exited = _supervisor.WaitForExitAsync(cancellationToken);
+        if (await Task.WhenAny(accept, exited) == exited && !accept.IsCompletedSuccessfully)
+        {
+            var cause = _supervisor.ExitCode == 3 ? "setsid failure" : "helper launch failure";
+            throw new IOException($"Linux ScriptHarness supervisor exited before handshake (exit {_supervisor.ExitCode}): {cause}.");
+        }
+        _socket = await accept;
         _control = new NetworkStream(_socket, ownsSocket: false);
-        var hello = (await ReadFrameAsync(_control, cancellationToken)).Split(' ');
-        if (hello.Length != 6 || hello[0] != "HELLO" || hello[1] != _nonce ||
-            !int.TryParse(hello[2], out var pid) || !long.TryParse(hello[3], out var start) ||
-            !int.TryParse(hello[4], out var pgid) || !int.TryParse(hello[5], out var sid))
-            throw new InvalidDataException("Invalid Linux ScriptHarness ownership handshake.");
-        var observed = ReadIdentity(pid);
-        if (pid != _supervisor.Id || pid <= 1 || pgid <= 1 ||
-            pid != pgid || pid != sid || pgid == ReadIdentity(Environment.ProcessId).Group ||
-            observed.Start != start || observed.Group != pgid || observed.Session != sid)
-            throw new InvalidDataException("Linux ScriptHarness owner identity does not match private session.");
-        _pgid = pgid;
-        _sid = sid;
-        _supervisorStart = start;
+        var hello = await ReadFrameAsync(_control, cancellationToken);
+        var identity = ValidateHello(hello, _nonce, _supervisor.Id,
+            ReadIdentity(Environment.ProcessId).Group, _faults?.IdentityReader ?? ReadIdentity);
+        _pgid = identity.Group;
+        _sid = identity.Session;
+        _supervisorStart = identity.Start;
         await WriteFrameAsync(_control, "START " + _nonce, cancellationToken);
         var rootFrame = (await ReadFrameAsync(_control, cancellationToken)).Split(' ');
         if (rootFrame.Length != 4 || rootFrame[0] != "ROOT" || rootFrame[1] != _nonce ||
             !int.TryParse(rootFrame[2], out _rootPid) || !long.TryParse(rootFrame[3], out _rootStart) ||
             _rootPid <= 1 || _rootStart <= 0)
             throw new InvalidDataException("Linux ScriptHarness root identity was not reported.");
-        var exitFrame = (await ReadFrameAsync(_control, cancellationToken)).Split(' ');
-        if (exitFrame.Length != 5 || exitFrame[0] != "EXIT" || exitFrame[1] != _nonce ||
-            !int.TryParse(exitFrame[2], out var exitPid) || !long.TryParse(exitFrame[3], out var exitStart) ||
-            !int.TryParse(exitFrame[4], out var exitCode) || exitPid != _rootPid || exitStart != _rootStart)
-            throw new InvalidDataException("Linux ScriptHarness root exit receipt did not match root identity.");
-        return exitCode;
+        return ValidateRootExit(await ReadFrameAsync(_control, cancellationToken), _nonce, _rootPid, _rootStart);
     }
 
     public async Task TerminateAsync(CancellationToken cancellationToken)
@@ -98,14 +103,21 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
         if (_terminated) return;
         _terminated = true;
         if (_supervisor.HasExited)
-            throw new IOException("Linux ScriptHarness supervisor exited before explicit stop; group custody is unknown.");
+        {
+            var observed = _faults?.IdentityReader?.Invoke(_supervisor.Id);
+            var mismatch = observed is not null && observed.Value.Start != _supervisorStart ? " identity mismatch;" : "";
+            throw new IOException($"Linux ScriptHarness supervisor exited before explicit stop;{mismatch} group custody is unknown.");
+        }
         if (_control is null)
         {
             // Before a valid handshake, disconnect is the supervisor's safe stop path.
             _listener.Dispose();
             return;
         }
-        await WriteFrameAsync(_control, "STOP " + _nonce, cancellationToken);
+        if (_faults?.StopWriter is { } writer)
+            await writer(_control, "STOP " + _nonce, cancellationToken);
+        else
+            await WriteFrameAsync(_control, "STOP " + _nonce, cancellationToken);
     }
 
     public async Task ConfirmDeadAsync(CancellationToken cancellationToken)
@@ -120,10 +132,10 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
             {
                 if (!int.TryParse(Path.GetFileName(path), out var pid)) continue;
                 LinuxIdentity identity;
-                try { identity = ReadIdentity(pid); }
+                try { identity = (_faults?.IdentityReader ?? ReadIdentity)(pid); }
                 catch (FileNotFoundException) { continue; }
                 catch (DirectoryNotFoundException) { continue; }
-                if (identity.Group == _pgid && identity.Session == _sid && identity.State is not ('Z' or 'X'))
+                if (identity.Group == _pgid && identity.Session == _sid && IsExecutingState(identity.State))
                     executing.Add(pid);
             }
             if (executing.Count == 0) return;
@@ -153,7 +165,34 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
         _supervisor.Dispose();
     }
 
-    private static LinuxIdentity ReadIdentity(int pid)
+    internal static bool IsExecutingState(char state) => state is not ('Z' or 'X');
+
+    internal static LinuxIdentity ValidateHello(string frame, string nonce, int supervisorPid, int callerGroup,
+        Func<int, LinuxIdentity> readIdentity)
+    {
+        var hello = frame.Split(' ');
+        if (hello.Length != 6 || hello[0] != "HELLO" || hello[1] != nonce ||
+            !int.TryParse(hello[2], out var pid) || !long.TryParse(hello[3], out var start) ||
+            !int.TryParse(hello[4], out var pgid) || !int.TryParse(hello[5], out var sid))
+            throw new InvalidDataException("Invalid Linux ScriptHarness ownership handshake.");
+        var observed = readIdentity(pid);
+        if (pid != supervisorPid || pid <= 1 || pgid <= 1 || pid != pgid || pid != sid ||
+            pgid == callerGroup || observed.Start != start || observed.Group != pgid || observed.Session != sid)
+            throw new InvalidDataException("Linux ScriptHarness owner identity does not match private session.");
+        return observed;
+    }
+
+    internal static int ValidateRootExit(string frame, string nonce, int rootPid, long rootStart)
+    {
+        var exitFrame = frame.Split(' ');
+        if (exitFrame.Length != 5 || exitFrame[0] != "EXIT" || exitFrame[1] != nonce ||
+            !int.TryParse(exitFrame[2], out var exitPid) || !long.TryParse(exitFrame[3], out var exitStart) ||
+            !int.TryParse(exitFrame[4], out var exitCode) || exitPid != rootPid || exitStart != rootStart)
+            throw new InvalidDataException("Linux ScriptHarness root exit receipt did not match root identity.");
+        return exitCode;
+    }
+
+    internal static LinuxIdentity ReadIdentity(int pid)
     {
         var stat = File.ReadAllText($"/proc/{pid}/stat");
         var end = stat.LastIndexOf(") ", StringComparison.Ordinal);
@@ -163,9 +202,9 @@ internal sealed class LinuxScriptHarnessProcess : IOwnedScriptProcess
             int.Parse(fields[3], CultureInfo.InvariantCulture), long.Parse(fields[19], CultureInfo.InvariantCulture));
     }
 
-    private readonly record struct LinuxIdentity(char State, int Group, int Session, long Start);
+    internal readonly record struct LinuxIdentity(char State, int Group, int Session, long Start);
 
-    private static async Task<string> ReadFrameAsync(Stream stream, CancellationToken token)
+    internal static async Task<string> ReadFrameAsync(Stream stream, CancellationToken token)
     {
         using var bytes = new MemoryStream();
         var one = new byte[1];

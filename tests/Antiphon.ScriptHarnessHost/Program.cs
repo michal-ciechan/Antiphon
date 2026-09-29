@@ -18,6 +18,11 @@ var results = args[6];
 if (!long.TryParse(args[7], NumberStyles.None, CultureInfo.InvariantCulture, out var failsafeMs) || failsafeMs <= 0)
     return 2;
 // The final argument is reserved for future fixture modes and validates the wire shape.
+if (args[8] == "fail-setsid")
+{
+    Console.Error.WriteLine("injected setsid failure before child launch");
+    return 3;
+}
 if (args[8] != "v1") return 2;
 
 var pid = getpid();
@@ -53,6 +58,7 @@ try
     {
         var frame = await ReadFrame(stream, failsafe.Token);
         if (frame == "STOP " + nonce) break;
+        if (frame.StartsWith("STOP ", StringComparison.Ordinal)) continue;
         // A malformed command ends custody without executing the script further.
         break;
     }
