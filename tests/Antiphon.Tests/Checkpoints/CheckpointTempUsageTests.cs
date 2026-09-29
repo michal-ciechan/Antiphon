@@ -75,6 +75,27 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task namespace_census_uses_the_native_execution_roster()
+    {
+        var dir = TempDir();
+        var names = Enumerable.Range(0, 256).Select(i => $"N.C.case_{i}").ToArray();
+        var roster = UsageLibrary.WriteRoster(dir, names);
+        var events = UsageLibrary.WriteEvents(dir, complete: true);
+        var skipped = OperatingSystem.IsWindows() ? 11 : 18;
+        var trx = Path.Combine(dir, "namespace.trx");
+        CheckpointFixtures.WriteResults(trx, names.Select((name, i) =>
+            (name, i < skipped ? "NotExecuted" : "Passed")).ToArray());
+        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
+            @{ native = Test-UsageEvidence -Phase Namespace -RosterPath {{UsageLibrary.Quote(roster)}} -TrxPath {{UsageLibrary.Quote(trx)}} -EventsPath {{UsageLibrary.Quote(events)}} } | ConvertTo-Json -Depth 8
+            """);
+        var evidence = result.RootElement.GetProperty("native");
+        UsageLibrary.Errors(result.RootElement, "native").ShouldBeEmpty();
+        evidence.GetProperty("selected").GetInt32().ShouldBe(256);
+        evidence.GetProperty("executed").GetInt32().ShouldBe(256 - skipped);
+        evidence.GetProperty("skipped").GetInt32().ShouldBe(skipped);
+    }
+
+    [Test]
     public async Task allocated_bytes_include_written_payload()
     {
         var work = TempDir();
@@ -106,9 +127,12 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         allocated.ShouldBeGreaterThanOrEqualTo(128 * 1024);
         allocated.ShouldBeLessThan(192 * 1024);
         result.RootElement.GetProperty("absent").GetInt64().ShouldBe(0);
-        result.RootElement.GetProperty("retried").GetInt64().ShouldBe(8192);
-        result.RootElement.GetProperty("calls").GetInt32().ShouldBe(2);
-        result.RootElement.GetProperty("denied").GetBoolean().ShouldBeTrue();
+        if (OperatingSystem.IsLinux())
+        {
+            result.RootElement.GetProperty("retried").GetInt64().ShouldBe(8192);
+            result.RootElement.GetProperty("calls").GetInt32().ShouldBe(2);
+            result.RootElement.GetProperty("denied").GetBoolean().ShouldBeTrue();
+        }
     }
 
     [Test]

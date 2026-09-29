@@ -115,6 +115,7 @@ internal sealed class CheckpointTempRootSweep
         if (!Directory.Exists(IndexDirectory)) { WriteState(state); return receipt; }
         if ((File.GetAttributes(IndexDirectory) & FileAttributes.ReparsePoint) != 0)
         { receipt.Skip("index-linked"); return receipt; }
+        RemoveStaleIndexTemps(timer);
         // Entries exist only while roots are live or retained. Sorting the small active
         // roster gives a stable cursor even as other test hosts add and remove roots.
         var entries = Directory.EnumerateFiles(IndexDirectory, "c723-*.json", SearchOption.TopDirectoryOnly)
@@ -285,15 +286,50 @@ internal sealed class CheckpointTempRootSweep
 
     private CursorState ReadState()
     {
-        try { return JsonSerializer.Deserialize<CursorState>(File.ReadAllText(StatePath)) ?? new(); }
+        try
+        {
+            using var stream = new FileStream(StatePath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            return JsonSerializer.Deserialize<CursorState>(stream) ?? new();
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return new(); }
     }
 
     private void WriteState(CursorState state)
     {
         var temp = StatePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(state));
-        File.Move(temp, StatePath, true);
+        try
+        {
+            File.WriteAllText(temp, JsonSerializer.Serialize(state));
+            File.Move(temp, StatePath, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A reader or external handle may prevent replacement on Windows. Keep
+            // the previous interval so the next sweep can retry without failing a test.
+            try { File.Delete(temp); }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private void RemoveStaleIndexTemps(Stopwatch timer)
+    {
+        // Registration does not take the sweep gate. A fixed age protects an active
+        // writer even when a test coordinator uses zero grace/interval overrides.
+        foreach (var temp in Directory.EnumerateFiles(IndexDirectory, "*.tmp", SearchOption.TopDirectoryOnly)
+                     .Take(_options.MaxDirectEntries))
+        {
+            if (timer.Elapsed >= _options.MaxDuration) break;
+            var name = Path.GetFileName(temp);
+            if (!Regex.IsMatch(name, "^c723-[0-9a-f]{32}\\.json\\.[0-9a-f]{32}\\.tmp$",
+                    RegexOptions.CultureInvariant)) continue;
+            try
+            {
+                if (DateTime.UtcNow - File.GetLastWriteTimeUtc(temp) >= TimeSpan.FromMinutes(10))
+                    File.Delete(temp);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private void MigrateLegacyIndex(CursorState state, Stopwatch timer)

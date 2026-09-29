@@ -142,12 +142,15 @@ function Test-UsageEvidence([string]$Phase, [string]$RosterPath, [string]$TrxPat
     if (($expectedNames -join "`n") -cne ($actualNames -join "`n")) { $errors.Add('selected class/method multiset differs from TRX') }
     if ($failed.Count -ne 0) { $errors.Add("failed TRX tests=$($failed.Count)") }
     if ($Phase -eq 'Namespace') {
-        if ($selected.Count -ne 254 -or $executed.Count -ne 236 -or $skipped.Count -ne 18) {
+        $expectedExecuted = if ($IsWindows) { 245 } else { 238 }
+        $expectedSkipped = if ($IsWindows) { 11 } else { 18 }
+        if ($selected.Count -ne 256 -or $executed.Count -ne $expectedExecuted -or $skipped.Count -ne $expectedSkipped) {
             $errors.Add("namespace census selected=$($selected.Count) executed=$($executed.Count) skipped=$($skipped.Count)")
         }
     } else {
         if ($executed.Count -lt 1000) { $errors.Add("full-suite executed=$($executed.Count) below 1000") }
-        if (@($executed | Where-Object { $_.name -like 'Antiphon.Tests.Checkpoints.*' }).Count -lt 236) {
+        $checkpointFloor = if ($IsWindows) { 245 } else { 238 }
+        if (@($executed | Where-Object { $_.name -like 'Antiphon.Tests.Checkpoints.*' }).Count -lt $checkpointFloor) {
             $errors.Add('full suite omitted checkpoint executions')
         }
     }
