@@ -63,10 +63,11 @@ internal sealed class CheckpointTempRootSweep
         if (!IsCandidate(root) || ReadMarker(root) is null)
             throw new InvalidOperationException("checkpoint root marker is invalid");
         FileStream? gate = null;
-        for (var attempt = 0; attempt < 20 && gate is null; attempt++)
+        var admission = Stopwatch.StartNew();
+        while (gate is null && admission.Elapsed < TimeSpan.FromSeconds(30))
         {
             gate = OpenGate();
-            if (gate is null) Thread.Sleep(10 * (attempt + 1));
+            if (gate is null) Thread.Sleep(20);
         }
         using var held = gate ?? throw new IOException("checkpoint coordinator is busy");
         using var index = new FileStream(IndexPath, FileMode.Append, FileAccess.Write, FileShare.Read);
