@@ -524,7 +524,7 @@ public sealed class ChannelOutboundStorageTests
             var staged = Path.Combine(input, "source-001.md");
             (await File.ReadAllBytesAsync(staged)).ShouldBe(bytes);
             Directory.GetFiles(input).Select(Path.GetFileName).OrderBy(name => name)
-                .ShouldBe(new[] { "attachment-001.zip", "source-001.md" });
+                .ShouldBe(new[] { "attachment-001.zip", "source-001.md", "source-manifest.json" });
 
             var invalid = fault switch
             {
