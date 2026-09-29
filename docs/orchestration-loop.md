@@ -340,6 +340,79 @@ Raising a host budget releases eligible held work on the next dispatch tick. Thi
 the existing explicit/default/local placement order; local overflow from a full default runner
 is a follow-on placement policy.
 
+### Post-land miss retrospective (CARD-0811)
+
+Rule 6's post-land sibling. A defect that a Clean Review approved and that was found only in the
+running system gets, alongside its ordinary fix card, a retrospective that records why the
+pipeline missed it and a Low-tier first pass at the instruction change that would have caught
+it. A defect Review or Mutation caught before land is the pipeline working; it is not a retrospective,
+so do not fire this for every bug fix.
+
+**Trigger: all five hold, each read from the API now, not from memory.**
+
+1. The fix card names the landed card (`CARD-nnnn`) and the observation: who saw what, where
+   (operator report, live incident, a Debug or Investigate finding against the running system)
+   and when.
+2. `GET /api/stage-outcomes?cardId=<landed-card-guid>&stage=Review` returns a latest row with
+   `outcome: Clean`, a `reviewedSourceSha` (C) and `supersedesId: null`. A latest `Found` row
+   means the pipeline caught it before land, or this retrospective already ran; stop.
+3. `GET /api/agent-tasks/<subjectTaskId>` from that row shows `landing.publication` `Landed` or
+   `AlreadyPresent`, `landing.verifiedSha` (L) and `landing.remoteConfirmedAt` (T).
+4. The observation is later than T and was made against a running build whose
+   `GET /api/version` SHA contains L (`git merge-base --is-ancestor <L> <version-sha>`). A
+   defect seen only in a worktree, on an unlanded branch or before activation is not a
+   retrospective.
+5. The landed card's `Post-land verification:` companion (CARD-0478) does not already report the
+   same defect from Mutation.
+
+**Record it before dispatching anything.** Create or discover one same-board Backlog companion:
+title `Post-land retrospective: <landed identifier>`, label `post-land-retrospective`, stable key
+`post-land-retrospective:<review-outcome-guid>` in the description. Search the board's Backlog,
+In Progress and Done cards client-side for the key before creating (`GET /api/cards` needs
+`boardId` and `status`); the key is discoverable text, not DB uniqueness, and one Review outcome
+gets one retrospective. Record the landed and fix card GUIDs, the Review task and outcome GUIDs,
+C, L, T, the observation source, `investigation pending` and `override pending`. Exclude the
+companion from feature picking; never Spawn it.
+
+Then override the Review finding so `scripts/stage-value-report.ps1` counts the miss:
+`delegate.ps1 -Finding <review-task-guid> -Stage Review -Found "post-land miss: <fix card> <one
+line>"`, but only when `landing.cleanup` is `Complete`. The override supersedes the Clean row, and
+a later `-Land` retry for residue or cleanup loads evidence by ID and refuses a superseded row
+(`review_evidence_superseded`); while cleanup is `Pending` or `Refused`, leave `override pending`
+on the companion and record the override after the cleanup retry lands.
+
+**Task A, the retrospective: `-Role Investigate -Worktree -Card <companion-guid>`, role-default
+tier.** Evidence only, no fix design; the fix card owns the fix. It writes
+`docs/investigations/<date>-card-<landed nnnn>-post-land-retrospective.md` with exactly these
+headings: `## Defect` (what the running system did, from the observation); `## What passed it`
+(the Review report's evidence lines, the plan's V/R rows and the checkpoint lines that covered the
+changed path, quoted with task and outcome GUIDs); `## Why it was missed`, exactly one of
+`not-designed` (no V/R row covered the case), `designed-not-asserted` (a row named it but its
+test did not assert the outcome), `asserted-wrong-layer` (asserted below the layer that failed),
+`bundle-gap` (the reviewer followed the bundle and the bundle does not ask for it),
+`reviewer-deviation` (the bundle asks for it and the report shows it was skipped),
+`environment-only` (reproducible only with the live host, data or provider), with the evidence
+for that one; `## Not done, noted`. It closes `next: none`. The brief carries every GUID from the
+companion, the plan path and the Review task's report (`GET /api/agent-tasks/<review-task-guid>`).
+Land it.
+
+**Task B, the instruction-gap pass: `-Role Docs -Kind ClaudeCode -Level Low` (or `-Kind Codex
+-Level Low`) `-Worktree -Card <companion-guid>`, after Task A lands.** Input: the retrospective
+file and its `## Why it was missed` line. Output: one appended section
+`## Instruction-gap proposal (Low tier)` in the same file, at most 25 lines, opening with one
+verdict, `no-instruction-change`, `doc-change`, `bundle-change` or `escalate`, then for a change
+the exact file, the sentence to add and, for a stage bundle, the sentence to remove so the file
+stays within its 2,480-character cap. Task B never edits a bundle, a test, or any doc other than
+its own section; a `not-designed` or `environment-only` miss usually reads
+`no-instruction-change`. Land it.
+
+**Disposition: yours, one action, no new column or alert.** `no-instruction-change`: close the
+companion Done, naming the classification and the file. `doc-change` or `bundle-change`: file one
+Backlog card `Instruction gap: <one line>` with the proposal as its description and label `instruction-gap`, linking the retrospective, then close
+the companion naming it; the ordinary pipeline's Plan judges the proposal, not you. `escalate`: move the companion to NeedsDecision
+with the question on the move revision. Never apply a Low-tier proposal to a bundle directly:
+bundles are size-capped and test-pinned and change through Code and Review like any file.
+
 ### Reprioritising the backlog
 
 An agent that can call the API — `delegate.ps1 -Role Custom` (or Plan), or a `ScheduleKind.Prompt`
