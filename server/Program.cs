@@ -669,7 +669,8 @@ try
         sp.GetRequiredService<IExpectationCatchUp>(),
         sp.GetRequiredService<IOptions<SupervisionSettings>>().Value,
         sp.GetRequiredService<ExpectationTimingSettings>(),
-        sp.GetRequiredService<SessionDeliveryProfile>()));
+        sp.GetRequiredService<SessionDeliveryProfile>(),
+        sp.GetRequiredService<IOptions<RetentionSettings>>().Value));
     builder.Services.AddScoped<ExpectationNudgeDeliveryService>();
     builder.Services.AddScoped<ExpectationResponseService>();
     builder.Services.AddScoped<ExpectationOperatorDeliveryService>();
@@ -876,17 +877,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     if (hangfireSettings.ServerEnabled)
     {
         builder.Services.AddHangfireServer(options => { options.WorkerCount = 1; options.Queues = ["default"]; });
-        if (ExpectationWatchdogJob.ShouldRun(hangfireSettings,
-            builder.Configuration.GetSection(ExpectationWatchdogSettings.SectionName)
-                .Get<ExpectationWatchdogSettings>() ?? new ExpectationWatchdogSettings()))
-        {
-            builder.Services.AddHangfireServer(options =>
-            {
-                options.WorkerCount = 1;
-                options.Queues = ["expectations"];
-            });
-        }
     }
+    HangfireConfiguration.AddExpectationWorker(builder.Services, hangfireSettings,
+        builder.Configuration.GetSection(ExpectationWatchdogSettings.SectionName)
+            .Get<ExpectationWatchdogSettings>() ?? new ExpectationWatchdogSettings());
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();

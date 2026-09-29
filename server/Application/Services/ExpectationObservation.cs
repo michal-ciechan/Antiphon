@@ -300,6 +300,7 @@ public sealed record ExpectationSnapshot
     public IReadOnlyList<ExpectationInFlightTask> InFlight { get; init; } = [];
     public IReadOnlyList<ExpectationNoteDebt> Notes { get; init; } = [];
     public bool NoteCoverageIncomplete { get; init; }
+    public IReadOnlySet<Guid> CheckedNoteIds { get; init; } = new HashSet<Guid>();
     public DateTime? NextNoteOutboxCursorAt { get; init; }
     public Guid? NextNoteOutboxCursorId { get; init; }
     public DateTime? NextNoteQueueCursorAt { get; init; }

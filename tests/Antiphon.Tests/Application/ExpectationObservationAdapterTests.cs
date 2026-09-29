@@ -187,15 +187,15 @@ public sealed class ExpectationObservationAdapterTests
         await using var firstDb = world.Db();
         var first = await new ExpectationSnapshotReader(firstDb).ReadAsync(world.Directive,
             world.Digest, world.Now, ExpectationProbeInput.None, CancellationToken.None);
-        first.Notes.Count.ShouldBe(105);
-        first.NoteCoverageIncomplete.ShouldBeFalse();
+        first.Notes.Count.ShouldBe(100);
+        first.NoteCoverageIncomplete.ShouldBeTrue();
         var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
         await using (var scanDb = world.Db())
             await world.Service(scanDb, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
         await using var secondDb = world.Db();
         var second = await new ExpectationSnapshotReader(secondDb).ReadAsync(world.Directive,
             world.Digest, world.Now.AddMinutes(1), ExpectationProbeInput.None, CancellationToken.None);
-        second.Notes.Count.ShouldBe(105);
+        second.Notes.Count.ShouldBe(5);
         first.Notes.Select(n => n.NotificationId).Concat(second.Notes.Select(n => n.NotificationId))
             .Distinct().Count().ShouldBe(105);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -203,6 +203,42 @@ public sealed class ExpectationObservationAdapterTests
             await world.Service(scanDb, clock).ScanAsync(world.Directive, ExpectationProbeInput.None, CancellationToken.None);
         await using var verify = world.Db();
         (await verify.ExpectationEpisodes.CountAsync(e => e.ResolvedAt == null)).ShouldBe(105);
+    }
+
+    [Test]
+    [Arguments(500)]
+    [Arguments(1500)]
+    public async Task C650_Note_scan_cost_is_bounded_at_history_scale(int historySize)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        await using (var db = world.Db())
+        {
+            db.AgentTasks.Add(world.Task(taskId, AgentTaskStatus.Succeeded, world.Now.AddMinutes(-30)));
+            db.SessionQueuedMessages.AddRange(Enumerable.Range(1, historySize).Select(i => Note(world, taskId, i)));
+            await db.SaveChangesAsync();
+        }
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        await using var firstDb = world.Db();
+        var first = await new ExpectationSnapshotReader(firstDb).ReadAsync(world.Directive,
+            world.Digest, world.Now, ExpectationProbeInput.None, CancellationToken.None);
+        timer.Stop();
+        first.Notes.Count.ShouldBe(100);
+        first.NoteCoverageIncomplete.ShouldBeTrue();
+        first.NextNoteQueueCursorId.ShouldNotBeNull();
+        timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8));
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(world.Now, TimeSpan.Zero));
+        await using (var scanDb = world.Db())
+            await world.Service(scanDb, clock).ScanAsync(world.Directive,
+                ExpectationProbeInput.None, CancellationToken.None);
+        await using var nextDb = world.Db();
+        var next = await new ExpectationSnapshotReader(nextDb).ReadAsync(world.Directive,
+            world.Digest, world.Now.AddMinutes(1), ExpectationProbeInput.None, CancellationToken.None);
+        next.Notes.Count.ShouldBe(100);
+        first.CheckedNoteIds.Intersect(next.CheckedNoteIds).ShouldBeEmpty();
     }
 
     [Test]

@@ -29,12 +29,12 @@ public sealed class ExpectationWatchdogService
         IExpectationCatchUp? catchUp = null,
         SupervisionSettings? supervision = null,
         ExpectationTimingSettings? timing = null,
-        SessionDeliveryProfile? deliveryProfile = null)
+        SessionDeliveryProfile? deliveryProfile = null, RetentionSettings? retention = null)
     {
         _db = db;
         _timing = timing ?? new ExpectationTimingSettings();
         _deliveryProfile = deliveryProfile;
-        _reader = new ExpectationSnapshotReader(db, delegation, supervision, _timing);
+        _reader = new ExpectationSnapshotReader(db, delegation, supervision, _timing, retention);
         _ledger = ledger;
         _time = time;
         _catchUp = catchUp ?? NoExpectationCatchUp.Instance;
@@ -138,11 +138,13 @@ public sealed class ExpectationWatchdogService
             evaluation.PreservesOpenEpisodes,
             previousScan,
             asOf,
+            snapshot.OpenEpisodes.Where(episode => episode.Kind == ExpectationEpisodeKind.UndeliveredNote
+                    && !snapshot.CheckedNoteIds.Any(id => episode.SubjectKey == ExpectationSubjects.Note(directive.Id, id)))
+                .Select(episode => episode.SubjectKey).ToHashSet(StringComparer.Ordinal),
             ct);
 
         await _ledger.RecordObservationAsync(directive.Id, digest, asOf,
-            successful: !snapshot.NoteCoverageIncomplete,
-            error: snapshot.NoteCoverageIncomplete ? "note page incomplete; cursor advanced" : null, ct);
+            successful: true, error: null, ct);
         _db.ChangeTracker.Clear();
 
         var nudge = await NudgeAsync(directive, digest, asOf, probes, DueConditions(evaluation).ToList(), ct);

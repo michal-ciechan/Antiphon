@@ -44,9 +44,6 @@ public static class ExpectationWatchdogPolicy
         var (silent, unknownSubjects) = Silent(snapshot, directive, timing);
         unknownSubjects.AddRange(snapshot.Lanes.Where(lane => !lane.ObservationKnown)
             .Select(lane => ExpectationSubjects.Capacity(directive.Id, lane.RunnerId)));
-        if (snapshot.NoteCoverageIncomplete)
-            unknownSubjects.AddRange(snapshot.OpenEpisodes.Where(episode => episode.Kind == ExpectationEpisodeKind.UndeliveredNote)
-                .Select(episode => episode.SubjectKey));
         var notes = Notes(snapshot, directive, timing);
         var observedClear = hadOpen && fenceKnown && !snapshot.NoteCoverageIncomplete
             && !fencePresent && pipelines.Count == 0 && !deficitRemains
@@ -59,7 +56,7 @@ public static class ExpectationWatchdogPolicy
             ScopedFences = scoped,
             Capacity = capacity,
             ObservedClear = observedClear,
-            PreservesOpenEpisodes = hadOpen && (!fenceKnown || snapshot.NoteCoverageIncomplete),
+            PreservesOpenEpisodes = hadOpen && !fenceKnown,
             SilentInFlight = silent,
             UndeliveredNotes = notes,
             UnknownSubjectKeys = unknownSubjects,

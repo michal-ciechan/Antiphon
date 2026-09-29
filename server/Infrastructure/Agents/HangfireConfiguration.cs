@@ -2,12 +2,23 @@ using Antiphon.Server.Application.Settings;
 using Hangfire;
 using Hangfire.InMemory;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Antiphon.Server.Infrastructure.Agents;
 
 /// <summary>CARD-0298: Hangfire storage options and recurring-job registration shared by Program and tests.</summary>
 internal static class HangfireConfiguration
 {
+    public static void AddExpectationWorker(IServiceCollection services, HangfireSettings hangfire,
+        ExpectationWatchdogSettings watchdog)
+    {
+        if (!ExpectationWatchdogJob.ShouldRun(hangfire, watchdog)) return;
+        services.AddHangfireServer(options =>
+        {
+            options.WorkerCount = 1;
+            options.Queues = ["expectations"];
+        });
+    }
     public static InMemoryStorageOptions CreateStorageOptions(HangfireSettings settings) =>
         new() { MaxExpirationTime = TimeSpan.FromDays(settings.HistoryRetentionDays) };
 

@@ -16,6 +16,7 @@ using Hangfire.InMemory;
 using Hangfire.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
@@ -58,6 +59,26 @@ public sealed class ExpectationWatchdogJobTests
         f.Producer.Sent.ShouldBeEmpty();
         await using var db = f.World.Db();
         (await db.ExpectationWatchStates.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C650_Worker_registration_uses_both_gates_and_adds_dedicated_host()
+    {
+        static int Hosts(IServiceCollection services) =>
+            services.Count(d => d.ServiceType == typeof(IHostedService));
+        var services = new ServiceCollection();
+        services.AddHangfire(config => config.UseInMemoryStorage(
+            HangfireConfiguration.CreateStorageOptions(new HangfireSettings())));
+        var baseline = Hosts(services);
+        HangfireConfiguration.AddExpectationWorker(services,
+            new HangfireSettings { ServerEnabled = false }, new ExpectationWatchdogSettings { Enabled = true });
+        HangfireConfiguration.AddExpectationWorker(services,
+            new HangfireSettings { ServerEnabled = true }, new ExpectationWatchdogSettings { Enabled = false });
+        Hosts(services).ShouldBe(baseline);
+        HangfireConfiguration.AddExpectationWorker(services,
+            new HangfireSettings { ServerEnabled = true }, new ExpectationWatchdogSettings { Enabled = true });
+        Hosts(services).ShouldBe(baseline + 1);
+        await Task.CompletedTask;
     }
 
     [Test]

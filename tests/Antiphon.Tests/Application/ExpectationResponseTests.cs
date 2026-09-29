@@ -192,6 +192,24 @@ public sealed class ExpectationResponseTests
             && n.OperatorOutboxState == ExpectationOperatorOutboxState.Due)).ShouldBe(50);
     }
 
+    [Test]
+    public async Task C650_Published_history_cannot_delay_fresh_operator_page()
+    {
+        await using var f = await ExpectationDeliveryFixture.CreateAsync();
+        for (var i = 0; i < 250; i++) await f.NudgeAsync();
+        await using (var db = f.Db())
+            await db.ExpectationNudges.Where(n => n.DirectiveId == f.World.Directive.Id)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(n => n.CreatedAt, DateTime.UtcNow.AddDays(-1))
+                    .SetProperty(n => n.OperatorOutboxState, ExpectationOperatorOutboxState.Published));
+        var fresh = await f.NudgeAsync();
+        await using (var db = f.Db())
+            await db.ExpectationNudges.Where(n => n.Id == fresh.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(n => n.CreatedAt, DateTime.UtcNow.AddMinutes(-10)));
+        await ReconcileAsync(f);
+        (await f.ReloadAsync(fresh.Id)).OperatorOutboxState.ShouldBe(ExpectationOperatorOutboxState.Due);
+    }
+
     private static async Task<ExpectationNudge> AttemptedAsync(ExpectationDeliveryFixture f,
         ExpectationAttemptState state = ExpectationAttemptState.Submitted) =>
         await f.NudgeAsync(state: state, destination: f.SessionId,

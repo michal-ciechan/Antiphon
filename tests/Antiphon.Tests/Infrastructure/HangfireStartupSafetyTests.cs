@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Antiphon.Server.Api.Endpoints;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Application.Services;
@@ -75,6 +76,8 @@ public class HangfireStartupSafetyTests
         using var scope = _factory.Services.CreateScope();
         scope.ServiceProvider.GetRequiredService<IExpectationCatchUp>()
             .ShouldBeOfType<ExpectationTranscriptCatchUp>();
+        scope.ServiceProvider.GetRequiredService<IExpectationPromptSender>()
+            .ShouldBeOfType<SessionQueueExpectationPromptSender>();
         scope.ServiceProvider.GetRequiredService<ExpectationWatchdogService>().ShouldNotBeNull();
         _factory.Services.GetRequiredService<IOptions<HangfireSettings>>().Value.ServerEnabled.ShouldBeFalse();
         _factory.Services.GetServices<IHostedService>()
