@@ -11,7 +11,22 @@ receipts below. The inherited CP-8 `PinnedAgentKindTests.T1/T2` failures for
 
 ## V-15 C-3/C-4
 
-Pending.
+The dispatched C-3 row now keeps the killed dispatcher's task/session identity,
+records a marked transcript closing turn, and settles that existing task through
+`AgentTaskReplyService`. The worker writes its output manifest under the actual
+request's output directory. A second process dies at the C-4 pre-claim boundary
+after normal settlement and before pump observation. A fresh probe then validates
+the output and must publish the converted attachment. The test checks the
+retained task id/session, transcript marker, output hash and accepted payload.
+
+An initial CP-6 run on `5a94ecc99720c712703ef661b65ca970ff6d3300` executed
+29 / passed 28 / failed 1 at `.antiphon/checkpoints/r35-cp6-a/`. The C-4
+barrier was initially after the pump's claim; the killed process left a five-minute
+lease on a two-minute conversion deadline, so immediate recovery stayed
+`Converting`. This did not validate the normal worker output. The barrier moved
+to just before claim; that cut still follows committed transcript settlement and
+precedes pump observation. Post-claim death with a short configured conversion
+deadline is a separate lease/deadline behavior and is not claimed by this case.
 
 ## Checkpoint receipts
 
