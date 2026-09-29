@@ -713,8 +713,8 @@ public sealed class ChannelOutboundRecoveryTests
                         .ShouldBe(1);
                 }
                 // C-4: kill a second process after the normal worker has settled and the
-                // output manifest is durable, but before the pump observes that settlement.
-                await WriteConfigAsync("prepare", "before-conversion-observation", acceptedId);
+                // output manifest is durable, before the pump claims/observes it.
+                await WriteConfigAsync("prepare", "before-conversion-claim", acceptedId);
                 File.Delete(markerPath);
                 child = StartProbe(probeDll, configPath);
                 using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
