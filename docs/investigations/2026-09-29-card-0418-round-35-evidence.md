@@ -32,7 +32,10 @@ executed 29 / passed 28 / failed 1 at `.antiphon/checkpoints/r35-cp6-b/`:
 the test's zero-offset recovery configuration selected the probe's deliberate
 refusing producer, so it reached `PublishUncertain`. The recovery offset is now
 one second, which selects the durable evidence producer without expiring the
-conversion deadline.
+conversion deadline. The next CP-6 rerun on `7a72c77ca24d5f59ab3b2574b763be40a791f484`
+executed 29 / passed 28 / failed 1 at `.antiphon/checkpoints/r35-cp6-c/`:
+the change hit the earlier task-creation call, not the post-C-4 recovery call.
+Both call sites are now corrected.
 
 ## Checkpoint receipts
 
