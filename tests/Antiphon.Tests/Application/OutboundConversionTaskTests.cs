@@ -57,6 +57,7 @@ public sealed class OutboundConversionTaskTests
             PromptText = "Use the local converter tool.", Trigger = "MarkdownSources",
             InputPath = snapshot.ReplyPath, InputSha256 = snapshot.ReplySha256,
             State = ChannelOutboundDeliveryState.Pending, CreatedAt = now, DeadlineAt = deadline,
+            LeaseOwner = Guid.NewGuid(), LeaseUntil = now.AddMinutes(5),
         };
         db.ChannelOutboundDeliveries.Add(delivery);
         await db.SaveChangesAsync();

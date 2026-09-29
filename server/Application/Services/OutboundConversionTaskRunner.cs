@@ -48,6 +48,19 @@ public sealed class OutboundConversionTaskRunner
             throw new InvalidDataException("The conversion prompt exceeds the task goal limit.");
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        // Lock and validate the claimed row in the same transaction as task creation.
+        // An expired owner that resumes after another pump's claim must not create
+        // a task from the stale in-memory delivery.
+        var fenced = await _db.ChannelOutboundDeliveries
+            .Where(d => d.Id == delivery.Id && d.Version == delivery.Version
+                && d.LeaseOwner == delivery.LeaseOwner
+                && d.State == ChannelOutboundDeliveryState.Pending
+                && d.LeaseUntil > DateTime.UtcNow)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.Version, d => d.Version + 1), ct);
+        if (fenced != 1)
+            throw new DbUpdateConcurrencyException("The outbound conversion lease changed before task creation.");
+        delivery.Version++;
+        _db.Entry(delivery).Property(d => d.Version).OriginalValue = delivery.Version;
         var created = await _tasks.CreateAsync(new CreateAgentTaskRequest(
             Goal: goal,
             Title: "Outbound conversion " + delivery.Id.ToString("N")[..8],
