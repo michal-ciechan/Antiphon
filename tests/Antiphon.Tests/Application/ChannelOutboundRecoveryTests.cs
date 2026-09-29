@@ -6,6 +6,7 @@ using Antiphon.Messaging.Tests.FakeSlack;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -591,21 +592,21 @@ public sealed class ChannelOutboundRecoveryTests
                     .ShouldBe(afterTaskCreation ? 1 : 0);
                 if (count == 1)
                 {
-                    var intent = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
-                    intent.Id.ShouldBe(acceptedId == Guid.Empty ? intent.Id : acceptedId);
-                    intent.InputSha256.ShouldBe(expectedInputHash);
-                    Sha256(await File.ReadAllBytesAsync(intent.InputPath)).ShouldBe(expectedInputHash);
-                    intent.OutputPath.ShouldBeNull();
-                    intent.OutputSha256.ShouldBeNull();
-                    intent.PublishedAt.ShouldBeNull();
-                    intent.PublicationAttempts.ShouldBe(0);
-                    intent.ConversionTaskId.HasValue.ShouldBe(afterTaskCreation);
-                    correlation.ChannelOutboundDeliveryId.ShouldBe(intent.Id);
+                    var cutIntent = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
+                    cutIntent.Id.ShouldBe(acceptedId == Guid.Empty ? cutIntent.Id : acceptedId);
+                    cutIntent.InputSha256.ShouldBe(expectedInputHash);
+                    Sha256(await File.ReadAllBytesAsync(cutIntent.InputPath)).ShouldBe(expectedInputHash);
+                    cutIntent.OutputPath.ShouldBeNull();
+                    cutIntent.OutputSha256.ShouldBeNull();
+                    cutIntent.PublishedAt.ShouldBeNull();
+                    cutIntent.PublicationAttempts.ShouldBe(0);
+                    cutIntent.ConversionTaskId.HasValue.ShouldBe(afterTaskCreation);
+                    correlation.ChannelOutboundDeliveryId.ShouldBe(cutIntent.Id);
                     if (afterTaskCreation)
                     {
                         var task = await verify.AgentTasks.AsNoTracking()
-                            .SingleAsync(t => t.OutboundDeliveryId == intent.Id);
-                        intent.ConversionTaskId.ShouldBe(task.Id);
+                            .SingleAsync(t => t.OutboundDeliveryId == cutIntent.Id);
+                        cutIntent.ConversionTaskId.ShouldBe(task.Id);
                         task.AgentId.ShouldBe(converterId);
                         task.ProjectId.ShouldBe(projectId);
                     }
