@@ -1,4 +1,7 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
+using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -6,6 +9,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
@@ -2077,6 +2081,223 @@ public partial class AgentTaskReplyIntegrationTests
             foreach (var path in attached)
                 (await File.ReadAllBytesAsync(path)).ShouldBe(expected[Path.GetFileName(path)]);
         }
+    }
+
+    [Test]
+    [Arguments("X", 4)]
+    [Arguments("Y", 4)]
+    [Arguments("Z", 4)]
+    [Arguments("X", 6)]
+    public async Task actual_completion_routes_source_bytes_directly_or_through_conversion(
+        string selected, int count)
+    {
+        using var workspace = new TempWorkspace();
+        var relative = Enumerable.Range(0, count).Select(i =>
+            $"docs/features/{(i == 0 ? "one" : i == 1 ? "two" : "other")}/{(i < 2 ? "shared" : $"source-{i}")}.md")
+            .ToArray();
+        var expected = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var path in relative)
+        {
+            var bytes = System.Text.Encoding.Unicode.GetPreamble()
+                .Concat(System.Text.Encoding.Unicode.GetBytes($"# {path}\r\nZażółć ✨  \r\n"))
+                .ToArray();
+            expected.Add(path, bytes);
+            var disk = Path.Combine(workspace.Path, path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(disk)!);
+            await File.WriteAllBytesAsync(disk, bytes);
+        }
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var conversationId = $"c0418-{selected}-{Guid.NewGuid():N}";
+        var now = DateTime.UtcNow;
+        await File.WriteAllTextAsync(Path.Combine(workspace.Path, "convert.md"), "Convert these sources.");
+        await using (var seed = CreateContext())
+        {
+            seed.Projects.Add(new Project { Id = projectId, Name = "completion-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "completion",
+                CreatedAt = now, UpdatedAt = now });
+            seed.Agents.AddRange(
+                new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                    Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = workspace.Path },
+                new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = workspace.Path });
+            seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "slack",
+                ExternalId = conversationId, ReplyHandle = conversationId + "|thread-1",
+                AgentId = inboundId, Enabled = true,
+                OutboundAgentProfile = selected == "X" ? "pdf" : null,
+                CreatedAt = now, UpdatedAt = now });
+            await seed.SaveChangesAsync();
+        }
+
+        var parent = await SeedSessionAsync(workspace.Path);
+        var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t =>
+        {
+            t.Role = AgentTaskRole.Docs;
+            t.ProjectId = projectId;
+            t.RepoPath = workspace.Path;
+        });
+        var report = "Wrote " + string.Join(", ", relative.Select(p => $"`{p}`")) + ".";
+        using var factory = NewDeliveryFactory();
+        var terminal = AttachTerminal(factory, parent);
+        await SeedParentHistoryAsync(parent);
+        await SeedTurnAsync(session, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(session, CancellationToken.None);
+        await Queue(factory).FlushSessionAsync(parent, CancellationToken.None);
+        var (note, _) = await AssertParentReceivedNoteAsync(parent, task, report);
+        terminal.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
+        note.Body.ShouldContain($"deliverable={count} md" + (count == 6 ? ", sources zip" : ""));
+
+        await using var db = CreateContext();
+        var settled = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        settled.DeliverablePdfPath.ShouldBeNull();
+        settled.DeliverableRenderError.ShouldBeNull();
+        var manifest = System.Text.Json.JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(
+            await File.ReadAllTextAsync(Path.Combine(settled.DeliverableBundleDir!,
+                DeliverableBundleService.SourceManifestName)),
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+        manifest.Complete.ShouldBeTrue();
+        manifest.Sources.Count.ShouldBe(count);
+        var attachments = DeliverableBundleService.ListAttachableFiles(settled).Select(path =>
+            new OutboundAttachment
+            {
+                Kind = AttachmentKind.File,
+                Name = Path.GetFileName(path),
+                Mime = count == 6 ? "application/zip" : "text/markdown",
+                Content = File.ReadAllBytes(path),
+            }).ToArray();
+        attachments.Length.ShouldBe(count == 6 ? 1 : count);
+        var reply = new ChannelReply
+        {
+            Channel = "slack", ConversationId = conversationId,
+            ReplyHandle = conversationId + "|thread-1", Text = "The four source documents are ready.",
+            Attachments = attachments,
+        };
+        reply.Text.ShouldNotContain("[[attach:");
+        var correlationId = Guid.NewGuid();
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = correlationId, AgentSessionId = parent, Body = note.Body, Sequence = 10,
+            Origin = QueuedMessageOrigin.Channel, Status = QueuedMessageStatus.Sent,
+            ConversationKey = "slack:" + conversationId, SourceTaskId = task.Id, CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["pdf"] = new() { ProjectId = projectId, AgentId = converterId,
+                    PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.MarkdownSources },
+            },
+        });
+        var producer = new FakeAntiphonMessagingClient();
+        var files = new ChannelOutboundFileStore(Path.Combine(workspace.Path, ".antiphon", "outbound"));
+        var outbound = new ChannelOutboundService(db, files, producer, settings, TimeProvider.System);
+        var source = new ChannelOutboundSource(parent, 2, 3, 4, "machine", [correlationId], task.Id);
+        var result = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+            source, CancellationToken.None);
+        var correlation = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId);
+        if (selected != "X")
+        {
+            result.ShouldBe(ChannelOutboundSendOutcome.Published);
+            producer.SentReplies.ShouldHaveSingleItem();
+            correlation.ChannelReplySettledAt.ShouldNotBeNull();
+            (await db.ChannelOutboundDeliveries.CountAsync(d => d.ChannelId == channelId)).ShouldBe(0);
+            AssertPublishedSources(producer.SentReplies.Single(), manifest, expected, false);
+            return;
+        }
+
+        result.ShouldBe(ChannelOutboundSendOutcome.Deferred);
+        producer.SentReplies.ShouldBeEmpty();
+        correlation.ChannelReplySettledAt.ShouldBeNull();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
+            .DeliverableDeliveredAt.ShouldBeNull();
+        var intent = await db.ChannelOutboundDeliveries.SingleAsync(d => d.ChannelId == channelId);
+        intent.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+        intent.PublishedAt.ShouldBeNull();
+        var requestPath = Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "request.json");
+        using (var request = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(requestPath)))
+        {
+            var sourceFiles = request.RootElement.GetProperty("sourceFiles").EnumerateArray().ToArray();
+            sourceFiles.Length.ShouldBe(count);
+            foreach (var file in sourceFiles)
+            {
+                var path = file.GetProperty("originalRelativePath").GetString()!;
+                var bytes = await File.ReadAllBytesAsync(Path.Combine(
+                    Path.GetDirectoryName(intent.InputPath)!, "input", file.GetProperty("localName").GetString()!));
+                bytes.ShouldBe(expected[path]);
+                file.GetProperty("sha256").GetString().ShouldBe(
+                    Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant());
+            }
+        }
+        var tasks = new AgentTaskService(db,
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings { AllowedRoots = [workspace.Path] }),
+            new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+            NullLogger<AgentTaskService>.Instance);
+        var runner = new OutboundConversionTaskRunner(db, tasks);
+        var conversionTaskId = await runner.CreateAsync(intent, CancellationToken.None);
+        var conversionTask = await db.AgentTasks.SingleAsync(t => t.Id == conversionTaskId);
+        conversionTask.OutboundDeliveryId.ShouldBe(intent.Id);
+        var pdf = "%PDF-1.4 four source fixture\n"u8.ToArray();
+        var output = Path.Combine(Path.GetDirectoryName(intent.InputPath)!, "output");
+        await File.WriteAllBytesAsync(Path.Combine(output, "combined.pdf"), pdf);
+        await File.WriteAllTextAsync(Path.Combine(output, "manifest.json"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                version = 1, deliveryId = intent.Id, disposition = "converted",
+                files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                    mime = "application/pdf", length = pdf.Length,
+                    sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pdf))
+                        .ToLowerInvariant() } },
+            }));
+        conversionTask.Status = AgentTaskStatus.Succeeded;
+        conversionTask.CompletedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        var pump = new ChannelOutboundDeliveryPump(db, runner, files, producer,
+            Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+            NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+        (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+        var published = producer.SentReplies.ShouldHaveSingleItem();
+        AssertPublishedSources(published, manifest, expected, true);
+        published.Attachments.Single(a => a.Name == "combined.pdf").Content.ShouldBe(pdf);
+        (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == intent.Id))
+            .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+        (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+            .ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
+    private static void AssertPublishedSources(ChannelReply published,
+        DeliverableBundleService.SourceManifest manifest, IReadOnlyDictionary<string, byte[]> expected,
+        bool converted)
+    {
+        published.Text.ShouldBe("The four source documents are ready.");
+        published.Attachments.Count.ShouldBe(manifest.Sources.Any(s => s.ZipEntry is not null)
+            ? (converted ? 2 : 1) : manifest.Sources.Count + (converted ? 1 : 0));
+        foreach (var member in manifest.Sources)
+        {
+            byte[] bytes;
+            if (member.ZipEntry is null)
+                bytes = published.Attachments.Single(a => a.Name == member.StoredFile).Content!;
+            else
+            {
+                var zip = published.Attachments.Single(a => a.Name == member.StoredFile).Content!;
+                using var archive = new System.IO.Compression.ZipArchive(new MemoryStream(zip));
+                using var stream = archive.GetEntry(member.ZipEntry)!.Open();
+                using var copy = new MemoryStream();
+                stream.CopyTo(copy);
+                bytes = copy.ToArray();
+            }
+            bytes.ShouldBe(expected[member.OriginalRelativePath]);
+            member.Sha256.ShouldBe(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+                .ToLowerInvariant());
+        }
+        if (!converted)
+            published.Attachments.Any(a => a.Name?.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) == true)
+                .ShouldBeFalse();
     }
 
     [Test]
