@@ -36,6 +36,14 @@ public static class OutputCleanup
                 continue;
             if (Directory.GetLastWriteTimeUtc(dir) >= cutoff)
                 continue;
+            var ownership = RunOwnershipStore.Read(dir);
+            if (ownership is null || !ContainedCleanup.SafeTree(dir, 10000))
+                continue;
+            var observed = ownership.Phase == "preparing"
+                ? new ProcessIdentityProbe().Observe(ownership.Starter)
+                : new ToolCopyCleanup().ObserveExecutor(dir);
+            if (observed.Verdict != ProcessVerdict.Dead)
+                continue;
             deleted.Add(dir);
             if (!dryRun)
                 Directory.Delete(dir, recursive: true);

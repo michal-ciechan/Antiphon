@@ -184,18 +184,37 @@ public static class Program
     private static int Stop(ArgSet options, string repo)
     {
         var run = ResolveRun(options, repo);
+        var cleanup = new ToolCopyCleanup();
+        var observed = cleanup.ObserveExecutor(run);
+        if (observed.Verdict is ProcessVerdict.Unknown or ProcessVerdict.ReusedPid)
+        {
+            Console.WriteLine("stop incomplete " + Path.GetFileName(run) + " " + observed.Reason);
+            return ExitCodes.StillRunning;
+        }
         var store = new RunStateStore();
         var state = store.TryRead(Path.Combine(run, "state.json"));
-        if (state is { ExecutorPid: > 0 })
+        if (observed.Verdict == ProcessVerdict.AliveSame)
         {
             try
             {
-                using var process = Process.GetProcessById(state.ExecutorPid);
+                var identity = ExecutorOwnershipStore.Read(run)?.Executor ?? RunOwnershipStore.Read(run)?.Launched;
+                if (identity is null)
+                    return ExitCodes.StillRunning;
+                using var process = Process.GetProcessById(identity.Pid);
+                if (new ProcessIdentityProbe().Observe(identity).Verdict != ProcessVerdict.AliveSame)
+                    return ExitCodes.StillRunning;
                 process.Kill(entireProcessTree: true);
+                if (!process.WaitForExit(10000))
+                {
+                    Console.WriteLine("stop incomplete " + Path.GetFileName(run) + " exit-timeout");
+                    return ExitCodes.StillRunning;
+                }
             }
-            catch
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException
+                                       or System.ComponentModel.Win32Exception)
             {
-                /* already gone */
+                Console.WriteLine("stop incomplete " + Path.GetFileName(run) + " " + ex.GetType().Name);
+                return ExitCodes.StillRunning;
             }
         }
 
@@ -205,6 +224,7 @@ public static class Program
             store.Write(Path.Combine(run, "state.json"), state);
         }
 
+        Console.WriteLine(cleanup.Remove(run));
         Console.WriteLine("stopped " + Path.GetFileName(run));
         return ExitCodes.Green;
     }

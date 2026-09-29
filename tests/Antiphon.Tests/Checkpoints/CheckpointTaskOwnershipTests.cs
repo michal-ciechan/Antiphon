@@ -7,7 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class CheckpointTaskOwnershipTests
+public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
 {
     [Test]
     public async Task settlement_cancels_two_drivers_and_skips_later_rows()
@@ -40,7 +40,7 @@ public sealed class CheckpointTaskOwnershipTests
             var manifest = new CheckpointManifest();
             for (var i = 1; i <= 3; i++)
                 manifest.Checkpoints.Add(new CheckpointSpec { Id = $"CP-{i}", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
-            var repo = CheckpointFixtures.TempDir();
+            var repo = TempDir();
             var run = CheckpointApp.CreateRun(manifest, new RunRequest
             {
                 Slots = "off", KeepOutputs = true, Parallel = 2,
@@ -69,6 +69,9 @@ public sealed class CheckpointTaskOwnershipTests
                 state.Rows.Single(row => row.Id == "CP-3").State.ShouldBe("owner-ended");
                 state.Reason.ShouldBe("owner-ended");
                 File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("exit=7");
+                var dead = new ProcessIdentityProbe().Current() with { Pid = int.MaxValue, StartUtcTicks = 1 };
+                ExecutorOwnershipStore.Write(run, dead);
+                CheckpointFixtures.MarkRun(run, alive: false);
                 (await new WaitCommand(liveness: new DeadLiveness()).WaitAsync(run, TimeSpan.FromSeconds(1),
                     TimeSpan.FromMinutes(1), TextWriter.Null, CancellationToken.None)).ShouldBe(ExitCodes.OwnerEnded);
             }
@@ -106,9 +109,9 @@ public sealed class CheckpointTaskOwnershipTests
         Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 }],
     };
 
-    private static string NewBoundRun(CheckpointManifest? manifest = null)
+    private string NewBoundRun(CheckpointManifest? manifest = null)
     {
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         return CheckpointApp.CreateRun(manifest ?? CommandManifest(), new RunRequest
         {
             Slots = "off", KeepOutputs = true, OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
@@ -127,7 +130,7 @@ public sealed class CheckpointTaskOwnershipTests
     {
         foreach (var status in new[] { "Succeeded", "Failed", "Canceled" })
         {
-            var root = CheckpointFixtures.TempDir();
+            var root = TempDir();
             var handler = new OwnerHandler { TaskStatus = status };
             var launches = 0;
             var runtime = new CheckpointApp.Runtime
@@ -200,7 +203,7 @@ public sealed class CheckpointTaskOwnershipTests
             Id = "CP-1", After = ["S1"], Build = "bin-a", Filter = "/*/*/FlakyTests/*",
             Expect = ["FlakyTests"], MinExecuted = 1, EstimatedMinutes = 1,
         });
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var retryRun = CheckpointApp.CreateRun(retryManifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, KnownFlaky = [flaky],
@@ -249,8 +252,8 @@ public sealed class CheckpointTaskOwnershipTests
         var driver = new ProcessDriver(factory);
         using var first = new CancellationTokenSource();
         using var second = new CancellationTokenSource();
-        var a = driver.RunAsync(new DriverRequest("fake", [], CheckpointFixtures.TempDir()), first.Token);
-        var b = driver.RunAsync(new DriverRequest("fake", [], CheckpointFixtures.TempDir()), second.Token);
+        var a = driver.RunAsync(new DriverRequest("fake", [], TempDir()), first.Token);
+        var b = driver.RunAsync(new DriverRequest("fake", [], TempDir()), second.Token);
         factory.Handles.Count.ShouldBe(2);
         first.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(() => a);
@@ -270,9 +273,9 @@ public sealed class CheckpointTaskOwnershipTests
         var driver = new ProcessDriver(factory);
         using var keepRunning = new CancellationTokenSource();
         var timed = RowTimeout.RunWithDeadlineAsync(driver,
-            new DriverRequest("fake", [], CheckpointFixtures.TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
+            new DriverRequest("fake", [], TempDir()), TimeSpan.FromMilliseconds(50), CancellationToken.None);
         var sibling = RowTimeout.RunWithDeadlineAsync(driver,
-            new DriverRequest("fake", [], CheckpointFixtures.TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
+            new DriverRequest("fake", [], TempDir()), TimeSpan.FromMinutes(1), keepRunning.Token);
         try
         {
             factory.Handles.Count.ShouldBe(2);
@@ -327,7 +330,7 @@ public sealed class CheckpointTaskOwnershipTests
         var factory = new StuckAfterKillFactory();
         var driver = new ProcessDriver(factory);
         using var cancel = new CancellationTokenSource();
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var log = Path.Combine(root, "console.log");
         var run = driver.RunAsync(new DriverRequest("fake", [], root, log), cancel.Token);
         cancel.Cancel();
@@ -430,13 +433,14 @@ public sealed class CheckpointTaskOwnershipTests
         (await CheckpointApp.ExecuteAsync(bound, CancellationToken.None, Runtime(handler))).ShouldBe(0);
         handler.Calls.ShouldBeGreaterThan(0);
 
-        var starterRoot = CheckpointFixtures.TempDir();
+        var starterRoot = TempDir();
         var starterHandler = new OwnerHandler();
         var starterRuntime = new CheckpointApp.Runtime
         {
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = starterHandler,
             Delay = HoldDelay, Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
-            Launch = _ => 123,
+            ToolDirectory = TinyToolDirectory(),
+            Launch = _ => Environment.ProcessId,
         };
         var started = await CheckpointApp.StartAsync(CommandManifest(), new RunRequest { Slots = "off", KeepOutputs = true },
             starterRoot, TextWriter.Null, starterRuntime);
@@ -531,7 +535,7 @@ public sealed class CheckpointTaskOwnershipTests
         var manifest = new CheckpointManifest();
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var run = CheckpointApp.CreateRun(manifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, Parallel = 1,
@@ -602,7 +606,7 @@ public sealed class CheckpointTaskOwnershipTests
         var manifest = new CheckpointManifest();
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var run = CheckpointApp.CreateRun(manifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, Parallel = 1,
@@ -651,12 +655,13 @@ public sealed class CheckpointTaskOwnershipTests
     public async Task owner_token_is_used_only_in_the_http_header()
     {
         var handler = new OwnerHandler();
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         LaunchRequest? launch = null;
         var runtime = new CheckpointApp.Runtime
         {
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler,
-            Launch = request => { launch = request; return 123; },
+            ToolDirectory = TinyToolDirectory(),
+            Launch = request => { launch = request; return Environment.ProcessId; },
         };
         var started = await CheckpointApp.StartAsync(CommandManifest(), new RunRequest(), root, TextWriter.Null, runtime);
         started.ExitCode.ShouldBe(0);
@@ -688,7 +693,7 @@ public sealed class CheckpointTaskOwnershipTests
             return Task.CompletedTask;
         });
         await Should.ThrowAsync<OperationCanceledException>(() => comparer.CompareAsync(
-            CheckpointFixtures.TempDir(), CheckpointFixtures.TempDir(), "origin/master",
+            TempDir(), TempDir(), "origin/master",
             [new ReportRow { Id = "CP-1", Filter = "/*/*/ExampleTests/*", Failures = [new ReportFailure { Name = "ExampleTests.method" }] }],
             [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }], canceled.Token));
         driver.Count(_ => true).ShouldBe(0);
@@ -697,7 +702,7 @@ public sealed class CheckpointTaskOwnershipTests
     [Test]
     public void ownership_loss_keeps_outputs_and_stops_new_cleanup()
     {
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var output = Path.Combine(repo, "bin-owned");
         Directory.CreateDirectory(output);
         var marker = Path.Combine(output, "marker.txt");
@@ -729,7 +734,7 @@ public sealed class CheckpointTaskOwnershipTests
         PlanTableImporter.ImportMarkdown(markdown.Replace("| 9 | 27 |", "| 9 | n/a |"), isWindows: true)
             .Manifest!.Checkpoints.Single().EstimatedMinutes.ShouldBe(9);
         var manifest = new CheckpointManifest { Checkpoints = [windows] };
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var run = CheckpointApp.CreateRun(manifest, new RunRequest { Slots = "off", KeepOutputs = true }, repo);
         var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null, Driver = new FakeDriver(),
             Slots = new FixedSlotClient("off"), Platform = new FakePlatform { IsWindows = true } };

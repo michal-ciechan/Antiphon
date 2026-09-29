@@ -5,12 +5,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class EvidenceFolderTests
+public sealed class EvidenceFolderTests : CheckpointTestBase
 {
     [Test]
     public async Task tool_copy_removal_retries_while_a_file_is_still_held_open()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
         Directory.CreateDirectory(Path.Combine(dir, "tool"));
         var locked = Path.Combine(dir, "tool", "YamlDotNet.dll");
         File.WriteAllText(locked, "x");
@@ -28,7 +29,7 @@ public sealed class EvidenceFolderTests
     [Test]
     public void red_run_writes_failures_with_message_stack_stdout_and_commands()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
         Directory.CreateDirectory(Path.Combine(dir, "rows", "CP-2"));
         Directory.CreateDirectory(Path.Combine(dir, "tool"));
         File.WriteAllText(Path.Combine(dir, "tool", "Antiphon.Checkpoints.dll"), "x");
@@ -53,7 +54,7 @@ public sealed class EvidenceFolderTests
     [Test]
     public void rerun_text_is_reset_for_each_row()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
         var model = Model(dir, exit: 1);
         model.Rows.Add(new ReportRow
         {
@@ -74,7 +75,7 @@ public sealed class EvidenceFolderTests
     [Test]
     public void green_run_leaves_the_executor_image()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
         var tool = Path.Combine(dir, "tool");
         Directory.CreateDirectory(tool);
         File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
@@ -88,7 +89,8 @@ public sealed class EvidenceFolderTests
     [Test]
     public void non_image_remove_drops_the_tool_copy()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
         Directory.CreateDirectory(Path.Combine(dir, "tool"));
         File.WriteAllText(Path.Combine(dir, "tool", "Antiphon.Checkpoints.dll"), "x");
         var model = Model(dir, exit: 0);
@@ -101,7 +103,7 @@ public sealed class EvidenceFolderTests
     [Test]
     public void host_and_git_snapshots_present()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
         var host = HostSnapshot.Capture("http://127.0.0.1:9/build-slots");
         var git = GitSnapshot.Capture(CheckpointFixtures.RepoRoot);
         File.WriteAllText(Path.Combine(dir, "host.txt"), host);

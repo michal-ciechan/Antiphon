@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class RowRunnerTests
+public sealed class RowRunnerTests : CheckpointTestBase
 {
     [Test]
     public async Task green_row_is_exit_0()
@@ -157,7 +157,7 @@ public sealed class RowRunnerTests
         return driver;
     }
 
-    private static Task<RowRunResult> Run(bool passed, int min, bool write = true, bool zero = false, bool noBuild = false,
+    private Task<RowRunResult> Run(bool passed, int min, bool write = true, bool zero = false, bool noBuild = false,
         List<string>? expect = null, List<KeyValuePair<string, string>>? properties = null, bool windows = false)
     {
         var driver = new FakeDriver();
@@ -179,7 +179,7 @@ public sealed class RowRunnerTests
         return Run(driver, passed, min, noBuild, expect, properties, windows);
     }
 
-    private static Task<RowRunResult> Run(FakeDriver driver, bool passed, int min, bool noBuild = false,
+    private Task<RowRunResult> Run(FakeDriver driver, bool passed, int min, bool noBuild = false,
         List<string>? expect = null, List<KeyValuePair<string, string>>? properties = null, bool windows = false)
     {
         var runner = new RowRunner(driver, new FakePlatform { IsWindows = windows });
@@ -189,8 +189,8 @@ public sealed class RowRunnerTests
             Project = "tests/Antiphon.Tests",
             OutputPath = "bin-ex/",
             Filter = "/*/*/Sample/*",
-            ResultsDirectory = Path.Combine(CheckpointFixtures.TempDir(), "row"),
-            WorkingDirectory = CheckpointFixtures.TempDir(),
+            ResultsDirectory = Path.Combine(TempDir(), "row"),
+            WorkingDirectory = TempDir(),
             NoBuild = noBuild,
             MinExecuted = min,
             Expect = expect ?? [],

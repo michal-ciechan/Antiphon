@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class CheckpointImportTests
+public sealed class CheckpointImportTests : CheckpointTestBase
 {
     [Test]
     public void imports_the_card_0688_table()
@@ -114,7 +114,7 @@ public sealed class CheckpointImportTests
         PlanTableImporter.TryParseMin("16 linux / 15 windows", isWindows: true, out var windows, out _).ShouldBeTrue();
         windows.ShouldBe(15);
         first.Filter.ShouldContain("|");
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var yaml = ManifestLoader.ToYaml(manifest);
         var roundTrip = ManifestLoader.LoadYaml(yaml, root);
         roundTrip.Checkpoints.Count.ShouldBe(9);
@@ -142,7 +142,7 @@ public sealed class CheckpointImportTests
         var manifest = imported.Manifest!;
         manifest.Checkpoints[0].Serial.ShouldBeTrue();
         manifest.Checkpoints[1].Serial.ShouldBeFalse();
-        var reloaded = ManifestLoader.LoadYaml(ManifestLoader.ToYaml(manifest), CheckpointFixtures.TempDir());
+        var reloaded = ManifestLoader.LoadYaml(ManifestLoader.ToYaml(manifest), TempDir());
         reloaded.Checkpoints[0].Serial.ShouldBeTrue();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -150,7 +150,7 @@ public sealed class CheckpointImportTests
         driver.When(_ => true, async (_, _) => { entered.TrySetResult(); await release.Task; return new DriverResult(0, "", ""); });
         var run = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
         {
-            Manifest = manifest, Rows = manifest.Checkpoints, RunDirectory = CheckpointFixtures.TempDir(),
+            Manifest = manifest, Rows = manifest.Checkpoints, RunDirectory = TempDir(),
             WorkingDirectory = CheckpointFixtures.RepoRoot, State = new RunState(), Slots = new FixedSlotClient("off"), Width = 2,
         }, CancellationToken.None);
         try
@@ -175,7 +175,7 @@ public sealed class CheckpointImportTests
         row.Environment["TUNIT_MAX_PARALLEL_TESTS"].ShouldBe("1");
         row.Environment["C760_VALUE"].ShouldBe("a=b");
         row.Environment["C760_EMPTY"].ShouldBe("");
-        var reload = ManifestLoader.LoadYaml(ManifestLoader.ToYaml(imported.Manifest), CheckpointFixtures.TempDir());
+        var reload = ManifestLoader.LoadYaml(ManifestLoader.ToYaml(imported.Manifest), TempDir());
         reload.Checkpoints.Single().Environment.ShouldBe(row.Environment);
         PlanTableImporter.ImportFile(CheckpointFixtures.Fixture("plan-table-0688.md")).Manifest!.Checkpoints[0].Environment.ShouldBeEmpty();
         var trimmed = PlanTableImporter.ImportMarkdown(Table("| Environment",
@@ -191,7 +191,7 @@ public sealed class CheckpointImportTests
         var original = Environment.GetEnvironmentVariable(name);
         var factory = new CapturingFactory();
         var runner = new RowRunner(new ProcessDriver(factory), new FakePlatform());
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         await runner.RunAsync(new RowRequest { Name = "A", Command = "true", ResultsDirectory = Path.Combine(root, "a"),
             WorkingDirectory = root, Environment = new Dictionary<string, string> { [name] = "a=b" } }, TextWriter.Null, CancellationToken.None);
         await runner.RunAsync(new RowRequest { Name = "B", Command = "true", ResultsDirectory = Path.Combine(root, "b"),
@@ -236,7 +236,7 @@ public sealed class CheckpointImportTests
         });
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-3", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         var factory = new CapturingFactory();
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var result = await new RunScheduler(new ProcessDriver(factory), new FakePlatform()).RunAsync(new SchedulerRequest
         {
             Manifest = manifest, Rows = manifest.Checkpoints, RunDirectory = root, WorkingDirectory = root,
@@ -295,9 +295,9 @@ public sealed class CheckpointImportTests
         var yaml = ManifestLoader.ToYaml(PlanTableImporter.ImportMarkdown(Table("| Environment",
             FilterRow("CP-1", "`tests/Antiphon.Tests -> bin-e/`", suffix: "| A=x"))).Manifest!);
         yaml = yaml.Replace("A: x", "1BAD: x");
-        Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(yaml, CheckpointFixtures.TempDir()));
+        Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(yaml, TempDir()));
         var duplicateYaml = yaml.Replace("1BAD: x", "A: x\n    a: y");
-        Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(duplicateYaml, CheckpointFixtures.TempDir()));
+        Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml(duplicateYaml, TempDir()));
     }
 
     [Test]
@@ -355,7 +355,7 @@ public sealed class CheckpointImportTests
     [Test]
     public async Task run_plan_and_import_resolve_the_committed_table_identically()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var plan = Path.Combine(CheckpointFixtures.RepoRoot, "docs", "superpowers", "plans", "2026-09-26-checkpoint-tool-hardening-plan.md");
         var output = Path.Combine(root, "import.yaml");
         (await Antiphon.Checkpoints.Program.RunAsync(["import", "--plan", plan, "--repo-root", root, "--out", output])).ShouldBe(0);
@@ -364,7 +364,8 @@ public sealed class CheckpointImportTests
         var runtime = new CheckpointApp.Runtime
         {
             EnvironmentLookup = _ => null,
-            Launch = _ => 123,
+            ToolDirectory = TinyToolDirectory(),
+            Launch = _ => Environment.ProcessId,
             Wait = path => { runDirectory = path; return Task.FromResult(0); },
         };
         foreach (var (slice, id, floor) in new[] { ("S1", "CP-1", 17), ("S2", "CP-2", 19), ("S3", "CP-3", 3) })
