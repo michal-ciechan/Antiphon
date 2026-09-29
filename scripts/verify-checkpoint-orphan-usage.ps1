@@ -142,12 +142,21 @@ try {
     $threshold = $false
     $partial = $false
     $resumed = $false
+    $partialRoot = $null
     $countCap = $true
     $byteCap = $true
     $scanCap = $true
     $descendantCap = $true
     $timeAccounted = $true
     for ($iteration = 1; $iteration -le 32; $iteration++) {
+        $resumeCandidate = $null
+        if ($null -ne $partialRoot -and (Test-Path -LiteralPath $partialRoot -PathType Container)) {
+            $marker = Get-Content -LiteralPath (Join-Path $partialRoot '.checkpoint-test-root.json') -Raw | ConvertFrom-Json
+            if ($marker.State -eq 'deleting' -and $marker.Owner.Pid -eq $deadIdentity.Pid -and
+                $marker.Owner.StartUtcTicks -eq $deadIdentity.StartUtcTicks) {
+                $resumeCandidate = $partialRoot
+            }
+        }
         $receiptPath = Join-Path $evidence ("sweep-$iteration.json")
         $psi = [Diagnostics.ProcessStartInfo]::new('dotnet')
         $psi.UseShellExecute = $false
@@ -175,14 +184,23 @@ try {
         $countCap = $countCap -and $receipt.CompletedRoots -le 16
         $byteCap = $byteCap -and $receipt.ReclaimedBytes -le 256MB
         $scanCap = $scanCap -and $receipt.Examined -le 512
-        $descendantCap = $descendantCap -and ($receipt.Skips.'inventory-incomplete-or-linked' -eq $null -or
-            $receipt.Skips.'inventory-incomplete-or-linked' -ge 0)
+        foreach ($item in $inventory.roots) {
+            if (-not (Test-Path -LiteralPath ([string]$item.path) -PathType Container)) { continue }
+            $entryCount = 1 + @(Get-ChildItem -LiteralPath ([string]$item.path) -Force -Recurse).Count
+            $descendantCap = $descendantCap -and $entryCount -le 10000
+        }
         $timeAccounted = $timeAccounted -and $receipt.Elapsed -ne $null
         if ($after.count -le 32 -and $after.allocatedBytes -le 256MB) { $threshold = $true }
-        if (@($inventory.roots | Where-Object { Test-Path -LiteralPath ([string]$_.path) -PathType Container }).Count -gt 0 -and
-            @($inventory.roots | Where-Object { (Test-Path -LiteralPath ([string]$_.path)) -and
-                ((Get-Content -LiteralPath (Join-Path ([string]$_.path) '.checkpoint-test-root.json') -Raw | ConvertFrom-Json).State -eq 'deleting') }).Count -gt 0) {
-            $partial = $true
+        if ($null -ne $resumeCandidate -and -not (Test-Path -LiteralPath $resumeCandidate)) {
+            $resumed = $true
+        }
+        foreach ($item in $inventory.roots) {
+            if (-not (Test-Path -LiteralPath ([string]$item.path) -PathType Container)) { continue }
+            $marker = Get-Content -LiteralPath (Join-Path ([string]$item.path) '.checkpoint-test-root.json') -Raw | ConvertFrom-Json
+            if ($marker.State -eq 'deleting') {
+                $partial = $true
+                $partialRoot = [string]$item.path
+            }
         }
         foreach ($fixture in $fixtures) {
             if (-not (Test-Path -LiteralPath $fixture.payload)) { throw "Protected fixture removed: $($fixture.name)" }
@@ -199,7 +217,7 @@ try {
     Assert-Check 'descendant-scan-cap' $descendantCap 'all inventories stayed within 10000 entries'
     Assert-Check 'time-budget-accounted' $timeAccounted 'all receipts include elapsed time'
     Assert-Check 'partial-marker-retained' $partial '300 MiB root had a deleting marker'
-    Assert-Check 'resumed-custody-rechecked' ($passes.Count -gt 1) 'multiple admitted passes completed'
+    Assert-Check 'resumed-custody-rechecked' $resumed 'a deleting root retained its owner marker and was removed on a later admitted pass'
     Assert-Check 'count-target' $threshold 'eligible count crossed <=32'
     Assert-Check 'bytes-target' $threshold 'eligible bytes crossed <=256 MiB'
     Assert-Check 'eligible-drained' ($after.count -eq 0 -and $after.allocatedBytes -eq 0) "count=$($after.count) bytes=$($after.allocatedBytes)"
