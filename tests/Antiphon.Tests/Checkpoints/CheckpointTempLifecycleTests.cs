@@ -50,6 +50,7 @@ public sealed class CheckpointTempLifecycleTests : CheckpointTestBase
         psi.Environment["TMP"] = sandbox;
         psi.Environment["C804_LIFECYCLE_ROOTS"] = inventory;
         psi.Environment["C804_LIFECYCLE_CHILD_PID"] = childPid;
+        psi.Environment.Remove("C804_ROSTER_FILE");
         using var process = Process.Start(psi)!;
         RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync();
