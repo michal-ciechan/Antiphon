@@ -83,22 +83,28 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         var request = Request("LiveRoot");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var owner = new WindowsScriptHarnessProcess(request);
+        ScriptHarnessProcessFixture.ObservedTree? tree = null;
         try
         {
             (owner.QueryLimitFlagsForTesting() & WindowsScriptHarnessProcess.JobObjectLimitKillOnJobClose)
                 .ShouldBe(WindowsScriptHarnessProcess.JobObjectLimitKillOnJobClose,
                     "The private job must carry kill-on-close before relying on it as a safety net.");
             var root = owner.StartAndWaitForRootAsync(deadline.Token);
-            var tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => request, root);
+            tree = await ScriptHarnessProcessFixture.WaitReadyAsync(() => request, root);
             owner.Dispose();
             var clock = Stopwatch.StartNew();
             while ((tree.Root.Executing() || tree.Child.Executing() || tree.Grandchild.Executing()) &&
                    clock.Elapsed < TimeSpan.FromSeconds(5))
                 await Task.Delay(20);
-            tree.AssertDeadBeforeEmergencySweep();
+            // Direct construction bypasses ScriptHarnessProcess.RunAsync's own results-directory
+            // deletion, so only process death is this owner's contract; DeletePaths below is the
+            // test's own cleanup, not evidence of the coordinator's cleanup path.
+            tree.Root.Executing().ShouldBeFalse("Script root remained executing after job close.");
+            tree.Child.Executing().ShouldBeFalse("Fixture child remained executing after job close.");
+            tree.Grandchild.Executing().ShouldBeFalse("Fixture grandchild remained executing after job close.");
             _ = await ScriptHarnessProcessFixture.CaptureAsync(root);
         }
-        finally { owner.Dispose(); DeletePaths(request); }
+        finally { tree?.EmergencyStop(); owner.Dispose(); DeletePaths(request); }
     }
 
     [Test]
@@ -228,10 +234,9 @@ public sealed class ScriptHarnessWindowsOwnershipTests
         {
             ScriptProcessRequest? request = null;
             var faults = new WindowsFaultInjection { SkipTerminateKill = true };
-            WindowsScriptHarnessProcess? owner = null;
             var options = ScriptHarnessProcessFixture.Options() with
             {
-                OwnerFactory = value => { request = value; return owner = new WindowsScriptHarnessProcess(value, faults); }
+                OwnerFactory = value => { request = value; return new WindowsScriptHarnessProcess(value, faults); }
             };
             var run = ScriptHarnessProcess.RunAsync("fixture", "C806", "LiveRoot", ScriptHarnessProcessFixture.ScriptPath,
                 options, CancellationToken.None);
@@ -241,11 +246,13 @@ public sealed class ScriptHarnessWindowsOwnershipTests
                 var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
                 error.ShouldBeOfType<TimeoutException>();
                 error!.Message.ShouldContain("cleanup:");
-                WindowsScriptHarnessProcess.QueryActiveProcessesForTesting(owner!.JobHandleForTesting).ShouldBeGreaterThan(0u);
+                // The coordinator's own cleanup already disposed owner's job handle by the time
+                // CaptureAsync returns; query the independently retained duplicate instead.
+                WindowsScriptHarnessProcess.QueryActiveProcessesForTesting(faults.JobHandleCopy!).ShouldBeGreaterThan(0u);
                 Directory.Exists(tree.ResultsDirectory).ShouldBeTrue(
                     "Cleanup must not delete owned paths while a real member remains alive.");
             }
-            finally { tree.EmergencyStop(); DeletePaths(request!); }
+            finally { tree.EmergencyStop(); faults.JobHandleCopy?.Dispose(); DeletePaths(request!); }
         }
         {
             var request = Request("Passing");
