@@ -307,14 +307,14 @@ public sealed class ChannelOutboundFileStore : IChannelOutboundFileStore
             if (!File.Exists(path) || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)
                 || new FileInfo(path).Length != file.Length || rawBytes + file.Length > MaxRawAttachmentBytes)
                 throw new InvalidDataException("A converted file is missing, linked or oversized.");
-            // Open the inspected file itself, without following a link introduced
-            // between inspection and opening. Keep that handle through the copy:
-            // a later rename cannot redirect the read to another file.
+            // Keep the inspected file's handle through the copy: a later rename
+            // cannot redirect the read to another file. Recheck link status
+            // immediately after opening as well as before it.
             await using var reader = new FileStream(path, new FileStreamOptions
             {
                 Mode = FileMode.Open, Access = FileAccess.Read,
                 Share = FileShare.Read | FileShare.Delete,
-                Options = FileOptions.OpenReparsePoint | FileOptions.Asynchronous,
+                Options = FileOptions.Asynchronous,
             });
             if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
                 throw new InvalidDataException("A converted file became linked before sealing.");
