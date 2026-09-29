@@ -1,0 +1,152 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Text;
+
+if (args.Length >= 3 && args[0] == "fixture-child")
+    return await FixtureChild(args[1], args[2]);
+if (args.Length >= 3 && args[0] == "fixture-grandchild")
+    return await FixtureGrandchild(args[1], args[2]);
+if (args.Length < 9 || args[0] != "linux-owner" || !OperatingSystem.IsLinux()) return 2;
+var socketPath = args[1];
+var nonce = args[2];
+var executable = args[3];
+var script = args[4];
+var caseName = args[5];
+var results = args[6];
+if (!long.TryParse(args[7], NumberStyles.None, CultureInfo.InvariantCulture, out var failsafeMs) || failsafeMs <= 0)
+    return 2;
+// The final argument is reserved for future fixture modes and validates the wire shape.
+if (args[8] != "v1") return 2;
+
+var pid = getpid();
+if (setsid() != pid || getpgid(0) != pid || getsid(0) != pid) return 3;
+using var failsafe = new CancellationTokenSource(TimeSpan.FromMilliseconds(failsafeMs));
+using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+try
+{
+    await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), failsafe.Token);
+    using var stream = new NetworkStream(socket, ownsSocket: false);
+    var startTicks = ReadStart(pid);
+    await WriteFrame(stream, $"HELLO {nonce} {pid} {startTicks} {pid} {pid}", failsafe.Token);
+    var authorization = await ReadFrame(stream, failsafe.Token);
+    if (authorization != "START " + nonce) return 4;
+
+    var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Directory.GetCurrentDirectory() };
+    foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script, "-Case", caseName, "-ResultsDirectory", results })
+        psi.ArgumentList.Add(arg);
+    foreach (var arg in args.Skip(9)) psi.ArgumentList.Add(arg);
+    using var root = Process.Start(psi) ?? throw new InvalidOperationException("pwsh did not start.");
+    var rootStart = ReadStart(root.Id);
+    await WriteFrame(stream, $"ROOT {nonce} {root.Id} {rootStart}", failsafe.Token);
+    // The child inherited both writers. Keeping copies here would make EOF depend
+    // on the supervisor's lifetime rather than the logical script tree.
+    CloseOwnOutputWriters();
+
+    var rootExit = Task.Run(async () =>
+    {
+        await root.WaitForExitAsync(failsafe.Token);
+        await WriteFrame(stream, $"EXIT {nonce} {root.Id} {rootStart} {root.ExitCode}", failsafe.Token);
+    });
+    while (true)
+    {
+        var frame = await ReadFrame(stream, failsafe.Token);
+        if (frame == "STOP " + nonce) break;
+        // A malformed command ends custody without executing the script further.
+        break;
+    }
+}
+catch (OperationCanceledException) when (failsafe.IsCancellationRequested) { }
+catch (EndOfStreamException) { }
+catch (IOException) { }
+finally
+{
+    // Only this supervisor signals its own verified group. The parent never sends
+    // a delayed signal to a saved group number that could have been recycled.
+    if (getpid() == pid && getpgid(0) == pid && getsid(0) == pid && pid > 1)
+        kill(-pid, 9);
+}
+return 5;
+
+static long ReadStart(int pid)
+{
+    var stat = File.ReadAllText($"/proc/{pid}/stat");
+    var end = stat.LastIndexOf(") ", StringComparison.Ordinal);
+    var fields = stat[(end + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    return long.Parse(fields[19], CultureInfo.InvariantCulture);
+}
+
+static async Task<string> ReadFrame(Stream stream, CancellationToken token)
+{
+    using var bytes = new MemoryStream();
+    var one = new byte[1];
+    while (bytes.Length <= 4096)
+    {
+        if (await stream.ReadAsync(one, token) == 0) throw new EndOfStreamException();
+        if (one[0] == (byte)'\n') return Encoding.UTF8.GetString(bytes.ToArray());
+        bytes.WriteByte(one[0]);
+    }
+    throw new InvalidDataException("Control frame exceeds 4096 bytes.");
+}
+
+static Task WriteFrame(Stream stream, string message, CancellationToken token) =>
+    stream.WriteAsync(Encoding.UTF8.GetBytes(message + "\n"), token).AsTask();
+
+static void CloseOwnOutputWriters(bool closeStdout = true, bool closeStderr = true)
+{
+    // dotnet's redirected-process launch can leave duplicate write descriptors
+    // (for example 6/7) in the supervisor in addition to fd 1/2. They must all
+    // be closed or a completed pwsh never gives the host stream EOF.
+    var targets = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var fd in new[] { closeStdout ? 1 : -1, closeStderr ? 2 : -1 })
+    {
+        var target = ReadFdTarget(fd);
+        if (target is not null && target.StartsWith("pipe:[", StringComparison.Ordinal)) targets.Add(target);
+    }
+    var descriptors = Directory.EnumerateFileSystemEntries("/proc/self/fd")
+        .Select(Path.GetFileName).Select(value => int.TryParse(value, out var fd) ? fd : -1)
+        .Where(fd => fd >= 1).ToArray();
+    foreach (var fd in descriptors)
+    {
+        var target = ReadFdTarget(fd);
+        if (target is not null && targets.Contains(target) && close(fd) != 0)
+            throw new IOException($"Failed to close inherited output descriptor {fd}.");
+    }
+}
+
+static string? ReadFdTarget(int fd)
+{
+    var bytes = new byte[256];
+    var count = readlink($"/proc/self/fd/{fd}", bytes, (nuint)bytes.Length);
+    return count > 0 ? Encoding.UTF8.GetString(bytes, 0, (int)count) : null;
+}
+
+static async Task<int> FixtureChild(string directory, string heldStream)
+{
+    Directory.CreateDirectory(directory);
+    var helper = typeof(Program).Assembly.Location;
+    var psi = new ProcessStartInfo("dotnet") { UseShellExecute = false };
+    foreach (var arg in new[] { helper, "fixture-grandchild", directory, heldStream }) psi.ArgumentList.Add(arg);
+    using var grandchild = Process.Start(psi) ?? throw new InvalidOperationException("Fixture grandchild did not start.");
+    File.WriteAllText(Path.Combine(directory, "child"), $"{Environment.ProcessId} {Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks} {(OperatingSystem.IsLinux() ? ReadStart(Environment.ProcessId) : 0)}");
+    CloseOwnOutputWriters(heldStream is "stderr" or "none", heldStream is "stdout" or "none");
+    await Task.Delay(TimeSpan.FromSeconds(20));
+    return 0;
+}
+
+static async Task<int> FixtureGrandchild(string directory, string heldStream)
+{
+    File.WriteAllText(Path.Combine(directory, "grandchild"), $"{Environment.ProcessId} {Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks} {(OperatingSystem.IsLinux() ? ReadStart(Environment.ProcessId) : 0)}");
+    CloseOwnOutputWriters(heldStream is "stderr" or "none", heldStream is "stdout" or "none");
+    await Task.Delay(TimeSpan.FromSeconds(20));
+    return 0;
+}
+
+[DllImport("libc", SetLastError = true)] static extern int setsid();
+[DllImport("libc", SetLastError = true)] static extern int getpid();
+[DllImport("libc", SetLastError = true)] static extern int getpgid(int pid);
+[DllImport("libc", SetLastError = true)] static extern int getsid(int pid);
+[DllImport("libc", SetLastError = true)] static extern int kill(int pid, int signal);
+[DllImport("libc", SetLastError = true)] static extern int close(int fd);
+[DllImport("libc", SetLastError = true)] static extern nint readlink(string path, byte[] buffer, nuint size);
