@@ -32,6 +32,25 @@ namespace Antiphon.Tests.Application;
 public class CardWorkTransitionServiceTests
 {
     [Test]
+    public async Task Unbound_conversion_worker_cannot_move_a_source_card_but_bound_work_can()
+    {
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var card = await world.SeedCardAsync(CardStatus.Backlog);
+        await world.SeedTaskAsync(card.Id, AgentTaskStatus.Queued, role: AgentTaskRole.Custom);
+        await world.SeedTaskAsync(null, AgentTaskStatus.Dispatched,
+            dispatchedAt: world.Now, role: AgentTaskRole.Custom);
+
+        (await world.ScanAsync()).ShouldBe(0);
+        (await world.ReadCardAsync(card.Id)).Status.ShouldBe(CardStatus.Backlog);
+        (await world.MoveCountAsync(card.Id)).ShouldBe(0);
+
+        await world.SeedTaskAsync(card.Id, AgentTaskStatus.Dispatched,
+            dispatchedAt: world.Now.AddSeconds(1), role: AgentTaskRole.Custom);
+        (await world.ScanAsync()).ShouldBe(1);
+        (await world.ReadCardAsync(card.Id)).Status.ShouldBe(CardStatus.InProgress);
+    }
+
+    [Test]
     public async Task a_dispatched_task_moves_its_backlog_card_to_in_progress()
     {
         await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
@@ -495,7 +514,7 @@ public class CardWorkTransitionServiceTests
         }
 
         public async Task<AgentTask> SeedTaskAsync(
-            Guid cardId,
+            Guid? cardId,
             AgentTaskStatus status,
             DateTime? dispatchedAt = null,
             DateTime? completedAt = null,
