@@ -10,6 +10,10 @@ namespace Antiphon.SessionRunner.Tests;
 public class RunnerCapabilitiesTests
 {
     [Test]
+    public void Phone_home_adapter_advertises_workspaceRepositoryV1() =>
+        PhoneHomeRuntimeAdapter.StaticFeatures.ShouldContain(RunnerCapabilityFeatures.WorkspaceRepositoryV1);
+
+    [Test]
     public void Declared_transcript_formats_match_the_formats_implemented_by_the_runner()
     {
         // The runtime's list is the gate used before its Grok/Codex/Claude dispatch branches and

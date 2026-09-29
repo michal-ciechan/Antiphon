@@ -105,7 +105,7 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     private RunnerWorkspaceService Workspace() =>
-        _workspace ??= new RunnerWorkspaceService(_settings.RunnerRepository, _settings.AllowedCwd);
+        _workspace ??= new RunnerWorkspaceService(_settings.RepositoryPolicy(), _settings.AllowedCwd);
 
     private async Task WriteSpillIfPresentAsync(PhoneHomeFrame request, CancellationToken ct)
     {
