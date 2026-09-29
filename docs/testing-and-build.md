@@ -256,6 +256,17 @@ deletion-only set, old identities, kept Markdown, final-tree and blob-recovery
 checks. Omission preserves CARD-1015's anchored contract; `CARD-1015` is not an
 allowed supplemental label. Run the full task-range history guard separately.
 
+`Antiphon.Tests` ScriptHarness invocations own a private Windows Job Object or
+Linux process group before running PowerShell. One 300-second deadline covers
+launch, logical root exit, stdout EOF and stderr EOF. Every outcome explicitly
+terminates the owner, even if the logical root has exited or both streams have
+closed; cleanup has a separate total 10-second budget. Native regression cases
+use a 5-second execution budget and 2-second cleanup budget. Their portable
+helper is staged beside the test output in `script-harness-host/`. The Windows
+owner requires a real `pwsh.exe` path, and the Linux owner requires its confirmed
+private-session supervisor. A failed death or pipe observation retains the
+invocation's results/control directories for diagnosis.
+
 Use the checkpoint tool for repeated class runs. Before any ad hoc destructive shell cleanup, verify both variable components are nonempty, quote their expansions, and resolve the target inside the intended scratch root; a missing component must exit nonzero before `rm`.
 
 A Plan/TestDesign artifact ends its `## Verification design` with a `### Checkpoints` table: one row per isolated build plus one exact test-filter group, bound to the plan slice it closes, and a Code dispatch runs that table as a **closed list** rather than an ad hoc build/test loop. It removes the extra rebuilds (CARD-0490 ran 19 builds for 8 test runs), the hunting for files the plan already named, and the second Code round that CARD-0459 paid for; it does not shrink the named Slow/native V/R work, which is the coverage itself (investigation `docs/superpowers/investigations/2026-09-20-card-0585-batched-edit-test-workflow.md`).
