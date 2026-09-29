@@ -174,7 +174,9 @@ public sealed class ExpectationResponseTests
         await using (var db = f.Db())
             await db.ExpectationNudges.Where(n => n.DirectiveId == f.World.Directive.Id)
                 .ExecuteUpdateAsync(u => u.SetProperty(n => n.CreatedAt, DateTime.UtcNow.AddMinutes(-10)));
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var minute = now.UtcDateTime.Ticks / TimeSpan.TicksPerMinute;
+        var clock = new FakeTimeProvider(now.AddMinutes((3 - minute % 3) % 3));
         await using (var db = f.Db())
             await new ExpectationResponseService(db, clock, f.CatchUp,
                 new ExpectationTimingSettings()).ReconcileAsync(f.World.Directive, CancellationToken.None);
