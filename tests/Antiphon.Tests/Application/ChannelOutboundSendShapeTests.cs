@@ -70,6 +70,7 @@ public sealed partial class ChannelOutboundDeliveryTests
                 services.AddScoped<ChannelOutboundService>();
             },
         });
+        Guid? channelId = null;
         try
         {
             await using (var db = Db(h))
@@ -86,7 +87,6 @@ public sealed partial class ChannelOutboundDeliveryTests
                     .ExecuteUpdateAsync(u => u.SetProperty(a => a.BoardId, boardId));
             }
             var conversation = await h.BindChannelAsync();
-            Guid channelId;
             await using (var db = Db(h))
             {
                 var channel = await db.ChatChannels.SingleAsync(c => c.ExternalId == conversation);
@@ -120,6 +120,9 @@ public sealed partial class ChannelOutboundDeliveryTests
                         DeliverableBundleDir = bundle, CreatedAt = DateTime.UtcNow,
                     });
                     await db.SaveChangesAsync();
+                    if (shape == "manifest-zip")
+                        DeliverableBundleService.ListAttachableFiles(await db.AgentTasks
+                            .SingleAsync(t => t.Id == taskId)).ShouldContain(zip);
                 }
             }
 
@@ -182,7 +185,11 @@ public sealed partial class ChannelOutboundDeliveryTests
             {
                 var intents = await db.ChannelOutboundDeliveries.AsNoTracking()
                     .Where(d => d.ChannelId == channelId).ToListAsync();
-                intents.Count.ShouldBe(converts ? 1 : 0);
+                var directDetails = shape == "manifest-zip" && intents.Count == 0
+                    ? $" direct=[{string.Join(", ", h.Messaging.SentReplies.Select(r =>
+                        r.Text + ":" + string.Join("/", r.Attachments.Select(a => a.Name))))}]"
+                    : "";
+                intents.Count.ShouldBe(converts ? 1 : 0, shape + directDetails);
                 if (converts)
                 {
                     var intent = intents.ShouldHaveSingleItem();
@@ -232,13 +239,24 @@ public sealed partial class ChannelOutboundDeliveryTests
         finally
         {
             await using var db = Db(h);
+            var deliveryIds = channelId is Guid id
+                ? await db.ChannelOutboundDeliveries.Where(d => d.ChannelId == id)
+                    .Select(d => d.Id).ToArrayAsync()
+                : [];
+            await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId
+                && m.ChannelOutboundDeliveryId != null
+                && deliveryIds.Contains(m.ChannelOutboundDeliveryId.Value))
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.ChannelOutboundDeliveryId,
+                    (Guid?)null));
             await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId
                 && m.SourceTaskId == taskId)
                 .ExecuteUpdateAsync(u => u.SetProperty(m => m.SourceTaskId, (Guid?)null));
-            await db.AgentTasks.Where(t => t.ProjectId == projectId
-                && (t.OutboundDeliveryId != null || t.Id == taskId))
+            await db.AgentTasks.Where(t => t.Id == taskId
+                || (t.OutboundDeliveryId != null
+                    && deliveryIds.Contains(t.OutboundDeliveryId.Value)))
                 .ExecuteDeleteAsync();
-            await db.ChannelOutboundDeliveries.Where(d => d.ProjectId == projectId).ExecuteDeleteAsync();
+            await db.ChannelOutboundDeliveries.Where(d => deliveryIds.Contains(d.Id))
+                .ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == h.AgentId)
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.BoardId, (Guid?)null));
             await db.Agents.Where(a => a.Id == converterId).ExecuteDeleteAsync();
