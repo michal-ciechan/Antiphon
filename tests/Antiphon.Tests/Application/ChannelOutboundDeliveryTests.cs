@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
@@ -23,6 +24,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class ChannelOutboundDeliveryTests
 {
     [Test]
@@ -767,6 +769,44 @@ public sealed partial class ChannelOutboundDeliveryTests
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
             options.Value.Profiles["conversion"].Trigger = ChannelOutboundTrigger.EveryAgentReply;
             producer.SentReplies.ShouldBeEmpty();
+            // Restart a separate worker process after both inbound-derived replies are durable.
+            // Its pending heads are leased so the probe can only inspect the queued follower.
+            var restartLease = Guid.NewGuid();
+            await db.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId
+                && d.State == ChannelOutboundDeliveryState.Pending)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.LeaseOwner, restartLease)
+                    .SetProperty(d => d.LeaseUntil, DateTime.UtcNow.AddMinutes(5)));
+            var probeDll = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
+                "Antiphon.ChannelOutbound.Probe.dll");
+            File.Exists(probeDll).ShouldBeTrue();
+            var restartSent = Path.Combine(root, "restart-sent.bin");
+            var probeConfig = Path.Combine(root, "restart-probe.json");
+            await File.WriteAllTextAsync(probeConfig, JsonSerializer.Serialize(new
+            {
+                ConnectionString = TestDbFixture.ConnectionString,
+                StoreRoot = Path.Combine(root, "outbound"), DeliveryId = Guid.NewGuid(),
+                EvidencePath = restartSent, MarkerPath = Path.Combine(root, "restart-marker"),
+                Barrier = (string?)null, ClockOffsetSeconds = 0,
+            }));
+            var start = new ProcessStartInfo("dotnet") { UseShellExecute = false };
+            start.ArgumentList.Add(probeDll);
+            start.ArgumentList.Add(probeConfig);
+            using (var restartedWorker = Process.Start(start)!)
+            {
+                using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                try { await restartedWorker.WaitForExitAsync(watchdog.Token); }
+                finally
+                {
+                    if (!restartedWorker.HasExited) restartedWorker.Kill(entireProcessTree: true);
+                    await restartedWorker.WaitForExitAsync();
+                }
+                restartedWorker.ExitCode.ShouldBe(0);
+            }
+            File.Exists(restartSent).ShouldBeFalse();
+            await db.ChannelOutboundDeliveries.Where(d => d.ChannelId == channelId
+                && d.LeaseOwner == restartLease)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.LeaseOwner, (Guid?)null)
+                    .SetProperty(d => d.LeaseUntil, (DateTime?)null));
             var control = reply with { Text = "# Control notice", ReplyHandle = "control-thread" };
             (await outbound.SendAsync(control, ChannelOutboundOrigin.Control, source,
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Published);
