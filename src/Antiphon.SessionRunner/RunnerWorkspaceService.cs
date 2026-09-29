@@ -269,13 +269,21 @@ public sealed partial class RunnerWorkspaceService
     private async Task PruneRepositoriesAsync(CancellationToken ct)
     {
         var repositories = new List<string> { _repository };
-        if (Directory.Exists(_policy.RepositoriesRoot))
-            repositories.AddRange(Directory.EnumerateDirectories(_policy.RepositoriesRoot)
-                .Where(path => Directory.Exists(Path.Combine(path, ".git"))));
+        try
+        {
+            if (Directory.Exists(_policy.RepositoriesRoot))
+                repositories.AddRange(Directory.EnumerateDirectories(_policy.RepositoriesRoot)
+                    .Where(path => Directory.Exists(Path.Combine(path, ".git"))));
+        }
+        catch (IOException) { /* The mirror is already absent; pruning is best effort. */ }
+        catch (UnauthorizedAccessException) { /* Same: do not invent residue. */ }
         foreach (var repository in repositories.Distinct(StringComparer.Ordinal))
         {
             if (Directory.Exists(Path.Combine(repository, ".git")))
-                await GitAsync(repository, ct, "worktree", "prune");
+            {
+                try { await GitAsync(repository, ct, "worktree", "prune"); }
+                catch (PhoneHomeAdmissionException) { /* Continue other checkouts. */ }
+            }
         }
     }
 
