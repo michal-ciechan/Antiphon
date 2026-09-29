@@ -74,7 +74,8 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("bare, unfenced, unindented, unquoted lines");
         text.ShouldContain("original Code/Worktree landing owner");
-        text.ShouldContain("subject is source, owner stays landing target");
+        text.ShouldContain("adoption subject: source");
+        text.ShouldContain("Owner stays landing target");
         foreach (var flag in new[] { "-Land <owner>", "-FromTask <source>", "-ExpectedSourceSha <sha>",
                      "-ReviewEvidenceId <evidence>", "-RecoverReviewedSource", "-Card", "-StartRef" })
             text.ShouldContain(flag);

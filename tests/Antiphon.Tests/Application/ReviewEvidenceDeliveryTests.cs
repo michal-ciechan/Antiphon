@@ -82,15 +82,15 @@ public sealed class ReviewEvidenceDeliveryTests
                 await using var scope = rig.World.Services.CreateAsyncScope();
                 await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
                     .GetAsync(taskId, CancellationToken.None, pollingSessionId: rig.World.CallerSessionId);
-                await using var db = rig.World.CreateContext();
-                (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.NoteShrunk))
-                    .ShouldBeTrue(row);
             }
             await rig.DeliverAsync(row);
             await rig.ScanAsync();
             await AssertWarningReceiptAsync(rig, taskId, row, distill ? "distilled" : null, spill);
             if (rendering == "polled-inline")
             {
+                await using var db = rig.World.CreateContext();
+                (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.NoteShrunk))
+                    .ShouldBeTrue(row);
                 var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
                 delivery.LogicalNote.ShouldContain("Report withheld", Case.Sensitive, row);
                 delivery.LogicalNote.ShouldContain(Warning, Case.Sensitive, row);
@@ -218,9 +218,9 @@ public sealed class ReviewEvidenceDeliveryTests
         await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
         var (taskId, _) = await SettleWarningAsync(rig);
         var note = (await rig.NotificationAsync(taskId))!;
-        var held = await rig.RowAsync(taskId);
         rig.DistillQueue.TryDequeue(out var request).ShouldBeTrue();
-        rig.World.Clock.Advance(held.HoldUntil!.Value - rig.World.Clock.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(5));
+        (await rig.Queue.TryApplyDistillationAsync(request, note.ContentDigest, C544DeliveryRig.Summary,
+            CancellationToken.None)).ShouldBeNull("first summary releases the hold before deadline");
         rig.Fault.TaskId = taskId;
         rig.Fault.Cut = "attempt-committed";
         try { await rig.FlushAsync(); }
@@ -228,7 +228,7 @@ public sealed class ReviewEvidenceDeliveryTests
         rig.Fault.Throws.ShouldBe(1);
         var frozen = (await rig.NotificationAsync(taskId))!.CompletionDeliveryJson.ShouldNotBeNull();
         var before = await rig.RowAsync(taskId);
-        var rejected = await rig.Queue.TryApplyDistillationAsync(request, note.ContentDigest, C544DeliveryRig.Summary,
+        var rejected = await rig.Queue.TryApplyDistillationAsync(request, note.ContentDigest, "late replacement",
             CancellationToken.None);
         rejected.ShouldBe("delivery-claimed");
         (await rig.RowAsync(taskId)).Body.ShouldBe(before.Body);
@@ -237,7 +237,7 @@ public sealed class ReviewEvidenceDeliveryTests
         await rig.ScanAsync();
         await rig.FlushAsync();
         await rig.ScanAsync();
-        await AssertWarningReceiptAsync(rig, taskId, "late", "raw", false);
+        await AssertWarningReceiptAsync(rig, taskId, "late", "distilled", false);
     }
 
     [Test]
