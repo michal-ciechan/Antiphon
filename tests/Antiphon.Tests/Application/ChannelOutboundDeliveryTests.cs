@@ -424,7 +424,10 @@ public sealed partial class ChannelOutboundDeliveryTests
                     Path.Combine(root, "outbound")), new FakeAntiphonMessagingClient(), options,
                     TimeProvider.System);
                 var reply = new ChannelReply { Channel = "slack",
-                    ConversationId = target.ToString("N"), Text = "reply " + sequence };
+                    ConversationId = target.ToString("N"), Text = "reply " + sequence,
+                    Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                        Name = "source.md", Mime = "text/markdown",
+                        Content = [0, (byte)sequence, 255] }] };
                 (await service.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
                     new ChannelOutboundSource(sourceSessionId, sequence, 1, 2, kind, [], sourceTaskId),
                     CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
@@ -443,6 +446,33 @@ public sealed partial class ChannelOutboundDeliveryTests
             deliveries.Count(d => d.State == ChannelOutboundDeliveryState.Pending).ShouldBe(2);
             deliveries.Count(d => d.ConversionOutcome == "QueueOverflow").ShouldBe(2);
             deliveries.Single(d => d.SendKind == "trailing").ChannelId.ShouldBe(channelId);
+            var deliveryIds = deliveries.Select(d => d.Id).ToArray();
+            (await seed.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId != null
+                && deliveryIds.Contains(t.OutboundDeliveryId.Value)))
+                .ShouldBe(0);
+
+            // Release the two older queue heads so the overflow replies can publish.
+            await seed.ChannelOutboundDeliveries.Where(d => d.State == ChannelOutboundDeliveryState.Pending
+                && (d.ChannelId == channelId || d.ChannelId == otherChannelId))
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.State, ChannelOutboundDeliveryState.Failed));
+            var producer = new FakeAntiphonMessagingClient();
+            var pump = new ChannelOutboundDeliveryPump(seed, null!,
+                new ChannelOutboundFileStore(Path.Combine(root, "outbound")), producer,
+                Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance, options);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+            producer.SentReplies.Count.ShouldBe(2);
+            producer.SentReplies.Select(r => r.Text).ShouldBe([
+                ChannelOutboundService.AnnotateFallback("reply 2", true),
+                ChannelOutboundService.AnnotateFallback("reply 1", true),
+            ]);
+            producer.SentReplies[0].Attachments.ShouldHaveSingleItem().Content
+                .ShouldBe(new byte[] { 0, 2, 255 });
+            producer.SentReplies[1].Attachments.ShouldHaveSingleItem().Content
+                .ShouldBe(new byte[] { 0, 1, 255 });
+            (await seed.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId != null
+                && deliveryIds.Contains(t.OutboundDeliveryId.Value)))
+                .ShouldBe(0);
         }
         finally
         {
