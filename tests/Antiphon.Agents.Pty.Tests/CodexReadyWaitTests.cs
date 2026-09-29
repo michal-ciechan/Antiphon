@@ -471,6 +471,7 @@ public class CodexReadyWaitTests
         var frames = new List<CodexStartupSnapshot?>();
         var diagnostics = new List<string>();
         var reads = 0;
+        var maxWait = TimeSpan.FromMilliseconds(1_000);
         var gate = CodexReadyWait.WaitAsync(
             _ =>
             {
@@ -481,13 +482,17 @@ public class CodexReadyWaitTests
             {
                 TimeProvider = time,
                 Settle = TimeSpan.FromMilliseconds(50),
-                MaxWait = TimeSpan.FromMilliseconds(200),
+                MaxWait = maxWait,
                 PollInterval = TimeSpan.FromMilliseconds(50),
                 OnDiagnostic = diagnostics.Add,
                 OnNotReadyFrame = frames.Add,
             });
         await WaitUntilAsync(() => Volatile.Read(ref reads) >= 1);
-        await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(200));
+        for (var step = 0; step < 10 && Volatile.Read(ref reads) < 2; step++)
+            await AdvanceAfterWaitStartedAsync(time, TimeSpan.FromMilliseconds(50));
+        Volatile.Read(ref reads).ShouldBeGreaterThanOrEqualTo(2,
+            "the update picker must be classified before the timeout diagnostic");
+        await AdvanceAfterWaitStartedAsync(time, maxWait);
 
         (await gate).ShouldBeFalse();
         frames.Count.ShouldBe(1);

@@ -191,9 +191,13 @@ public class RunnerCodexAdapterReadyTests
                 StartupScreens = [modal],
                 RawOutput = "\u001b[2J" + SecretSentinel,
             };
-            var adapter = NewAdapter(client, settleMs: 50, maxMs: 200, logger: logger, captureDir: captureDir);
+            // The adapter uses a real clock. Leave enough time for its first snapshot and
+            // update-picker follow-up read under a loaded test host.
+            var adapter = NewAdapter(client, settleMs: 50, maxMs: 2_000, logger: logger, captureDir: captureDir);
             await adapter.StartAsync(NewSpec(), CancellationToken.None);
-            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+            var ready = adapter.WaitForReadyAsync(CancellationToken.None);
+            await WaitUntilAsync(() => client.SnapshotReads >= 2);
+            (await ready).ShouldBeFalse();
 
             var file = Directory.GetFiles(captureDir, "codex-startup-*.txt").ShouldHaveSingleItem();
             var body = await File.ReadAllTextAsync(file);
