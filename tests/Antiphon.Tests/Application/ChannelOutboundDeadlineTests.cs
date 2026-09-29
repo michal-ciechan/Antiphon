@@ -17,6 +17,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class ChannelOutboundDeadlineTests
 {
     [Test]
