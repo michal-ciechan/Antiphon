@@ -243,26 +243,31 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     public async Task allocation_sample_fails_on_access_denied_subfolder()
     {
         if (!Windows()) return;
-        var work = TempDir();
+        // The usage observer samples the test child's TEMP tree. Keep the deliberately
+        // unreadable fixture outside that tree so its fail-closed sample can continue.
+        var work = Path.Combine(CheckpointFixtures.RepoRoot, ".antiphon",
+            "c804-denied-sample-" + Guid.NewGuid().ToString("N"));
         var sampled = Path.Combine(work, "sampled");
         var locked = Path.Combine(sampled, "locked");
         Directory.CreateDirectory(locked);
-        File.WriteAllBytes(Path.Combine(locked, "payload.bin"), RandomNumberGenerator.GetBytes(128 * 1024));
-        var body = $"Get-Allocated {UsageLibrary.Quote(sampled)}";
-        var readable = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
-        readable.Exit.ShouldBe(0, readable.Error);
-        long.Parse(readable.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture)
-            .ShouldBeGreaterThanOrEqualTo(128 * 1024);
-        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
-        var deny = new System.Security.AccessControl.FileSystemAccessRule(user,
-            System.Security.AccessControl.FileSystemRights.ListDirectory,
-            System.Security.AccessControl.AccessControlType.Deny);
         var directory = new DirectoryInfo(locked);
-        var acl = directory.GetAccessControl();
-        acl.AddAccessRule(deny);
-        directory.SetAccessControl(acl);
+        System.Security.AccessControl.DirectorySecurity? originalAcl = null;
         try
         {
+            File.WriteAllBytes(Path.Combine(locked, "payload.bin"), RandomNumberGenerator.GetBytes(128 * 1024));
+            var body = $"Get-Allocated {UsageLibrary.Quote(sampled)}";
+            var readable = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
+            readable.Exit.ShouldBe(0, readable.Error);
+            long.Parse(readable.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture)
+                .ShouldBeGreaterThanOrEqualTo(128 * 1024);
+            var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+            var deny = new System.Security.AccessControl.FileSystemAccessRule(user,
+                System.Security.AccessControl.FileSystemRights.ListDirectory,
+                System.Security.AccessControl.AccessControlType.Deny);
+            originalAcl = directory.GetAccessControl();
+            var restrictedAcl = directory.GetAccessControl();
+            restrictedAcl.AddAccessRule(deny);
+            directory.SetAccessControl(restrictedAcl);
             var denied = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
             denied.Exit.ShouldNotBe(0, "an unreadable subfolder must fail the sample, not read as zero: " + denied.Output);
             denied.Error.ShouldContain("Allocated-byte sample failed");
@@ -270,9 +275,8 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         }
         finally
         {
-            acl = directory.GetAccessControl();
-            acl.RemoveAccessRule(deny);
-            directory.SetAccessControl(acl);
+            try { if (originalAcl is not null) directory.SetAccessControl(originalAcl); }
+            finally { if (Directory.Exists(work)) Directory.Delete(work, recursive: true); }
         }
     }
 

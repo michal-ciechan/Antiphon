@@ -53,8 +53,40 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         var second = Sweep(sandbox, clock: () => now.AddMinutes(1), interval: TimeSpan.FromMinutes(5));
         using var gate = new FileStream(Path.Combine(sandbox, ".checkpoint-temp-coordinator.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        second.SweepOnce().Examined.ShouldBe(0);
+        var receipt = second.SweepOnce();
+        receipt.Examined.ShouldBe(0);
+        receipt.Skips.ShouldContainKey("interval");
+        receipt.Skips.ShouldNotContainKey("coordinator-busy");
         Directory.Exists(secondRoot).ShouldBeTrue();
+    }
+
+    [Test]
+    public void cursor_write_failure_does_not_fail_the_sweep()
+    {
+        var sandbox = TempDir();
+        var root = Candidate(sandbox);
+        // A directory at the cursor path makes replacement fail on Linux too.
+        Directory.CreateDirectory(Path.Combine(sandbox, ".checkpoint-temp-cursor.json"));
+        var receipt = Sweep(sandbox).SweepOnce();
+        receipt.CompletedRoots.ShouldBe(1);
+        Directory.Exists(root).ShouldBeFalse();
+    }
+
+    [Test]
+    public void sweep_removes_only_stale_index_temp_files()
+    {
+        var sandbox = TempDir();
+        var root = Candidate(sandbox, alive: true);
+        var index = Path.Combine(sandbox, ".checkpoint-temp-roots");
+        var prefix = Path.GetFileName(root) + ".json.";
+        var stale = Path.Combine(index, prefix + Guid.NewGuid().ToString("N") + ".tmp");
+        var fresh = Path.Combine(index, prefix + Guid.NewGuid().ToString("N") + ".tmp");
+        File.WriteAllText(stale, "pending");
+        File.WriteAllText(fresh, "pending");
+        File.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddMinutes(-11));
+        Sweep(sandbox).SweepOnce();
+        File.Exists(stale).ShouldBeFalse();
+        File.Exists(fresh).ShouldBeTrue();
     }
 
     [Test]
