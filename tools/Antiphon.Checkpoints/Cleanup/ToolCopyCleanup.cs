@@ -12,14 +12,16 @@ public sealed class ToolCopyCleanup
     private readonly int _maxEntries;
     private readonly string? _imageDirectory;
     private readonly Action? _beforeLock;
+    private readonly Action<string>? _beforeDelete;
 
     public ToolCopyCleanup(ProcessIdentityProbe? probe = null, int maxEntries = 10000,
-        string? imageDirectory = null, Action? beforeLock = null)
+        string? imageDirectory = null, Action? beforeLock = null, Action<string>? beforeDelete = null)
     {
         _probe = probe ?? new();
         _maxEntries = maxEntries;
         _imageDirectory = imageDirectory;
         _beforeLock = beforeLock;
+        _beforeDelete = beforeDelete;
     }
 
     public ProcessObservation ObserveExecutor(string runDirectory)
@@ -70,7 +72,7 @@ public sealed class ToolCopyCleanup
                 return new("Retained", observed.Reason, tool);
             for (var attempt = 0; ; attempt++)
             {
-                try { Directory.Delete(tool, recursive: true); break; }
+                try { _beforeDelete?.Invoke(tool); Directory.Delete(tool, recursive: true); break; }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 9)
                 { Thread.Sleep(50 * (attempt + 1)); }
             }
