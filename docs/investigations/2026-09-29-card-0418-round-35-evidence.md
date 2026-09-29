@@ -66,3 +66,12 @@ inbound routing fields stay frozen. Checkpoint receipt pending.
 The first CP-5 build on `51bd3ba3a` did not reach tests: two references to
 `MessagingJson` were ambiguous between the Messaging and Client namespaces.
 Both now select the actual `Antiphon.Messaging.MessagingJson.Options` wire contract.
+CP-5 rerun on `d642deb417560f051b030df7313edfc418426664` executed 57 /
+passed 57 / failed 0 at
+`.antiphon/checkpoints/r35-cp5-b/CP-5-20260929-233336-c2a2/run.trx`.
+V-16 remains open for source completeness and multi-target outcomes.
+
+`Source_publication_requires_all_four_members_or_a_complete_zip` now adds four
+actual publication variants (one/four Markdown attachments and incomplete/complete
+zip), comparing the accepted serialized payload to the frozen original and
+checking the source delivery stamp after publication. Receipt pending.

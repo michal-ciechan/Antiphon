@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
+using System.IO.Compression;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
+using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -20,6 +22,134 @@ namespace Antiphon.Tests.Application;
 
 public sealed partial class ChannelOutboundDeliveryTests
 {
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task Source_publication_requires_all_four_members_or_a_complete_zip(
+        bool zip, bool complete)
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-source-publication-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        try
+        {
+            var bundle = Path.Combine(root, "bundle");
+            Directory.CreateDirectory(bundle);
+            var names = new[] { "requirements.md", "design.md", "external-api.md", "snapshots.md" };
+            var bytes = names.Select((name, i) => System.Text.Encoding.UTF8.GetBytes(
+                $"# {name}\nunique final sentinel {i} żółw ✨\n")).ToArray();
+            var members = new List<DeliverableBundleService.SourceMember>();
+            var attachments = new List<OutboundAttachment>();
+            if (zip)
+            {
+                var zipPath = Path.Combine(bundle, "sources.zip");
+                await using (var stream = File.Create(zipPath))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
+                    for (var i = 0; i < names.Length; i++)
+                    {
+                        if (!complete && i == names.Length - 1) continue;
+                        await using var entry = archive.CreateEntry(names[i]).Open();
+                        await entry.WriteAsync(bytes[i]);
+                    }
+                attachments.Add(new OutboundAttachment
+                {
+                    Kind = AttachmentKind.File, Name = "sources.zip", Mime = "application/zip",
+                    Source = zipPath, Content = await File.ReadAllBytesAsync(zipPath),
+                });
+                for (var i = 0; i < names.Length; i++)
+                    members.Add(new DeliverableBundleService.SourceMember(
+                        "docs/" + names[i], "sources.zip", names[i], bytes[i].Length,
+                        Convert.ToHexStringLower(SHA256.HashData(bytes[i]))));
+            }
+            else
+            {
+                for (var i = 0; i < names.Length; i++)
+                {
+                    var path = Path.Combine(bundle, names[i]);
+                    await File.WriteAllBytesAsync(path, bytes[i]);
+                    if (complete || i == 0)
+                        attachments.Add(new OutboundAttachment
+                        {
+                            Kind = AttachmentKind.File, Name = names[i], Mime = "text/markdown",
+                            Source = path, Content = bytes[i],
+                        });
+                    members.Add(new DeliverableBundleService.SourceMember(
+                        "docs/" + names[i], names[i], null, bytes[i].Length,
+                        Convert.ToHexStringLower(SHA256.HashData(bytes[i]))));
+                }
+            }
+            await File.WriteAllTextAsync(Path.Combine(bundle, DeliverableBundleService.SourceManifestName),
+                JsonSerializer.Serialize(new DeliverableBundleService.SourceManifest(1, true, members, []),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var original = new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"),
+                ReplyHandle = "T1", Text = "Four sources", Attachments = attachments,
+            };
+            var expectedWire = JsonSerializer.SerializeToUtf8Bytes(original,
+                Antiphon.Messaging.MessagingJson.Options);
+            var frozen = await files.StageAsync(deliveryId, original, CancellationToken.None);
+            await using (var seed = new AppDbContext(options))
+            {
+                seed.Projects.Add(new Project { Id = projectId, Name = "members-" + projectId.ToString("N"),
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "members",
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "members",
+                    Slug = "members-" + agentId.ToString("N"), WorkingDirectory = root });
+                seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                    ExternalId = channelId.ToString("N"), AgentId = agentId,
+                    CreatedAt = now, UpdatedAt = now });
+                seed.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, ProjectId = projectId, AgentId = agentId,
+                    Title = "Four sources", Goal = "Write sources", WorkingDirectory = root,
+                    RepoPath = root, Status = AgentTaskStatus.Succeeded,
+                    DeliverableBundleDir = bundle, CreatedAt = now, CompletedAt = now,
+                });
+                seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                {
+                    Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"),
+                    ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                    SourceSessionId = Guid.NewGuid(), SourceTaskId = taskId, SendKind = "main",
+                    ProfileName = "", PromptRevision = new string('a', 64),
+                    InputPath = frozen.ReplyPath, InputSha256 = frozen.ReplySha256,
+                    Trigger = "Passthrough", State = ChannelOutboundDeliveryState.Ready,
+                    CreatedAt = now, DeadlineAt = now.AddMinutes(10),
+                });
+                await seed.SaveChangesAsync();
+            }
+            await using (var db = new AppDbContext(options))
+            {
+                var pump = new ChannelOutboundDeliveryPump(db, null!, files, producer,
+                    Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            }
+            var accepted = producer.SentReplies.ShouldHaveSingleItem();
+            JsonSerializer.SerializeToUtf8Bytes(accepted, Antiphon.Messaging.MessagingJson.Options)
+                .ShouldBe(expectedWire);
+            accepted.Attachments.Count.ShouldBe(zip ? 1 : complete ? 4 : 1);
+            await using var verify = new AppDbContext(options);
+            (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
+                .DeliverableDeliveredAt.HasValue.ShouldBe(complete);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Test]
     [Arguments("blocked-then-accepted")]
     [Arguments("two-refusals-then-accepted")]
