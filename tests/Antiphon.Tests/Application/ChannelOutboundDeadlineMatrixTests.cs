@@ -74,7 +74,7 @@ public sealed partial class ChannelOutboundDeadlineTests
             .Where(d => d.Id == missing.Id || d.Id == unavailable.Id).ToListAsync();
         rows.All(d => d.State == ChannelOutboundDeliveryState.Ready
             && d.ConversionTaskId == null && d.ConversionOutcome == "Fallback").ShouldBeTrue();
-        rows.Single(d => d.Id == missing.Id).FailureReason.ShouldContain("worker unavailable");
+        rows.Single(d => d.Id == missing.Id).FailureReason.ShouldContain("agent is missing");
         rows.Single(d => d.Id == unavailable.Id).FailureReason.ShouldContain("workspace or channel role");
         (await db.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId != null)).ShouldBe(0);
         (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
@@ -95,6 +95,7 @@ public sealed partial class ChannelOutboundDeadlineTests
             (AgentTaskStatus.Blocked, "provider authentication required", "Blocked"),
             (AgentTaskStatus.Failed, "subscription quota refused", "Failed"),
             (AgentTaskStatus.Failed, "model unavailable", "Failed"),
+            (AgentTaskStatus.Failed, "browser executable missing", "Failed"),
             (AgentTaskStatus.Succeeded, "", "result invalid"),
         };
         var ids = new List<Guid>();

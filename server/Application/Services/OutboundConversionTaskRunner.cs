@@ -25,7 +25,8 @@ public sealed class OutboundConversionTaskRunner
         if (delivery.ConversionTaskId is Guid existing)
             return existing;
         var converter = await _db.Agents.Include(a => a.Board)
-            .SingleAsync(a => a.Id == delivery.ConverterAgentId, ct);
+            .SingleOrDefaultAsync(a => a.Id == delivery.ConverterAgentId, ct)
+            ?? throw new InvalidOperationException("The pinned conversion agent is missing.");
         if (converter.Board?.ProjectId != delivery.ProjectId || converter.IsPoolDelegate
             || converter.AlwaysOn || !AgentTaskService.DelegatableKinds.Contains(converter.Kind))
             throw new InvalidOperationException("The pinned conversion agent is unavailable for this project.");
