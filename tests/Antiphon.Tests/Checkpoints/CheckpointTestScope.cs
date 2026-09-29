@@ -32,7 +32,7 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     public string TempDir()
     {
         if (_sealed) throw new InvalidOperationException("checkpoint test scope is sealed");
-        var id = Guid.NewGuid().ToString("N");
+        var id = Guid.CreateVersion7().ToString("N");
         var path = Path.Combine(Path.GetTempPath(), "c723-" + id);
         Directory.CreateDirectory(path);
         try
@@ -135,6 +135,7 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
                 }
                 _beforeDelete?.Invoke(root);
                 Directory.Delete(root, recursive: true);
+                new CheckpointTempRootSweep().Unregister(root);
                 CheckpointUsageEvent.Write("root-delete", root);
             }
             catch (Exception ex) { failures.Add(root + ": " + ex.Message); }
