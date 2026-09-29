@@ -174,25 +174,38 @@ public sealed class OutboundConversionPublicCreateTests
     [Test]
     public async Task Public_create_cannot_assign_an_outbound_conversion_purpose()
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var host = await DefaultsHost.StartAsync(schema.ConnectionString, null);
-        var forgedDeliveryId = Guid.NewGuid();
-        using var response = await host.Client.PostAsJsonAsync("/api/agent-tasks", new
+        var root = Directory.CreateTempSubdirectory("c0418-public-purpose-").FullName;
+        try
         {
-            goal = "An ordinary public task with a forged internal purpose",
-            workspace = "Shared",
-            workingDirectory = host.RepoRoot,
-            outboundDeliveryId = forgedDeliveryId,
-        });
-        var body = await response.Content.ReadAsStringAsync();
-        response.StatusCode.ShouldBe(HttpStatusCode.Created, body);
-        using var json = JsonDocument.Parse(body);
-        var taskId = json.RootElement.GetProperty("id").GetGuid();
-        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        task.OutboundDeliveryId.ShouldBeNull();
-        (await verify.ChannelOutboundDeliveries.AsNoTracking()
-            .CountAsync(d => d.Id == forgedDeliveryId)).ShouldBe(0);
+            using var factory = new PublicCreateFactory(root);
+            using var client = factory.CreateClient();
+            var forgedDeliveryId = Guid.NewGuid();
+            using var response = await client.PostAsJsonAsync("/api/agent-tasks", new
+            {
+                goal = "An ordinary public task with a forged internal purpose",
+                workspace = "Shared",
+                workingDirectory = root,
+                outboundDeliveryId = forgedDeliveryId,
+            });
+            var body = await response.Content.ReadAsStringAsync();
+            response.StatusCode.ShouldBe(HttpStatusCode.Created, body);
+            using var json = JsonDocument.Parse(body);
+            var taskId = json.RootElement.GetProperty("id").GetGuid();
+            using var scope = factory.Services.CreateScope();
+            var verify = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            task.OutboundDeliveryId.ShouldBeNull();
+            task.Role.ShouldBe(AgentTaskRole.Custom);
+            (await verify.ChannelOutboundDeliveries.AsNoTracking()
+                .CountAsync(d => d.Id == forgedDeliveryId)).ShouldBe(0);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private sealed class PublicCreateFactory(string allowedRoot) : AntiphonWebAppFactory
+    {
+        protected override void ApplyTestOverrides(IServiceCollection services) =>
+            services.PostConfigure<DelegationSettings>(settings => settings.AllowedRoots.Add(allowedRoot));
     }
 }
 
