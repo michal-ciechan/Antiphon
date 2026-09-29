@@ -72,14 +72,14 @@ public sealed class TaskPlatformGuidanceTests
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
         text.ShouldContain("self-compare, constant, no outcome assertion");
         text.ShouldContain("Review build vs plan.");
-        text.ShouldContain("reject empty variables, exit nonzero");
+        text.ShouldContain("empty variables exit nonzero");
         text.ShouldContain("quote expansions");
         text.ShouldContain("resolve target in scratch root");
         text.ShouldContain("Full only when the whole required selection ran.");
         text.ShouldContain("bare, unfenced, unindented, unquoted lines");
         text.ShouldContain("Carry original Code landing owner.");
-        text.ShouldContain("adoption: source");
-        text.ShouldContain("Review ID/`-StartRef` cannot identify source");
+        text.ShouldContain("adopt: source");
+        text.ShouldContain("Review ID/`-StartRef` cannot name source");
         foreach (var flag in new[] { "-Land <owner>", "-FromTask <source>", "-ExpectedSourceSha <sha>",
                      "-ReviewEvidenceId <evidence>", "-RecoverReviewedSource", "-Card", "-StartRef" })
             text.ShouldContain(flag);
@@ -94,7 +94,7 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("Require matching complete UserPrompt transcript");
         text.ShouldContain("Re-run claimed Unit + named affected integration classes");
         text.ShouldContain("Reject missing tests or evidence.");
-        text.ShouldContain("code for defects (name in handoff:)");
+        text.ShouldContain("code when there are defects (name them in handoff:)");
     }
 
     [Test]
@@ -108,7 +108,8 @@ public sealed class TaskPlatformGuidanceTests
         var missingCheckpointInstruction = text.Replace(
             "use it for repeated class runs.", "", StringComparison.Ordinal);
         missingCheckpointInstruction.ShouldNotBe(text);
-        Should.Throw<ShouldAssertException>(() => AssertBaseInstructions(missingCheckpointInstruction));
+        Should.Throw<ShouldAssertException>(() => AssertBaseInstructions(missingCheckpointInstruction))
+            .Message.ShouldContain("Use checkpoint tool for repeated class runs");
     }
 
     private static void AssertBaseInstructions(string text)
@@ -134,7 +135,7 @@ public sealed class TaskPlatformGuidanceTests
             ("new test that cannot go red", "test cannot go red (self-compare, constant, no outcome assertion)"),
             // Base line 5: repeated classes and destructive cleanup.
             ("Use checkpoint tool for repeated class runs", "use it for repeated class runs."),
-            ("reject empty variables before rm", "reject empty variables, exit nonzero"),
+            ("reject empty variables before rm", "empty variables exit nonzero"),
             ("quote expansions before rm", "quote expansions"),
             ("confine resolved target to scratch root", "resolve target in scratch root"),
             // Base line 7: round and evidence floor.
@@ -182,14 +183,14 @@ public sealed class TaskPlatformGuidanceTests
             ("Full|Interim|None scope", "ordinaryScopeCompleted: <Full|Interim|None>"),
             ("Full only after whole required selection", "Full only when the whole required selection ran."),
             ("original Code owner for ordinary/recovery", "Ordinary/recovery: Code owner"),
-            ("caller lands Code owner", "Land owner with `-ExpectedSourceSha`."),
+            ("caller lands Code owner", "-Land <owner> -FromTask <source>"),
             ("ExpectedSourceSha from evidence", "-ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>"),
             // D-3 additions retain the original owner while identifying an adopted source.
-            ("adoption source identity", "adoption: source"),
+            ("adoption source identity", "adopt: source"),
             ("adoption command", "-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>"),
             ("ordinary owner omits FromTask", "owner: no `-FromTask`"),
             ("recovery flag", "recovery: `-RecoverReviewedSource`"),
-            ("StartRef cannot identify source", "Review ID/`-StartRef` cannot identify source"),
+            ("StartRef cannot identify source", "Review ID/`-StartRef` cannot name source"),
             ("brief names owner and source", "name both."),
             ("explicit card binding", "Use `-Card`"),
             ("follow-up matches subject", "follow-up must match FollowUpOfTaskId"),
@@ -202,9 +203,9 @@ public sealed class TaskPlatformGuidanceTests
             ("Platform only when OS needed", "Omit -Platform unless OS needed"),
             ("Platform Any unpins", "-Platform Any unpins."),
             // Base line 26: all next-stage routes.
-            ("land for clean Final", "next: land if clean Final"),
-            ("review Final for clean Interim", "review (Final) if clean Interim"),
-            ("code for defects named in handoff", "code for defects (name in handoff:)"),
+            ("land for clean Final", "next: land when there are no defects and this was a Final Review;"),
+            ("review Final for clean Interim", "review (Final) when a clean Interim;"),
+            ("code for defects named in handoff", "code when there are defects (name them in handoff:)"),
             ("decide when a human choice blocks", "decide when a human choice blocks.")
         })
             text.ShouldContain(currentPin, Case.Sensitive, $"Missing base Review instruction: {baseInstruction}");
