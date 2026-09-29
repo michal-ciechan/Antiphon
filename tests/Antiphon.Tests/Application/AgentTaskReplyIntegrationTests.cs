@@ -1972,9 +1972,20 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    [Arguments(4)]
-    [Arguments(6)]
-    public async Task completed_sources_reach_the_parent_as_exact_inline_or_zip_attachments(int count)
+    [Arguments(AgentTaskRole.Plan, false, 4)]
+    [Arguments(AgentTaskRole.Plan, false, 6)]
+    [Arguments(AgentTaskRole.Plan, true, 4)]
+    [Arguments(AgentTaskRole.Plan, true, 6)]
+    [Arguments(AgentTaskRole.Docs, false, 4)]
+    [Arguments(AgentTaskRole.Docs, false, 6)]
+    [Arguments(AgentTaskRole.Docs, true, 4)]
+    [Arguments(AgentTaskRole.Docs, true, 6)]
+    [Arguments(AgentTaskRole.Custom, false, 4)]
+    [Arguments(AgentTaskRole.Custom, false, 6)]
+    [Arguments(AgentTaskRole.Custom, true, 4)]
+    [Arguments(AgentTaskRole.Custom, true, 6)]
+    public async Task completed_sources_reach_the_parent_as_exact_inline_or_zip_attachments(
+        AgentTaskRole role, bool secondProject, int count)
     {
         using var workspace = new TempWorkspace();
         var feature = Path.Combine(workspace.Path, "docs", "features", "completion");
@@ -1991,9 +2002,22 @@ public partial class AgentTaskReplyIntegrationTests
         }
         var report = "Wrote " + string.Join(", ", names.Select(n => $"`docs/features/completion/{n}`")) + ".";
         var parent = await SeedSessionAsync(workspace.Path);
+        var projectId = Guid.NewGuid();
+        await using (var seed = CreateContext())
+        {
+            seed.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = (secondProject ? "Q-" : "P-") + projectId.ToString("N"),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await seed.SaveChangesAsync();
+        }
         var (task, session) = await SeedDispatchedTaskAsync(workspace.Path, parent, t =>
         {
-            t.Role = AgentTaskRole.Docs;
+            t.Role = role;
+            t.ProjectId = projectId;
             t.RepoPath = workspace.Path;
         });
         using var factory = NewDeliveryFactory();
@@ -2015,6 +2039,23 @@ public partial class AgentTaskReplyIntegrationTests
         settled.DeliverableFileCount.ShouldBe(count);
         settled.DeliverablePdfPath.ShouldBeNull();
         settled.DeliverableRenderError.ShouldBeNull();
+        settled.ProjectId.ShouldBe(projectId);
+        Directory.GetFiles(settled.DeliverableBundleDir!, "*.pdf").ShouldBeEmpty();
+        File.Exists(Path.Combine(settled.DeliverableBundleDir!, "render.log")).ShouldBeFalse();
+        var manifest = System.Text.Json.JsonSerializer.Deserialize<DeliverableBundleService.SourceManifest>(
+            await File.ReadAllTextAsync(Path.Combine(settled.DeliverableBundleDir!,
+                DeliverableBundleService.SourceManifestName)),
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+        manifest.Complete.ShouldBeTrue();
+        manifest.Omitted.ShouldBeEmpty();
+        manifest.Sources.Count.ShouldBe(count);
+        foreach (var member in manifest.Sources)
+        {
+            var bytes = expected[Path.GetFileName(member.OriginalRelativePath)];
+            member.Length.ShouldBe(bytes.LongLength);
+            member.Sha256.ShouldBe(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+                .ToLowerInvariant());
+        }
         var attached = DeliverableBundleService.ListAttachableFiles(settled);
         attached.Count.ShouldBe(count == 6 ? 1 : count);
         foreach (var path in attached)
