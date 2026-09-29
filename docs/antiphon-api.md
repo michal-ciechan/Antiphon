@@ -672,6 +672,7 @@ GET    /api/channels/consumer                effective inbound consumer identity
 GET    /api/channels                         the catalog (rows appear on first inbound message)
 GET    /api/channels/outbound-profiles       configured profile previews (project, worker, trigger, prompt revision, timeout)
 POST   /api/channels/outbound-deliveries/{id}/retry  explicit uncertain-publication retry; body {"acknowledgePossibleDuplicate":true}
+POST   /api/channels/outbound-deliveries/{id}/resume explicit Held retry after original channel binding is repaired
 PATCH  /api/channels/{id}                    bind/unbind an agent, preamble, enable/disable, outboundAgentProfile / clearOutboundAgentProfile
 ```
 

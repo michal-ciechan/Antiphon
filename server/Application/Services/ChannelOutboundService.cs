@@ -62,6 +62,31 @@ public sealed class ChannelOutboundService
         await _db.SaveChangesAsync(ct);
     }
 
+    /// <summary>Explicitly requeue a held reply after the channel binding has been repaired.</summary>
+    public async Task ResumeHeldAsync(Guid id, CancellationToken ct)
+    {
+        var delivery = await _db.ChannelOutboundDeliveries.SingleOrDefaultAsync(d => d.Id == id, ct)
+            ?? throw new NotFoundException(nameof(ChannelOutboundDelivery), id);
+        if (delivery.State != ChannelOutboundDeliveryState.Held)
+            throw new ConflictException("Only a held outbound delivery can be resumed.",
+                "channel_outbound_not_held");
+        var channel = await _db.ChatChannels.AsNoTracking()
+            .SingleOrDefaultAsync(c => c.Id == delivery.ChannelId, ct);
+        var projectId = channel is null ? null : await _db.Agents.Where(a => a.Id == channel.AgentId)
+            .Join(_db.Boards, a => a.BoardId, b => b.Id, (a, b) => (Guid?)b.ProjectId)
+            .FirstOrDefaultAsync(ct);
+        if (channel is null || !channel.Enabled || channel.AgentId != delivery.InboundAgentId
+            || projectId != delivery.ProjectId)
+            throw new ConflictException("Repair the original channel binding before resuming delivery.",
+                "channel_outbound_binding_held");
+        delivery.State = ChannelOutboundDeliveryState.Ready;
+        delivery.LeaseOwner = null;
+        delivery.LeaseUntil = null;
+        delivery.FailureReason = null;
+        delivery.Version++;
+        await _db.SaveChangesAsync(ct);
+    }
+
     public async Task<ChannelOutboundSendOutcome> SendAsync(
         ChannelReply reply, ChannelOutboundOrigin origin, ChannelOutboundSource? source,
         CancellationToken ct)

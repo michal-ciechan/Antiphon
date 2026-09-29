@@ -1,6 +1,8 @@
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
+using Antiphon.Messaging.Slack;
+using Antiphon.Messaging.Tests.FakeSlack;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using Antiphon.Server.Application.Services;
@@ -26,6 +28,280 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ChannelOutboundRecoveryTests
 {
+    [Test]
+    public async Task Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-held-order-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var dbOptions = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        try
+        {
+            var first = await store.StageAsync(firstId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"),
+                ReplyHandle = "T1", Text = "first held answer",
+            }, CancellationToken.None);
+            var second = await store.StageAsync(secondId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"),
+                ReplyHandle = "T2", Text = "later answer",
+            }, CancellationToken.None);
+            await using var db = new AppDbContext(dbOptions);
+            db.Projects.Add(new Project { Id = projectId, Name = "held-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "held",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "held",
+                Slug = "held-" + agentId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = agentId,
+                Enabled = false, ReplyHandle = "T2", CreatedAt = now, UpdatedAt = now });
+            db.ChannelOutboundDeliveries.AddRange(
+                new ChannelOutboundDelivery { Id = firstId, SourceKey = Guid.NewGuid().ToString("N"),
+                    ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                    SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "",
+                    PromptRevision = new string('a', 64), InputPath = first.ReplyPath,
+                    InputSha256 = first.ReplySha256, Trigger = "Passthrough",
+                    State = ChannelOutboundDeliveryState.Ready, CreatedAt = now,
+                    DeadlineAt = now.AddMinutes(10) },
+                new ChannelOutboundDelivery { Id = secondId, SourceKey = Guid.NewGuid().ToString("N"),
+                    ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                    SourceSessionId = Guid.NewGuid(), SendKind = "trailing", ProfileName = "",
+                    PromptRevision = new string('a', 64), InputPath = second.ReplyPath,
+                    InputSha256 = second.ReplySha256, Trigger = "Passthrough",
+                    State = ChannelOutboundDeliveryState.Ready, CreatedAt = now.AddMilliseconds(1),
+                    DeadlineAt = now.AddMinutes(10) });
+            await db.SaveChangesAsync();
+            var pump = new ChannelOutboundDeliveryPump(db, null!, store, producer,
+                Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+            producer.SentReplies.ShouldBeEmpty();
+            (await db.ChannelOutboundDeliveries.AsNoTracking().CountAsync(d => d.ChannelId == channelId
+                && d.State == ChannelOutboundDeliveryState.Held)).ShouldBe(2);
+            var service = new ChannelOutboundService(db, store, producer,
+                Options.Create(new ChannelOutboundSettings()), TimeProvider.System);
+            var refusal = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+                () => service.ResumeHeldAsync(secondId, CancellationToken.None));
+            refusal.Code.ShouldBe("channel_outbound_binding_held");
+            await db.ChatChannels.Where(c => c.Id == channelId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Enabled, true));
+            await service.ResumeHeldAsync(secondId, CancellationToken.None);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            producer.SentReplies.ShouldBeEmpty();
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == secondId))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+            await service.ResumeHeldAsync(firstId, CancellationToken.None);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(2);
+            producer.SentReplies.Select(r => (r.Text, r.ReplyHandle))
+                .ShouldBe([("first held answer", "T1"), ("later answer", "T2")]);
+            (await db.ChannelOutboundDeliveries.AsNoTracking().CountAsync(d => d.ChannelId == channelId
+                && d.State == ChannelOutboundDeliveryState.Published)).ShouldBe(2);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-route-restart-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var dbOptions = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var evidencePath = Path.Combine(root, "sent.bin");
+        var markerPath = Path.Combine(root, "barrier");
+        var configPath = Path.Combine(root, "probe.json");
+        var probeDll = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
+            "Antiphon.ChannelOutbound.Probe.dll");
+        File.Exists(probeDll).ShouldBeTrue();
+        Process? child = null;
+        try
+        {
+            await using var fakeSlack = new FakeSlackServer();
+            await fakeSlack.StartAsync();
+            using var slackHttp = new HttpClient();
+            var slack = new SlackChannelAdapter(slackHttp, new SlackSettings
+            {
+                ApiBaseUrl = fakeSlack.ApiBaseUrl, BotToken = fakeSlack.BotToken,
+                AppToken = fakeSlack.AppToken, ErrorBackoffSeconds = 0,
+            }, NullLogger<SlackChannelAdapter>.Instance);
+            using var inboundTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await using var inbound = slack.ReceiveAsync(inboundTimeout.Token).GetAsyncEnumerator();
+            fakeSlack.EnqueueMessage(channelId.ToString("N"), "U1", "prompt T1",
+                threadTs: "1700000000.000100", ts: "1700000001.000200");
+            (await inbound.MoveNextAsync()).ShouldBeTrue();
+            var t1 = inbound.Current;
+            fakeSlack.EnqueueMessage(channelId.ToString("N"), "U1", "prompt T2",
+                threadTs: "1700001000.000300", ts: "1700001001.000400");
+            (await inbound.MoveNextAsync()).ShouldBeTrue();
+            var t2 = inbound.Current;
+            var source = "# Frozen source\n"u8.ToArray();
+            using var metadata = JsonDocument.Parse("""{"thread_marker":"T1","parse_mode":"MarkdownV2"}""");
+            var firstReply = new ChannelReply
+            {
+                Channel = "slack", ConversationId = channelId.ToString("N"),
+                ReplyHandle = t1.ReplyHandle, ReplyToMessageId = t1.ChannelMessageId,
+                Kind = ChannelReplyKind.Question, RawOverrides = metadata.RootElement.Clone(),
+                Text = "first frozen answer",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Caption = "original source",
+                    Source = "fixture://source.md", Content = source }],
+            };
+            var secondReply = firstReply with { ReplyHandle = t2.ReplyHandle,
+                ReplyToMessageId = t2.ChannelMessageId, Text = "second frozen answer",
+                Attachments = [] };
+            var first = await store.StageAsync(firstId, firstReply, CancellationToken.None);
+            var second = await store.StageAsync(secondId, secondReply, CancellationToken.None);
+            await using (var db = new AppDbContext(dbOptions))
+            {
+                db.Projects.Add(new Project { Id = projectId, Name = "route-" + projectId.ToString("N"),
+                    CreatedAt = now, UpdatedAt = now });
+                db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "route",
+                    CreatedAt = now, UpdatedAt = now });
+                db.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "route",
+                    Slug = "route-" + agentId.ToString("N"), WorkingDirectory = root });
+                db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "slack",
+                    ExternalId = channelId.ToString("N"), AgentId = agentId,
+                    ReplyHandle = t2.ReplyHandle, CreatedAt = now, UpdatedAt = now });
+                db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "route",
+                    Cwd = root, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+                db.ChannelOutboundDeliveries.AddRange(
+                    new ChannelOutboundDelivery { Id = firstId, SourceKey = Guid.NewGuid().ToString("N"),
+                        ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                        SourceSessionId = sessionId, SendKind = "main", ProfileName = "",
+                        PromptRevision = new string('a', 64), InputPath = first.ReplyPath,
+                        InputSha256 = first.ReplySha256, Trigger = "Passthrough",
+                        State = ChannelOutboundDeliveryState.Ready, CreatedAt = now,
+                        DeadlineAt = now.AddMinutes(20) },
+                    new ChannelOutboundDelivery { Id = secondId, SourceKey = Guid.NewGuid().ToString("N"),
+                        ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                        SourceSessionId = sessionId, SendKind = "trailing", ProfileName = "",
+                        PromptRevision = new string('a', 64), InputPath = second.ReplyPath,
+                        InputSha256 = second.ReplySha256, Trigger = "Passthrough",
+                        State = ChannelOutboundDeliveryState.Ready, CreatedAt = now.AddMilliseconds(1),
+                        DeadlineAt = now.AddMinutes(20) });
+                await db.SaveChangesAsync();
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = correlationId, AgentSessionId = sessionId, Body = "asked in T1",
+                    Sequence = 1, Origin = QueuedMessageOrigin.Channel,
+                    Status = QueuedMessageStatus.Sent, ConversationKey = "slack:" + channelId.ToString("N"),
+                    ChannelOutboundDeliveryId = firstId, CreatedAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            async Task WriteConfigAsync(string? barrier) =>
+                await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(new
+                {
+                    ConnectionString = isolated.ConnectionString, StoreRoot = Path.Combine(root, "store"),
+                    DeliveryId = firstId, EvidencePath = evidencePath, MarkerPath = markerPath,
+                    Barrier = barrier, ClockOffsetSeconds = barrier is null ? 301 : 0,
+                }));
+            await WriteConfigAsync("publishing-committed");
+            child = StartProbe(probeDll, configPath);
+            using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                while (!File.Exists(markerPath))
+                {
+                    child.HasExited.ShouldBeFalse("publisher exited before the durable Publishing cut");
+                    await Task.Delay(25, watchdog.Token);
+                }
+            child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync();
+            child.Dispose();
+            child = null;
+
+            await WriteConfigAsync(null);
+            using (var recovery = StartProbe(probeDll, configPath))
+            {
+                using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await recovery.WaitForExitAsync(watchdog.Token);
+                recovery.ExitCode.ShouldBe(0);
+            }
+            File.Exists(evidencePath).ShouldBeFalse();
+            await using (var verify = new AppDbContext(dbOptions))
+            {
+                var head = await verify.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == firstId);
+                head.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
+                head.PublishedAt.ShouldBeNull();
+                (await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == secondId))
+                    .State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+                (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                    .ChannelReplySettledAt.ShouldBeNull();
+                var service = new ChannelOutboundService(verify, store, new FakeAntiphonMessagingClient(),
+                    Options.Create(new ChannelOutboundSettings()), TimeProvider.System);
+                await service.RetryUncertainAsync(firstId, true, CancellationToken.None);
+            }
+            using (var resumed = StartProbe(probeDll, configPath))
+            {
+                using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await resumed.WaitForExitAsync(watchdog.Token);
+                resumed.ExitCode.ShouldBe(0);
+            }
+            var bytes = await File.ReadAllBytesAsync(evidencePath);
+            var replies = new List<ChannelReply>();
+            for (var offset = 0; offset < bytes.Length;)
+            {
+                var length = BitConverter.ToInt32(bytes, offset);
+                offset += sizeof(int);
+                replies.Add(JsonSerializer.Deserialize<ChannelReply>(bytes.AsSpan(offset, length),
+                    MessagingJson.Options)!);
+                offset += length;
+            }
+            replies.Count.ShouldBe(2);
+            replies[0].Channel.ShouldBe("slack");
+            replies[0].ConversationId.ShouldBe(channelId.ToString("N"));
+            replies[0].ReplyHandle.ShouldBe(t1.ReplyHandle);
+            replies[0].ReplyToMessageId.ShouldBe(t1.ChannelMessageId);
+            replies[0].Kind.ShouldBe(ChannelReplyKind.Question);
+            replies[0].RawOverrides!.Value.GetProperty("thread_marker").GetString().ShouldBe("T1");
+            replies[0].Text.ShouldBe("first frozen answer");
+            replies[0].Attachments.ShouldHaveSingleItem().Content.ShouldBe(source);
+            replies[0].Attachments[0].Source.ShouldBe("fixture://source.md");
+            replies[0].Attachments[0].Caption.ShouldBe("original source");
+            replies[1].ReplyHandle.ShouldBe(t2.ReplyHandle);
+            replies[1].ReplyToMessageId.ShouldBe(t2.ChannelMessageId);
+            replies[1].Text.ShouldBe("second frozen answer");
+            await using var final = new AppDbContext(dbOptions);
+            (await final.ChannelOutboundDeliveries.AsNoTracking().CountAsync(d => d.ChannelId == channelId
+                && d.State == ChannelOutboundDeliveryState.Published)).ShouldBe(2);
+            (await final.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                .ChannelReplySettledAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            if (child is not null)
+            {
+                if (!child.HasExited) child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync();
+                child.Dispose();
+            }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Test]
     public async Task Broker_ack_before_process_death_remains_uncertain_without_replay()
     {
