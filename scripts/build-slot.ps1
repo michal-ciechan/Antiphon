@@ -65,6 +65,19 @@ if ($command.Count -eq 0) {
     Write-Host 'usage: pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> [-SlotWaitMinutes 45] [-NoSlot] -- <command...>'
     exit 2
 }
+# An in-process PowerShell caller can pass an unsplatted array as one argument. Expand
+# nested arrays here so each element remains one command-line token, including empty ones.
+function Add-AntiphonCommandToken {
+    param([Collections.Generic.List[string]]$Target, $Value)
+    if ($Value -is [array]) {
+        foreach ($part in $Value) { Add-AntiphonCommandToken -Target $Target -Value $part }
+    } else {
+        [void]$Target.Add([string]$Value)
+    }
+}
+$flatCommand = [Collections.Generic.List[string]]::new()
+foreach ($part in $command) { Add-AntiphonCommandToken -Target $flatCommand -Value $part }
+$command = @($flatCommand.ToArray())
 if ([string]::IsNullOrWhiteSpace($label)) { $label = (@($command | Select-Object -First 2) -join ' ') }
 
 $slot = $null

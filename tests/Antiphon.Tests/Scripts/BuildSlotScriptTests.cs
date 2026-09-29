@@ -88,17 +88,27 @@ public sealed class BuildSlotScriptTests
         "C800 WrapperStartsUnitFilterWithinDeadline releases the lease");
 
     [Test]
-    public Task C800_WrapperKeepsScriptCommandsInProcess() => RunC800CaseAsync("C800_WrapperKeepsScriptCommandsInProcess", 2,
+    public Task C800_WrapperKeepsScriptCommandsInProcess() => RunC800CaseAsync("C800_WrapperKeepsScriptCommandsInProcess", 4,
         "C800 WrapperKeepsScriptCommandsInProcess propagates exit 6 from a script command",
-        "C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged");
+        "C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged",
+        "C800 WrapperKeepsScriptCommandsInProcess an unsplatted array stays separate",
+        "C800 WrapperKeepsScriptCommandsInProcess an empty array element stays separate");
 
     [Test]
-    public Task C800_WrapperInterruptKillsChildAndReleasesLease() => OperatingSystem.IsLinux()
-        ? RunC800CaseAsync("C800_WrapperInterruptKillsChildAndReleasesLease", 3,
+    public Task C800_WrapperLaunchesNativeExecutableLiterally() => RunC800CaseAsync("C800_WrapperLaunchesNativeExecutableLiterally", 3,
+        "C800 WrapperLaunchesNativeExecutableLiterally exits zero",
+        "C800 WrapperLaunchesNativeExecutableLiterally passes wildcard argv unchanged",
+        "C800 WrapperLaunchesNativeExecutableLiterally keeps the caller directory");
+
+    [Test]
+    public Task C800_WrapperInterruptKillsChildAndReleasesLease()
+    {
+        if (!OperatingSystem.IsLinux()) throw new TUnit.Core.Exceptions.SkipTestException("Linux SIGINT behavior only");
+        return RunC800CaseAsync("C800_WrapperInterruptKillsChildAndReleasesLease", 3,
             "C800 WrapperInterruptKillsChildAndReleasesLease the wrapper exits within 5 s of SIGINT",
             "C800 WrapperInterruptKillsChildAndReleasesLease the child is gone within 5 s",
-            "C800 WrapperInterruptKillsChildAndReleasesLease the lease is released after the command")
-        : Task.CompletedTask;
+            "C800 WrapperInterruptKillsChildAndReleasesLease the lease is released after the command");
+    }
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C589", caseName, expectedRows, requiredRows);

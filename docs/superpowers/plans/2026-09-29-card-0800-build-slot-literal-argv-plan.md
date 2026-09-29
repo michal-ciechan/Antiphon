@@ -283,12 +283,16 @@ No build or test ran during Plan; the probes above used `pwsh` and `/usr/bin/pri
 | R-1 | The eight existing methods (lease order, `-maxcpucount` rules, failure release, timeout exit 4, unreachable fallback, ASCII, renew) pass unchanged through the new launcher. |
 | R-2 | The `wrapper-run` sub-case (`/*/*/A/*`) of `C589_WrapperMaxCpuCountRules` completes in seconds on Linux, which is why CP-5 fits its `EstimatedMinutes`. |
 | R-3 | Review reads `build-slot.ps1` for: `WorkingDirectory` set from `Get-Location`, no redirection, `Kill($true)` before `Exit-AntiphonBuildSlot`, the D-2 resolution rule, the shim branch on the same launcher, and no change to `scripts/lib/build-slot.ps1`. |
+| V-6 | `C800_WrapperLaunchesNativeExecutableLiterally`: with the shim seam unset, a real `pwsh` executable receives matching wildcard tokens and the fixture working directory literally. |
+| R-4 | The full `BuildSlotEndToEndTests` class passes against its isolated broker. |
+| R-5 | The complete `Antiphon.Tests` Unit lane passes. |
 
 ### Positive controls for the later Mutation stage (method-scoped, Linux)
 
 - PC-1: in `build-slot.ps1` make the D-2 decision always take the call operator. Run
-  `/*/*/BuildSlotScriptTests/C800_WrapperPassesWildcardArgvLiterally`: red on the two `ARGV`
-  rows (`a/b/Unit`, `old.trx run.trx`; `run.trx` in-process). Restore, rerun, green.
+  `/*/*/BuildSlotScriptTests/C800_WrapperLaunchesNativeExecutableLiterally`: red on the native
+  `ARGV` row (`*.trx` expands to `old.trx run.trx`; `?` matches the fixture's `x`). Restore,
+  rerun, green.
 - PC-2: remove the `Kill($true)` in the `finally`. Run
   `/*/*/BuildSlotScriptTests/C800_WrapperInterruptKillsChildAndReleasesLease`: red on
   "the child is gone within 5 s". Restore, green.
@@ -336,5 +340,8 @@ contention and are not measured timings. No open decisions or external prerequis
 | CP-2 | S1 | CP-1 | unit-filter-red | `/*/*/BuildSlotScriptTests/C800_WrapperStartsUnitFilterWithinDeadline` | V-2 (red) | 1 executed, 1 failed; the failure names the 30 s deadline with no `CMD` line; not rerun | 1 | 2 | true |
 | CP-3 | S1 | CP-1 | interrupt-red | `/*/*/BuildSlotScriptTests/C800_WrapperInterruptKillsChildAndReleasesLease` | V-4 (red) | 1 executed, 1 failed; the failure names the surviving child pid; not rerun | 1 | 2 | true |
 | CP-4 | S1 | CP-1 | script-inprocess | `/*/*/BuildSlotScriptTests/C800_WrapperKeepsScriptCommandsInProcess` | V-3 | 1 executed, 0 failed | 1 | 1 | true |
-| CP-5 | S1-S2 | `tests/Antiphon.Tests -> bin-c800s2/` | wrapper-green | `/*/*/BuildSlotScriptTests/*` | V-1, V-2, V-3, V-4, R-1, R-2 | all 12 results, 0 failed, 0 skipped | 12 | 8 | true |
+| CP-5 | S1-S2 | `tests/Antiphon.Tests -> bin-c800s2/` | wrapper-green | `/*/*/BuildSlotScriptTests/*` | V-1, V-2, V-3, V-4, R-1, R-2 | all 13 results, 0 failed, 0 skipped | 13 | 8 | true |
 | CP-6 | S1-S2 | CP-5 | doc-contract | `/*/*/CheckpointManifestDocumentationTests/*` | V-5 | all 7 results, 0 failed | 7 | 1 | true |
+| CP-7 | S1-S2 | CP-5 | native-branch | `/*/*/BuildSlotScriptTests/C800_WrapperLaunchesNativeExecutableLiterally` | V-6, PC-1 target | 1 executed, 0 failed; native argv and CWD literal | 1 | 1 | true |
+| CP-8 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c800runner/` | broker-integration | `/*/*/BuildSlotEndToEndTests/*` | R-4 | 2 executed, 0 failed | 2 | 5 | true |
+| CP-9 | S1-S2 | CP-5 | unit-lane | `/*/*/*/*[Category=Unit]` | R-5 | whole Unit lane, 0 failed | 1 | 8 | true |
