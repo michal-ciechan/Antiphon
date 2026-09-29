@@ -11,23 +11,54 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint StartfUseStdHandles = 0x00000100;
     private const uint HandleFlagInherit = 0x00000001;
-    private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    internal const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    internal const uint JobObjectLimitBreakawayOk = 0x00000800;
+    internal const uint JobObjectLimitSilentBreakawayOk = 0x00001000;
     private const int JobObjectExtendedLimitInformation = 9;
     private const int JobObjectBasicAccountingInformation = 1;
     private const int ProcThreadAttributeHandleList = 0x00020002;
     private const uint WaitObject0 = 0;
+    private const uint DuplicateSameAccess = 0x00000002;
 
     private readonly SafeFileHandle _job;
     private readonly SafeFileHandle _process;
     private readonly SafeFileHandle _thread;
     private readonly StreamReader _stdout;
     private readonly StreamReader _stderr;
+    private readonly WindowsFaultInjection? _faults;
     private bool _terminated;
     public StreamReader Stdout => _stdout;
     public StreamReader Stderr => _stderr;
+    internal int ProcessId { get; }
+    internal IReadOnlyList<IntPtr> InheritedHandlesForTesting { get; private set; } = Array.Empty<IntPtr>();
+    internal SafeFileHandle JobHandleForTesting => _job;
 
-    internal WindowsScriptHarnessProcess(ScriptProcessRequest request)
+    internal uint QueryLimitFlagsForTesting() => QueryLimitFlagsForTesting(_job);
+
+    internal uint QueryActiveProcessesForTesting() => QueryActiveProcessesForTesting(_job);
+
+    internal static uint QueryLimitFlagsForTesting(SafeFileHandle job)
     {
+        var limits = new JobExtendedLimitInformation();
+        if (!QueryInformationJobObjectLimits(job, JobObjectExtendedLimitInformation, ref limits,
+                Marshal.SizeOf<JobExtendedLimitInformation>(), IntPtr.Zero))
+            throw NativeError("QueryInformationJobObject (limits)");
+        return limits.Basic.LimitFlags;
+    }
+
+    internal static uint QueryActiveProcessesForTesting(SafeFileHandle job)
+    {
+        if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
+                out var accounting, Marshal.SizeOf<JobBasicAccounting>(), IntPtr.Zero))
+            throw NativeError("QueryInformationJobObject (accounting)");
+        return accounting.ActiveProcesses;
+    }
+
+    internal WindowsScriptHarnessProcess(ScriptProcessRequest request) : this(request, null) { }
+
+    internal WindowsScriptHarnessProcess(ScriptProcessRequest request, WindowsFaultInjection? faults)
+    {
+        _faults = faults;
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         if (!Path.IsPathFullyQualified(request.Executable) ||
             request.Executable.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) ||
@@ -35,6 +66,15 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
             throw new InvalidOperationException("ScriptHarness requires a real pwsh.exe path, not an App Execution Alias; set ExecutablePath to the installed PowerShell executable.");
         _job = CreateJobObjectW(IntPtr.Zero, null);
         if (_job.IsInvalid) { _job.Dispose(); throw NativeError("CreateJobObjectW"); }
+        if (faults is not null)
+        {
+            // Duplicate the job handle so a test can inspect accounting after a thrown
+            // constructor disposes this instance's own copy during unwind.
+            var self = GetCurrentProcess();
+            if (!DuplicateHandle(self, _job, self, out var jobCopy, 0, false, DuplicateSameAccess))
+                throw NativeError("DuplicateHandle (job)");
+            faults.JobHandleCopy = jobCopy;
+        }
         SafeFileHandle? stdoutRead = null, stdoutWrite = null, stderrRead = null, stderrWrite = null,
             stdinRead = null, stdinWrite = null;
         try
@@ -74,6 +114,8 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                 Marshal.WriteIntPtr(handles, 0, stdinRead.DangerousGetHandle());
                 Marshal.WriteIntPtr(handles, IntPtr.Size, stdoutWrite.DangerousGetHandle());
                 Marshal.WriteIntPtr(handles, 2 * IntPtr.Size, stderrWrite.DangerousGetHandle());
+                InheritedHandlesForTesting = [stdinRead.DangerousGetHandle(), stdoutWrite.DangerousGetHandle(),
+                    stderrWrite.DangerousGetHandle()];
                 if (!UpdateProcThreadAttribute(attributes, 0, ProcThreadAttributeHandleList,
                         handles, (nint)(3 * IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
                     throw NativeError("UpdateProcThreadAttribute");
@@ -98,8 +140,17 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
                     throw NativeError("CreateProcessW");
                 _process = information.Process;
                 _thread = information.Thread;
-                if (!AssignProcessToJobObject(_job, _process)) throw NativeError("AssignProcessToJobObject");
-                if (ResumeThread(_thread) == uint.MaxValue) throw NativeError("ResumeThread");
+                ProcessId = information.ProcessId;
+                faults?.RootProcessIds.Add(information.ProcessId);
+                faults?.Trace.Add("Assign:attempt");
+                var assigned = faults?.FailAssign == true ? false : AssignProcessToJobObject(_job, _process);
+                if (!assigned) throw NativeError("AssignProcessToJobObject");
+                faults?.Trace.Add("Assign:success");
+                faults?.OnAssigned?.Invoke();
+                faults?.Trace.Add("Resume:attempt");
+                var resumed = faults?.FailResume == true ? uint.MaxValue : ResumeThread(_thread);
+                if (resumed == uint.MaxValue) throw NativeError("ResumeThread");
+                faults?.Trace.Add("Resume:success");
             }
             finally
             {
@@ -153,12 +204,14 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         cancellationToken.ThrowIfCancellationRequested();
         if (_terminated) return Task.CompletedTask;
         _terminated = true;
+        if (_faults?.SkipTerminateKill == true) return Task.CompletedTask;
         if (!TerminateJobObject(_job, 1)) throw NativeError("TerminateJobObject");
         return Task.CompletedTask;
     }
 
     public async Task ConfirmDeadAsync(CancellationToken cancellationToken)
     {
+        if (_faults?.FailAccountingQuery == true) throw NativeError("QueryInformationJobObject (injected)");
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -272,5 +325,29 @@ internal sealed class WindowsScriptHarnessProcess : IOwnedScriptProcess
         SafeFileHandle job, int informationClass, ref JobExtendedLimitInformation information, int length);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool QueryInformationJobObject(
         SafeFileHandle job, int informationClass, out JobBasicAccounting accounting, int length, IntPtr returned);
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+    private static extern bool QueryInformationJobObjectLimits(
+        SafeFileHandle job, int informationClass, ref JobExtendedLimitInformation information, int length, IntPtr returned);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateJobObject(SafeFileHandle job, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool DuplicateHandle(
+        IntPtr sourceProcess, SafeFileHandle sourceHandle, IntPtr targetProcess, out SafeFileHandle targetHandle,
+        uint desiredAccess, bool inheritHandle, uint options);
+}
+
+/// <summary>
+/// Test-only fault-injection and observation seam for WindowsScriptHarnessProcess. Each flag
+/// forces the corresponding guard's native call to fail without disturbing any other native
+/// operation, and each observation is populated from the real construction it instruments.
+/// </summary>
+internal sealed class WindowsFaultInjection
+{
+    internal bool FailAssign;
+    internal bool FailResume;
+    internal bool SkipTerminateKill;
+    internal bool FailAccountingQuery;
+    internal Action? OnAssigned;
+    internal readonly List<string> Trace = [];
+    internal readonly List<int> RootProcessIds = [];
+    internal SafeFileHandle? JobHandleCopy;
 }
