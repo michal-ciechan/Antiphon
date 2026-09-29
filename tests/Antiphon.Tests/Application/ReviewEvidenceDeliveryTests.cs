@@ -67,11 +67,6 @@ public sealed class ReviewEvidenceDeliveryTests
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
             snapshot.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
-            if (cut == "wakeup-dropped")
-            {
-                rig.Boundary.DropCompletionWakeup.ShouldBeFalse(row + ": drop consumed");
-                rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": lost wakeup typed nothing");
-            }
             rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": no enqueue receipt");
             if (distill)
             {
@@ -143,6 +138,11 @@ public sealed class ReviewEvidenceDeliveryTests
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
             snapshot.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
+            if (cut == "wakeup-dropped")
+            {
+                rig.Boundary.DropCompletionWakeup.ShouldBeFalse(row + ": drop consumed");
+                rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": lost wakeup typed nothing");
+            }
             var oldQueue = await rig.RowsAsync(taskId);
             if (cut is "settled-committed" or "note-insert") oldQueue.ShouldBeEmpty(row);
             if (cut == "note-committed") oldQueue.ShouldHaveSingleItem(row);
@@ -309,7 +309,7 @@ public sealed class ReviewEvidenceDeliveryTests
                 parked.ConfirmingPromptSequence.ShouldBeNull(form);
                 var rendering = TaskCompletionNotification.TryReadDelivery(parked.CompletionDeliveryJson)!;
                 (await rig.CallerPromptsAsync()).ShouldNotContain(p =>
-                    p.Text is not null && PromptSubmissionMatch.IsCompleteIn(rendering.WireText, p.Text), form);
+                    p.Text != null && PromptSubmissionMatch.IsCompleteIn(rendering.WireText, p.Text), form);
             }
         }
     }
