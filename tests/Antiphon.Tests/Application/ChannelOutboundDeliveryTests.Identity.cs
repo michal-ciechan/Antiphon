@@ -288,9 +288,12 @@ public sealed partial class ChannelOutboundDeliveryTests
             firstTick = first.TickAsync(CancellationToken.None);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
             (await second.TickAsync(CancellationToken.None)).ShouldBe(0);
+            Guid? firstLeaseOwner;
             await using (var verify = new AppDbContext(options))
             {
                 var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
+                firstLeaseOwner = delivery.LeaseOwner;
+                firstLeaseOwner.ShouldNotBeNull();
                 delivery.State.ShouldBe(barrier == "conversion-task-committed"
                     ? ChannelOutboundDeliveryState.Converting : ChannelOutboundDeliveryState.Pending);
                 (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId))
@@ -298,9 +301,33 @@ public sealed partial class ChannelOutboundDeliveryTests
             }
             clock.Advance(TimeSpan.FromMinutes(6));
             var secondTick = second.TickAsync(CancellationToken.None);
+            if (barrier == "before-conversion-create")
+            {
+                // The first pump still holds the advisory lock at this barrier.
+                // Confirm the second owner has claimed the expired lease before
+                // releasing the first; otherwise scheduling can let the old owner
+                // create the task before the intended takeover even starts.
+                var claimed = false;
+                for (var attempt = 0; attempt < 300 && !secondTick.IsCompleted; attempt++)
+                {
+                    await using var observation = new AppDbContext(options);
+                    var owner = await observation.ChannelOutboundDeliveries.AsNoTracking()
+                        .Where(d => d.Id == deliveryId).Select(d => d.LeaseOwner).SingleAsync();
+                    if (owner is not null && owner != firstLeaseOwner)
+                    {
+                        claimed = true;
+                        break;
+                    }
+                    await Task.Delay(50);
+                }
+                claimed.ShouldBeTrue("the competing pump must claim the expired lease before the old owner resumes");
+            }
+            else
+                (await secondTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
             release.TrySetResult();
             (await firstTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
-            (await secondTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
+            if (barrier == "before-conversion-create")
+                (await secondTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
             firstOwnerCreatedTasks.ShouldBe(barrier == "conversion-task-committed" ? 1 : 0);
             await using (var verify = new AppDbContext(options))
             {
