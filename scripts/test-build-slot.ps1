@@ -58,21 +58,59 @@ function Invoke-C589Wrapper {
         [string]$WaitSeconds = '',
         [string]$GraceSeconds = '',
         [string]$RetryMs = '10',
-        [int]$CommandExit = 0
+        [int]$CommandExit = 0,
+        [string]$WorkingDirectory = $script:RepoRoot,
+        [int]$DeadlineSeconds = 120,
+        [switch]$NoWait,
+        [switch]$DisableCommandShim
     )
     Set-C589Seams -Fx $Fx -SlotScript $SlotScript -WaitSeconds $WaitSeconds -GraceSeconds $GraceSeconds -RetryMs $RetryMs -CommandExit $CommandExit
-    Push-Location -LiteralPath $script:RepoRoot
+    if ($DisableCommandShim) { Remove-Item Env:C589_COMMAND_SHIM -ErrorAction SilentlyContinue }
     try {
-        $output = & pwsh -NoProfile -NonInteractive -File $script:Wrapper @WrapperArgs 2>&1
-        $code = $LASTEXITCODE
+        $psi = [Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = (Get-Command pwsh).Source
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $WorkingDirectory
+        foreach ($token in @('-NoProfile', '-NonInteractive', '-File', $script:Wrapper) + @($WrapperArgs)) {
+            [void]$psi.ArgumentList.Add([string]$token)
+        }
+        $proc = [Diagnostics.Process]::Start($psi)
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
     } finally {
-        Pop-Location
         Clear-C589Seams
     }
-    $lines = @($output | ForEach-Object { [string]$_ })
+    if ($NoWait) { return [pscustomobject]@{ Process = $proc; StdoutTask = $stdoutTask; StderrTask = $stderrTask; Fx = $Fx } }
+    return Wait-C589Wrapper -Running ([pscustomobject]@{ Process = $proc; StdoutTask = $stdoutTask; StderrTask = $stderrTask; Fx = $Fx }) -DeadlineSeconds $DeadlineSeconds
+}
+
+function Wait-C589Wrapper {
+    param($Running, [int]$DeadlineSeconds = 120)
+    $proc = $Running.Process
+    $timedOut = -not $proc.WaitForExit($DeadlineSeconds * 1000)
+    if ($timedOut) {
+        try { $proc.Kill($true) } catch { }
+        [void]$proc.WaitForExit(5000)
+    }
+    $merged = [string]$Running.StdoutTask.Result
+    $errText = [string]$Running.StderrTask.Result
+    if ($errText) {
+        if ($merged -and -not $merged.EndsWith("`n")) { $merged += "`n" }
+        $merged += $errText
+    }
+    $lines = @()
+    if ($merged) {
+        $merged = $merged -replace "`r`n", "`n" -replace "`r", "`n"
+        if ($merged.EndsWith("`n")) { $merged = $merged.Substring(0, $merged.Length - 1) }
+        $lines = @($merged -split "`n")
+    }
     $calls = @()
-    if (Test-Path -LiteralPath $Fx.Log) { $calls = @(Get-Content -LiteralPath $Fx.Log) }
-    return [pscustomobject]@{ Exit = $code; Lines = $lines; Text = ($lines -join "`n"); Calls = $calls }
+    if (Test-Path -LiteralPath $Running.Fx.Log) { $calls = @(Get-Content -LiteralPath $Running.Fx.Log) }
+    $code = $(if ($timedOut) { -1 } else { $proc.ExitCode })
+    $proc.Dispose()
+    return [pscustomobject]@{ Exit = $code; TimedOut = $timedOut; Lines = $lines; Text = ($lines -join "`n"); Calls = $calls }
 }
 
 function Get-C589Order {
@@ -92,6 +130,103 @@ function Get-C589Cmd {
 function Get-C589Line {
     param($Result, [string]$Pattern)
     return @($Result.Lines | Where-Object { $_ -cmatch $Pattern }).Count
+}
+
+function Get-C589LoggedValue {
+    param($Result, [string]$Prefix)
+    $lines = @($Result.Calls | Where-Object { $_ -clike ($Prefix + ' *') })
+    if ($lines.Count -ne 1) { return ('<{0} {1} lines>' -f $lines.Count, $Prefix) }
+    return ([string]$lines[0]).Substring($Prefix.Length + 1)
+}
+
+function Test-C800_WrapperPassesWildcardArgvLiterally {
+    $fx = New-C589Case -Name 'c800-argv'
+    New-Item -ItemType Directory -Path (Join-Path $fx.Root 'a/b') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $fx.Root 'a/b/Unit') -Value ''
+    Set-Content -LiteralPath (Join-Path $fx.Root 'run.trx') -Value ''
+    Set-Content -LiteralPath (Join-Path $fx.Root 'old.trx') -Value ''
+    $argv = @('dotnet', 'run', '--project', 'tests/X', '--no-build', '--', '--treenode-filter', '*/*/*[Category=Unit]', '--report-trx-filename', '*.trx')
+    $r = Invoke-C589Wrapper -Fx $fx -WorkingDirectory $fx.Root -CommandExit 3 -WrapperArgs (@('-Label', 'c800-argv', '--') + $argv)
+    Assert-C487 -Cond ($r.Exit -eq 3) -Name 'C800 WrapperPassesWildcardArgvLiterally propagates exit 3' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,CMD,DELETE') -Name 'C800 WrapperPassesWildcardArgvLiterally runs the command between grant and release' -Detail ($r.Calls -join ' | ')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $argv -Compress)) -Name 'C800 WrapperPassesWildcardArgvLiterally every token arrives literally' -Detail (Get-C589LoggedValue -Result $r -Prefix 'ARGV')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'CWD') -ceq $fx.Root) -Name "C800 WrapperPassesWildcardArgvLiterally the child runs in the caller's directory" -Detail (Get-C589LoggedValue -Result $r -Prefix 'CWD')
+
+    $ip = New-C589Case -Name 'c800-inproc'
+    $inproc = Join-Path $ip.Root 'inproc'
+    New-Item -ItemType Directory -Path $inproc | Out-Null
+    Set-Content -LiteralPath (Join-Path $inproc 'run.trx') -Value ''
+    Set-C589Seams -Fx $ip -SlotScript 'granted' -WaitSeconds '' -GraceSeconds '' -RetryMs '10' -CommandExit 0
+    Push-Location -LiteralPath $inproc
+    try { & $script:Wrapper -Label c800-inproc -- dotnet build tests/X '*.trx' | Out-Null }
+    finally { Pop-Location; Clear-C589Seams }
+    $ipResult = [pscustomobject]@{ Calls = @(Get-Content -LiteralPath $ip.Log) }
+    $ipArgv = @('dotnet', 'build', 'tests/X', '*.trx', '-maxcpucount:3')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $ipArgv -Compress)) -Name 'C800 WrapperPassesWildcardArgvLiterally an in-process call passes the token literally' -Detail (Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $ipResult -Prefix 'CWD') -ceq $inproc) -Name 'C800 WrapperPassesWildcardArgvLiterally an in-process call runs the child at the pushed location' -Detail (Get-C589LoggedValue -Result $ipResult -Prefix 'CWD')
+}
+
+function Test-C800_WrapperStartsUnitFilterWithinDeadline {
+    $fx = New-C589Case -Name 'c800-unit'
+    $filter = '/*/*/*/*[Category=Unit]'
+    $argv = @('-Label', 'c800-unit', '--', 'dotnet', 'run', '--project', 'tests/Antiphon.Tests', '--no-build', '--property:OutputPath=bin-c800/', '--', '--treenode-filter', $filter, '--report-trx', '--report-trx-filename', 'run.trx', '--results-directory', $fx.Root)
+    $r = Invoke-C589Wrapper -Fx $fx -DeadlineSeconds 30 -WrapperArgs $argv
+    Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq 0) -Name 'C800 WrapperStartsUnitFilterWithinDeadline exits within 30 s' -Detail ('exit={0} timedOut={1} calls={2}' -f $r.Exit, $r.TimedOut, ($r.Calls -join ' | '))
+    $logged = Get-C589LoggedValue -Result $r -Prefix 'ARGV'
+    $literal = $false
+    try { $literal = @($logged | ConvertFrom-Json) -ccontains $filter } catch { }
+    Assert-C487 -Cond $literal -Name 'C800 WrapperStartsUnitFilterWithinDeadline passes the Unit filter literally' -Detail $logged
+    Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,CMD,DELETE') -Name 'C800 WrapperStartsUnitFilterWithinDeadline releases the lease' -Detail ($r.Calls -join ' | ')
+}
+
+function Test-C800_WrapperKeepsScriptCommandsInProcess {
+    $fx = New-C589Case -Name 'c800-script'
+    Set-Content -LiteralPath (Join-Path $fx.Root 'run.trx') -Value ''
+    $r = Invoke-C589Wrapper -Fx $fx -WorkingDirectory $fx.Root -CommandExit 6 -DisableCommandShim -WrapperArgs @('-NoSlot', '--', $script:CommandShim, '--treenode-filter', '*.trx')
+    Assert-C487 -Cond ($r.Exit -eq 6) -Name 'C800 WrapperKeepsScriptCommandsInProcess propagates exit 6 from a script command' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ARGV') -ceq '["--treenode-filter","*.trx"]') -Name 'C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged' -Detail (Get-C589LoggedValue -Result $r -Prefix 'ARGV')
+}
+
+function Test-C800_WrapperInterruptKillsChildAndReleasesLease {
+    if (-not $IsLinux) { Write-Host 'SKIP C800 WrapperInterruptKillsChildAndReleasesLease (Linux only)'; return }
+    $fx = New-C589Case -Name 'c800-interrupt'
+    $env:C589_COMMAND_SLEEP_SECONDS = '20'
+    $running = $null
+    try {
+        $running = Invoke-C589Wrapper -Fx $fx -NoWait -WrapperArgs @('-Label', 'c800-interrupt', '--', 'dotnet', 'build', 'tests/X')
+        $childPid = 0
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        while ($clock.Elapsed.TotalSeconds -lt 10) {
+            if (Test-Path -LiteralPath $fx.Log) {
+                $pidLines = @(Get-Content -LiteralPath $fx.Log | Where-Object { $_ -cmatch '^PID [0-9]+$' })
+                if ($pidLines.Count -gt 0) { $childPid = [int](($pidLines[0] -split ' ')[1]); break }
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($childPid -gt 0) { & /bin/kill -INT $running.Process.Id }
+        $quickExit = $running.Process.WaitForExit(5000)
+        $gone = $false
+        if ($childPid -gt 0) {
+            $clock.Restart()
+            while ($clock.Elapsed.TotalSeconds -lt 5) {
+                if (-not (Test-Path -LiteralPath ('/proc/' + $childPid))) { $gone = $true; break }
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        $calls = @()
+        if (Test-Path -LiteralPath $fx.Log) { $calls = @(Get-Content -LiteralPath $fx.Log) }
+        $result = [pscustomobject]@{ Calls = $calls }
+        Assert-C487 -Cond $quickExit -Name 'C800 WrapperInterruptKillsChildAndReleasesLease the wrapper exits within 5 s of SIGINT' -Detail ('pid={0} child={1}' -f $running.Process.Id, $childPid)
+        Assert-C487 -Cond $gone -Name 'C800 WrapperInterruptKillsChildAndReleasesLease the child is gone within 5 s' -Detail ('child={0} exists={1}' -f $childPid, (Test-Path -LiteralPath ('/proc/' + $childPid)))
+        Assert-C487 -Cond ((Get-C589Order -Result $result) -ceq 'POST,CMD,DELETE') -Name 'C800 WrapperInterruptKillsChildAndReleasesLease the lease is released after the command' -Detail ($calls -join ' | ')
+    } finally {
+        if ($running) {
+            if (-not $running.Process.HasExited) { try { $running.Process.Kill($true) } catch { } }
+            [void]$running.Process.WaitForExit(5000)
+            $running.Process.Dispose()
+        }
+        Remove-Item Env:C589_COMMAND_SLEEP_SECONDS -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-C589_WrapperRunsUnderLease {
@@ -230,7 +365,7 @@ function Test-C589_WrapperRenews {
         -Name 'C589 WrapperRenews pid grant has no renewals' -Detail ($pidResult.Calls -join ' | ')
 }
 
-$script:C589ExpectedRows = 7 + 12 + 2 + 3 + 4 + 2 + 5
+$script:C589ExpectedRows = 35 + 11 + $(if ($IsLinux) { 3 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }
@@ -242,6 +377,7 @@ if ($Case) {
     & $fn
 } else {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
+    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C800_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'build-slot-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { $script:C589ExpectedRows })

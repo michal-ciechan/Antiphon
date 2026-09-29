@@ -3,10 +3,20 @@
 # It runs under pwsh -File, whose binder splits -name:value, so -maxcpucount:3 logs as
 # '-maxcpucount 3'; the real command receives the token whole. ASCII-only.
 $argv = @($args)
+$raw = [Environment]::GetCommandLineArgs()
+for ($i = 0; $i -lt $raw.Count; $i++) {
+    if ([string]::Equals([string]$raw[$i], $PSCommandPath, [StringComparison]::OrdinalIgnoreCase)) {
+        $argv = @($raw | Select-Object -Skip ($i + 1))
+        break
+    }
+}
 if ($env:C589_SLOT_SCRIPT -like 'deadline_*') {
     Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD_AT ' + [Diagnostics.Stopwatch]::GetTimestamp()) -Encoding ASCII
 }
-Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + (($argv) -join ' ')) -Encoding ASCII
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CWD ' + (Get-Location).ProviderPath) -Encoding ASCII
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('PID ' + $PID) -Encoding ASCII
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('ARGV ' + (ConvertTo-Json -InputObject @($argv) -Compress)) -Encoding ASCII
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + ((@($args)) -join ' ')) -Encoding ASCII
 if ($env:C589_COMMAND_SLEEP_SECONDS) { Start-Sleep -Seconds ([int]$env:C589_COMMAND_SLEEP_SECONDS) }
 $code = 0
 if ($env:C589_COMMAND_EXIT) { $code = [int]$env:C589_COMMAND_EXIT }

@@ -72,6 +72,37 @@ public sealed class BuildSlotScriptTests
         "C589 WrapperRenews renews twice before release",
         "C589 WrapperRenews pid grant has no renewals");
 
+    [Test]
+    public Task C800_WrapperPassesWildcardArgvLiterally() => RunC800CaseAsync("C800_WrapperPassesWildcardArgvLiterally", 6,
+        "C800 WrapperPassesWildcardArgvLiterally propagates exit 3",
+        "C800 WrapperPassesWildcardArgvLiterally runs the command between grant and release",
+        "C800 WrapperPassesWildcardArgvLiterally every token arrives literally",
+        "C800 WrapperPassesWildcardArgvLiterally the child runs in the caller's directory",
+        "C800 WrapperPassesWildcardArgvLiterally an in-process call passes the token literally",
+        "C800 WrapperPassesWildcardArgvLiterally an in-process call runs the child at the pushed location");
+
+    [Test]
+    public Task C800_WrapperStartsUnitFilterWithinDeadline() => RunC800CaseAsync("C800_WrapperStartsUnitFilterWithinDeadline", 3,
+        "C800 WrapperStartsUnitFilterWithinDeadline exits within 30 s",
+        "C800 WrapperStartsUnitFilterWithinDeadline passes the Unit filter literally",
+        "C800 WrapperStartsUnitFilterWithinDeadline releases the lease");
+
+    [Test]
+    public Task C800_WrapperKeepsScriptCommandsInProcess() => RunC800CaseAsync("C800_WrapperKeepsScriptCommandsInProcess", 2,
+        "C800 WrapperKeepsScriptCommandsInProcess propagates exit 6 from a script command",
+        "C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged");
+
+    [Test]
+    public Task C800_WrapperInterruptKillsChildAndReleasesLease() => OperatingSystem.IsLinux()
+        ? RunC800CaseAsync("C800_WrapperInterruptKillsChildAndReleasesLease", 3,
+            "C800 WrapperInterruptKillsChildAndReleasesLease the wrapper exits within 5 s of SIGINT",
+            "C800 WrapperInterruptKillsChildAndReleasesLease the child is gone within 5 s",
+            "C800 WrapperInterruptKillsChildAndReleasesLease the lease is released after the command")
+        : Task.CompletedTask;
+
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C589", caseName, expectedRows, requiredRows);
+
+    private static Task RunC800CaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
+        ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C800", caseName, expectedRows, requiredRows);
 }
