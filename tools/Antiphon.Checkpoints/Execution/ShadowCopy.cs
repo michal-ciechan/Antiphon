@@ -10,17 +10,20 @@ public static class ShadowCopy
             throw new InvalidOperationException("tool directory has no dll: " + toolDirectory);
 
         Directory.CreateDirectory(destination);
-        CopyFiles(toolDirectory, destination);
+        var bytes = CopyFiles(toolDirectory, destination);
+        CheckpointUsageEvent.Write("copy", destination, bytes);
     }
 
-    private static void CopyFiles(string source, string destination)
+    private static long CopyFiles(string source, string destination)
     {
+        var bytes = 0L;
         foreach (var file in Directory.EnumerateFiles(source))
         {
             var name = Path.GetFileName(file);
             if (name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
                 continue;
             File.Copy(file, Path.Combine(destination, name), overwrite: true);
+            bytes += new FileInfo(file).Length;
         }
 
         foreach (var dir in Directory.EnumerateDirectories(source))
@@ -30,7 +33,8 @@ public static class ShadowCopy
                 continue;
             var next = Path.Combine(destination, name);
             Directory.CreateDirectory(next);
-            CopyFiles(dir, next);
+            bytes += CopyFiles(dir, next);
         }
+        return bytes;
     }
 }
