@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
-public sealed class ChannelOutboundDeadlineTests
+public sealed partial class ChannelOutboundDeadlineTests
 {
     [Test]
     public async Task Deadline_crossing_the_final_creation_barrier_never_launches_a_worker()
