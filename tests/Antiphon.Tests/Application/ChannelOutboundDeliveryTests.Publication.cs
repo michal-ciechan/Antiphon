@@ -53,7 +53,7 @@ public sealed partial class ChannelOutboundDeliveryTests
             var attachments = new List<OutboundAttachment>();
             if (zip)
             {
-                var zipPath = Path.Combine(bundle, "sources.zip");
+                var zipPath = Path.Combine(bundle, "fixture-sources.zip");
                 await using (var stream = File.Create(zipPath))
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
                     for (var i = 0; i < names.Length; i++)
@@ -64,12 +64,12 @@ public sealed partial class ChannelOutboundDeliveryTests
                     }
                 attachments.Add(new OutboundAttachment
                 {
-                    Kind = AttachmentKind.File, Name = "sources.zip", Mime = "application/zip",
+                    Kind = AttachmentKind.File, Name = "fixture-sources.zip", Mime = "application/zip",
                     Source = zipPath, Content = await File.ReadAllBytesAsync(zipPath),
                 });
                 for (var i = 0; i < names.Length; i++)
                     members.Add(new DeliverableBundleService.SourceMember(
-                        "docs/" + names[i], "sources.zip", names[i], bytes[i].Length,
+                        "docs/" + names[i], "fixture-sources.zip", names[i], bytes[i].Length,
                         Convert.ToHexStringLower(SHA256.HashData(bytes[i]))));
             }
             else
