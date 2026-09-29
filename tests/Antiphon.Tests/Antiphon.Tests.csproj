@@ -61,6 +61,7 @@
     <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
@@ -102,6 +103,20 @@
       <CustodyChildOutput Include="$(_CustodyChildOutputDir)*" />
     </ItemGroup>
     <Copy SourceFiles="@(CustodyChildOutput)" DestinationFolder="$(OutDir)custody-child/" />
+  </Target>
+
+  <Target Name="CopyScriptHarnessHost" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_ScriptHarnessHostTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <_ScriptHarnessHostDir>@(_ScriptHarnessHostTargetPath->'%(RootDir)%(Directory)')</_ScriptHarnessHostDir>
+    </PropertyGroup>
+    <ItemGroup><ScriptHarnessHostOutput Include="$(_ScriptHarnessHostDir)**\*" /></ItemGroup>
+    <Copy SourceFiles="@(ScriptHarnessHostOutput)"
+          DestinationFiles="@(ScriptHarnessHostOutput->'$(OutDir)script-harness-host\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="CopyChannelOutboundProbe" AfterTargets="Build">
