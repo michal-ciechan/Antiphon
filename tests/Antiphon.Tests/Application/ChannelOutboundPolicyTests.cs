@@ -27,6 +27,7 @@ public sealed class ChannelOutboundPolicyTests
     [Arguments("unbound")]
     [Arguments("inbound_project")]
     [Arguments("converter_project")]
+    [Arguments("missing_converter")]
     [Arguments("same_agent")]
     [Arguments("raw_converter")]
     [Arguments("pool_converter")]
@@ -67,11 +68,13 @@ public sealed class ChannelOutboundPolicyTests
                 CreatedAt = now, UpdatedAt = now },
             new Board { Id = otherBoardId, ProjectId = otherProjectId, Name = "other",
                 CreatedAt = now, UpdatedAt = now });
-        db.Agents.AddRange(
-            new Agent { Id = inboundId, Name = "inbound", Slug = "inbound-" + inboundId.ToString("N"),
-                BoardId = fault == "inbound_project" ? otherBoardId : boardId,
-                WorkingDirectory = root },
-            new Agent { Id = converterId, Name = "converter", Slug = "converter-" + converterId.ToString("N"),
+        db.Agents.Add(new Agent { Id = inboundId, Name = "inbound",
+            Slug = "inbound-" + inboundId.ToString("N"),
+            BoardId = fault == "inbound_project" ? otherBoardId : boardId,
+            WorkingDirectory = root });
+        if (fault != "missing_converter")
+            db.Agents.Add(new Agent { Id = converterId, Name = "converter",
+                Slug = "converter-" + converterId.ToString("N"),
                 BoardId = fault == "converter_project" ? otherBoardId : boardId,
                 WorkingDirectory = fault == "missing_workspace" ? Path.Combine(root, "absent") : root,
                 Kind = fault == "raw_converter" ? AgentKind.Raw : AgentKind.ClaudeCode,
@@ -103,10 +106,12 @@ public sealed class ChannelOutboundPolicyTests
             var service = new ChatChannelService(db, TimeProvider.System,
                 new FakeAntiphonMessagingClient(), settings);
             await Should.ThrowAsync<ValidationException>(() => service.UpdateAsync(channelId,
-                new UpdateChatChannelRequest(OutboundAgentProfile: "conversion"), CancellationToken.None));
+                new UpdateChatChannelRequest(OutboundAgentProfile: "conversion", DigestEnabled: true),
+                CancellationToken.None));
             db.ChangeTracker.Clear();
-            (await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
-                .OutboundAgentProfile.ShouldBeNull();
+            var unchanged = await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId);
+            unchanged.OutboundAgentProfile.ShouldBeNull();
+            unchanged.DigestEnabled.ShouldBeFalse();
         }
         finally
         {

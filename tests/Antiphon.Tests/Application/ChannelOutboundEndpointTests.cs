@@ -113,9 +113,11 @@ public sealed class ChannelOutboundEndpointTests
             {
                 list.EnsureSuccessStatusCode();
                 using var body = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
-                foreach (var item in body.RootElement.EnumerateArray()
-                             .Where(item => item.GetProperty("id").GetGuid() == channelId
-                                 || companionIds.Contains(item.GetProperty("id").GetGuid())))
+                var selected = body.RootElement.EnumerateArray()
+                    .Where(item => item.GetProperty("id").GetGuid() == channelId
+                        || companionIds.Contains(item.GetProperty("id").GetGuid())).ToArray();
+                selected.Length.ShouldBe(3);
+                foreach (var item in selected)
                 {
                     var id = item.GetProperty("id").GetGuid();
                     if (id == channelId)
