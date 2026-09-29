@@ -120,7 +120,10 @@ public sealed partial class ChannelOutboundDeliveryTests
     }
 
     [Test]
-    public async Task Two_pumps_create_one_linked_task_and_expired_lease_takeover_fences_old_owner()
+    [Arguments("before-conversion-create")]
+    [Arguments("conversion-task-committed")]
+    public async Task Two_pumps_create_one_linked_task_and_expired_lease_takeover_fences_old_owner(
+        string barrier)
     {
         var root = Directory.CreateTempSubdirectory("c0418-pump-race-").FullName;
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -194,13 +197,19 @@ public sealed partial class ChannelOutboundDeliveryTests
             var firstRunner = Runner(firstDb);
             firstRunner.ProbeBarrierAsync = async (boundary, _, ct) =>
             {
-                if (boundary != "conversion-task-committed") return;
+                if (barrier != "conversion-task-committed" || boundary != barrier) return;
                 entered.TrySetResult();
                 await release.Task.WaitAsync(ct);
             };
             var first = new ChannelOutboundDeliveryPump(firstDb, firstRunner, files, producer,
                 Options.Create(new AntiphonMessagingOptions()), clock,
                 NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+            first.ProbeBarrierAsync = async (boundary, _, ct) =>
+            {
+                if (barrier != "before-conversion-create" || boundary != barrier) return;
+                entered.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            };
             var second = new ChannelOutboundDeliveryPump(secondDb, Runner(secondDb), files, producer,
                 Options.Create(new AntiphonMessagingOptions()), clock,
                 NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
@@ -210,14 +219,16 @@ public sealed partial class ChannelOutboundDeliveryTests
             await using (var verify = new AppDbContext(options))
             {
                 var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
-                delivery.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
-                delivery.ConversionTaskId.ShouldNotBeNull();
-                (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
+                delivery.State.ShouldBe(barrier == "conversion-task-committed"
+                    ? ChannelOutboundDeliveryState.Converting : ChannelOutboundDeliveryState.Pending);
+                (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId))
+                    .ShouldBe(barrier == "conversion-task-committed" ? 1 : 0);
             }
             clock.Advance(TimeSpan.FromMinutes(6));
-            (await second.TickAsync(CancellationToken.None)).ShouldBe(1);
+            var secondTick = second.TickAsync(CancellationToken.None);
             release.TrySetResult();
             (await firstTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
+            (await secondTick.WaitAsync(TimeSpan.FromSeconds(15))).ShouldBe(1);
             await using (var verify = new AppDbContext(options))
             {
                 var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
@@ -231,8 +242,22 @@ public sealed partial class ChannelOutboundDeliveryTests
             }
             (await first.TickAsync(CancellationToken.None)).ShouldBe(1);
             await using (var verify = new AppDbContext(options))
+            {
                 (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
-            producer.SentReplies.ShouldBeEmpty();
+                (await verify.AgentTasks.Where(t => t.OutboundDeliveryId == deliveryId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(t => t.Status, AgentTaskStatus.Failed)))
+                    .ShouldBe(1);
+            }
+            await Task.WhenAll(first.TickAsync(CancellationToken.None), second.TickAsync(CancellationToken.None));
+            await Task.WhenAll(first.TickAsync(CancellationToken.None), second.TickAsync(CancellationToken.None));
+            producer.SentReplies.ShouldHaveSingleItem().Text.ShouldContain("frozen");
+            await using (var verify = new AppDbContext(options))
+            {
+                var delivery = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
+                delivery.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+                delivery.PublishedAt.ShouldNotBeNull();
+                (await verify.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
+            }
         }
         finally
         {
