@@ -145,7 +145,7 @@ New harness functions are `Test-C800_*` with `PASS C800 ...` rows; the harness's
 appends `Get-C487CaseFunctions -Prefix 'C800_'` (pattern: `test-run-checkpoint.ps1:797`), and
 `BuildSlotScriptTests` adds `[Test]` methods calling
 `ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C800", ...)` through a
-`RunC800CaseAsync` helper. `$script:C589ExpectedRows` becomes `35 + 11` plus 3 on Linux (the
+`RunC800CaseAsync` helper. `$script:C589ExpectedRows` becomes `35 + 16` plus 3 on Linux (the
 interrupt case runs only there; on Windows it prints one `SKIP` line and adds no rows). The class
 stays `[Category("Integration")]` with `[ParallelLimiter<ProcessSpawnLimit>]`. No roster change:
 the class is not in `tests/linux-test-roster.json` (a CARD-0590 Docker-stack roster), and the
@@ -177,14 +177,21 @@ Cases (row names are the harness's `PASS` names; each C# method lists them as re
    250 s, so the harness kills the wrapper at 30 s with no `CMD` and no `SLOT DELETE` line. Green
    after S2 in about two seconds. The 30 s is the assertion, not a tolerance: a green run needs
    well under 5 s, and the value is never widened.
-3. `Test-C800_WrapperKeepsScriptCommandsInProcess` (2 rows). `C589_COMMAND_SHIM` unset; wrapper
+3. `Test-C800_WrapperKeepsScriptCommandsInProcess` (4 rows). `C589_COMMAND_SHIM` unset; wrapper
    args `-NoSlot -- scripts/fixtures/c589-command-shim.ps1 --treenode-filter *.trx` from a case
    root holding `run.trx`, `C589_COMMAND_EXIT=6`, `C589_SLOT_LOG` pointing at the case log. Rows:
    `... propagates exit 6 from a script command`;
    `... a script command receives its tokens unchanged` (`ARGV` = `["--treenode-filter","*.trx"]`,
-   because a PowerShell script is never globbed). Green at the baseline; it guards the D-2
+   because a PowerShell script is never globbed). Two in-process array rows pin distinct tokens,
+   including an empty element. Green at the baseline; it guards the D-2
    branch and goes red when everything is routed through `Process.Start` (PC-3).
-4. `Test-C800_WrapperInterruptKillsChildAndReleasesLease` (3 rows, Linux only).
+4. `Test-C800_WrapperLaunchesNativeExecutableLiterally` (3 rows). With the command shim seam
+   unset, wrap real `pwsh -NoProfile -File <command shim> *.trx ?` from a directory containing
+   two `.trx` files and a one-character filename; assert exit, exact `ARGV`, and `CWD`.
+   This exercises the production `Get-Command -> Application -> Process.Start` branch and is
+   the PC-1 target. The command shim reads raw argv only when it is the process's own `-File`
+   target, so the in-process rows above observe `$args`.
+5. `Test-C800_WrapperInterruptKillsChildAndReleasesLease` (3 rows, Linux only).
    `C589_COMMAND_SLEEP_SECONDS=20`; the wrapper is started through the D-4 launcher with
    `-NoWait`; the case polls the log for the `PID` line (10 s cap), then runs
    `/bin/kill -INT <wrapper pid>`. Rows: `... the wrapper exits within 5 s of SIGINT`;
@@ -247,9 +254,9 @@ literal.
 ### S1: red-first (tests only)
 
 Files: `scripts/test-build-slot.ps1` (D-4 launcher with `-WorkingDirectory`, `-DeadlineSeconds`,
-`-NoWait`; the four `Test-C800_*` functions; `C800_` discovery; expected rows),
+`-NoWait`; the five `Test-C800_*` functions; `C800_` discovery; expected rows),
 `scripts/fixtures/c589-command-shim.ps1` (`CWD`, `PID`, `ARGV` lines before `CMD`),
-`tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs` (four `[Test]` methods,
+`tests/Antiphon.Tests/Scripts/BuildSlotScriptTests.cs` (five `[Test]` methods,
 `RunC800CaseAsync`). All three files stay ASCII-only (`Test-C589_WrapperAsciiOnly`).
 Commit: `test(CARD-0800): pin literal wildcard argv through build-slot.ps1 red-first`.
 
@@ -270,8 +277,8 @@ Acceptance: CP-5 and CP-6 green; the header of `build-slot.ps1` still describes 
 
 No build or test ran during Plan; the probes above used `pwsh` and `/usr/bin/printf` directly.
 `BuildSlotScriptTests` has 8 `[Test]` methods at the baseline (seven `C589_*` plus
-`Wrapper_renews_a_renew_mode_grant_while_the_command_runs`); S1 adds four, so a class run is
-**12 results**. `CheckpointManifestDocumentationTests` has 7 methods.
+`Wrapper_renews_a_renew_mode_grant_while_the_command_runs`); S1 and the review fix add five, so a class run is
+**13 results**. `CheckpointManifestDocumentationTests` has 7 methods.
 
 | ID | Evidence |
 |---|---|
@@ -307,23 +314,22 @@ Code does not run these; Mutation records its own leased, method-scoped red/rest
 
 ### Execution
 
-One checkpoint run per committed slice, through the CARD-0723 tool. Bootstrap the tool under
-its own slot and release that slot before `run`; each row leases its own driver.
+S1's red rows CP-1 through CP-4 ran in the original Code slice. For this fix round, run
+CP-5 through CP-9 individually through `scripts/run-checkpoint.ps1`; the CARD-0723 tool
+can crash with `scheduler crashed` on this host (CARD-0823). Each row takes its own build
+slot. CP-6, CP-7, and CP-9 reuse CP-5's isolated output with `-NoBuild`.
 
 ```text
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c800-checkpoint-tool -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c800-tool/ --nologo
-dotnet run --project tools/Antiphon.Checkpoints --no-build --property:OutputPath=bin-c800-tool/ -- run --plan docs/superpowers/plans/2026-09-29-card-0800-build-slot-literal-argv-plan.md --after S1 --max-wait 50s
-dotnet run --project tools/Antiphon.Checkpoints --no-build --property:OutputPath=bin-c800-tool/ -- run --plan docs/superpowers/plans/2026-09-29-card-0800-build-slot-literal-argv-plan.md --rows CP-5,CP-6 --max-wait 50s
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-5 -Project tests/Antiphon.Tests -OutputPath bin-c800s2/ -Filter '/*/*/BuildSlotScriptTests/*' -MinExecuted 13
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-6 -Project tests/Antiphon.Tests -OutputPath bin-c800s2/ -NoBuild -Filter '/*/*/CheckpointManifestDocumentationTests/*' -MinExecuted 7
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-7 -Project tests/Antiphon.Tests -OutputPath bin-c800s2/ -NoBuild -Filter '/*/*/BuildSlotScriptTests/C800_WrapperLaunchesNativeExecutableLiterally' -MinExecuted 1
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-8 -Project tests/Antiphon.SessionRunner.Tests -OutputPath bin-c800runner/ -Filter '/*/*/BuildSlotEndToEndTests/*' -MinExecuted 2
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-9 -Project tests/Antiphon.Tests -OutputPath bin-c800s2/ -NoBuild -Filter '/*/*/*/*[Category=Unit]' -MinExecuted 1
 ```
 
-The first run selects CP-1 to CP-4 (their `After` is `S1`). The second names CP-5 and CP-6
-explicitly so the deliberately red rows are not rerun after the fix; their methods are
-re-verified green inside CP-5. After exit 75, call `wait <run-id> --max-wait 50s` until
-terminal; never end the turn while a run is live. CP-1 to CP-3 are expected red at S1 and are
-reported as such with their `FAILED` lines, not rerun; a red CP-4, CP-5 or CP-6 is fixed and
-rerun as the same row. Report every `CHECKPOINT` line with executed/passed/failed/skipped and
-the TRX path. Delete every `bin-c800*` directory before finishing (a red run keeps its
-outputs; remove them once the report is written).
+Report every `CHECKPOINT` line with executed/passed/failed/skipped and the TRX path. If a
+row fails, keep its TRX for diagnosis and report the failure and any focused rerun. Delete
+every `bin-c800*` directory once verification is complete.
 
 ### Cost
 
