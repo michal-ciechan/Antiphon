@@ -668,8 +668,70 @@ public sealed class ChannelOutboundRecoveryTests
             if (cut != "conversion-task-committed")
                 await RunToExitAsync("admit");
             acceptedId = await ReadDeliveryIdAsync();
-            await RunToExitAsync("prepare", acceptedId,
-                afterTaskCreation ? 301 : 0);
+            byte[]? convertedBytes = null;
+            if (cut == "conversion-dispatched")
+            {
+                // The killed dispatcher already committed the task/session owner. A fresh
+                // transcript-settlement service consumes that same task's actual closing turn.
+                Guid taskId;
+                await using (var pending = new AppDbContext(
+                    TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
+                {
+                    var task = await pending.AgentTasks.AsNoTracking()
+                        .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
+                    taskId = task.Id;
+                    task.AgentSessionId.ShouldBe(dispatchedSessionId);
+                    task.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                }
+                var outputDir = Path.Combine(storeRoot, acceptedId.ToString("N"), "output");
+                Directory.CreateDirectory(outputDir);
+                convertedBytes = "%PDF-1.4 recovered worker result"u8.ToArray();
+                await File.WriteAllBytesAsync(Path.Combine(outputDir, "combined.pdf"), convertedBytes);
+                await File.WriteAllTextAsync(Path.Combine(outputDir, "manifest.json"),
+                    JsonSerializer.Serialize(new
+                    {
+                        version = 1, deliveryId = acceptedId, disposition = "converted",
+                        files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                            mime = "application/pdf", length = convertedBytes.Length,
+                            sha256 = Sha256(convertedBytes).ToLowerInvariant() } },
+                    }));
+                await AgentTaskReplyIntegrationTests.SettleExistingConversionTaskAsync(
+                    isolated.ConnectionString, taskId, dispatchedSessionId!.Value);
+                await using (var settled = new AppDbContext(
+                    TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
+                {
+                    var task = await settled.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                    task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+                    task.AgentSessionId.ShouldBe(dispatchedSessionId);
+                    task.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+                    (await settled.TranscriptEntries.AsNoTracking().CountAsync(e =>
+                        e.AgentSessionId == dispatchedSessionId && e.Kind == "AssistantText"
+                        && e.Text != null && e.Text.Contains(
+                            DelegationReportFormatter.ReportToken(taskId, "done"))))
+                        .ShouldBe(1);
+                    (await settled.AgentTasks.CountAsync(t => t.OutboundDeliveryId == acceptedId))
+                        .ShouldBe(1);
+                }
+                // C-4: kill a second process after the normal worker has settled and the
+                // output manifest is durable, but before the pump observes that settlement.
+                await WriteConfigAsync("prepare", "before-conversion-observation", acceptedId);
+                File.Delete(markerPath);
+                child = StartProbe(probeDll, configPath);
+                using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                    while (!File.Exists(markerPath))
+                    {
+                        child.HasExited.ShouldBeFalse("pump exited before the settled-worker cut");
+                        await Task.Delay(25, watchdog.Token);
+                    }
+                child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync();
+                child.Dispose();
+                child = null;
+                await RunToExitAsync("prepare", acceptedId);
+            }
+            else
+                await RunToExitAsync("prepare", acceptedId,
+                    afterTaskCreation ? 301 : 0);
             await using var final = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
             var intent = await final.ChannelOutboundDeliveries.AsNoTracking().SingleAsync();
             intent.Id.ShouldBe(acceptedId);
@@ -699,10 +761,20 @@ public sealed class ChannelOutboundRecoveryTests
             {
                 var retained = await final.AgentTasks.AsNoTracking()
                     .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
-                retained.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                retained.Status.ShouldBe(AgentTaskStatus.Succeeded);
                 retained.AgentSessionId.ShouldBe(dispatchedSessionId);
                 (await final.AgentSessions.AsNoTracking().CountAsync(s => s.Id == dispatchedSessionId))
                     .ShouldBe(1);
+                intent.OutputPath.ShouldNotBeNull();
+                intent.OutputSha256.ShouldNotBeNull();
+                Sha256(await File.ReadAllBytesAsync(intent.OutputPath)).ShouldBe(intent.OutputSha256);
+                var accepted = await File.ReadAllBytesAsync(evidencePath);
+                var length = BitConverter.ToInt32(accepted, 0);
+                accepted.Length.ShouldBe(length + sizeof(int));
+                var publishedReply = JsonSerializer.Deserialize<ChannelReply>(
+                    accepted.AsSpan(sizeof(int), length), Antiphon.Messaging.MessagingJson.Options);
+                publishedReply.ShouldNotBeNull();
+                publishedReply.Attachments.Last().Content.ShouldBe(convertedBytes);
             }
         }
         finally
