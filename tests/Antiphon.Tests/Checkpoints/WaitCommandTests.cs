@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class WaitCommandTests
+public sealed class WaitCommandTests : CheckpointTestBase
 {
     [Test]
     public void heartbeat_lists_a_queued_build_after_the_building_one()
@@ -54,7 +54,8 @@ public sealed class WaitCommandTests
     [Test]
     public async Task prints_report_and_run_exit_when_done()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
         {
             RunId = "done-1",
@@ -74,7 +75,8 @@ public sealed class WaitCommandTests
     [Test]
     public async Task executor_finish_leaves_the_image_and_wait_deletes_it_once_the_pid_is_gone()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
         var tool = Path.Combine(dir, "tool");
         Directory.CreateDirectory(tool);
         File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
@@ -106,7 +108,8 @@ public sealed class WaitCommandTests
     [Test]
     public async Task wait_leaves_the_tool_copy_while_the_finished_executor_is_still_alive()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: true);
         var tool = Path.Combine(dir, "tool");
         Directory.CreateDirectory(tool);
         File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
@@ -165,7 +168,8 @@ public sealed class WaitCommandTests
     [Test]
     public async Task empty_progress_does_not_print_a_blank_line()
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: true);
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
         {
             RunId = "live",
@@ -185,9 +189,10 @@ public sealed class WaitCommandTests
         text.ShouldContain("STILL RUNNING");
     }
 
-    private static string Running(int pid)
+    private string Running(int pid)
     {
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: pid != 99);
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
         {
             RunId = "live",

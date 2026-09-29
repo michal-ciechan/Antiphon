@@ -5,12 +5,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class RunStateStoreTests
+public sealed class RunStateStoreTests : CheckpointTestBase
 {
     [Test]
     public async Task readers_never_see_a_partial_file()
     {
-        var path = Path.Combine(CheckpointFixtures.TempDir(), "state.json");
+        var path = Path.Combine(TempDir(), "state.json");
         var store = new RunStateStore();
         var failures = 0;
         var reads = 0;

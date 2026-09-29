@@ -5,12 +5,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class CheckpointAppTests
+public sealed class CheckpointAppTests : CheckpointTestBase
 {
     [Test]
     public void create_run_uses_the_manifest_results_root()
     {
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var manifest = new CheckpointManifest { ResultsRoot = ".antiphon/custom-root" };
         manifest.Checkpoints.Add(new CheckpointSpec
         {
@@ -50,12 +50,14 @@ public sealed class CheckpointAppTests
     [Test]
     public void create_run_sweeps_a_finished_sibling_tool_copy_and_leaves_a_live_one()
     {
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var root = Path.Combine(repo, ".antiphon", "checkpoints");
         var finished = Path.Combine(root, "old-run");
         var live = Path.Combine(root, "live-run");
         Directory.CreateDirectory(Path.Combine(finished, "tool"));
         Directory.CreateDirectory(Path.Combine(live, "tool"));
+        CheckpointFixtures.MarkRun(finished, alive: false);
+        CheckpointFixtures.MarkRun(live, alive: true);
         File.WriteAllText(Path.Combine(finished, "tool", "Antiphon.Checkpoints.dll"), "old");
         File.WriteAllText(Path.Combine(live, "tool", "Antiphon.Checkpoints.dll"), "live");
         var store = new RunStateStore();

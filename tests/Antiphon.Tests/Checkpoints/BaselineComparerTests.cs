@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class BaselineComparerTests
+public sealed class BaselineComparerTests : CheckpointTestBase
 {
     [Test]
     public async Task classifies_inherited_introduced_new()
@@ -29,7 +29,7 @@ public sealed class BaselineComparerTests
             Failures("CP-1", "bin-a", "N.Kept.bad", "N.Fresh.good", "N.Missing.gone"),
         };
         var kinds = await new BaselineComparer(driver).CompareAsync(
-            CheckpointFixtures.TempDir(), CheckpointFixtures.TempDir(), "origin/master", rows,
+            TempDir(), TempDir(), "origin/master", rows,
             [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
             CancellationToken.None);
         kinds.Single(item => item.Name == "N.Kept.bad").Kind.ShouldBe("INHERITED");
@@ -48,7 +48,7 @@ public sealed class BaselineComparerTests
             Failures("CP-3", "bin-b", "N.B.three"),
         };
         await new BaselineComparer(driver).CompareAsync(
-            CheckpointFixtures.TempDir(), CheckpointFixtures.TempDir(), "origin/master", rows,
+            TempDir(), TempDir(), "origin/master", rows,
             [
                 new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" },
                 new BuildSpec { Id = "bin-b", Project = "tests/Other.Tests", OutputPath = "bin-b/" },
@@ -72,7 +72,7 @@ public sealed class BaselineComparerTests
         driver.When(request => request.Arguments.Contains("remove"),
             (_, _) => Task.FromResult(new DriverResult(0, "", "")));
         await new BaselineComparer(driver).CompareAsync(
-            CheckpointFixtures.TempDir(), CheckpointFixtures.TempDir(), "origin/master",
+            TempDir(), TempDir(), "origin/master",
             [Failures("CP-1", "bin-a", "N.A.one")],
             [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
             CancellationToken.None);
@@ -85,8 +85,8 @@ public sealed class BaselineComparerTests
     {
         var driver = Script(GreenTrx());
         var slots = new RecordingSlots();
-        var source = CheckpointFixtures.TempDir();
-        var run = CheckpointFixtures.TempDir();
+        var source = TempDir();
+        var run = TempDir();
         var comparer = new BaselineComparer(driver, slots, TimeSpan.FromMinutes(5));
         await comparer.CompareAsync(
             source, run, "origin/master",
@@ -113,7 +113,7 @@ public sealed class BaselineComparerTests
         var driver = Script(GreenTrx());
         var comparer = new BaselineComparer(driver, timeout: TimeSpan.Zero);
         await comparer.CompareAsync(
-            CheckpointFixtures.TempDir(), CheckpointFixtures.TempDir(), "origin/master",
+            TempDir(), TempDir(), "origin/master",
             [Failures("CP-1", "bin-a", "N.A.one")],
             [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
             CancellationToken.None);

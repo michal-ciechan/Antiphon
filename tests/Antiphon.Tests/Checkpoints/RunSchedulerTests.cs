@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class RunSchedulerTests
+public sealed class RunSchedulerTests : CheckpointTestBase
 {
     [Test]
     public async Task builds_never_overlap_even_with_free_slots_and_width_two()
@@ -278,7 +278,7 @@ public sealed class RunSchedulerTests
         var driver = BlockingDriver(release);
         var handler = new PidIdempotentSlotHandler();
         var manifest = OneBuildTwoRows();
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         foreach (var row in manifest.Checkpoints)
             row.Expect = [];
         var client = new BuildSlotClient(
@@ -376,9 +376,9 @@ public sealed class RunSchedulerTests
         }
     }
 
-    private static Task<SchedulerResult> Schedule(FakeDriver driver, CheckpointManifest manifest, IReadOnlyList<CheckpointSpec> rows, int width, bool serialAll = false)
+    private Task<SchedulerResult> Schedule(FakeDriver driver, CheckpointManifest manifest, IReadOnlyList<CheckpointSpec> rows, int width, bool serialAll = false)
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         foreach (var row in rows)
             row.Expect = [];
         var scheduler = new RunScheduler(driver, new FakePlatform());

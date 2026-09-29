@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class CheckpointExecutorLogTests
+public sealed class CheckpointExecutorLogTests : CheckpointTestBase
 {
     [Test]
     public async Task concurrent_callbacks_append_each_line_once_without_overlap()
@@ -117,9 +117,9 @@ public sealed class CheckpointExecutorLogTests
         return reader.ReadToEnd();
     }
 
-    private static (string Run, CheckpointApp.Runtime Runtime, GatedSink Sink) NewRun()
+    private (string Run, CheckpointApp.Runtime Runtime, GatedSink Sink) NewRun()
     {
-        var repo = CheckpointFixtures.TempDir();
+        var repo = TempDir();
         var manifest = new CheckpointManifest();
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         var request = new RunRequest { Slots = "off", KeepOutputs = true };

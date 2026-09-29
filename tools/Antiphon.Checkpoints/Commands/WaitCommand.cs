@@ -54,16 +54,17 @@ public sealed class WaitCommand
         var logPath = Path.Combine(runDirectory, "executor.log");
         var started = _clock();
         var nextBeat = started;
+        var cleanup = new ToolCopyCleanup();
         while (true)
         {
             var now = _clock();
             var state = _store.TryRead(statePath);
             if (state?.Phase == "done")
             {
-                var executorGone = state.ExecutorPid <= 0 || !_liveness.IsAlive(state.ExecutorPid);
-                if (executorGone)
+                if (cleanup.ObserveExecutor(runDirectory).Verdict == ProcessVerdict.Dead)
                 {
-                    EvidenceFolder.TryRemoveToolCopy(runDirectory);
+                    var receipt = cleanup.Remove(runDirectory);
+                    output.WriteLine(receipt);
                     if (File.Exists(reportPath))
                         output.Write(File.ReadAllText(reportPath));
                     else
@@ -72,8 +73,10 @@ public sealed class WaitCommand
                 }
             }
 
-            if (state is not null && state.Phase != "done" && state.ExecutorPid > 0 && !_liveness.IsAlive(state.ExecutorPid))
+            if (state?.Phase != "done"
+                && cleanup.ObserveExecutor(runDirectory).Verdict == ProcessVerdict.Dead)
             {
+                output.WriteLine(cleanup.Remove(runDirectory));
                 output.WriteLine("executor died without phase=done");
                 output.WriteLine(Tail(logPath));
                 return ExitCodes.ExecutorCrashed;
