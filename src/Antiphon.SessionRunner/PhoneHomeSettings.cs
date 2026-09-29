@@ -32,6 +32,15 @@ public sealed class PhoneHomeSettings
     /// are anonymous HTTPS; only pushes use the deploy key.
     /// </summary>
     public string RunnerRepository { get; set; } = "/work/repos/antiphon";
+    public string RunnerCloneSource { get; set; } = RunnerWorkspaceService.DefaultCloneSource;
+    public string? RunnerRepositoriesRoot { get; set; }
+    public IReadOnlyList<string> AllowedCloneSources { get; set; } = ["https://github.com/michal-ciechan/"];
+    public bool ProbeSecondaryRepositoryPushAccess { get; set; } = true;
+
+    public RunnerRepositoryPolicy RepositoryPolicy() => new(
+        RunnerRepository, RunnerCloneSource,
+        RunnerRepositoriesRoot ?? Path.GetDirectoryName(RunnerRepository) ?? "/work/repos",
+        AllowedCloneSources, ProbeSecondaryRepositoryPushAccess);
     public string GrokHome { get; set; } = "/state/grok";
 
     /// <summary>
@@ -112,6 +121,15 @@ public sealed class PhoneHomeSettings
             throw new InvalidOperationException("PhoneHome:AllowedCwd must be a POSIX absolute path.");
         if (string.IsNullOrWhiteSpace(RunnerRepository) || !RunnerRepository.StartsWith('/'))
             throw new InvalidOperationException("PhoneHome:RunnerRepository must be a POSIX absolute path.");
+        if (RunnerRepositoriesRoot is { } root && !root.StartsWith('/'))
+            throw new InvalidOperationException("PhoneHome:RunnerRepositoriesRoot must be a POSIX absolute path.");
+        if (!RepositoryCloneSource.TryNormalize(RunnerCloneSource, out _))
+            throw new InvalidOperationException("PhoneHome:RunnerCloneSource must name a repository.");
+        if (AllowedCloneSources is null || AllowedCloneSources.Any(prefix =>
+                !Uri.TryCreate(prefix, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0
+                || uri.Query.Length > 0 || uri.Fragment.Length > 0 || !prefix.EndsWith('/')))
+            throw new InvalidOperationException("PhoneHome:AllowedCloneSources entries must be absolute https prefixes ending in '/'.");
         if (string.IsNullOrWhiteSpace(ClaudeHome) || !ClaudeHome.StartsWith('/'))
             throw new InvalidOperationException("PhoneHome:ClaudeHome must be a POSIX absolute path.");
         if (string.IsNullOrWhiteSpace(CodexHome) || !CodexHome.StartsWith('/'))

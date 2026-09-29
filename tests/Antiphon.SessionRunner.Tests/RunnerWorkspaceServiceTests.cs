@@ -14,6 +14,101 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class RunnerWorkspaceServiceTests
 {
     [Test]
+    public async Task Mirror_of_a_second_repository_clones_beside_the_primary_and_removes_through_its_own_checkout()
+    {
+        using var scratch = Scratch.Create();
+        var secondary = Path.Combine(scratch.Root, "secondary");
+        Scratch.Git(scratch.Root, "clone", "--bare", scratch.Origin, secondary);
+        var starts = new List<ProcessStartInfo>();
+        var root = Path.Combine(scratch.Root, "repos");
+        var service = RepositoryService(scratch, root, starts);
+        var request = new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef", secondary);
+        var mirror = (await service.MirrorAsync(request, CancellationToken.None)).Path;
+        var checkout = Path.Combine(root, "secondary");
+        Directory.Exists(Path.Combine(checkout, ".git")).ShouldBeTrue();
+        starts.Single(IsClone).ArgumentList.ToArray().ShouldBe(
+            new[] { "clone", "--filter=blob:none", "--no-checkout", secondary, checkout });
+        mirror.ShouldBe(scratch.Work + "/worktrees/task-deadbeef");
+        (await service.MirrorAsync(request, CancellationToken.None)).Path.ShouldBe(mirror);
+        (await service.RemoveAsync(new PhoneHomeWorkspaceRemoveRequest(mirror), CancellationToken.None)).Removed.ShouldBeTrue();
+        starts.ShouldContain(psi => psi.WorkingDirectory == checkout
+            && psi.ArgumentList.SequenceEqual(new[] { "worktree", "remove", "--force", mirror }));
+        starts.ShouldContain(psi => psi.WorkingDirectory == checkout
+            && psi.ArgumentList.SequenceEqual(new[] { "worktree", "prune" }));
+    }
+
+    [Test]
+    public async Task Mirror_refuses_a_repository_outside_the_allowed_clone_sources()
+    {
+        using var scratch = Scratch.Create();
+        var starts = new List<ProcessStartInfo>();
+        var policy = new RunnerRepositoryPolicy(scratch.Clone, scratch.Origin,
+            Path.Combine(scratch.Root, "repos"), ["https://github.com/michal-ciechan/"], true);
+        var service = new RunnerWorkspaceService(policy, scratch.Work, psi => { starts.Add(psi); return Process.Start(psi); });
+        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(
+            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef",
+                "https://github.com/another/repo.git"), CancellationToken.None));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryNotAdmitted);
+        starts.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Mirror_refuses_an_existing_checkout_whose_origin_is_another_repository()
+    {
+        using var scratch = Scratch.Create();
+        var secondary = Path.Combine(scratch.Root, "secondary");
+        Scratch.Git(scratch.Root, "clone", "--bare", scratch.Origin, secondary);
+        var root = Path.Combine(scratch.Root, "repos");
+        Directory.CreateDirectory(root);
+        var checkout = Path.Combine(root, "secondary");
+        Scratch.Git(root, "clone", scratch.Origin, checkout);
+        var service = RepositoryService(scratch, root);
+        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(
+            new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef", secondary),
+            CancellationToken.None));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryMismatch);
+        Scratch.Git(checkout, "remote", "get-url", "origin").Trim().ShouldBe(scratch.Origin);
+        Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-deadbeef")).ShouldBeFalse();
+        var primary = await service.MirrorAsync(new PhoneHomeWorkspaceMirrorRequest(
+            Scratch.Branch, scratch.Sha, "task-cafef00d", scratch.Origin), CancellationToken.None);
+        Directory.Exists(primary.Path).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Mirror_refuses_a_secondary_repository_the_deploy_key_cannot_push_to()
+    {
+        using var scratch = Scratch.Create();
+        var secondary = Path.Combine(scratch.Root, "secondary");
+        Scratch.Git(scratch.Root, "clone", "--bare", scratch.Origin, secondary);
+        var root = Path.Combine(scratch.Root, "repos");
+        var starts = new List<ProcessStartInfo>();
+        var service = RepositoryService(scratch, root, starts, failProbe: true);
+        var request = new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef", secondary);
+        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.MirrorAsync(request, CancellationToken.None));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.RepositoryPushUnauthorized);
+        Directory.Exists(Path.Combine(scratch.Work, "worktrees", "task-deadbeef")).ShouldBeFalse();
+        starts.ShouldContain(psi => psi.ArgumentList.FirstOrDefault() == "ls-remote");
+        var allowed = RepositoryService(scratch, root, probe: false);
+        Directory.Exists((await allowed.MirrorAsync(request, CancellationToken.None)).Path).ShouldBeTrue();
+    }
+
+    private static RunnerWorkspaceService RepositoryService(Scratch scratch, string root,
+        List<ProcessStartInfo>? starts = null, bool failProbe = false, bool probe = true)
+    {
+        var policy = new RunnerRepositoryPolicy(scratch.Clone, scratch.Origin, root,
+            [scratch.Root + Path.DirectorySeparatorChar], probe);
+        return new RunnerWorkspaceService(policy, scratch.Work, psi =>
+        {
+            psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            psi.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(scratch.Root, "empty.gitconfig");
+            starts?.Add(psi);
+            if (failProbe && psi.ArgumentList.FirstOrDefault() == "ls-remote")
+                psi.ArgumentList[2] = Path.Combine(scratch.Root, "no-such-origin");
+            return Process.Start(psi);
+        });
+    }
+
+    [Test]
     public async Task Mirror_creates_worktree_on_branch_at_sha()
     {
         using var scratch = Scratch.Create();

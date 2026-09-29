@@ -6,6 +6,14 @@ namespace Antiphon.SessionRunner;
 
 public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
 {
+    internal static IReadOnlyList<string> StaticFeatures { get; } =
+    [
+        GrokRulesTransport.Capability,
+        RunnerCapabilityFeatures.SessionGenerationV1,
+        RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
+        RunnerCapabilityFeatures.CompactionContinuationStopV1,
+        RunnerCapabilityFeatures.WorkspaceRepositoryV1,
+    ];
     private readonly SessionRunnerRuntime _runtime;
     private readonly RunnerBuildDto _build;
 
@@ -23,13 +31,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     {
         var decision = PtyBackendPolicy.Resolve();
         IReadOnlyList<string> backends = [SessionBackends.PtyHost];
-        IReadOnlyList<string> features =
-        [
-            GrokRulesTransport.Capability,
-            RunnerCapabilityFeatures.SessionGenerationV1,
-            RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
-            RunnerCapabilityFeatures.CompactionContinuationStopV1,
-        ];
+        IReadOnlyList<string> features = StaticFeatures;
         // CARD-0604 D-17 (Cut B). Phone-home advertises the LINUX custody backend, and only
         // when the runner's live probe passed. It never advertises windows-job-v1: a Windows
         // answer reaching the server over this lane is precisely how a Linux execution would be

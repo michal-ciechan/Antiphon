@@ -178,7 +178,7 @@ public sealed record RunnerProviderAuthDto(
 /// <paramref name="Branch"/> and refuses unless its tip is exactly <paramref name="Sha"/>: a
 /// mirror at a different commit would run the session against source the desktop never produced.
 /// </summary>
-public sealed record PhoneHomeWorkspaceMirrorRequest(string Branch, string Sha, string Name);
+public sealed record PhoneHomeWorkspaceMirrorRequest(string Branch, string Sha, string Name, string? Repository = null);
 
 public sealed record PhoneHomeWorkspaceMirrorResponse(string Path);
 
@@ -213,6 +213,9 @@ public static class PhoneHomeProblemTypes
     public const string BootConflict = "phone_home_boot_conflict";
     public const string UnsupportedOperation = "phone_home_unsupported_operation";
     public const string UnsupportedTarget = "phone_home_unsupported_target";
+    public const string RepositoryNotAdmitted = "phone_home_repository_not_admitted";
+    public const string RepositoryMismatch = "phone_home_repository_mismatch";
+    public const string RepositoryPushUnauthorized = "phone_home_repository_push_unauthorized";
     public const string Capacity = "phone_home_capacity";
     public const string Unavailable = "phone_home_unavailable";
     public const string MessageTooLarge = "phone_home_message_too_large";

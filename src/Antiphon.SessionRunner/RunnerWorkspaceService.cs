@@ -23,6 +23,7 @@ public sealed partial class RunnerWorkspaceService
     private static readonly Regex BranchPattern = new(@"^[A-Za-z0-9._/-]{1,200}$", RegexOptions.Compiled);
 
     private readonly string _repository;
+    private readonly RunnerRepositoryPolicy _policy;
     private readonly string _worktreeRoot;
     // CARD-0604 D-19: schema-2 creation metadata lives beside the worktree root, never inside a
     // snapshot -- the snapshot is the thing being removed, and its own record cannot go with it.
@@ -49,10 +50,25 @@ public sealed partial class RunnerWorkspaceService
     /// </summary>
     internal RunnerWorkspaceService(string repository, string allowedCwd, string cloneSource,
         Func<ProcessStartInfo, Process?> startProcess, TimeSpan? timeout = null, string publishedBranch = "master")
+        : this(new RunnerRepositoryPolicy(repository, cloneSource,
+            Path.GetDirectoryName(repository) ?? repository, [cloneSource], true),
+            allowedCwd, startProcess, timeout, publishedBranch)
     {
-        _cloneSource = cloneSource;
+    }
+
+    public RunnerWorkspaceService(RunnerRepositoryPolicy policy, string allowedCwd, TimeSpan? timeout = null,
+        string publishedBranch = "master")
+        : this(policy, allowedCwd, Process.Start, timeout, publishedBranch)
+    {
+    }
+
+    internal RunnerWorkspaceService(RunnerRepositoryPolicy policy, string allowedCwd,
+        Func<ProcessStartInfo, Process?> startProcess, TimeSpan? timeout = null, string publishedBranch = "master")
+    {
+        _policy = policy;
+        _cloneSource = policy.PrimaryCloneSource;
         _startProcess = startProcess;
-        _repository = repository;
+        _repository = policy.PrimaryPath;
         _worktreeRoot = allowedCwd.TrimEnd('/') + "/worktrees";
         _verificationMetadataRoot = allowedCwd.TrimEnd('/') + "/verification-creations";
         _timeout = timeout ?? TimeSpan.FromMinutes(10);
@@ -74,30 +90,41 @@ public sealed partial class RunnerWorkspaceService
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Mirror branch name is not admitted.", 409);
 
+        var (repository, cloneSource, named, secondary) = ResolveRepository(request.Repository);
         var path = _worktreeRoot + "/" + request.Name;
+        if (named && (Directory.Exists(Path.Combine(repository, ".git"))
+                      || File.Exists(Path.Combine(repository, ".git"))))
+            await VerifyOriginAsync(repository, cloneSource, ct);
         if (Directory.Exists(path))
         {
             // Idempotent for a redispatch of the same task: the mirror is only reused when it is
             // already on the exact commit asked for, never adopted at some other tip.
             var existing = await GitAsync(path, ct, "rev-parse", "HEAD");
             if (existing.ExitCode == 0 && existing.Stdout.Trim() == request.Sha)
-                return new PhoneHomeWorkspaceMirrorResponse(path);
+            {
+                if (!named || PathsEqual(await OwningRepositoryAsync(path, ct), repository))
+                    return new PhoneHomeWorkspaceMirrorResponse(path);
+            }
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget,
                 $"A mirror already exists at {path} at a different commit.",
                 409);
         }
 
-        await EnsureRepositoryAsync(ct);
+        await EnsureRepositoryAsync(repository, cloneSource, ct);
+        if (named)
+            await VerifyOriginAsync(repository, cloneSource, ct);
+        if (secondary && _policy.ProbeSecondaryPushAccess)
+            await ProbePushAccessAsync(repository, cloneSource, ct);
 
-        var fetch = await GitAsync(_repository, ct, "fetch", "origin", request.Branch!);
+        var fetch = await GitAsync(repository, ct, "fetch", "origin", request.Branch!);
         if (fetch.ExitCode != 0)
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Mirror fetch failed: " + Tail(fetch.Stderr), 409);
 
         // G-27: the fetched tip must be exactly the sha the desktop pushed. A branch that moved
         // between the push and the mirror would silently run the session on someone else's commit.
-        var tip = await GitAsync(_repository, ct, "rev-parse", "FETCH_HEAD");
+        var tip = await GitAsync(repository, ct, "rev-parse", "FETCH_HEAD");
         if (tip.ExitCode != 0 || tip.Stdout.Trim() != request.Sha)
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget,
@@ -105,7 +132,7 @@ public sealed partial class RunnerWorkspaceService
                 409);
 
         Filesystem("create the worktree root", () => Directory.CreateDirectory(_worktreeRoot));
-        var add = await GitAsync(_repository, ct, "worktree", "add", "-B", request.Branch!, path, request.Sha!);
+        var add = await GitAsync(repository, ct, "worktree", "add", "-B", request.Branch!, path, request.Sha!);
         if (add.ExitCode != 0)
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Mirror creation failed: " + Tail(add.Stderr), 409);
@@ -126,25 +153,65 @@ public sealed partial class RunnerWorkspaceService
     /// a file, or a directory with someone else's content in it, is refused and left exactly as
     /// found. The dispatcher's mutation lock already serializes mirrors, so no second lock here.
     /// </summary>
-    private async Task EnsureRepositoryAsync(CancellationToken ct)
+    private (string Path, string Source, bool Named, bool Secondary) ResolveRepository(string? requested)
     {
-        var dotGit = Path.Combine(_repository, ".git");
+        if (requested is null)
+            return (_repository, _cloneSource, false, false);
+        if (!RepositoryCloneSource.TryNormalize(requested, out var identity)
+            || !RepositoryCloneSource.TryNormalize(_cloneSource, out var primary)
+            || !RepositoryCloneSource.IsAdmitted(identity, _policy.AllowedCloneSources, primary))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryNotAdmitted,
+                $"Repository '{requested}' is not admitted by this runner.", 409);
+        if (identity == primary)
+            return (_repository, primary, true, false);
+        if (!RepositoryCloneSource.TryDeriveName(identity, out var name))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryNotAdmitted,
+                $"Repository '{requested}' has no admitted checkout name.", 409);
+        return (Path.Combine(_policy.RepositoriesRoot, name), identity, true, true);
+    }
+
+    private async Task VerifyOriginAsync(string repository, string requested, CancellationToken ct)
+    {
+        var origin = await GitAsync(repository, ct, "remote", "get-url", "origin");
+        if (origin.ExitCode == 0 && RepositoryCloneSource.TryNormalize(origin.Stdout, out var found)
+            && found == requested)
+            return;
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryMismatch,
+            $"Runner checkout {repository} has origin '{origin.Stdout.Trim()}', expected '{requested}'.", 409);
+    }
+
+    private async Task ProbePushAccessAsync(string repository, string identity, CancellationToken ct)
+    {
+        var pushUrl = await GitAsync(repository, ct, "remote", "get-url", "--push", "origin");
+        if (pushUrl.ExitCode == 0 && pushUrl.Stdout.Trim().Length > 0)
+        {
+            var probe = await GitAsync(repository, ct, "ls-remote", "--exit-code", pushUrl.Stdout.Trim(), "HEAD");
+            if (probe.ExitCode == 0)
+                return;
+        }
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.RepositoryPushUnauthorized,
+            $"Runner cannot push to {identity}; register a push credential for it on server2.", 409);
+    }
+
+    private async Task EnsureRepositoryAsync(string repository, string cloneSource, CancellationToken ct)
+    {
+        var dotGit = Path.Combine(repository, ".git");
         if (Directory.Exists(dotGit) || File.Exists(dotGit))
             return;
-        if (File.Exists(_repository))
+        if (File.Exists(repository))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
-                $"Runner repository {_repository} is a file, not a checkout; it was left untouched.", 409);
-        if (Directory.Exists(_repository)
-            && Filesystem("inspect the runner repository", () => Directory.EnumerateFileSystemEntries(_repository).Any()))
+                $"Runner repository {repository} is a file, not a checkout; it was left untouched.", 409);
+        if (Directory.Exists(repository)
+            && Filesystem("inspect the runner repository", () => Directory.EnumerateFileSystemEntries(repository).Any()))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
-                $"Runner repository {_repository} is not empty and has no .git; it was left untouched.", 409);
+                $"Runner repository {repository} is not empty and has no .git; it was left untouched.", 409);
 
-        var parent = Path.GetDirectoryName(Path.GetFullPath(_repository))
+        var parent = Path.GetDirectoryName(Path.GetFullPath(repository))
             ?? throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
-                $"Runner repository {_repository} has no parent directory to clone from.", 409);
+                $"Runner repository {repository} has no parent directory to clone from.", 409);
         Filesystem("create the runner repository parent", () => Directory.CreateDirectory(parent));
 
-        var clone = await GitAsync(parent, ct, "clone", "--filter=blob:none", "--no-checkout", _cloneSource, _repository);
+        var clone = await GitAsync(parent, ct, "clone", "--filter=blob:none", "--no-checkout", cloneSource, repository);
         if (clone.ExitCode != 0)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
                 "Runner repository clone failed: " + Tail(clone.Stderr), 409);
@@ -158,7 +225,10 @@ public sealed partial class RunnerWorkspaceService
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Only a mirror under the worktree root may be removed.", 409);
         if (!Directory.Exists(path))
+        {
+            await PruneRepositoriesAsync(ct);
             return new PhoneHomeWorkspaceRemoveResponse(true, null);
+        }
 
         if (!request.Force)
         {
@@ -172,11 +242,41 @@ public sealed partial class RunnerWorkspaceService
                     PhoneHomeProblemTypes.UnsupportedTarget, "Mirror has uncommitted changes.", 409);
         }
 
-        var remove = await GitAsync(_repository, ct, "worktree", "remove", "--force", path);
+        var repository = await OwningRepositoryAsync(path, ct);
+        var remove = await GitAsync(repository, ct, "worktree", "remove", "--force", path);
         if (remove.ExitCode != 0 && Directory.Exists(path))
             return new PhoneHomeWorkspaceRemoveResponse(false, path);
-        await GitAsync(_repository, ct, "worktree", "prune");
+        await GitAsync(repository, ct, "worktree", "prune");
         return new PhoneHomeWorkspaceRemoveResponse(!Directory.Exists(path), Directory.Exists(path) ? path : null);
+    }
+
+    private async Task<string> OwningRepositoryAsync(string path, CancellationToken ct)
+    {
+        var common = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
+        if (common.ExitCode == 0)
+        {
+            var directory = Path.GetDirectoryName(common.Stdout.Trim());
+            if (directory is not null && Path.GetFileName(common.Stdout.Trim()) == ".git"
+                && (PathsEqual(directory, _repository)
+                    || (PathsEqual(Path.GetDirectoryName(directory) ?? "", _policy.RepositoriesRoot)
+                        && Directory.Exists(Path.Combine(directory, ".git")))))
+                return directory;
+        }
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+            $"Mirror {path} does not belong to a runner repository.", 409);
+    }
+
+    private async Task PruneRepositoriesAsync(CancellationToken ct)
+    {
+        var repositories = new List<string> { _repository };
+        if (Directory.Exists(_policy.RepositoriesRoot))
+            repositories.AddRange(Directory.EnumerateDirectories(_policy.RepositoriesRoot)
+                .Where(path => Directory.Exists(Path.Combine(path, ".git"))));
+        foreach (var repository in repositories.Distinct(StringComparer.Ordinal))
+        {
+            if (Directory.Exists(Path.Combine(repository, ".git")))
+                await GitAsync(repository, ct, "worktree", "prune");
+        }
     }
 
     /// <summary>

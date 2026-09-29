@@ -270,6 +270,19 @@ public class PhoneHomeCommandDispatcherTests
         badName.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
     }
 
+    [Test]
+    public async Task Workspace_mirror_naming_an_unadmitted_repository_is_refused_before_any_git_runs()
+    {
+        var dispatcher = Dispatcher(new RecordingRuntime());
+        var reply = await dispatcher.DispatchAsync(
+            new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+                JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorRequest(
+                    "main", new string('a', 40), "task-deadbeef",
+                    "https://github.com/outside/repo.git"), PhoneHomeFraming.Json)), CancellationToken.None);
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        reply.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RepositoryNotAdmitted);
+    }
+
     // CARD-0604 D-19 / G-37 (Cut B). Cut A refused EVERY verification binding here, because the
     // runner had no containment at all. Cut B refuses on capability instead: a binding is admitted
     // only when this runner advertises a backend AND the binding names that exact backend and this
