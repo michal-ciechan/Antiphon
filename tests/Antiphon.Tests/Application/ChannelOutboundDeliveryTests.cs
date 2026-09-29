@@ -656,7 +656,7 @@ public sealed partial class ChannelOutboundDeliveryTests
     }
 
     [Test]
-    public async Task Deferred_intent_freezes_route_and_only_publication_stamps_correlation()
+    public async Task Later_prompt_thread_and_control_cannot_retarget_pending_reply()
     {
         var projectId = Guid.NewGuid();
         var boardId = Guid.NewGuid();
@@ -752,8 +752,10 @@ public sealed partial class ChannelOutboundDeliveryTests
             (await inbound.MoveNextAsync()).ShouldBeTrue();
             var t2 = inbound.Current;
             t2.ReplyHandle.ShouldBe(channelId.ToString("N") + "|1700001000.000300");
+            using var t2Metadata = JsonDocument.Parse("""{"parse_mode":"MarkdownV2","thread_marker":"T2"}""");
             var second = reply with { ReplyHandle = t2.ReplyHandle,
-                ReplyToMessageId = t2.ChannelMessageId, Text = "second answer" };
+                ReplyToMessageId = t2.ChannelMessageId, Text = "second answer",
+                RawOverrides = t2Metadata.RootElement.Clone() };
             (await outbound.SendAsync(second, ChannelOutboundOrigin.AgentReply,
                 new ChannelOutboundSource(sessionId, 2, 5, 6, "trailing", []),
                 CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
@@ -861,6 +863,8 @@ public sealed partial class ChannelOutboundDeliveryTests
             sent.Attachments[1].Content.ShouldBe(pdf);
             producer.SentReplies[2].ReplyHandle.ShouldBe(t2.ReplyHandle);
             producer.SentReplies[2].ReplyToMessageId.ShouldBe(t2.ChannelMessageId);
+            producer.SentReplies[2].RawOverrides!.Value.GetProperty("thread_marker")
+                .GetString().ShouldBe("T2");
             producer.SentReplies[2].Text.ShouldBe("second answer");
             producer.SentReplies[3].ReplyHandle.ShouldBe("thread-3");
             producer.SentReplies[3].Text.ShouldBe("plain follow-up");
