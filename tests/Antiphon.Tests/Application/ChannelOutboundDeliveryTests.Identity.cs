@@ -1,4 +1,5 @@
 using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -106,7 +107,7 @@ public sealed partial class ChannelOutboundDeliveryTests
             deliveries.Count(d => d.ChannelId == yId).ShouldBe(1);
             deliveries.Select(d => d.InputSha256).Distinct().Count().ShouldBe(2);
             deliveries.ShouldAllBe(d => d.State == ChannelOutboundDeliveryState.Pending
-                && d.PublishedAt is null && d.ConversionTaskId is null);
+                && d.PublishedAt == null && d.ConversionTaskId == null);
             producer.SentReplies.ShouldBeEmpty();
         }
         finally
