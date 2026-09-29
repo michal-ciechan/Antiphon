@@ -71,7 +71,16 @@ public sealed class TaskPlatformGuidanceTests
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "stage-review.md"));
         text.ShouldContain("self-compare, constant, no outcome assertion");
-        text.ShouldContain("Full only when the whole required selection ran. The caller lands that Code owner with `-ExpectedSourceSha` from this evidence.");
+        text.ShouldContain("Full only when the whole required selection ran.");
+        text.ShouldContain("bare, unfenced, unindented, unquoted lines");
+        text.ShouldContain("original Code/Worktree landing owner");
+        text.ShouldContain("subject is source, owner stays landing target");
+        foreach (var flag in new[] { "-Land <owner>", "-FromTask <source>", "-ExpectedSourceSha <sha>",
+                     "-ReviewEvidenceId <evidence>", "-RecoverReviewedSource", "-Card", "-StartRef" })
+            text.ShouldContain(flag);
+        var ownerDoc = File.ReadAllText(Path.Combine(RepoRoot(), "docs", "orchestration-loop.md"));
+        ownerDoc.ShouldContain("| Adopt another eligible task's reviewed branch | Source task named by `-FromTask` |");
+        ownerDoc.ShouldContain("A follow-up Review must name its `FollowUpOfTaskId`");
         text.ShouldContain("GET /api/runner-defaults");
         text.ShouldContain("GET /api/session-runners");
         text.ShouldContain("embed no fleet location");
