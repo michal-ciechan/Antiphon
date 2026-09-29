@@ -574,7 +574,7 @@ public sealed class ChannelOutboundRecoveryTests
                 await RunToExitAsync("admit");
             var acceptedId = afterTaskCreation ? await ReadDeliveryIdAsync() : Guid.Empty;
             if (cut == "conversion-dispatched")
-                await RunToExitAsync("prepare", acceptedId);
+                await RunToExitAsync("prepare", acceptedId, 1);
             await WriteConfigAsync(cut switch
                 {
                     "conversion-task-committed" => "prepare",
