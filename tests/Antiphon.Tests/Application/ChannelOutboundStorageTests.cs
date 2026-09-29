@@ -472,6 +472,9 @@ public sealed class ChannelOutboundStorageTests
     [Arguments("stored_file_traversal")]
     [Arguments("case_collision")]
     [Arguments("zip_entry_differs")]
+    [Arguments("forged_length")]
+    [Arguments("forged_hash")]
+    [Arguments("missing_entry")]
     public async Task Source_zip_manifest_rejects_unsafe_or_ambiguous_members(string fault)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-zip-path-" + Guid.NewGuid().ToString("N"));
@@ -517,8 +520,11 @@ public sealed class ChannelOutboundStorageTests
         {
             var valid = await store.StageAsync(Guid.NewGuid(), reply, CancellationToken.None,
                 Json(Member("docs/source.md")));
-            var staged = Path.Combine(Path.GetDirectoryName(valid.RequestPath)!, "input", "source-001.md");
+            var input = Path.Combine(Path.GetDirectoryName(valid.RequestPath)!, "input");
+            var staged = Path.Combine(input, "source-001.md");
             (await File.ReadAllBytesAsync(staged)).ShouldBe(bytes);
+            Directory.GetFiles(input).Select(Path.GetFileName).OrderBy(name => name)
+                .ShouldBe(new[] { "attachment-001.zip", "source-001.md" });
 
             var invalid = fault switch
             {
@@ -528,6 +534,12 @@ public sealed class ChannelOutboundStorageTests
                 "stored_file_traversal" => Json(Member("docs/source.md", stored: "../source.zip")),
                 "case_collision" => Json(Member("docs/A.md"), Member("docs/a.md")),
                 "zip_entry_differs" => Json(Member("docs/source.md", "docs/other.md")),
+                "forged_length" => Json(new DeliverableBundleService.SourceMember(
+                    "docs/source.md", "source.zip", "docs/source.md", bytes.Length + 1, hash)),
+                "forged_hash" => Json(new DeliverableBundleService.SourceMember(
+                    "docs/source.md", "source.zip", "docs/source.md", bytes.Length,
+                    new string('0', 64))),
+                "missing_entry" => Json(Member("docs/absent.md")),
                 _ => throw new ArgumentOutOfRangeException(nameof(fault), fault, null),
             };
             var id = Guid.NewGuid();
