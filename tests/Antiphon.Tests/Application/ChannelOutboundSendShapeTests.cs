@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
