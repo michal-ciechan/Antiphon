@@ -26,7 +26,7 @@ public class InstructionBundleTests
     public void C807_ShippedReviewExampleParses()
     {
         var text = InstructionBundles.TextOf(InstructionBundles.StageReview);
-        const string subjectPlaceholder = "<full GUID of task whose exact pushed tip was reviewed>";
+        const string subjectPlaceholder = "<full GUID of the original Code/Worktree landing owner>";
         const string shaPlaceholder = "<full SHA actually reviewed>";
         const string scopePlaceholder = "<Full|Interim|None>";
         foreach (var placeholder in new[] { subjectPlaceholder, shaPlaceholder, scopePlaceholder })
