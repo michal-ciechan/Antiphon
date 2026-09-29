@@ -328,8 +328,35 @@ public sealed class ReviewEvidenceDeliveryTests
         var prompts = await rig.CallerPromptsAsync();
         var complete = prompts.Single(p => p.Sequence == note.ConfirmingPromptSequence);
         complete.Kind.ShouldBe(TranscriptKinds.UserPrompt);
-        complete.Sequence.ShouldBeGreaterThan((await rig.RowAsync(taskId)).LastDeliveryBaselineSequence ?? 0);
+        var floor = (await rig.RowAsync(taskId)).LastDeliveryBaselineSequence.ShouldNotBeNull();
+        complete.Sequence.ShouldBeGreaterThan(floor);
         PromptSubmissionMatch.IsCompleteIn(delivery.WireText, complete.Text!).ShouldBeTrue();
+
+        var session = rig.World.CallerSessionId;
+        var now = DateTime.UtcNow;
+        var candidates = new[]
+        {
+            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = Guid.NewGuid(), Sequence = floor + 1,
+                Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now },
+            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor + 1,
+                Kind = TranscriptKinds.AssistantText, Text = delivery.WireText, Timestamp = now },
+            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor + 1,
+                Kind = TranscriptKinds.QueuedUserPrompt, Text = delivery.WireText, Timestamp = now },
+            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor,
+                Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now },
+            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor + 2,
+                Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now },
+        };
+        var selected = LandNoteReceipt.Prompts(candidates.AsQueryable(), session, false,
+            LandNotificationKind.TaskCompletion, floor, now, 30)!.ToArray();
+        selected.Select(x => x.Id).ShouldBe(new[] { candidates[4].Id });
+        LandNoteReceipt.IsReceipt(delivery.WireText, selected[0].Text!).ShouldBeTrue();
+        LandNoteReceipt.Prompts(candidates.AsQueryable(), session, false,
+            LandNotificationKind.TaskCompletion, null, null, 30).ShouldBeNull();
+        var old = new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor + 3,
+            Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now.AddMinutes(-2) };
+        LandNoteReceipt.Prompts(new[] { old }.AsQueryable(), session, false,
+            LandNotificationKind.TaskCompletion, null, now, 30)!.ShouldBeEmpty();
     }
 
     [Test]
