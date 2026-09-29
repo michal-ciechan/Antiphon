@@ -35,7 +35,8 @@ internal sealed class CheckpointTempRootSweep
 {
     private sealed class CursorState
     {
-        public long Cursor { get; set; }
+        public string? LastRootId { get; set; }
+        public long LegacyCursor { get; set; }
         public DateTimeOffset LastSweep { get; set; }
     }
 
@@ -55,61 +56,82 @@ internal sealed class CheckpointTempRootSweep
     }
 
     private string LockPath => Path.Combine(_temp, ".checkpoint-temp-coordinator.lock");
-    private string IndexPath => Path.Combine(_temp, ".checkpoint-temp-roots.jsonl");
+    private string IndexDirectory => Path.Combine(_temp, ".checkpoint-temp-roots");
+    private string LegacyIndexPath => Path.Combine(_temp, ".checkpoint-temp-roots.jsonl");
     private string StatePath => Path.Combine(_temp, ".checkpoint-temp-cursor.json");
+    private string IndexFile(string root) => Path.Combine(IndexDirectory, Path.GetFileName(root) + ".json");
 
     public void Register(string root)
     {
         if (!IsCandidate(root) || ReadMarker(root) is null)
             throw new InvalidOperationException("checkpoint root marker is invalid");
-        FileStream? gate = null;
-        var admission = Stopwatch.StartNew();
-        while (gate is null && admission.Elapsed < TimeSpan.FromSeconds(30))
+        var pending = "";
+        try
         {
-            gate = OpenGate();
-            if (gate is null) Thread.Sleep(20);
+            Directory.CreateDirectory(IndexDirectory);
+            if ((File.GetAttributes(IndexDirectory) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("checkpoint index directory is linked");
+            pending = IndexFile(root) + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(pending, JsonSerializer.Serialize(Path.GetFullPath(root)));
+            File.Move(pending, IndexFile(root), overwrite: true);
         }
-        using var held = gate ?? throw new IOException("checkpoint coordinator is busy");
-        using var index = new FileStream(IndexPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(Path.GetFullPath(root)) + "\n");
-        index.Write(bytes);
-        index.Flush(flushToDisk: true);
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The root's own marker is already durable enough to keep it visible to
+            // inspection. Index failure must never turn a valid allocation into a failure.
+            if (pending.Length > 0)
+            {
+                try { File.Delete(pending); }
+                catch (IOException) { }
+            }
+        }
+    }
+
+    public void Unregister(string root)
+    {
+        if (!IsCandidate(root)) return;
+        try { File.Delete(IndexFile(root)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     public CheckpointSweepReceipt SweepOnce(TextWriter? output = null)
     {
         var receipt = new CheckpointSweepReceipt();
         var timer = Stopwatch.StartNew();
+        if (_clock() - ReadState().LastSweep < _options.Interval)
+        { receipt.Skip("interval"); return receipt; }
         using var gate = OpenGate();
         if (gate is null) { receipt.Skip("coordinator-busy"); return receipt; }
         var state = ReadState();
         if (_clock() - state.LastSweep < _options.Interval)
         { receipt.Skip("interval"); return receipt; }
         state.LastSweep = _clock();
-        if (!File.Exists(IndexPath)) { WriteState(state); return receipt; }
-        using var index = new FileStream(IndexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (state.Cursor >= index.Length) state.Cursor = 0;
-        var stopAt = state.Cursor;
-        index.Position = state.Cursor;
-        var wrapped = false;
-        while (receipt.Examined < _options.MaxDirectEntries && receipt.CompletedRoots < _options.MaxRoots
-               && receipt.ReclaimedBytes < _options.MaxBytes && timer.Elapsed < _options.MaxDuration)
+        MigrateLegacyIndex(state, timer);
+        if (!Directory.Exists(IndexDirectory)) { WriteState(state); return receipt; }
+        if ((File.GetAttributes(IndexDirectory) & FileAttributes.ReparsePoint) != 0)
+        { receipt.Skip("index-linked"); return receipt; }
+        // Entries exist only while roots are live or retained. Sorting the small active
+        // roster gives a stable cursor even as other test hosts add and remove roots.
+        var entries = Directory.EnumerateFiles(IndexDirectory, "c723-*.json", SearchOption.TopDirectoryOnly)
+            .OrderBy(Path.GetFileName, StringComparer.Ordinal).ToArray();
+        var start = Array.FindIndex(entries, entry => string.CompareOrdinal(
+            Path.GetFileName(entry), state.LastRootId) > 0);
+        if (start < 0) start = 0;
+        for (var scanned = 0; scanned < entries.Length && receipt.Examined < _options.MaxDirectEntries
+             && receipt.CompletedRoots < _options.MaxRoots && receipt.ReclaimedBytes < _options.MaxBytes
+             && timer.Elapsed < _options.MaxDuration; scanned++)
         {
-            if (wrapped && index.Position >= stopAt) break;
-            var line = ReadLine(index);
-            if (line is null)
-            {
-                if (wrapped || index.Length == 0) break;
-                index.Position = 0;
-                wrapped = true;
-                continue;
-            }
+            var entry = entries[(start + scanned) % entries.Length];
+            state.LastRootId = Path.GetFileName(entry);
             receipt.Examined++;
             string root;
-            try { root = JsonSerializer.Deserialize<string>(line) ?? ""; }
-            catch (JsonException) { receipt.Skip("index-malformed"); continue; }
-            if (!IsCandidate(root)) { receipt.Skip("name-or-depth"); continue; }
-            if (!Directory.Exists(root)) { receipt.Skip("absent"); continue; }
+            try { root = JsonSerializer.Deserialize<string>(File.ReadAllText(entry)) ?? ""; }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            { receipt.Skip("index-malformed-or-removed"); continue; }
+            if (!IsCandidate(root) || !RunOwnershipStore.SamePath(IndexFile(root), entry))
+            { receipt.Skip("name-or-depth"); continue; }
+            if (!Directory.Exists(root))
+            { Unregister(root); receipt.Skip("absent"); continue; }
             if (!ContainedCleanup.SafeAncestors(root)) { receipt.Skip("linked-root-or-ancestor"); continue; }
             if (ReadMarker(root) is null) { receipt.Skip("marker-invalid"); continue; }
             using var rootGate = TestRootGuard.TryLock(root);
@@ -134,6 +156,7 @@ internal sealed class CheckpointTempRootSweep
                     File.Delete(Path.Combine(root, TestRootGuard.LockName));
                     File.Delete(Path.Combine(root, CheckpointTestScope.MarkerName));
                     Directory.Delete(root);
+                    Unregister(root);
                     receipt.CompletedRoots++;
                     receipt.EligibleRemaining--;
                 }
@@ -141,7 +164,6 @@ internal sealed class CheckpointTempRootSweep
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { receipt.Skip("delete-" + ex.GetType().Name); }
         }
-        state.Cursor = index.Position;
         WriteState(state);
         receipt.BudgetExhausted = receipt.Examined >= _options.MaxDirectEntries
             || receipt.CompletedRoots >= _options.MaxRoots || receipt.ReclaimedBytes >= _options.MaxBytes
@@ -269,6 +291,31 @@ internal sealed class CheckpointTempRootSweep
         File.Move(temp, StatePath, true);
     }
 
+    private void MigrateLegacyIndex(CursorState state, Stopwatch timer)
+    {
+        if (!File.Exists(LegacyIndexPath)) return;
+        // Earlier versions serialized all registrations into one JSONL file. Read it
+        // under their coordinator gate, promoting only still-marked roots.
+        using (var legacy = new FileStream(LegacyIndexPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            legacy.Position = Math.Min(state.LegacyCursor, legacy.Length);
+            while (timer.Elapsed < _options.MaxDuration)
+            {
+                var line = ReadLine(legacy);
+                if (line is null) break;
+                state.LegacyCursor = legacy.Position;
+                string root;
+                try { root = JsonSerializer.Deserialize<string>(line) ?? ""; }
+                catch (JsonException) { continue; }
+                if (IsCandidate(root) && Directory.Exists(root) && ReadMarker(root) is not null)
+                    Register(root);
+            }
+            if (state.LegacyCursor < legacy.Length) return;
+        }
+        File.Delete(LegacyIndexPath);
+        state.LegacyCursor = 0;
+    }
+
     private static string? ReadLine(FileStream stream)
     {
         using var buffer = new MemoryStream();
@@ -281,6 +328,7 @@ internal sealed class CheckpointTempRootSweep
         }
         throw new IOException("checkpoint temp index line exceeds 4096 bytes");
     }
+
 }
 
 internal static class CheckpointTempSweepAssemblyHook
