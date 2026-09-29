@@ -87,6 +87,59 @@ public sealed partial class ChannelOutboundDeadlineTests
     }
 
     [Test]
+    [Arguments("quota", "subscription")]
+    [Arguments("authentication", "sign")]
+    [Arguments("model", "held")]
+    public async Task Real_create_refusals_keep_the_original_without_provider_reroute(
+        string scenario, string expectedReason)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var delivery = await fixture.AddAsync(0, "refused " + scenario,
+            TimeSpan.FromMinutes(1), attachment: true);
+        await using (var seed = fixture.Open())
+        {
+            if (scenario == "quota")
+                seed.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+                {
+                    Id = Guid.NewGuid(), Provider = AgentKind.ClaudeCode,
+                    SubscriptionKey = "ClaudeCode", PlanLabel = "fixture",
+                    RemainingPercent = 1, ResetsAt = fixture.Now.AddHours(36),
+                    ObservedAt = fixture.Now, AgentSessionId = Guid.NewGuid(),
+                    SourceCommand = "/status", ParseStatus = SubscriptionUsageParseStatus.Parsed,
+                    RawExcerpt = "fixture",
+                });
+            if (scenario == "authentication")
+                await seed.Agents.Where(a => a.Id == fixture.Converters[0]).ExecuteUpdateAsync(s =>
+                    s.SetProperty(a => a.Kind, AgentKind.Grok));
+            if (scenario == "model")
+                seed.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+                {
+                    Id = Guid.NewGuid(), Kind = AgentKind.ClaudeCode, ModelAlias = "*",
+                    Source = ModelAvailabilitySource.Manual, HitAt = fixture.Now,
+                    Reason = "fixture model hold", Revision = 1,
+                });
+            await seed.SaveChangesAsync();
+        }
+        await using var db = fixture.Open();
+        var pump = fixture.Pump(db, guarded: true);
+        (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+        var row = await db.ChannelOutboundDeliveries.AsNoTracking()
+            .SingleAsync(d => d.Id == delivery.Id);
+        row.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+        row.ConversionOutcome.ShouldBe("Fallback");
+        row.ConversionTaskId.ShouldBeNull();
+        row.FailureReason!.ToLowerInvariant().ShouldContain(expectedReason);
+        (await db.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId == delivery.Id))
+            .ShouldBe(0);
+        (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+        var sent = fixture.Producer.SentReplies.ShouldHaveSingleItem();
+        sent.Text.ShouldContain("refused " + scenario);
+        sent.Text.ShouldContain("original attachments retained");
+        sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(new byte[] { 0, 0, 255 });
+        (await pump.TickAsync(CancellationToken.None)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Blocked_failed_and_missing_output_keep_original_bytes_and_record_distinct_reasons()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -257,13 +310,30 @@ public sealed partial class ChannelOutboundDeadlineTests
 
         public AppDbContext Open() => new(_options);
 
-        public ChannelOutboundDeliveryPump Pump(AppDbContext db)
+        public ChannelOutboundDeliveryPump Pump(AppDbContext db, bool guarded = false)
         {
+            var quota = guarded ? new SubscriptionQuotaGate(
+                new SubscriptionUsageReader(db, Clock),
+                Options.Create(new SubscriptionQuotaGateSettings()), Clock,
+                NullLogger<SubscriptionQuotaGate>.Instance) : null;
+            var model = guarded ? new ModelAvailability(db, Clock,
+                NullLogger<ModelAvailability>.Instance) : null;
+            var registry = new AgentRegistrySettings { GrokCredentialProbeEnabled = true };
+            registry.Definitions["grok"] = new AgentDefinition
+            {
+                Kind = "Grok", Exe = "grok",
+                Env = new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = Path.Combine(Root, "empty-grok-home"),
+                },
+            };
             var tasks = new AgentTaskService(db,
                 new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
                 Options.Create(new DelegationSettings { AllowedRoots = [Root] }),
                 new MockEventBus(), new RecordingSessionStopper(), Clock,
-                NullLogger<AgentTaskService>.Instance);
+                NullLogger<AgentTaskService>.Instance, quotaGate: quota,
+                modelAvailability: model,
+                registrySettings: guarded ? Options.Create(registry) : null);
             return new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
                 _files, Producer, Options.Create(new Antiphon.Messaging.Client.AntiphonMessagingOptions()),
                 Clock, NullLogger<ChannelOutboundDeliveryPump>.Instance);
