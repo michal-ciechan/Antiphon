@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class RerunPolicyTests
+public sealed class RerunPolicyTests : CheckpointTestBase
 {
     [Test]
     public async Task reruns_only_known_flaky_names_once()
@@ -134,7 +134,7 @@ public sealed class RerunPolicyTests
         result.ExitCode.ShouldBe(1);
     }
 
-    private static Task<RowRunResult> Run(FakeDriver driver, IReadOnlyList<string> known)
+    private Task<RowRunResult> Run(FakeDriver driver, IReadOnlyList<string> known)
     {
         var runner = new RowRunner(driver, new FakePlatform());
         return runner.RunAsync(new RowRequest
@@ -143,8 +143,8 @@ public sealed class RerunPolicyTests
             Project = "tests/Antiphon.Tests",
             OutputPath = "bin-ex/",
             Filter = "/*/*/Sample/*",
-            ResultsDirectory = Path.Combine(CheckpointFixtures.TempDir(), "row"),
-            WorkingDirectory = CheckpointFixtures.TempDir(),
+            ResultsDirectory = Path.Combine(TempDir(), "row"),
+            WorkingDirectory = TempDir(),
             MinExecuted = 1,
             KnownFlaky = known,
             Commit = new string('d', 40),

@@ -5,12 +5,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class CheckpointManifestTests
+public sealed class CheckpointManifestTests : CheckpointTestBase
 {
     [Test]
     public void parses_yaml_and_defaults()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var manifest = ManifestLoader.LoadYaml(CheckpointFixtures.SampleYaml(), root);
         manifest.SchemaVersion.ShouldBe(1);
         manifest.ResultsRoot.ShouldBe(".antiphon/checkpoints");
@@ -29,7 +29,7 @@ public sealed class CheckpointManifestTests
     [Test]
     public void rejects_backslash_or_trailing_space_output_path()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         foreach (var path in new[] { @"bin-ex\", "bin-ex/ ", "bin-ex", " bin-ex/" })
         {
             var manifest = ManifestLoader.LoadYaml(CheckpointFixtures.SampleYaml(), root, validate: false);
@@ -43,7 +43,7 @@ public sealed class CheckpointManifestTests
     [Test]
     public void rejects_duplicate_or_unknown_build_ids()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var duplicate = ManifestLoader.LoadYaml(CheckpointFixtures.SampleYaml(), root, validate: false);
         duplicate.Builds.Add(new BuildSpec { Id = "bin-ex", Project = "tests/Antiphon.Tests", OutputPath = "bin-ex/" });
         var duplicateError = Should.Throw<ManifestValidationException>(() => ManifestValidator.Validate(duplicate, root));
@@ -60,7 +60,7 @@ public sealed class CheckpointManifestTests
     [Test]
     public void rejects_reuse_across_different_after()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var manifest = ManifestLoader.LoadYaml(CheckpointFixtures.SampleYaml(), root, validate: false);
         manifest.Checkpoints.Add(new CheckpointSpec
         {
@@ -90,7 +90,7 @@ public sealed class CheckpointManifestTests
     [Test]
     public void results_root_must_be_under_worktree()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var manifest = ManifestLoader.LoadYaml(CheckpointFixtures.SampleYaml(), root, validate: false);
         manifest.ResultsRoot = Path.Combine(Path.GetTempPath(), "c723-outside-" + Guid.NewGuid().ToString("N"));
         var ex = Should.Throw<ManifestValidationException>(() => ManifestValidator.Validate(manifest, root));

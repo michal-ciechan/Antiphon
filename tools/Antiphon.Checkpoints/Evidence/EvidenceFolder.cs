@@ -60,48 +60,14 @@ public static class EvidenceFolder
 
     public static int SweepFinishedToolCopies(string resultsRoot, IProcessLiveness liveness, RunStateStore? store = null)
     {
-        if (string.IsNullOrWhiteSpace(resultsRoot) || !Directory.Exists(resultsRoot))
-            return 0;
-        store ??= new RunStateStore();
-        var removed = 0;
-        foreach (var dir in Directory.EnumerateDirectories(resultsRoot))
-        {
-            if (!Directory.Exists(Path.Combine(dir, "tool")))
-                continue;
-            var state = store.TryRead(Path.Combine(dir, "state.json"));
-            if (state is null || state.Phase is not ("done" or "stopped" or "crashed"))
-                continue;
-            if (state.ExecutorPid > 0 && liveness.IsAlive(state.ExecutorPid))
-                continue;
-            TryRemoveToolCopy(dir);
-            if (!Directory.Exists(Path.Combine(dir, "tool")))
-                removed++;
-        }
-
-        return removed;
+        return string.IsNullOrWhiteSpace(resultsRoot) ? 0 : new ToolCopyCleanup().Sweep(resultsRoot);
     }
 
     public static void TryRemoveToolCopy(string runDirectory, string? imageDirectory = null)
     {
         if (IsExecutorImage(runDirectory, imageDirectory))
             return;
-        var tool = Path.Combine(runDirectory, "tool");
-        if (!Directory.Exists(tool))
-            return;
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            try
-            {
-                Directory.Delete(tool, recursive: true);
-                return;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                if (!Directory.Exists(tool))
-                    return;
-                Thread.Sleep(50 * (attempt + 1));
-            }
-        }
+        new ToolCopyCleanup().Remove(runDirectory);
     }
 
     public static bool IsExecutorImage(string runDirectory, string? imageDirectory = null)

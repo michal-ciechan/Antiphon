@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class DetachedLauncherTests
+public sealed class DetachedLauncherTests : CheckpointTestBase
 {
     [Test]
     public async Task executor_survives_its_starter()
@@ -20,15 +20,19 @@ public sealed class DetachedLauncherTests
             return;
         }
 
-        var dir = CheckpointFixtures.TempDir();
+        var dir = TempDir();
         var marker = Path.Combine(dir, "done");
         var dll = typeof(DetachedLauncher).Assembly.Location;
-        var starter = Process.Start(new ProcessStartInfo("setsid", $"dotnet \"{dll}\" smoke-detach \"{marker}\"")
+        using var starter = Process.Start(new ProcessStartInfo("setsid", $"dotnet \"{dll}\" smoke-detach \"{marker}\"")
         {
             RedirectStandardOutput = true,
             UseShellExecute = false,
             WorkingDirectory = dir,
         })!;
+        RegisterCheckpointChild(starter);
+        Process? executor = null;
+        try
+        {
         string? line = null;
         var read = Task.Run(async () =>
         {
@@ -45,6 +49,8 @@ public sealed class DetachedLauncherTests
         completed.ShouldBe(read, "starter did not print the executor pid");
         line.ShouldNotBeNull();
         var executorPid = int.Parse(line!["executor=".Length..]);
+        executor = Process.GetProcessById(executorPid);
+        RegisterCheckpointChild(executor);
         sys_kill(-starter.Id, 15);
         sys_kill(executorPid, 0).ShouldBe(0);
         var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -52,6 +58,26 @@ public sealed class DetachedLauncherTests
             await Task.Delay(50);
         File.Exists(marker).ShouldBeTrue("the executor died with the starter process group");
         try { sys_kill(-starter.Id, 9); } catch { /* group already gone */ }
+        }
+        finally
+        {
+            if (executor is not null)
+            {
+                try
+                {
+                    if (!executor.HasExited) executor.Kill(entireProcessTree: true);
+                    await executor.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or TimeoutException) { }
+                executor.Dispose();
+            }
+            try
+            {
+                if (!starter.HasExited) starter.Kill(entireProcessTree: true);
+                await starter.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or TimeoutException) { }
+        }
     }
 
     [DllImport("libc", SetLastError = true, EntryPoint = "kill")]

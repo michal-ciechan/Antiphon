@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class OutputCleanupTests
+public sealed class OutputCleanupTests : CheckpointTestBase
 {
     [Test]
     public void deletes_only_this_runs_bin_names()
@@ -48,11 +48,13 @@ public sealed class OutputCleanupTests
     [Test]
     public void older_than_removes_run_folders()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         var old = Path.Combine(root, "20200101-000000-aaaa");
         var young = Path.Combine(root, "20990101-000000-bbbb");
         Directory.CreateDirectory(old);
         Directory.CreateDirectory(young);
+        CheckpointFixtures.MarkRun(old, alive: false);
+        CheckpointFixtures.MarkRun(young, alive: true);
         Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-8));
         var dry = OutputCleanup.RemoveOlderRuns(root, TimeSpan.FromDays(7), dryRun: true);
         dry.Count.ShouldBe(1);
@@ -81,9 +83,9 @@ public sealed class OutputCleanupTests
         Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeFalse();
     }
 
-    private static string Tree()
+    private string Tree()
     {
-        var root = CheckpointFixtures.TempDir();
+        var root = TempDir();
         Write(root, "bin-c723a", "out.dll");
         Write(root, Path.Combine("src", "bin-c723a"), "out.dll");
         Write(root, "bin-foreign", "keep.txt");

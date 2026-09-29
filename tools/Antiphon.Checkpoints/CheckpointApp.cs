@@ -19,9 +19,12 @@ public static class CheckpointApp
         public IBuildSlotClient? Slots { get; init; }
         public IPlatform? Platform { get; init; }
         public Func<LaunchRequest, int>? Launch { get; init; }
+        public string? ToolDirectory { get; init; }
         public Func<string, IExecutorLogSink>? LogSinkFactory { get; init; }
         public Func<string, Task<int>>? Wait { get; init; }
     }
+
+    public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? AppContext.BaseDirectory;
 
     public static async Task<int> ExecuteAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime = null)
     {
@@ -67,6 +70,8 @@ public static class CheckpointApp
     private static async Task<int> ExecuteCoreAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime)
     {
         runtime ??= new Runtime();
+        // Checked entry custody precedes request, log, owner, and row I/O.
+        ExecutorOwnershipStore.Write(runDirectory, new ProcessIdentityProbe().Current());
         var request = JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(Path.Combine(runDirectory, "request.json")), Json)
             ?? throw new ManifestValidationException("request", "request.json is empty");
         var repo = request.RepoRoot;
@@ -223,7 +228,6 @@ public static class CheckpointApp
 
         model.Evidence = Path.Combine(runDirectory, "report.md");
         ReportWriter.WriteFiles(runDirectory, model);
-        var green = model.ExitCode == 0;
         try
         {
             EvidenceFolder.Write(runDirectory, model, removeToolCopy: false);
@@ -239,8 +243,6 @@ public static class CheckpointApp
                 throw new OperationCanceledException(owner.Reason);
             if (!request.KeepOutputs)
             {
-                if (green)
-                    EvidenceFolder.TryRemoveToolCopy(runDirectory);
                 OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null);
             }
@@ -300,10 +302,17 @@ public static class CheckpointApp
             throw new ManifestValidationException("rows", "no checkpoints selected");
         var resultsRoot = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
         Directory.CreateDirectory(resultsRoot);
-        EvidenceFolder.SweepFinishedToolCopies(resultsRoot, new ProcessLiveness());
+        new ToolCopyCleanup().Sweep(resultsRoot);
         var runId = RepoPaths.RunId();
         var runDirectory = Path.Combine(resultsRoot, runId);
         Directory.CreateDirectory(runDirectory);
+        RunOwnershipStore.Write(runDirectory, new RunOwnership
+        {
+            RunId = runId,
+            RunDirectory = Path.GetFullPath(runDirectory),
+            Starter = new ProcessIdentityProbe().Current(),
+        });
+        TestRootGuard.RegisterRun(runDirectory);
         File.WriteAllText(Path.Combine(runDirectory, "manifest.resolved.yaml"), ManifestLoader.ToYaml(manifest));
         request.RepoRoot = repo;
         request.Rows = selected.Select(row => row.Id).ToList();
@@ -334,16 +343,50 @@ public static class CheckpointApp
         var runDirectory = CreateRun(manifest, request, repo);
         var resultsRoot = Path.GetDirectoryName(runDirectory)!;
         var runId = Path.GetFileName(runDirectory);
-        ShadowCopy.CopyToolOutput(AppContext.BaseDirectory, Path.Combine(runDirectory, "tool"));
+        var ownership = RunOwnershipStore.Read(runDirectory)!;
+        try
+        {
+            new RunStateStore().Write(Path.Combine(runDirectory, "state.json"),
+                new RunState { RunId = runId, Phase = "starting", StartedAt = DateTimeOffset.UtcNow });
+            ShadowCopy.CopyToolOutput(ToolSource(runtime), Path.Combine(runDirectory, "tool"));
+        }
+        catch
+        {
+            // This starter has not published launch intent; only its exact run can be rolled back.
+            if (ContainedCleanup.SafeTree(runDirectory, 10000)) Directory.Delete(runDirectory, true);
+            throw;
+        }
         var dll = Path.Combine(runDirectory, "tool", "Antiphon.Checkpoints.dll");
-        var launch = new LaunchRequest(
-            "dotnet",
-            [dll, "execute", "--run", runDirectory],
-            repo);
-        var pid = runtime.Launch?.Invoke(launch) ?? new DetachedLauncher(new RuntimePlatform()).Start(launch);
-        File.WriteAllText(Path.Combine(resultsRoot, "latest"), runId);
-        var state = new RunState { RunId = runId, Phase = "starting", ExecutorPid = pid, StartedAt = DateTimeOffset.UtcNow };
-        new RunStateStore().Write(Path.Combine(runDirectory, "state.json"), state);
+        var launch = new LaunchRequest("dotnet", [dll, "execute", "--run", runDirectory], repo);
+        ownership.Phase = "launch-attempted";
+        RunOwnershipStore.Write(runDirectory, ownership);
+        int pid;
+        try
+        {
+            pid = runtime.Launch?.Invoke(launch) ?? new DetachedLauncher(new RuntimePlatform()).Start(launch);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            // The native API refused to create a process; no executor can use this image.
+            if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
+                Directory.Delete(runDirectory, recursive: true);
+            throw;
+        }
+        try
+        {
+            ownership.Launched = new ProcessIdentityProbe().Capture(pid);
+            ownership.Phase = "launched";
+            RunOwnershipStore.Write(runDirectory, ownership);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException
+                                   or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            // A fast child may have exited or published its own ack already. Retain uncertain custody.
+        }
+        try { File.WriteAllText(Path.Combine(resultsRoot, "latest"), runId); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { output.WriteLine("CHECKPOINT latest write failed: " + ex.GetType().Name); }
+        // An executor can already be running or done; the starter does not publish progress.
         output.WriteLine($"RUN {runId} started rows={request.Rows.Count} executor={pid}");
         return new StartResult(ExitCodes.Green, runDirectory);
     }

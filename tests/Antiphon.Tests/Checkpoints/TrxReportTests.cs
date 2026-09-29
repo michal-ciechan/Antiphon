@@ -6,7 +6,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class TrxReportTests
+public sealed class TrxReportTests : CheckpointTestBase
 {
     [Test]
     public void joins_results_to_class_qualified_names()
@@ -27,7 +27,7 @@ public sealed class TrxReportTests
     [Test]
     public void counts_failed_error_timeout_aborted()
     {
-        var path = Path.Combine(CheckpointFixtures.TempDir(), "mix.trx");
+        var path = Path.Combine(TempDir(), "mix.trx");
         CheckpointFixtures.WriteResults(path,
             ("Antiphon.Tests.Sample.ok", "Passed"),
             ("Antiphon.Tests.Sample.bad", "Failed"),
@@ -42,7 +42,7 @@ public sealed class TrxReportTests
     [Test]
     public void skips_not_executed()
     {
-        var path = Path.Combine(CheckpointFixtures.TempDir(), "skip.trx");
+        var path = Path.Combine(TempDir(), "skip.trx");
         var ns = XNamespace.Get("http://microsoft.com/schemas/VisualStudio/TeamTest/2010");
         new XDocument(new XElement(ns + "TestRun",
             new XElement(ns + "Results",
@@ -64,7 +64,7 @@ public sealed class TrxReportTests
     [Test]
     public void falls_back_when_counters_missing()
     {
-        var path = Path.Combine(CheckpointFixtures.TempDir(), "nocounters.trx");
+        var path = Path.Combine(TempDir(), "nocounters.trx");
         var ns = XNamespace.Get("http://microsoft.com/schemas/VisualStudio/TeamTest/2010");
         new XDocument(new XElement(ns + "TestRun",
             new XElement(ns + "Results",
@@ -106,11 +106,11 @@ public sealed class TrxReportTests
     [Test]
     public void malformed_trx_is_exit_2()
     {
-        var path = Path.Combine(CheckpointFixtures.TempDir(), "bad.trx");
+        var path = Path.Combine(TempDir(), "bad.trx");
         File.WriteAllText(path, "this is not xml");
         var parsed = TrxReport.Parse(path);
         parsed.Ok.ShouldBeFalse();
         parsed.ExitCode.ShouldBe(2);
-        TrxReport.Parse(Path.Combine(CheckpointFixtures.TempDir(), "missing.trx")).ExitCode.ShouldBe(2);
+        TrxReport.Parse(Path.Combine(TempDir(), "missing.trx")).ExitCode.ShouldBe(2);
     }
 }

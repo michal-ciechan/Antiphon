@@ -151,11 +151,17 @@ internal static class CheckpointFixtures
     public static string Trx(string name) =>
         Path.Combine(RepoRoot, "scripts", "fixtures", name);
 
-    public static string TempDir()
+    public static void MarkRun(string directory, bool alive)
     {
-        var path = Path.Combine(Path.GetTempPath(), "c723-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
+        var current = new ProcessIdentityProbe().Current();
+        RunOwnershipStore.Write(directory, new RunOwnership
+        {
+            RunId = Path.GetFileName(directory),
+            RunDirectory = Path.GetFullPath(directory),
+            Phase = "launched",
+            Starter = current,
+            Launched = alive ? current : current with { Pid = int.MaxValue, StartUtcTicks = 1 },
+        });
     }
 
     public static string SampleYaml() => """

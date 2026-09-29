@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class TimeoutTests
+public sealed class TimeoutTests : CheckpointTestBase
 {
     [Test]
     public async Task row_deadline_marks_timeout_without_global_driver_kill()
@@ -19,7 +19,7 @@ public sealed class TimeoutTests
             _ => new DriverResult(0, "", ""), TaskScheduler.Default));
         var result = await RowTimeout.RunWithDeadlineAsync(
             driver,
-            new DriverRequest("dotnet", ["run"], CheckpointFixtures.TempDir()),
+            new DriverRequest("dotnet", ["run"], TempDir()),
             TimeSpan.FromMilliseconds(50),
             CancellationToken.None);
         result.TimedOut.ShouldBeTrue();
@@ -46,8 +46,8 @@ public sealed class TimeoutTests
         {
             Manifest = manifest,
             Rows = manifest.Checkpoints,
-            RunDirectory = CheckpointFixtures.TempDir(),
-            WorkingDirectory = CheckpointFixtures.TempDir(),
+            RunDirectory = TempDir(),
+            WorkingDirectory = TempDir(),
             State = new RunState { RunId = "t", StartedAt = DateTimeOffset.UtcNow },
             Slots = new FixedSlotClient("unavailable"),
             Commit = new string('b', 40),
@@ -68,7 +68,7 @@ public sealed class TimeoutTests
         }
 
         var driver = new ProcessDriver();
-        var directory = CheckpointFixtures.TempDir();
+        var directory = TempDir();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var slow = Task.Run(() => driver.RunAsync(new DriverRequest("ping.exe", ["-n", "20", "127.0.0.1"], directory), stop.Token), CancellationToken.None);
         var quick = Enumerable.Range(0, 8).Select(_ => Task.Run(
@@ -101,7 +101,7 @@ public sealed class TimeoutTests
             return;
         }
 
-        var directory = CheckpointFixtures.TempDir();
+        var directory = TempDir();
         var exe = CompileEchoExe(directory);
         string[] expected = [@"C:\a b\", "second", "q\"x", "a\\\"b c", ""];
         var result = await new ProcessDriver().RunAsync(
@@ -126,7 +126,7 @@ public sealed class TimeoutTests
             return;
         }
 
-        var directory = CheckpointFixtures.TempDir();
+        var directory = TempDir();
         var exe = CompileEchoExe(directory);
         var result = await new ProcessDriver().RunAsync(
             new DriverRequest(exe, ["--chatter"], directory), cancellationToken);
@@ -151,7 +151,7 @@ public sealed class TimeoutTests
             var command = "start /b pwsh -NoProfile -NonInteractive -Command Start-Sleep -Seconds 600 # " + marker;
             var result = await RowTimeout.RunWithDeadlineAsync(
                 new ProcessDriver(),
-                new DriverRequest("cmd.exe", ["/d", "/c", command], CheckpointFixtures.TempDir()),
+                new DriverRequest("cmd.exe", ["/d", "/c", command], TempDir()),
                 TimeSpan.FromMinutes(1),
                 cancellationToken);
             result.TimedOut.ShouldBeTrue();
