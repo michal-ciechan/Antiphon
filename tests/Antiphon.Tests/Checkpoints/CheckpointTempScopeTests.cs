@@ -55,7 +55,11 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
             failure.Message.ShouldContain("identity-unknown");
             Directory.Exists(root).ShouldBeTrue();
         }
-        finally { Directory.Delete(root, true); }
+        finally
+        {
+            Directory.Delete(root, true);
+            CheckpointUsageEvent.Write("root-delete", root);
+        }
     }
 
     [Test]
@@ -87,6 +91,7 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
         Directory.Exists(denied).ShouldBeTrue();
         Directory.Exists(other).ShouldBeFalse();
         Directory.Delete(denied, true);
+        CheckpointUsageEvent.Write("root-delete", denied);
     }
 
     [Test]
