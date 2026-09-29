@@ -21,6 +21,100 @@ namespace Antiphon.Tests.Application;
 public partial class AgentTaskReplyIntegrationTests
 {
     [Test]
+    public async Task Internal_conversion_settles_with_usage_but_without_sources_or_follow_up()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var document = Path.Combine(workspace.Path, "docs", "result.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(document)!);
+        await File.WriteAllTextAsync(document, "# Ordinary source\nSentinel for the normal Custom task.\n");
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var seed = CreateContext(isolated.ConnectionString))
+        {
+            seed.Projects.Add(new Project { Id = projectId, Name = "purpose-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "purpose",
+                CreatedAt = now, UpdatedAt = now });
+            seed.Agents.AddRange(
+                new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                    Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = workspace.Path },
+                new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = workspace.Path });
+            seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                CreatedAt = now, UpdatedAt = now });
+            seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                ProjectId = projectId, InboundAgentId = inboundId, ConverterAgentId = converterId,
+                SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "purpose",
+                PromptRevision = new string('a', 64), PromptText = "Convert sources.",
+                Trigger = "MarkdownSources", InputPath = Path.Combine(workspace.Path, "input.json"),
+                InputSha256 = new string('b', 64), CreatedAt = now, DeadlineAt = now.AddMinutes(2),
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var (internalTask, internalSession) = await SeedDispatchedTaskAsync(workspace.Path,
+            configure: task =>
+            {
+                task.Role = AgentTaskRole.Custom;
+                task.ProjectId = projectId;
+                task.AgentId = converterId;
+                task.OutboundDeliveryId = deliveryId;
+                task.RepoPath = workspace.Path;
+            }, connectionString: isolated.ConnectionString);
+        var report = "Wrote `docs/result.md`.";
+        await SeedTurnAsync(internalSession, DelegationReportFormatter.TaskMarker(internalTask.Id),
+            report, inputTokens: 19, outputTokens: 7, connectionString: isolated.ConnectionString);
+        using var factory = new TestScopeFactory(connectionString: isolated.ConnectionString);
+        await CreateService(factory).OnTurnEndAsync(internalSession, CancellationToken.None);
+
+        await using (var verify = CreateContext(isolated.ConnectionString))
+        {
+            var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == internalTask.Id);
+            settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            settled.Result.ShouldBe(report);
+            settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+            settled.TokensIn.ShouldBe(19);
+            settled.TokensOut.ShouldBe(7);
+            settled.DeliverableBundleDir.ShouldBeNull();
+            settled.DeliverableFileCount.ShouldBe(0);
+            settled.CardId.ShouldBeNull();
+            settled.ParentSessionId.ShouldBeNull();
+            (await verify.AgentTasks.CountAsync(t => t.ParentTaskId == internalTask.Id)).ShouldBe(0);
+            (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == internalTask.Id)).ShouldBe(0);
+            (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == internalTask.Id)).ShouldBe(0);
+            OutputDistillationService.ShouldRequest(settled,
+                new DelegationSettings { OutputDistillerEnabled = true }).ShouldBeFalse();
+        }
+
+        var (ordinaryTask, ordinarySession) = await SeedDispatchedTaskAsync(workspace.Path,
+            configure: task =>
+            {
+                task.Role = AgentTaskRole.Custom;
+                task.ProjectId = projectId;
+                task.RepoPath = workspace.Path;
+            }, connectionString: isolated.ConnectionString);
+        await SeedTurnAsync(ordinarySession, DelegationReportFormatter.TaskMarker(ordinaryTask.Id),
+            report, connectionString: isolated.ConnectionString);
+        await CreateService(factory).OnTurnEndAsync(ordinarySession, CancellationToken.None);
+        await using var companion = CreateContext(isolated.ConnectionString);
+        var normal = await companion.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == ordinaryTask.Id);
+        normal.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        normal.OutboundDeliveryId.ShouldBeNull();
+        normal.DeliverableFileCount.ShouldBe(1);
+        var copied = DeliverableBundleService.ListAttachableFiles(normal).ShouldHaveSingleItem();
+        (await File.ReadAllBytesAsync(copied)).ShouldBe(await File.ReadAllBytesAsync(document));
+    }
+
+    [Test]
     public async Task Deferred_is_durable_and_releases_runtime()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();

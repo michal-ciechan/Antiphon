@@ -1,4 +1,6 @@
 using Antiphon.Messaging;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -91,6 +93,16 @@ public sealed class OutboundConversionTaskTests
             task.Goal.ShouldContain("Do not dispatch child tasks or send to a channel");
             task.Goal.ShouldContain("Use the local converter tool.");
             task.Goal.ShouldNotContain(delivery.SourceTaskId!.Value.ToString("D"));
+            var rejected = await Should.ThrowAsync<ForbiddenException>(() => tasks.CreateAsync(
+                new CreateAgentTaskRequest("Attempt a child conversion task.",
+                    WorkingDirectory: root, Workspace: WorkspaceMode.Shared),
+                new AgentTaskService.Caller(task, Guid.NewGuid(), root), CancellationToken.None));
+            rejected.Message.ShouldContain("Workers cannot delegate");
+            (await db.AgentTasks.AsNoTracking().CountAsync(t => t.ParentTaskId == taskId))
+                .ShouldBe(0);
+            (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == taskId
+                && e.Detail != null && e.Detail.Contains("worker attempted to delegate")))
+                .ShouldBe(1);
             (await db.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId == deliveryId))
                 .ShouldBe(1);
             var stored = await db.ChannelOutboundDeliveries.AsNoTracking()
