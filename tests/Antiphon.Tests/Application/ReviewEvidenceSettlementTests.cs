@@ -86,6 +86,7 @@ public sealed class ReviewEvidenceSettlementTests
             snapshot.NoteHeader.ShouldContain("bare lines before the next-stage block", Case.Sensitive, row);
             snapshot.NoteHeader.ShouldContain("scope=Unknown", Case.Sensitive, row);
             snapshot.NoteHeader.ShouldNotContain("review-evidence=", Case.Sensitive, row);
+            snapshot.NoteHeader.ShouldNotContain("subject=", Case.Sensitive, row);
             snapshot.NoteHeader.ShouldNotContain("reviewed-sha=", Case.Sensitive, row);
             await using var db = world.CreateContext();
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == result.Id && e.Type == AgentTaskEventType.Warning
@@ -202,6 +203,11 @@ public sealed class ReviewEvidenceSettlementTests
         var unboundResult = await SettleAsync(world, subject: unbound.Id);
         unboundResult.Outcome.ReviewedSourceSha.ShouldBeNull();
         unboundResult.Outcome.SubjectTaskId.ShouldBeNull();
+        var missing = await SettleAsync(world, subject: Guid.NewGuid());
+        missing.Outcome.SubjectTaskId.ShouldBeNull();
+        missing.Outcome.ReviewedSourceSha.ShouldBeNull();
+        missing.Outcome.ReviewedSourceRef.ShouldBeNull();
+        missing.Outcome.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Unknown);
     }
 
     [Test]

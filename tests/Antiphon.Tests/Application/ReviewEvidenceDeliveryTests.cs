@@ -44,6 +44,7 @@ public sealed class ReviewEvidenceDeliveryTests
         var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!;
         var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson)!;
         snapshot.NoteHeader.ShouldNotContain("review-evidence=", Case.Sensitive, row);
+        snapshot.NoteHeader.ShouldNotContain("subject=", Case.Sensitive, row);
         snapshot.NoteHeader.ShouldNotContain("reviewed-sha=", Case.Sensitive, row);
         delivery.LogicalNote.ShouldNotContain("review-evidence=", Case.Sensitive, row);
         rig.Caller.SubmittedBodies.ShouldContain(body => PromptSubmissionMatch.IsCompleteIn(delivery.WireText, body), row);
@@ -66,6 +67,11 @@ public sealed class ReviewEvidenceDeliveryTests
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
             snapshot.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
+            if (cut == "wakeup-dropped")
+            {
+                rig.Boundary.DropCompletionWakeup.ShouldBeFalse(row + ": drop consumed");
+                rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": lost wakeup typed nothing");
+            }
             rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": no enqueue receipt");
             if (distill)
             {
@@ -291,28 +297,46 @@ public sealed class ReviewEvidenceDeliveryTests
                 await rig.ScanAsync();
                 await AssertWarningReceiptAsync(rig, taskId, form, "raw", false);
             }
+            else
+            {
+                await rig.RestartAsync();
+                rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+                await rig.ScanAsync();
+                await rig.FlushAsync();
+                await rig.ScanAsync();
+                var parked = (await rig.NotificationAsync(taskId))!;
+                parked.State.ShouldNotBe(LandNotificationState.Confirmed, form + ": incomplete replay parked");
+                parked.ConfirmingPromptSequence.ShouldBeNull(form);
+                var rendering = TaskCompletionNotification.TryReadDelivery(parked.CompletionDeliveryJson)!;
+                (await rig.CallerPromptsAsync()).ShouldNotContain(p =>
+                    p.Text is not null && PromptSubmissionMatch.IsCompleteIn(rendering.WireText, p.Text), form);
+            }
         }
     }
 
     [Test]
     public async Task C807_SpillWarningRequiresMatchingFile()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true);
-        var (taskId, _) = await SettleWarningAsync(rig);
-        await rig.DeliverAsync("spill");
-        var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
-        var path = delivery.SpillPath.ShouldNotBeNull();
-        var bytes = await File.ReadAllBytesAsync(path);
-        await File.WriteAllTextAsync(path, "tampered");
-        await rig.ScanAsync();
-        var refused = (await rig.NotificationAsync(taskId))!;
-        refused.State.ShouldNotBe(LandNotificationState.Confirmed);
-        refused.ConfirmingPromptSequence.ShouldBeNull();
-        refused.LastErrorCode.ShouldBe("completion_pointer_content_mismatch");
-        await File.WriteAllBytesAsync(path, bytes);
-        rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
-        await rig.ScanAsync();
-        await AssertWarningReceiptAsync(rig, taskId, "spill-restored", "raw", true);
+        foreach (var mode in new[] { "missing", "tampered" })
+        {
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, spill: true);
+            var (taskId, _) = await SettleWarningAsync(rig);
+            await rig.DeliverAsync(mode);
+            var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
+            var path = delivery.SpillPath.ShouldNotBeNull();
+            var bytes = await File.ReadAllBytesAsync(path);
+            if (mode == "missing") File.Delete(path);
+            else await File.WriteAllTextAsync(path, "tampered");
+            await rig.ScanAsync();
+            var refused = (await rig.NotificationAsync(taskId))!;
+            refused.State.ShouldNotBe(LandNotificationState.Confirmed, mode);
+            refused.ConfirmingPromptSequence.ShouldBeNull(mode);
+            refused.LastErrorCode.ShouldBe("completion_pointer_content_mismatch", mode);
+            await File.WriteAllBytesAsync(path, bytes);
+            rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
+            await rig.ScanAsync();
+            await AssertWarningReceiptAsync(rig, taskId, mode + "-restored", "raw", true);
+        }
     }
 
     [Test]
@@ -344,12 +368,14 @@ public sealed class ReviewEvidenceDeliveryTests
                 Kind = TranscriptKinds.QueuedUserPrompt, Text = delivery.WireText, Timestamp = now },
             new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor,
                 Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now },
+            new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor - 1,
+                Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now },
             new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session, Sequence = floor + 2,
                 Kind = TranscriptKinds.UserPrompt, Text = delivery.WireText, Timestamp = now },
         };
         var selected = LandNoteReceipt.Prompts(candidates.AsQueryable(), session, false,
             LandNotificationKind.TaskCompletion, floor, now, 30)!.ToArray();
-        selected.Select(x => x.Id).ShouldBe(new[] { candidates[4].Id });
+        selected.Select(x => x.Id).ShouldBe(new[] { candidates[5].Id });
         LandNoteReceipt.IsReceipt(delivery.WireText, selected[0].Text!).ShouldBeTrue();
         LandNoteReceipt.Prompts(candidates.AsQueryable(), session, false,
             LandNotificationKind.TaskCompletion, null, null, 30).ShouldBeNull();
