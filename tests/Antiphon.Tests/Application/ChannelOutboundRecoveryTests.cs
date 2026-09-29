@@ -401,6 +401,20 @@ public sealed class ChannelOutboundRecoveryTests
             child.Dispose();
             child = null;
 
+            await using (var cutDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
+            {
+                var atCut = await cutDb.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == deliveryId);
+                atCut.State.ShouldBe(ChannelOutboundDeliveryState.Publishing);
+                atCut.PublicationAttempts.ShouldBe(1);
+                atCut.PublishedAt.ShouldBeNull();
+                atCut.InputSha256.ShouldBe(frozen.ReplySha256);
+                Sha256(await File.ReadAllBytesAsync(atCut.InputPath)).ShouldBe(frozen.ReplySha256);
+                (await cutDb.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
+                    .ChannelReplySettledAt.ShouldBeNull();
+            }
+            await AssertDeliveryAttentionAsync(isolated.ConnectionString, 0, deliveryId);
+
             using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
             {
                 BootstrapServers = address,
@@ -412,6 +426,8 @@ public sealed class ChannelOutboundRecoveryTests
             accepted.ShouldNotBeNull();
             accepted.Topic.ShouldBe(topic);
             accepted.Message.Key.ShouldBe("C0418");
+            Sha256(System.Text.Encoding.UTF8.GetBytes(accepted.Message.Value))
+                .ShouldBe(frozen.ReplySha256);
             var reply = JsonSerializer.Deserialize<ChannelReply>(accepted.Message.Value,
                 Antiphon.Messaging.MessagingJson.Options)!;
             reply.ReplyHandle.ShouldBe("C0418|1700000000.000100");
@@ -431,11 +447,16 @@ public sealed class ChannelOutboundRecoveryTests
             delivery.State.ShouldBe(ChannelOutboundDeliveryState.PublishUncertain);
             delivery.PublicationAttempts.ShouldBe(1);
             delivery.PublishedAt.ShouldBeNull();
+            delivery.InputSha256.ShouldBe(frozen.ReplySha256);
+            Sha256(await File.ReadAllBytesAsync(delivery.InputPath)).ShouldBe(frozen.ReplySha256);
             delivery.FailureReason.ShouldContain("unknown");
+            delivery.FailureReason.Length.ShouldBeLessThanOrEqualTo(550);
             (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == correlationId))
                 .ChannelReplySettledAt.ShouldBeNull();
             (await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
                 .LastReplyAt.ShouldBeNull();
+            await AssertDeliveryAttentionAsync(isolated.ConnectionString, 1, deliveryId,
+                ChannelOutboundDeliveryState.PublishUncertain, channelId);
         }
         finally
         {
