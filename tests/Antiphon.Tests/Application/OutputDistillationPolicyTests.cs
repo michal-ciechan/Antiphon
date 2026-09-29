@@ -76,8 +76,10 @@ public class OutputDistillationPolicyTests
     public void Outbound_conversion_never_requests_distillation_even_with_a_session_reply_target()
     {
         var task = Target(new string('x', 5500));
+        task.Role = AgentTaskRole.Custom;
+        var enabled = new DelegationSettings { OutputDistillerEnabled = true };
+        OutputDistillationService.ShouldRequest(task, enabled).ShouldBeTrue();
         task.OutboundDeliveryId = Guid.NewGuid();
-        OutputDistillationService.ShouldRequest(task,
-            new DelegationSettings { OutputDistillerEnabled = true }).ShouldBeFalse();
+        OutputDistillationService.ShouldRequest(task, enabled).ShouldBeFalse();
     }
 }
