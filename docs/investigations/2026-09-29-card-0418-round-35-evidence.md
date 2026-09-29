@@ -37,6 +37,19 @@ executed 29 / passed 28 / failed 1 at `.antiphon/checkpoints/r35-cp6-c/`:
 the change hit the earlier task-creation call, not the post-C-4 recovery call.
 Both call sites are now corrected.
 
+The final CP-6 rerun on `103dc8e266a171f91db51163398b90b03acd659d`
+executed 29 / passed 29 / failed 0 at
+`.antiphon/checkpoints/r35-cp6-d/CP-6-20260929-232045-3221/run.trx`.
+This proves the C-3 persisted dispatched owner can settle from a marked
+transcript after the dispatch process dies, and the C-4 settled output survives
+a second process death before the pump claims it. It does **not** yet prove
+reconciliation of a submitted/running converter process after abrupt server
+death: the crash probe still uses a refusing external launch sink. V-15 therefore
+remains open at the whole-ID level. The existing F-5 owned-host-restart test
+`Four_sources_convert_only_for_the_selected_conversation` exercises a real
+FakeGrok converter process across a graceful host restart, but that is not an
+abrupt process-death C-3 receipt.
+
 ## Checkpoint receipts
 
 Pending. PC-1–PC-30 remain reserved for method-scoped SourceLanding Mutation;

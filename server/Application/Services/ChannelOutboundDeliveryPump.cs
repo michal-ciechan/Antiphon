@@ -28,9 +28,9 @@ public sealed class ChannelOutboundDeliveryPump
     private readonly ILogger<ChannelOutboundDeliveryPump> _logger;
     private readonly Guid _owner = Guid.NewGuid();
 
-    // Test-only, per-instance stop point. Production leaves this null. The callback runs
-    // only after the named durable write has completed, so a killed probe cannot rely
-    // on in-memory state when recovery starts in a new process.
+    // Test-only, per-instance stop point. Production leaves this null. Write-boundary
+    // callbacks run after commit; before-conversion-claim runs after the worker's
+    // independently committed settlement and before this pump takes a lease.
     internal Func<string, Guid, CancellationToken, Task>? ProbeBarrierAsync { get; set; }
 
     public ChannelOutboundDeliveryPump(AppDbContext db, OutboundConversionTaskRunner runner,
