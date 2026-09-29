@@ -898,8 +898,21 @@ public sealed class AgentTaskReplyService
         if (gitWarning is not null)
             callerWarning = callerWarning is null ? gitWarning : $"{callerWarning}\n\n{gitWarning}";
 
+        // Both settlement and the caller must classify the same raw report. The displayed body
+        // omits the final token and may itself contain a token-shaped line.
+        var reviewEvidence = task.Role == AgentTaskRole.Review && task.Stage == OrchestrationStage.Review
+            ? ReviewEvidence.TryParse(report) : default;
         if (task.Stage is not null)
-            await RecordDelegateStageOutcomeAsync(services, db, task, report, now, ct);
+            await RecordDelegateStageOutcomeAsync(services, db, task, report, reviewEvidence, now, ct);
+        if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
+            && reviewEvidence.Warning == ReviewEvidence.NotStandaloneWarning)
+        {
+            const string evidenceWarning = "review-evidence-warning=review_evidence_not_standalone: "
+                + "Evidence was ignored because it was fenced, quoted or indented; "
+                + "submit the evidence block as bare lines before the next-stage block.";
+            callerWarning = string.IsNullOrWhiteSpace(callerWarning)
+                ? evidenceWarning : callerWarning.Trim() + "\n\n" + evidenceWarning;
+        }
 
         // A finished Merge task is what un-blocks the conflicted task it was spawned for.
         if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
@@ -2267,15 +2280,6 @@ public sealed class AgentTaskReplyService
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
         string? warning = null, string? drift = null, string? git = null, AppDbContext? settlementDb = null)
     {
-        if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
-            && ReviewEvidence.TryParse(report).Warning == ReviewEvidence.NotStandaloneWarning)
-        {
-            const string evidenceWarning = "review-evidence-warning=review_evidence_not_standalone: "
-                + "Evidence was ignored because it was fenced, quoted or indented; "
-                + "submit the evidence block as bare lines before the next-stage block.";
-            warning = string.IsNullOrWhiteSpace(warning) ? evidenceWarning : warning.Trim() + "\n\n" + evidenceWarning;
-        }
-
         if (BlockedNote.IsQuestionBlock(task))
         {
             var bits = BlockedNote.Format(task, report, _settings);
@@ -3672,7 +3676,8 @@ public sealed class AgentTaskReplyService
     private sealed record CommitOnSettleNote(string Header, string? Warning, bool Durable = false);
 
     private async Task<CommitOnSettleNote?> TryCommitOnSettleAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,
+        IServiceProvider services, AppDbContext db, AgentTask task, string report,
+        ReviewEvidence.Result reviewEvidence, DateTime now,
         CancellationToken ct)
     {
         if (!CommitOnSettleEligibility.IsEligible(task))
@@ -4354,7 +4359,7 @@ public sealed class AgentTaskReplyService
         if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
             && stage == OrchestrationStage.Review && bindsEvidence)
         {
-            var evidence = ReviewEvidence.TryParse(report);
+            var evidence = reviewEvidence;
             if (evidence.Usable && evidence.SubjectTaskId is { } named)
             {
                 if (task.FollowUpOfTaskId is { } follow && follow != named)

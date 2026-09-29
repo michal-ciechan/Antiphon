@@ -97,6 +97,19 @@ public sealed class ReviewEvidenceDeliveryTests
                 delivery.LogicalNote.ShouldContain(Warning, Case.Sensitive, row);
             }
         }
+
+        // Settlement sees the real closing token. The caller body omits it and ends with
+        // the earlier token-shaped line, so parsing that body would miss the fenced block.
+        await using (var rig = await C544DeliveryRig.CreateAsync(busy: false))
+        {
+            var (taskId, _) = await rig.SettleReviewAsync(transformReport: (id, report) =>
+                Presented(report, "fence").Replace("Reviewed the owner.",
+                    $"Reviewed the owner.\n[antiphon-report:{id.ToString("N")[..8]} done]"));
+            (await rig.NotificationAsync(taskId))!.CompletionSnapshotJson.ShouldNotBeNull();
+            await rig.DeliverAsync("embedded token");
+            await rig.ScanAsync();
+            await AssertWarningReceiptAsync(rig, taskId, "embedded token", spill: false);
+        }
     }
 
     [Test] public Task C807_RecoveryBeforeSettlementCommit() => RecoverAsync("obligation-insert");
@@ -120,6 +133,8 @@ public sealed class ReviewEvidenceDeliveryTests
             else rig.Fault.Cut = cut is "render-committed" or "spill-written" or "attempt-committed" or "prompt-accepted"
                 ? null : cut;
             var (taskId, _) = await SettleWarningAsync(rig);
+            if (cut is "settled-committed" or "note-insert" or "note-committed")
+                rig.Fault.Throws.ShouldBe(1, row);
             if (cut == "obligation-insert")
             {
                 rig.Fault.Throws.ShouldBe(1, row);
@@ -138,6 +153,14 @@ public sealed class ReviewEvidenceDeliveryTests
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
             snapshot.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
+            if (cut == "settled-committed")
+            {
+                (await rig.World.TaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Succeeded, row);
+                await using var db = rig.World.CreateContext();
+                (await db.StageOutcomes.CountAsync(o => o.StageTaskId == taskId)).ShouldBe(1, row);
+                (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Warning)).ShouldBe(1, row);
+                (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Completed)).ShouldBe(1, row);
+            }
             if (cut == "wakeup-dropped")
             {
                 rig.Boundary.DropCompletionWakeup.ShouldBeFalse(row + ": drop consumed");
@@ -249,23 +272,29 @@ public sealed class ReviewEvidenceDeliveryTests
     [Test]
     public async Task C807_DistillationDeadlineIsNotRenewed()
     {
-        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
-        rig.Fault.Cut = "settled-committed";
-        var (taskId, _) = await SettleWarningAsync(rig);
-        var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
-        var deadline = snapshot.DistillDeadlineAt.ShouldNotBeNull();
-        await rig.RestartAsync();
-        rig.World.Clock.Advance(TimeSpan.FromSeconds(30));
-        await rig.ScanAsync();
-        var row = await rig.RowAsync(taskId);
-        (row.HoldUntil!.Value - deadline).Duration().ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
-        rig.DistillQueue.TryDequeue(out _).ShouldBeFalse();
-        await rig.FlushAsync();
-        rig.Caller.SubmittedBodies.ShouldBeEmpty();
-        rig.World.Clock.Advance(deadline - rig.World.Clock.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(5));
-        await rig.FlushAsync();
-        await rig.ScanAsync();
-        await AssertWarningReceiptAsync(rig, taskId, "deadline", "raw", false);
+        foreach (var cut in new[] { "settled-committed", "note-committed" })
+        {
+            await using var rig = await C544DeliveryRig.CreateAsync(busy: false, distill: true);
+            rig.Fault.Cut = cut;
+            var (taskId, _) = await SettleWarningAsync(rig);
+            rig.Fault.Throws.ShouldBe(1, cut);
+            var snapshot = TaskCompletionNotification.TryReadSnapshot((await rig.NotificationAsync(taskId))!.CompletionSnapshotJson)!;
+            var deadline = snapshot.DistillDeadlineAt.ShouldNotBeNull();
+            if (cut == "note-committed") (await rig.RowsAsync(taskId)).ShouldHaveSingleItem(cut);
+            else (await rig.RowsAsync(taskId)).ShouldBeEmpty(cut);
+            await rig.RestartAsync();
+            rig.World.Clock.Advance(TimeSpan.FromSeconds(30));
+            await rig.ScanAsync();
+            var row = await rig.RowAsync(taskId);
+            (row.HoldUntil!.Value - deadline).Duration().ShouldBeLessThan(TimeSpan.FromMilliseconds(1), cut);
+            rig.DistillQueue.TryDequeue(out _).ShouldBeFalse(cut);
+            await rig.FlushAsync();
+            rig.Caller.SubmittedBodies.ShouldBeEmpty(cut);
+            rig.World.Clock.Advance(deadline - rig.World.Clock.GetUtcNow().UtcDateTime + TimeSpan.FromSeconds(5));
+            await rig.FlushAsync();
+            await rig.ScanAsync();
+            await AssertWarningReceiptAsync(rig, taskId, cut + " deadline", "raw", false);
+        }
     }
 
     [Test]
