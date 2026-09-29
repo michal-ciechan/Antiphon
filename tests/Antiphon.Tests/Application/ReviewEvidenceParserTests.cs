@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
 
@@ -52,9 +53,110 @@ public class ReviewEvidenceParserTests
     public void C488_QuotedAndFencedBlocksAreNotEvidence()
     {
         var quoted = "> --- review evidence ---\n> subjectTaskId: " + Subject + "\n> reviewedSourceSha: " + Sha40;
-        ReviewEvidence.TryParse(Report(quoted)).Found.ShouldBeFalse();
+        AssertIgnored(ReviewEvidence.TryParse(Report(quoted)), "quoted");
         var fenced = "```\n--- review evidence ---\nsubjectTaskId: " + Subject + "\nreviewedSourceSha: " + Sha40 + "\n```";
-        ReviewEvidence.TryParse(Report(fenced)).Found.ShouldBeFalse();
+        AssertIgnored(ReviewEvidence.TryParse(Report(fenced)), "fenced");
+    }
+
+    [Test]
+    public void C807_IgnoredHeadingMatrix()
+    {
+        var block = Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full";
+        var rows = new (string Name, string Text)[]
+        {
+            ("fence", "```\n" + block + "\n```"),
+            ("language", "```markdown\n" + block + "\n```"),
+            ("four", "````\n" + block + "\n````"),
+            ("indented-fence", "   ```\n" + block + "\n   ```"),
+            ("unclosed", "```\n" + block),
+            ("quote", "> " + block.Replace("\n", "\n> ")),
+            ("quote-tight", ">" + block.Replace("\n", "\n>")),
+            ("nested-tight", ">>" + block.Replace("\n", "\n>>")),
+            ("nested-spaced", "> > " + block.Replace("\n", "\n> > ")),
+            ("nested-indented", "  >  > " + block.Replace("\n", "\n  >  > ")),
+            ("one-space", " " + block.Replace("\n", "\n ")),
+            ("four-spaces", "    " + block.Replace("\n", "\n    ")),
+            ("tab", "\t" + block.Replace("\n", "\n\t")),
+        };
+        foreach (var (name, content) in rows)
+            foreach (var newline in new[] { "\n", "\r\n" })
+                AssertIgnored(ReviewEvidence.TryParse(Report(content).Replace("\n", newline)), name + newline.Length);
+    }
+
+    [Test]
+    public void C807_MixedExamplesPreserveStandalone()
+    {
+        var other = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var ignored = "```\n" + Block(other, new string('b', 40)) + "\nordinaryScopeCompleted: None\n```";
+        var actual = Block(Subject, Sha40) + "\nordinaryScopeCompleted: Full";
+        foreach (var newline in new[] { "\n", "\r\n" })
+        {
+            var parsed = ReviewEvidence.TryParse(Report(ignored + "\n" + actual + "\n--- separator ---\n" + ignored)
+                .Replace("\n", newline));
+            parsed.Found.ShouldBeTrue();
+            parsed.Usable.ShouldBeTrue();
+            parsed.SubjectTaskId.ShouldBe(Subject);
+            parsed.ReviewedSourceSha.ShouldBe(Sha40);
+            parsed.Scope.ShouldBe(VerificationScope.Full);
+            parsed.Warning.ShouldBeNull();
+        }
+    }
+
+    [Test]
+    public void C807_StandaloneErrorPrecedence()
+    {
+        var ignored = "```\n" + Block(Subject, Sha40) + "\n```\n";
+        var rows = new (string Name, string Text, string Warning)[]
+        {
+            ("duplicate", Block(Subject, Sha40) + "\n" + Block(Subject, Sha40), "review_evidence_duplicate"),
+            ("subject", Block(Guid.Empty, Sha40), "review_evidence_subject_invalid"),
+            ("sha", Block(Subject, "bad"), "review_evidence_sha_invalid"),
+            ("placement", "--- next stage ---\nnext: land\n" + Block(Subject, Sha40), "review_evidence_after_next_stage"),
+        };
+        foreach (var (name, content, warning) in rows)
+        {
+            var parsed = ReviewEvidence.TryParse(ignored + content);
+            parsed.Found.ShouldBeTrue(name);
+            parsed.Usable.ShouldBeFalse(name);
+            parsed.Warning.ShouldBe(warning, name);
+        }
+    }
+
+    [Test]
+    public void C807_ReportTokenCutsOffEvidence()
+    {
+        var token = "[antiphon-report:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee done]";
+        var block = Block(Subject, Sha40);
+        var after = ReviewEvidence.TryParse("body\n" + token + "\n" + block);
+        after.Found.ShouldBeFalse();
+        after.Warning.ShouldBeNull();
+        AssertIgnored(ReviewEvidence.TryParse("```\n" + block + "\n```\n" + token + "\n" + block), "cutoff");
+    }
+
+    [Test]
+    public void C807_HeadingPrecision()
+    {
+        foreach (var text in new string?[] { null, "", "   ", "review evidence", "`--- review evidence ---`",
+                     "Prose: --- review evidence ---", "--- review evidence --- extra", "> This quotes --- review evidence ---" })
+        {
+            var parsed = ReviewEvidence.TryParse(text);
+            parsed.Found.ShouldBeFalse(text);
+            parsed.Warning.ShouldBeNull();
+        }
+        var actual = ReviewEvidence.TryParse("--- REVIEW EVIDENCE --- \t\nsubjectTaskId: " + Subject
+            + "\nreviewedSourceSha: " + Sha40 + "\nordinaryScopeCompleted: Full");
+        actual.Usable.ShouldBeTrue();
+        actual.Scope.ShouldBe(VerificationScope.Full);
+    }
+
+    private static void AssertIgnored(ReviewEvidence.Result parsed, string row)
+    {
+        parsed.Found.ShouldBeTrue(row);
+        parsed.Usable.ShouldBeFalse(row);
+        parsed.SubjectTaskId.ShouldBeNull(row);
+        parsed.ReviewedSourceSha.ShouldBeNull(row);
+        parsed.Scope.ShouldBe(VerificationScope.Unknown, row);
+        parsed.Warning.ShouldBe(ReviewEvidence.NotStandaloneWarning, row);
     }
 
     [Test]
