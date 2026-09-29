@@ -26,34 +26,35 @@ public sealed partial class ChannelOutboundDeadlineTests
         var sameConverter = await fixture.AddAsync(0, "same converter", TimeSpan.FromSeconds(30));
         var second = await fixture.AddAsync(1, "second", TimeSpan.FromMinutes(3));
         var globalOverflow = await fixture.AddAsync(2, "global overflow", TimeSpan.FromSeconds(30));
+        var deliveryIds = new[] { first.Id, sameConverter.Id, second.Id, globalOverflow.Id };
 
         await using var db = fixture.Open();
         var pump = fixture.Pump(db);
         (await pump.TickAsync(CancellationToken.None)).ShouldBe(4);
         var rows = await db.ChannelOutboundDeliveries.AsNoTracking()
-            .Where(d => new[] { first, sameConverter, second, globalOverflow }.Contains(d.Id))
+            .Where(d => deliveryIds.Contains(d.Id))
             .ToDictionaryAsync(d => d.Id);
-        rows[first].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
-        rows[second].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
-        rows[sameConverter].State.ShouldBe(ChannelOutboundDeliveryState.Pending);
-        rows[globalOverflow].State.ShouldBe(ChannelOutboundDeliveryState.Pending);
-        rows[sameConverter].ConversionTaskId.ShouldBeNull();
-        rows[globalOverflow].ConversionTaskId.ShouldBeNull();
+        rows[first.Id].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+        rows[second.Id].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+        rows[sameConverter.Id].State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+        rows[globalOverflow.Id].State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+        rows[sameConverter.Id].ConversionTaskId.ShouldBeNull();
+        rows[globalOverflow.Id].ConversionTaskId.ShouldBeNull();
         (await db.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId != null)).ShouldBe(2);
         fixture.Producer.SentReplies.ShouldBeEmpty();
 
         fixture.Clock.Advance(TimeSpan.FromSeconds(30));
         (await pump.TickAsync(CancellationToken.None)).ShouldBe(4);
         rows = await db.ChannelOutboundDeliveries.AsNoTracking()
-            .Where(d => new[] { first, sameConverter, second, globalOverflow }.Contains(d.Id))
+            .Where(d => deliveryIds.Contains(d.Id))
             .ToDictionaryAsync(d => d.Id);
-        rows[sameConverter].State.ShouldBe(ChannelOutboundDeliveryState.Ready);
-        rows[globalOverflow].State.ShouldBe(ChannelOutboundDeliveryState.Ready);
-        rows[sameConverter].FailureReason.ShouldContain("deadline elapsed in queue");
-        rows[globalOverflow].FailureReason.ShouldContain("deadline elapsed in queue");
+        rows[sameConverter.Id].State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+        rows[globalOverflow.Id].State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+        rows[sameConverter.Id].FailureReason.ShouldContain("deadline elapsed in queue");
+        rows[globalOverflow.Id].FailureReason.ShouldContain("deadline elapsed in queue");
         (await db.AgentTasks.AsNoTracking().CountAsync(t => t.OutboundDeliveryId != null)).ShouldBe(2);
-        rows[first].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
-        rows[second].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+        rows[first.Id].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+        rows[second.Id].State.ShouldBe(ChannelOutboundDeliveryState.Converting);
     }
 
     [Test]
