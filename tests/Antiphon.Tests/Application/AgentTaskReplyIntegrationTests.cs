@@ -2306,6 +2306,10 @@ public partial class AgentTaskReplyIntegrationTests
             new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
             NullLogger<AgentTaskService>.Instance);
         var runner = new OutboundConversionTaskRunner(db, tasks);
+        intent.LeaseOwner = Guid.NewGuid();
+        intent.LeaseUntil = DateTime.UtcNow.AddMinutes(5);
+        intent.Version++;
+        await db.SaveChangesAsync();
         var conversionTaskId = await runner.CreateAsync(intent, CancellationToken.None);
         var conversionTask = await db.AgentTasks.SingleAsync(t => t.Id == conversionTaskId);
         conversionTask.OutboundDeliveryId.ShouldBe(intent.Id);
@@ -2519,6 +2523,10 @@ public partial class AgentTaskReplyIntegrationTests
                 new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
                 NullLogger<AgentTaskService>.Instance);
             var runner = new OutboundConversionTaskRunner(db, tasks);
+            intent.LeaseOwner = Guid.NewGuid();
+            intent.LeaseUntil = DateTime.UtcNow.AddMinutes(5);
+            intent.Version++;
+            await db.SaveChangesAsync();
             var conversionId = await runner.CreateAsync(intent, CancellationToken.None);
             var conversion = await db.AgentTasks.SingleAsync(t => t.Id == conversionId);
             conversion.OutboundDeliveryId.ShouldBe(intent.Id);
