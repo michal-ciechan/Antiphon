@@ -239,6 +239,88 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         new ToolCopyCleanup().Remove(run).Outcome.ShouldBe("Removed");
     }
 
+    [Test]
+    public async Task allocation_sample_fails_on_access_denied_subfolder()
+    {
+        if (!Windows()) return;
+        var work = TempDir();
+        var sampled = Path.Combine(work, "sampled");
+        var locked = Path.Combine(sampled, "locked");
+        Directory.CreateDirectory(locked);
+        File.WriteAllBytes(Path.Combine(locked, "payload.bin"), RandomNumberGenerator.GetBytes(128 * 1024));
+        var body = $"Get-Allocated {UsageLibrary.Quote(sampled)}";
+        var readable = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
+        readable.Exit.ShouldBe(0, readable.Error);
+        long.Parse(readable.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture)
+            .ShouldBeGreaterThanOrEqualTo(128 * 1024);
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var deny = new System.Security.AccessControl.FileSystemAccessRule(user,
+            System.Security.AccessControl.FileSystemRights.ListDirectory,
+            System.Security.AccessControl.AccessControlType.Deny);
+        var directory = new DirectoryInfo(locked);
+        var acl = directory.GetAccessControl();
+        acl.AddAccessRule(deny);
+        directory.SetAccessControl(acl);
+        try
+        {
+            var denied = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
+            denied.Exit.ShouldNotBe(0, "an unreadable subfolder must fail the sample, not read as zero: " + denied.Output);
+            denied.Error.ShouldContain("Allocated-byte sample failed");
+            denied.Output.Trim().ShouldBeEmpty();
+        }
+        finally
+        {
+            acl = directory.GetAccessControl();
+            acl.RemoveAccessRule(deny);
+            directory.SetAccessControl(acl);
+        }
+    }
+
+    [Test]
+    public async Task allocation_sample_does_not_follow_junction_root()
+    {
+        if (!Windows()) return;
+        var work = TempDir();
+        var target = Path.Combine(work, "target");
+        Directory.CreateDirectory(target);
+        File.WriteAllBytes(Path.Combine(target, "payload.bin"), RandomNumberGenerator.GetBytes(132 * 1024));
+        var link = Path.Combine(work, "c723-" + Guid.NewGuid().ToString("N"));
+        DirectoryLinkHelper.Create(link, target);
+        try
+        {
+            using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, work,
+                $"@{{ link = Get-Allocated {UsageLibrary.Quote(link)}; target = Get-Allocated {UsageLibrary.Quote(target)} }} | ConvertTo-Json");
+            result.RootElement.GetProperty("target").GetInt64().ShouldBeGreaterThanOrEqualTo(132 * 1024);
+            result.RootElement.GetProperty("link").GetInt64().ShouldBe(0);
+        }
+        finally { Directory.Delete(link); }
+    }
+
+    [Test]
+    public async Task drifted_boot_reading_is_still_the_local_boot()
+    {
+        if (!Windows()) return;
+        var probe = new ProcessIdentityProbe();
+        var current = probe.Current();
+        // The recorded boot is the kernel's boot time (CIM LastBootUpTime), not now minus uptime.
+        var work = TempDir();
+        var (exit, output, error) = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work,
+            "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('yyyyMMddHHmm')");
+        exit.ShouldBe(0, error);
+        current.Boot.ShouldBe(output.Trim());
+        var boot = DateTime.ParseExact(current.Boot, "yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+        var dead = current with { Pid = int.MaxValue, StartUtcTicks = 1 };
+        foreach (var drift in new[] { TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(-1), TimeSpan.FromMinutes(4) })
+        {
+            // A marker written before a clock correction must still read as this boot's.
+            var drifted = dead with { Boot = boot.Add(drift).ToString("yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture) };
+            probe.Observe(drifted).Reason.ShouldBe("identity-dead", $"drift {drift}");
+        }
+        var otherBoot = dead with { Boot = boot.AddDays(-1).ToString("yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture) };
+        probe.Observe(otherBoot).Reason.ShouldBe("identity-foreign");
+    }
+
     private static bool Windows()
     {
         if (OperatingSystem.IsWindows()) return true;

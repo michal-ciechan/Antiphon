@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace Antiphon.Checkpoints;
 
@@ -26,7 +27,7 @@ public class ProcessIdentityProbe
             return new(ProcessVerdict.Unknown, "identity-missing");
         try
         {
-            if (expected.Host != Environment.MachineName || expected.Boot != BootId()
+            if (expected.Host != Environment.MachineName || !SameBoot(expected.Boot, BootId())
                 || expected.PidNamespace != PidNamespace())
                 return new(ProcessVerdict.Unknown, "identity-foreign");
             using var process = Process.GetProcessById(expected.Pid);
@@ -70,14 +71,49 @@ public class ProcessIdentityProbe
         return (start, fields[0][0]);
     }
 
+    private const string BootFormat = "yyyyMMddHHmm";
+
+    // Windows boot readings within this distance are one boot, so a clock step cannot strand a
+    // marker. Windows process start times are absolute: the start-token check, not the boot
+    // reading, is what separates process generations there.
+    private static readonly TimeSpan WindowsBootTolerance = TimeSpan.FromMinutes(5);
+
+    private static bool SameBoot(string recorded, string current)
+    {
+        if (string.Equals(recorded, current, StringComparison.Ordinal)) return true;
+        if (OperatingSystem.IsLinux()) return false;
+        return TryParseBoot(recorded, out var a) && TryParseBoot(current, out var b)
+            && (a - b).Duration() <= WindowsBootTolerance;
+    }
+
+    private static bool TryParseBoot(string? value, out DateTime boot) =>
+        DateTime.TryParseExact(value, BootFormat, CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out boot);
+
     private static string BootId()
     {
         if (OperatingSystem.IsLinux())
             return File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim();
+        if (OperatingSystem.IsWindows())
+        {
+            // The kernel's recorded boot time (CIM's LastBootUpTime). Now minus uptime drifted
+            // with every clock slew (29 s after 20 days), so earlier markers read as foreign.
+            var info = new byte[48];
+            var status = NtQuerySystemInformation(SystemTimeOfDayInformation, info, info.Length, out _);
+            if (status != 0)
+                throw new InvalidOperationException($"boot time query failed: 0x{status:X8}");
+            return DateTime.FromFileTimeUtc(BitConverter.ToInt64(info, 0))
+                .ToString(BootFormat, CultureInfo.InvariantCulture);
+        }
         // A change or clock correction can only prevent cleanup, never authorize it.
         return (DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64))
-            .UtcDateTime.ToString("yyyyMMddHHmm");
+            .UtcDateTime.ToString(BootFormat, CultureInfo.InvariantCulture);
     }
+
+    private const int SystemTimeOfDayInformation = 3;
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQuerySystemInformation(int infoClass, byte[] info, int length, out int returned);
 
     private static string PidNamespace() => OperatingSystem.IsLinux()
         ? new FileInfo("/proc/self/ns/pid").LinkTarget ?? "unknown"

@@ -108,6 +108,24 @@ public sealed class BuildSlotClientTests
     }
 
     [Test]
+    public async Task null_renewal_interval_is_granted_without_renewal()
+    {
+        // The Windows broker sends renewEverySeconds:null (commit 1546dc44); a null is "no renewal".
+        var handler = ScriptProbe();
+        handler.Enqueue(HttpStatusCode.OK, """{"leaseId":"L5","maxCpuCount":2,"renewEverySeconds":null}""");
+        handler.Enqueue(HttpStatusCode.NoContent, "");
+        var (client, _) = Client(handler);
+        var session = await client.ProbeAsync(CancellationToken.None);
+        var lease = await client.AcquireAsync(session, "CP-null-renew", CancellationToken.None);
+        lease.State.ShouldBe("granted");
+        lease.LeaseId.ShouldBe("L5");
+        lease.MaxCpuCount.ShouldBe(2);
+        await lease.DisposeAsync();
+        handler.Calls.ShouldNotContain(call => call.Uri.EndsWith("/renew", StringComparison.Ordinal));
+        handler.Calls.ShouldContain(call => call.Method == "DELETE" && call.Uri.EndsWith("/L5", StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task renewable_grant_is_renewed_until_the_checkpoint_releases_it()
     {
         var handler = new RenewableSlotHandler();

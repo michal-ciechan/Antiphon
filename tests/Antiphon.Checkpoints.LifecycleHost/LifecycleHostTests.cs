@@ -89,3 +89,10 @@ public sealed class OrphanSweepHostTests : CheckpointTestBase
         File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt));
     }
 }
+
+/// <summary>Allocates no checkpoint root, so only the assembly hook can sweep while it runs.</summary>
+public sealed class AssemblyHookHostTests
+{
+    [Test]
+    public void no_allocation() { }
+}
