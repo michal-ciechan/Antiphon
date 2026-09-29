@@ -43,12 +43,12 @@ public sealed class ReviewEvidenceDeliveryTests
         var note = (await rig.NotificationAsync(taskId))!;
         var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!;
         var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson)!;
-        snapshot.NoteHeader.ShouldNotContain("review-evidence=", row);
-        snapshot.NoteHeader.ShouldNotContain("reviewed-sha=", row);
-        delivery.LogicalNote.ShouldNotContain("review-evidence=", row);
+        snapshot.NoteHeader.ShouldNotContain("review-evidence=", Case.Sensitive, row);
+        snapshot.NoteHeader.ShouldNotContain("reviewed-sha=", Case.Sensitive, row);
+        delivery.LogicalNote.ShouldNotContain("review-evidence=", Case.Sensitive, row);
         rig.Caller.SubmittedBodies.ShouldContain(body => PromptSubmissionMatch.IsCompleteIn(delivery.WireText, body), row);
         if (delivery.SpillPath is { } path)
-            (await File.ReadAllTextAsync(path)).ShouldContain(Warning, row);
+            (await File.ReadAllTextAsync(path)).ShouldContain(Warning, Case.Sensitive, row);
     }
 
     [Test]
@@ -65,7 +65,7 @@ public sealed class ReviewEvidenceDeliveryTests
             var (taskId, _) = await SettleWarningAsync(rig, presentation);
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
-            snapshot.NoteHeader.ShouldContain(Warning, row);
+            snapshot.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
             rig.Caller.SubmittedBodies.ShouldBeEmpty(row + ": no enqueue receipt");
             if (distill)
             {
@@ -73,9 +73,9 @@ public sealed class ReviewEvidenceDeliveryTests
                 (await rig.Queue.TryApplyDistillationAsync(request, note.ContentDigest, C544DeliveryRig.Summary,
                     CancellationToken.None)).ShouldBeNull(row);
                 var queued = await rig.RowAsync(taskId);
-                queued.NoteHeader.ShouldContain(Warning, row);
-                queued.Body.ShouldContain(Warning, row);
-                queued.Body.ShouldContain(C544DeliveryRig.Summary, row);
+                queued.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
+                queued.Body.ShouldContain(Warning, Case.Sensitive, row);
+                queued.Body.ShouldContain(C544DeliveryRig.Summary, Case.Sensitive, row);
             }
             if (rendering == "polled-inline")
             {
@@ -92,8 +92,8 @@ public sealed class ReviewEvidenceDeliveryTests
             if (rendering == "polled-inline")
             {
                 var delivery = TaskCompletionNotification.TryReadDelivery((await rig.NotificationAsync(taskId))!.CompletionDeliveryJson)!;
-                delivery.LogicalNote.ShouldContain("Report withheld", row);
-                delivery.LogicalNote.ShouldContain(Warning, row);
+                delivery.LogicalNote.ShouldContain("Report withheld", Case.Sensitive, row);
+                delivery.LogicalNote.ShouldContain(Warning, Case.Sensitive, row);
             }
         }
     }
@@ -136,7 +136,7 @@ public sealed class ReviewEvidenceDeliveryTests
             }
             var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
-            snapshot.NoteHeader.ShouldContain(Warning, row);
+            snapshot.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
             var oldQueue = await rig.RowsAsync(taskId);
             if (cut is "settled-committed" or "note-insert") oldQueue.ShouldBeEmpty(row);
             if (cut == "note-committed") oldQueue.ShouldHaveSingleItem(row);
@@ -382,13 +382,13 @@ public sealed class ReviewEvidenceDeliveryTests
             await rig.World.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
             (await rig.NotificationAsync(created.Id)).ShouldBeNull(row + ": legacy has no completion snapshot");
             var queued = await rig.RowAsync(created.Id);
-            queued.NoteHeader.ShouldContain(Warning, row);
+            queued.NoteHeader.ShouldContain(Warning, Case.Sensitive, row);
             await rig.DeliverAsync(row);
             var prompts = await rig.CallerPromptsAsync();
             var carrying = prompts.Where(p => p.Text is not null && PromptSubmissionMatch.IsCompleteIn(queued.Body, p.Text)).ToList();
             carrying.ShouldHaveSingleItem(row);
             carrying[0].Sequence.ShouldBeGreaterThan(queued.LastDeliveryBaselineSequence ?? 0, row);
-            carrying[0].Text.ShouldContain(Warning, row);
+            carrying[0].Text.ShouldContain(Warning, Case.Sensitive, row);
         }
     }
 }

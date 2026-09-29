@@ -81,12 +81,12 @@ public sealed class ReviewEvidenceSettlementTests
             result.Task.NextStage.ShouldBe(found ? PipelineHandoffKind.Code : PipelineHandoffKind.Land, row);
             var note = result.Note.ShouldNotBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row);
-            snapshot.NoteHeader.ShouldContain(HeaderWarning, row);
-            snapshot.NoteHeader.ShouldContain("fenced, quoted or indented", row);
-            snapshot.NoteHeader.ShouldContain("bare lines before the next-stage block", row);
-            snapshot.NoteHeader.ShouldContain("scope=Unknown", row);
-            snapshot.NoteHeader.ShouldNotContain("review-evidence=", row);
-            snapshot.NoteHeader.ShouldNotContain("reviewed-sha=", row);
+            snapshot.NoteHeader.ShouldContain(HeaderWarning, Case.Sensitive, row);
+            snapshot.NoteHeader.ShouldContain("fenced, quoted or indented", Case.Sensitive, row);
+            snapshot.NoteHeader.ShouldContain("bare lines before the next-stage block", Case.Sensitive, row);
+            snapshot.NoteHeader.ShouldContain("scope=Unknown", Case.Sensitive, row);
+            snapshot.NoteHeader.ShouldNotContain("review-evidence=", Case.Sensitive, row);
+            snapshot.NoteHeader.ShouldNotContain("reviewed-sha=", Case.Sensitive, row);
             await using var db = world.CreateContext();
             (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == result.Id && e.Type == AgentTaskEventType.Warning
                 && e.Detail == Warning)).ShouldBe(1, row);
@@ -110,7 +110,7 @@ public sealed class ReviewEvidenceSettlementTests
             result.Outcome.ReviewedRepositoryPath.ShouldBe(world.RepositoryPath, row);
             result.Outcome.OrdinaryScopeCompleted.ShouldBe(interim ? VerificationScope.Interim : VerificationScope.Full, row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(result.Note!.CompletionSnapshotJson)!;
-            snapshot.NoteHeader.ShouldNotContain(HeaderWarning, row);
+            snapshot.NoteHeader.ShouldNotContain(HeaderWarning, Case.Sensitive, row);
         }
     }
 
@@ -160,7 +160,7 @@ public sealed class ReviewEvidenceSettlementTests
             });
             result.Outcome.ReviewedSourceSha.ShouldBeNull(row);
             var snapshot = TaskCompletionNotification.TryReadSnapshot(result.Note!.CompletionSnapshotJson)!;
-            snapshot.NoteHeader.ShouldNotContain(HeaderWarning, row);
+            snapshot.NoteHeader.ShouldNotContain(HeaderWarning, Case.Sensitive, row);
             await using var db = world.CreateContext();
             var expected = row switch { "absent" => "Review settled without usable review evidence.",
                 "subject" => "review_evidence_subject_invalid", _ => "review_evidence_sha_invalid" };
