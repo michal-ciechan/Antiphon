@@ -174,7 +174,13 @@ public sealed class ChannelOutboundDeliveryPump
                 return;
             try
             {
+                if (ProbeBarrierAsync is { } beforeCreateBarrier)
+                    await beforeCreateBarrier("before-conversion-create", delivery.Id, ct);
                 await _runner.CreateAsync(delivery, ct);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
