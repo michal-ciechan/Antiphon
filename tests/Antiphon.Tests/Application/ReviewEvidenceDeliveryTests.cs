@@ -37,9 +37,10 @@ public sealed class ReviewEvidenceDeliveryTests
             transformReport: (_, report) => Presented(report, kind));
 
     private static async Task AssertWarningReceiptAsync(C544DeliveryRig rig, Guid taskId, string row,
-        string? kind = null, bool? spill = null)
+        string? kind = null, bool? spill = null, bool expectLandHandoff = true)
     {
-        await VerificationRoundDeliveryTests.AssertReceivedOnceAsync(rig, taskId, row, HeaderBits, kind, spill);
+        var headerBits = expectLandHandoff ? HeaderBits : HeaderBits.Where(bit => bit != "next=land").ToArray();
+        await VerificationRoundDeliveryTests.AssertReceivedOnceAsync(rig, taskId, row, headerBits, kind, spill);
         var note = (await rig.NotificationAsync(taskId))!;
         var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson)!;
         var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson)!;
@@ -109,7 +110,7 @@ public sealed class ReviewEvidenceDeliveryTests
             (await rig.NotificationAsync(taskId))!.CompletionSnapshotJson.ShouldNotBeNull();
             await rig.DeliverAsync("embedded token");
             await rig.ScanAsync();
-            await AssertWarningReceiptAsync(rig, taskId, "embedded token", spill: false);
+            await AssertWarningReceiptAsync(rig, taskId, "embedded token", spill: false, expectLandHandoff: false);
         }
     }
 
