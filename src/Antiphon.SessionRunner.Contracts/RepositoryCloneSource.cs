@@ -49,7 +49,7 @@ public static partial class RepositoryCloneSource
     private static bool TryHttps(string host, string path, out string identity)
     {
         identity = "";
-        var segments = path.TrimEnd('/').Split('/');
+        var segments = path.Trim('/').Split('/');
         if (segments.Length < 2 || segments.Any(s => s.Length == 0 || s is "." or ".."
             || s.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.'))))
             return false;
