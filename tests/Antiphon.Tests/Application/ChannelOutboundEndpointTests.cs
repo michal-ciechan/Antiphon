@@ -126,7 +126,7 @@ public sealed class ChannelOutboundEndpointTests
             }
             using (var invalid = await client.PatchAsJsonAsync($"/api/channels/{channelId:D}",
                        new { outboundAgentProfile = "unknown" }))
-                invalid.StatusCode.ShouldBe(System.Net.HttpStatusCode.BadRequest);
+                invalid.StatusCode.ShouldBe(System.Net.HttpStatusCode.UnprocessableEntity);
             (await db.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
                 .OutboundAgentProfile.ShouldBe("conversion");
             using (var clear = await client.PatchAsJsonAsync($"/api/channels/{channelId:D}",
