@@ -20,6 +20,15 @@ namespace Antiphon.Tests.Application;
 
 public partial class AgentTaskReplyIntegrationTests
 {
+    internal static async Task SettleExistingConversionTaskAsync(
+        string connectionString, Guid taskId, Guid sessionId)
+    {
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(taskId),
+            "Wrote the conversion output manifest.", connectionString: connectionString);
+        using var factory = new TestScopeFactory(connectionString: connectionString);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+    }
+
     [Test]
     public async Task Internal_conversion_settles_with_usage_but_without_sources_or_follow_up()
     {
