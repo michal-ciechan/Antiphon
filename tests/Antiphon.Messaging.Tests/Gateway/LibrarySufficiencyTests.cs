@@ -18,6 +18,26 @@ public sealed class LibrarySufficiencyTests
         using var profile = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(serviceDir, "appsettings.json")));
         profile.RootElement.GetProperty("Kafka").GetProperty("ExpectedAntiphonConsumerGroup").GetString().ShouldBe("antiphon-server-bridge");
     }
+
+    [Test]
+    public void Configured_inbound_monitor_and_outbound_consumer_keep_distinct_contracts()
+    {
+        using var service = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            RepoRoot, "src", "Antiphon.Messaging.Service", "appsettings.json")));
+        using var server = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            RepoRoot, "server", "appsettings.json")));
+        var gateway = service.RootElement.GetProperty("Kafka");
+        var bridge = server.RootElement.GetProperty("AntiphonMessaging");
+
+        gateway.GetProperty("InboundTopic").GetString().ShouldBe("channels.inbound");
+        gateway.GetProperty("OutboundTopic").GetString().ShouldBe("channels.outbound");
+        bridge.GetProperty("InboundTopic").GetString().ShouldBe(gateway.GetProperty("InboundTopic").GetString());
+        bridge.GetProperty("OutboundTopic").GetString().ShouldBe(gateway.GetProperty("OutboundTopic").GetString());
+        gateway.GetProperty("AntiphonConsumerGroup").GetString().ShouldBe(bridge.GetProperty("ConsumerGroup").GetString());
+        gateway.GetProperty("ExpectedAntiphonConsumerGroup").GetString().ShouldBe(bridge.GetProperty("ConsumerGroup").GetString());
+        gateway.GetProperty("ConsumerGroup").GetString().ShouldBe("antiphon-messaging-service");
+        gateway.GetProperty("ConsumerGroup").GetString().ShouldNotBe(bridge.GetProperty("ConsumerGroup").GetString());
+    }
     [Test]
     public void Service_has_no_hand_rolled_ingress_or_outbound_loops()
     {
