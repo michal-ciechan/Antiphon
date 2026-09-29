@@ -54,7 +54,7 @@ public static class Program
             case "status":
                 return Status(options, repo);
             case "stop":
-                return Stop(options, repo);
+                return Stop(options, repo, runtime);
             case "report":
                 return Report(options, repo);
             case "clean":
@@ -181,10 +181,10 @@ public static class Program
         return ExitCodes.Green;
     }
 
-    private static int Stop(ArgSet options, string repo)
+    private static int Stop(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
         var run = ResolveRun(options, repo);
-        var cleanup = new ToolCopyCleanup();
+        var cleanup = new ToolCopyCleanup(runtime?.ProcessProbe);
         var observed = cleanup.ObserveExecutor(run);
         if (observed.Verdict is ProcessVerdict.Unknown or ProcessVerdict.ReusedPid)
         {
@@ -200,11 +200,9 @@ public static class Program
                 var identity = ExecutorOwnershipStore.Read(run)?.Executor ?? RunOwnershipStore.Read(run)?.Launched;
                 if (identity is null)
                     return ExitCodes.StillRunning;
-                using var process = Process.GetProcessById(identity.Pid);
-                if (new ProcessIdentityProbe().Observe(identity).Verdict != ProcessVerdict.AliveSame)
+                if ((runtime?.ProcessProbe ?? new ProcessIdentityProbe()).Observe(identity).Verdict != ProcessVerdict.AliveSame)
                     return ExitCodes.StillRunning;
-                process.Kill(entireProcessTree: true);
-                if (!process.WaitForExit(10000))
+                if (!(runtime?.ProcessControl ?? new ProcessControl()).StopAndWait(identity, TimeSpan.FromSeconds(10)))
                 {
                     Console.WriteLine("stop incomplete " + Path.GetFileName(run) + " exit-timeout");
                     return ExitCodes.StillRunning;
