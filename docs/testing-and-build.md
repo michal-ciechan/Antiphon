@@ -684,8 +684,13 @@ A failed teardown is a test failure. A linked tree, live or uncertain nested exe
 or failed delete leaves the marked root visible for a later guarded retry. Do not use
 `CheckpointFixtures.TempDir()` or an unmarked test root.
 
-The assembly startup hook admits a bounded sweep every five minutes. It considers
-only exact indexed direct children of the OS temp directory, waits ten minutes from
+The assembly startup hook admits a bounded sweep every five minutes. Registration
+uses one independent index file per marked root under `.checkpoint-temp-roots/`, so
+allocations do not wait for the shared sweep lock. Disposal removes its index file;
+stale entries for absent roots are removed when visited. The sweep checks the
+persisted interval before trying the lock. An older shared JSONL index is migrated
+under that lock, with disposed entries discarded. It considers only exact indexed direct
+children of the OS temp directory, waits ten minutes from
 marker creation, and requires confirmed owner and nested executor death. One pass
 is bounded by 512 index entries, 10000 descendants per root, 16 completed roots,
 256 MiB of payload and two seconds. A partially deleted root keeps its marker and

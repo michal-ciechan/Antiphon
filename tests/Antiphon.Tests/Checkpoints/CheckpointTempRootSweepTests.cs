@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -7,6 +8,24 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Unit")]
 public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
 {
+    [Test]
+    public async Task two_hundred_concurrent_allocations_ignore_the_sweep_gate()
+    {
+        var sandbox = TempDir();
+        var gatePath = Path.Combine(sandbox, ".checkpoint-temp-coordinator.lock");
+        using var gate = new FileStream(gatePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var allocations = Task.WhenAll(Enumerable.Range(0, 200).Select(_ => Task.Factory.StartNew(
+            () => Candidate(sandbox), CancellationToken.None, TaskCreationOptions.LongRunning,
+            TaskScheduler.Default)));
+        var completedWhileGateHeld = await Task.WhenAny(allocations, Task.Delay(TimeSpan.FromSeconds(20)))
+            == allocations;
+        gate.Dispose();
+        var roots = await allocations;
+        roots.Length.ShouldBe(200);
+        roots.ShouldAllBe(Directory.Exists);
+        completedWhileGateHeld.ShouldBeTrue("registration must not queue behind the sweep gate");
+    }
+
     [Test]
     public void grace_is_additional_to_dead_ownership()
     {
@@ -32,6 +51,8 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
         first.SweepOnce().CompletedRoots.ShouldBe(1);
         var secondRoot = Candidate(sandbox);
         var second = Sweep(sandbox, clock: () => now.AddMinutes(1), interval: TimeSpan.FromMinutes(5));
+        using var gate = new FileStream(Path.Combine(sandbox, ".checkpoint-temp-coordinator.lock"),
+            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         second.SweepOnce().Examined.ShouldBe(0);
         Directory.Exists(secondRoot).ShouldBeTrue();
     }
@@ -143,6 +164,29 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
     }
 
     [Test]
+    public void disposed_roots_do_not_consume_the_next_sweep_budget()
+    {
+        var sandbox = TempDir();
+        var index = new CheckpointTempRootSweep(sandbox);
+        var legacyEntries = new List<string>();
+        for (var i = 0; i < 700; i++)
+        {
+            var disposed = Candidate(sandbox);
+            Directory.Delete(disposed, recursive: true);
+            index.Unregister(disposed);
+            legacyEntries.Add(JsonSerializer.Serialize(disposed));
+        }
+        var orphan = Candidate(sandbox);
+        index.Unregister(orphan);
+        legacyEntries.Add(JsonSerializer.Serialize(orphan));
+        File.WriteAllLines(Path.Combine(sandbox, ".checkpoint-temp-roots.jsonl"), legacyEntries);
+        var receipt = Sweep(sandbox, maxDirect: 1).SweepOnce();
+        receipt.Examined.ShouldBe(1);
+        receipt.CompletedRoots.ShouldBe(1);
+        Directory.Exists(orphan).ShouldBeFalse();
+    }
+
+    [Test]
     public void eligible_backlog_drains_without_touching_exclusions()
     {
         var sandbox = TempDir();
@@ -168,7 +212,7 @@ public sealed class CheckpointTempRootSweepTests : CheckpointTestBase
     private static string Candidate(string sandbox, int payloadBytes = 0, DateTimeOffset? createdAt = null,
         bool alive = false)
     {
-        var root = Path.Combine(sandbox, "c723-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(sandbox, "c723-" + Guid.CreateVersion7().ToString("N"));
         Directory.CreateDirectory(root);
         var current = new ProcessIdentityProbe().Current();
         TestRootGuard.Write(root, new CheckpointRootMarker

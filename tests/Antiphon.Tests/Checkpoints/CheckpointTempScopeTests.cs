@@ -39,6 +39,8 @@ public sealed class CheckpointTempScopeTests : CheckpointTestBase
         gate.SetResult();
         await disposal;
         Directory.Exists(root).ShouldBeFalse();
+        File.Exists(Path.Combine(Path.GetTempPath(), ".checkpoint-temp-roots",
+            Path.GetFileName(root) + ".json")).ShouldBeFalse();
         Should.Throw<InvalidOperationException>(() => scope.TempDir());
     }
 

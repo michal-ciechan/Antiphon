@@ -186,6 +186,13 @@ Use a filesystem lock/cursor, not a static in-memory clock or a background task.
 runner interactions. The assembly hook can be static as required by TUnit; its state is a passed
 scope or validated filesystem record, not new process-global mutable state.
 
+Registration writes an independent per-root index file and never waits for the
+coordinator lock. Successful disposal removes that file, keeping historical disposed
+roots out of the 512-entry sweep budget. The old shared JSONL index is migrated
+under the sweep lock, dropping disposed entries. The sweep checks its persisted interval
+before acquiring the lock, then rechecks under it. Failed index registration is
+best effort; the root's own marker remains available for operator inspection.
+
 Only direct children of `Path.GetTempPath()` with the exact name and a valid supported marker
 are candidates. Require a ten-minute creation grace, a proven dead owner, and a complete check
 that every nested/registered checkpoint launch is either not attempted with a dead starter or
@@ -518,8 +525,8 @@ not the number of child assertions. A killed child is the V-9 orphan case, not V
   argument-expanded cases (ExitCodeTests contributes seven). Four TimeoutTests are Windows-only;
   DetachedLauncherTests has one Linux-only case. With this exact 100-case addition, namespace
   selection is 250 cases: Linux 235 executed + 15 declared OS skips, Windows 239 + 11. The fix
-  round after Review 953ac836 adds four (three Windows-native, one BuildSlotClient), so it is 254:
-  Linux 236 + 18, Windows 243 + 11. Reclassifying
+  round after Review 953ac836 adds four (three Windows-native, one BuildSlotClient), and
+  this repair adds two sweep tests, so it is 256: Linux 238 + 18, Windows 245 + 11. Reclassifying
   Unit/Integration does not change the namespace total. Any count/name delta needs reconciliation
   before the checkpoint runs; do not silently lower these floors.
 - **R-5 (test infrastructure):** run the full default Unit category plus
@@ -730,9 +737,9 @@ is a completeness inventory, never execution proof. Join every eligible selected
 terminal TRX result, assert no missing/duplicate/wrong-SHA result, preserve all skips and require
 zero unexplained skips. A numeric floor alone does not establish full selection. The Unit/full
 floor of 1000 is the conservative existing checkpoint lane floor, not a fresh full-suite count;
-the compiled roster equality is the stricter acceptance gate. Namespace uses the exact 236
-Linux execution floor and 254 selected cases derived above. Full must contain all 236 eligible
-checkpoint cases, all other eligible compiled cases, and at least 1000 executions. Both full
+the compiled roster equality is the stricter acceptance gate. Namespace uses the exact 238
+Linux execution floor and 256 selected cases derived above. Full must contain every eligible
+checkpoint case on the Windows compiled roster, all other eligible compiled cases, and at least 1000 executions. Both full
 passes must have the same eligible roster and argument expansion. Record actual counts, not 1000
 as if it were measured. `--list-tests` output is not an executed roster.
 
@@ -755,6 +762,14 @@ Required report fields per pass:
 | finished healthy scopes, including expected assertion/cancel lifecycle probes | **0 retained roots and 0 allocated bytes** after joins; created roots all have terminal removal evidence. No GB-scale retained growth is possible under this stronger gate. |
 | complete roster, TRX and native process completion | Full joined roster, original process exit, executed/passed/failed/skipped counts and hashes; 0 test failures for acceptance. Ordinary deliberate child red/cancel is asserted by its passing parent. |
 | noneligible artifacts | Named reason, count and allocated bytes, no unexplained new unmarked or unknown roots from a healthy run; deliberate injected fixtures are removed by their owning test after assertions. |
+
+CP-11/CP-12 are Windows-pinned full-suite rows. The Linux full suite contains inherited
+Windows-only failures, and its test child inherits the runner container's `ASPNETCORE_URLS`
+and `SessionRunner__*` settings; one attempt went idle after binding `http://+:8080`.
+Linux qualification uses the complete CP-8 Unit lane and CP-9/CP-10/CP-13 instead.
+Windows Final Review owns CP-11/CP-12. Clearing those inherited settings is a
+separate card and is outside this change. The earlier commit's final sentence is
+superseded by this explicit platform assignment.
 
 CP-13 is separate from normal zero-residue acceptance. A real child creates 48 marked roots
 with 8 MiB written payload each and one 300 MiB root, publishes external inventory and is stopped
@@ -792,10 +807,10 @@ pressure turns it into deletion authority. Lack of native evidence is reported a
 ### Cost
 
 Estimates, not measurements: ordinary V/R **295 minutes**, the sum of CP-1..CP-13 below
-(Linux 270, Windows 25). This replaces the provisional 155-minute Plan estimate: complete full
+(Linux 90, Windows 205). This replaces the provisional 155-minute Plan estimate: complete full
 passes have no current measured duration, so reserve 90 minutes each instead of assuming the
 historical 25-minute suite. Exact-scope development builds total 42 minutes; lifecycle/native,
-Unit, measured namespace and orphan rows add 48, Windows 25, full passes 180. No claim of a
+Unit, measured namespace and orphan rows add 48, Windows native 25, full passes 180. No claim of a
 runtime saving until measurements exist; output reuse eliminates rebuilding per native/pass row.
 
 Launcher bootstrap allowance **3 minutes per platform = 6** outside row leases. Mutation floor
@@ -812,7 +827,7 @@ ExpectAbout to 295 plus authoring/bootstrap, Mutation to its own floor, not the 
 
 Code commits each closed slice before its single tool run. Required row subsets:
 Linux S1 = CP-1; Linux S1-S2 = CP-2; Linux S1-S3 = CP-3; Linux all =
-CP-4,CP-5,CP-6,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13; Windows all = CP-7.
+CP-4,CP-5,CP-6,CP-8,CP-9,CP-10,CP-13; Windows all = CP-7,CP-11,CP-12.
 Use explicit `--rows` lists: selecting `--after all` would also start the other OS's row.
 Platform qualifier checks at native test entry fail/skip visibly; the selected native row
 requires zero skips. Re-read dispatch eligibility; request the OS, not a hard-coded runner.
@@ -825,7 +840,7 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label c804-checkpoint-bootstrap --
 $checkpointDll = Join-Path (Get-Location) 'tools/Antiphon.Checkpoints/bin-c804-launcher/net9.0/Antiphon.Checkpoints.dll'
 $plan = 'docs/superpowers/plans/2026-09-29-card-0804-0805-checkpoint-temp-lifecycle-plan.md'
 # Example final Linux slice; earlier slice row lists are specified above.
-dotnet $checkpointDll run --plan $plan --rows CP-4,CP-5,CP-6,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13 --keep-outputs --max-wait 570s
+dotnet $checkpointDll run --plan $plan --rows CP-4,CP-5,CP-6,CP-8,CP-9,CP-10,CP-13 --keep-outputs --max-wait 570s
 # While exit is 75, repeat wait with the exact returned run directory:
 # dotnet $checkpointDll wait --run <returned-absolute-run-directory> --max-wait 570s
 ```
@@ -841,9 +856,8 @@ All rows serial at the outer scheduler to avoid shared-obj races, two acceptance
 once, or overlap with another row during a native boundary. TUnit's own limiters/concurrency
 remain active. Deadlines derive as max(15,3*estimate): respectively 24,30,36,36,24,36,75,24,18,18,
 270,270,24 minutes. CP-11/12 intentionally exceed the importer's warning-only 45-minute ceiling;
-this is the explicit full-suite exception, not a silent timeout widening after a hang. Final
-Linux selection has a derived total deadline of 490 minutes (2*240+10); report a timed-out full
-pass as incomplete, not disk acceptance. Every row produces the standard CHECKPOINT line, with
+this is the explicit Windows full-suite exception, not a silent timeout widening after a hang.
+Report a timed-out full pass as incomplete, not disk acceptance. Every row produces the standard CHECKPOINT line, with
 reruns and non-TUnit child counts attached. Extra commands need a reason; baseline diagnosis
 is exact failing methods, not another full suite. No retries are silently labeled flaky.
 
@@ -854,13 +868,13 @@ is exact failing methods, not another full suite. No retries are silently labele
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c804-s1/` | ownership-primitives | `/*/Antiphon.Tests.Checkpoints/(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(RunStateStoreTests*)/*` | V-2, R-3 | all 20 executions, 0 failed/skipped | 20 | 8 | true |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c804-s2/` | fixture-and-copy | `/*/Antiphon.Tests.Checkpoints/(CheckpointTempScopeTests*)\|(CheckpointToolSourceTests*)\|(ShadowCopyTests*)\|(CheckpointImportTests*)\|(CheckpointTaskOwnershipTests*)\|(CheckpointExecutorLogTests*)/*` | V-1, V-3, R-1, R-2, R-3 | all 58 executions, 0 failed/skipped | 58 | 10 | true |
 | CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c804-s3/` | launch-and-recovery | `/*/Antiphon.Tests.Checkpoints/(CheckpointLaunchCleanupTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointAppTests*)\|(WaitCommandTests*)\|(EvidenceFolderTests*)\|(OutputCleanupTests*)/*` | V-3, V-4, R-3 | all 49 executions, 0 failed/skipped | 49 | 12 | true |
-| CP-4 | all | `tests/Antiphon.Tests -> bin-c804-final/` | sweep-and-classification | `/*/*/(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-7, R-1, R-4, R-5 | all 21 executions, 0 failed/skipped | 21 | 12 | true |
+| CP-4 | all | `tests/Antiphon.Tests -> bin-c804-final/` | sweep-and-classification | `/*/*/(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-7, R-1, R-4, R-5 | all 23 executions, 0 failed/skipped | 23 | 12 | true |
 | CP-5 | all | CP-4 | tunit-lifecycle-linux | `/*/Antiphon.Tests.Checkpoints/CheckpointTempLifecycleTests/*` | V-1, V-5 | all 6 parent executions, complete expected child outcomes, 0 parent failed/skipped | 6 | 8 | true |
 | CP-6 | all | CP-4 | native-linux | `/*/Antiphon.Tests.Checkpoints/(CheckpointRecoveryLinuxTests*)\|(DetachedLauncherTests*)/*` | V-2, V-3, V-4, V-6 | Linux only; all 11 executions, 0 failed/skipped | 11 | 12 | true |
-| CP-7 | all | `tests/Antiphon.Tests -> bin-c804-windows/` | native-and-policy-windows | `/*/*/(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(CheckpointTempScopeTests*)\|(CheckpointToolSourceTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(CheckpointTempLifecycleTests*)\|(CheckpointRecoveryWindowsTests*)\|(EvidenceFolderTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-2, R-5 | Windows only; all 104 executions, 0 failed/skipped | 104 | 25 | true |
+| CP-7 | all | `tests/Antiphon.Tests -> bin-c804-windows/` | native-and-policy-windows | `/*/*/(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(CheckpointTempScopeTests*)\|(CheckpointToolSourceTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(CheckpointTempLifecycleTests*)\|(CheckpointRecoveryWindowsTests*)\|(EvidenceFolderTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-2, R-5 | Windows only; all 106 executions, 0 failed/skipped | 106 | 25 | true |
 | CP-8 | all | CP-4 | unit-linux | `/*/*/*/*[Category=Unit]` | R-3, R-5 | >= 1000 executed, 0 failed; complete Unit roster; declared OS skips accounted | 1000 | 8 | true |
-| CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 236 executed / 254 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
-| CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 236 executed / 254 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
-| CP-11 | all | n/a | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-final/` | V-8, R-4, R-5 | exit 0; all 5 gates; child >=1000 executed including all 236 checkpoint cases; full compiled roster equality; 0 failed | n/a | 90 | true |
-| CP-12 | all | n/a | full-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 2 -OutputPath bin-c804-final/` | V-8, R-4, R-5 | exit 0; all 5 gates and pass delta; same full roster as pass1; child >=1000 executed; 0 failed | n/a | 90 | true |
+| CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 238 executed / 256 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
+| CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 238 executed / 256 selected; 0 failed; exact 18 OS skips | n/a | 6 | true |
+| CP-11 | all | CP-7 | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only; exit 0; all 5 gates; child >=1000 executed including every eligible checkpoint case; full compiled roster equality; 0 failed | n/a | 90 | true |
+| CP-12 | all | CP-7 | full-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 2 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only; exit 0; all 5 gates and pass delta; same full roster as pass1; child >=1000 executed; 0 failed | n/a | 90 | true |
 | CP-13 | all | n/a | owner-death-usage | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Orphans -Pass 1 -OutputPath bin-c804-final/` | V-7, V-9 | exit 0; 18/18 named harness checks; eligible <=32 roots AND <=256 MiB then zero; 6 excluded fixtures intact | n/a | 8 | true |
