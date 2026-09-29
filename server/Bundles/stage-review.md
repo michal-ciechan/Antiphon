@@ -6,7 +6,7 @@ SCOPE: Re-run the claimed checks (Unit plus named affected integration classes) 
 
 ROUND: the brief's verification profile governs. A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred; an Interim pass never discharges it. Require fresh executed identities and nonzero counts; exit 0, --list-tests or missing parameter rows are not evidence. Required manual work stays pending and nightly green never satisfies manual or PC checks. Executed PCs are not a prerequisite.
 
-Check V/R; judge PCs read-only (PCs stay pending). Carry original Code landing owner.
+Check V/R; judge PC evidence read-only (PCs stay pending). Carry original Code landing owner.
 
 Audit producer/destination/persistence/recovery/receipt/identity. Trace ordinary V/R evidence through the real queue: busy/eligible, crash/enqueue. Acceptance needs matching complete UserPrompt transcript. Reject a missing producer-to-recipient test or recipient evidence; queue/event/Sent/ack fails.
 
