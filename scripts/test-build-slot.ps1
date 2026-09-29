@@ -193,6 +193,36 @@ function Test-C800_WrapperKeepsScriptCommandsInProcess {
     $r = Invoke-C589Wrapper -Fx $fx -WorkingDirectory $fx.Root -CommandExit 6 -DisableCommandShim -WrapperArgs @('-NoSlot', '--', $script:CommandShim, '--treenode-filter', '*.trx')
     Assert-C487 -Cond ($r.Exit -eq 6) -Name 'C800 WrapperKeepsScriptCommandsInProcess propagates exit 6 from a script command' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
     Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ARGV') -ceq '["--treenode-filter","*.trx"]') -Name 'C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged' -Detail (Get-C589LoggedValue -Result $r -Prefix 'ARGV')
+
+    $ip = New-C589Case -Name 'c800-script-array'
+    Set-C589Seams -Fx $ip -SlotScript 'granted' -WaitSeconds '' -GraceSeconds '' -RetryMs '10' -CommandExit 0
+    Remove-Item Env:C589_COMMAND_SHIM -ErrorAction SilentlyContinue
+    $array = @('*.trx', '/*/*/*/*[Category=Unit]', '?')
+    try { & $script:Wrapper -NoSlot -- $script:CommandShim $array | Out-Null }
+    finally { Clear-C589Seams }
+    $ipResult = [pscustomobject]@{ Calls = @(Get-Content -LiteralPath $ip.Log) }
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $array -Compress)) -Name 'C800 WrapperKeepsScriptCommandsInProcess an unsplatted array stays separate' -Detail (Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV')
+
+    $empty = New-C589Case -Name 'c800-script-empty'
+    Set-C589Seams -Fx $empty -SlotScript 'granted' -WaitSeconds '' -GraceSeconds '' -RetryMs '10' -CommandExit 0
+    Remove-Item Env:C589_COMMAND_SHIM -ErrorAction SilentlyContinue
+    $emptyArray = @('x', '', 'y')
+    try { & $script:Wrapper -NoSlot -- $script:CommandShim $emptyArray | Out-Null }
+    finally { Clear-C589Seams }
+    $emptyResult = [pscustomobject]@{ Calls = @(Get-Content -LiteralPath $empty.Log) }
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $emptyResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $emptyArray -Compress)) -Name 'C800 WrapperKeepsScriptCommandsInProcess an empty array element stays separate' -Detail (Get-C589LoggedValue -Result $emptyResult -Prefix 'ARGV')
+}
+
+function Test-C800_WrapperLaunchesNativeExecutableLiterally {
+    $fx = New-C589Case -Name 'c800-native'
+    Set-Content -LiteralPath (Join-Path $fx.Root 'run.trx') -Value ''
+    Set-Content -LiteralPath (Join-Path $fx.Root 'old.trx') -Value ''
+    Set-Content -LiteralPath (Join-Path $fx.Root 'x') -Value ''
+    $argv = @('*.trx', '?')
+    $r = Invoke-C589Wrapper -Fx $fx -WorkingDirectory $fx.Root -CommandExit 0 -DisableCommandShim -WrapperArgs (@('-NoSlot', '--', 'pwsh', '-NoProfile', '-File', $script:CommandShim) + $argv)
+    Assert-C487 -Cond ($r.Exit -eq 0) -Name 'C800 WrapperLaunchesNativeExecutableLiterally exits zero' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $argv -Compress)) -Name 'C800 WrapperLaunchesNativeExecutableLiterally passes wildcard argv unchanged' -Detail (Get-C589LoggedValue -Result $r -Prefix 'ARGV')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'CWD') -ceq $fx.Root) -Name 'C800 WrapperLaunchesNativeExecutableLiterally keeps the caller directory' -Detail (Get-C589LoggedValue -Result $r -Prefix 'CWD')
 }
 
 function Test-C800_WrapperInterruptKillsChildAndReleasesLease {
@@ -373,7 +403,7 @@ function Test-C589_WrapperRenews {
         -Name 'C589 WrapperRenews pid grant has no renewals' -Detail ($pidResult.Calls -join ' | ')
 }
 
-$script:C589ExpectedRows = 35 + 11 + $(if ($IsLinux) { 3 } else { 0 })
+$script:C589ExpectedRows = 35 + 16 + $(if ($IsLinux) { 3 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }

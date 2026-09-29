@@ -5,7 +5,8 @@
 $argv = @($args)
 $raw = [Environment]::GetCommandLineArgs()
 for ($i = 0; $i -lt $raw.Count; $i++) {
-    if ([string]::Equals([string]$raw[$i], $PSCommandPath, [StringComparison]::OrdinalIgnoreCase)) {
+    if ($i -gt 0 -and [string]$raw[$i - 1] -ieq '-File' -and
+        [string]::Equals([string]$raw[$i], $PSCommandPath, [StringComparison]::OrdinalIgnoreCase)) {
         $argv = @($raw | Select-Object -Skip ($i + 1))
         break
     }
