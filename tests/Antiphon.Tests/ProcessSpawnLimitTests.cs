@@ -77,6 +77,7 @@ public class ProcessSpawnLimitTests
             typeof(Antiphon.Tests.Scripts.BuildSlotScriptTests),
             typeof(Antiphon.Tests.Checkpoints.CheckpointTempLifecycleTests),
             typeof(Antiphon.Tests.Checkpoints.CheckpointTempUsageTests),
+            typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests),
         ];
 
         foreach (var type in types)
