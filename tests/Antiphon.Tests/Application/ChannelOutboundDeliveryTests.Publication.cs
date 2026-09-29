@@ -87,7 +87,7 @@ public sealed partial class ChannelOutboundDeliveryTests
                         CreatedAt = now, UpdatedAt = now });
                     seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
                     {
-                        Id = deliveryIds[i], SourceKey = "same-source",
+                        Id = deliveryIds[i], SourceKey = "same-source:" + i,
                         ChannelId = channelIds[i], ProjectId = projectId, InboundAgentId = agentId,
                         SourceSessionId = sessionId, SourceTaskId = taskId, SendKind = "main",
                         ProfileName = "", PromptRevision = new string('a', 64),
