@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Gateway;
@@ -78,6 +79,106 @@ public sealed class KafkaOutboundPayloadTests
         roundTrip.ReplyHandle.ShouldBe("thread-1");
         roundTrip.Text.ShouldBe("four sources ✨");
         roundTrip.Attachments.ShouldHaveSingleItem().Content.ShouldBe(original);
+    }
+
+    [Test]
+    public async Task Near_default_serialized_reply_crosses_the_real_broker_with_exact_bytes_and_key()
+    {
+        var topic = "c0418-large-out-" + Guid.NewGuid().ToString("N");
+        var cap = AntiphonMessagingOptions.MaxMessageBytesDefault;
+        using (var admin = new AdminClientBuilder(new AdminClientConfig
+               { BootstrapServers = _broker!.GetBootstrapAddress() }).Build())
+            await admin.CreateTopicsAsync([new TopicSpecification
+            {
+                Name = topic, NumPartitions = 1, ReplicationFactor = 1,
+                Configs = new Dictionary<string, string>
+                {
+                    ["max.message.bytes"] = (cap + 64 * 1024).ToString(),
+                },
+            }]);
+
+        var source = new byte[13 * 1024 * 1024 + 512 * 1024];
+        Random.Shared.NextBytes(source);
+        using var raw = JsonDocument.Parse("""{"note":"zażółć ✨"}""");
+        var reply = new ChannelReply
+        {
+            Channel = "slack", ConversationId = "C0418-large", ReplyHandle = "C0418-large|thread-✨",
+            ReplyToMessageId = "parent-✨", Text = "Source and conversion ✨",
+            RawOverrides = raw.RootElement.Clone(),
+            Attachments = [new OutboundAttachment
+            {
+                Kind = AttachmentKind.File, Name = "źródło.md", Mime = "text/markdown",
+                Caption = "original ✨", Content = source,
+            }],
+        };
+        var expected = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        var wireBytes = Encoding.UTF8.GetBytes(expected);
+        wireBytes.Length.ShouldBeGreaterThan(18 * 1024 * 1024);
+        wireBytes.Length.ShouldBeLessThan(cap - 64 * 1024);
+
+        using (var producer = new KafkaAntiphonMessagingProducer(Options.Create(
+                   new AntiphonMessagingOptions
+                   {
+                       BootstrapServers = _broker!.GetBootstrapAddress(), OutboundTopic = topic,
+                       MaxMessageBytes = cap,
+                   })))
+            await producer.SendAsync(reply);
+
+        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
+        {
+            BootstrapServers = _broker!.GetBootstrapAddress(),
+            GroupId = "c0418-large-group-" + Guid.NewGuid().ToString("N"),
+            AutoOffsetReset = AutoOffsetReset.Earliest, EnableAutoCommit = false,
+            FetchMaxBytes = cap + 64 * 1024, MaxPartitionFetchBytes = cap + 64 * 1024,
+        }).Build();
+        consumer.Subscribe(topic);
+        var record = consumer.Consume(TimeSpan.FromSeconds(60));
+        record.ShouldNotBeNull();
+        record.Topic.ShouldBe(topic);
+        record.Message.Key.ShouldBe(reply.ConversationId);
+        Encoding.UTF8.GetBytes(record.Message.Value).ShouldBe(wireBytes);
+        var received = JsonSerializer.Deserialize<ChannelReply>(record.Message.Value,
+            MessagingJson.Options)!;
+        received.ReplyHandle.ShouldBe(reply.ReplyHandle);
+        received.ReplyToMessageId.ShouldBe(reply.ReplyToMessageId);
+        received.RawOverrides?.GetProperty("note").GetString().ShouldBe("zażółć ✨");
+        received.Attachments.ShouldHaveSingleItem().Content.ShouldBe(source);
+    }
+
+    [Test]
+    public async Task Broker_key_uses_conversation_then_reply_handle_then_empty_string()
+    {
+        var topic = "c0418-keys-" + Guid.NewGuid().ToString("N");
+        using (var admin = new AdminClientBuilder(new AdminClientConfig
+               { BootstrapServers = _broker!.GetBootstrapAddress() }).Build())
+            await admin.CreateTopicsAsync([new TopicSpecification
+                { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        var options = Options.Create(new AntiphonMessagingOptions
+        {
+            BootstrapServers = _broker!.GetBootstrapAddress(), OutboundTopic = topic,
+        });
+        using (var producer = new KafkaAntiphonMessagingProducer(options))
+        {
+            await producer.SendAsync(new ChannelReply
+                { Channel = "slack", ConversationId = "conversation", ReplyHandle = "handle" });
+            await producer.SendAsync(new ChannelReply
+                { Channel = "slack", ReplyHandle = "handle" });
+            await producer.SendAsync(new ChannelReply { Channel = "slack" });
+        }
+        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
+        {
+            BootstrapServers = _broker!.GetBootstrapAddress(),
+            GroupId = "c0418-key-group-" + Guid.NewGuid().ToString("N"),
+            AutoOffsetReset = AutoOffsetReset.Earliest, EnableAutoCommit = false,
+        }).Build();
+        consumer.Subscribe(topic);
+        foreach (var key in new[] { "conversation", "handle", "" })
+        {
+            var record = consumer.Consume(TimeSpan.FromSeconds(30));
+            record.ShouldNotBeNull();
+            record.Topic.ShouldBe(topic);
+            record.Message.Key.ShouldBe(key);
+        }
     }
 
     [Test]
