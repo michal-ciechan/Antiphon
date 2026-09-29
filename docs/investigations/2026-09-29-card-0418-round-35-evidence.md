@@ -27,6 +27,12 @@ lease on a two-minute conversion deadline, so immediate recovery stayed
 to just before claim; that cut still follows committed transcript settlement and
 precedes pump observation. Post-claim death with a short configured conversion
 deadline is a separate lease/deadline behavior and is not claimed by this case.
+The next CP-6 run on `424f06ef3d766e65ea3c72d0b0c4708b3d533339` also
+executed 29 / passed 28 / failed 1 at `.antiphon/checkpoints/r35-cp6-b/`:
+the test's zero-offset recovery configuration selected the probe's deliberate
+refusing producer, so it reached `PublishUncertain`. The recovery offset is now
+one second, which selects the durable evidence producer without expiring the
+conversion deadline.
 
 ## Checkpoint receipts
 
