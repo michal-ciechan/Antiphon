@@ -20,27 +20,21 @@ public sealed class RerunFilterHostTests
         ]);
         filters.ShouldBe(["/*/*/FilterHostTests/(alpha*)|(beta*)"]);
 
-        var projectDir = Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Checkpoints.FilterHost");
-        var project = Path.Combine(projectDir, "Antiphon.Checkpoints.FilterHost.csproj");
-        var output = Path.Combine(projectDir, "bin-c723filter");
-        try
+        var staged = Path.Combine(AppContext.BaseDirectory, "checkpoint-filter-host",
+            "Antiphon.Checkpoints.FilterHost.dll");
+        File.Exists(staged).ShouldBeTrue("filter host must be staged by the parent build");
         {
-            var good = await RunAsync(project, filters[0]);
+            var good = await RunAsync(staged, filters[0]);
             good.ExitCode.ShouldBe(0, good.Text);
             Count(good.Text, "total:").ShouldBe(2);
             Count(good.Text, "succeeded:").ShouldBe(2);
 
-            var bad = await RunAsync(project, "/*/*/FilterHostTests/alpha|/*/*/FilterHostTests/beta");
+            var bad = await RunAsync(staged, "/*/*/FilterHostTests/alpha|/*/*/FilterHostTests/beta");
             Count(bad.Text, "total:").ShouldBe(0);
-        }
-        finally
-        {
-            if (Directory.Exists(output))
-                Directory.Delete(output, recursive: true);
         }
     }
 
-    private static async Task<(int ExitCode, string Text)> RunAsync(string project, string filter)
+    private static async Task<(int ExitCode, string Text)> RunAsync(string staged, string filter)
     {
         var psi = new ProcessStartInfo("dotnet")
         {
@@ -50,13 +44,7 @@ public sealed class RerunFilterHostTests
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("run");
-        psi.ArgumentList.Add("--project");
-        psi.ArgumentList.Add(project);
-        psi.ArgumentList.Add("--property:OutputPath=bin-c723filter/");
-        psi.ArgumentList.Add("--disable-build-servers");
-        psi.ArgumentList.Add("-p:UseAppHost=false");
-        psi.ArgumentList.Add("--");
+        psi.ArgumentList.Add(staged);
         psi.ArgumentList.Add("--treenode-filter");
         psi.ArgumentList.Add(filter);
         using var process = Process.Start(psi)!;

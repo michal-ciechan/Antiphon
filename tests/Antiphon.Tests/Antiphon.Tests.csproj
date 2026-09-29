@@ -62,6 +62,8 @@
     <!-- CARD-0545: the independent nightly watchdog runs in-process against fakes at its four boundaries. -->
     <ProjectReference Include="..\..\src\Antiphon.NightlyWatchdog\Antiphon.NightlyWatchdog.csproj" />
     <ProjectReference Include="..\..\tools\Antiphon.Checkpoints\Antiphon.Checkpoints.csproj" />
+    <ProjectReference Include="..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Slack\Antiphon.Messaging.Slack.csproj" />
@@ -95,6 +97,31 @@
     <ItemGroup><ChannelOutboundProbeOutput Include="$(_ChannelOutboundProbeDir)**\*" /></ItemGroup>
     <Copy SourceFiles="@(ChannelOutboundProbeOutput)"
           DestinationFiles="@(ChannelOutboundProbeOutput->'$(OutDir)channel-outbound-probe\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyCheckpointProbeHosts" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_LifecycleHostTarget" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_FilterHostTarget" />
+    </MSBuild>
+    <PropertyGroup>
+      <_LifecycleHostDir>@(_LifecycleHostTarget->'%(RootDir)%(Directory)')</_LifecycleHostDir>
+      <_FilterHostDir>@(_FilterHostTarget->'%(RootDir)%(Directory)')</_FilterHostDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_LifecycleHostFiles Include="$(_LifecycleHostDir)**\*" />
+      <_FilterHostFiles Include="$(_FilterHostDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LifecycleHostFiles)"
+          DestinationFiles="@(_LifecycleHostFiles->'$(OutDir)checkpoint-lifecycle-host/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_FilterHostFiles)"
+          DestinationFiles="@(_FilterHostFiles->'$(OutDir)checkpoint-filter-host/%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 
