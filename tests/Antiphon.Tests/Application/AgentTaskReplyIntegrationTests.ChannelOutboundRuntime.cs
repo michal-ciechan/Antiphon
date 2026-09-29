@@ -89,8 +89,13 @@ public partial class AgentTaskReplyIntegrationTests
             settled.CardId.ShouldBeNull();
             settled.ParentSessionId.ShouldBeNull();
             (await verify.AgentTasks.CountAsync(t => t.ParentTaskId == internalTask.Id)).ShouldBe(0);
+            (await verify.AgentTasks.CountAsync(t => t.RootTaskId == internalTask.Id
+                && t.Id != internalTask.Id)).ShouldBe(0);
             (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == internalTask.Id)).ShouldBe(0);
             (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == internalTask.Id)).ShouldBe(0);
+            (await verify.OutputDistillations.CountAsync(d => d.TaskId == internalTask.Id)).ShouldBe(0);
+            (await verify.ChannelOutboundDeliveries.CountAsync(d => d.SourceTaskId == internalTask.Id))
+                .ShouldBe(0);
             OutputDistillationService.ShouldRequest(settled,
                 new DelegationSettings { OutputDistillerEnabled = true }).ShouldBeFalse();
         }
