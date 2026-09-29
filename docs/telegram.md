@@ -84,6 +84,11 @@ handle, even if another message updates the catalog. A missing, invalid or late 
 the original sources with an honest fallback note. Disabled or rebound channels hold the reply;
 an ambiguous broker result is `PublishUncertain` and needs operator review in attention. Kafka
 acceptance is publication evidence, not provider receipt.
+Later agent replies for the same channel remain behind a Held or PublishUncertain head. After
+repairing the original channel binding, an operator can explicitly resume a Held delivery through
+`POST /api/channels/outbound-deliveries/{id}/resume`; it retains its frozen payload and is
+revalidated before publication. An uncertain delivery instead uses the existing explicit retry
+with possible-duplicate acknowledgement. Neither state automatically replays on restart.
 
 The PDF renderer is an optional worker tool. See the
 [sample PDF worker prompt](samples/channel-outbound-pdf-agent.md) and the

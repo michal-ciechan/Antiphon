@@ -158,6 +158,7 @@ public sealed class ChannelOutboundRecoveryTests
             var t2 = inbound.Current;
             var source = "# Frozen source\n"u8.ToArray();
             using var metadata = JsonDocument.Parse("""{"thread_marker":"T1","parse_mode":"MarkdownV2"}""");
+            using var secondMetadata = JsonDocument.Parse("""{"thread_marker":"T2","parse_mode":"MarkdownV2"}""");
             var firstReply = new ChannelReply
             {
                 Channel = "slack", ConversationId = channelId.ToString("N"),
@@ -170,7 +171,7 @@ public sealed class ChannelOutboundRecoveryTests
             };
             var secondReply = firstReply with { ReplyHandle = t2.ReplyHandle,
                 ReplyToMessageId = t2.ChannelMessageId, Text = "second frozen answer",
-                Attachments = [] };
+                RawOverrides = secondMetadata.RootElement.Clone(), Attachments = [] };
             var first = await store.StageAsync(firstId, firstReply, CancellationToken.None);
             var second = await store.StageAsync(secondId, secondReply, CancellationToken.None);
             await using (var db = new AppDbContext(dbOptions))
@@ -283,6 +284,7 @@ public sealed class ChannelOutboundRecoveryTests
             replies[0].Attachments[0].Caption.ShouldBe("original source");
             replies[1].ReplyHandle.ShouldBe(t2.ReplyHandle);
             replies[1].ReplyToMessageId.ShouldBe(t2.ChannelMessageId);
+            replies[1].RawOverrides!.Value.GetProperty("thread_marker").GetString().ShouldBe("T2");
             replies[1].Text.ShouldBe("second frozen answer");
             await using var final = new AppDbContext(dbOptions);
             (await final.ChannelOutboundDeliveries.AsNoTracking().CountAsync(d => d.ChannelId == channelId
