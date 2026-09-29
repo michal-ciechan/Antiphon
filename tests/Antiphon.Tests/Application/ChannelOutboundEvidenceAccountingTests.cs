@@ -19,17 +19,42 @@ public sealed class ChannelOutboundEvidenceAccountingTests
             var green = WriteTrx(root, "green", "Passed");
             var zero = WriteTrx(root, "zero", null);
             var skipped = WriteTrx(root, "skipped", "NotExecuted");
-            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1"],
-                [new("V-1", Method, green)]).ShouldBeEmpty();
-            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1", "R-1"],
-                [new("V-1", Method, green)]).ShouldContain(e => e.Contains("R-1"));
+            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1/default-sources"],
+                [new("V-1/default-sources", Method, green)]).ShouldBeEmpty();
+            ChannelOutboundEvidenceAccounting.ValidateOrdinary(
+                ["V-1/default-sources", "V-1/eligibility-matrix"],
+                [new("V-1/default-sources", Method, green)])
+                .ShouldContain(e => e.Contains("V-1/eligibility-matrix"));
             ChannelOutboundEvidenceAccounting.ValidateFullOrdinary(
-                [new("V-1", Method, green)]).Count.ShouldBe(37);
+                [new("V-1/default-sources", Method, green)]).Count
+                .ShouldBe(ChannelOutboundEvidenceAccounting.RequiredOrdinaryAssertions.Count - 1);
             ChannelOutboundEvidenceAccounting.RequiredControlIds.Count.ShouldBe(30);
-            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1"],
-                [new("V-1", Method, zero)]).ShouldContain(e => e.Contains("non-skipped green"));
-            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1"],
-                [new("V-1", Method, skipped)]).ShouldContain(e => e.Contains("non-skipped green"));
+            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1/default-sources"],
+                [new("V-1/default-sources", Method, zero)])
+                .ShouldContain(e => e.Contains("non-skipped green"));
+            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-1/default-sources"],
+                [new("V-1/default-sources", Method, skipped)])
+                .ShouldContain(e => e.Contains("non-skipped green"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public void Broad_id_tokens_cannot_stand_in_for_assertion_evidence()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-broad-evidence-").FullName;
+        try
+        {
+            var green = WriteTrx(root, "green", "Passed");
+            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-16"],
+                [new("V-16", Method, green)])
+                .ShouldContain(e => e.Contains("broad or invalid"));
+            ChannelOutboundEvidenceAccounting.ValidateOrdinary(["V-16/source-completeness"],
+                [new("V-16", Method, green)])
+                .ShouldContain(e => e.Contains("broad, invalid or unrequired"));
+            ChannelOutboundEvidenceAccounting.ValidateFullOrdinary(
+                [new("V-16", Method, green)])
+                .ShouldContain(e => e.Contains("V-16/source-completeness"));
         }
         finally { Directory.Delete(root, true); }
     }
