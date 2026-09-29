@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
@@ -25,6 +26,39 @@ public sealed class RemoteWorktreeMirrorTests
     private const string Worktree = "/worktrees/card-task-deadbeef";
     private const string FullRef = "refs/heads/feat/card-task-deadbeef";
     private const string Fingerprint = "ABCDEF";
+
+    [Test]
+    public async Task Push_reads_the_desktop_origin_and_the_mirror_request_carries_its_https_identity()
+    {
+        foreach (var origin in new[]
+                 {
+                     "git@GitHub.com:Michal-Ciechan/Markdown-Package.git",
+                     "https://github.com/michal-ciechan/markdown-package.git/",
+                 })
+        {
+            var git = new ScriptedGit();
+            git.On("rev-parse", 0, Sha);
+            git.On("remote", 0, origin);
+            git.On("push", 0, "");
+            var push = await Service(git).PushBranchAsync(Task(), CancellationToken.None);
+            push.Pushed.ShouldBeTrue();
+            push.Repository.ShouldBe("https://github.com/michal-ciechan/markdown-package.git");
+            git.Commands.ShouldContain("remote get-url origin");
+        }
+    }
+
+    [Test]
+    public async Task Push_refuses_when_the_desktop_origin_cannot_be_read()
+    {
+        var git = new ScriptedGit();
+        git.On("rev-parse", 0, Sha);
+        git.On("remote", 128, "origin missing");
+        var push = await Service(git).PushBranchAsync(Task(), CancellationToken.None);
+        push.Pushed.ShouldBeFalse();
+        push.Repository.ShouldBeNull();
+        push.Warning.ShouldContain("origin could not be read");
+        git.Commands.ShouldNotContain(c => c.StartsWith("push ", StringComparison.Ordinal));
+    }
 
     [Test]
     public async Task Sync_fast_forwards_desktop_worktree()
@@ -140,6 +174,7 @@ public sealed class RemoteWorktreeMirrorTests
             ["symbolic-ref"] = (0, FullRef, null),
             ["status"] = (0, "", null),
             ["update-ref"] = (0, "", null),
+            ["remote"] = (0, "https://github.com/michal-ciechan/Antiphon.git", null),
         };
         public List<string> Commands { get; } = [];
         public string Head { get; set; } = head;

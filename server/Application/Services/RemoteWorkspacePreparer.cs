@@ -131,7 +131,7 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                 }
                 else
                 {
-                    var path = await remote.MirrorAsync(task, push.Sha, ct);
+                    var path = await remote.MirrorAsync(task, push.Sha, push.Repository!, ct);
                     // D-8: keyed by id, not by status, so a mirror that succeeds after a cancel is
                     // still known to retirement and removed rather than left as runner residue.
                     // The runner id is part of the key: a drain that moved the task while this
@@ -164,6 +164,8 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                     ? $"{transport.Code}: {ex.Message}"
                     : ex.Message;
                 failure = $"The runner could not mirror the task branch ({reason}); the task stays Queued.";
+                if (!await remote.SupportsRepositoryMirrorsAsync(task.RunnerId, ct))
+                    failure += $" Runner '{task.RunnerId}' does not advertise workspaceRepositoryV1 and mirrors only its primary repository; upgrade it (CARD-0727) or pin another runner.";
             }
 
             var attempt = task.RemotePrepFailures + 1;
