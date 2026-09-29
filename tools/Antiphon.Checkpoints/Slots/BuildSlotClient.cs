@@ -301,7 +301,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         try
         {
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
-            if (doc.RootElement.TryGetProperty(name, out var value) && value.TryGetInt32(out var n))
+            if (doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var n))
                 return n;
         }
         catch (JsonException)
