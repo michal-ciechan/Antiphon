@@ -111,7 +111,16 @@ public sealed class ExpectationResponseService(AppDbContext db, TimeProvider tim
                                                 ? ExpectationOperatorOutboxState.Published
                                                 : ExpectationOperatorOutboxState.Suppressed), ct);
                                 if (changed == 1)
-                                    await AuditAsync(nudge.Id, $"Assistant ACK at sequence {match.Sequence}; unpublished operator debt suppressed.", ct);
+                                {
+                                    var page = await db.ExpectationNudges.AsNoTracking()
+                                        .Where(n => n.Id == nudge.Id)
+                                        .Select(n => new { n.OperatorOutboxState, n.OperatorPublicationOrdinal })
+                                        .SingleAsync(ct);
+                                    var detail = page.OperatorOutboxState == ExpectationOperatorOutboxState.Published
+                                        ? $"Assistant ACK at sequence {match.Sequence}; reply after page {page.OperatorPublicationOrdinal}; page already sent; reminders stop."
+                                        : $"Assistant ACK at sequence {match.Sequence}; unpublished operator debt suppressed.";
+                                    await AuditAsync(nudge.Id, detail, ct);
+                                }
                                 await answered.CommitAsync(ct);
                                 continue;
                             }
