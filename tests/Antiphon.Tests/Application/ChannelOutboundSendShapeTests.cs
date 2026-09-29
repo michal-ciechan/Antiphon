@@ -215,17 +215,27 @@ public sealed partial class ChannelOutboundDeliveryTests
                 else
                 {
                     var direct = h.Messaging.SentReplies.Last();
-                    direct.Text.ShouldContain(shape == "plain-markdown" ? "# Markdown body" : "Source answer");
+                    direct.Text.ShouldBe(shape == "plain-markdown"
+                        ? "Source answer\n# Markdown body without an attachment" : "Source answer");
+                    direct.Kind.ShouldBe(ChannelReplyKind.Answer);
+                    direct.ConversationId.ShouldBe(conversation);
                     if (shape == "unrelated-zip")
                         direct.Attachments.ShouldHaveSingleItem().Content.ShouldBe([1, 2, 3]);
-                    (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId != null)).ShouldBe(0);
+                    else
+                        direct.Attachments.ShouldBeEmpty();
+                    (await db.AgentTasks.CountAsync(t => t.ProjectId == projectId
+                        && t.OutboundDeliveryId != null)).ShouldBe(0);
                 }
             }
         }
         finally
         {
             await using var db = Db(h);
-            await db.AgentTasks.Where(t => t.OutboundDeliveryId != null || t.Id == taskId)
+            await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId
+                && m.SourceTaskId == taskId)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.SourceTaskId, (Guid?)null));
+            await db.AgentTasks.Where(t => t.ProjectId == projectId
+                && (t.OutboundDeliveryId != null || t.Id == taskId))
                 .ExecuteDeleteAsync();
             await db.ChannelOutboundDeliveries.Where(d => d.ProjectId == projectId).ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == h.AgentId)
