@@ -570,6 +570,10 @@ public sealed partial class ChannelOutboundDeliveryTests
             var runner = new OutboundConversionTaskRunner(verify, tasks);
             var taskId = await runner.CreateAsync(intent, CancellationToken.None);
             (await runner.CreateAsync(intent, CancellationToken.None)).ShouldBe(taskId);
+            intent.LeaseOwner = null;
+            intent.LeaseUntil = null;
+            intent.Version++;
+            await verify.SaveChangesAsync();
             var conversionTask = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
             conversionTask.OutboundDeliveryId.ShouldBe(intent.Id);
             conversionTask.Workspace.ShouldBe(WorkspaceMode.Shared);

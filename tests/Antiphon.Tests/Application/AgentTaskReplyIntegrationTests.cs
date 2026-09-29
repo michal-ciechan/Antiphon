@@ -2426,6 +2426,10 @@ public partial class AgentTaskReplyIntegrationTests
         intent.Version++;
         await db.SaveChangesAsync();
         var conversionTaskId = await runner.CreateAsync(intent, CancellationToken.None);
+        intent.LeaseOwner = null;
+        intent.LeaseUntil = null;
+        intent.Version++;
+        await db.SaveChangesAsync();
         var conversionTask = await db.AgentTasks.SingleAsync(t => t.Id == conversionTaskId);
         conversionTask.OutboundDeliveryId.ShouldBe(intent.Id);
         var pdf = "%PDF-1.4 four source fixture\n"u8.ToArray();
@@ -2643,6 +2647,10 @@ public partial class AgentTaskReplyIntegrationTests
             intent.Version++;
             await db.SaveChangesAsync();
             var conversionId = await runner.CreateAsync(intent, CancellationToken.None);
+            intent.LeaseOwner = null;
+            intent.LeaseUntil = null;
+            intent.Version++;
+            await db.SaveChangesAsync();
             var conversion = await db.AgentTasks.SingleAsync(t => t.Id == conversionId);
             conversion.OutboundDeliveryId.ShouldBe(intent.Id);
             var pdf = "%PDF-1.4 routed source fixture\n"u8.ToArray();
