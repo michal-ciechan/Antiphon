@@ -79,7 +79,8 @@ public sealed partial class ChannelOutboundDeliveryTests
             };
             var x = new ChannelReply { Channel = "fake", ConversationId = xId.ToString("N"),
                 Text = "same frozen answer" };
-            var source = new ChannelOutboundSource(sessionId, 10, 11, 12, "trailing", []);
+            var sourceTaskId = Guid.NewGuid();
+            var source = new ChannelOutboundSource(sessionId, 10, 11, 12, "trailing", [], sourceTaskId);
             firstCall = first.SendAsync(x, ChannelOutboundOrigin.AgentReply, source, CancellationToken.None);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
             secondCall = second.SendAsync(x, ChannelOutboundOrigin.AgentReply, source, CancellationToken.None);
@@ -99,13 +100,22 @@ public sealed partial class ChannelOutboundDeliveryTests
             (await second.SendAsync(x, ChannelOutboundOrigin.AgentReply,
                 source with { LastTextSequence = 13 }, CancellationToken.None))
                 .ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            foreach (var changed in new[]
+            {
+                source with { PromptSequence = 11 },
+                source with { FirstTextSequence = 10 },
+                source with { SendKind = "main" },
+            })
+                (await second.SendAsync(x, ChannelOutboundOrigin.AgentReply, changed,
+                    CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
             await using var verify = new AppDbContext(options);
             var deliveries = await verify.ChannelOutboundDeliveries.AsNoTracking().ToListAsync();
-            deliveries.Count.ShouldBe(3);
-            deliveries.Select(d => d.SourceKey).Distinct().Count().ShouldBe(3);
-            deliveries.Count(d => d.ChannelId == xId).ShouldBe(2);
+            deliveries.Count.ShouldBe(6);
+            deliveries.Select(d => d.SourceKey).Distinct().Count().ShouldBe(6);
+            deliveries.Count(d => d.ChannelId == xId).ShouldBe(5);
             deliveries.Count(d => d.ChannelId == yId).ShouldBe(1);
             deliveries.Select(d => d.InputSha256).Distinct().Count().ShouldBe(2);
+            deliveries.ShouldAllBe(d => d.SourceTaskId == sourceTaskId);
             deliveries.ShouldAllBe(d => d.State == ChannelOutboundDeliveryState.Pending
                 && d.PublishedAt == null && d.ConversionTaskId == null);
             producer.SentReplies.ShouldBeEmpty();
