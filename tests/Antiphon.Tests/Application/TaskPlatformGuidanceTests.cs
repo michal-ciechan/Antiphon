@@ -93,6 +93,8 @@ public sealed class TaskPlatformGuidanceTests
         text.ShouldContain("through the real queue");
         text.ShouldContain("Acceptance needs");
         text.ShouldContain("Re-run the claimed checks (Unit plus named affected integration classes)");
+        text.ShouldContain("Reject missing tests or evidence.");
+        text.ShouldContain("code when there are defects (name them in handoff:)");
     }
 
     private static string RepoRoot()
