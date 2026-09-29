@@ -45,10 +45,10 @@ public static class ReportWriter
             $"wall: {Format(model.WallSeconds)}  sequential-equivalent: {Format(model.SequentialEquivalentSeconds)}  builds: {model.Builds.Count}  max-concurrent-builds: {model.MaxConcurrentBuilds}  rows: {green} green {red} red {skipped} skipped");
         if (model.OutputNames.Count == 0)
             text.AppendLine("outputs: none");
-        else if (model.ExitCode == 0)
+        else if (model.CleanedOutputs)
             text.AppendLine("outputs: deleted " + string.Join(", ", model.OutputNames));
         else
-            text.AppendLine($"outputs: kept {string.Join(", ", model.OutputNames)} (red run) -> dotnet run --project tools/Antiphon.Checkpoints -- clean --run {model.RunId}");
+            text.AppendLine($"outputs: kept {string.Join(", ", model.OutputNames)} -> dotnet run --project tools/Antiphon.Checkpoints -- clean --run {model.RunId}");
         text.AppendLine("evidence: " + model.Evidence);
         text.AppendLine($"verdict: {model.Verdict} exit={model.ExitCode}" + (model.Reason is null ? "" : " reason=" + model.Reason));
         return text.ToString();

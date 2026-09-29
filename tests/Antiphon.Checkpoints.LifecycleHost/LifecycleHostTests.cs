@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Antiphon.Tests.Checkpoints;
 using TUnit.Core;
 
@@ -70,4 +71,21 @@ public sealed class LifecycleSetupFailureTests : CheckpointTestBase
 
     [Test]
     public void setup_failure() { }
+}
+
+public sealed class OrphanSweepHostTests : CheckpointTestBase
+{
+    [Test]
+    public void orphan_sweep_once()
+    {
+        var sandbox = Environment.GetEnvironmentVariable("C804_ORPHAN_SWEEP_ROOT")
+            ?? throw new InvalidOperationException("orphan sweep root missing");
+        var receiptPath = Environment.GetEnvironmentVariable("C804_ORPHAN_SWEEP_RECEIPT")
+            ?? throw new InvalidOperationException("orphan sweep receipt missing");
+        var receipt = new CheckpointTempRootSweep(sandbox, options: new CheckpointSweepOptions
+        {
+            Grace = TimeSpan.Zero, Interval = TimeSpan.Zero,
+        }).SweepOnce();
+        File.WriteAllText(receiptPath, JsonSerializer.Serialize(receipt));
+    }
 }
