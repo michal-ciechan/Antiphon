@@ -9,10 +9,12 @@ namespace Antiphon.SessionRunner;
 /// <summary>Obtains the kernel-reported peer process, then binds it to its observed start time.</summary>
 internal static class HerdrPeerIdentity
 {
-    internal static Func<Socket, int?>? NativePidOverride { get; set; }
+    internal static AsyncLocal<Func<Socket, int?>?> NativePidOverride { get; } = new();
+    internal static AsyncLocal<bool> ForceUnavailable { get; } = new();
 
     internal static string? FromPipe(SafePipeHandle pipe)
     {
+        if (ForceUnavailable.Value) return null;
         if (!OperatingSystem.IsWindows() || !GetNamedPipeServerProcessId(pipe, out var pid) || pid > int.MaxValue)
             return null;
         return Format((int)pid);
@@ -20,10 +22,11 @@ internal static class HerdrPeerIdentity
 
     internal static string? FromSocket(Socket socket)
     {
+        if (ForceUnavailable.Value) return null;
         int? pid;
         try
         {
-            pid = NativePidOverride is { } read ? read(socket) : ReadNativePid(socket);
+            pid = NativePidOverride.Value is { } read ? read(socket) : ReadNativePid(socket);
         }
         catch (Exception ex) when (ex is SocketException or ArgumentException or ObjectDisposedException)
         {

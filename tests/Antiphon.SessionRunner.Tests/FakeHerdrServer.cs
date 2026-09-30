@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner;
@@ -9,7 +8,7 @@ using Shouldly;
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
-/// Named-pipe fake for <see cref="Antiphon.SessionRunner.HerdrClient"/> — one NDJSON request per
+/// Native endpoint fake for <see cref="Antiphon.SessionRunner.HerdrClient"/> — one NDJSON request per
 /// normal connection (herdr's normal-request contract); <c>events.subscribe</c> keeps the pipe
 /// open and pushes events (CARD-0162). Holds a small scripted state model so the typed wrappers
 /// can round-trip without a live herdr. Emulates herdr's historical <c>pane_closed</c> REPLAY
@@ -18,7 +17,9 @@ namespace Antiphon.SessionRunner.Tests;
 internal sealed class FakeHerdrServer : IAsyncDisposable
 {
     public int PingProtocol { get; set; } = 20;
-    private readonly string _session;
+    private readonly FakeHerdrEndpoint _endpoint;
+    private readonly FakeHerdrTransport _transport;
+    private readonly bool _ownsEndpoint;
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentQueue<JsonElement> _requests = new();
     private readonly ConcurrentQueue<string> _liveEvents = new();
@@ -27,6 +28,10 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private readonly object _listenGate = new();
     private readonly object _eventGate = new();
     private TaskCompletionSource _listening = NewListeningTcs();
+    private Exception? _listenerFault;
+    private bool _disposed;
+    private readonly TimeProvider _timeProvider;
+    internal Task? StartGate { get; set; }
     private TaskCompletionSource _eventAvailable = NewListeningTcs();
     private Task? _loop;
     private readonly ConcurrentBag<Task> _ownedHandlers = [];
@@ -77,16 +82,22 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// </summary>
     public string? RejectAgentRename { get; set; }
 
-    public FakeHerdrServer(string? session = null)
+    public FakeHerdrServer(string? session = null, FakeHerdrEndpoint? endpoint = null,
+        TimeProvider? timeProvider = null,
+        Func<FakeHerdrEndpoint, FakeHerdrTransport>? transportFactory = null)
     {
-        _session = session ?? $"antiphon-herdr-test-{Guid.NewGuid():N}";
+        _endpoint = endpoint ?? new FakeHerdrEndpoint(session);
+        _ownsEndpoint = endpoint is null;
+        _transport = transportFactory?.Invoke(_endpoint) ?? new FakeHerdrTransport(_endpoint);
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public string Session => _session;
+    public string Session => _endpoint.Session;
 
-    public string PipeName => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "herdr", "sessions", _session, "herdr.sock");
+    public string PipeName => _endpoint.Path;
+    public string EndpointPath => _endpoint.Path;
+    public Exception? ListenerFault => _listenerFault;
+    public Task LoopCompletion => _loop ?? Task.CompletedTask;
 
     public IReadOnlyList<JsonElement> Requests => _requests.ToArray();
 
@@ -189,43 +200,58 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         if (_loop is not null)
             throw new InvalidOperationException("FakeHerdrServer already started.");
         _loop = AcceptLoopAsync(_cts.Token);
+        _ = _loop.ContinueWith(task => _ = task.Exception,
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     /// <summary>Waits until the fake is blocked in <c>WaitForConnection</c> (safe to dial).</summary>
-    public Task WaitUntilListeningAsync(CancellationToken cancellationToken = default)
+    public async Task WaitUntilListeningAsync(CancellationToken cancellationToken = default)
     {
         Task listening;
         lock (_listenGate)
             listening = _listening.Task;
-        return listening.WaitAsync(cancellationToken);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5), _timeProvider);
+        try { await listening.WaitAsync(timeout.Token); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"FakeHerdrServer did not listen at '{EndpointPath}' within five seconds.");
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
         await _cts.CancelAsync();
+        lock (_listenGate)
+            _listening.TrySetCanceled();
+        await _transport.DisposeAsync();
         if (_loop is not null)
         {
             try { await _loop; }
             catch (OperationCanceledException) { }
+            catch when (_listenerFault is not null) { }
         }
 
         await Task.WhenAll(_ownedHandlers);
 
         _cts.Dispose();
+        if (_ownsEndpoint) await _endpoint.DisposeAsync();
     }
 
     private async Task AcceptLoopAsync(CancellationToken ct)
     {
+        try
+        {
+            if (StartGate is { } gate) await gate.WaitAsync(ct);
+            _transport.Bind();
         while (!ct.IsCancellationRequested)
         {
-            NamedPipeServerStream? pipe = null;
+            Stream? pipe = null;
             try
             {
-                pipe = new NamedPipeServerStream(
-                    PipeName, PipeDirection.InOut, _maxInstances, PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
-                SignalListening();
-                await pipe.WaitForConnectionAsync(ct);
+                pipe = await _transport.AcceptAsync(ct, SignalListening);
                 // Next Accept will re-signal; clear so WaitUntilListeningAsync after a call waits for
                 // the subsequent listen rather than the one we just consumed.
                 ResetListening();
@@ -305,15 +331,20 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             {
                 break;
             }
-            catch (IOException)
-            {
-                // Client disconnected mid-write — same as herdr closing the pipe after respond.
-            }
+            catch (IOException) when (pipe is not null) { /* client disconnected */ }
             finally
             {
                 if (pipe is not null)
                     await pipe.DisposeAsync();
             }
+        }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (ObjectDisposedException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            FaultListening(ex);
+            throw;
         }
     }
 
@@ -396,7 +427,19 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private void ResetListening()
     {
         lock (_listenGate)
-            _listening = NewListeningTcs();
+            if (_listenerFault is null) _listening = NewListeningTcs();
+    }
+
+    private void FaultListening(Exception ex)
+    {
+        lock (_listenGate)
+        {
+            _listenerFault = ex;
+            if (_listening.Task.IsCompleted)
+                _listening = NewListeningTcs();
+            _listening.TrySetException(ex);
+            _ = _listening.Task.Exception;
+        }
     }
 
     private static TaskCompletionSource NewListeningTcs() =>

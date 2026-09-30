@@ -27,6 +27,7 @@
   <ItemGroup>
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestSupport\HerdrTestProcess.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
