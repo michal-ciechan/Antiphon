@@ -74,9 +74,9 @@ internal static class OutboundRequestMode
             Directory.CreateDirectory(output);
             if (tool == "fixture:pdf")
             {
-                var bytes = "%PDF-1.4 running converter fixture\n"u8.ToArray();
-                File.WriteAllBytes(Path.Combine(output, "combined.pdf"), bytes);
-                WriteOutputManifest(output, deliveryId, bytes);
+                var fixtureBytes = "%PDF-1.4 running converter fixture\n"u8.ToArray();
+                File.WriteAllBytes(Path.Combine(output, "combined.pdf"), fixtureBytes);
+                WriteOutputManifest(output, deliveryId, fixtureBytes);
                 result = $"Converted {sourceFiles.Length} frozen Markdown sources in the running fixture.";
                 succeeded = true;
                 return true;
