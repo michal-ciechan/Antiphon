@@ -645,6 +645,10 @@ public sealed class ChannelOutboundRecoveryTests
 
         Process? child = null;
         DirectSessionRunnerClient? nativeRunner = null;
+        ServiceProvider? nativeDeliveryServer = null;
+        Task<SessionQueueDto>? nativeBriefDelivery = null;
+        string? nativeBriefBody = null;
+        string? nativeInputShape = null;
         var nativeSessionId = Guid.Empty;
         Guid? dispatchedSessionId = null;
         try
@@ -699,7 +703,7 @@ public sealed class ChannelOutboundRecoveryTests
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
-                var nativeInputShape = Path.Combine(root, "native-input-shape.txt");
+                nativeInputShape = Path.Combine(root, "native-input-shape.txt");
                 var nativeEnv = spec.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
                 nativeEnv["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
                 // The launch queue ordinarily passes this dispatcher spec through
@@ -729,47 +733,30 @@ public sealed class ChannelOutboundRecoveryTests
                 var requestPath = Path.Combine(storeRoot, acceptedId.ToString("N"), "request.json");
                 await nativeDb.AgentSessions.Where(s => s.Id == nativeSessionId)
                     .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running));
-                await using (var initialServer = BuildNativeRecoveryProvider(
-                    isolated.ConnectionString, nativeRunner))
-                {
-                    var initialQueue = initialServer.GetRequiredService<SessionMessageQueueService>();
-                    // Grok's rules launch defers its task brief. Run the production
-                    // post-rules brief producer against the captured task, then use
-                    // the ordinary queue to type that persisted row into the pty.
-                    var session = await nativeDb.AgentSessions.SingleAsync(s => s.Id == nativeSessionId);
-                    await initialServer.GetRequiredService<GrokRulesRefreshService>()
-                        .QueueLaunchBriefAsync(nativeDb, session, initialQueue, CancellationToken.None);
-                    var queuedBrief = await nativeDb.SessionQueuedMessages.AsNoTracking()
-                        .SingleAsync(m => m.AgentSessionId == nativeSessionId
-                            && m.Origin == QueuedMessageOrigin.Delegation && m.SourceTaskId == nativeTaskId);
-                    (await nativeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == nativeTaskId))
-                        .Goal.ShouldContain(requestPath);
-                    queuedBrief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(nativeTaskId));
-                    try
-                    {
-                        await initialQueue.SendNowAsync(nativeSessionId, queuedBrief.Id,
-                            CancellationToken.None);
-                    }
-                    catch (Exception ex)
-                    {
-                        var observed = await nativeRunner.GetTranscriptAsync(nativeSessionId,
-                            CancellationToken.None);
-                        var buffer = await nativeRunner.GetBufferAsync(nativeSessionId,
-                            CancellationToken.None);
-                        throw new InvalidOperationException("Queued native brief failed: "
-                            + $"inputShape={(File.Exists(nativeInputShape) ? await File.ReadAllTextAsync(nativeInputShape) : "absent")}; "
-                            + $"nativeKinds={string.Join(',', observed.Entries.Select(e => e.Kind))}; "
-                            + $"screenHasBrief={buffer.Buffer.Contains(queuedBrief.Body)}", ex);
-                    }
-                    (await nativeRunner.GetTranscriptAsync(nativeSessionId, CancellationToken.None))
-                        .Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt
-                            && e.Text != null && e.Text.Contains(queuedBrief.Body));
-                }
+                nativeDeliveryServer = BuildNativeRecoveryProvider(
+                    isolated.ConnectionString, nativeRunner);
+                var initialQueue = nativeDeliveryServer.GetRequiredService<SessionMessageQueueService>();
+                // Grok's rules launch defers its task brief. Run the production
+                // post-rules brief producer against the captured task, then use
+                // the ordinary queue to type that persisted row into the pty.
+                var session = await nativeDb.AgentSessions.SingleAsync(s => s.Id == nativeSessionId);
+                await nativeDeliveryServer.GetRequiredService<GrokRulesRefreshService>()
+                    .QueueLaunchBriefAsync(nativeDb, session, initialQueue, CancellationToken.None);
+                var queuedBrief = await nativeDb.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == nativeSessionId
+                        && m.Origin == QueuedMessageOrigin.Delegation && m.SourceTaskId == nativeTaskId);
+                (await nativeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == nativeTaskId))
+                    .Goal.ShouldContain(requestPath);
+                queuedBrief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(nativeTaskId));
+                nativeBriefBody = queuedBrief.Body;
+                nativeBriefDelivery = initialQueue.SendNowAsync(nativeSessionId, queuedBrief.Id,
+                    CancellationToken.None);
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 try
                 {
                     while (!File.Exists(workerGate + ".held"))
                     {
+                        if (nativeBriefDelivery.IsFaulted) await nativeBriefDelivery;
                         (await nativeRunner.GetAsync(nativeSessionId, CancellationToken.None))
                             .Status.ShouldBe("Running");
                         await Task.Delay(25, nativeWatchdog.Token);
@@ -784,6 +771,7 @@ public sealed class ChannelOutboundRecoveryTests
                         + $"screenHasTask={buffer.Buffer.Contains(DelegationReportFormatter.TaskMarker(nativeTaskId))}; "
                         + $"screenHasReady={buffer.Buffer.Contains("Fake Grok ready")}; "
                         + $"screenHasToolFailure={buffer.Buffer.Contains("Outbound tool failed")}; "
+                        + $"inputShape={(File.Exists(nativeInputShape) ? await File.ReadAllTextAsync(nativeInputShape) : "absent")}; "
                         + $"queuedTask={nativeTaskId:D}");
                 }
                 (await File.ReadAllTextAsync(workerGate + ".held"))
@@ -887,6 +875,12 @@ public sealed class ChannelOutboundRecoveryTests
                 if (running)
                 {
                     await File.WriteAllTextAsync(workerGate + ".release", "release");
+                    await nativeBriefDelivery!.WaitAsync(TimeSpan.FromSeconds(30));
+                    (await nativeRunner!.GetTranscriptAsync(nativeSessionId, CancellationToken.None))
+                        .Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt
+                            && e.Text != null && e.Text.Contains(nativeBriefBody!));
+                    await nativeDeliveryServer!.DisposeAsync();
+                    nativeDeliveryServer = null;
                     await ReconcileNativeWorkerAsync(isolated.ConnectionString,
                         nativeRunner!, taskId, dispatchedSessionId!.Value);
                     convertedBytes = await File.ReadAllBytesAsync(Path.Combine(outputDir, "combined.pdf"));
@@ -989,6 +983,8 @@ public sealed class ChannelOutboundRecoveryTests
         }
         finally
         {
+            if (nativeDeliveryServer is not null)
+                await nativeDeliveryServer.DisposeAsync();
             if (nativeRunner is not null)
             {
                 if (nativeSessionId != Guid.Empty
