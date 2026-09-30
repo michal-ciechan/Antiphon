@@ -1312,6 +1312,8 @@ public sealed class ChannelOutboundRecoveryTests
             var stored = await db.TranscriptEntries.AsNoTracking()
                 .Where(e => e.AgentSessionId == sessionId).OrderBy(e => e.Sequence).ToListAsync();
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            var selection = await TaskReportTurnSelector.SelectAsync(
+                db, sessionId, task, CancellationToken.None);
             var marker = DelegationReportFormatter.TaskMarker(taskId);
             var token = DelegationReportFormatter.ReportToken(taskId, "done");
             var warnings = string.Join(',', replyLog.Entries
@@ -1327,6 +1329,8 @@ public sealed class ChannelOutboundRecoveryTests
                 + $"storedKinds={string.Join(',', stored.Select(e => e.Kind))}; "
                 + $"storedPromptMarker={stored.Any(e => e.Kind == "UserPrompt" && e.Text?.Contains(marker) == true)}; "
                 + $"storedReportToken={stored.Any(e => e.Kind == "AssistantText" && e.Text?.Contains(token) == true)}; "
+                + $"selection={selection.Kind}; skipped={string.Join(',', selection.Skipped.Select(s => s.Reason))}; "
+                + $"watermark={task.RepliedAtSequence}; promptAfterDispatch={stored.Any(e => e.Kind == "UserPrompt" && (task.DispatchedAt == null || e.Timestamp == null || e.Timestamp > task.DispatchedAt))}; "
                 + $"settlementWarnings={warnings}");
         }
         var native = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
