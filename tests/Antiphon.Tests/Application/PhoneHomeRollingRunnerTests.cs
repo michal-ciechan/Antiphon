@@ -55,7 +55,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
 
         result.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
         result.MirrorPushed.ShouldBeTrue();
-        result.ConfirmedSha.ShouldBe(tip);
+        result.DesktopAfterSha.ShouldBe(tip);
         (await git.HeadAsync()).ShouldBe(tip);
         (await git.RunAsync(git.Origin, "rev-parse", git.Branch)).ShouldBe(tip);
         var request = rolling.PeerB.Incoming.Single(f => f.Operation == PhoneHomeOperation.WorkspacePublish)
