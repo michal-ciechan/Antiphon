@@ -309,7 +309,8 @@ public sealed class CardService : IScheduledCardActions
         {
             var last = cards[^1];
             next = new CardPageToken(CardPageToken.CurrentVersion, kind, boardId, status, updatedSince,
-                queryText, includeArchived, effectiveLimit, last.UpdatedAt.ToUniversalTime(), last.Id,
+                CardPageToken.HashQuery(queryText), includeArchived, effectiveLimit,
+                last.UpdatedAt.ToUniversalTime(), last.Id,
                 fingerprint).Encode();
         }
         var summaries = cards.Select(card => BoardService.ToSummaryDto(

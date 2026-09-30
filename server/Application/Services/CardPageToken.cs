@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Enums;
@@ -6,11 +8,14 @@ namespace Antiphon.Server.Application.Services;
 
 internal sealed record CardPageToken(
     int Version, string Kind, Guid? BoardId, CardStatus? Status, DateTime? UpdatedSince,
-    string? Query, bool IncludeArchived, int Limit, DateTime AfterUpdatedAt, Guid AfterId,
+    string? QueryHash, bool IncludeArchived, int Limit, DateTime AfterUpdatedAt, Guid AfterId,
     string Fingerprint)
 {
-    internal const int CurrentVersion = 1;
+    internal const int CurrentVersion = 2;
     internal const int MaxLength = 4096;
+
+    internal static string? HashQuery(string? query) => query is null ? null :
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(query)));
 
     internal string Encode()
     {
@@ -30,7 +35,7 @@ internal sealed record CardPageToken(
             var bytes = Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
             using var document = JsonDocument.Parse(bytes);
             if (document.RootElement.ValueKind != JsonValueKind.Object ||
-                new[] { "Version", "Kind", "BoardId", "Status", "UpdatedSince", "Query",
+                new[] { "Version", "Kind", "BoardId", "Status", "UpdatedSince", "QueryHash",
                     "IncludeArchived", "Limit", "AfterUpdatedAt", "AfterId", "Fingerprint" }
                     .Any(name => !document.RootElement.TryGetProperty(name, out _)))
                 throw Invalid();
@@ -41,7 +46,9 @@ internal sealed record CardPageToken(
                 (token.UpdatedSince is DateTime since && since.Kind != DateTimeKind.Utc) ||
                 token.Fingerprint is null || token.Fingerprint.Length != 64 ||
                 !token.Fingerprint.All(Uri.IsHexDigit) ||
-                (token.Kind == "search" && string.IsNullOrWhiteSpace(token.Query)))
+                (token.Kind == "search" && (token.QueryHash is null ||
+                    token.QueryHash.Length != 64 || !token.QueryHash.All(Uri.IsHexDigit))) ||
+                (token.Kind == "list" && token.QueryHash is not null))
                 throw Invalid();
             return token;
         }
@@ -55,7 +62,7 @@ internal sealed record CardPageToken(
         string? query, bool includeArchived, int limit)
     {
         if (Kind != kind || BoardId != boardId || Status != status || UpdatedSince != updatedSince ||
-            Query != query || IncludeArchived != includeArchived || Limit != limit)
+            QueryHash != HashQuery(query) || IncludeArchived != includeArchived || Limit != limit)
             throw Invalid();
     }
 
