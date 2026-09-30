@@ -2017,6 +2017,13 @@ EOF
 
 c849_fixture_cleanup() {
     local name
+    for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
+        "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
+        "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
+        "c849-${RUN}-apphost-miss" "c849-${RUN}-npm-fill" \
+        "c849-${RUN}-npm-b" "c849-${RUN}-npm-b-empty"; do
+        docker rm -f "$name" >/dev/null 2>&1 || true
+    done
     [ -f "$CASE_DIR/.fixture-volumes" ] || return 0
     while read -r name; do
         [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] || continue
@@ -2218,6 +2225,298 @@ c849_fixture_unmarked_consumer() {
     c849_volume "$name" nuget-packages yes "$image"
 }
 
+c849_fixture_restore_container() {
+    local image="$1" project="$2" packages="$3" scratch="$4" root="$5" driver="$6"
+    docker run --rm --name "c849-${RUN}-restore-$project" --network antiphon-build-slots --user 1654:1654 --entrypoint /bin/sh \
+        -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
+        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
+        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
+        --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=bind,source=$root,target=/fixture" \
+        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
+        "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-fixture-restore -- /bin/sh "/fixture/$1" "/fixture/$2"' \
+        sh "$driver" "$project"
+}
+
+c849_fixture_lock_container() {
+    local image="$1" scratch="$2" root="$3" mode="$4" generation="$5"
+    docker run --rm --name "c849-${RUN}-lock-$mode-$generation" --network none --user 1654:1654 --entrypoint pwsh \
+        --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=bind,source=$root,target=/fixture" \
+        "$image" -NoProfile -File /fixture/lock-probe.ps1 -Mode "$mode" -Generation "$generation"
+}
+
+c849_fixture_wait_file() {
+    local path="$1" i
+    for i in $(seq 1 150); do
+        [ -f "$path" ] && return 0
+        sleep 0.2
+    done
+    return 1
+}
+
+c849_fixture_lock_assert() {
+    [ ! -e "$1" ] || { printf 'NuGetLockNotShared\n'; return 2; }
+}
+
+c849_fixture_nuget_race() {
+    local image root packages scratch private_scratch name a b holder waiter
+    image="$(c849_image)"
+    root="$SERVER2_ROOT/race"
+    packages="c849${RUN}race-packages"
+    scratch="c849${RUN}race-scratch"
+    private_scratch="c849${RUN}private-scratch"
+    for name in "$packages" "$scratch" "$private_scratch"; do
+        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    done
+    C849_PACKAGES="$packages"; C849_SCRATCH="$scratch"
+    c849_volume "$packages" nuget-packages yes "$image"
+    c849_volume "$scratch" nuget-scratch yes "$image"
+    C849_SCRATCH="$private_scratch"
+    c849_volume "$private_scratch" nuget-scratch yes "$image"
+    C849_SCRATCH="$scratch"
+    mkdir -p "$root/package/lib/net10.0" "$root/package/content" "$root/feed" "$root/empty" "$root/p1" "$root/p2" "$root/p3"
+    printf '%s\n' '<?xml version="1.0"?><package><metadata><id>C849.Probe</id><version>1.0.0</version><authors>Antiphon</authors><description>Offline fixture</description></metadata></package>' > "$root/package/C849.Probe.nuspec"
+    : > "$root/package/lib/net10.0/_._"
+    printf 'C849_PACKAGE_SENTINEL\n' > "$root/package/content/probe.txt"
+    cat > "$root/make-zip.ps1" <<'PS'
+param([string]$Source, [string]$Target)
+[System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)
+PS
+    pwsh -NoProfile -File "$root/make-zip.ps1" "$root/package" "$root/feed/C849.Probe.1.0.0.nupkg" \
+        || write_result false FixturePackageZipFailed 2
+    for name in p1 p2 p3; do
+        printf '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><PackageReference Include="C849.Probe" Version="1.0.0" /></ItemGroup></Project>\n' \
+            > "$root/$name/$name.csproj"
+    done
+    printf '<configuration><packageSources><clear/><add key="fixture" value="/fixture/feed"/></packageSources></configuration>\n' > "$root/NuGet.Config"
+    printf '<configuration><packageSources><clear/><add key="empty" value="/fixture/empty"/></packageSources></configuration>\n' > "$root/Offline.Config"
+    cat > "$root/driver.sh" <<'SH'
+#!/bin/sh
+set -eu
+cd "$1"
+: > ready
+while [ ! -e /fixture/go ]; do sleep 0.1; done
+dotnet restore "$(basename "$1").csproj" --configfile /fixture/NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
+SH
+    cat > "$root/offline.sh" <<'SH'
+#!/bin/sh
+set -eu
+cd "$1"
+dotnet restore p3.csproj --configfile /fixture/Offline.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
+SH
+    sudo -n chown -R 1654:1654 "$root"
+    c849_fixture_restore_container "$image" p1 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
+    c849_fixture_restore_container "$image" p2 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
+    c849_fixture_wait_file "$root/p1/ready" && c849_fixture_wait_file "$root/p2/ready" \
+        || write_result false FixtureRestoreBarrierFailed 2
+    sudo -n touch "$root/go"
+    wait "$a" || write_result false FixtureConcurrentRestoreFailed 2
+    wait "$b" || write_result false FixtureConcurrentRestoreFailed 2
+    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" "$root" offline.sh \
+        > "$SERVER2_ROOT/race-offline.log" 2>&1 || write_result false FixtureOfflineRestoreFailed 2
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
+        -c 'test -s /cache/c849.probe/1.0.0/.nupkg.metadata && grep -Fxq C849_PACKAGE_SENTINEL /cache/c849.probe/1.0.0/content/probe.txt' \
+        || write_result false FixturePackageIncomplete 2
+    cat > "$root/lock-probe.ps1" <<'PS'
+param([ValidateSet('holder','waiter')][string]$Mode, [string]$Generation)
+$assembly = Get-ChildItem /usr/share/dotnet/sdk/*/NuGet.Common.dll | Select-Object -Last 1
+if (-not $assembly) { throw 'NuGetLockPrimitiveMissing' }
+[void][System.Reflection.Assembly]::LoadFrom($assembly.FullName)
+$path = '/var/cache/antiphon/nuget-scratch/' + $Generation + '.lock'
+$root = '/fixture'
+[NuGet.Common.ConcurrencyUtilities]::ExecuteWithFileLocked($path, [Action]{
+    [System.IO.File]::WriteAllText("$root/$Generation-$Mode-entered", '1')
+    if ($Mode -eq 'holder') {
+        $until = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not [System.IO.File]::Exists("$root/$Generation-release")) {
+            if ([DateTime]::UtcNow -gt $until) { throw 'FixtureLockReleaseTimeout' }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+})
+PS
+    c849_fixture_lock_container "$image" "$scratch" "$root" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
+    c849_fixture_wait_file "$root/shared-holder-entered" || write_result false FixtureNuGetLockHolderFailed 2
+    c849_fixture_lock_container "$image" "$scratch" "$root" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
+    sleep 2
+    c849_fixture_lock_assert "$root/shared-waiter-entered" || write_result false NuGetLockNotShared 2
+    sudo -n touch "$root/shared-release"
+    wait "$holder" && wait "$waiter" && [ -e "$root/shared-waiter-entered" ] \
+        || write_result false FixtureNuGetLockProbeFailed 2
+    c849_fixture_lock_container "$image" "$scratch" "$root" holder private > "$SERVER2_ROOT/private-holder.log" 2>&1 & holder=$!
+    c849_fixture_wait_file "$root/private-holder-entered" || write_result false FixtureNuGetLockHolderFailed 2
+    c849_fixture_lock_container "$image" "$private_scratch" "$root" waiter private > "$SERVER2_ROOT/private-waiter.log" 2>&1 & waiter=$!
+    c849_fixture_wait_file "$root/private-waiter-entered" || write_result false ControlNotSensitive 2
+    c849_fixture_control PC-17 NuGetLockNotShared c849_fixture_lock_assert "$root/private-waiter-entered"
+    sudo -n touch "$root/private-release"
+    wait "$holder" && wait "$waiter" || write_result false FixtureNuGetLockProbeFailed 2
+    printf 'PASS F-4\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
+c849_fixture_empty_apphost() {
+    local image="$1" packages="$2" scratch="$3" root="$4" output="$SERVER2_ROOT/empty-apphost.log" code=0
+    docker run --rm --name "c849-${RUN}-apphost-miss" --network antiphon-build-slots \
+        --user 1654:1654 --entrypoint /bin/sh -e HOME=/home/app \
+        -e NUGET_PACKAGES=/home/app/.nuget/packages \
+        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
+        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
+        --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=bind,source=$root,target=/fixture" \
+        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
+        "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-apphost-miss -- /bin/sh -c "cd /fixture; dotnet restore Smoke.csproj --configfile NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1"' \
+        > "$output" 2>&1 || code=$?
+    [ "$code" -ne 0 ] && grep -Eq 'NU1101|NU1102' "$output" \
+        && grep -Fq 'Microsoft.NETCore.App.Host.linux-x64' "$output" \
+        || { printf 'ControlNotSensitive\n'; return 2; }
+    printf 'AppHostCacheMiss\n'; return 2
+}
+
+c849_fixture_apphost() {
+    local image donor packages scratch empty_packages empty_scratch name root helper before after
+    image="$(c849_image)"
+    donor="$(docker ps -aq --filter label=com.docker.compose.project=antiphon-runner-temp \
+        --filter label=com.docker.compose.service=session-runner)"
+    [ -n "$donor" ] && [ "${donor//$'\n'/}" = "$donor" ] \
+        || write_result false FixtureNet9DonorMissing 2
+    root="$SERVER2_ROOT/apphost"
+    mkdir -p "$root/packages/microsoft.netcore.app.host.linux-x64" "$root/packages/microsoft.netcore.app.ref"
+    before="$(docker exec "$donor" sha256sum /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost | cut -d' ' -f1)" \
+        || write_result false FixtureNet9DonorMissing 2
+    docker cp "$donor:/home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20" \
+        "$root/packages/microsoft.netcore.app.host.linux-x64/" >/dev/null \
+        || write_result false FixtureNet9CopyFailed 2
+    docker cp "$donor:/home/app/.nuget/packages/microsoft.netcore.app.ref/9.0.20" \
+        "$root/packages/microsoft.netcore.app.ref/" >/dev/null \
+        || write_result false FixtureNet9CopyFailed 2
+    after="$(docker exec "$donor" sha256sum /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost | cut -d' ' -f1)" \
+        || write_result false FixtureNet9DonorChanged 2
+    [ "$before" = "$after" ] \
+        && [ "$after" = "$(sha256sum "$root/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)" ] \
+        && [ -s "$root/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
+        && [ -s "$root/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
+        || write_result false FixtureNet9DonorChanged 2
+    docker run --rm --network none --entrypoint /bin/sh "$image" \
+        -c 'test ! -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20' \
+        || write_result false ControlNotSensitive 2
+    packages="c849${RUN}smoke-packages"; scratch="c849${RUN}smoke-scratch"
+    empty_packages="c849${RUN}empty-packages"; empty_scratch="c849${RUN}empty-scratch"
+    for name in "$packages" "$scratch" "$empty_packages" "$empty_scratch"; do
+        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    done
+    C849_PACKAGES="$packages"; C849_SCRATCH="$scratch"
+    c849_volume "$packages" nuget-packages yes "$image"
+    c849_volume "$scratch" nuget-scratch yes "$image"
+    C849_PACKAGES="$empty_packages"; C849_SCRATCH="$empty_scratch"
+    c849_volume "$empty_packages" nuget-packages yes "$image"
+    c849_volume "$empty_scratch" nuget-scratch yes "$image"
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=bind,source=$root/packages,target=/seed,readonly" \
+        --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
+        -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache' \
+        || write_result false FixtureNet9ImportFailed 2
+    helper="c849-${RUN}-apphost"
+    docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+        -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
+        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch -e NPM_CONFIG_CACHE=/home/app/.npm \
+        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
+        --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
+        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
+        "$image" infinity >/dev/null || write_result false FixtureAppHostStartFailed 2
+    printf '%s\n' "$helper" > "$CASE_DIR/.fixture-apphost"
+    c849_smoke "$helper" fixture || write_result false FixtureAppHostSmokeFailed 2
+    docker rm -f "$helper" >/dev/null || write_result false FixtureAppHostCleanupFailed 2
+    rm -f "$CASE_DIR/.fixture-apphost"
+    cat > "$root/Smoke.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup></Project>
+EOF
+    printf 'System.Console.WriteLine("CARD0849_APPHOST_OK");\n' > "$root/Program.cs"
+    mkdir -p "$root/empty"
+    printf '<configuration><packageSources><clear/><add key="empty" value="/fixture/empty"/></packageSources></configuration>\n' > "$root/NuGet.Config"
+    sudo -n chown -R 1654:1654 "$root"
+    c849_fixture_control PC-18 AppHostCacheMiss c849_fixture_empty_apphost "$image" "$empty_packages" "$empty_scratch" "$root"
+    printf 'PASS F-5\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
+c849_fixture_npm_install() {
+    local image="$1" root="$2" cache="$3" project="$4" output="$SERVER2_ROOT/npm-$project.log" code=0
+    docker run --rm --name "c849-${RUN}-npm-$project" --network none --user 1654:1654 \
+        --entrypoint /bin/sh -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
+        --mount "type=volume,source=$cache,target=/home/app/.npm/_cacache,volume-nocopy" \
+        --mount "type=bind,source=$root,target=/fixture" "$image" \
+        -c 'cd "/fixture/$1"; npm ci --offline --ignore-scripts --no-audit --no-fund' sh "$project" \
+        > "$output" 2>&1 || code=$?
+    [ "$code" -eq 0 ] || { grep -Fq ENOTCACHED "$output" && { printf 'NpmOfflineCacheMiss\n'; return 2; }; return 1; }
+    [ -s "$root/$project/node_modules/c849-cache-probe/sentinel" ] \
+        && [ "$(cat "$root/$project/node_modules/c849-cache-probe/sentinel")" = C849_NPM_OFFLINE ] \
+        || return 1
+}
+
+c849_fixture_npm() {
+    local image root cache empty_cache network integrity name
+    image="$(c849_image)"
+    root="$SERVER2_ROOT/npm-offline"
+    cache="c849${RUN}npmcache-npm"; empty_cache="c849${RUN}npmempty-npm"
+    network="c849-${RUN}-npm"
+    for name in "$cache" "$empty_cache"; do
+        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    done
+    C849_NPM="$cache"; c849_volume "$cache" npm-content yes "$image"
+    C849_NPM="$empty_cache"; c849_volume "$empty_cache" npm-content yes "$image"
+    C849_NPM="$cache"
+    mkdir -p "$root/package" "$root/b" "$root/b-empty"
+    printf '{"name":"c849-cache-probe","version":"1.0.0"}\n' > "$root/package/package.json"
+    printf 'C849_NPM_OFFLINE\n' > "$root/package/sentinel"
+    tar -czf "$root/pkg.tgz" -C "$root" package
+    integrity="$(pwsh -NoProfile -Command '$bytes=[System.Security.Cryptography.SHA512]::HashData([System.IO.File]::ReadAllBytes($args[0])); [Convert]::ToBase64String($bytes)' "$root/pkg.tgz")" \
+        || write_result false FixtureNpmIntegrityFailed 2
+    cat > "$root/server.js" <<'JS'
+const http = require('http'); const fs = require('fs');
+http.createServer((req, res) => {
+  if (req.url !== '/pkg.tgz') { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, {'Content-Type': 'application/octet-stream'});
+  fs.createReadStream('/fixture/pkg.tgz').pipe(res);
+}).listen(8080, '0.0.0.0');
+JS
+    printf '{"name":"c849-consumer","version":"1.0.0","dependencies":{"c849-cache-probe":"1.0.0"}}\n' > "$root/b/package.json"
+    printf '{"name":"c849-consumer","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"c849-consumer","version":"1.0.0","dependencies":{"c849-cache-probe":"1.0.0"}},"node_modules/c849-cache-probe":{"version":"1.0.0","resolved":"http://c849-npm-http:8080/pkg.tgz","integrity":"sha512-%s"}}}\n' \
+        "$integrity" > "$root/b/package-lock.json"
+    cp "$root/b/package.json" "$root/b/package-lock.json" "$root/b-empty/"
+    sudo -n chown -R 1654:1654 "$root"
+    docker network create "$network" >/dev/null || write_result false FixtureNpmNetworkFailed 2
+    printf '%s\n' "$network" > "$CASE_DIR/.fixture-network"
+    docker run -d --name "c849-${RUN}-npm-http" --network "$network" --network-alias c849-npm-http \
+        --user 1654:1654 --entrypoint node \
+        --mount "type=bind,source=$root,target=/fixture,readonly" "$image" /fixture/server.js >/dev/null \
+        || write_result false FixtureNpmServerFailed 2
+    printf 'c849-%s-npm-http\n' "$RUN" > "$CASE_DIR/.fixture-npm-server"
+    docker run --rm --network "$network" --entrypoint /bin/sh "$image" \
+        -c 'for i in $(seq 1 30); do curl -fsS http://c849-npm-http:8080/pkg.tgz -o /dev/null && exit 0; sleep 0.2; done; exit 1' \
+        || write_result false FixtureNpmServerNotReady 2
+    docker run --rm --name "c849-${RUN}-npm-fill" --network "$network" --user 1654:1654 \
+        --entrypoint npm -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
+        --mount "type=volume,source=$cache,target=/home/app/.npm/_cacache,volume-nocopy" \
+        "$image" cache add http://c849-npm-http:8080/pkg.tgz >/dev/null \
+        || write_result false FixtureNpmFillFailed 2
+    docker rm -f "c849-${RUN}-npm-http" >/dev/null || write_result false FixtureNpmServerCleanupFailed 2
+    rm -f "$CASE_DIR/.fixture-npm-server"
+    c849_fixture_npm_install "$image" "$root" "$cache" b \
+        || write_result false FixtureNpmOfflineFailed 2
+    c849_fixture_control PC-19 NpmOfflineCacheMiss c849_fixture_npm_install "$image" "$root" "$empty_cache" b-empty
+    printf 'PASS F-6\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
 c849_fixture() {
     require_lane host
     c849_lock
@@ -2229,10 +2528,13 @@ c849_fixture() {
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     : > "$CASE_DIR/fixture-groups.txt"
-    trap 'if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
+    trap 'if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed
+    c849_fixture_nuget_race
+    c849_fixture_apphost
+    c849_fixture_npm
     write_result false CacheFixtureIncomplete 2
 }
 
