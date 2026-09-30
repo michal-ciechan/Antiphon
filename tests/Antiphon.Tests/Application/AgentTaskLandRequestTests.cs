@@ -49,6 +49,7 @@ public class AgentTaskLandRequestTests
             owner.FailureCode = AgentTaskFailureCode.CompletedWithoutProgress;
             owner.FailureReason = "historical failure";
             await db.SaveChangesAsync();
+            await db.Entry(owner).ReloadAsync();
             var originalCompleted = owner.CompletedAt;
             var queue = new AgentTaskLandQueue();
             var land = CreateLand(db, queue, Frozen(DateTime.UtcNow));
