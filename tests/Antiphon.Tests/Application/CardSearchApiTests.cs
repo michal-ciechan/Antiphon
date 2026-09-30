@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
@@ -115,6 +116,7 @@ public class CardSearchApiTests
         await _fixture.CardsAsync(board.Id, 605, "common-needle");
         var expected = await _fixture.OracleAsync(board.Id);
         var actual = new List<Guid>();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         string? token = null;
         for (var i = 0; i < 5; i++)
         {
@@ -130,6 +132,9 @@ public class CardSearchApiTests
             token.ShouldNotBeNullOrWhiteSpace();
         }
         actual.ShouldBe(expected);
+        clock.Stop();
+        Console.WriteLine($"CARD-0846 search 605 elapsedMs={clock.ElapsedMilliseconds}");
+        await _fixture.DiagnosePlansAsync(board.Id, "common-needle");
         var empty = await SearchAsync("no-such-needle", board.Id);
         empty.Total.ShouldBe(0);
         empty.Cards.Count.ShouldBe(0);
@@ -140,16 +145,34 @@ public class CardSearchApiTests
     [Test] public async Task Search_filters_include_closed_and_optional_archived_cards()
     {
         var board = await _fixture.BoardAsync();
-        var cards = await _fixture.CardsAsync(board.Id, 3, "state-needle");
+        var cards = await _fixture.CardsAsync(board.Id, 6, "state-needle");
+        var foreign = await _fixture.BoardAsync();
+        var foreignCard = await _fixture.CardsAsync(foreign.Id, 1, "state-needle");
+        var states = new[] { CardStatus.Backlog, CardStatus.InProgress, CardStatus.Review,
+            CardStatus.Done, CardStatus.NeedsDecision, CardStatus.Canceled };
         await using (var db = _fixture.Writer())
         {
-            await db.Cards.Where(c => c.Id == cards[0].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, CardStatus.Done));
-            await db.Cards.Where(c => c.Id == cards[1].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, CardStatus.Canceled));
+            for (var i = 0; i < states.Length; i++)
+            {
+                var id = cards[i].Id;
+                var state = states[i];
+                await db.Cards.Where(c => c.Id == id).ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, state));
+            }
             await db.Cards.Where(c => c.Id == cards[2].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.ArchivedAt, DateTime.UtcNow));
         }
-        (await SearchAsync("state-needle", board.Id)).Total.ShouldBe(2);
-        (await SearchAsync("state-needle", board.Id, all: true)).Total.ShouldBe(3);
-        (await SearchAsync("state-needle", board.Id, status: CardStatus.Done)).Cards.Single().Id.ShouldBe(cards[0].Id);
+        (await SearchAsync("state-needle", board.Id)).Total.ShouldBe(5);
+        (await SearchAsync("state-needle", board.Id, all: true)).Total.ShouldBe(6);
+        (await SearchAsync("state-needle")).Total.ShouldBe(6);
+        (await SearchAsync("state-needle", all: true)).Total.ShouldBe(7);
+        foreach (var (state, card) in states.Zip(cards))
+        {
+            var result = await SearchAsync("state-needle", board.Id, status: state, all: true);
+            result.Cards.Single().Id.ShouldBe(card.Id);
+            result.Total.ShouldBe(1);
+        }
+        (await SearchAsync("state-needle", board.Id, status: CardStatus.Done)).Cards.Single().Id.ShouldBe(cards[3].Id);
+        (await SearchAsync("state-needle", board.Id, status: CardStatus.Canceled)).Cards.Single().Id.ShouldBe(cards[5].Id);
+        (await SearchAsync("state-needle", foreign.Id)).Cards.Single().Id.ShouldBe(foreignCard[0].Id);
     }
 
     [Test] public async Task Literal_patterns_and_decoded_labels_do_not_overmatch()
@@ -195,8 +218,19 @@ public class CardSearchApiTests
         await Assert422Async("/api/cards/search", "q");
         await Assert422Async("/api/cards/search?q=%20%20", "q");
         await Assert422Async("/api/cards/search?q=" + new string('a', 501), "q");
+        (await SearchAsync(new string('a', 500), board.Id)).Total.ShouldBe(0);
         var token = (await SearchAsync("search-needle", board.Id, 1)).NextPageToken!;
         await Assert422Async($"/api/cards/search?q=other&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(token)}", "pageToken");
+        var raw = token.Replace('-', '+').Replace('_', '/');
+        var payload = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(
+            Convert.FromBase64String(raw.PadRight((raw.Length + 3) / 4 * 4, '='))))!.AsObject();
+        payload["Kind"] = "list";
+        var wrongKind = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload.ToJsonString()))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        await Assert422Async($"/api/cards/search?q=search-needle&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(wrongKind)}", "pageToken");
+        using var client = _fixture.CreateClient();
+        var list = await client.GetFromJsonAsync<CardListDto>($"/api/cards?boardId={board.Id}&limit=1", Json);
+        await Assert422Async($"/api/cards/search?q=search-needle&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(list!.NextPageToken!)}", "pageToken");
         (await SearchAsync(" search-needle ", board.Id, 1, token)).Cards.Count.ShouldBe(1);
     }
 
@@ -236,12 +270,22 @@ public class CardSearchApiTests
     {
         var board = await _fixture.BoardAsync();
         var cards = await _fixture.CardsAsync(board.Id, 4, "membership-needle");
+        await using (var setup = _fixture.Writer())
+            await setup.Cards.Where(c => c.BoardId == board.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.Title, "neutral title")
+                 .SetProperty(c => c.Description, "membership-needle"));
         var token = (await SearchAsync("membership-needle", board.Id, 2)).NextPageToken!;
         await using (var db = _fixture.Writer())
             await db.Cards.Where(c => c.Id == cards[3].Id).ExecuteUpdateAsync(s =>
-                s.SetProperty(c => c.Title, "departed").SetProperty(c => c.Description, "departed"));
+                s.SetProperty(c => c.Description, "departed"));
         await AssertChangedAsync("membership-needle", board.Id, token);
         (await SearchAsync("membership-needle", board.Id)).Total.ShouldBe(3);
+        var reentryToken = (await SearchAsync("membership-needle", board.Id, 2)).NextPageToken!;
+        await using (var db = _fixture.Writer())
+            await db.Cards.Where(c => c.Id == cards[3].Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.Description, "membership-needle"));
+        await AssertChangedAsync("membership-needle", board.Id, reentryToken);
+        (await SearchAsync("membership-needle", board.Id)).Total.ShouldBe(4);
 
         var secondBoard = await _fixture.BoardAsync();
         var barrierCards = await _fixture.CardsAsync(secondBoard.Id, 4, "barrier-needle");

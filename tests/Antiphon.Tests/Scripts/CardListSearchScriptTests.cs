@@ -131,38 +131,54 @@ public sealed class CardListSearchScriptTests
     [Test] public async Task Search_uses_search_endpoint_and_preserves_encoded_query()
     {
         using var stub = new Stub();
+        const string opaque = "next+/=%?&";
         stub.Respond = (call, _) => call.Value("pageToken") is null
-            ? new(200, Page(0, 1, true, "next", 2)) : new(200, Page(1, 1, total: 2));
-        var phrase = "雪 %_\\ quote\"";
+            ? new(200, Page(0, 1, true, opaque, 2)) : new(200, Page(1, 1, total: 2));
+        var phrase = "雪 +&%#/_\\ quote\"";
         var run = await RunAsync(stub, "search", phrase, "-Board", BoardId, "-Status", "Done", "-Json");
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.All(c => c.Path == "/api/cards/search" && c.Value("q") == phrase &&
             c.Value("status") == "Done").ShouldBeTrue();
+        stub.Calls[1].Value("pageToken").ShouldBe(opaque);
         JsonDocument.Parse(run.Stdout).RootElement.GetProperty("cards").GetArrayLength().ShouldBe(2);
     }
 
     [Test] public async Task All_includes_archives_and_resolves_archived_board_names()
     {
         using var stub = new Stub();
-        stub.Respond = (call, _) => new(200, Page(0, 1));
+        stub.Respond = (call, _) => new(200, Page(0, 1, total: call.Path.EndsWith("search") ? 1 : null));
         var run = await RunAsync(stub, "list", "-Board", "Antiphon", "-All", "-Json");
         run.ExitCode.ShouldBe(0, run.Stderr);
-        stub.Calls.Count.ShouldBe(2);
+        var search = await RunAsync(stub, "search", "needle", "-Board", "Antiphon", "-All", "-Json");
+        search.ExitCode.ShouldBe(0, search.Stderr);
+        stub.Calls.Count.ShouldBe(4);
         stub.Calls.All(c => c.Value("includeArchived") == "true").ShouldBeTrue();
+        using var defaultStub = new Stub();
+        defaultStub.Respond = (call, _) => new(200, Page(0, 1, total: call.Path.EndsWith("search") ? 1 : null));
+        (await RunAsync(defaultStub, "search", "needle", "-Board", "Antiphon", "-Json")).ExitCode.ShouldBe(0);
+        defaultStub.Calls.All(c => c.Value("includeArchived") is null).ShouldBeTrue();
     }
 
     [Test] public async Task Paging_is_automatic_without_All()
     {
-        using var stub = new Stub();
-        stub.Respond = (call, _) => call.Value("pageToken") is null
-            ? new(200, Page(0, 1, true, "next", call.Path.EndsWith("search") ? 2 : null))
-            : new(200, Page(1, 1, total: call.Path.EndsWith("search") ? 2 : null));
-        var list = await RunAsync(stub, "list", "-Status", "Backlog", "-Json");
-        var search = await RunAsync(stub, "search", "needle", "-Json");
-        list.ExitCode.ShouldBe(0, list.Stderr);
-        search.ExitCode.ShouldBe(0, search.Stderr);
-        stub.Calls.Count.ShouldBe(4);
-        stub.Calls.All(c => c.Value("includeArchived") is null).ShouldBeTrue();
+        foreach (var all in new[] { false, true })
+        foreach (var search in new[] { false, true })
+        {
+            using var stub = new Stub();
+            stub.Respond = (call, _) => call.Value("pageToken") is null
+                ? new(200, Page(0, 2, true, "next", search ? 3 : null))
+                : new(200, Page(2, 1, total: search ? 3 : null));
+            var args = search ? new List<string> { "search", "needle" } : new List<string> { "list", "-Status", "Backlog" };
+            args.AddRange(["-Limit", "2"]);
+            if (all) args.Add("-All");
+            args.Add("-Json");
+            var run = await RunAsync(stub, args.ToArray());
+            run.ExitCode.ShouldBe(0, run.Stderr);
+            JsonDocument.Parse(run.Stdout).RootElement.GetProperty("cards").GetArrayLength().ShouldBe(3);
+            stub.Calls.Count.ShouldBe(2);
+            stub.Calls.All(c => c.Value("limit") == "2" &&
+                c.Value("includeArchived") == (all ? "true" : null)).ShouldBeTrue();
+        }
     }
 
     [Test] public async Task Old_or_inconsistent_pagination_fails_without_results()

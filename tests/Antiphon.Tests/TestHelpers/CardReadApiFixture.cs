@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -161,6 +162,32 @@ public sealed class CardReadApiFixture : AntiphonWebAppFactory
         if (!includeArchived) query = query.Where(c => c.ArchivedAt == null);
         return await query.OrderByDescending(c => c.UpdatedAt).ThenBy(c => c.Id)
             .Select(c => c.Id).ToListAsync();
+    }
+
+    public async Task DiagnosePlansAsync(Guid boardId, string? marker = null)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        var scope = "c.\"BoardId\" = @board AND c.\"ArchivedAt\" IS NULL";
+        if (marker is not null)
+            scope += " AND (c.\"Identifier\" ILIKE @pattern ESCAPE '\\' OR c.\"Alias\" ILIKE @pattern ESCAPE '\\' " +
+                "OR c.\"Title\" ILIKE @pattern ESCAPE '\\' OR c.\"Description\" ILIKE @pattern ESCAPE '\\' " +
+                "OR c.\"TerminalReason\" ILIKE @pattern ESCAPE '\\' OR EXISTS " +
+                "(SELECT 1 FROM jsonb_array_elements_text(c.\"LabelsJson\") AS label(value) " +
+                "WHERE label.value ILIKE @pattern ESCAPE '\\'))";
+        foreach (var query in new[]
+        {
+            "SELECT c.\"Id\", c.\"UpdatedAt\" FROM \"Cards\" c WHERE " + scope + " ORDER BY c.\"Id\"",
+            "SELECT c.* FROM \"Cards\" c WHERE " + scope +
+                " ORDER BY c.\"UpdatedAt\" DESC, c.\"Id\" LIMIT 501"
+        })
+        {
+            await using var command = new NpgsqlCommand("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + query, connection);
+            command.Parameters.AddWithValue("board", boardId);
+            if (marker is not null) command.Parameters.AddWithValue("pattern", "%" + marker + "%");
+            var plan = (string?)await command.ExecuteScalarAsync();
+            Console.WriteLine($"CARD-0846 plan board={boardId} search={marker is not null}: {plan}");
+        }
     }
 
     public async Task CleanupAsync()

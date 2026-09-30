@@ -4,9 +4,13 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Antiphon.Server.Application.Settings;
 using Shouldly;
 using TUnit.Core;
 
@@ -82,7 +86,11 @@ public class CardListPaginationApiTests
         var board = await _fixture.BoardAsync();
         await _fixture.CardsAsync(board.Id, 605);
         var expected = await _fixture.OracleAsync(board.Id);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         var actual = await DrainAsync(board.Id);
+        clock.Stop();
+        Console.WriteLine($"CARD-0846 list 605 elapsedMs={clock.ElapsedMilliseconds}");
+        await _fixture.DiagnosePlansAsync(board.Id);
         actual.ShouldBe(expected);
         actual.Distinct().Count().ShouldBe(605);
     }
@@ -126,6 +134,9 @@ public class CardListPaginationApiTests
         using var client = _fixture.CreateClient();
         (await client.GetAsync("/api/cards")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await client.GetAsync("/api/cards?limit=2&includeArchived=true")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        foreach (var malformed in new[] { "boardId=not-a-guid", "status=NoSuchStatus",
+            "updatedSince=not-a-date", $"boardId={board.Id}&includeArchived=maybe" })
+            (await client.GetAsync("/api/cards?" + malformed)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         var since = Uri.EscapeDataString(cards[1].UpdatedAt.ToString("O"));
         var result = await client.GetFromJsonAsync<CardListDto>(
             $"/api/cards?boardId={board.Id}&status=Backlog&updatedSince={since}", Json);
@@ -137,6 +148,16 @@ public class CardListPaginationApiTests
         var board = await _fixture.BoardAsync();
         await _fixture.CardsAsync(board.Id, 3);
         await _fixture.CardsAsync(board.Id, 2, archived: true);
+        (await DrainAsync(board.Id, 2)).Count.ShouldBe(3);
+        (await DrainAsync(board.Id, 2, true)).Count.ShouldBe(5);
+        await using (var db = _fixture.Writer())
+        {
+            var projectId = await db.Boards.Where(b => b.Id == board.Id).Select(b => b.ProjectId).SingleAsync();
+            await db.Boards.Where(b => b.Id == board.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(b => b.ArchivedAt, DateTime.UtcNow));
+            await db.Projects.Where(p => p.Id == projectId).ExecuteUpdateAsync(s =>
+                s.SetProperty(p => p.ArchivedAt, DateTime.UtcNow));
+        }
         (await DrainAsync(board.Id, 2)).Count.ShouldBe(3);
         (await DrainAsync(board.Id, 2, true)).Count.ShouldBe(5);
     }
@@ -175,6 +196,19 @@ public class CardListPaginationApiTests
         using var client = _fixture.CreateClient();
         (await client.GetAsync($"/api/cards?boardId={board.Id}&limit=oops")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PageAsync(board.Id, int.MaxValue)).Cards.Count.ShouldBe(3);
+        (await PageAsync(board.Id, 501)).Cards.Count.ShouldBe(3);
+        using var scope = _fixture.Services.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<IOptions<CardsSettings>>().Value;
+        var original = settings.MaxListResults;
+        try
+        {
+            foreach (var ceiling in new[] { 0, -1 })
+            {
+                settings.MaxListResults = ceiling;
+                (await PageAsync(board.Id)).Cards.Count.ShouldBe(1, $"ceiling={ceiling}");
+            }
+        }
+        finally { settings.MaxListResults = original; }
     }
 
     [Test] public async Task Tokens_cannot_change_the_query()
@@ -183,9 +217,15 @@ public class CardListPaginationApiTests
         await _fixture.CardsAsync(board.Id, 4);
         var token = (await PageAsync(board.Id, 2)).NextPageToken!;
         await Assert422Async($"/api/cards?boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(token)}", "pageToken");
+        await Assert422Async($"/api/cards?boardId={Guid.NewGuid()}&limit=2&pageToken={Uri.EscapeDataString(token)}", "pageToken");
         await Assert422Async($"/api/cards?boardId={board.Id}&limit=2&includeArchived=true&pageToken={Uri.EscapeDataString(token)}", "pageToken");
         await Assert422Async($"/api/cards?boardId={board.Id}&limit=2&status=Done&pageToken={Uri.EscapeDataString(token)}", "pageToken");
+        await Assert422Async($"/api/cards?boardId={board.Id}&limit=2&updatedSince={Uri.EscapeDataString(DateTime.UtcNow.AddDays(-10).ToString("O"))}&pageToken={Uri.EscapeDataString(token)}", "pageToken");
         (await PageAsync(board.Id, 2, token)).Cards.Count.ShouldBe(2);
+        var equivalentBoard = await _fixture.BoardAsync();
+        await _fixture.CardsAsync(equivalentBoard.Id, 501);
+        var defaultToken = (await PageAsync(equivalentBoard.Id)).NextPageToken!;
+        (await PageAsync(equivalentBoard.Id, 501, defaultToken)).Cards.Count.ShouldBe(1);
     }
 
     [Test] public async Task Moving_an_unseen_card_refuses_incomplete_continuation()
@@ -262,6 +302,27 @@ public class CardListPaginationApiTests
             }
             await AssertChangedAsync(board.Id, token, statusFilter);
         }
+
+        var replacementBoard = await _fixture.BoardAsync();
+        await _fixture.CardsAsync(replacementBoard.Id, 4);
+        var tie = DateTime.UtcNow.AddDays(-3);
+        await using (var db = _fixture.Writer())
+            await db.Cards.Where(c => c.BoardId == replacementBoard.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.UpdatedAt, tie));
+        var ordered = await _fixture.OracleAsync(replacementBoard.Id);
+        var replacementToken = (await PageAsync(replacementBoard.Id, 2)).NextPageToken!;
+        var removed = ordered[^1];
+        await using (var db = _fixture.Writer())
+            await db.Cards.Where(c => c.Id == removed).ExecuteDeleteAsync();
+        var added = await _fixture.CardsAsync(replacementBoard.Id, 1);
+        await using (var db = _fixture.Writer())
+        {
+            var addedId = added[0].Id;
+            await db.Cards.Where(c => c.Id == addedId).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.UpdatedAt, tie));
+        }
+        (await _fixture.OracleAsync(replacementBoard.Id)).Count.ShouldBe(4);
+        await AssertChangedAsync(replacementBoard.Id, replacementToken);
     }
 
     [Test] public async Task Writes_outside_the_matching_scope_do_not_break_paging()
@@ -315,9 +376,21 @@ public class CardListPaginationApiTests
         var board = await _fixture.BoardAsync();
         var cards = await _fixture.CardsAsync(board.Id, 1);
         var body = string.Concat(Enumerable.Repeat("abcd ", 60)) + "LATE_MARKER";
+        var sessionId = Guid.NewGuid();
         await using (var db = _fixture.Writer())
+        {
             await db.Cards.Where(c => c.Id == cards[0].Id).ExecuteUpdateAsync(s =>
-                s.SetProperty(c => c.Description, body).SetProperty(c => c.TerminalReason, body));
+                s.SetProperty(c => c.Description, body).SetProperty(c => c.TerminalReason, body)
+                 .SetProperty(c => c.PrivateNotes, "private-marker-0846"));
+            var now = DateTime.UtcNow;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, CardId = cards[0].Id, DefinitionName = "synthetic-card-reader",
+                AgentKind = AgentKind.Raw, Status = SessionStatus.Exited, Cwd = "/tmp/card-read",
+                Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now
+            });
+            await db.SaveChangesAsync();
+        }
         var summary = (await PageAsync(board.Id)).Cards.Single();
         summary.HasMore.ShouldBeTrue();
         summary.Description.ShouldNotContain("LATE_MARKER");
@@ -326,5 +399,10 @@ public class CardListPaginationApiTests
         using var client = _fixture.CreateClient();
         var detail = await client.GetFromJsonAsync<CardDto>($"/api/cards/{cards[0].Id}", Json);
         detail!.Description.ShouldContain("LATE_MARKER");
+        detail.Sessions.Select(s => s.Id).ShouldContain(sessionId);
+        var raw = await client.GetStringAsync($"/api/cards?boardId={board.Id}");
+        using var json = JsonDocument.Parse(raw);
+        json.RootElement.GetProperty("cards")[0].TryGetProperty("privateNotes", out _).ShouldBeFalse();
+        raw.ShouldNotContain("private-marker-0846");
     }
 }
