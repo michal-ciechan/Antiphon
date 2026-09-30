@@ -63,8 +63,8 @@ public class HerdrTransportTests
         await using var endpoint = new FakeHerdrEndpoint();
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
-        (await CaptureAsync(() => Client(endpoint.Path).ConnectAndValidateAsync(cancelled.Token)))
-            .ShouldBeOfType<OperationCanceledException>();
+        (await CaptureAsync(() => Client(endpoint.Path).ConnectAndValidateAsync(cancelled.Token))
+            is OperationCanceledException).ShouldBeTrue();
     }
 
     [Test]

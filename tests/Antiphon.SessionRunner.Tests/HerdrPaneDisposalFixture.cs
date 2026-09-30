@@ -23,7 +23,7 @@ internal sealed class HerdrPaneDisposalFixture : IAsyncDisposable
 
     public HerdrPaneDisposalFixture(IProcessLivenessProbe? probe = null, int? connectTimeoutMs = null)
     {
-        var herdrSettings = new HerdrSettings { Enabled = true, Session = Fake.Session };
+        var herdrSettings = new HerdrSettings { Enabled = true, Session = Fake.Session, SocketPath = Fake.EndpointPath };
         if (connectTimeoutMs is int timeout) herdrSettings.ConnectTimeoutMs = timeout;
         Client = new(herdrSettings);
         Runtime = new(Options.Create(Settings), NullLogger<SessionRunnerRuntime>.Instance, Client, probe);
