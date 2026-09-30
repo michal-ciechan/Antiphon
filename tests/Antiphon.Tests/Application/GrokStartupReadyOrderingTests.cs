@@ -188,8 +188,8 @@ public sealed class GrokStartupReadyOrderingTests
             }
             return GetAsync(id, ct);
         }
-        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+        public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            _id == Guid.Empty || _killed ? [] : [await GetAsync(_id, ct)];
         public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSessionDto(id, _killed ? null : 123,
                 _started, _killed ? "Exited" : "Running", _killed ? 0 : null,
