@@ -291,13 +291,13 @@ public class ApiErrorRecoveryServiceTests
                 .ToListAsync())
             .ShouldHaveSingleItem();
         hold.RawText.ShouldBe(UsageLimitWallParser.SessionLimitProductionText);
-        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.Reason.ShouldContain("2026-09-05T16:20:00Z");
         hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc));
         await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
     }
 
     [Test]
-    public async Task Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text()
+    public async Task Sibling_text_is_resolved_before_initial_wall_classification()
     {
         var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
@@ -319,14 +319,14 @@ public class ApiErrorRecoveryServiceTests
         await using (var first = CreateContext())
         {
             var paused = await first.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
-            paused.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallModelPaused);
-            var sixHour = (await first.ModelAvailabilityHolds
+            paused.ResolvedReason.ShouldBeNull();
+            paused.ResetAtUtc.ShouldBe(new DateTime(2026, 9, 5, 16, 20, 0, DateTimeKind.Utc));
+            var parsed = (await first.ModelAvailabilityHolds
                     .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
                     .ToListAsync())
                 .ShouldHaveSingleItem();
-            sixHour.DisabledUntil.ShouldBe(now.UtcDateTime.AddHours(6));
-            sixHour.RawText.ShouldBeNullOrWhiteSpace();
-            sixHour.Reason.ShouldContain("per-model cap");
+            parsed.DisabledUntil.ShouldBe(new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc));
+            parsed.RawText.ShouldBe(text);
         }
 
         await svc.EnsureAdoptedAsync(
@@ -342,7 +342,7 @@ public class ApiErrorRecoveryServiceTests
         var hold = await db.ModelAvailabilityHolds.SingleAsync(
             x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
         hold.RawText.ShouldBe(text);
-        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.Reason.ShouldContain("2026-09-05T16:20:00Z");
         hold.DisabledUntil.ShouldBe(resetPlusPadding);
         await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
     }
@@ -1083,7 +1083,7 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
-    public async Task Wall_parks_after_three_deaths()
+    public async Task Superseded_walls_do_not_count_as_three_deaths()
     {
         await using var h = await CreateHarnessAsync();
         for (var i = 0; i < 3; i++)
@@ -1099,10 +1099,10 @@ public class ApiErrorRecoveryServiceTests
             .OrderBy(r => r.StubSequence)
             .ToListAsync();
         rows.Count.ShouldBe(3);
-        rows[0].ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.Replaced);
-        rows[1].ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.Replaced);
-        rows[2].ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallParked);
-        rows[2].NextAttemptAt.ShouldBeNull();
+        rows[0].ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.Superseded);
+        rows[1].ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.Superseded);
+        rows[2].ResolvedReason.ShouldBeNull();
+        rows[2].NextAttemptAt.ShouldNotBeNull();
     }
 
     [Test]
