@@ -56,8 +56,18 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
         }
     }
 
-    public async Task<ProgressRemoteObservation> ObserveExactRefAsync(
-        string repository, string fullRef, string? expectedFingerprint, Guid taskId, CancellationToken ct)
+    public Task<ProgressRemoteObservation> ObserveExactRefAsync(
+        string repository, string fullRef, string? expectedFingerprint, Guid taskId, CancellationToken ct) =>
+        ObserveExactRefCoreAsync(repository, fullRef, expectedFingerprint, taskId, null, ct);
+
+    public Task<ProgressRemoteObservation> ObserveExactRefUnderLeaseAsync(
+        string repository, string fullRef, string? expectedFingerprint, Guid taskId,
+        RepositoryLease lease, CancellationToken ct) =>
+        ObserveExactRefCoreAsync(repository, fullRef, expectedFingerprint, taskId, lease, ct);
+
+    private async Task<ProgressRemoteObservation> ObserveExactRefCoreAsync(
+        string repository, string fullRef, string? expectedFingerprint, Guid taskId,
+        RepositoryLease? heldLease, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (!fullRef.StartsWith("refs/heads/", StringComparison.Ordinal))
@@ -118,8 +128,12 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
             if (_leases is null)
                 return new(ProgressRemoteState.Unavailable, EndpointFingerprint: fingerprint, Reason: "repository_lease_busy");
 
-            await using var lease = await _leases.TryAcquireAsync(repository, ct);
-            if (lease is null)
+            await using var acquiredLease = heldLease is null
+                ? await _leases.TryAcquireAsync(repository, ct) : null;
+            if (heldLease is not null
+                && !_leases.Owns(heldLease, await CommonDirectoryAsync(repository, ct)))
+                return new(ProgressRemoteState.Unavailable, EndpointFingerprint: fingerprint, Reason: "repository_lease_busy");
+            if (heldLease is null && acquiredLease is null)
                 return new(ProgressRemoteState.Unavailable, EndpointFingerprint: fingerprint, Reason: "repository_lease_busy");
 
             var pin = $"{ProgressRefPrefix}{taskId:N}/observe-{ShaSuffix(fullRef)}";

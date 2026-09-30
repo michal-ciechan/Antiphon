@@ -15,6 +15,10 @@ public interface ITaskProgressGit
     Task<bool> HasOriginAsync(string repository, CancellationToken ct);
     Task<ProgressRemoteObservation> ObserveExactRefAsync(
         string repository, string fullRef, string? expectedFingerprint, Guid taskId, CancellationToken ct);
+    Task<ProgressRemoteObservation> ObserveExactRefUnderLeaseAsync(
+        string repository, string fullRef, string? expectedFingerprint, Guid taskId,
+        RepositoryLease lease, CancellationToken ct) =>
+        ObserveExactRefAsync(repository, fullRef, expectedFingerprint, taskId, ct);
     Task<bool?> IsAncestorAsync(string repository, string ancestorSha, string descendantSha, CancellationToken ct);
 
     /// <summary>

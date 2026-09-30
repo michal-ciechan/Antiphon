@@ -4593,7 +4593,7 @@ public sealed class AgentTaskDispatcher
         List<string>? repairWarnings = null;
         if (claimed.RepairSourceTaskId is Guid)
         {
-            var prep = await PrepareRepairSourceAsync(claimed, ct);
+            var prep = await PrepareRepairSourceAsync(claimed, repositoryLease!, ct);
             if (prep.FailureReason is not null)
             {
                 await FailAsync(claimed, prep.FailureReason, ct);
@@ -6216,7 +6216,7 @@ public sealed class AgentTaskDispatcher
 
     private sealed record RepairSourcePrep(string? OwnerSha, List<string> Warnings, string? FailureReason);
 
-    private async Task<RepairSourcePrep> PrepareRepairSourceAsync(AgentTask task, CancellationToken ct)
+    private async Task<RepairSourcePrep> PrepareRepairSourceAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
     {
         var warnings = new List<string>();
         if (_progressGit is null || task.RepairSourceTaskId is not Guid ownerId || task.RepoPath is null)
@@ -6278,7 +6278,10 @@ public sealed class AgentTaskDispatcher
                 $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {registered.Path}");
         }
 
-        var remote = await ObserveRemoteForBaselineAsync(task.RepoPath, ownerRef, task.Id, ct);
+        var observed = await _progressGit.ObserveExactRefUnderLeaseAsync(
+            task.RepoPath, ownerRef, null, task.Id, lease, ct);
+        var remote = new ProgressRemoteBaseline(observed.State, observed.Sha,
+            observed.EndpointFingerprint, observed.Reason);
         if (remote.State == ProgressRemoteState.Present && remote.Sha is { } remoteSha && remoteSha != local.Sha)
         {
             var localBehind = await _progressGit.IsAncestorAsync(task.RepoPath, local.Sha, remoteSha, ct);
