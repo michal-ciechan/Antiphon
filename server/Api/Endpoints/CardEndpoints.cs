@@ -46,7 +46,7 @@ public static class CardEndpoints
             Guid? boardId,
             int? limit,
             string? pageToken,
-            bool includeArchived,
+            bool? includeArchived,
             CardService service,
             CancellationToken cancellationToken) =>
         {
@@ -57,7 +57,7 @@ public static class CardEndpoints
             }
 
             return Results.Ok(await service.GetSummaryAsync(updatedSince, status, boardId, cancellationToken,
-                limit, pageToken, includeArchived));
+                limit, pageToken, includeArchived ?? false));
         });
 
         cards.MapGet("/search", async (
@@ -66,11 +66,11 @@ public static class CardEndpoints
             CardStatus? status,
             int? limit,
             string? pageToken,
-            bool includeArchived,
+            bool? includeArchived,
             CardService service,
             CancellationToken cancellationToken) =>
             Results.Ok(await service.SearchAsync(q, status, boardId, limit, pageToken,
-                includeArchived, cancellationToken)));
+                includeArchived ?? false, cancellationToken)));
 
         cards.MapGet("/{id}", async (
             string id,
