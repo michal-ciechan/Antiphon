@@ -1680,6 +1680,15 @@ c849_observe_volume() {
     [ "$mode" = 1654:1654:700 ] || write_result false CacheRootOwnershipInvalid 2
     bytes="$(sudo -n du -s -B1 -- "$resolved" | cut -f1)" || write_result false CacheSizeUnavailable 2
     [[ "$bytes" =~ ^[0-9]+$ ]] || write_result false CacheSizeInvalid 2
+    if [ "$CASE" = runner-cache-fixture ]; then
+        case "$role" in
+            nuget-packages) budget="${C849_FIXTURE_PACKAGES_BUDGET:-$budget}" ;;
+            nuget-scratch) budget="${C849_FIXTURE_SCRATCH_BUDGET:-$budget}" ;;
+            npm-content) budget="${C849_FIXTURE_NPM_BUDGET:-$budget}" ;;
+        esac
+        [[ "$budget" =~ ^[0-9]+$ ]] && [ "$budget" -gt 0 ] \
+            || write_result false CacheBudgetInvalid 2
+    fi
     printf '%s %s %s %s %s %s\n' "$name" "$role" "$resolved" "$mode" "$bytes" "$budget"
 }
 
@@ -1709,6 +1718,11 @@ c849_preview() {
         "$roots" > "$CASE_DIR/budgets.txt"
     if [ "$free_bytes" -lt 21474836480 ]; then printf 'headroom=LOW\n' >> "$CASE_DIR/preview.txt"; else printf 'headroom=OK\n' >> "$CASE_DIR/preview.txt"; fi
     : > "$CASE_DIR/consumers.txt"
+    if [ "$CASE" = runner-cache-fixture ]; then
+        [ -s "$SERVER2_ROOT/fixture-consumers.txt" ] \
+            || write_result false CacheConsumerUnknown 2
+        cp "$SERVER2_ROOT/fixture-consumers.txt" "$CASE_DIR/consumers.txt"
+    else
     for runner in server2 server2-temp; do
         status_file="$CASE_DIR/.status-$runner"
         status_code="$(curl -sS --max-time 15 -o "$status_file" -w '%{http_code}' \
@@ -1736,6 +1750,7 @@ c849_preview() {
             2>/dev/null | jq -r '.occupied // "unknown"' 2>/dev/null || true)"
     fi
     printf 'build-slots-occupied=%s\n' "$occupancy" >> "$CASE_DIR/consumers.txt"
+    fi
     local durable="$SERVER2_ROOT/cache/previews/$RUN"
     [ ! -e "$durable" ] || write_result false CachePreviewAlreadyExists 2
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache/previews" "$durable"
@@ -1766,6 +1781,15 @@ c849_budget_gate() {
 
 c849_prune_idle() {
     local runner project container body broker mounted expected other active
+    if [ "$CASE" = runner-cache-fixture ]; then
+        grep -Fxq 'runners=idle processes=0 leases=0' "$SERVER2_ROOT/fixture-consumers.txt" \
+            || write_result false CacheConsumersBusy 2
+        for mounted in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+            [ -z "$(docker ps -q --filter "volume=$mounted")" ] \
+                || write_result false CacheConsumersBusy 2
+        done
+        return 0
+    fi
     for runner in server2 server2-temp; do
         body="$(c849_status_body "$runner")" \
             || write_result false CacheStatusUnavailable 2
@@ -1900,6 +1924,13 @@ c849_prune() {
             *) write_result false CacheTargetInvalid 2 ;;
         esac
     done < "$CASE_DIR/volumes-now.txt"
+    if [ "$CASE" = runner-cache-fixture ]; then
+        c849_fixture_refill "$image"
+        c849_budget_gate
+        printf 'pruned=%s receipt=%s refill=passed smokes=1 admission=held\n' \
+            "$selected" "$C590_PREVIEW_RUN" > "$CASE_DIR/prune.txt"
+        write_result true '' 0
+    fi
     main_container="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" --filter 'label=com.docker.compose.service=session-runner')"
     temp_container="$(docker ps -q --filter "label=com.docker.compose.project=$TEMP_PROJECT" --filter 'label=com.docker.compose.service=session-runner')"
     [ -n "$main_container" ] || write_result false CacheConsumerUnknown 2
@@ -2615,6 +2646,141 @@ EOF
     printf 'PASS F-7\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
+c849_fixture_refill() {
+    local image="$1" helper="c849-${RUN}-prune-smoke" npm_work="$SERVER2_ROOT/npm-offline"
+    docker run --rm --network none --user 1654:1654 --entrypoint npm \
+        -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
+        --mount "type=bind,source=$npm_work,target=/fixture,readonly" \
+        --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
+        "$image" cache add /fixture/pkg.tgz >/dev/null \
+        || write_result false CacheRefillFailed 2
+    docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+        -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
+        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch -e NPM_CONFIG_CACHE=/home/app/.npm \
+        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        --mount "type=volume,source=$C849_PACKAGES,target=/home/app/.nuget/packages,volume-nocopy" \
+        --mount "type=volume,source=$C849_SCRATCH,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
+        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
+        "$image" infinity >/dev/null || write_result false CacheRefillProbeStartFailed 2
+    printf '%s\n' "$helper" > "$CASE_DIR/.fixture-prune-smoke"
+    c849_smoke "$helper" fixture-prune
+    docker rm -f "$helper" >/dev/null || write_result false CacheRefillProbeCleanupFailed 2
+    rm -f "$CASE_DIR/.fixture-prune-smoke"
+}
+
+c849_fixture_prune_case() {
+    local output="$CASE_DIR/.fixture-prune-control" code=0
+    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_prune ) > "$output" 2>&1 || code=$?
+    [ "$code" -eq 0 ] || { cat "$output"; return "$code"; }
+}
+
+c849_fixture_prune() {
+    local image recovery payload image_id name path mode bytes budget source_root
+    image="$(c849_image)"
+    C849_PACKAGES="c849${RUN}smoke-packages"
+    C849_SCRATCH="c849${RUN}smoke-scratch"
+    C849_NPM="c849${RUN}npmcache-npm"
+    C849_READY="$SERVER2_ROOT/cache/fixture-prune-ready"
+    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    [ ! -e "$recovery" ] || write_result false CacheRecoveryExists 2
+    mkdir -p "$recovery/packages" "$recovery/npm"
+    cp -a "$SERVER2_ROOT/apphost/packages/." "$recovery/packages/" \
+        || write_result false CacheRecoveryMissing 2
+    payload="$(sha256sum "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+    image_id="$(docker image inspect -f '{{.Id}}' "$image")" \
+        || write_result false CacheRecoveryImageMissing 2
+    printf 'image=%s\npayload-sha256=%s\nrecovery=%s\n' "$image_id" "$payload" "$recovery" > "$C849_READY"
+    printf 'runners=idle processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
+    C849_FIXTURE_PACKAGES_BUDGET="$(( $(c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 | awk '{print $5}') * 5 / 4 ))"
+    C849_FIXTURE_SCRATCH_BUDGET="$(( $(c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 | awk '{print $5}') * 5 / 4 ))"
+    C849_FIXTURE_NPM_BUDGET="$(( $(c849_observe_volume "$C849_NPM" npm-content 2147483648 | awk '{print $5}') * 5 / 4 ))"
+    [ "$C849_FIXTURE_PACKAGES_BUDGET" -gt 0 ] && [ "$C849_FIXTURE_NPM_BUDGET" -gt 0 ] \
+        || write_result false FixtureBudgetInvalid 2
+    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_preview ) \
+        || write_result false FixturePrunePreviewFailed 2
+    C590_PREVIEW_RUN="$RUN"
+    printf 'runners=busy processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
+    c849_fixture_control PC-21 CacheConsumersBusy c849_fixture_prune_case
+    printf 'runners=idle processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
+    source_root="$SERVER2_ROOT/cache/previews/$RUN/preview.txt"
+    cp "$source_root" "$SERVER2_ROOT/preview-backup.txt"
+    sed -i 's/^source-sha=.*/source-sha=0000000000000000000000000000000000000000/' "$source_root"
+    c849_fixture_control PC-22 CachePreviewStale c849_fixture_prune_case
+    cp "$SERVER2_ROOT/preview-backup.txt" "$source_root"
+    c849_fixture_control PC-23 CacheTargetInvalid c849_prune_validate_tree '' ''
+    cp "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt" "$SERVER2_ROOT/volumes-backup.txt"
+    C849_FIXTURE_PACKAGES_BUDGET=1
+    awk '$2=="nuget-packages" {$6=1} {print}' "$SERVER2_ROOT/volumes-backup.txt" \
+        > "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt"
+    sed -i "s/^volume-sha256=.*/volume-sha256=$(sha256sum "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt" | cut -d' ' -f1)/" "$source_root"
+    c849_fixture_control PC-24 CacheBudgetExceeded c849_fixture_prune_case
+    cp "$SERVER2_ROOT/volumes-backup.txt" "$SERVER2_ROOT/cache/previews/$RUN/volumes.txt"
+    cp "$SERVER2_ROOT/preview-backup.txt" "$source_root"
+    C849_FIXTURE_PACKAGES_BUDGET="$(awk '$2=="nuget-packages" {print $6}' "$SERVER2_ROOT/volumes-backup.txt")"
+    mv "$recovery" "$recovery.missing"
+    c849_fixture_control PC-25 CacheRecoveryMissing c849_fixture_prune_case
+    mv "$recovery.missing" "$recovery"
+    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_prune ) \
+        || write_result false FixturePruneApplyFailed 2
+    [ -s "$CASE_DIR/prune.txt" ] && [ -s "$CASE_DIR/smoke-summary.txt" ] \
+        || write_result false FixturePruneReceiptMissing 2
+    printf 'PASS F-8\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
+c849_fixture_receipt() {
+    local line key value source="$1" output="$2"
+    : > "$output"
+    while IFS= read -r line; do
+        key="${line%%=*}"; value="${line#*=}"
+        case "$key" in
+            source-sha) [[ "$value" =~ ^[0-9a-f]{40}$ ]] || { printf 'EvidenceNotAllowListed\n'; return 2; } ;;
+            image-id) [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'EvidenceNotAllowListed\n'; return 2; } ;;
+            inventories|groups|controls|expected-red|production-mutations)
+                [[ "$value" =~ ^[0-9]+$ ]] || { printf 'EvidenceNotAllowListed\n'; return 2; } ;;
+            *) printf 'EvidenceNotAllowListed\n'; return 2 ;;
+        esac
+        printf '%s=%s\n' "$key" "$value" >> "$output"
+    done < "$source"
+}
+
+c849_fixture_evidence() {
+    local image_id id groups controls receipt="$CASE_DIR/fixture-summary.txt" input="$SERVER2_ROOT/fixture-summary-input.txt"
+    ( TEMP_PROJECT=antiphon-runner-temp
+      write_result() { printf '%s\n' "$2"; exit "$3"; }
+      case_runner_cache_inventory ) >/dev/null \
+        || write_result false FixtureInventoryFailed 2
+    [ -s "$CASE_DIR/server2-status.json" ] && [ -s "$CASE_DIR/server2-temp-status.json" ] \
+        || write_result false FixtureInventoriesMissing 2
+    for id in $(seq -w 1 25); do
+        grep -q "^CONTROL PC-$id " "$CASE_DIR/fixture-controls.txt" \
+            || write_result false "FixtureControlMissing PC-$id" 2
+    done
+    [ "$(sort -u "$CASE_DIR/fixture-controls.txt" | wc -l)" -eq 25 ] \
+        && [ "$(wc -l < "$CASE_DIR/fixture-controls.txt")" -eq 25 ] \
+        && [ "$(wc -l < "$CASE_DIR/fixture-groups.txt")" -eq 8 ] \
+        || write_result false FixtureRosterIncomplete 2
+    printf 'credential=TOKEN_SENTINEL_C849_CONTENT\n' > "$SERVER2_ROOT/fixture-toxic-observation.txt"
+    c849_fixture_control PC-26 EvidenceNotAllowListed c849_fixture_receipt \
+        "$SERVER2_ROOT/fixture-toxic-observation.txt" "$SERVER2_ROOT/fixture-toxic-output.txt"
+    [ ! -s "$SERVER2_ROOT/fixture-toxic-output.txt" ] \
+        && ! grep -Rq 'TOKEN_SENTINEL_C849_CONTENT' "$CASE_DIR" \
+        || write_result false EvidenceNotAllowListed 2
+    image_id="$(docker image inspect -f '{{.Id}}' "$(c849_image)")" \
+        || write_result false FixtureImageMissing 2
+    groups=9; controls=26
+    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nproduction-mutations=0\n' \
+        "$SHA" "$image_id" "$groups" "$controls" "$controls" > "$input"
+    c849_fixture_receipt "$input" "$receipt" || write_result false EvidenceNotAllowListed 2
+    printf 'PASS F-9\n' >> "$CASE_DIR/fixture-groups.txt"
+    [ "$(wc -l < "$CASE_DIR/fixture-groups.txt")" -eq 9 ] \
+        && [ "$(wc -l < "$CASE_DIR/fixture-controls.txt")" -eq 26 ] \
+        || write_result false FixtureRosterIncomplete 2
+    cat "$CASE_DIR/fixture-groups.txt" "$CASE_DIR/fixture-controls.txt"
+    printf 'C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0\n'
+}
+
 c849_fixture() {
     require_lane host
     c849_lock
@@ -2626,7 +2792,7 @@ c849_fixture() {
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     : > "$CASE_DIR/fixture-groups.txt"
-    trap 'if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
+    trap 'if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed
@@ -2634,7 +2800,9 @@ c849_fixture() {
     c849_fixture_apphost
     c849_fixture_npm
     c849_fixture_retention
-    write_result false CacheFixtureIncomplete 2
+    c849_fixture_prune
+    c849_fixture_evidence
+    write_result true '' 0
 }
 
 case_verify_runner_caches() {
