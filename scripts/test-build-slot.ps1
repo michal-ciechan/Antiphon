@@ -417,6 +417,17 @@ if ($env:C845_CALLER_LOG) {
 }
 $global:LASTEXITCODE = 37
 $tokens = @($args)
+$argv = [Environment]::GetCommandLineArgs()
+for ($i = 0; $i -lt $argv.Count; $i++) {
+    $candidate = [string]$argv[$i]
+    if ([string]::IsNullOrWhiteSpace($candidate) -or $candidate.StartsWith('-')) { continue }
+    $full = $null
+    try { $full = [IO.Path]::GetFullPath($candidate) } catch { continue }
+    if ([string]::Equals($full, $PSCommandPath, [StringComparison]::OrdinalIgnoreCase)) {
+        $tokens = @($argv | Select-Object -Skip ($i + 1))
+        break
+    }
+}
 & $env:C845_WRAPPER @tokens
 $code = $LASTEXITCODE
 exit $code
@@ -498,7 +509,7 @@ $payload = @{ name=$Name; project=$Project; outputPath=$OutputPath; minExecuted=
         Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq 0) -Name ($base + 'exits zero') -Detail $r.Text
         Assert-C487 -Cond $hasFields -Name ($base + 'payload parses') -Detail $r.Text
         Assert-C487 -Cond ($hasFields -and $d.name -ceq 'CP-1' -and $d.project -ceq 'project folder/app' -and
-            $d.outputPath -ceq 'bin-c845/' -and $d.minExecuted -is [int] -and $d.minExecuted -eq 3 -and
+            $d.outputPath -ceq 'bin-c845/' -and ($d.minExecuted -is [int] -or $d.minExecuted -is [long]) -and $d.minExecuted -eq 3 -and
             $d.flag -is [bool] -and $d.flag -eq $flag -and $d.expect -ceq 'A.One,B.Two') `
             -Name ($base + 'binds typed values') -Detail $r.Text
         Assert-C487 -Cond ($hasFields -and [int]$d.pid -gt 0 -and $holder -gt 0 -and [int]$d.pid -ne $holder -and
