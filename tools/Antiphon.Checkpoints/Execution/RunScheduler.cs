@@ -109,8 +109,30 @@ public sealed class RunScheduler
                 foreach (var row in pending.Where(row => BuildFailed(row, buildStates)).ToList())
                 {
                     pending.Remove(row);
-                    Mark(request, row.Id, "build-failed", ExitCodes.Invalid);
-                    finished.Add(Placeholder(row, "build-failed", ExitCodes.Invalid));
+                    var build = buildStates[row.Build!];
+                    var admission = build.AdmissionExitCode != 0;
+                    var state = admission ? build.Slot == "timeout" ? "slot-timeout" : "slot-refused" : "build-failed";
+                    var code = admission ? build.AdmissionExitCode : ExitCodes.Invalid;
+                    var receipt = Placeholder(row, state, code);
+                    if (admission)
+                    {
+                        receipt.Slot = build.Slot;
+                        receipt.SlotReason = build.SlotReason;
+                        receipt.WaitedSeconds = build.WaitedSeconds;
+                        receipt.Line = CheckpointLine.Format(new CheckpointLineModel
+                        {
+                            Name = row.Id, Commit = request.Commit, Build = "failed", Filter = row.Filter ?? "",
+                            Executed = "0", Passed = "0", Failed = "0", Skipped = "0",
+                            Slot = build.Slot, SlotReason = build.SlotReason, WaitedSeconds = build.WaitedSeconds,
+                        });
+                    }
+                    Mark(request, row.Id, state, code);
+                    var rowProgress = request.State.Rows.First(item => item.Id == row.Id);
+                    rowProgress.Slot = receipt.Slot;
+                    rowProgress.SlotReason = receipt.SlotReason;
+                    rowProgress.WaitedSeconds = receipt.WaitedSeconds;
+                    rowProgress.Line = receipt.Line;
+                    finished.Add(receipt);
                 }
 
                 var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
@@ -194,6 +216,9 @@ public sealed class RunScheduler
             progress.State = result.State;
             progress.ExitCode = result.ExitCode;
             progress.Line = result.Line;
+            progress.Slot = result.Slot;
+            progress.SlotReason = result.SlotReason;
+            progress.WaitedSeconds = result.WaitedSeconds;
             progress.Seconds = result.Seconds > 0 ? result.Seconds : Elapsed(progress.StartedAt);
             finished.Add(result);
             Publish(request);
@@ -214,6 +239,9 @@ public sealed class RunScheduler
             }
             progress.State = result.State;
             progress.ExitCode = result.ExitCode;
+            progress.Slot = result.Slot;
+            progress.SlotReason = result.SlotReason;
+            progress.WaitedSeconds = result.WaitedSeconds;
             finished.Add(result);
             Publish(request);
         }
@@ -279,9 +307,11 @@ public sealed class RunScheduler
         {
             await using var lease = await request.Slots.AcquireAsync(session, "build:" + build.Id, cancellationToken).ConfigureAwait(false);
             progress.Slot = lease.State;
+            progress.SlotReason = lease.SlotReason;
             progress.WaitedSeconds = lease.WaitedSeconds;
-            if (lease.ExitCode == ExitCodes.SlotTimeout)
+            if (lease.ExitCode != 0)
             {
+                progress.AdmissionExitCode = lease.ExitCode;
                 progress.State = "failed";
                 Publish(request);
                 return;
@@ -320,21 +350,25 @@ public sealed class RunScheduler
     {
         var started = DateTimeOffset.UtcNow;
         await using var lease = await request.Slots.AcquireAsync(session, spec.Id + "@" + (spec.Build ?? "command"), cancellationToken).ConfigureAwait(false);
-        if (lease.ExitCode == ExitCodes.SlotTimeout)
+        if (lease.ExitCode != 0)
         {
             return new RowRunResult
             {
                 Id = spec.Id,
-                ExitCode = ExitCodes.SlotTimeout,
-                State = "slot-timeout",
+                ExitCode = lease.ExitCode,
+                State = lease.State == "timeout" ? "slot-timeout" : "slot-refused",
                 BuildState = "failed",
+                Slot = lease.State,
+                SlotReason = lease.SlotReason,
+                WaitedSeconds = lease.WaitedSeconds,
                 Line = CheckpointLine.Format(new CheckpointLineModel
                 {
                     Name = spec.Id,
                     Commit = request.Commit,
                     Build = "failed",
                     Filter = spec.Filter ?? spec.Command ?? "",
-                    Slot = "timeout",
+                    Slot = lease.State,
+                    SlotReason = lease.SlotReason,
                     WaitedSeconds = lease.WaitedSeconds,
                     Command = spec.IsCommand,
                 }),
@@ -362,6 +396,7 @@ public sealed class RunScheduler
             KnownFlaky = request.KnownFlaky,
             Commit = request.Commit,
             Slot = lease.State,
+            SlotReason = lease.SlotReason,
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
             Deadline = TimeSpan.FromMinutes(minutes),
@@ -370,6 +405,9 @@ public sealed class RunScheduler
         }, TextWriter.Null, cancellationToken).ConfigureAwait(false);
         progress.LastOutputAt = DateTimeOffset.UtcNow;
         result.Id = spec.Id;
+        result.Slot = lease.State;
+        result.SlotReason = lease.SlotReason;
+        result.WaitedSeconds = lease.WaitedSeconds;
         result.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
         return result;
     }

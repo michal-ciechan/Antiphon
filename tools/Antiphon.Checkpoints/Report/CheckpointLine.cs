@@ -12,6 +12,7 @@ public sealed class CheckpointLineModel
     public string? Skipped { get; init; }
     public string? Trx { get; init; }
     public string Slot { get; init; } = "unavailable";
+    public string? SlotReason { get; init; }
     public int WaitedSeconds { get; init; }
     public int Reruns { get; init; }
     public int? ExitCode { get; init; }
@@ -36,6 +37,8 @@ public static class CheckpointLine
         if (model.Command && model.ExitCode is int code)
             line += " exit=" + code;
         line += $" slot={model.Slot} waited={model.WaitedSeconds}s";
+        if (!string.IsNullOrWhiteSpace(model.SlotReason))
+            line += " slot-reason=" + model.SlotReason;
         if (model.Reruns > 0)
             line += " reruns=" + model.Reruns;
         return line;

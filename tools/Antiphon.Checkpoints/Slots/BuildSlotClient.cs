@@ -7,11 +7,11 @@ namespace Antiphon.Checkpoints;
 public interface IBuildSlotClient
 {
     Task<SlotSession> ProbeAsync(CancellationToken cancellationToken);
-
     Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken);
 }
 
-public sealed record SlotSession(string Mode, int MaxCpuCount);
+public sealed record SlotSession(string Mode, int MaxCpuCount, int ExitCode = 0,
+    string? SlotReason = null, SlotDiagnostic? Diagnostic = null);
 
 public sealed class SlotLease : IAsyncDisposable
 {
@@ -19,6 +19,8 @@ public sealed class SlotLease : IAsyncDisposable
     public int WaitedSeconds { get; init; }
     public int MaxCpuCount { get; init; } = 4;
     public int ExitCode { get; init; }
+    public string? SlotReason { get; init; }
+    public SlotDiagnostic? Diagnostic { get; init; }
     public string? LeaseId { get; init; }
     public Func<CancellationToken, Task>? ReleaseAsync { get; init; }
 
@@ -29,7 +31,6 @@ public sealed class SlotLease : IAsyncDisposable
 public sealed class BuildSlotClient : IBuildSlotClient
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-
     private readonly HttpClient _http;
     private readonly string _endpoint;
     private readonly TimeSpan _grace;
@@ -42,17 +43,10 @@ public sealed class BuildSlotClient : IBuildSlotClient
     private readonly ILeaseHolderSource? _holders;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _held = new(StringComparer.Ordinal);
 
-    public BuildSlotClient(
-        HttpMessageHandler handler,
-        string endpoint,
-        TimeSpan? grace = null,
-        TimeSpan? wait = null,
-        Func<DateTimeOffset>? clock = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null,
-        Action<string>? log = null,
-        int? pid = null,
-        string? processStartUtc = null,
-        ILeaseHolderSource? holders = null)
+    public BuildSlotClient(HttpMessageHandler handler, string endpoint, TimeSpan? grace = null,
+        TimeSpan? wait = null, Func<DateTimeOffset>? clock = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null,
+        int? pid = null, string? processStartUtc = null, ILeaseHolderSource? holders = null)
     {
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _endpoint = endpoint.TrimEnd('/');
@@ -77,171 +71,223 @@ public sealed class BuildSlotClient : IBuildSlotClient
     public async Task<SlotSession> ProbeAsync(CancellationToken cancellationToken)
     {
         var started = _clock();
+        SlotDiagnostic? answered = null;
+        SlotDiagnostic? last = null;
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 using var response = await _http.GetAsync(_endpoint, cancellationToken).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                var elapsed = Seconds(started);
                 if (response.StatusCode == HttpStatusCode.NotFound)
-                    return new SlotSession("unavailable", 4);
+                {
+                    var notFound = SlotDiagnostic.Answer("probe", 404, "broker_not_found", body, elapsed);
+                    Note(notFound);
+                    return new SlotSession("unavailable", 4, SlotReason: notFound.Reason, Diagnostic: notFound);
+                }
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
-                    var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                    if (body.Contains("\"unlimited\":true", StringComparison.OrdinalIgnoreCase)
-                        || body.Contains("\"unlimited\": true", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var cpu = ReadInt(body, "maxCpuCount", 4);
-                        return new SlotSession("unlimited", cpu);
-                    }
-
-                    return new SlotSession("enabled", 4);
+                    if (!TryListing(body, out var enabled, out var cpu))
+                        return RefusedSession(Observe("probe", 200, "invalid_listing", body, elapsed));
+                    var mode = enabled ? "enabled" : "unlimited";
+                    _log?.Invoke($"BUILD SLOT operation=probe status=200 reason={mode} maxcpucount={cpu} elapsed={elapsed}s");
+                    return new SlotSession(mode, cpu);
                 }
+                var reason = SlotDiagnostic.ReasonOf(body, "http_" + (int)response.StatusCode);
+                last = Observe("probe", (int)response.StatusCode, reason, body, elapsed);
+                if ((int)response.StatusCode < 500)
+                    return RefusedSession(last);
+                answered = last;
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
             }
-
-            if (_clock() - started >= _grace)
-                return new SlotSession("unleased", 4);
-            var remaining = _grace - (_clock() - started);
-            var step = remaining < TimeSpan.FromSeconds(5) ? remaining : TimeSpan.FromSeconds(5);
-            if (step <= TimeSpan.Zero)
-                return new SlotSession("unleased", 4);
-            await _delay(step, cancellationToken).ConfigureAwait(false);
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+            {
+                last = SlotDiagnostic.Failure("probe", "runner_unreachable", ex, Seconds(started));
+                Note(last);
+            }
+            if (SecondsSince(started) >= _grace)
+                break;
+            await DelayGrace(started, cancellationToken).ConfigureAwait(false);
         }
+        if (answered is not null)
+            return RefusedSession(answered);
+        var fallback = last ?? new SlotDiagnostic("probe", null, "runner_unreachable", null, null, Seconds(started));
+        _log?.Invoke(fallback.Line() + " fallback=unleased");
+        return new SlotSession("unleased", 4, SlotReason: "runner_unreachable", Diagnostic: fallback);
     }
 
     public async Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
     {
+        if (session.ExitCode != 0 || session.Mode == "refused")
+            return RefusedLease(session.Diagnostic ?? new SlotDiagnostic("probe", null,
+                session.SlotReason ?? "probe_refused", null, null, 0), 0, label);
         if (session.Mode is "unavailable" or "unleased" or "unlimited" or "off")
-        {
-            var state = session.Mode == "off" ? "skipped" : session.Mode;
-            return new SlotLease { State = state, MaxCpuCount = session.MaxCpuCount, ExitCode = 0 };
-        }
+            return new SlotLease
+            {
+                State = session.Mode == "off" ? "skipped" : session.Mode,
+                MaxCpuCount = session.MaxCpuCount,
+                SlotReason = session.SlotReason,
+                Diagnostic = session.Diagnostic,
+            };
+        if (session.Mode != "enabled")
+            return RefusedLease(new SlotDiagnostic("probe", null, "invalid_session", null, null, 0), 0, label);
 
         var started = _clock();
         var lastPrinted = started - TimeSpan.FromMinutes(2);
+        SlotDiagnostic? answered = null;
+        SlotDiagnostic? last = null;
         ILeaseHolder? holder = null;
         try
         {
-            holder = _holders?.Open();
+            try
+            {
+                holder = _holders?.Open();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return RefusedLease(SlotDiagnostic.Failure("acquire", "holder_identity_unavailable", ex, Seconds(started)), Seconds(started), label);
+            }
             var pid = holder?.Pid ?? _pid;
             var processStart = holder?.ProcessStartUtc ?? _processStartUtc;
+            if (pid <= 0 || string.IsNullOrWhiteSpace(processStart))
+                return RefusedLease(new SlotDiagnostic("acquire", null, "holder_identity_unavailable", null, null, Seconds(started)), Seconds(started), label);
             var replacements = 0;
             while (true)
             {
-                using var content = new StringContent(JsonSerializer.Serialize(new
+                cancellationToken.ThrowIfCancellationRequested();
+                try
                 {
-                    pid,
-                    processStartUtc = processStart,
-                    label,
-                    sessionId = Environment.GetEnvironmentVariable("ANTIPHON_SESSION_ID"),
-                    taskId = Environment.GetEnvironmentVariable("ANTIPHON_TASK_ID"),
-                }, Json), Encoding.UTF8, "application/json");
-                using var response = await _http.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);
-                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                var elapsed = (int)(_clock() - started).TotalSeconds;
-                if (response.StatusCode == HttpStatusCode.OK)
-                {
-                    if (body.Contains("\"unlimited\":true", StringComparison.OrdinalIgnoreCase))
+                    using var content = new StringContent(JsonSerializer.Serialize(new
                     {
-                        var cpu = ReadInt(body, "maxCpuCount", session.MaxCpuCount);
-                        _log?.Invoke($"BUILD SLOT unlimited maxcpucount={cpu}");
-                        return new SlotLease { State = "unlimited", MaxCpuCount = cpu, WaitedSeconds = elapsed };
-                    }
-
-                    var leaseId = ReadString(body, "leaseId") ?? "";
-                    if (leaseId.Length == 0 || !_held.TryAdd(leaseId, 0))
+                        pid,
+                        processStartUtc = processStart,
+                        label,
+                        sessionId = Environment.GetEnvironmentVariable("ANTIPHON_SESSION_ID"),
+                        taskId = Environment.GetEnvironmentVariable("ANTIPHON_TASK_ID"),
+                    }, Json), Encoding.UTF8, "application/json");
+                    using var response = await _http.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);
+                    var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    var elapsed = Seconds(started);
+                    if (response.StatusCode == HttpStatusCode.OK)
                     {
-                        if (_holders is null || holder is null || replacements >= 3)
+                        if (!TryGrant(body, out var leaseId, out var cpu, out var renewEvery, out var unlimited))
                         {
-                            _log?.Invoke($"BUILD SLOT refused shared lease={leaseId} label={label}");
-                            return new SlotLease { State = "unleased", MaxCpuCount = 4, WaitedSeconds = elapsed };
+                            // A syntactically identifiable grant may need cleanup even if another field is invalid.
+                            var orphanId = ReadString(body, "leaseId");
+                            if (!string.IsNullOrWhiteSpace(orphanId) && !_held.ContainsKey(orphanId))
+                                await ReleaseAsync(orphanId, label, CancellationToken.None).ConfigureAwait(false);
+                            return RefusedLease(Observe("acquire", 200, "invalid_grant", body, elapsed, label), elapsed, label);
                         }
-
-                        await holder.DisposeAsync().ConfigureAwait(false);
-                        holder = _holders.Open();
-                        pid = holder.Pid;
-                        processStart = holder.ProcessStartUtc;
-                        replacements++;
+                        if (unlimited)
+                        {
+                            _log?.Invoke($"BUILD SLOT label={SlotDiagnostic.Excerpt(label)} operation=acquire status=200 reason=unlimited maxcpucount={cpu} elapsed={elapsed}s");
+                            return new SlotLease { State = "unlimited", MaxCpuCount = cpu, WaitedSeconds = elapsed };
+                        }
+                        if (!_held.TryAdd(leaseId!, 0))
+                        {
+                            if (_holders is null || holder is null || replacements >= 3)
+                                return RefusedLease(Observe("acquire", 200, "shared_lease", body, elapsed, label), elapsed, label);
+                            await holder.DisposeAsync().ConfigureAwait(false);
+                            holder = null;
+                            try { holder = _holders.Open(); }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                return RefusedLease(SlotDiagnostic.Failure("acquire", "holder_identity_unavailable", ex, Seconds(started)), Seconds(started), label);
+                            }
+                            pid = holder.Pid;
+                            processStart = holder.ProcessStartUtc;
+                            if (pid <= 0 || string.IsNullOrWhiteSpace(processStart))
+                                return RefusedLease(new SlotDiagnostic("acquire", null, "holder_identity_unavailable", null, null, Seconds(started)), Seconds(started), label);
+                            replacements++;
+                            continue;
+                        }
+                        try
+                        {
+                            _log?.Invoke($"BUILD SLOT granted lease={leaseId} label={SlotDiagnostic.Excerpt(label)} waited={elapsed}s maxcpucount={cpu}");
+                        }
+                        catch
+                        {
+                            _held.TryRemove(leaseId!, out _);
+                            await ReleaseAsync(leaseId!, label, CancellationToken.None).ConfigureAwait(false);
+                            throw;
+                        }
+                        var owned = holder;
+                        holder = null;
+                        var renewalStop = renewEvery > 0 ? new CancellationTokenSource() : null;
+                        var renewal = renewalStop is null ? Task.CompletedTask
+                            : RenewUntilReleasedAsync(leaseId!, label, renewEvery, renewalStop.Token);
+                        return new SlotLease
+                        {
+                            State = "granted", LeaseId = leaseId, MaxCpuCount = cpu,
+                            WaitedSeconds = elapsed,
+                            ReleaseAsync = async token =>
+                            {
+                                try
+                                {
+                                    if (renewalStop is not null)
+                                    {
+                                        renewalStop.Cancel();
+                                        await renewal.ConfigureAwait(false);
+                                    }
+                                    await ReleaseAsync(leaseId!, label, token).ConfigureAwait(false);
+                                }
+                                finally
+                                {
+                                    renewalStop?.Dispose();
+                                    _held.TryRemove(leaseId!, out _);
+                                    if (owned is not null)
+                                        await owned.DisposeAsync().ConfigureAwait(false);
+                                }
+                            },
+                        };
+                    }
+                    var reason = SlotDiagnostic.ReasonOf(body, "http_" + (int)response.StatusCode);
+                    last = Observe("acquire", (int)response.StatusCode, reason, body, elapsed, label);
+                    if (response.StatusCode == HttpStatusCode.Conflict && reason is ("build_slot_busy" or "build_slot_memory_floor"))
+                    {
+                        if (SecondsSince(started) >= _wait)
+                        {
+                            _log?.Invoke($"BUILD SLOT timeout label={SlotDiagnostic.Excerpt(label)} after {(int)_wait.TotalSeconds}s reason={reason}");
+                            return new SlotLease { State = "timeout", ExitCode = ExitCodes.SlotTimeout,
+                                WaitedSeconds = elapsed, MaxCpuCount = 0, SlotReason = reason, Diagnostic = last };
+                        }
+                        if (_clock() - lastPrinted >= TimeSpan.FromMinutes(1))
+                        {
+                            _log?.Invoke($"BUILD SLOT waiting label={SlotDiagnostic.Excerpt(label)} reason={reason} elapsed={(int)(_clock() - started).TotalMinutes}m");
+                            lastPrinted = _clock();
+                        }
+                        var retryMs = ReadInt(body, "retryAfterMs", 5000);
+                        await _delay(TimeSpan.FromMilliseconds(Math.Clamp(retryMs, 1, 60_000)), cancellationToken).ConfigureAwait(false);
                         continue;
                     }
-
-                    var max = ReadInt(body, "maxCpuCount", 4);
-                    var renewEvery = ReadInt(body, "renewEverySeconds", 0);
-                    try
-                    {
-                        _log?.Invoke($"BUILD SLOT granted lease={leaseId} waited={elapsed}s maxcpucount={max}");
-                    }
-                    catch
-                    {
-                        _held.TryRemove(leaseId, out _);
-                        try { using var ignored = await _http.DeleteAsync(_endpoint + "/" + leaseId, CancellationToken.None).ConfigureAwait(false); }
-                        catch { /* holder disposal in the outer finally is the remaining safety net */ }
-                        throw;
-                    }
-                    var owned = holder;
-                    holder = null;
-                    var renewalStop = renewEvery > 0 ? new CancellationTokenSource() : null;
-                    var renewal = renewalStop is null
-                        ? Task.CompletedTask
-                        : RenewUntilReleasedAsync(leaseId, renewEvery, renewalStop.Token);
-                    return new SlotLease
-                    {
-                        State = "granted",
-                        LeaseId = leaseId,
-                        MaxCpuCount = max,
-                        WaitedSeconds = elapsed,
-                        ReleaseAsync = async token =>
-                        {
-                            try
-                            {
-                                if (renewalStop is not null)
-                                {
-                                    renewalStop.Cancel();
-                                    await renewal.ConfigureAwait(false);
-                                }
-                                await ReleaseAsync(leaseId, token).ConfigureAwait(false);
-                            }
-                            finally
-                            {
-                                renewalStop?.Dispose();
-                                _held.TryRemove(leaseId, out _);
-                                if (owned is not null)
-                                    await owned.DisposeAsync().ConfigureAwait(false);
-                            }
-                        },
-                    };
+                    if ((int)response.StatusCode < 500)
+                        return RefusedLease(last, elapsed, label);
+                    answered = last;
                 }
-
-            var type = ReadString(body, "type") ?? "";
-            if (response.StatusCode == HttpStatusCode.Conflict
-                && (type == "build_slot_busy" || type == "build_slot_memory_floor"))
-            {
-                if (_clock() - started >= _wait)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    _log?.Invoke($"BUILD SLOT timeout after {(int)_wait.TotalSeconds}s");
-                    return new SlotLease { State = "timeout", ExitCode = ExitCodes.SlotTimeout, WaitedSeconds = elapsed, MaxCpuCount = 0 };
+                    throw;
                 }
-
-                if (_clock() - lastPrinted >= TimeSpan.FromMinutes(1))
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
                 {
-                    var minutes = (int)(_clock() - started).TotalMinutes;
-                    _log?.Invoke(type == "build_slot_busy"
-                        ? $"BUILD SLOT waiting label={label} elapsed={minutes}m"
-                        : $"BUILD SLOT waiting label={label} reason=memory_floor elapsed={minutes}m");
-                    lastPrinted = _clock();
+                    last = SlotDiagnostic.Failure("acquire", "runner_unreachable", ex, Seconds(started));
+                    Note(last, label);
                 }
-
-                var retryMs = ReadInt(body, "retryAfterMs", 5000);
-                await _delay(TimeSpan.FromMilliseconds(Math.Clamp(retryMs, 1, 60_000)), cancellationToken).ConfigureAwait(false);
-                continue;
+                if (SecondsSince(started) >= _grace)
+                    break;
+                await DelayGrace(started, cancellationToken).ConfigureAwait(false);
             }
-
-                if (_clock() - started >= _grace)
-                    return new SlotLease { State = "unleased", MaxCpuCount = 4, WaitedSeconds = elapsed };
-                await _delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-            }
+            if (answered is not null)
+                return RefusedLease(answered, Seconds(started), label);
+            var fallback = last ?? new SlotDiagnostic("acquire", null, "runner_unreachable", null, null, Seconds(started));
+            _log?.Invoke(fallback.Line(label) + " fallback=unleased");
+            return new SlotLease { State = "unleased", MaxCpuCount = 4,
+                WaitedSeconds = Seconds(started), SlotReason = "runner_unreachable", Diagnostic = fallback };
         }
         finally
         {
@@ -250,67 +296,141 @@ public sealed class BuildSlotClient : IBuildSlotClient
         }
     }
 
-    private async Task RenewUntilReleasedAsync(string leaseId, int everySeconds, CancellationToken ct)
+    private async Task RenewUntilReleasedAsync(string leaseId, string label, int everySeconds, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(everySeconds), ct).ConfigureAwait(false);
-                using var response = await _http.PostAsync(
-                    _endpoint + "/" + leaseId + "/renew", null, ct).ConfigureAwait(false);
-                if (response.StatusCode == HttpStatusCode.NotFound)
-                {
-                    _log?.Invoke($"BUILD SLOT renew lost lease={leaseId}");
-                    return;
-                }
+                using var response = await _http.PostAsync(_endpoint + "/" + leaseId + "/renew", null, ct).ConfigureAwait(false);
                 if (response.StatusCode != HttpStatusCode.NoContent)
-                    _log?.Invoke($"BUILD SLOT renew failed lease={leaseId} status={(int)response.StatusCode}");
+                {
+                    var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    var diagnostic = Observe("renew", (int)response.StatusCode,
+                        SlotDiagnostic.ReasonOf(body, "http_" + (int)response.StatusCode), body, 0, label);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                        return;
+                }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
             {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _log?.Invoke($"BUILD SLOT renew failed lease={leaseId} error={ex.Message}");
+                Note(SlotDiagnostic.Failure("renew", "runner_unreachable", ex, 0), label);
             }
         }
     }
 
-    private async Task ReleaseAsync(string leaseId, CancellationToken cancellationToken)
+    private async Task ReleaseAsync(string leaseId, string label, CancellationToken cancellationToken)
     {
-        string line;
         try
         {
             using var response = await _http.DeleteAsync(_endpoint + "/" + leaseId, cancellationToken).ConfigureAwait(false);
-            line = response.StatusCode == HttpStatusCode.NoContent
-                ? $"BUILD SLOT released lease={leaseId}"
-                : $"BUILD SLOT release failed lease={leaseId} status={(int)response.StatusCode}";
+            if (response.StatusCode == HttpStatusCode.NoContent)
+                _log?.Invoke($"BUILD SLOT released lease={leaseId} label={SlotDiagnostic.Excerpt(label)}");
+            else
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                Observe("release", (int)response.StatusCode,
+                    SlotDiagnostic.ReasonOf(body, "http_" + (int)response.StatusCode), body, 0, label);
+            }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
         {
-            line = $"BUILD SLOT release failed lease={leaseId} error={ex.Message}";
+            Note(SlotDiagnostic.Failure("release", "runner_unreachable", ex, 0), label);
         }
+    }
 
-        _log?.Invoke(line);
+    private SlotSession RefusedSession(SlotDiagnostic diagnostic)
+    {
+        _log?.Invoke(diagnostic.Line() + " final=refused");
+        return new SlotSession("refused", 0, ExitCodes.Invalid, diagnostic.Reason, diagnostic);
+    }
+
+    private SlotLease RefusedLease(SlotDiagnostic diagnostic, int waited, string label)
+    {
+        _log?.Invoke(diagnostic.Line(label) + " final=refused");
+        return new SlotLease { State = "refused", ExitCode = ExitCodes.Invalid,
+            MaxCpuCount = 0, WaitedSeconds = waited, SlotReason = diagnostic.Reason, Diagnostic = diagnostic };
+    }
+
+    private SlotDiagnostic Observe(string operation, int status, string reason, string body, int elapsed, string? label = null)
+    {
+        var diagnostic = SlotDiagnostic.Answer(operation, status, reason, body, elapsed);
+        Note(diagnostic, label);
+        return diagnostic;
+    }
+
+    private void Note(SlotDiagnostic diagnostic, string? label = null) => _log?.Invoke(diagnostic.Line(label));
+    private int Seconds(DateTimeOffset started) => Math.Max(0, (int)(_clock() - started).TotalSeconds);
+    private TimeSpan SecondsSince(DateTimeOffset started) => _clock() - started;
+
+    private async Task DelayGrace(DateTimeOffset started, CancellationToken cancellationToken)
+    {
+        var remaining = _grace - SecondsSince(started);
+        if (remaining > TimeSpan.Zero)
+            await _delay(remaining < TimeSpan.FromSeconds(5) ? remaining : TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool TryListing(string body, out bool enabled, out int cpu)
+    {
+        enabled = false;
+        cpu = 0;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("enabled", out var flag)
+                || flag.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+                || !root.TryGetProperty("maxCpuCount", out var max)
+                || max.ValueKind != JsonValueKind.Number || !max.TryGetInt32(out cpu) || cpu <= 0
+                || !root.TryGetProperty("budget", out var budget)
+                || budget.ValueKind != JsonValueKind.Number || !budget.TryGetInt32(out var n) || n <= 0)
+                return false;
+            enabled = flag.GetBoolean();
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static bool TryGrant(string body, out string? leaseId, out int cpu, out int renewEvery, out bool unlimited)
+    {
+        leaseId = null; cpu = 0; renewEvery = 0; unlimited = false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("maxCpuCount", out var max)
+                || max.ValueKind != JsonValueKind.Number || !max.TryGetInt32(out cpu) || cpu <= 0)
+                return false;
+            if (root.TryGetProperty("unlimited", out var flag))
+            {
+                if (flag.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return false;
+                unlimited = flag.GetBoolean();
+            }
+            if (unlimited) return true;
+            if (!root.TryGetProperty("leaseId", out var id) || id.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(leaseId = id.GetString())) return false;
+            if (root.TryGetProperty("renewEverySeconds", out var renew) && renew.ValueKind != JsonValueKind.Null)
+            {
+                if (renew.ValueKind != JsonValueKind.Number || !renew.TryGetInt32(out renewEvery) || renewEvery < 0)
+                    return false;
+            }
+            return true;
+        }
+        catch (JsonException) { return false; }
     }
 
     private static int ReadInt(string json, string name, int fallback)
     {
         try
         {
-            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
-            // A pid-liveness broker sends renewEverySeconds as null; TryGetInt32 throws on Null.
+            using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty(name, out var value)
-                && value.ValueKind == JsonValueKind.Number
-                && value.TryGetInt32(out var n))
-                return n;
+                && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var n)) return n;
         }
-        catch (JsonException)
-        {
-        }
-
+        catch (JsonException) { }
         return fallback;
     }
 
@@ -318,14 +438,11 @@ public sealed class BuildSlotClient : IBuildSlotClient
     {
         try
         {
-            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+            using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
                 return value.GetString();
         }
-        catch (JsonException)
-        {
-        }
-
+        catch (JsonException) { }
         return null;
     }
 }

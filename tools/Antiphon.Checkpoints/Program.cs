@@ -60,7 +60,7 @@ public static class Program
             case "clean":
                 return Clean(options, repo);
             case "row":
-                return await Row(options, repo).ConfigureAwait(false);
+                return await Row(options, repo, runtime).ConfigureAwait(false);
             case "execute":
                 return await CheckpointApp.ExecuteAsync(Required(options, "run"), CancellationToken.None, runtime).ConfigureAwait(false);
             default:
@@ -279,23 +279,30 @@ public static class Program
         return ExitCodes.Green;
     }
 
-    private static async Task<int> Row(ArgSet options, string repo)
+    private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
-        var platform = new RuntimePlatform();
+        var platform = runtime?.Platform ?? new RuntimePlatform();
         var slots = new BuildSlotClient(
-            new HttpClientHandler(),
+            runtime?.SlotHandler ?? new HttpClientHandler(),
             BuildSlotClient.DefaultEndpoint(platform.IsWindows),
-            holders: new ProcessLeaseHolderSource());
+            clock: runtime?.SlotClock,
+            delay: runtime?.SlotDelay,
+            holders: new ProcessLeaseHolderSource(runtime?.SlotStartTimeReader));
         var session = options.Get("slots") == "off"
             ? new SlotSession("off", 4)
             : await slots.ProbeAsync(CancellationToken.None).ConfigureAwait(false);
         var name = Required(options, "name");
         await using var lease = await slots.AcquireAsync(session, name, CancellationToken.None).ConfigureAwait(false);
-        if (lease.ExitCode == ExitCodes.SlotTimeout)
+        if (lease.ExitCode != 0)
         {
-            Console.WriteLine($"CHECKPOINT {name} slot=timeout waited={lease.WaitedSeconds}s");
-            Console.WriteLine($"CHECKPOINT {name} EXIT CODE: 4");
-            return ExitCodes.SlotTimeout;
+            Console.WriteLine(CheckpointLine.Format(new CheckpointLineModel
+            {
+                Name = name, Commit = GitSnapshot.Run(repo, "rev-parse", "HEAD").Trim(),
+                Build = "failed", Filter = options.Get("filter") ?? "", Slot = lease.State,
+                SlotReason = lease.SlotReason, WaitedSeconds = lease.WaitedSeconds,
+            }));
+            Console.WriteLine($"CHECKPOINT {name} EXIT CODE: {lease.ExitCode}");
+            return lease.ExitCode;
         }
 
         var resultsRoot = options.Get("results-root") ?? ".antiphon/checkpoints";
@@ -312,7 +319,7 @@ public static class Program
         var commit = GitSnapshot.Run(repo, "rev-parse", "HEAD");
         if (commit.StartsWith("git-failed", StringComparison.Ordinal))
             commit = new string('0', 40);
-        var runner = new RowRunner(new ProcessDriver { DotnetShim = options.Get("dotnet") }, platform);
+        var runner = new RowRunner(runtime?.Driver ?? new ProcessDriver { DotnetShim = options.Get("dotnet") }, platform);
         var result = await runner.RunAsync(new RowRequest
         {
             Name = name,
@@ -327,6 +334,7 @@ public static class Program
             Properties = properties,
             Commit = commit.Trim(),
             Slot = lease.State,
+            SlotReason = lease.SlotReason,
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
         }, Console.Out, CancellationToken.None).ConfigureAwait(false);

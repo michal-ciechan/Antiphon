@@ -17,6 +17,7 @@ public sealed class RowRequest
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];
     public string Commit { get; init; } = new string('0', 40);
     public string Slot { get; init; } = "unavailable";
+    public string? SlotReason { get; init; }
     public int WaitedSeconds { get; init; }
     public int MaxCpuCount { get; init; } = 4;
     public TimeSpan Deadline { get; init; } = TimeSpan.FromMinutes(15);
@@ -38,6 +39,9 @@ public sealed class RowRunResult
     public TrxParseResult? Trx { get; init; }
     public bool TimedOut { get; init; }
     public string State { get; init; } = "";
+    public string Slot { get; set; } = "";
+    public string? SlotReason { get; set; }
+    public int WaitedSeconds { get; set; }
     public double Seconds { get; set; }
 }
 
@@ -94,6 +98,7 @@ public sealed class RowRunner
                 Command = true,
                 ExitCode = ran.ExitCode,
                 Slot = request.Slot,
+                SlotReason = request.SlotReason,
                 WaitedSeconds = request.WaitedSeconds,
             });
             combined.WriteLine(commandLine);
@@ -118,7 +123,7 @@ public sealed class RowRunner
                 return TimeoutResult(request, "failed", buffer, combined);
             if (built.ExitCode != 0)
             {
-                combined.WriteLine($"CHECKPOINT {request.Name} build=failed project={request.Project} outputPath={request.OutputPath} exit={built.ExitCode} slot={request.Slot} waited={request.WaitedSeconds}s");
+                combined.WriteLine($"CHECKPOINT {request.Name} build=failed project={request.Project} outputPath={request.OutputPath} exit={built.ExitCode} slot={request.Slot} waited={request.WaitedSeconds}s" + (request.SlotReason is null ? "" : " slot-reason=" + request.SlotReason));
                 combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
                 return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
             }
@@ -245,6 +250,7 @@ public sealed class RowRunner
             Skipped = parsed.Skipped.ToString(),
             Trx = Path.GetFullPath(trxPath),
             Slot = request.Slot,
+            SlotReason = request.SlotReason,
             WaitedSeconds = request.WaitedSeconds,
             Reruns = reruns,
         });
@@ -290,6 +296,7 @@ public sealed class RowRunner
             Filter = request.Filter ?? request.Command ?? "",
             Timeout = minutes + "m",
             Slot = request.Slot,
+            SlotReason = request.SlotReason,
             WaitedSeconds = request.WaitedSeconds,
             Command = request.Command is not null,
         });

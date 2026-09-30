@@ -45,7 +45,8 @@ public sealed class BaselineComparer
             new DriverRequest("git", ["fetch", "origin", BranchOf(baselineRef)], worktree),
             deadline,
             cancellationToken).ConfigureAwait(false);
-        _ = fetch;
+        if (fetch.ExitCode != 0 || fetch.TimedOut)
+            return results;
 
         var rev = await RunLeased(
             session,
@@ -195,8 +196,14 @@ public sealed class BaselineComparer
         if (remaining <= TimeSpan.Zero)
             return new DriverResult(ExitCodes.Timeout, "", "baseline timeout", TimedOut: true);
         await using var lease = await _slots.AcquireAsync(session, label, cancellationToken).ConfigureAwait(false);
-        if (lease.ExitCode == ExitCodes.SlotTimeout)
-            return new DriverResult(ExitCodes.SlotTimeout, "", "slot timeout", TimedOut: true);
+        if (lease.ExitCode != 0)
+        {
+            ToolRuns.Add(label + " slot=" + lease.State + " slot-reason=" + (lease.SlotReason ?? "unknown")
+                + " waited=" + lease.WaitedSeconds + "s"
+                + (lease.Diagnostic is null ? "" : " " + lease.Diagnostic.Line(label)));
+            return new DriverResult(lease.ExitCode, "", "slot " + lease.State + ": " + lease.SlotReason,
+                TimedOut: lease.ExitCode == ExitCodes.SlotTimeout);
+        }
         if (_beforeLaunch is not null)
             await _beforeLaunch(cancellationToken).ConfigureAwait(false);
         return await RowTimeout.RunWithDeadlineAsync(_driver, request, remaining, cancellationToken).ConfigureAwait(false);

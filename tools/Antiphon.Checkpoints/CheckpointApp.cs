@@ -17,6 +17,10 @@ public static class CheckpointApp
         public TimeSpan? OwnerUncertaintyBudget { get; init; }
         public IDriver? Driver { get; init; }
         public IBuildSlotClient? Slots { get; init; }
+        public HttpMessageHandler? SlotHandler { get; init; }
+        public Func<DateTimeOffset>? SlotClock { get; init; }
+        public Func<TimeSpan, CancellationToken, Task>? SlotDelay { get; init; }
+        public Func<Process, DateTime>? SlotStartTimeReader { get; init; }
         public IPlatform? Platform { get; init; }
         public Func<LaunchRequest, int>? Launch { get; init; }
         public Func<LaunchRequest, LaunchOutcome>? LaunchWithOutcome { get; init; }
@@ -115,7 +119,8 @@ public static class CheckpointApp
         Publish();
         IBuildSlotClient slots = runtime.Slots ?? (request.Slots == "off"
             ? new FixedSlotClient("off")
-            : new BuildSlotClient(new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()), log: Note, holders: new ProcessLeaseHolderSource()));
+            : new BuildSlotClient(runtime.SlotHandler ?? new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()),
+                clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note, holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader)));
         var platform = runtime.Platform ?? new RuntimePlatform();
         var width = request.Parallel is > 0 ? request.Parallel.Value : manifest.EffectiveMaxRows(platform.IsWindows);
         if (request.Serial)
@@ -483,12 +488,14 @@ public static class CheckpointApp
                 Commit = request.Commit,
                 Build = row.State == "build-failed" ? "failed" : "n/a",
                 Filter = row.Filter ?? row.Command ?? "",
-                Executed = "n/a",
-                Passed = "n/a",
-                Failed = "n/a",
-                Skipped = "n/a",
+                Executed = row.State == "slot-refused" ? "0" : "n/a",
+                Passed = row.State == "slot-refused" ? "0" : "n/a",
+                Failed = row.State == "slot-refused" ? "0" : "n/a",
+                Skipped = row.State == "slot-refused" ? "0" : "n/a",
                 Trx = "n/a",
-                Slot = "skipped",
+                Slot = row.Slot ?? "skipped",
+                SlotReason = row.SlotReason,
+                WaitedSeconds = row.WaitedSeconds,
                 Command = row.Command is not null,
                 Timeout = row.State == "timeout" ? "total" : null,
             });
@@ -524,6 +531,7 @@ public static class CheckpointApp
                 State = build.State,
                 Seconds = build.Seconds,
                 Slot = build.Slot,
+                SlotReason = build.SlotReason,
                 WaitedSeconds = build.WaitedSeconds,
             }).ToList(),
             Rows = rows,
@@ -546,10 +554,13 @@ public static class CheckpointApp
             Build = spec?.Build,
             State = row.State,
             ExitCode = row.ExitCode,
-            Executed = row.Trx?.Executed,
-            Passed = row.Trx?.Passed,
-            Failed = row.Trx?.Failed,
-            Skipped = row.Trx?.Skipped,
+            Slot = row.Slot.Length == 0 ? null : row.Slot,
+            SlotReason = row.SlotReason,
+            WaitedSeconds = row.WaitedSeconds,
+            Executed = row.Trx?.Executed ?? (row.State == "slot-refused" ? 0 : null),
+            Passed = row.Trx?.Passed ?? (row.State == "slot-refused" ? 0 : null),
+            Failed = row.Trx?.Failed ?? (row.State == "slot-refused" ? 0 : null),
+            Skipped = row.Trx?.Skipped ?? (row.State == "slot-refused" ? 0 : null),
             Reruns = row.Reruns,
             Trx = row.TrxPath,
             Seconds = row.Seconds,
