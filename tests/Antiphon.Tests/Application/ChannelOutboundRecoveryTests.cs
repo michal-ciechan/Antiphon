@@ -676,7 +676,8 @@ public sealed class ChannelOutboundRecoveryTests
                     $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
                     CancellationToken.None);
                 await Task.Delay(100);
-                await nativeRunner.SendInputAsync(nativeSessionId, "\r", CancellationToken.None);
+                await nativeRunner.SendInputAsync(nativeSessionId,
+                    OperatingSystem.IsWindows() ? "\r" : "\n", CancellationToken.None);
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 try
                 {
