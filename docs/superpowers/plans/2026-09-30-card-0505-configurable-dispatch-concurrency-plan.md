@@ -501,10 +501,66 @@ kill/release authority.
 
 ## Verification design
 
-No builds/tests are run in this Plan stage; the census below is static source evidence,
-not a TRX. TestDesign must author concrete tests for the new roster, pin the transaction
-interleavings and confirm selectors before Code. Do not replace outcome assertions with
-tests of copied formulas or settings-only assertions that never exercise the real gate.
+No builds/tests were run in Plan or TestDesign; the census and manifest checks below are
+static source evidence, not a TRX or a claim that the proposed tests already pass.
+The following fixtures, case bodies and interleavings are the Code authoring contract.
+Do not replace outcome assertions with copied formulas or settings-only assertions
+that never exercise the real gate.
+
+### Inspection
+
+| Bodies read | Boundary covered |
+|---|---|
+| DelegationOpenGate, AgentTaskService create transaction, ConcurrencyLimitException, DelegationSettings/role enum; all AgentTaskConcurrencyLimitTests | V-1/V-5/R-2; project/null/specialist/follow-up predicates and insert atomicity. Current regression fixture uses ScratchGitRepo, so the old CARD-0749 report's plain-directory failure is already repaired here. |
+| RunnerDefaultSettingsService/Endpoints, RunnerDefaultTests (including DefaultsHost, World and ThrowingBus), AppDbContext settings mapping | V-2/V-3/V-4/R-1; first seed, revision/audit, wire parsing, migration and restart patterns. Do not copy its lazy GET initialization into the pipeline. |
+| AgentTaskDispatcher DispatchOneAsync, TryReuseWarmAgentAsync, PlaceOnStandingAgentAsync, DeliverReuseMessagesAsync; DispatchHoldVisibilityTests and HostBudgetAdmissionTests | V-6/R-3; three status writers, early preparation, final claim, commit-before-delivery, held deduplication and retained-host semantics. |
+| DelegationTestServices, TestDbFixture/IsolatedTestSchema, AntiphonWebAppFactory, ModelAvailabilityDispatcherTests, BridgeQueueHarness, SessionQueueTranscriptPump, ScriptedSessionRunnerClient, ScratchGitRepo | Harness registration, database custody, safe fake clients and transcript evidence. SessionQueueTranscriptPump uses the shared default store: do not reuse it unchanged for an isolated clone. |
+| Pipeline service/DTO/endpoint; all three pipeline partial files and separate endpoint class; HostBudgetServiceTests, dispatcher predicate and standing-policy docs tests | V-7/R-3/R-4/R-5; fleet/project distinction and exact census. |
+| RoutingPinScriptTests/its StubApi and process runner; routing-pin.ps1 and delegate.ps1; checkpoint PlanTableImporter | V-8; HTTP recording through real pwsh, no retry, exact escaped-pipe manifest shape. |
+
+### Named fixtures and file ownership
+
+All **new** helpers below live in the already reserved
+`tests/Antiphon.Tests/TestHelpers/DispatchConcurrencyTestHost.cs`; keep script-only helpers
+nested in `DispatchConcurrencyScriptTests.cs`. No additional helper file is implicit.
+
+| Fixture | Concrete setup and lifetime |
+|---|---|
+| F-P `ConcurrencyPolicyCases` | Immutable inputs to the real DispatchConcurrencyPolicy. Explicit literal expected values and decisions; never another implementation of resolution/counting. All 14 ordinary roles and three specialist roles are enumerated from AgentTaskRole and asserted against the explicit supported-role set. |
+| F-S `DispatchConcurrencyTestHost` | Owns one `IsolatedTestSchema` from TestDbFixture (despite the name it is a **cloned database**, not a shared SearchPath schema), FakeTimeProvider fixed at 2026-09-30T12:00Z, recording event bus, projects P/Q, stable ordered GUIDs, and distinct contexts per caller. Seed configuration: MaxOpenTasks=9, MaxConcurrentTasks=2, Code=5, Review=4, Plan=3, Custom=null; explicit mode LegacyOpen and null queued limits after import. Host capacity is deliberately independent. Initialize explicitly before consumers. Dispose scopes, host, fake runtime and database in that order. |
+| F-H `ConcurrencyHttpHost` | Loopback Kestrel port 0, production exception middleware and real settings/project routes, JSON enum configuration, real AgentTaskService and production task/pipeline route map with its dependencies registered. Uses F-S store/services, a deterministic Caller resolved through the actual attribution path, no Hangfire dispatch loop. GET/PUT response parsing is separate from persisted DB readback. The existing AntiphonWebAppFactory/ProductionRunnerGuard remains the R-4 full-Program smoke; never configure a real runner URL. |
+| F-D `ConcurrencyDispatchWorld` | F-S plus real AgentTaskDispatcher, AgentSessionRuntime and SessionMessageQueueService; `AddDelegationWorktrees` through DelegationTestServices. Recording fake launch adapter/client and directory have local/runner-a/runner-b with ample seats (32), valid profiles/auth and controllable readiness. Use explicit ReadOnly for fresh create cases; explicit Shared plus real idle sessions for warm/standing dispatch; prepared Worktree+RemoteWorktreePath for mirror cases. Temp paths are owned directories; no native provider or real Git needed for these cases. Scope/pin/date/provider gates are initially clear. Record launches, queue inserts, submits, kills, session rows and workspace ownership separately. |
+| F-R `ConcurrencyRaceProbe` | Per-context DbCommandInterceptor, SaveChangesInterceptor and DbTransactionInterceptor, plus a separate Npgsql observer connection. Records backend PID, transaction ID, advisory-key attempts, candidate row claim, final write-entry, commit and rollback. Awaitable gates use RunContinuationsAsynchronously; only the test's chosen operation is paused. Observe `pg_blocking_pids`/`pg_locks` for the specific PID and key, or a competing write-entry signal; do not infer blocking from elapsed time. Cleanup releases every barrier in finally, cancels/awaits workers, and rolls back observer transactions. No process-wide lock or static fixture state. |
+| F-M `ConcurrencyMigrationWorld` | Own F-S clone, rewind only that clone through IMigrator to the migration immediately before AddDispatchConcurrencySettings, seed old task/project/session/host-budget/default-routing rows, migrate forward and compare full persisted snapshots. A transaction interceptor throws once before the initial import commit to model interruption. No manual SQL substitute for the actual new migration. |
+| F-Q `ConcurrencyRecipient` | FakeAgentProtocolAdapter.OnSubmitted persists exactly the submitted body as a timestamped UserPrompt in the **same cloned DB**, then controlled TurnEnd, following BridgeQueueHarness. Register it in the real runtime/queue. Busy/idle is driven by transcript rows and the fake clock; queue processing and confirmation are real. Recording client launch is a substitute for the provider process, not native readiness/delivery evidence. |
+| F-X `ConcurrencyScriptRecorder` and `ConcurrencyScriptProcess` | Loopback HTTP recorder answers ordered GET/PUT/history fixtures. Real `pwsh -NoProfile -File scripts/dispatch-concurrency.ps1` with ArgumentList, owned temp settings/reason files, fake task-token sentinel, isolated ANTIPHON_API, captured stdout/stderr/exit. Clear inherited capability/token credentials before supplying the sentinel; assert it is absent from output. Always stop/await child and listener. Class carries assembly-local ParallelLimiter<ProcessSpawnLimit>. |
+
+F-S readbacks use new contexts/AsNoTracking; a tracked entity echo is not persistence proof.
+Use fresh stores per internal scenario where counts/revisions reset. Negative wire/settings
+cases compare settings, history, task/event and host/routing row snapshots before/after;
+fixture import is outside that comparison. The wire host must explicitly finish startup
+import before serving even its first GET. F-R selects operations by context/candidate ID,
+not a brittle nth SQL command. Match EF entity states at SaveChanges for insert/claim pauses.
+
+**Narrow S2 seam amendment, within the existing footprint:** add an internal two-argument
+DispatchOneAsync overload that forwards to the existing private three-argument method
+with null siblingObservation; make DispatchOneResult internal. Keep the private
+SiblingBaseGuard/UnlandedSibling types private. F-R can then call the real final transaction
+on two distinct candidate IDs. This avoids both ticks selecting the same FIFO task and
+testing only its row lock. Ordinary V-6 cases still use TickAsync. For the stale-tick scenario, pause the
+candidate's existing `FOR UPDATE` through F-R before execution, after the outer tick read.
+No alternate admission implementation and no production test-only gate is introduced.
+
+**Late-lock boundary:** warm/standing helpers currently set Dispatched inside their own
+branches, and warm reuse mutates prior token ownership. Extract their eligibility/read
+phase from final assignment; acquire any prior-task/owner row locks before the parallel
+key, then apply status/token/agent changes and save under that key. Cold verification
+reservation, optional expiry and workspace preparation also precede the key. Move
+irreversible RawTokens removal until the decision has committed. A held decision must
+restore agent idle fields, prior token ownership and session/task bindings as well as
+Queued status. F-R asserts the observed order and F-D compares these fields after holds.
+No new owner/repository lock or external I/O is allowed after the parallel key and before
+commit. All of this stays in AgentTaskDispatcher.cs and the named helper file.
 
 ### Static census at the source baseline
 
@@ -573,39 +629,256 @@ established production-runner guard. Mark any genuinely slow new fixture Slow an
 exact class to `tests/Antiphon.Tests/slow-tests-allowlist.txt` only if measurement requires
 it; record that as a justified footprint amendment, not an assumed new file change.
 
+### Proves it works now: the 54 concrete method bodies
+
+Every row below is **one unparameterized method**, with labeled internal scenarios,
+not one TUnit execution per scenario. Preserve the existing roster's exact class/method
+names. Assertion names in backticks are Shouldly assertion messages for diagnosis and
+Mutation, not helper methods that merely return a constant. Unless a row overrides it,
+use the F-S seed and fresh state per scenario. S1 has 27, S2 16, S3 11 new results.
+
+**V-1 — DispatchConcurrencyPolicyTests, F-P (8).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Legacy_counts_queued_as_open` | LegacyOpen project=3/Plan=1; one queued Plan refuses another on role; queued+dispatched+working Custom at 3 refuses absolute. Removing one occupant admits. Assert population=open and exact counts (`legacy-queued-refusal`); no queue limit is implied by maxParallel. |
+| `Separate_counts_parallel_and_queue_independently` | SeparateQueues project 3/4 and Code 2/3 (parallel/queue). Two running Code plus 2 queued allow create, but hold dispatch; 3 queued refuse create. A free Plan role dispatches while project parallel=2, then holds at 3. Assert both decision kinds, populations, count/limit and remaining=0 at/above limits. |
+| `Project_then_global_then_seed` | Seed 9/Code5/Plan3; global project parallel=8 and Code=4; project Code=2 only. Expect project parallel 8/global, Code2/project, Plan3/default. Clear global then project independently; assert complete resolved values and every source (`precedence`). |
+| `Missing_inherits_null_is_unbounded_zero_pauses_queue` | Compare missing roles, empty Code object, Code maxParallel=null, project maxQueued=0 and null. Empty inherits; null is unbounded on that role only; zero refuses fresh create with count=0 even with an available host. Project parallel=2 still holds a null-role candidate at 2 (`null-not-absent`, `zero-pauses`). |
+| `Queue_failure_precedes_legacy_override` | LegacyOpen open=3/limit3 and queued=2/limit2 on both axes. With flag false and true, primary refusal is queued/absolute, canOverride=false; all failures include open+queued and absolute+role. Remove queue saturation: flag false refuses open, true admits. |
+| `Absolute_precedes_role_and_reports_all_failures` | Project limit=3, Code=2, with 2 Code+1 Plan; primary=absolute and exceeded constraints also contain Code. Raise project to4: role primary. Role cap above parent (Code5/project3) remains visible as5, combined bound3. Assert ordered full constraint identities and totals, not just text. |
+| `Status_and_specialist_populations_match_contract` | One of every status for each of 14 ordinary roles and all 3 specialists; for P expect open=42, parallel=28, queued=14, per ordinary role=3/2/1. Q and null copies do not change P; Blocked/Succeeded/Failed/Canceled cost0. A retained Working ordinary row adds1 parallel, a retained specialist adds0. |
+| `Validate_modes_roles_fields_and_bounds` | Literal input matrix: parallel 1/512 accepted, 0/-1/513 refused; queue 0/4096/null accepted, -1/4097 refused. Validate all ordinary role names including Custom; reject specialists, unknown/numeric/duplicate role keys, duplicate/unknown fields, fractional/string/bool/array limit, mode null/unknown/numeric, project parallel null. Role parallel null accepted. Reuse raw JSON corpus in V-3 to prove wire parser behavior (`invalid-policy-refused`). |
+
+**V-2 — DispatchConcurrencySettingsTests, F-S/F-R (10).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Import_preserves_bound_values_once` | Import F-S seed: global revision1, project revision0, Migration reason/time, immutable seed 9/5/4/3/null, LegacyOpen, null queues. New service with default2/1 role config still reads original seed (`bound-seed`). Separate fresh clone imports unchanged legacy MaxOpenTasks=600 and Code=700 without clamping; PUT newly writing those values is rejected, clear preserves the original seed. |
+| `Concurrent_initialization_writes_one_seed` | Two service providers/contexts run initialization through schedule I below, with same bound values. Exactly one scope and revision1/history row; both answers same seed/time; losing initializer does not update provenance or emit a second change (`one-seed`). |
+| `Global_put_changes_existing_service_reads` | Construct reader before PUT. Human global change project parallel7, Code4 and queue6; original reader's next read returns new values/global source and revision2. P/Q/null inherit them; host budgets, runner defaults, roles' routing and existing tasks byte-equal. |
+| `Project_override_isolated_and_clear_restores_inheritance` | P writes Code2, Code queue null and project queue0; Q/null retain global. Clear P with `{}` increments its revision and persists empty overrides/history. Later global Code4->3 flows into P; explicit-null and zero effects disappear. A stale pre-clear write fails (`clear-inherits`, `clear-keeps-revision`). |
+| `Stale_scope_or_global_revision_writes_nothing` | Independently stale global expectedRevision, stale P expectedRevision, stale expectedGlobalRevision, then P write/clear/write with the pre-clear token. Each throws revision-conflict with current two revisions, zero new history/events and exact saved snapshot unchanged (`stale-scope`, `stale-global`, `no-aba`). |
+| `Concurrent_puts_have_one_winner` | Same-revision competing global PUTs (7 vs8), then competing P PUTs with same pair of revisions. Schedule U; one success, one revision-conflict, exactly one history increment/event; winning snapshot equals its complete request, no mixed fields (`one-put-winner`). Also race P PUT against global PUT: global-first makes P stale, P-first commits P then global; asserted revision pair identifies the order. |
+| `Auto_cannot_replace_or_shadow_human` | Independent Human global replace/clear by Auto; Human P replace/clear by Auto; new Auto P shadows Human global. All refuse `dispatch_concurrency_human`, unchanged snapshots (`human-scope`, `human-inheritance`). Positive controls in same method: Auto over Migration/Auto succeeds, and explicit Human P may differ from Human global. |
+| `Noop_preserves_revision_human_claim_audits` | Auto put equivalent values/field order with trimmed reason does not change revision, time/history/events. Claim same Auto choice as Human creates one new audited revision, then identical Human repeat is no-op. Missing vs explicit-null overrides are different even if current effective values coincide (`human-claim-audits`). |
+| `History_paginates_and_survives_clear` | Write 5 revisions including a clear; read descending limit2 pages with exclusive beforeRevision; all IDs appear once, previousRevision links form chain, final cursor null. Limit bounds exercised at service level. Clear keeps earlier complete snapshot and caller/reason provenance; history reads save nothing. |
+| `Restart_and_event_failure_preserve_committed_policy` | Event bus queries through an independent connection before returning/throwing and must see committed revision. Force event exception after PUT: GET still returns saved policy. Rebuild provider on same DB with divergent config; seed/overrides/history unchanged (`restart-durable`, `event-after-commit`); no runner call. The real create consequence is V-5 after S2, so CP-1 does not depend on a future slice. |
+
+**V-3 — DispatchConcurrencyWireTests, F-H (6).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Global_get_put_roundtrip` | GET supports exactly14 ordinary roles, ranges, seed origin/time and revision1. PUT full audited override with finite/null/zero fields returns200 committed snapshot; follow-up GET and new DB context agree, camelCase field/source/mode/population metadata present. Independent named fields are asserted, not serialization compared with itself. |
+| `Project_get_put_clear_roundtrip` | P GET gives projectRevision0 and globalRevision1. PUT reads both, sends partial Code override; GET Q unchanged. PUT `{}` then global change verifies inherited P and nonzero P revision. Unknown project GET/PUT both404 and create no scope/history row. |
+| `Missing_fields_invalid_body_and_unknown_project_write_nothing` | Raw JSON corpus: missing/null outer required fields, unknown fields, duplicate keys, wrong type/enum, empty/malformed body, trailing garbage, V-1 bounds, reason blank/401 chars, Migration provenance, forged callerTaskId. Follow RunnerDefaultsPut's explicit reader: catch malformed JSON/type conversion as ValidationException, so all these body cases are422/validation_failed; unknown project is404. Every case has its literal expected status/code and unchanged DB snapshot (`invalid-wire-no-write`); reason1/400, empty overrides and explicit nullable null are positive cases. |
+| `Revision_conflict_returns_current_revisions` | Stale global and P/global-pair writes return409 Problem Details code dispatch_concurrency_revision_conflict with current revisions, not a generic500. P/global race from schedule U is also exercised over HTTP. Auto-over-Human returns409 dispatch_concurrency_human. Both leave DB and event list unchanged. |
+| `Human_reason_and_server_caller_are_audited` | PUT as seeded authorized task caller with body Human and padded reason; history stores trimmed text and server caller ID. Anonymous allowed caller records null, never a body ID. Forged body ID is rejected before mutation. Assert complete audit fields (`server-caller-only`), event follows commit, and no placement/routing/host write. |
+| `Revision_routes_are_readonly_and_bounded` | Exercise both route families, default50/max100, explicit1, exclusive cursor and end-of-pages; seed101 history rows via service. Invalid limit0/101 and invalid cursor refused422. Two GET/history calls preserve table snapshots and invoke no save/initialization; absent project404 (`get-is-readonly`). |
+
+**V-4 — DispatchConcurrencyMigrationTests, F-M (3).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Upgrade_populated_database_preserves_task_rows` | At preceding migration seed P/Q/null tasks in every status, sessions, host override0 and runner-default revision. Apply actual migration; old row snapshots are identical and no task is requeued. Verify schema/indexes by attempting duplicate scope and duplicate (SettingsId,Revision) writes in separately rolled-back transactions: both unique violations. Ensure initialization later supplies config rather than migration SQL constants. |
+| `Initialize_from_nondefault_config_then_restart` | Upgrade then initialize with F-S seed; persist global mode SeparateQueues and P override; restart provider with MaxOpenTasks=2/Code1. GET still honors saved policy, clear restores seed9/Code5, global/project revisions never reset. Real create/dispatch consequences belong to S2's V-5/V-6. |
+| `Interrupted_initialization_rolls_back_seed_and_history` | Throw once immediately before import commit, after both insert commands; fresh context sees zero settings and history, no event (`atomic-import`). Retry succeeds with exactly one complete revision1. Do not use a failure before any SQL as the rollback proof. |
+
+**V-5 — DispatchConcurrencyAdmissionTests, F-H/F-S/F-R (8).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Unconfigured_create_keeps_legacy_decisions` | No limit PUT: imported Plan3 admits first3 Queued Plan rows, fourth409/open/role; explicit seed Plan1 subcase admits first and refuses second. Overall9 uses mixed roles/Custom; tenth409/absolute. Blocked/terminal controls admit. Assert inserted IDs and zero failed-request rows; mode stays LegacyOpen (`legacy-real-create`). |
+| `Global_and_project_put_change_real_create` | Same AgentTaskService instance: global Legacy Plan1 refuses second; Human global Plan2 admits it. P override Plan3 affects only P; clear restores current global. Reconstruct the provider with divergent seed options and repeat CreateAsync: saved limits still decide. Schedule A/U below races a lower PUT with a fresh create in both orders, proving no stale policy and exactly the legal committed row set. |
+| `Project_and_role_queue_boundaries_refuse_without_insert` | Separate project parallel3/queue4, Code parallel2/queue3. Two Working Code do not spend queue allowance: first3 queued Code accepted, fourth role409; a Plan fills fourth project slot, next Custom absolute409. Complete a queued row and retry accepts one. Loop role/project queue0 and null: zero pauses at empty, null does not bound; keep finite running gate. Compare task/event count after every refusal (`queue-count-only`, `queue-refuses`). |
+| `Other_project_and_null_bucket_do_not_interfere` | Fill P queue and parallel; Q and null each accept their own first row. Fill Q separately; it cannot block null. Requests for P list only P occupants; blocked/terminal/specialists from P and ordinary Q/null never contaminate its count. Check parent-derived project scope and explicit null bucket (`project-isolation`). |
+| `Specialists_and_live_followups_keep_admission_exemptions` | Full queue/open: internal producer paths for Check/Distill/Diagnose admit, and accepted specialist rows do not increase later ordinary counts. Live ordinary follow-up admits; its queued row DOES increase subsequent ordinary count. Retired/absent-agent continuation is fresh admission and409. Use valid existing specialized-producer setup, not an invalid public request for an internal role (`specialist-exempt`, `followup-only-live`). |
+| `Override_only_bypasses_legacy_open` | Legacy full open/no queue bound: flag accepts plus warning. Add full queue: flag still409/canOverride=false with no insert. SeparateQueues: flag cannot lift role/project queue bounds, nor subsequent running hold; no persisted bypass on accepted row (`override-cannot-lift-queue`). |
+| `Concurrent_last_queue_slot_has_one_winner` | Schedule A: project queue1 with unbounded role, then role queue1/project4, plus null bucket. A/B contexts and distinct requests: 1 accepted, 1 concurrency_limit409, exactly1 matching queued row and Created event, no leftover partial audit/event. F-R records B's real lock wait before A commit (`one-create-winner`). |
+| `Problem_names_population_sources_revisions_and_bounded_occupants` | Seed15 matching queued occupants plus foreign/specialist distractors, ordered timestamps with equal-time GUID tie. Refusal reports total15, list12 in CreatedAt/ID order, omitted3, project/role, mode, field sources and exact two revisions, all exceeded constraints, queue primary/canOverride=false; old `open` and `override` keys remain. Legacy subcase reports open/canOverride=true and only matching role occupants (`problem-total`, `problem-capability`, `problem-population`). |
+
+**V-6 — DispatchConcurrencyDispatchTests, F-D/F-R/F-Q (8).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Parallel_cap_holds_then_next_tick_releases` | Separate P parallel1; Working occupant and queued successor. Three ticks dispatch0, preserve row/session/agent fields and one Held detail at recorded revision. Advance fake clock to HeldAged boundary; deduplicated warning as existing contract. Terminalize occupant, tick again dispatch1 and deliver exactly one complete successor brief. Role cap and project cap run independently. Other free role/project can progress (`held-zero-launch`). |
+| `Project_cap_spans_local_and_remote_hosts` | P parallel2 with local+runner-a Working and queued runner-b; every host still has spare seats. Runner-b stays Queued; Q runner-b dispatches. Complete local occupant then P progresses. Conversely host budget0 holds despite free project slot, and clearing it releases; retained Working spends P slot while releasing host budget. Assert host and project counts separately (`cross-host-project-cap`). |
+| `All_launch_paths_obey_role_cap` | Matrix cold local, cold prepared-mirror remote, warm pooled, standing non-specialist, live follow-up. Each has distinct eligible agent/session, role cap1 already full, project/host ample; zero launch/queue/prompt for held candidate and unchanged tokens/agent idle/session bindings. Drain role and tick: one Dispatched row; fake cold launch once, warm/standing reuse same session with zero cold starts; real queue produces complete UserPrompt. Repeat idle recipient and recipient becoming busy after commit: no submit until TurnEnd. Inject claim rollback, cancellation before commit and enqueue failure as delivery inventory below (`every-path-gated`, `held-custody`, `complete-recipient-prompt`). |
+| `Competing_claims_admit_only_one_task` | Schedule D on two distinct queued IDs, project-last-slot and role-last-slot; cold/cold, warm/standing and local/prepared-remote pairs. Exactly one durable Dispatched + one Queued, one candidate has launch/delivery, held candidate has none; no shared-agent/host constraint may mask the project lock. Repeat with first claimant canceled/rolled back: second dispatches, first remains queued with owned preparation (`one-dispatch-winner`). |
+| `Put_racing_claim_observes_one_complete_policy` | Schedule P for every cold/warm/standing path and prepared mirror: old project cap2/Code2, one active, commit cap1/Code1 while tick paused before final claim. Candidate held with new revision, no launch. Reverse order allows claim at old revision then PUT reports overage without killing. Include LegacyOpen->SeparateQueues switch (outer tick must not skip final key), and global+P fields with intentionally distinguishable revision pairs (`latest-claim-policy`, `lock-order`, `no-external-io-under-key`). |
+| `Lowering_never_kills_or_discards_accepted_work` | 3 running+4 queued; lower parallel3->1 and queue4->0, then tick/create. IDs, running statuses/sessions and queued ownership unchanged; create409, holds report parallel overage2 and queue overage4, zero kills/cancels/releases. Drain running through explicit test state transitions; no start at occupancy1, next starts at0 despite queue0 because it was accepted earlier (`lowering-preserves-work`). |
+| `Restart_recounts_without_leaked_slots` | Admit one, cancel or roll back a second pre-commit claim, dispose provider, rebuild against same DB; no phantom slot, recount1. At cap1 candidate holds; complete admitted task and next tick dispatches once. A transaction committed before provider disposal retains its slot even if delivery is pending; no replay launch on ordinary next tick (`restart-recounts`). |
+| `Recovery_and_retained_wait_preserve_owned_slots` | Accepted task requeue/routing-blocked resume goes Queued even when queue0/full; fresh create still409. Its redispatch obeys current parallel cap. Retained capacity wait remains Working and counted, returns on existing host admission without spending another project slot; new queued work cannot steal it. Preserve task/session identity and custody on provider rebuild/recovery (`recovery-owned-slot`). |
+
+**V-7 — DispatchConcurrencyPipelineTests, F-H/F-D (5).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Scoped_pipeline_matches_create_and_dispatch_policy` | P Separate override, Q Legacy and null seed; mix open/parallel/queue/retained/specialist statuses. P GET arrays/counts/effective role limits/sources/revisions agree with the subsequent real POST refusal and dispatcher hold. Seed bound ready and backlog cards in P/Q and assert both arrays filter, not merely active tasks (`scoped-policy-matches`). |
+| `Empty_project_and_unscoped_have_correct_limits` | Empty P still has a policy snapshot and counts0; `unscoped=true` gives only null bucket; no-query includes represented scopes and null. Unknown project404, malformed GUID/invalid unscoped/conflicting parameters422, no writes. |
+| `Fleet_contract_and_host_totals_remain_distinct` | No-query retains legacy arrays/recommendationsAreAdvisory and global recommendedInFlight (e.g. Code4 after PUT), while concurrencyScopes names real project counts. Host summaries remain identical fleet totals in scoped/unscoped reads and explicitly fleet-scoped; runner sessions do not inflate local cap. F-S MaxConcurrentTasks2 remains host configuration only. |
+| `Queued_hold_and_overage_match_gate_without_writes` | Role/project parallel holds emit matching IDs/sources/revisions; lease/sibling-land/routing-date reason still dominates when present. Below/at/above limits gives nonnegative remaining and explicit overage. Pin expiry and reading empty initialized policy write nothing; compare tasks, settings/history, pins, events before/after (`pipeline-readonly`). |
+| `Effective_policy_changes_after_put_without_restart` | Construct service/HTTP host once, read P, PUT global then P then clear; same service returns changed values/sources/revisions, ready counts and atLimit accurately. Schedule P read barrier around global+project snapshot: returned pair is wholly before or after a committed update, never assembled from incompatible revisions (`pipeline-live-revision`). |
+
+**V-8 — DispatchConcurrencyScriptTests, F-X (6).**
+
+| Method | Input, action and decisive expected result |
+|---|---|
+| `Get_and_history_use_correct_scope` | Run get/history global and `-Project <P>`; recorder sees exact four route families, GET only, proper cursor/limit and no PUT. JSON output parses with expected scope/revisions; token sentinel absent. |
+| `Set_reads_then_sends_exact_snapshot` | `-SettingsFile` and inline JSON subcases contain explicit null, zero and omitted role fields. Default sequence GET then single PUT with obtained expected revisions and exact supplied override; explicit revision arguments are sent unchanged (do not silently substitute newer GET revisions). Project request carries both revisions, global only its own; success exit0. |
+| `Clear_sends_empty_override_with_reason` | Global and P clear read correct revision(s), send literal empty overrides object and supplied audit fields, never a materialized global/default policy. Exactly one PUT each; reason retained, exit0. |
+| `Human_and_reasonfile_are_preserved` | UTF-8 multiline reason file with quotes/backticks is passed literally except server-owned trimming; Human remains Human. Inline reason and Auto subcase preserved. Assert sentinel absent from stdout/stderr and header present at recorder; ASCII-only script source parses without PowerShell5.1-unsafe syntax (no Windows-only test requirement). |
+| `Conflict_is_not_retried_or_overwritten` | Recorder returns409 revision conflict then would accept a second PUT. Run returns nonzero and displays conflict; ordered requests contain one GET/one PUT and no later GET/PUT (`single-conflict-put`). No sleep/retry or hidden change in revision. |
+| `Missing_input_and_invalid_json_do_not_write` | Missing settings, malformed JSON, missing reason, invalid provenance/project and mutually exclusive inputs fail nonzero locally with zero PUT; unsafe missing expected fields are never synthesized into a clear. Assert diagnostics identify bad input, not token. |
+
+### Deterministic schedules for admission, settings PUT and dispatch
+
+No test waits for two entrants **inside** a lock that correctly admits one. No fixed
+sleep establishes order. F-R's observation race returns `BlockedOnExpectedKey`,
+`ReachedWrite`, `Completed` or `Faulted`; it polls only the identified PostgreSQL PID
+and has a bounded harness deadline. A deadline is a harness failure, **never a positive
+control red**. For a removed lock, the other entrant reaches the write checkpoint or
+completes, so the named exclusion assertion fails immediately. Release the barriers in
+finally and collect outcomes even on that failure. Use ReadCommitted transactions;
+cross-context probes must not reuse A's connection or wait for its transaction to commit.
+
+| Schedule | Ordered operations and assertion; methods that own it |
+|---|---|
+| I — first initialization | A imports and pauses at final SaveChanges after its locked existence read. B starts initialization. Observe B blocked on create key OR reaching its own write/unique failure. Assert `initializer-B-blocked=true`; release A and expect identical revision1 responses and one persisted seed/history. V-2 concurrent initialization; V-4 interruption covers rollback. |
+| A — last queue slot | A's real CreateAsync counts free capacity, then pauses on its Added AgentTask SaveChanges before INSERT. B's CreateAsync proceeds until PostgreSQL says it waits for A's create key, or B reaches its own insert checkpoint. Assert `create-B-crossed=false`; release A, then B; expect one201/one409. Removing TakeLock lets both reach insert; released stale decisions also yield two rows, failing `one-create-winner`. No callback is placed only inside the removed gate. V-5 concurrent-last-slot. |
+| U — same revision PUT | A has read revision r and pauses immediately before settings/history SaveChanges. B PUT expected r waits on create key (then parallel key) or crosses to save. Release A, let B re-read and conflict. `put-winners=1`, `history-delta=1`. To kill revision-comparison mutants deterministically, run the same stale request after A commits too; a removed comparison must fail `stale-scope`/`stale-global` regardless of the remaining EF token. V-2 concurrent/stale, V-3 revision response. |
+| A/U — create against PUT | Variant1: create A pauses pre-insert while holding create key; lower-limit PUT B must wait, then commits after A. Existing accepted A remains and PUT reports occupancy/overage. Variant2: PUT A pauses pre-commit holding create+parallel keys; create B must wait, then refuses under committed queue0/new revision with no insert. Assert `admission-used-revision` and `create-B-crossed=false`; run LegacyOpen and SeparateQueues. V-5 Global_and_project_put_change_real_create. |
+| D — final claims | Direct real DispatchOneAsync(A) is paused by SaveChangesInterceptor when A changes Queued->Dispatched, after policy evaluation and before commit. B has a different task row/session and reaches either a **parallel-key** wait or final status save. Assert `claim-B-crossed=false`; release A; B sees committed occupant and stays Queued. B must not be waiting on the same task, agent, host or repository lease (use distinct roots or already prepared mirrors). Lock-removed mutant reaches save with stale count; gate-removed mutant also reaches save. Both terminate at `one-dispatch-winner`/`launch-count=1`, not a barrier timeout. V-6 competing claims. |
+| P — PUT beats stale tick | Start real tick at policy r, pause candidate FOR UPDATE command before execution (its outer snapshot is already read). PUT lower limit/mode at r+1 commits; release tick. Final transactional read must use r+1 and hold with no launch. Converse: pause final claim pre-commit while holding parallel key, start PUT holding create key; observe it wait on parallel, release claim then PUT, expect existing task retained. Run cold/warm/standing/prepared paths. Inspect `lock-order`: create->parallel on PUT; task/prior-owner locks->parallel on dispatch; no reverse acquisitions. V-6 PUT race. |
+| P/read — coherent projection | Pause settings read after first result is available; commit global+P edits using other contexts; finish reader. Its snapshot must contain a pair that existed together (record pre/post pairs). A repeatable-read transaction or composed query passes; two independent ReadCommitted reads can return a never-valid pair and fail `snapshot-pair-existed`. V-7 live policy read. |
+
+For D and P, record outgoing fake runner/Git/provider calls with their transaction IDs.
+An observer's successful try-lock of the parallel key at the outgoing launch/submit point
+proves it is no longer held; `external-call-key-free=true` is required. At preparation
+and provider probe points it must also be free, before the late gate. A missing final
+gate cannot pass on that assertion alone: the status/launch and key-observation assertions
+are mandatory. A denied claim must roll back Added agent/session/event rows and token
+changes; reset the context before tracing Held so a later SaveChanges cannot flush them.
+
+### Delivery inventory and limits of the substitutes
+
+This card changes authorization to enter the existing delivery paths, not their transport.
+All denied-claim assertions concern **zero attempted delivery**. Successful-path evidence
+uses F-Q's real queue plus submitted-body transcript; fake launch-call counts alone never
+prove a brief arrived. Native Pty/provider behavior is unchanged and excluded here.
+
+| Producer/destination and durable identity | Persistence, recovery and observable receipt |
+|---|---|
+| CreateAsync -> queued AgentTask, TaskId/ProjectId | Create key held through INSERT commit; rollback/409 inserts nothing. V-5 A schedule proves exact accepted IDs. Queued is acceptance, not session delivery. |
+| DispatchOneAsync -> cold launch or warm/standing queue, TaskId/AgentSessionId plus session generation | Parallel key held only through Dispatched+binding commit. V-6 all-path/competing/restart methods inject failure/cancellation before final save and after save-before-commit: no session/launch/queue leaks, Queued retry uses current policy. Prepared mirror remains owned. |
+| Existing runtime/DeliverReuseMessagesAsync -> SessionMessageQueueService -> recipient | V-6 All_launch_paths uses the real queue for idle and busy-after-commit recipients; complete UserPrompt must contain task marker and entire expected brief with matching SessionId and sequence above the pre-delivery watermark. Busy recipient has no submit until TurnEnd; then one receipt. Inject enqueue throw via the existing ReuseEnqueueOverride for a separate fault scenario: persisted Dispatched owner plus existing delivery-failure incident, **no false Delivered claim**. Reset override and exercise the documented retry/delivery entry once, then require the whole prompt. Do not assume ordinary Tick automatically retries a failed enqueue. |
+| Committed claim -> provider restart/recovery, same TaskId/session | V-6 Restart_recounts and Recovery_and_retained_wait preserve counted slot and binding if process dies after commit/before delivery. The existing recovery path owns retransmission; do not invent a second queue or launch from this settings feature. Persisted queue-message recovery after enqueue is exercised by disposing/reopening queue runtime against same DB before F-Q submit. Assert one whole recipient UserPrompt and no second Dispatched event/launch. |
+| Settings PUT -> IEventBus DispatchConcurrencyChanged, scope and revision pair | V-2 event test queries from a separate connection at publish: revision already committed. Throwing event leaves durable GET/history authoritative; no persisted outbox or replay is promised. This is invalidation, not transcript delivery; CARD-0506 owns UI observation. |
+
+### Guards the regression and exclusions
+
+R-1 keeps runner-default seed/history/placement settings independent (11 results); R-2
+keeps legacy project/specialist/follow-up behavior and warning text (25); R-3 keeps the
+host-budget min/declaration/zero/drain rule, held trace/custody and prepared-mirror
+predicate (44); R-4 retains fleet arrays and literal pipeline HTTP routing (62); R-5
+retains standing Code/Review=2, other stages1 and feed2 policy (4). Keep existing assertions,
+not merely the method names, when wiring the new provider.
+
+No Windows row is required: PostgreSQL locking, migrations, fake dispatcher/recipient,
+loopback HTTP and pwsh run on Linux and Windows. New fixture code must not use cmd.exe,
+ConPTY, native fakeclaude/fakegrok apphosts, WMI or a live provider. Existing ScratchGitRepo
+regression setup uses portable git. Apply ProcessSpawnLimit to any new class that later
+chooses real Git; F-X already needs it. No client/E2E/runner deployment or full assembly
+acceptance run; CARD-0506 owns UI, CARD-0778 native readiness. These fake receipts prove
+the admission/queue boundary, not native terminal rendering or provider authentication.
+
 ### Positive controls
 
-Mutation executes each control method-scoped on a restored baseline and records the named
-assertion turning red. Compile errors, fixture failures, self-comparisons and zero tests
-are not a red control. TestDesign supplies deterministic barriers for PC-7/8/9.
+The Plan's **15 control groups** contain independently bypassable guards. TestDesign
+splits them into **44 compiling mutation variants**, each with its own guard ID and
+named assertion. One guard maps to one variant: **guards=44, mapped=44, missing=0,
+duplicate PC maps=0**. This does not add ordinary test methods or change checkpoint Min.
+Other validation, history and diagnostic assertions remain in the 54 ordinary methods.
+Existing host, scope, routing, queue transport and native custody guards remain their
+own cards' responsibility and are regression coverage here, not silently new mutants.
 
-| PC | Deliberate production defect | Required red assertion |
-|---|---|---|
-| PC-1 | Import shipped defaults instead of bound config. | V-2 `Import_preserves_bound_values_once`: seeded Code=5/Plan=3 remain those values, not 2/1. |
-| PC-2 | Reverse global/project precedence or treat explicit null as absent. | V-1 `Project_then_global_then_seed` / `Missing_inherits_null_is_unbounded_zero_pauses_queue`: exact value and source. |
-| PC-3 | Clear by copying globals into project overrides. | V-2 `Project_override_isolated_and_clear_restores_inheritance`: a later global edit flows into the cleared project. |
-| PC-4 | Remove revision comparison or Auto-over-Human guard (separate mutants). | V-2 stale/conflicting/Auto methods: refusal plus unchanged revision/history and saved values. |
-| PC-5 | Count only running tasks in LegacyOpen. | V-5 `Unconfigured_create_keeps_legacy_decisions`: second queued Plan is 409, no inserted row. |
-| PC-6 | Use open instead of queued count in SeparateQueues, or allow override past queue cap. | V-5 queue/override methods: working rows do not spend queue slots; full queue still 409 with the flag. |
-| PC-7 | Remove count+insert advisory serialization. | V-5 `Concurrent_last_queue_slot_has_one_winner`: exactly one accepted insert and one 409 under a controlled two-context interleaving. |
-| PC-8 | Remove final shared dispatch gate, or guard only cold spawn. | V-6 `Competing_claims_admit_only_one_task` / `All_launch_paths_obey_role_cap`: one Dispatched row, no second fake launch/delivery. |
-| PC-9 | Reuse stale tick policy after a committed PUT. | V-6 `Put_racing_claim_observes_one_complete_policy`: queued task remains held under the lower committed revision. |
-| PC-10 | Drop ProjectId filter or specialist exclusion. | V-5 scope/exemption methods: foreign occupants absent, other project still accepts; specialist has no capacity cost. |
-| PC-11 | Kill, cancel or fail existing work on a lower cap. | V-6 `Lowering_never_kills_or_discards_accepted_work`: identical accepted row IDs/statuses and empty kill/prompt calls. |
-| PC-12 | Lose settings on restart or reimport env every read. | V-2 restart/V-4 restart methods: saved overrides/revisions persist with deliberately different second-process config. |
-| PC-13 | Read old IOptions values in pipeline or use fleet count for a scoped gate. | V-7 match/PUT methods: exact non-default scoped limit/source/revision and counts agree with POST/dispatch. |
-| PC-14 | Remove population/canOverride or truncate totals to the displayed occupant count. | V-5 problem method: queued refusal cannot advertise an effective bypass; total remains >12, list length=12. |
-| PC-15 | Re-send a script PUT after a 409. | V-8 conflict method: recorder has exactly one PUT and nonzero script result. |
+For each row, Mutation changes only the named production behavior, runs
+`/*/*/<class for V-n>/<exact method>` with Min=1, restores, rebuilds and runs the same
+method green. Compilation/setup failures, zero tests, deadlines and self-comparisons
+are not RED evidence. All expected failures below are ordinary outcome/Shouldly
+assertions. No mutant has been executed by this TestDesign task.
+
+| Guard | PC | Compiling production defect | Exact method and failing assertion (class from V-n) |
+|---|---|---|---|
+| G-1a bound deployment seed | PC-1a | Initialize with new DelegationSettings instead of bound options. | V-2 `Import_preserves_bound_values_once`: `bound-seed`, Code5/Plan3/overall9. |
+| G-1b atomic seed/history | PC-1b | Persist the seed with a separately committed context before writing history in the import transaction. | V-4 `Interrupted_initialization_rolls_back_seed_and_history`: `atomic-import`, zero rows after injected pre-commit failure (mutant leaves the seed). |
+| G-1c single initializer | PC-1c | Omit initializer advisory acquisition, retain unique indexes. | V-2 `Concurrent_initialization_writes_one_seed`: `initializer-B-blocked=true`; B instead reaches save (or collected unique-fault), then `one-seed` checks both successful answers. |
+| G-2a resolution precedence | PC-2a | Resolve global before project. | V-1 `Project_then_global_then_seed`: `precedence`, Code2/project. |
+| G-2b explicit null | PC-2b | Treat present-null role field as missing. | V-1 `Missing_inherits_null_is_unbounded_zero_pauses_queue`: `null-not-absent`, null/project source and still finite project cap. |
+| G-2c validated limit range | PC-2c | Accept parallel0 in policy validation. | V-1 `Validate_modes_roles_fields_and_bounds`: `invalid-policy-refused` for parallel0. |
+| G-3a clear inherits | PC-3a | Materialize global values into cleared project overrides. | V-2 `Project_override_isolated_and_clear_restores_inheritance`: `clear-inherits`, later global Code3 reaches P. |
+| G-3b no revision ABA | PC-3b | Delete the project settings row on clear. | V-2 `Project_override_isolated_and_clear_restores_inheritance`: `clear-keeps-revision`, row/revision remain and stale pre-clear write conflicts. |
+| G-4a scope CAS | PC-4a | Skip expectedRevision comparison. | V-2 `Stale_scope_or_global_revision_writes_nothing`: `stale-scope`, deterministic post-commit stale call throws409 and writes nothing. |
+| G-4b inherited CAS | PC-4b | Skip expectedGlobalRevision comparison on P PUT. | Same V-2 method: `stale-global`, current two revisions and no mutation. |
+| G-4c Human scope custody | PC-4c | Permit Auto to overwrite Human scope. | V-2 `Auto_cannot_replace_or_shadow_human`: `human-scope`, dispatch_concurrency_human and identical snapshot. |
+| G-4d inherited Human custody | PC-4d | Permit Auto project shadow over Human global. | Same V-2 method: `human-inheritance`, conflict and no P row. |
+| G-4e Human audit claim | PC-4e | Treat Auto->Human same-value claim as a value-only no-op. | V-2 `Noop_preserves_revision_human_claim_audits`: `human-claim-audits`, one new Human history revision. |
+| G-4f explicit replacement intent | PC-4f | Default missing outer overrides to empty object. | V-3 `Missing_fields_invalid_body_and_unknown_project_write_nothing`: `invalid-wire-no-write`, request rejected and Human policy retained. |
+| G-4g server attribution | PC-4g | Persist callerTaskId=null rather than resolved authorized caller. | V-3 `Human_reason_and_server_caller_are_audited`: `server-caller-only`, exact seeded caller ID. |
+| G-5a legacy population | PC-5a | Omit Queued from LegacyOpen count. | V-5 `Unconfigured_create_keeps_legacy_decisions`: `legacy-real-create`, second Plan at explicit seed1 is409/no insert. |
+| G-5b opt-in mode | PC-5b | Seed SeparateQueues instead of LegacyOpen. | Same V-5 method: `legacy-real-create`, queued saturation is refused without a PUT. |
+| G-5c live-only continuation exemption | PC-5c | Exempt retired-agent continuations as though live. | V-5 `Specialists_and_live_followups_keep_admission_exemptions`: `followup-only-live`, retired case409/no insert. |
+| G-6a queued population | PC-6a | Use open count for queue admission. | V-5 `Project_and_role_queue_boundaries_refuse_without_insert`: `queue-count-only`, three queued Code accepted despite two Working. |
+| G-6b restricted override | PC-6b | Apply ignoreConcurrencyLimit to queue/running checks. | V-5 `Override_only_bypasses_legacy_open`: `override-cannot-lift-queue`, flagged full queue409/no insert. |
+| G-6c zero pauses admission | PC-6c | Treat maxQueued0 as unbounded. | V-5 `Project_and_role_queue_boundaries_refuse_without_insert`: `queue-refuses`, empty queue0 still409. |
+| G-7 count/insert serialization | PC-7 | Remove create advisory call. | V-5 `Concurrent_last_queue_slot_has_one_winner`: `create-B-crossed=false` and `one-create-winner`, schedule A. |
+| G-8a final authorization | PC-8a | Skip the final shared policy decision on cold claims. | V-6 `Competing_claims_admit_only_one_task`: `one-dispatch-winner`, one Dispatched/one Queued, schedule D. |
+| G-8b warm authorization | PC-8b | Bypass only the warm-reuse role gate. | V-6 `All_launch_paths_obey_role_cap`: `every-path-gated`, warm candidate Queued and zero queue/prompt. |
+| G-8c standing authorization | PC-8c | Bypass only standing non-specialist gate. | Same V-6 method: `every-path-gated`, standing candidate Queued and same idle session. |
+| G-8d shared parallel serialization | PC-8d | Remove parallel advisory call but retain count/decision. | V-6 `Competing_claims_admit_only_one_task`: `claim-B-crossed=false`, then `one-dispatch-winner` under schedule D. |
+| G-8e denied-claim rollback | PC-8e | Save tentative agent/session/token changes when a final claim is held. | V-6 `All_launch_paths_obey_role_cap`: `held-custody`, exact before/after bindings/idle/token fields and no Added session row. |
+| G-8f commit before external delivery | PC-8f | Move final commit after cold launch or reused delivery. | V-6 `Put_racing_claim_observes_one_complete_policy`: `external-call-key-free=true` fails at the recorded launch/submit; no delivery timeout needed. |
+| G-9a fresh dispatch snapshot | PC-9a | Reuse tick-start policy after committed lower PUT. | V-6 `Put_racing_claim_observes_one_complete_policy`: `latest-claim-policy`, Queued at r+1, launch count0, schedule P. |
+| G-9b acyclic lock order | PC-9b | Reverse PUT's create->parallel acquisition. | Same V-6 method: `lock-order`, F-R command interceptor asserts the next requested key BEFORE executing a reversed acquisition, so no deadlock timeout is the RED. |
+| G-10a project isolation | PC-10a | Drop ProjectId/null bucket predicate in admission. | V-5 `Other_project_and_null_bucket_do_not_interfere`: `project-isolation`, Q/null still accept and P refusal excludes foreign IDs. |
+| G-10b specialist exclusion | PC-10b | Count Check/Distill/Diagnose as ordinary occupants. | V-5 `Specialists_and_live_followups_keep_admission_exemptions`: `specialist-exempt`, next ordinary acceptance/count unchanged by specialist rows. |
+| G-11a lowering retains accepted work | PC-11a | Cancel an excess accepted task when limits decrease. | V-6 `Lowering_never_kills_or_discards_accepted_work`: `lowering-preserves-work`, same IDs/statuses and kills/releases0. |
+| G-11b retained project WIP | PC-11b | Exclude CapacityWaitRetained from parallel count as host count does. | V-6 `Recovery_and_retained_wait_preserve_owned_slots`: `recovery-owned-slot`, queued successor held while retained owner remains Working. |
+| G-12a durable overrides | PC-12a | Clear saved overrides when reconstructing the service/provider. | V-2 `Restart_and_event_failure_preserve_committed_policy`: `restart-durable`, exact saved overrides/revisions. |
+| G-12b immutable imported seed | PC-12b | Reimport options on each initialization. | V-4 `Initialize_from_nondefault_config_then_restart`: after clear overall9/Code5, not restart config2/Code1. |
+| G-13a live pipeline reader | PC-13a | Read captured IOptions for recommendations/effective limits. | V-7 `Effective_policy_changes_after_put_without_restart`: `pipeline-live-revision`, changed values/source/revision through same instance. |
+| G-13b scoped projection | PC-13b | Use fleet task population in scoped pipeline. | V-7 `Scoped_pipeline_matches_create_and_dispatch_policy`: `scoped-policy-matches`, exact P-only counts/IDs. |
+| G-13c read-only projection | PC-13c | Persist expired pin clearing during pipeline GET. | V-7 `Queued_hold_and_overage_match_gate_without_writes`: `pipeline-readonly`, identical pin/settings/task/event snapshots. |
+| G-13d coherent policy snapshot | PC-13d | Split snapshot into independent ReadCommitted global/project reads. | V-7 `Effective_policy_changes_after_put_without_restart`: `snapshot-pair-existed`, schedule P/read. |
+| G-14a population diagnostic | PC-14a | Label queue refusal as open. | V-5 `Problem_names_population_sources_revisions_and_bounded_occupants`: `problem-population`, queued exact wire value. |
+| G-14b truthful override diagnostic | PC-14b | Set canOverride=true on queue refusal. | Same V-5 method: `problem-capability`, false. |
+| G-14c untruncated totals | PC-14c | Count the Take(12) display list as total. | Same V-5 method: `problem-total`, total15/list12/omitted3. |
+| G-15 no automatic conflict overwrite | PC-15 | Re-fetch revision and resend PUT once after409. | V-8 `Conflict_is_not_retried_or_overwritten`: `single-conflict-put`, exactly1 PUT/nonzero exit even though recorder would accept retry. |
 
 ### Cost
 
 Ordinary Code checkpoint floor is **36 minutes** (8 + 16 + 12), estimated, not measured.
-Allow approximately 120–180 additional minutes for implementation and test authoring;
-set the commissioned duration from that work plus the floor. Post-land Mutation is
-separately budgeted for 15 method-scoped controls and restoration. The existing 146 and
+CP-1's 8 minutes estimates one build/store startup (4) plus 38 settings/wire/migration
+results (4). CP-2's 16 estimates build/startup (4) plus 85 admission/dispatch/race results
+(12). CP-3's 12 estimates build/startup (4) plus 77 pipeline/pwsh results (8). These
+are conservative estimates, not historic timings inferred from test counts. CP-2's
+16-minute estimate makes the importer warn that 3x16 exceeds its 45-minute timeout ceiling;
+the actual ceiling remains 45, not an instruction to broaden or omit the row.
+
+Allow approximately **180–240 additional minutes** for the 54 concrete tests, integration
+and late-lock refactor; Code commissioning estimate is **216–276 minutes** including V/R.
+Post-land Mutation floor is **220 minutes estimated**: setup/build8 + restored ordinary
+V/R36 + 44 method-scoped variants at4 minutes each for edit/build/red/restore/build/green
+(176). Each variant selects exactly the method in its table row, Min1; shared assertions
+do not multiply execution counts. Record every mutant, assertion, restoration and actual
+cost. No full-suite or native-provider battery is hidden in that budget. Targeted classes
+and single-method mutants avoid repeated full-assembly builds/runs; no measured savings
+claim is made because this task ran neither alternative.
+
+The existing 146 and
 planned new 54 results yield **200 expected ordinary executions**; those counts are not
-minutes or internal assertion counts. TestDesign must update the manifest before Code
-if it changes data expansion, names or coverage.
+minutes or internal assertion counts. Code must update the manifest before running a
+changed roster if it changes data expansion, names or coverage.
 
 Use the checkpoint tool once per committed slice group, for example
 `dotnet run --project tools/Antiphon.Checkpoints -- run --plan
