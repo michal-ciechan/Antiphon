@@ -265,6 +265,10 @@ function Invoke-C590LiveCase {
         if ($Case -eq 'verify-runner-caches' -and $cacheNames -notcontains 'runnerId') {
             throw 'CacheRunnerInvalid'
         }
+        if ($Case -eq 'runner-cache-prune' -and
+            ($cacheNames -notcontains 'previewRunId' -or [string]$Manifest.previewRunId -cnotmatch '^c849[0-9a-f]{16}0$')) {
+            throw 'CachePreviewInvalid'
+        }
     }
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     $run = Get-C590RunId -Manifest $Manifest
@@ -297,6 +301,9 @@ function Invoke-C590LiveCase {
     $tokenCopied = $false
     $tempRetiredAt = ''
     $runnerId = ''
+    $previewRunId = ''
+    if ($names -contains 'previewRunId') { $previewRunId = [string]$Manifest.previewRunId }
+    if ($previewRunId -and $previewRunId -cnotmatch '^c849[0-9a-f]{16}0$') { throw 'CachePreviewInvalid' }
     if ($names -contains 'runnerId' -and $Manifest.runnerId) { $runnerId = [string]$Manifest.runnerId }
     if ($Case -eq 'verify-runner-caches' -and $runnerId -notin @('server2', 'server2-temp')) {
         throw 'runnerId rejected'
@@ -359,6 +366,7 @@ function Invoke-C590LiveCase {
             "export C604_SERVER_ORIGIN='$c604Origin'"
             "export C590_TEMP_RETIRED_AT='$tempRetiredAt'"
             "export C590_RUNNER_ID='$runnerId'"
+            "export C590_PREVIEW_RUN='$previewRunId'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '
         $code = Invoke-C590Ssh $remote

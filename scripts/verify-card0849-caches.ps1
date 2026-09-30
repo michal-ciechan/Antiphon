@@ -24,6 +24,18 @@ if ($Preview) {
     }
     $Preview = $candidate
 }
+$previewRunId = ''
+if ($Case -eq 'Prune') {
+    $previewText = [System.IO.File]::ReadAllText($Preview)
+    $runMatch = [regex]::Match($previewText, '(?m)^run=(c849[0-9a-f]{16}0)$')
+    $shaMatch = [regex]::Match($previewText, '(?m)^source-sha=([0-9a-f]{40})$')
+    if (-not $runMatch.Success -or -not $shaMatch.Success -or $shaMatch.Groups[1].Value -cne $Sha -or
+        [System.IO.Path]::GetFileName($Preview) -cne 'preview.txt' -or
+        [System.IO.Path]::GetFileName((Split-Path -Parent $Preview)) -cne 'runner-cache-prune-preview') {
+        throw 'CachePreviewInvalid'
+    }
+    $previewRunId = $runMatch.Groups[1].Value
+}
 $runId = 'c849' + [guid]::NewGuid().ToString('N').Substring(0, 16)
 $evidence = Join-Path $repo ('.antiphon/c849-' + $runId)
 New-Item -ItemType Directory -Path $evidence -Force | Out-Null
@@ -47,6 +59,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
     }
     if ($runners[$i]) { $manifest.runnerId = $runners[$i] }
     if ($Preview) { $manifest.preview = $Preview }
+    if ($previewRunId) { $manifest.previewRunId = $previewRunId }
     New-Item -ItemType Directory -Path $manifest.evidenceRoot -Force | Out-Null
     $manifestPath = Join-Path $manifest.evidenceRoot 'manifest.json'
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii

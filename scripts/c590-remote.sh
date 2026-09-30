@@ -1705,6 +1705,12 @@ c849_preview() {
             2>/dev/null | jq -r '.occupied // "unknown"' 2>/dev/null || true)"
     fi
     printf 'build-slots-occupied=%s\n' "$occupancy" >> "$CASE_DIR/consumers.txt"
+    local durable="$SERVER2_ROOT/cache/previews/$RUN"
+    [ ! -e "$durable" ] || write_result false CachePreviewAlreadyExists 2
+    sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache/previews" "$durable"
+    install -m 0600 "$CASE_DIR/volumes.txt" "$durable/volumes.txt"
+    install -m 0600 "$CASE_DIR/consumers.txt" "$durable/consumers.txt"
+    install -m 0600 "$CASE_DIR/preview.txt" "$durable/preview.txt"
     write_result true '' 0
 }
 
@@ -1725,6 +1731,163 @@ c849_budget_gate() {
     [[ "$free_kb" =~ ^[0-9]+$ ]] || write_result false CacheDiskUnavailable 2
     [ "$free_kb" -ge 20971520 ] || write_result false CacheDiskLow 2
     printf 'free-bytes=%s\n' "$((free_kb * 1024))" >> "$CASE_DIR/cache-budget.txt"
+}
+
+c849_prune_idle() {
+    local runner project container body broker mounted expected other active
+    for runner in server2 server2-temp; do
+        body="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" \
+            || write_result false CacheStatusUnavailable 2
+        printf '%s' "$body" | jq -e '
+            .sessions != null and .runnerSessions != null and .queuedTasks != null and
+            .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
+            .draining == true and .acceptingNewWork == false' >/dev/null \
+            || write_result false CacheConsumersBusy 2
+        project="$HOST_PROJECT"; [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
+        container="$(docker ps -q --filter "label=com.docker.compose.project=$project" \
+            --filter 'label=com.docker.compose.service=session-runner')"
+        if [ -z "$container" ]; then
+            [ "$runner" = server2-temp ] \
+                && printf '%s' "$body" | jq -e '.retiredAt != null' >/dev/null \
+                && [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ] \
+                || write_result false CacheConsumerUnknown 2
+            continue
+        fi
+        active="$(docker exec "$container" /bin/sh -c \
+            "ps -eo uid,args | awk '\$1==1654 && \$2 ~ /(dotnet|nuget|npm|node)/ && \$0 !~ /Antiphon.SessionRunner.dll/ {n++} END {print n+0}'")" \
+            || write_result false CacheConsumerUnknown 2
+        [ "$active" = 0 ] || write_result false CacheConsumersBusy 2
+    done
+    # A third container attached to any cache is a consumer even if the two named
+    # runners report zero. Compare IDs, not container names supplied by a task.
+    for mounted in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        while read -r other; do
+            [ -n "$other" ] || continue
+            expected="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}:{{index .Config.Labels "com.docker.compose.service"}}' "$other")"
+            case "$expected" in "$HOST_PROJECT:session-runner"|"$TEMP_PROJECT:session-runner") ;; *) write_result false CacheConsumersBusy 2 ;; esac
+        done < <(docker ps -q --filter "volume=$mounted")
+    done
+    broker="$(compose_host --profile broker ps -q build-slots 2>/dev/null || true)"
+    [ -n "$broker" ] || write_result false CacheBuildSlotsUnavailable 2
+    docker exec "$broker" curl -fsS --max-time 10 http://127.0.0.1:8080/build-slots \
+        | jq -e '(.occupied | type) == "number" and .occupied == 0 and (.leases | type) == "array" and (.leases | length) == 0' >/dev/null \
+        || write_result false CacheBuildSlotsBusy 2
+}
+
+c849_prune_validate_tree() {
+    local path="$1" canonical="$2" resolved unsafe mounts
+    [ -n "$path" ] && [ "$path" = "$canonical" ] && [ -d "$path" ] && [ ! -L "$path" ] \
+        || write_result false CacheTargetInvalid 2
+    resolved="$(realpath -e -- "$path")" || write_result false CacheTargetInvalid 2
+    [ "$resolved" = "$canonical" ] || write_result false CacheTargetInvalid 2
+    unsafe="$(sudo -n find "$path" -xdev -mindepth 1 \( -type l -o -type b -o -type c -o -type p -o -type s -o -type f -links +1 \) -print -quit)" \
+        || write_result false CacheTargetInvalid 2
+    [ -z "$unsafe" ] || write_result false CacheTargetInvalid 2
+    mounts="$(findmnt -rn -o TARGET)" || write_result false CacheTargetInvalid 2
+    if printf '%s\n' "$mounts" | awk -v p="$path/" 'index($0,p)==1 {found=1} END {exit !found}'; then
+        write_result false CacheTargetInvalid 2
+    fi
+}
+
+c849_prune() {
+    require_lane host
+    [[ "${C590_PREVIEW_RUN:-}" =~ ^c849[0-9a-f]{16}0$ ]] || write_result false CachePreviewInvalid 2
+    c849_lock
+    local receipt="$SERVER2_ROOT/cache/previews/$C590_PREVIEW_RUN" age created previous_sha actual_sha
+    [ -d "$receipt" ] && [ ! -L "$receipt" ] \
+        && [ -f "$receipt/preview.txt" ] && [ -f "$receipt/volumes.txt" ] \
+        || write_result false CachePreviewMissing 2
+    grep -Fxq "run=$C590_PREVIEW_RUN" "$receipt/preview.txt" \
+        && grep -Fxq "source-sha=$SHA" "$receipt/preview.txt" \
+        || write_result false CachePreviewStale 2
+    created="$(sed -n 's/^created-at=//p' "$receipt/preview.txt" | head -n 1)"
+    age=$(( $(date -u +%s) - $(date -u -d "$created" +%s 2>/dev/null || echo 0) ))
+    [ "$age" -ge 0 ] && [ "$age" -le 3600 ] || write_result false CachePreviewStale 2
+    previous_sha="$(sed -n 's/^volume-sha256=//p' "$receipt/preview.txt" | head -n 1)"
+    actual_sha="$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)"
+    [ "$actual_sha" = "$previous_sha" ] || write_result false CachePreviewStale 2
+    : > "$CASE_DIR/volumes-now.txt"
+    c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 >> "$CASE_DIR/volumes-now.txt"
+    c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 >> "$CASE_DIR/volumes-now.txt"
+    c849_observe_volume "$C849_NPM" npm-content 2147483648 >> "$CASE_DIR/volumes-now.txt"
+    cmp -s "$receipt/volumes.txt" "$CASE_DIR/volumes-now.txt" \
+        || write_result false CachePreviewStale 2
+    c849_prune_idle
+    c849_require_ready
+    local name role path mode bytes budget selected=0 image recovery main_container temp_container expected_hash actual_hash donor_image
+    image="$(c849_image)"
+    recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
+    [ -d "$recovery/packages" ] && [ ! -L "$recovery" ] \
+        && [ -s "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
+        || write_result false CacheRecoveryMissing 2
+    expected_hash="$(sed -n 's/^payload-sha256=//p' "$C849_READY" | head -n 1)"
+    actual_hash="$(sha256sum "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" 2>/dev/null | cut -d' ' -f1)"
+    [ "$actual_hash" = "$expected_hash" ] || write_result false CacheRecoveryChanged 2
+    donor_image="$(sed -n 's/^image=//p' "$C849_READY" | head -n 1)"
+    [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        && docker image inspect "$donor_image" >/dev/null 2>&1 \
+        || write_result false CacheRecoveryImageMissing 2
+    while read -r name role path mode bytes budget; do
+        c849_prune_validate_tree "$path" "$path"
+        if [ $((bytes * 5)) -lt $((budget * 4)) ]; then continue; fi
+        selected=$((selected + 1))
+        case "$role" in
+            nuget-packages)
+                docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+                    --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" -c '
+                    set -eu
+                    find /cache -mindepth 2 -maxdepth 2 -type d -exec sh -c '\''for v do rm -f -- "$v/.nupkg.metadata"; rm -rf -- "$v"; done'\'' sh {} +
+                    find /cache -mindepth 1 -maxdepth 1 -type d -empty -delete
+                    ' >/dev/null || write_result false CachePruneFailed 2
+                docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+                    --mount "type=bind,source=$recovery/packages,target=/seed,readonly" \
+                    --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" -c '
+                    set -eu
+                    for p in microsoft.netcore.app.host.linux-x64 microsoft.netcore.app.ref; do
+                        mkdir -p "/cache/$p"
+                        cp -a "/seed/$p/9.0.20" "/cache/$p/"
+                        chown -R 1654:1654 "/cache/$p/9.0.20"
+                    done' >/dev/null || write_result false CacheRefillFailed 2
+                ;;
+            nuget-scratch|npm-content)
+                docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+                    --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+                    -c 'set -eu; find /cache -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' >/dev/null \
+                    || write_result false CachePruneFailed 2 ;;
+            *) write_result false CacheTargetInvalid 2 ;;
+        esac
+    done < "$CASE_DIR/volumes-now.txt"
+    [ "$selected" -gt 0 ] || write_result false CacheNoPruneCandidate 2
+    main_container="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" --filter 'label=com.docker.compose.service=session-runner')"
+    temp_container="$(docker ps -q --filter "label=com.docker.compose.project=$TEMP_PROJECT" --filter 'label=com.docker.compose.service=session-runner')"
+    [ -n "$main_container" ] || write_result false CacheConsumerUnknown 2
+    [ "$(docker exec -u 1654:1654 "$main_container" git -C /work/repos/antiphon rev-parse HEAD)" = "$SHA" ] \
+        || write_result false CacheSourceMismatch 2
+    docker exec -u 1654:1654 -e HOME=/home/app -i "$main_container" /bin/sh -s > "$CASE_DIR/refill-summary.txt" <<'C849_REFILL' \
+        || write_result false CacheRefillFailed 2
+set -eu
+root="$(mktemp -d /tmp/c849-refill-XXXXXXXX)"
+trap 'rm -rf "$root"' EXIT
+git -C /work/repos/antiphon archive HEAD | tar -x -C "$root"
+cat > "$root/driver.sh" <<'DRIVER'
+#!/bin/sh
+set -eu
+cd "$1"
+dotnet restore Antiphon.sln -maxcpucount:1 -nodeReuse:false -p:NuGetAudit=false >/dev/null
+cd client
+npm ci --ignore-scripts --no-audit --no-fund >/dev/null
+DRIVER
+pwsh -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1 -Label c849-refill -- /bin/sh "$root/driver.sh" "$root" >/dev/null
+printf 'C849_REFILL restore=0 npm=0\n'
+C849_REFILL
+    grep -Fxq 'C849_REFILL restore=0 npm=0' "$CASE_DIR/refill-summary.txt" \
+        || write_result false CacheRefillReceiptMissing 2
+    c849_smoke "$main_container" server2
+    if [ -n "$temp_container" ]; then c849_smoke "$temp_container" server2-temp; fi
+    c849_budget_gate
+    printf 'pruned=%s receipt=%s refill=passed smokes=%s admission=held\n' \
+        "$selected" "$C590_PREVIEW_RUN" "$([ -n "$temp_container" ] && printf 2 || printf 1)" > "$CASE_DIR/prune.txt"
+    write_result true '' 0
 }
 
 case_verify_runner_caches() {
@@ -2367,7 +2530,7 @@ case "$CASE" in
     runner-cache-seed) c849_seed ;;
     runner-cache-inventory) case_runner_cache_inventory ;;
     runner-cache-prune-preview) c849_preview ;;
-    runner-cache-prune) write_result false CachePruneNotImplemented 2 ;;
+    runner-cache-prune) c849_prune ;;
     runner-cache-fixture) write_result false CacheFixtureNotImplemented 2 ;;
     verify-runner-caches) case_verify_runner_caches ;;
     verify-runner-caches-retired) case_verify_runner_caches_retired ;;
