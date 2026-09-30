@@ -15,9 +15,17 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
   <Target Name="CopyFakeBrowser" AfterTargets="Build">
+    <MSBuild Projects="../Antiphon.MarkdownPdf.FakeBrowser/Antiphon.MarkdownPdf.FakeBrowser.csproj"
+             Targets="GetTargetPath">
+      <Output TaskParameter="TargetOutputs" ItemName="FakeBrowserTarget" />
+    </MSBuild>
+    <PropertyGroup>
+      <FakeBrowserOutputDir>$([System.IO.Path]::GetDirectoryName('@(FakeBrowserTarget)'))</FakeBrowserOutputDir>
+    </PropertyGroup>
     <ItemGroup>
-      <FakeBrowserFile Include="$(MSBuildProjectDirectory)/../Antiphon.MarkdownPdf.FakeBrowser/$(OutputPath)Antiphon.MarkdownPdf.FakeBrowser.*" />
+      <FakeBrowserFile Include="$(FakeBrowserOutputDir)/Antiphon.MarkdownPdf.FakeBrowser.*" />
     </ItemGroup>
+    <Error Condition="'@(FakeBrowserFile)' == ''" Text="FakeBrowser build output was not found in $(FakeBrowserOutputDir)" />
     <Copy SourceFiles="@(FakeBrowserFile)" DestinationFolder="$(TargetDir)fake-browser/"
           SkipUnchangedFiles="true" />
   </Target>
