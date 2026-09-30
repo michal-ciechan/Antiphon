@@ -57,32 +57,32 @@ public static class CapacityEvidence
             System.Text.Encoding.UTF8.GetBytes(text)));
     }
 
-    public static async Task<(string? Text, DateTime? Timestamp, DateTime? CreatedAt)> LoadTurnEndAsync(
+    public static async Task<(string? Text, DateTime? Timestamp, DateTime? CreatedAt, string? TimeZoneId)> LoadTurnEndAsync(
         AppDbContext db, Guid sessionId, long stubSequence, CancellationToken ct)
     {
         var row = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && t.Sequence == stubSequence
                 && t.Kind == TranscriptKinds.TurnEnd)
-            .Select(t => new { t.Text, t.Timestamp, t.CreatedAt, t.Uuid })
+            .Select(t => new { t.Text, t.Timestamp, t.CreatedAt, t.ApiErrorTimeZoneId })
             .FirstOrDefaultAsync(ct);
-        return row is null ? (null, null, null) : (row.Text, row.Timestamp, row.CreatedAt);
+        return row is null ? (null, null, null, null) : (row.Text, row.Timestamp, row.CreatedAt, row.ApiErrorTimeZoneId);
     }
 
-    public static async Task<(string? Text, DateTime? Timestamp)> LoadSiblingAsync(
+    public static async Task<(string? Text, DateTime? Timestamp, string? TimeZoneId)> LoadSiblingAsync(
         AppDbContext db, Guid sessionId, string? stubUuid, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(stubUuid))
-            return (null, null);
+            return (null, null, null);
         var row = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && t.Uuid == stubUuid
                 && t.Kind == TranscriptKinds.AssistantText
                 && t.IsApiError == true)
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Text, t.Timestamp })
+            .Select(t => new { t.Text, t.Timestamp, t.ApiErrorTimeZoneId })
             .FirstOrDefaultAsync(ct);
-        return row is null ? (null, null) : (row.Text, row.Timestamp);
+        return row is null ? (null, null, null) : (row.Text, row.Timestamp, row.ApiErrorTimeZoneId);
     }
 
     private static bool IsUsable(DateTime? value) =>

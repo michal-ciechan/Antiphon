@@ -30,7 +30,7 @@ public static partial class UsageLimitWallParser
         "You've hit your session limit · resets 2pm (Europe/London)";
 
     /// <summary>CARD-0412 grammar. Existing rows parsed under the minute-required regex are version 1.</summary>
-    public const int ParseVersion = 2;
+    public const int ParseVersion = 3;
 
     public const string FableModelCapIncidentText =
         "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.";
@@ -44,6 +44,9 @@ public static partial class UsageLimitWallParser
         @"\bresets?(?:\s+at)?\s+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ResetLeadRegex();
+
+    [GeneratedRegex(@"\btry again at\s+(?<month>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(?<day>\d{1,2})(?:st|nd|rd|th)?,\s*(?<year>\d{4})\s+(?<hour>\d{1,2}):(?<minute>\d{2})\s*(?<ampm>AM|PM)(?!\w)(?:\s*\((?<zone>[^)]+)\))?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex DatedResetRegex();
 
     /// <summary>Hour-only AM/PM. Omitted minutes mean zero only in this branch (CARD-0412).</summary>
     [GeneratedRegex(
@@ -68,7 +71,8 @@ public static partial class UsageLimitWallParser
     /// Unparseable reset degrades to <see cref="UsageLimitWallKind.ModelCap"/>, never the
     /// 30-minute ladder. A supplied-but-invalid reset is distinguished from no reset stated.
     /// </summary>
-    public static UsageLimitWall? Parse(DateTime evidenceAtUtc, string? text, string? fallbackAlias)
+    public static UsageLimitWall? Parse(DateTime evidenceAtUtc, string? text, string? fallbackAlias,
+        string? providerTimeZoneId = null)
     {
         var raw = text ?? string.Empty;
         var fromText = ExtractModelAlias(raw);
@@ -76,7 +80,7 @@ public static partial class UsageLimitWallParser
         if (alias is null)
             return null;
 
-        var reset = TryParseReset(evidenceAtUtc, raw);
+        var reset = TryParseReset(evidenceAtUtc, raw, providerTimeZoneId);
         var kind = reset.Status == ResetParseStatus.Valid
             ? UsageLimitWallKind.SessionLimit
             : UsageLimitWallKind.ModelCap;
@@ -109,6 +113,29 @@ public static partial class UsageLimitWallParser
             || ContainsIgnoreCase(raw, "monthly spending limit");
     }
 
+    /// <summary>Narrow diagnostic vocabulary, used only for API-error stubs.</summary>
+    public static bool IsQuotaRefusal(string? errorText)
+    {
+        if (string.IsNullOrWhiteSpace(errorText))
+            return false;
+        var text = errorText.Trim();
+        const string compactPrefix = "Error running remote compact task: ";
+        if (text.StartsWith(compactPrefix, StringComparison.OrdinalIgnoreCase))
+            text = text[compactPrefix.Length..];
+        if (text.Length > 600)
+            return false;
+        return text.StartsWith("You've hit your usage limit.", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("You’ve hit your usage limit.", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("You've hit your session limit", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("You’ve hit your session limit", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("You've reached your ", StringComparison.OrdinalIgnoreCase)
+                && NamedModelLimitRegex().IsMatch(text)
+            || text.StartsWith("API error (status 402", StringComparison.OrdinalIgnoreCase)
+                && LooksLikeCapacity(text)
+            || text.StartsWith("API error (status 403", StringComparison.OrdinalIgnoreCase)
+                && LooksLikeCapacity(text);
+    }
+
     public static string FormatReason(UsageLimitWall wall)
     {
         if (wall.Kind == UsageLimitWallKind.SessionLimit && wall.ResetAt is { } at)
@@ -117,7 +144,7 @@ public static partial class UsageLimitWallParser
                 ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(at, DateTimeKind.Utc), tz)
                 : at;
             var zoneLabel = wall.ResetZoneId ?? "UTC";
-            return $"session-limit resets {local:HH:mm} {zoneLabel}";
+            return $"session-limit resets {at:yyyy-MM-ddTHH:mm:ss}Z ({local:yyyy-MM-dd HH:mm} {zoneLabel}; {wall.RawText})";
         }
 
         var resetBit = wall.ResetParseFailure is { } failure
@@ -232,8 +259,31 @@ public static partial class UsageLimitWallParser
             new(ResetParseStatus.Valid, atUtc, zoneId, null);
     }
 
-    private static ResetParse TryParseReset(DateTime evidenceAtUtc, string text)
+    private static ResetParse TryParseReset(DateTime evidenceAtUtc, string text, string? providerTimeZoneId)
     {
+        var dated = DatedResetRegex().Match(text);
+        if (dated.Success)
+        {
+            var localText = $"{dated.Groups["month"].Value} {dated.Groups["day"].Value}, {dated.Groups["year"].Value} {dated.Groups["hour"].Value}:{dated.Groups["minute"].Value} {dated.Groups["ampm"].Value}";
+            if (!DateTime.TryParseExact(localText, "MMM d, yyyy h:mm tt", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var local))
+                return ResetParse.Invalid("malformed dated reset");
+            var datedZoneId = dated.Groups["zone"].Success
+                ? dated.Groups["zone"].Value.Trim() : providerTimeZoneId;
+            if (string.IsNullOrWhiteSpace(datedZoneId))
+                return ResetParse.Invalid("reset timezone unavailable");
+            if (!TryFindZone(datedZoneId, out var datedZone) || datedZone is null)
+                return ResetParse.Invalid($"invalid zone '{datedZoneId}'");
+            local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+            if (datedZone.IsInvalidTime(local))
+                return ResetParse.Invalid("nonexistent local time");
+            var choices = UtcInterpretations(datedZone, local).ToList();
+            if (choices.Count == 0)
+                return ResetParse.Invalid("reset not representable");
+            return ResetParse.Valid(choices.Max(), datedZoneId);
+        }
+        if (text.Contains("try again at", StringComparison.OrdinalIgnoreCase))
+            return ResetParse.Invalid("malformed dated reset");
         var lead = ResetLeadRegex().Match(text);
         if (!lead.Success)
             return ResetParse.Absent;

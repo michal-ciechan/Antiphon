@@ -340,7 +340,8 @@ public sealed record RunnerTranscriptEvent(
     string? Model = null,
     // Grok turn_completed.usage.modelCalls (CARD-0157). Additive-optional ON PURPOSE — same
     // old/new runner/server mix. Null on pre-carriage rows and on every non-Grok kind.
-    int? ModelCalls = null);
+    int? ModelCalls = null,
+    string? ApiErrorTimeZoneId = null);
 
 /// <summary>Full ordered transcript snapshot for a session (used for catch-up after a missed stream).</summary>
 public sealed record RunnerTranscriptDto(

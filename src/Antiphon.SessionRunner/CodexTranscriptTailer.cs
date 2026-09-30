@@ -89,7 +89,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private readonly Action? _onUnbound;
     private volatile bool _claimRevoked;
     private Guid _claimRevokedBy;
-    private readonly CodexTranscriptNormalizer _normalizer = new();
+    private readonly CodexTranscriptNormalizer _normalizer;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
     private readonly List<RunnerTranscriptEvent> _entries = new();
@@ -126,9 +126,11 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         Action<string, string>? onBound = null,
         Action? onUnbound = null,
         TimeSpan? refusalFaultDelay = null,
-        TimeSpan? refusalFaultRepeat = null)
+        TimeSpan? refusalFaultRepeat = null,
+        string? apiErrorTimeZoneId = null)
     {
         _sessionId = sessionId;
+        _normalizer = new CodexTranscriptNormalizer(apiErrorTimeZoneId);
         _cwd = cwd;
         _events = events;
         _logger = logger;
@@ -178,6 +180,14 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
 
         return Path.Combine(codexHome, "sessions");
+    }
+
+    public static string ResolveApiErrorTimeZoneId(IReadOnlyDictionary<string, string>? launchEnv)
+    {
+        if (launchEnv is not null && launchEnv.TryGetValue("TZ", out var zone)
+            && !string.IsNullOrWhiteSpace(zone))
+            return zone;
+        return TimeZoneInfo.Local.Id;
     }
 
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
@@ -350,7 +360,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                     _sessionId, ++_seq, p.Kind, p.Uuid, p.ParentUuid, p.Timestamp,
                     p.Role, p.Text, p.ToolName, p.ToolInput, p.ToolUseId, p.ToolIsError, p.StopReason,
                     p.ApiCallId, p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheCreationTokens,
-                    p.IsApiError, p.ApiErrorClass, p.ApiErrorStatus, p.Model, p.ModelCalls);
+                    p.IsApiError, p.ApiErrorClass, p.ApiErrorStatus, p.Model, p.ModelCalls,
+                    p.ApiErrorTimeZoneId);
                 _entries.Add(evt);
             }
             _events.Publish(SessionRunnerEventNames.SessionTranscript, evt);

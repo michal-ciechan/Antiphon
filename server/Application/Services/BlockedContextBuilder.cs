@@ -53,6 +53,8 @@ internal static class BlockedContextBuilder
 
     public static BlockedKind Classify(AgentTask task, IReadOnlyList<AgentTaskEventDto> events)
     {
+        if (task.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
+            return BlockedKind.SubscriptionQuota;
         var latest = events.LastOrDefault(e =>
             e.Type is AgentTaskEventType.Blocked or AgentTaskEventType.Conflicted);
         if (latest?.Type == AgentTaskEventType.Conflicted)
@@ -147,7 +149,7 @@ internal static class BlockedContextBuilder
 
     private static (bool CanAnswer, string? Reason) Answerability(BlockedKind kind, AgentTask task)
     {
-        if (kind is BlockedKind.CostCeiling or BlockedKind.RoutingExhausted)
+        if (kind is BlockedKind.CostCeiling or BlockedKind.RoutingExhausted or BlockedKind.SubscriptionQuota)
             return (false, task.FailureReason);
         if (task.AgentSessionId is null)
             return (false, "The delegate's session is no longer available.");

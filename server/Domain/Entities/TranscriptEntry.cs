@@ -67,6 +67,7 @@ public class TranscriptEntry
 
     /// <summary>The stub's <c>apiErrorStatus</c> HTTP status, when present (429, 529, 404 — absent on auth/connection-drop).</summary>
     public int? ApiErrorStatus { get; set; }
+    public string? ApiErrorTimeZoneId { get; set; }
 
     /// <summary>
     /// <c>message.model</c> from the assistant record this entry was parsed from (CARD-0082).

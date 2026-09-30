@@ -37,6 +37,7 @@ public sealed partial class SessionMessageQueueService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly DeliveryVerificationSettings _verification;
+    private readonly ApiErrorRecoverySettings _apiErrorRecovery;
     private readonly Settings.ChannelBridgeSettings _bridgeSettings;
     private readonly DelegationSettings _delegationSettings;
     private readonly PtyDeliveryProfile? _ptyProfile;
@@ -74,6 +75,7 @@ public sealed partial class SessionMessageQueueService
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
+        _apiErrorRecovery = (supervisionSettings?.Value ?? new SupervisionSettings()).ApiErrorRecovery;
         _bridgeSettings = bridgeSettings?.Value ?? new Settings.ChannelBridgeSettings();
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _logger = logger;
@@ -1980,6 +1982,22 @@ public sealed partial class SessionMessageQueueService
                 || m.MaintenanceAcceptedStartedAt is not { } deferredG
                 || SessionGeneration.Equal(deferredG, sessionGeneration))
             .ToList();
+        var quotaBlocked = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Status == AgentTaskStatus.Blocked
+                && t.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+        if (quotaBlocked.Count > 0)
+        {
+            var retryBodies = quotaBlocked.SelectMany(id => new[]
+            {
+                $"{DelegationReportFormatter.TaskMarker(id)} {_apiErrorRecovery.TransientPrompt}",
+                $"{DelegationReportFormatter.TaskMarker(id)} {_apiErrorRecovery.WallPrompt}",
+            }).ToHashSet(StringComparer.Ordinal);
+            deliverable = deliverable.Where(m => m.Origin != QueuedMessageOrigin.Supervision
+                || !retryBodies.Contains(m.Body)).ToList();
+        }
         if (deliverable.Count == 0)
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 

@@ -92,6 +92,7 @@ public sealed class ApiErrorRecoveryService
             .FirstOrDefaultAsync(r => r.AgentSessionId == sessionId && r.StubSequence == stubSequence, ct);
         if (existing is not null)
         {
+            await TryRepairQuotaClassificationAsync(db, scope.ServiceProvider, existing, sessionId, errorText, ct);
             await TryRepairEmptyWallAsync(
                 db, scope.ServiceProvider, existing, sessionId, errorText, ct);
             return existing;
@@ -124,6 +125,7 @@ public sealed class ApiErrorRecoveryService
             db.ChangeTracker.Clear();
             var raced = await db.ApiErrorRecoveries.SingleAsync(
                 r => r.AgentSessionId == sessionId && r.StubSequence == stubSequence, ct);
+            await TryRepairQuotaClassificationAsync(db, scope.ServiceProvider, raced, sessionId, errorText, ct);
             await TryRepairEmptyWallAsync(
                 db, scope.ServiceProvider, raced, sessionId, errorText, ct);
             return raced;
@@ -252,6 +254,18 @@ public sealed class ApiErrorRecoveryService
         // Never act on "the transcript does not contain X" without pulling first (CARD-0055).
         await _runtime.CatchUpTranscriptAsync(recovery.AgentSessionId, ct);
 
+        var stub = await db.TranscriptEntries.AsNoTracking().FirstOrDefaultAsync(
+            t => t.AgentSessionId == recovery.AgentSessionId && t.Sequence == recovery.StubSequence, ct);
+        if (stub is not null)
+        {
+            await EnsureAdoptedAsync(recovery.AgentSessionId, recovery.StubSequence,
+                recovery.StubUuid, recovery.ApiErrorClass, recovery.ApiErrorStatus, stub.Text, ct,
+                raiseIncident: false);
+            await db.Entry(recovery).ReloadAsync(ct);
+            if (recovery.ResolvedAt is not null || recovery.NextAttemptAt is null)
+                return false;
+        }
+
         var laterPrompt = await TranscriptPromptSpan.HasTurnPromptAfterAsync(
             db, recovery.AgentSessionId, recovery.StubSequence, ct);
         if (laterPrompt)
@@ -334,12 +348,12 @@ public sealed class ApiErrorRecoveryService
         DateTime now,
         CancellationToken ct)
     {
-        var classification = ApiErrorClassifier.Classify(apiErrorClass, apiErrorStatus, errorText);
         var sibling = await CapacityEvidence.LoadSiblingAsync(db, sessionId, stubUuid, ct);
         var turnEnd = await CapacityEvidence.LoadTurnEndAsync(db, sessionId, stubSequence, ct);
         var evidence = CapacityEvidence.Resolve(
             turnEnd.Timestamp, sibling.Timestamp, turnEnd.CreatedAt, now);
         errorText = ApiErrorStubText.Prefer(sibling.Text, errorText);
+        var classification = ApiErrorClassifier.Classify(apiErrorClass, apiErrorStatus, errorText);
         var row = new ApiErrorRecovery
         {
             Id = Guid.NewGuid(),
@@ -367,7 +381,8 @@ public sealed class ApiErrorRecoveryService
         if (classification == ApiErrorClassification.Wall)
         {
             var availability = services.GetRequiredService<ModelAvailability>();
-            return await ApplyWallAsync(db, availability, row, sessionId, errorText, now, ct, isNew: true);
+            return await ApplyWallAsync(db, availability, row, sessionId, errorText, now, ct,
+                isNew: true, providerTimeZoneId: turnEnd.TimeZoneId ?? sibling.TimeZoneId);
         }
 
         var interval = ApiErrorRetrySchedule.Interval(1, classification);
@@ -390,7 +405,8 @@ public sealed class ApiErrorRecoveryService
         string? errorText,
         DateTime now,
         CancellationToken ct,
-        bool isNew = true)
+        bool isNew = true,
+        string? providerTimeZoneId = null)
     {
         var evidenceAt = row.EvidenceAt ?? now;
         if (await IsWallSupersededAsync(db, sessionId, row.StubSequence, ct))
@@ -400,7 +416,8 @@ public sealed class ApiErrorRecoveryService
         }
 
         var fallback = await ResolveFallbackAliasAsync(db, sessionId, ct);
-        var wall = UsageLimitWallParser.Parse(evidenceAt, errorText, fallback);
+        var wall = UsageLimitWallParser.Parse(evidenceAt, errorText, fallback, providerTimeZoneId);
+        row.ResetAtUtc = wall?.ResetAt;
 
         var wallDeaths = await db.ApiErrorRecoveries.CountAsync(
             r => r.AgentSessionId == sessionId
@@ -452,6 +469,17 @@ public sealed class ApiErrorRecoveryService
         row.EvidenceDigest = CapacityEvidence.Digest(errorText);
         row.EvidenceStatus = string.IsNullOrWhiteSpace(errorText) ? "empty" : "text";
 
+        // A delegated quota refusal requires an operator choice. It never owns an automatic
+        // capacity resume or a same-session retry; the task settlement writes Blocked.
+        if (openTaskId is not null)
+        {
+            if (_capacityRecovery is not null)
+                await _capacityRecovery.SupersedeTaskWaitsOnAsync(db, openTaskId.Value,
+                    "subscription-quota-blocked", ct);
+            Resolve(row, now, ApiErrorRecoveryReasons.QuotaBlocked);
+            return row;
+        }
+
         // Production always registers CapacityRecoveryService; honor IsEnabled so a disabled
         // recovery does not stamp CapacityWaitId. A wait created while disabled would never
         // reconcile (ReconcileAsync returns immediately) and the reply path would retain Working.
@@ -499,6 +527,43 @@ public sealed class ApiErrorRecoveryService
     /// CARD-0412: exact, idempotent enrichment. Missing/cleared hold, revision mismatch,
     /// changed source, no improvement or a second parse-version correction is a no-op.
     /// </summary>
+    private async Task TryRepairQuotaClassificationAsync(
+        AppDbContext db, IServiceProvider services, ApiErrorRecovery existing,
+        Guid sessionId, string? errorText, CancellationToken ct)
+    {
+        if (existing.Classification is not (ApiErrorClassification.Unknown or ApiErrorClassification.Transient))
+            return;
+        var sibling = await CapacityEvidence.LoadSiblingAsync(db, sessionId, existing.StubUuid, ct);
+        var turnEnd = await CapacityEvidence.LoadTurnEndAsync(db, sessionId, existing.StubSequence, ct);
+        var preferred = ApiErrorStubText.Prefer(sibling.Text, ApiErrorStubText.Prefer(errorText, turnEnd.Text));
+        if (ApiErrorClassifier.Classify(existing.ApiErrorClass, existing.ApiErrorStatus, preferred)
+            != ApiErrorClassification.Wall)
+            return;
+        if (await IsWallSupersededAsync(db, sessionId, existing.StubSequence, ct))
+            return;
+        if (existing.AppliedHoldId is { } oldHoldId
+            && await db.ModelAvailabilityHolds.AsNoTracking().AnyAsync(
+                h => h.Id == oldHoldId && h.ClearedAt != null, ct))
+            return;
+        var latest = await db.ApiErrorRecoveries.AsNoTracking()
+            .Where(r => r.AgentSessionId == sessionId)
+            .MaxAsync(r => r.StubSequence, ct);
+        if (latest != existing.StubSequence)
+            return;
+
+        existing.Classification = ApiErrorClassification.Wall;
+        var evidence = CapacityEvidence.Resolve(turnEnd.Timestamp, sibling.Timestamp,
+            turnEnd.CreatedAt, existing.DetectedAt);
+        existing.EvidenceAt = evidence.At;
+        existing.EvidenceTimestampSource = evidence.Source;
+        existing.EvidenceDigest = CapacityEvidence.Digest(preferred);
+        existing.EvidenceStatus = string.IsNullOrWhiteSpace(preferred) ? "empty" : "text";
+        await ApplyWallAsync(db, services.GetRequiredService<ModelAvailability>(), existing,
+            sessionId, preferred, UtcNow(), ct, isNew: false,
+            providerTimeZoneId: turnEnd.TimeZoneId ?? sibling.TimeZoneId);
+        await db.SaveChangesAsync(ct);
+    }
+
     private async Task TryRepairEmptyWallAsync(
         AppDbContext db,
         IServiceProvider services,
@@ -569,7 +634,8 @@ public sealed class ApiErrorRecoveryService
         var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         if (session is not null && hold.Kind != session.AgentKind)
             return;
-        var parsed = UsageLimitWallParser.Parse(existing.EvidenceAt ?? existing.DetectedAt, errorText, hold.ModelAlias);
+        var parsed = UsageLimitWallParser.Parse(existing.EvidenceAt ?? existing.DetectedAt, errorText,
+            hold.ModelAlias, turnEndEarly.TimeZoneId ?? siblingEarly.TimeZoneId);
         if (parsed is not null
             && hold.ModelAlias != ModelAlias.KindWide
             && !string.Equals(hold.ModelAlias, parsed.ModelAlias, StringComparison.OrdinalIgnoreCase))
@@ -590,7 +656,8 @@ public sealed class ApiErrorRecoveryService
         }
 
         var availability = services.GetRequiredService<ModelAvailability>();
-        await ApplyWallAsync(db, availability, existing, sessionId, errorText, UtcNow(), ct, isNew: false);
+        await ApplyWallAsync(db, availability, existing, sessionId, errorText, UtcNow(), ct,
+            isNew: false, providerTimeZoneId: turnEnd.TimeZoneId ?? sibling.TimeZoneId);
         if (parseUpgrade && !textImproved)
             existing.EvidenceStatus = "parse-corrected";
         await db.SaveChangesAsync(ct);
@@ -679,16 +746,8 @@ public sealed class ApiErrorRecoveryService
         if (fromAgent is not null)
             return fromAgent;
 
-        var taskLevel = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId)
-            .OrderByDescending(t => t.CreatedAt)
-            .Select(t => (AgentModelLevel?)t.ModelLevel)
-            .FirstOrDefaultAsync(ct);
-        if (taskLevel is { } level)
-            return ModelLevelAliases.For(kind, level);
-        if (agent is not null)
-            return ModelLevelAliases.For(kind, agent.ModelLevel);
-        return ModelLevelAliases.For(kind, AgentModelLevel.High);
+        // A tier is not evidence of the actual model the provider rejected.
+        return null;
     }
 
     private static void Resolve(ApiErrorRecovery row, DateTime now, string reason)

@@ -843,7 +843,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             e.ApiErrorClass,
             e.ApiErrorStatus,
             e.Model,
-            e.ModelCalls);
+            e.ModelCalls,
+            e.ApiErrorTimeZoneId);
 
     public async Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct)
     {

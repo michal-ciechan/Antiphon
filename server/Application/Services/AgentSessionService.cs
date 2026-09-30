@@ -1800,7 +1800,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 t.Sequence, t.Kind, t.Uuid, t.ParentUuid, t.Timestamp, t.Role, t.Text,
                 t.ToolName, t.ToolInput, t.ToolUseId, t.ToolIsError, t.StopReason,
                 t.ApiCallId, t.InputTokens, t.OutputTokens, t.CacheReadTokens, t.CacheCreationTokens,
-                t.IsApiError, t.ApiErrorClass, t.ApiErrorStatus, t.Model))
+                t.IsApiError, t.ApiErrorClass, t.ApiErrorStatus, t.Model, t.ApiErrorTimeZoneId))
             .ToListAsync(ct);
 
         var last = entries.Count > 0 ? entries[^1].Sequence : since;

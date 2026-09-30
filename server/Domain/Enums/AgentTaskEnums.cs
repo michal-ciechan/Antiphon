@@ -417,6 +417,7 @@ public enum AgentTaskFailureCode
     /// same generation was retired. Distinct from a delivery timeout.
     /// </summary>
     CompactionRecoveryRetiredGeneration = 6,
+    SubscriptionQuotaExceeded = 7,
 }
 
 /// <summary>

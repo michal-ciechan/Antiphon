@@ -1370,6 +1370,7 @@ public class AppDbContext : DbContext
             entity.HasIndex(t => t.IsApiError)
                 .HasDatabaseName("IX_TranscriptEntries_IsApiError")
                 .HasFilter("\"IsApiError\" = true");
+            entity.Property(t => t.ApiErrorTimeZoneId).HasMaxLength(100);
 
             entity.HasOne(t => t.AgentSession)
                 .WithMany()
