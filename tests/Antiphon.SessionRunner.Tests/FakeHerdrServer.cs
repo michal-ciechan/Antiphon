@@ -233,6 +233,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             catch (OperationCanceledException) { }
             catch when (_listenerFault is not null) { }
         }
+        await _transport.DisposeAsync();
 
         await Task.WhenAll(_ownedHandlers);
 
