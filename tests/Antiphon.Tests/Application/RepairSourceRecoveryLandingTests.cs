@@ -111,6 +111,7 @@ public sealed class RepairSourceRecoveryLandingTests
             ? await AddReviewAsync(world, repair.Id, sha) : null;
         await using var before = world.CreateContext();
         var eventCount = await before.AgentTaskEvents.CountAsync(e => e.AgentTaskId == world.Owner.Id || e.AgentTaskId == repair.Id);
+        var notificationCount = await before.AgentTaskLandNotifications.CountAsync();
         var queue = world.Services.GetRequiredService<AgentTaskLandQueue>();
         var error = await Should.ThrowAsync<ConflictException>(() =>
             world.Services.GetRequiredService<AgentTaskLandService>().RequestAsync(world.Owner.Id,
@@ -122,9 +123,11 @@ public sealed class RepairSourceRecoveryLandingTests
             "missing-review" => "recovery_review_required",
             _ => "review_evidence_subject_mismatch",
         }, $"{scenario}: admission boundary");
+        error.StatusCode.ShouldBe(409);
         await using var db = world.CreateContext();
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
         (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
+        (await db.AgentTaskLandNotifications.CountAsync()).ShouldBe(notificationCount);
         (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == world.Owner.Id || e.AgentTaskId == repair.Id))
             .ShouldBe(eventCount);
         queue.PendingCount.ShouldBe(0);
@@ -166,6 +169,8 @@ public sealed class RepairSourceRecoveryLandingTests
         (await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", world.OwnerRef))
             .StdOut.Trim().ShouldBe(sha);
         var targetBefore = (await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", "refs/heads/master")).StdOut.Trim();
+        (await ScratchGitRepo.GitInAsync(world.Remote, "merge-base", "--is-ancestor", sha,
+            "refs/heads/master")).Ok.ShouldBeFalse("the repaired tip must not already be published");
         await world.SettleAsync(world.DoneReport("Repaired the original owner branch.", sha));
         await using var settledDb = world.CreateContext();
         var settled = await settledDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id);
