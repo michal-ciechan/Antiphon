@@ -44,6 +44,9 @@ public static class CardEndpoints
             DateTime? updatedSince,
             CardStatus? status,
             Guid? boardId,
+            int? limit,
+            string? pageToken,
+            bool includeArchived,
             CardService service,
             CancellationToken cancellationToken) =>
         {
@@ -53,8 +56,21 @@ public static class CardEndpoints
                     "At least one of updatedSince, status, or boardId is required.");
             }
 
-            return Results.Ok(await service.GetSummaryAsync(updatedSince, status, boardId, cancellationToken));
+            return Results.Ok(await service.GetSummaryAsync(updatedSince, status, boardId, cancellationToken,
+                limit, pageToken, includeArchived));
         });
+
+        cards.MapGet("/search", async (
+            string? q,
+            Guid? boardId,
+            CardStatus? status,
+            int? limit,
+            string? pageToken,
+            bool includeArchived,
+            CardService service,
+            CancellationToken cancellationToken) =>
+            Results.Ok(await service.SearchAsync(q, status, boardId, limit, pageToken,
+                includeArchived, cancellationToken)));
 
         cards.MapGet("/{id}", async (
             string id,
