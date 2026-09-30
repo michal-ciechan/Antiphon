@@ -118,6 +118,44 @@ second `SendNowAsync` waits, representing the live transcript ingestion that
 Program normally supplies through `SessionRunnerEventPump`. The row still comes
 from the native runner transcript, not a test-written prompt.
 
-Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
-task authorizes no live send. PC-1 through PC-30 remain pending for paused
-method-scoped SourceLanding Mutation.
+An additional `DIAG-V15` command on
+`67daea4e50d149261cdebb93dbe9c377f45632f1` selected the five
+parameterized `Process_death_preserves_ownership_at_each_boundary` cuts, not
+the separate `Running_converter_reconciles_after_dispatcher_death` method:
+5 / 5 / 0 / 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-051839-1005/`.
+That filter mistake gives no V-15 running verdict; the exact CP-6 class filter
+below includes the running method and all other recovery cases.
+
+## Final affected-row receipts
+
+The following exact plan filters each took an isolated build and granted host
+slot on committed source `67daea4e50d149261cdebb93dbe9c377f45632f1`.
+CP-1 and the conforming CP-7 used `TUNIT_MAX_PARALLEL_TESTS=2`.
+
+| Row | Executed / passed / failed / skipped | Receipt | Verdict |
+|---|---:|---|---|
+| CP-1 whole Unit | 3491 / 3491 / 0 / 33 | `.antiphon/checkpoints/r38/CP-1-20260930-054018-0afc/run.trx` | Pass |
+| CP-5 purpose/deadline | 66 / 66 / 0 / 0 | `.antiphon/checkpoints/r38/CP-5-20260930-054634-dc75/run.trx` | Pass |
+| CP-6 crash/transport | 31 / 31 / 0 / 0 | `.antiphon/checkpoints/r38/CP-6-20260930-052313-514c/run.trx` | Pass, including native running C-3 and the post-restart queue receipt |
+| CP-7 routing/attention | 320 / 320 / 0 / 0 | `.antiphon/checkpoints/r38/CP-7-20260930-053608-e0b3/run.trx` | Pass |
+
+The first CP-7 attempt mistakenly omitted the plan's two-test limit and ran
+320 / 319 / 1 / 0 at `.antiphon/checkpoints/r38/CP-7-20260930-053109-9827/`.
+`ChannelConsumerIdentityEndpointTests.Returns_effective_overrides_and_only_allowlisted_fields`
+failed to start because shared PostgreSQL returned `53300: too many clients
+already`; the correctly limited rerun above passed all 320 cases. This is the
+same baseline infrastructure failure recorded in round 7, not an assertion
+failure in the changed code.
+
+CP-2–CP-4 and CP-8–CP-13 were not changed by this round and retain the
+[round-37 exact-list receipts](2026-09-30-card-0418-round-37-evidence.md):
+CP-2 373/373, CP-3 34/34, CP-4 64/64, CP-8 69/71 with the inherited
+`PinnedAgentKindTests.T1/T2` `codex_desktop_unqualified` failures, CP-9 19/19,
+CP-10 1/1 with manual page inspection, CP-11 125/125, CP-12 26/26, and CP-13
+bundle success. The new V-15 receipt is Linux-only. It uses the staged native
+pty-host apphost and a shell wrapper only to run FakeGrok in raw terminal mode;
+it does not overwrite the pty-host launcher or enable LF-as-Enter.
+
+V-25 remains pending because this task authorizes no live send. PC-1 through
+PC-30 remain pending for paused method-scoped SourceLanding Mutation.
