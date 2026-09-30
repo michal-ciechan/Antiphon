@@ -1864,7 +1864,7 @@ c849_prune_idle() {
         grep -Fxq 'runners=idle processes=0 leases=0' "$SERVER2_ROOT/fixture-consumers.txt" \
             || write_result false CacheConsumersBusy 2
         for mounted in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-            attached="$(docker ps -aq --filter "volume=$mounted")" \
+            attached="$(docker ps -q --filter "volume=$mounted")" \
                 || write_result false CacheConsumerUnknown 2
             [ -z "$attached" ] \
                 || write_result false CacheConsumersBusy 2
