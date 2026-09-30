@@ -1392,6 +1392,8 @@ public sealed class AgentTaskReplyService
             var alias = hold?.ModelAlias ?? "model alias unresolved; hold not written";
             var resetText = reset is { } resetAt
                 ? $"reset {resetAt:yyyy-MM-ddTHH:mm:ss}Z"
+                : hold?.Reason.Contains("reset timezone unavailable", StringComparison.OrdinalIgnoreCase) == true
+                    ? "reset timezone unavailable; estimated hold"
                 : "reset unavailable or unparseable; estimated hold";
             var holdText = until is { } disabledUntil
                 ? $"hold until {disabledUntil:yyyy-MM-ddTHH:mm:ss}Z"
