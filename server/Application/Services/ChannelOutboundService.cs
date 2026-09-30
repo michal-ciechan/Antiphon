@@ -79,7 +79,11 @@ public sealed class ChannelOutboundService
             || projectId != delivery.ProjectId)
             throw new ConflictException("Repair the original channel binding before resuming delivery.",
                 "channel_outbound_binding_held");
-        delivery.State = ChannelOutboundDeliveryState.Ready;
+        // A binding can be held before the first conversion claim. Preserve that
+        // work when it is released; Ready would publish the untouched original.
+        delivery.State = delivery.ConverterAgentId != Guid.Empty
+            && delivery.ConversionOutcome is null && delivery.ConversionTaskId is null
+            ? ChannelOutboundDeliveryState.Pending : ChannelOutboundDeliveryState.Ready;
         delivery.LeaseOwner = null;
         delivery.LeaseUntil = null;
         delivery.FailureReason = null;

@@ -35,6 +35,55 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundRecoveryTests
 {
     [Test]
+    public async Task Resume_held_after_conversion_returns_to_ready()
+    {
+        var root = Directory.CreateTempSubdirectory("c0418-held-converted-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        try
+        {
+            var snapshot = await store.StageAsync(deliveryId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"), Text = "converted source",
+            }, CancellationToken.None);
+            await using var db = new AppDbContext(options);
+            db.Projects.Add(new Project { Id = projectId, Name = "converted-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "converted",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "converted",
+                Slug = "converted-" + agentId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = agentId,
+                CreatedAt = now, UpdatedAt = now });
+            db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                ProjectId = projectId, InboundAgentId = agentId, ConverterAgentId = Guid.NewGuid(),
+                SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "",
+                PromptRevision = new string('a', 64), Trigger = "EveryAgentReply",
+                InputPath = snapshot.ReplyPath, InputSha256 = snapshot.ReplySha256,
+                ConversionOutcome = "Converted", State = ChannelOutboundDeliveryState.Held,
+                CreatedAt = now, DeadlineAt = now.AddMinutes(10),
+            });
+            await db.SaveChangesAsync();
+            var service = new ChannelOutboundService(db, store, new FakeAntiphonMessagingClient(),
+                Options.Create(new ChannelOutboundSettings()), TimeProvider.System);
+            await service.ResumeHeldAsync(deliveryId, CancellationToken.None);
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed()
     {
         var root = Directory.CreateTempSubdirectory("c0418-held-order-").FullName;
@@ -643,11 +692,7 @@ public sealed class ChannelOutboundRecoveryTests
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
-                var nativeInputShape = Path.Combine(root, "native-input-shape.txt");
                 var nativeEnv = spec.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
-                nativeEnv["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
-                if (!OperatingSystem.IsWindows())
-                    nativeEnv["ANTIPHON_FAKE_LF_ENTER"] = "1";
                 // The launch queue ordinarily passes this dispatcher spec through
                 // AgentSessionService before the runner, adding Grok's durable
                 // conversation id. The direct test runner must perform that same
@@ -658,25 +703,9 @@ public sealed class ChannelOutboundRecoveryTests
                     Args = AgentSessionService.BuildSessionIdentityArgs(
                         spec.Args, nativeSessionId, resumeMode: null),
                 };
-                if (!OperatingSystem.IsWindows())
-                {
-                    // CP rows intentionally build with UseAppHost=false on Linux. The
-                    // direct runner needs an executable in its content-addressed host copy.
-                    var hostLauncher = Path.Combine(AppContext.BaseDirectory, "Antiphon.PtyHost");
-                    var stagedLauncher = hostLauncher + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                    await File.WriteAllTextAsync(stagedLauncher,
-                        "#!/bin/sh\n"
-                        + "if [ \"$1\" = --spawn ]; then\n"
-                        + "  shift\n"
-                        + "  setsid \"$0\" \"$@\" </dev/null >/dev/null 2>&1 &\n"
-                        + "  echo $!\n"
-                        + "  exit 0\n"
-                        + "fi\n"
-                        + "exec dotnet \"$(dirname \"$0\")/Antiphon.PtyHost.dll\" \"$@\"\n");
-                    File.SetUnixFileMode(stagedLauncher,
-                        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                    File.Move(stagedLauncher, hostLauncher, overwrite: true);
-                }
+                File.Exists(Path.Combine(AppContext.BaseDirectory,
+                    OperatingSystem.IsWindows() ? "Antiphon.PtyHost.exe" : "Antiphon.PtyHost"))
+                    .ShouldBeTrue("the native pty-host apphost must be staged by the test build");
                 nativeRunner = new DirectSessionRunnerClient(Path.Combine(root, "runner-logs"));
                 var started = await nativeRunner.StartAsync(nativeSessionId, spec, CancellationToken.None);
                 started.Status.ShouldBe("Running");
@@ -689,11 +718,20 @@ public sealed class ChannelOutboundRecoveryTests
                 var nativeTaskId = (await nativeDb.AgentTasks.AsNoTracking()
                     .SingleAsync(t => t.OutboundDeliveryId == acceptedId)).Id;
                 var requestPath = Path.Combine(storeRoot, acceptedId.ToString("N"), "request.json");
-                await nativeRunner.SendInputAsync(nativeSessionId,
-                    $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
-                    CancellationToken.None);
-                await nativeRunner.SendInputAsync(nativeSessionId,
-                    OperatingSystem.IsWindows() ? "\r" : "\n", CancellationToken.None);
+                var queuedBrief = await nativeDb.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == nativeSessionId
+                        && m.Origin == QueuedMessageOrigin.Delegation && m.ExecutionTaskId == nativeTaskId);
+                queuedBrief.Body.ShouldContain(requestPath);
+                queuedBrief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(nativeTaskId));
+                await nativeDb.AgentSessions.Where(s => s.Id == nativeSessionId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running)
+                        .SetProperty(x => x.StartedAt, started.AcceptedStartedAt));
+                await using (var initialServer = BuildNativeRecoveryProvider(
+                    isolated.ConnectionString, nativeRunner))
+                {
+                    await initialServer.GetRequiredService<SessionMessageQueueService>()
+                        .SendNowAsync(nativeSessionId, queuedBrief.Id, CancellationToken.None);
+                }
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 try
                 {
@@ -713,10 +751,13 @@ public sealed class ChannelOutboundRecoveryTests
                         + $"screenHasTask={buffer.Buffer.Contains(DelegationReportFormatter.TaskMarker(nativeTaskId))}; "
                         + $"screenHasReady={buffer.Buffer.Contains("Fake Grok ready")}; "
                         + $"screenHasToolFailure={buffer.Buffer.Contains("Outbound tool failed")}; "
-                        + $"inputShape={(File.Exists(nativeInputShape) ? await File.ReadAllTextAsync(nativeInputShape) : "absent")}");
+                        + $"queuedBrief={queuedBrief.Id:D}");
                 }
                 (await File.ReadAllTextAsync(workerGate + ".held"))
                     .ShouldBe(acceptedId.ToString("D"));
+                (await nativeRunner.GetTranscriptAsync(nativeSessionId, CancellationToken.None))
+                    .Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt
+                        && e.Text != null && e.Text.Contains(queuedBrief.Body));
             }
             child.Id.ShouldBe(childPid);
             child.StartTime.ShouldBe(childStarted);
@@ -1266,30 +1307,7 @@ public sealed class ChannelOutboundRecoveryTests
     private static async Task ReconcileNativeWorkerAsync(string connectionString,
         DirectSessionRunnerClient runner, Guid taskId, Guid sessionId)
     {
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
-        services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton<ISessionRunnerClient>(runner);
-        services.AddSingleton(TimeProvider.System);
-        services.AddSingleton(Options.Create(new AgentSessionSettings()));
-        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-        services.AddSingleton(Options.Create(new SupervisionSettings()));
-        services.AddSingleton(Options.Create(new DelegationSettings()));
-        services.AddSingleton(Options.Create(new DeliverablesSettings()));
-        services.AddSingleton<AgentSessionRuntime>();
-        services.AddSingleton<AgentTaskReplyService>();
-        var replyLog = new ListLogger<AgentTaskReplyService>();
-        services.AddSingleton<ILogger<AgentTaskReplyService>>(replyLog);
-        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
-        services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton<DeliverableBundleService>();
-        services.AddDelegationWorktreeGraph(new GitSettings
-        {
-            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "c0418-native-recovery-worktrees"),
-        });
-        services.AddScoped<AgentTaskService>();
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = BuildNativeRecoveryProvider(connectionString, runner);
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         try
@@ -1316,12 +1334,6 @@ public sealed class ChannelOutboundRecoveryTests
                 db, sessionId, task, CancellationToken.None);
             var marker = DelegationReportFormatter.TaskMarker(taskId);
             var token = DelegationReportFormatter.ReportToken(taskId, "done");
-            var warnings = string.Join(',', replyLog.Entries
-                .Where(entry => entry.Level >= LogLevel.Warning)
-                .Select(entry => entry.Exception is InvalidOperationException invalid
-                    && invalid.Message.StartsWith("No service for type", StringComparison.Ordinal)
-                    ? invalid.Message
-                    : entry.Exception?.GetType().Name ?? entry.Message));
             throw new InvalidOperationException("Native task reconciliation timed out: "
                 + $"status={task.Status}; nativeKinds={string.Join(',', nativeSnapshot.Entries.Select(e => e.Kind))}; "
                 + $"nativePromptMarker={nativeSnapshot.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt && e.Text?.Contains(marker) == true)}; "
@@ -1330,14 +1342,60 @@ public sealed class ChannelOutboundRecoveryTests
                 + $"storedPromptMarker={stored.Any(e => e.Kind == "UserPrompt" && e.Text?.Contains(marker) == true)}; "
                 + $"storedReportToken={stored.Any(e => e.Kind == "AssistantText" && e.Text?.Contains(token) == true)}; "
                 + $"selection={selection.Kind}; skipped={string.Join(',', selection.Skipped.Select(s => s.Reason))}; "
-                + $"watermark={task.RepliedAtSequence}; promptAfterDispatch={stored.Any(e => e.Kind == "UserPrompt" && (task.DispatchedAt == null || e.Timestamp == null || e.Timestamp > task.DispatchedAt))}; "
-                + $"settlementWarnings={warnings}");
+                + $"watermark={task.RepliedAtSequence}");
         }
         var native = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
-        native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt);
-        native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText
+        native.Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt);
+        native.Entries.ShouldContain(e => e.Kind == TranscriptKinds.AssistantText
             && e.Text != null && e.Text.Contains(DelegationReportFormatter.ReportToken(taskId, "done")));
-        native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd);
+        native.Entries.ShouldContain(e => e.Kind == TranscriptKinds.TurnEnd);
+
+        // A fresh server must still be able to send through its own queue after
+        // the original task settles. This checks the rebuilt registration too.
+        var probeText = "native recovery queue probe " + Guid.NewGuid().ToString("N");
+        var queue = provider.GetRequiredService<SessionMessageQueueService>();
+        var probeId = Guid.Empty;
+        await queue.EnqueueAsync(sessionId, probeText, MessageSendMode.WhenIdle,
+            CancellationToken.None, onCreated: id => probeId = id, deliverIfIdle: false);
+        probeId.ShouldNotBe(Guid.Empty);
+        await queue.SendNowAsync(sessionId, probeId, CancellationToken.None);
+        using var probeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            var observed = await runner.GetTranscriptAsync(sessionId, probeWatchdog.Token);
+            if (observed.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
+                && e.Text?.Contains(probeText) == true)) break;
+            await Task.Delay(50, probeWatchdog.Token);
+        }
+    }
+
+    private static ServiceProvider BuildNativeRecoveryProvider(string connectionString,
+        DirectSessionRunnerClient runner)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton<ISessionRunnerClient>(runner);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings()));
+        services.AddSingleton(Options.Create(new DeliverablesSettings()));
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<AgentTaskReplyService>();
+        services.AddSingleton<ILogger<AgentTaskReplyService>>(NullLogger<AgentTaskReplyService>.Instance);
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddSingleton<DeliverableBundleService>();
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "c0418-native-recovery-worktrees"),
+        });
+        services.AddScoped<AgentTaskService>();
+        return services.BuildServiceProvider();
     }
 
     [Test]
