@@ -34,26 +34,10 @@ public sealed class HerdrClient : IHerdrLabelReader
 
     internal HerdrSettings Settings => _settings;
 
-    /// <summary>Resolves Herdr's documented session/socket precedence to the Windows pipe name.</summary>
-    public string ResolveSocketPath()
-    {
-        if (_socketOverride is not null) return _socketOverride;
-        var session = _settings.Session;
-        if (!string.IsNullOrWhiteSpace(session))
-            return SocketPathForSession(session);
-
-        var explicitPath = Environment.GetEnvironmentVariable("HERDR_SOCKET_PATH");
-        if (!string.IsNullOrWhiteSpace(explicitPath))
-            return explicitPath;
-
-        var environmentSession = Environment.GetEnvironmentVariable("HERDR_SESSION");
-        if (!string.IsNullOrWhiteSpace(environmentSession))
-            return SocketPathForSession(environmentSession);
-
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "herdr", "herdr.sock");
-    }
+    /// <summary>Resolves the native Herdr endpoint for this runner instance.</summary>
+    public string ResolveSocketPath() => HerdrEndpointResolver.Resolve(
+        _settings, _socketOverride, Environment.GetEnvironmentVariable,
+        Environment.GetFolderPath, OperatingSystem.IsWindows());
 
     /// <summary>
     /// Connects and proves that the operator-run backend answers the expected protocol. A missing,
@@ -101,21 +85,13 @@ public sealed class HerdrClient : IHerdrLabelReader
         EnsureEnabled();
 
         var requestId = Guid.NewGuid().ToString("N");
-        await using var pipe = await ConnectPipeAsync(cancellationToken);
-        var writer = CreateWriter(pipe);
-        var reader = CreateReader(pipe);
+        await using var connection = await HerdrTransport.ConnectAsync(
+            ResolveSocketPath(), _settings.ConnectTimeoutMs, cancellationToken);
+        var writer = CreateWriter(connection.Stream);
+        var reader = CreateReader(connection.Stream);
         try
         {
-            string? instanceId = null;
-            if (identifyServer && GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid))
-            {
-                try
-                {
-                    using var server = Process.GetProcessById(checked((int)pid));
-                    instanceId = $"{pid}:{server.StartTime.ToUniversalTime().Ticks}";
-                }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
-            }
+            var instanceId = identifyServer ? connection.InstanceId : null;
             await WriteRequestAsync(writer, new HerdrRequest(requestId, method, parameters), cancellationToken);
             var response = await ReadResponseAsync(reader, cancellationToken);
             return (RequireResult(response, requestId), instanceId);
@@ -129,10 +105,6 @@ public sealed class HerdrClient : IHerdrLabelReader
             DisposeQuietly(reader);
         }
     }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint serverProcessId);
 
     // --- typed wrappers (CARD-0160 B2 / plan §8). agent.prompt is deliberately not wrapped. ---
 
@@ -474,9 +446,10 @@ public sealed class HerdrClient : IHerdrLabelReader
         await ConnectAndValidateAsync(cancellationToken);
 
         var requestId = Guid.NewGuid().ToString("N");
-        await using var pipe = await ConnectPipeAsync(cancellationToken);
-        var writer = CreateWriter(pipe);
-        var reader = CreateReader(pipe);
+        await using var connection = await HerdrTransport.ConnectAsync(
+            ResolveSocketPath(), _settings.ConnectTimeoutMs, cancellationToken);
+        var writer = CreateWriter(connection.Stream);
+        var reader = CreateReader(connection.Stream);
         try
         {
             await WriteRequestAsync(writer,
@@ -505,40 +478,6 @@ public sealed class HerdrClient : IHerdrLabelReader
         {
             DisposeQuietly(writer);
             DisposeQuietly(reader);
-        }
-    }
-
-    private async Task<NamedPipeClientStream> ConnectPipeAsync(CancellationToken cancellationToken)
-    {
-        if (!OperatingSystem.IsWindows())
-            throw new HerdrBackendUnavailableException("Herdr's named-pipe backend is only available on Windows.");
-
-        var pipe = new NamedPipeClientStream(
-            ".", ResolveSocketPath(), PipeDirection.InOut, PipeOptions.Asynchronous);
-        try
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, _settings.ConnectTimeoutMs)));
-            await pipe.ConnectAsync(timeout.Token);
-            return pipe;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            await pipe.DisposeAsync();
-            throw new HerdrBackendUnavailableException(
-                $"Herdr is unavailable: named pipe '{ResolveSocketPath()}' did not accept a connection within "
-                + $"{_settings.ConnectTimeoutMs} ms.");
-        }
-        catch (IOException ex)
-        {
-            await pipe.DisposeAsync();
-            throw new HerdrBackendUnavailableException(
-                $"Herdr is unavailable: could not connect to named pipe '{ResolveSocketPath()}'.", ex);
-        }
-        catch
-        {
-            await pipe.DisposeAsync();
-            throw;
         }
     }
 
@@ -623,9 +562,6 @@ public sealed class HerdrClient : IHerdrLabelReader
             throw new HerdrBackendUnavailableException(
                 "Herdr backend is disabled. Set SessionRunner:Herdr:Enabled=true before selecting it for a session.");
     }
-
-    private static string SocketPathForSession(string session) => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "herdr", "sessions", session, "herdr.sock");
 
     private sealed record HerdrRequest(
         [property: JsonPropertyName("id")] string Id,

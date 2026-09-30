@@ -15,7 +15,10 @@ public sealed class HerdrSettings
     /// </summary>
     public string? Session { get; set; }
 
-    /// <summary>Bound on opening a named-pipe connection to Herdr.</summary>
+    /// <summary>Explicit native endpoint for this runner instance. Overrides session and environment discovery.</summary>
+    public string? SocketPath { get; set; }
+
+    /// <summary>Bound on opening a local connection to Herdr.</summary>
     public int ConnectTimeoutMs { get; set; } = 5_000;
 
     /// <summary>The wire protocol this client was compiled and tested against.</summary>
