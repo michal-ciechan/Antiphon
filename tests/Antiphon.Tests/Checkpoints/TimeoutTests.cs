@@ -29,8 +29,8 @@ public sealed class TimeoutTests : CheckpointTestBase
         {
             Manifest = manifest,
             Rows = manifest.Checkpoints,
-            RunDirectory = CheckpointFixtures.TempDir(),
-            WorkingDirectory = CheckpointFixtures.TempDir(),
+            RunDirectory = TempDir(),
+            WorkingDirectory = TempDir(),
             State = new RunState { RunId = "t", StartedAt = DateTimeOffset.UtcNow },
             Slots = new FixedSlotClient("unavailable"),
             Width = 2,
