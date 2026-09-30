@@ -636,6 +636,8 @@ public sealed class ChannelOutboundRecoveryTests
                 var launch = launchDocument.RootElement;
                 var nativeSessionId = launch.GetProperty("SessionId").GetGuid();
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
+                spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
+                spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
                 if (!OperatingSystem.IsWindows())
                 {
                     // CP rows intentionally build with UseAppHost=false on Linux. The
@@ -658,9 +660,14 @@ public sealed class ChannelOutboundRecoveryTests
                 nativeRunner = new DirectSessionRunnerClient(Path.Combine(root, "runner-logs"));
                 var started = await nativeRunner.StartAsync(nativeSessionId, spec, CancellationToken.None);
                 started.Status.ShouldBe("Running");
-                var nativeTaskId = (await new AppDbContext(
-                    TestDbFixture.CreateDbContextOptions(isolated.ConnectionString))
-                    .AgentTasks.AsNoTracking().SingleAsync(t => t.OutboundDeliveryId == acceptedId)).Id;
+                using (var bootWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+                    while (!(await nativeRunner.GetBufferAsync(nativeSessionId, bootWatchdog.Token))
+                        .Buffer.Contains("Fake Grok ready", StringComparison.Ordinal))
+                        await Task.Delay(25, bootWatchdog.Token);
+                await using var nativeDb = new AppDbContext(
+                    TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+                var nativeTaskId = (await nativeDb.AgentTasks.AsNoTracking()
+                    .SingleAsync(t => t.OutboundDeliveryId == acceptedId)).Id;
                 var requestPath = Path.Combine(storeRoot, acceptedId.ToString("N"), "request.json");
                 await nativeRunner.SendInputAsync(nativeSessionId,
                     $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
