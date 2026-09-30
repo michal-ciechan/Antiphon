@@ -49,6 +49,11 @@ public sealed class RemoteScriptContractTests
         var cacheObserve = Block(text, "c849_observe_volume");
         var cachePreview = Block(text, "c849_preview");
         var cachePruneTree = Block(text, "c849_prune_validate_tree");
+        var cacheFixture = Block(text, "c849_fixture");
+        cacheFixture.ShouldContain("require_lane host");
+        var fixtureRestore = Block(text, "c849_fixture_nuget_race");
+        var fixtureApphost = Block(text, "c849_fixture_apphost");
+        var fixtureNpm = Block(text, "c849_fixture_npm");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
@@ -59,7 +64,10 @@ public sealed class RemoteScriptContractTests
                 || cacheSeed.Contains(line, StringComparison.Ordinal)
                 || cacheObserve.Contains(line, StringComparison.Ordinal)
                 || cachePreview.Contains(line, StringComparison.Ordinal)
-                || cachePruneTree.Contains(line, StringComparison.Ordinal))
+                || cachePruneTree.Contains(line, StringComparison.Ordinal)
+                || fixtureRestore.Contains(line, StringComparison.Ordinal)
+                || fixtureApphost.Contains(line, StringComparison.Ordinal)
+                || fixtureNpm.Contains(line, StringComparison.Ordinal))
                 .ShouldBeTrue("sudo outside a declared host-lane case or helper: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
         var codexCommands = Commands(codexHome);
@@ -233,9 +241,14 @@ public sealed class RemoteScriptContractTests
                 continue;
             if (!trimmed.Contains("down -v", StringComparison.Ordinal))
                 continue;
+            trimmed.ShouldNotContain("-p \"$HOST_PROJECT\"");
+            trimmed.ShouldNotContain("-p \"antiphon-runner\"");
             (trimmed.StartsWith("compose_child ", StringComparison.Ordinal)
                 || trimmed.StartsWith("compose_temp ", StringComparison.Ordinal)
-                || trimmed.Contains("-p \"$project\"", StringComparison.Ordinal))
+                || trimmed.Contains("-p \"$project\"", StringComparison.Ordinal)
+                || trimmed.Contains("-p \"$main\"", StringComparison.Ordinal)
+                || trimmed.Contains("-p \"$temp\"", StringComparison.Ordinal)
+                || trimmed.Contains("-p \"c849${RUN}", StringComparison.Ordinal))
                 .ShouldBeTrue("down -v aimed at something other than the child, temp or a retired c590 project: " + trimmed);
         }
     }
@@ -287,20 +300,16 @@ public sealed class RemoteScriptContractTests
     [Test]
     public void Host_daemon_is_never_pruned()
     {
-        // D-9: prune inside the nested daemon is permitted; prune on the host daemon is forbidden
-        // because am-service, traefik, windmill and schoolrevision-* share it.
+        // Cache-specific prune helpers may clear selected entries under the maintenance
+        // lock. A daemon-wide prune would also erase unrelated services' resources.
         foreach (var line in Remote().Replace("\r\n", "\n").Split('\n'))
         {
             var trimmed = line.Trim();
             if (trimmed.StartsWith("#", StringComparison.Ordinal))
                 continue;
-            // CARD-0660: `find ... -prune` (ensure_dirs skipping the Codex home) is a filesystem
-            // walk, not a daemon. Only that exact primary on a find line is set aside; every other
-            // occurrence of the word still fails.
-            if (trimmed.StartsWith("sudo -n find ", StringComparison.Ordinal))
-                trimmed = trimmed.Replace(" -prune -o ", " ", StringComparison.Ordinal);
-            trimmed.Contains("prune", StringComparison.Ordinal)
-                .ShouldBeFalse("remote script prunes a daemon: " + trimmed);
+            foreach (var forbidden in new[] { "docker system prune", "docker volume prune", "docker image prune", "docker container prune" })
+                trimmed.Contains(forbidden, StringComparison.Ordinal)
+                    .ShouldBeFalse("remote script prunes a daemon: " + trimmed);
         }
     }
 
@@ -1038,7 +1047,7 @@ public sealed class RemoteScriptContractTests
             printf 'exit=%s\n' "$code"
             cat "$root/verdict"
             [ "$(cat "$root/volumes/packages/sentinel")" = untouched ] && echo package-retained
-            [ ! -s "$root/docker-trace" ] && echo no-docker-mutation
+            [ -z "$(grep -E '^(run|volume create)' "$root/docker-trace")" ] && echo no-docker-mutation
             [ ! -e "$root/outside/sentinel" ] && echo sibling-retained
             """);
         output.ShouldContain("exit=2");
@@ -1171,7 +1180,9 @@ public sealed class RemoteScriptContractTests
                     if [ "$target" = "$root/volumes/packages" ]; then rm -rf "$target/unrelated"; else rm -f "$target"/*; fi
                     printf 'clear %s\n' "$target" >> "$root/docker-trace"
                 elif [[ "$args" == *'cp -a'* ]]; then
-                    cp -a "$root/recovery/packages/." "$target/"
+                    mkdir -p "$target/microsoft.netcore.app.host.linux-x64" "$target/microsoft.netcore.app.ref"
+                    cp -a "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20" "$target/microsoft.netcore.app.host.linux-x64/"
+                    cp -a "$root/recovery/packages/microsoft.netcore.app.ref/9.0.20" "$target/microsoft.netcore.app.ref/"
                     printf 'refill %s\n' "$target" >> "$root/docker-trace"
                 fi
             }

@@ -576,9 +576,10 @@ public sealed class DockerStackContractTests
             .ShouldBe(Env(runner, "CLAUDE_CONFIG_DIR"), "the auth probe targets the same store");
         Destination(runner, "runner-state").ShouldBe("/state");
 
-        DockerStackDocuments.List(runner, "volumes")
-            .ShouldContain("${CLAUDE_OAUTH_TOKEN_FILE:?CLAUDE_OAUTH_TOKEN_FILE is required}:/run/antiphon/claude-oauth-token:ro",
-                "the deploy's token file, read-only, at the path the entrypoint reads");
+        // The cache's long-form mounts precede this bind; the lightweight YAML
+        // list reader stops at nested fields, so inspect the complete service body.
+        runner.ShouldContain("- ${CLAUDE_OAUTH_TOKEN_FILE:?CLAUDE_OAUTH_TOKEN_FILE is required}:/run/antiphon/claude-oauth-token:ro",
+            "the deploy's token file, read-only, at the path the entrypoint reads");
         DockerStackDocuments.List(runner, "tmpfs").ShouldContain("/run/antiphon");
         Text("docker/session-runner-grok/dind-entrypoint.sh")
             .ShouldContain("CLAUDE_OAUTH_TOKEN_SOURCE=\"$RUNTIME_DIR/claude-oauth-token\"");
