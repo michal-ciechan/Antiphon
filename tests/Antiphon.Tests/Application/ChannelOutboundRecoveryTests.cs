@@ -514,7 +514,9 @@ public sealed class ChannelOutboundRecoveryTests
                 var fakeDll = Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.dll");
                 File.Exists(fakeDll).ShouldBeTrue();
                 await File.WriteAllTextAsync(workerExe,
-                    "#!/bin/sh\nstty raw -echo\nexec dotnet '"
+                    "#!/bin/sh\nstty raw -echo || exit 71\nstty -a > '"
+                    + Path.Combine(root, "native-stty.txt").Replace("'", "'\\''")
+                    + "'\nexec dotnet '"
                     + fakeDll.Replace("'", "'\\''") + "' \"$@\"\n");
                 File.SetUnixFileMode(workerExe,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -673,13 +675,27 @@ public sealed class ChannelOutboundRecoveryTests
                 await nativeRunner.SendInputAsync(nativeSessionId,
                     $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
                     CancellationToken.None);
+                await Task.Delay(100);
                 await nativeRunner.SendInputAsync(nativeSessionId, "\r", CancellationToken.None);
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                while (!File.Exists(workerGate + ".held"))
+                try
                 {
-                    (await nativeRunner.GetAsync(nativeSessionId, CancellationToken.None))
-                        .Status.ShouldBe("Running");
-                    await Task.Delay(25, nativeWatchdog.Token);
+                    while (!File.Exists(workerGate + ".held"))
+                    {
+                        (await nativeRunner.GetAsync(nativeSessionId, CancellationToken.None))
+                            .Status.ShouldBe("Running");
+                        await Task.Delay(25, nativeWatchdog.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (nativeWatchdog.IsCancellationRequested)
+                {
+                    var observed = await nativeRunner.GetTranscriptAsync(nativeSessionId, CancellationToken.None);
+                    var buffer = await nativeRunner.GetBufferAsync(nativeSessionId, CancellationToken.None);
+                    throw new InvalidOperationException("Native converter did not enter the gate: "
+                        + $"transcriptKinds={string.Join(',', observed.Entries.Select(e => e.Kind))}; "
+                        + $"screenHasTask={buffer.Buffer.Contains(DelegationReportFormatter.TaskMarker(nativeTaskId))}; "
+                        + $"screenHasReady={buffer.Buffer.Contains("Fake Grok ready")}; "
+                        + $"screenHasToolFailure={buffer.Buffer.Contains("Outbound tool failed")}");
                 }
                 (await File.ReadAllTextAsync(workerGate + ".held"))
                     .ShouldBe(acceptedId.ToString("D"));
