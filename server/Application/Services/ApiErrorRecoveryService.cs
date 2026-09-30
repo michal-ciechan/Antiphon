@@ -471,7 +471,9 @@ public sealed class ApiErrorRecoveryService
 
         // A delegated quota refusal requires an operator choice. It never owns an automatic
         // capacity resume or a same-session retry; the task settlement writes Blocked.
-        if (openTaskId is not null)
+        if (openTaskId is not null
+            && (string.Equals(row.ApiErrorClass, "usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
+                || UsageLimitWallParser.IsQuotaRefusal(errorText)))
         {
             if (_capacityRecovery is not null)
                 await _capacityRecovery.SupersedeTaskWaitsOnAsync(db, openTaskId.Value,
