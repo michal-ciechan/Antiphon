@@ -17,6 +17,20 @@ public class RunnerCodexAdapterReadyTests
     private const string SecretSentinel = "SECRET-PROMPT-BODY-C574";
 
     [Test]
+    public async Task Positive_ready_diagnostic_is_information()
+    {
+        var logger = new CollectingLogger();
+        var client = new ScriptedCodexRunnerClient
+        {
+            StartupScreens = [CodexStartupFixtures.P3, CodexStartupFixtures.P3, CodexStartupFixtures.P3],
+        };
+        var adapter = NewAdapter(client, settleMs: 50, maxMs: 5_000, logger: logger);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+        (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
+        logger.ReadyLevels.ShouldContain(LogLevel.Information);
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(10_000)]
     [Arguments(250)]
@@ -268,6 +282,7 @@ public class RunnerCodexAdapterReadyTests
     private sealed class CollectingLogger : ILogger
     {
         public List<string> Messages { get; } = [];
+        public List<LogLevel> ReadyLevels { get; } = [];
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(
@@ -275,8 +290,13 @@ public class RunnerCodexAdapterReadyTests
             EventId eventId,
             TState state,
             Exception? exception,
-            Func<TState, Exception?, string> formatter) =>
-            Messages.Add(formatter(state, exception));
+            Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            Messages.Add(message);
+            if (message.Contains("codex-startup ready", StringComparison.Ordinal))
+                ReadyLevels.Add(logLevel);
+        }
 
         private sealed class NullScope : IDisposable
         {

@@ -7,6 +7,35 @@ namespace Antiphon.Agents.Pty.Tests;
 public class CodexStartupReadinessTests
 {
     [Test]
+    public void V0158_footer_only_model_requires_a_complete_idle_layout()
+    {
+        var screen = CodexStartupFixtures.V0158FooterOnlyReady;
+        screen.ShouldNotContain("model:");
+        var observation = CodexStartupScreen.Classify(screen);
+        observation.IsReady.ShouldBeTrue("the measured 0.158.0 idle screen omits the model row");
+        observation.NormalizedRegion.ShouldContain("GPT-5.6-Luna low");
+
+        CodexStartupScreen.Classify(screen.Replace("  permissions: YOLO mode", "  model:\n  permissions: YOLO mode", StringComparison.Ordinal))
+            .Reason.ShouldBe(CodexStartupReason.Unknown);
+        CodexStartupScreen.Classify(screen.Replace("  permissions: YOLO mode", "  model: loading\n  permissions: YOLO mode", StringComparison.Ordinal))
+            .Reason.ShouldBe(CodexStartupReason.Loading);
+        CodexStartupScreen.Classify(screen.Replace("› Ask Codex to do anything", "› Do something clever", StringComparison.Ordinal))
+            .IsReady.ShouldBeFalse();
+        CodexStartupScreen.Classify(screen.Replace("OpenAI Codex", "Other agent", StringComparison.Ordinal))
+            .IsReady.ShouldBeFalse();
+        CodexStartupScreen.Classify(CodexStartupFixtures.ReplaceFooter(screen, "  GPT-5.6-Luna low · unknown"))
+            .IsReady.ShouldBeFalse();
+    }
+
+    [Test]
+    public void V0158_windows_sandbox_onboarding_is_named_blocker()
+    {
+        var observation = CodexStartupScreen.Classify(CodexStartupFixtures.V0158WindowsSandboxSetup);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.Sandbox);
+    }
+
+    [Test]
     public void Grounded_loaded_model_composer_layouts_are_ready()
     {
         Ready(CodexStartupFixtures.P1).ShouldBeTrue("V-1: P-1");

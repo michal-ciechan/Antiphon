@@ -67,6 +67,42 @@ public class CodexTranscriptTailerTests
         }
     }
 
+    [Test]
+    public async Task A_newline_joined_codex_prompt_binds_and_keeps_its_complete_receipt()
+    {
+        using var tree = new CodexTree();
+        var fixture = tree.Seed("codex-tui-turn.jsonl");
+        const string body = "[card-0796-diagnostic:c860-live-proof]\nReply exactly C860_OK_c860-live-proof. Do not use tools.";
+        var joined = body.Replace("\n", "", StringComparison.Ordinal);
+        File.WriteAllText(fixture.Path,
+            File.ReadAllText(fixture.Path).Replace(TuiFixturePrompt, joined, StringComparison.Ordinal));
+
+        var input = new SessionInputLog();
+        input.Append("\u001b[200~" + body + "\u001b[201~");
+        input.Append("\r");
+        input.MatchesRecordedInput(joined).ShouldBeTrue("C4 must survive the measured LF join");
+        input.MatchesRecordedInput(joined.Replace("C860_OK", "WRONG_OK", StringComparison.Ordinal))
+            .ShouldBeFalse("whitespace tolerance must reject different text");
+        input.MatchesRecordedInput("short").ShouldBeFalse("C4 retains the 12-character floor");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: fixture.FirstTimestamp.AddSeconds(-1));
+        tailer.Start();
+        try
+        {
+            var bound = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptBound, TimeSpan.FromSeconds(10));
+            bound.ShouldNotBeNull("the runner must bind its own newline-joined Codex rollout");
+            tailer.BoundTranscriptPath.ShouldBe(fixture.Path);
+            var entries = await PollForEntriesAsync(tailer, 3, TimeSpan.FromSeconds(10));
+            entries[0].Kind.ShouldBe(TranscriptKinds.UserPrompt);
+            PromptSubmissionMatch.IsCompleteIn(body, entries[0].Text).ShouldBeTrue();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
     /// <summary>
     /// THE test for this card's binding rules. Another Codex session in the SAME directory — the
     /// operator's own, or a sibling agent's — is refused, because none of its prompts is text this

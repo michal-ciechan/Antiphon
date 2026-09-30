@@ -28,6 +28,8 @@ public static class CodexStartupFixtures
     // version.json recorded latest 0.999.0. The footer is "enter continue · esc skip".
     public static string V0156UpdateModal => File.ReadAllText(Path.Combine(DirectoryPath, "v0156-update-modal.txt"));
     public static string V0158UpdateModal => File.ReadAllText(Path.Combine(DirectoryPath, "v0158-update-modal.txt"));
+    public static string V0158FooterOnlyReady => File.ReadAllText(Path.Combine(DirectoryPath, "v0158-footer-only-ready.txt"));
+    public static string V0158WindowsSandboxSetup => File.ReadAllText(Path.Combine(DirectoryPath, "v0158-windows-sandbox-setup.txt"));
 
     /// <summary>The 0.156.1 trust modal with the highlight moved from "Trust and continue" to "Quit".</summary>
     public static string V0156TrustPromptQuitHighlighted
