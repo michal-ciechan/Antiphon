@@ -89,6 +89,8 @@ Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests
 Antiphon.Tests.Application.RepairSourceDispatchTests
 # CARD-0499: real dispatch then settlement through AgentTaskReplyService.
 Antiphon.Tests.Application.RepairSourceSettlementTests
+# CARD-0603: real RepairSource settlement through reviewed owner recovery and remote publication.
+Antiphon.Tests.Application.RepairSourceRecoveryLandingTests
 # CARD-0514: isolated-schema clone for episode/arm uniqueness and receipt persistence.
 Antiphon.Tests.Application.RemoteControlModalPersistenceTests
 # CARD-0514: maintenance fault/reconcile under the production queue graph.
