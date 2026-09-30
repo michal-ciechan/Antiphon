@@ -254,8 +254,25 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
     public ValueTask DisposeAsync()
     {
         _pendingPipe?.Dispose();
-        _socket?.Dispose();
+        string? protectedReplacement = null;
+        if (_ownsSocketPath && NativeFileIdentity.TryRead(endpoint.Path, out var beforeClose)
+            && beforeClose != _boundIdentity)
+        {
+            protectedReplacement = endpoint.Path + ".replacement-" + Guid.NewGuid().ToString("N");
+            File.Move(endpoint.Path, protectedReplacement);
+        }
+        try { _socket?.Dispose(); }
+        finally
+        {
+            if (protectedReplacement is not null)
+            {
+                if (NativeFileIdentity.TryRead(endpoint.Path, out _))
+                    throw new IOException($"Herdr replacement endpoint changed during disposal: {endpoint.Path}");
+                File.Move(protectedReplacement, endpoint.Path);
+            }
+        }
         if (_ownsSocketPath && NativeFileIdentity.TryRead(endpoint.Path, out var current)
+            && (current.Mode & 0xF000) == 0xC000
             && current == _boundIdentity)
         {
             File.Delete(endpoint.Path);
