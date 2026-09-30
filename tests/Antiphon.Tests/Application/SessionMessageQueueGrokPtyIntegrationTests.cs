@@ -91,7 +91,8 @@ public class SessionMessageQueueGrokPtyIntegrationTests
                 prompts.Single(t => t.Text?.Contains(nonce, StringComparison.Ordinal) == true).Text.ShouldContain(body);
             }
             // The direct client's capability is static. Read the host's actual launch decision.
-            var hostLog = Path.Combine(client.PtyHostManifestDir, "logs", h.SessionId.ToString("N") + ".log");
+            var hostLog = Path.Combine(Path.GetDirectoryName(client.PtyHostManifestDir)!,
+                "logs", h.SessionId.ToString("N") + ".log");
             File.Exists(hostLog).ShouldBeTrue();
             File.ReadAllText(hostLog).ShouldContain("pty backend: ModernConPty (requested 'modern')");
         }
