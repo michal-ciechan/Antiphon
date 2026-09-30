@@ -66,7 +66,8 @@ public class QuotaEvidenceWireTests
         var parsed = JsonSerializer.Deserialize<RunnerTranscriptEvent>(json, RunnerContractMapper.Json)!;
         parsed.ApiErrorTimeZoneId.ShouldBeNull();
         var sidecar = JsonSerializer.Deserialize<TranscriptSidecar>(
-            "{\"sessionId\":\"" + Guid.NewGuid() + "\",\"format\":\"Codex\"}")!;
+            "{\"sessionId\":\"" + Guid.NewGuid() + "\",\"format\":\"Codex\"}",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         sidecar.ApiErrorTimeZoneId.ShouldBeNull();
     }
 }
