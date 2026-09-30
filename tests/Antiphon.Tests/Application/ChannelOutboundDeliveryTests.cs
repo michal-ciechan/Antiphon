@@ -130,7 +130,8 @@ public sealed partial class ChannelOutboundDeliveryTests
                 var delivery = await check.ChannelOutboundDeliveries.AsNoTracking()
                     .SingleAsync(d => d.Id == deliveryId);
                 delivery.State.ShouldBe(ChannelOutboundDeliveryState.Published);
-                delivery.ConversionOutcome.ShouldBe("Expired");
+                delivery.ConversionOutcome.ShouldBe("Fallback");
+                delivery.FailureReason.ShouldContain("deadline elapsed");
                 (await check.SessionQueuedMessages.AsNoTracking()
                     .SingleAsync(m => m.Id == correlationId)).ChannelReplySettledAt.ShouldNotBeNull();
             }
