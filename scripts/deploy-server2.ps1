@@ -39,6 +39,7 @@ function Invoke-RunnerRequest {
         $raw = & pwsh -NoProfile -File $env:C727_TEST_HTTP_STUB -Method $Method -RunnerId $RunnerId -Suffix $Suffix -BodyJson $bodyJson
         if ($LASTEXITCODE -ne 0) { throw "RunnerApiUnavailable $RunnerId$Suffix" }
         if ([string]$raw -eq '__404__') { return $null }
+        if ([string]$raw -eq '__503__') { throw "RunnerApiFailed $RunnerId$Suffix HTTP 503" }
         if ([string]::IsNullOrWhiteSpace([string]$raw)) { return $null }
         return ([string]$raw | ConvertFrom-Json)
     }
@@ -201,6 +202,7 @@ function Invoke-Phase {
         'retire-temp' {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             if ($null -eq $s -or -not $s.retiredAt -or -not $s.draining) { throw 'TempRunnerNotRetired' }
+            if ([string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle) { throw 'TempRunnerDrainConflict' }
             Assert-ZeroCounters -Status $s -RunnerId 'server2-temp'
             $retiredAt = if ($s.retiredAt -is [datetime]) {
                 $s.retiredAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
