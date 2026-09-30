@@ -201,7 +201,8 @@ public class ComplexityWallRerouteTests
             "You've reached your Opus 4.6 limit. Run /usage-credits to continue or switch models with /model.");
 
         await harness.Reply.OnTurnEndAsync(session2, CancellationToken.None);
-        await AssertQuotaBlockAsync(schema, harness, task, session2, 1, expectedBlocks: 2);
+        await AssertQuotaBlockAsync(schema, harness, task, session2, 1, expectedBlocks: 2,
+            expectedExplicitlyStoppedSessionId: sessionId);
     }
 
     [Test]
@@ -336,7 +337,7 @@ public class ComplexityWallRerouteTests
 
     private static async Task AssertQuotaBlockAsync(IsolatedTestSchema schema,
         WallRerouteHarness harness, AgentTask task, Guid sessionId, int priorReroutes,
-        int expectedBlocks = 1)
+        int expectedBlocks = 1, Guid? expectedExplicitlyStoppedSessionId = null)
     {
         await using var db = CreateContext(schema);
         var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -354,7 +355,10 @@ public class ComplexityWallRerouteTests
         var recovery = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == sessionId);
         recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.QuotaBlocked);
         recovery.NextAttemptAt.ShouldBeNull();
-        harness.Stopper.Killed.ShouldBeEmpty();
+        if (expectedExplicitlyStoppedSessionId is { } stopped)
+            harness.Stopper.Killed.ShouldBe([stopped]);
+        else
+            harness.Stopper.Killed.ShouldBeEmpty();
     }
 
 }
