@@ -1,7 +1,12 @@
 Working the Antiphon board. Use `scripts/card.ps1` — its header comment is the reference (verbs
-`get`, `history`, `new`, `edit`, `move`, `close`, `archive`, `unarchive`, `-Limits`); AGENTS.md
+`list`, `search`, `get`, `history`, `new`, `edit`, `move`, `close`, `archive`, `unarchive`, `-Limits`); AGENTS.md
 "Working cards from a shell" has the human-facing synopsis. Do not hand-compose the HTTP yourself
 unless the script genuinely can't do it. These are the shapes that bite either way:
+
+- Before filing a possible duplicate, run `card.ps1 search '<distinctive phrase>' -Board <name> -All`,
+  then `card.ps1 get <hit> -Board <name>` to read the full description and verdict. Search checks
+  stored full text and follows every page. A capped list or summary preview cannot prove absence;
+  a failed or changed enumeration cannot establish "no duplicate".
 
 - An **external** ChatGPT/Codex caller dispatches with `delegate.ps1 -Capability <name>` (the name,
   never a secret). While Claude is held, pass `-Kind Codex` on Worker/stage work. Do not edit

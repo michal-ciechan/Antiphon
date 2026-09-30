@@ -148,7 +148,8 @@ below is a route group; the file named is the authority for its exact bodies.
 
 ```
 GET    /api/home/tasks                       read-only home-rail projection of cards and unbound delegations (CARD-0002). Fleet-global; the client filters by project directory. Bound tasks nest as a card's Worker, never as their own item. No question field — that text is GET /api/attention.
-GET    /api/cards                            list (?boardId=|status=|updatedSince=, at least one) → { cards, truncated }. Summary representation (description cut to Cards:SummaryPreviewChars, sessions empty, hasMore when cut). Caps at Cards:MaxListResults (500); truncated is true when more matched. Unfiltered is 400.
+GET    /api/cards                            list (?boardId=|status=|updatedSince=, at least one; ?limit=&pageToken=&includeArchived=) → { cards, truncated, nextPageToken }. Bounded summary pages in updatedAt DESC, id ASC order; default excludes archived cards. A continuation binds the scope and limit. Unfiltered is 400.
+GET    /api/cards/search                     literal case-insensitive substring search (?q= required; ?boardId=&status=&limit=&pageToken=&includeArchived=) → { cards, total, truncated, nextPageToken }. Searches identifier, alias, title, full description, decoded labels and full terminal reason across all boards/statuses unless scoped. `total` counts all matches before cursor and limit. Private notes, comments, revisions and archive reason are excluded.
 GET    /api/cards/limits                     title/description/reason/actor length ceilings plus importanceValues / urgencyValues (enum names)
 GET    /api/cards/{id}                       one card  (?boardId=&cwd=)
 GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)  (?boardId=&cwd=)
