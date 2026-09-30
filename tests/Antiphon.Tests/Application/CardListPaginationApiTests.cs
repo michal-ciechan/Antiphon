@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
@@ -108,6 +109,12 @@ public class CardListPaginationApiTests
         var at = DateTime.UtcNow.AddDays(-2);
         await db.Cards.Where(c => c.BoardId == board.Id)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.UpdatedAt, at));
+        var firstId = cards[0].Id;
+        var secondId = cards[1].Id;
+        await db.Cards.Where(c => c.Id == firstId).ExecuteUpdateAsync(s =>
+            s.SetProperty(c => c.UpdatedAt, at.AddTicks(10)));
+        await db.Cards.Where(c => c.Id == secondId).ExecuteUpdateAsync(s =>
+            s.SetProperty(c => c.UpdatedAt, at.AddTicks(20)));
         (await DrainAsync(board.Id, 2)).ShouldBe(await _fixture.OracleAsync(board.Id));
         cards.Count.ShouldBe(7);
     }
@@ -144,6 +151,29 @@ public class CardListPaginationApiTests
         page.NextPageToken.ShouldNotBeNull();
         await Assert422Async($"/api/cards?boardId={board.Id}&limit=1&pageToken=bad", "pageToken");
         await Assert422Async($"/api/cards?boardId={board.Id}&limit=1&pageToken={new string('a', 4097)}", "pageToken");
+        var raw = page.NextPageToken!.Replace('-', '+').Replace('_', '/');
+        var issued = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(
+            Convert.FromBase64String(raw.PadRight((raw.Length + 3) / 4 * 4, '='))))!.AsObject();
+        static string Encode(JsonObject json) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json.ToJsonString()))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        foreach (var mutate in new Action<JsonObject>[]
+        {
+            j => j["Version"] = 2,
+            j => j.Remove("Fingerprint"),
+            j => j["AfterUpdatedAt"] = "2026-09-30T00:00:00",
+            j => j["AfterId"] = Guid.Empty.ToString(),
+            j => j["Fingerprint"] = "bad"
+        })
+        {
+            var altered = (JsonObject)issued.DeepClone();
+            mutate(altered);
+            await Assert422Async($"/api/cards?boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(Encode(altered))}", "pageToken");
+        }
+        var oversized = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(
+            issued.ToJsonString() + new string(' ', 4096))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        await Assert422Async($"/api/cards?boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(oversized)}", "pageToken");
+        using var client = _fixture.CreateClient();
+        (await client.GetAsync($"/api/cards?boardId={board.Id}&limit=oops")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PageAsync(board.Id, int.MaxValue)).Cards.Count.ShouldBe(3);
     }
 
@@ -168,18 +198,70 @@ public class CardListPaginationApiTests
                 s.SetProperty(c => c.UpdatedAt, cards[0].UpdatedAt.AddSeconds(1)));
         await AssertChangedAsync(board.Id, token);
         (await DrainAsync(board.Id, 2)).ShouldBe(await _fixture.OracleAsync(board.Id));
+
+        var secondBoard = await _fixture.BoardAsync();
+        var secondCards = await _fixture.CardsAsync(secondBoard.Id, 4);
+        var secondToken = (await PageAsync(secondBoard.Id, 2)).NextPageToken!;
+        var between = secondCards[0].UpdatedAt.AddMilliseconds(-500);
+        await using (var db = _fixture.Writer())
+            await db.Cards.Where(c => c.Id == secondCards[3].Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.UpdatedAt, between));
+        await AssertChangedAsync(secondBoard.Id, secondToken);
+        (await DrainAsync(secondBoard.Id, 2)).ShouldBe(await _fixture.OracleAsync(secondBoard.Id));
     }
 
     [Test] public async Task Membership_changes_refuse_continuation()
     {
-        var board = await _fixture.BoardAsync();
-        var cards = await _fixture.CardsAsync(board.Id, 4);
-        var token = (await PageAsync(board.Id, 2)).NextPageToken!;
-        await using (var db = _fixture.Writer())
-            await db.Cards.Where(c => c.Id == cards[3].Id).ExecuteUpdateAsync(s =>
-                s.SetProperty(c => c.ArchivedAt, DateTime.UtcNow));
-        await AssertChangedAsync(board.Id, token);
-        (await DrainAsync(board.Id, 2)).ShouldBe(await _fixture.OracleAsync(board.Id));
+        foreach (var change in new[] { "archive", "insert", "delete-returned", "delete-unseen",
+            "status-depart", "status-arrive", "unarchive" })
+        {
+            var board = await _fixture.BoardAsync();
+            var cards = await _fixture.CardsAsync(board.Id, 6);
+            var targetId = cards[5].Id;
+            if (change == "status-arrive")
+                await using (var setup = _fixture.Writer())
+                    await setup.Cards.Where(c => c.Id == targetId).ExecuteUpdateAsync(s =>
+                        s.SetProperty(c => c.Status, CardStatus.Done));
+            if (change == "unarchive")
+                await using (var setup = _fixture.Writer())
+                    await setup.Cards.Where(c => c.Id == targetId).ExecuteUpdateAsync(s =>
+                        s.SetProperty(c => c.ArchivedAt, DateTime.UtcNow));
+            var statusFilter = change.StartsWith("status-") ? "status=Backlog" : null;
+            var token = (await PageAsync(board.Id, 2, extra: statusFilter)).NextPageToken!;
+            await using (var db = _fixture.Writer())
+            {
+                switch (change)
+                {
+                    case "archive":
+                        await db.Cards.Where(c => c.Id == targetId).ExecuteUpdateAsync(s =>
+                            s.SetProperty(c => c.ArchivedAt, DateTime.UtcNow));
+                        break;
+                    case "insert":
+                        await _fixture.CardsAsync(board.Id, 1);
+                        break;
+                    case "delete-returned":
+                        var returnedId = cards[0].Id;
+                        await db.Cards.Where(c => c.Id == returnedId).ExecuteDeleteAsync();
+                        break;
+                    case "delete-unseen":
+                        await db.Cards.Where(c => c.Id == targetId).ExecuteDeleteAsync();
+                        break;
+                    case "status-depart":
+                        await db.Cards.Where(c => c.Id == targetId).ExecuteUpdateAsync(s =>
+                            s.SetProperty(c => c.Status, CardStatus.Done));
+                        break;
+                    case "status-arrive":
+                        await db.Cards.Where(c => c.Id == targetId).ExecuteUpdateAsync(s =>
+                            s.SetProperty(c => c.Status, CardStatus.Backlog));
+                        break;
+                    case "unarchive":
+                        await db.Cards.Where(c => c.Id == targetId).ExecuteUpdateAsync(s =>
+                            s.SetProperty(c => c.ArchivedAt, (DateTime?)null));
+                        break;
+                }
+            }
+            await AssertChangedAsync(board.Id, token, statusFilter);
+        }
     }
 
     [Test] public async Task Writes_outside_the_matching_scope_do_not_break_paging()
@@ -188,9 +270,13 @@ public class CardListPaginationApiTests
         var foreign = await _fixture.BoardAsync();
         await _fixture.CardsAsync(board.Id, 4);
         var other = await _fixture.CardsAsync(foreign.Id, 1);
+        var archived = await _fixture.CardsAsync(board.Id, 1, archived: true);
         var first = await PageAsync(board.Id, 2);
         await using (var db = _fixture.Writer())
             await db.Cards.Where(c => c.Id == other[0].Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.UpdatedAt, DateTime.UtcNow));
+        await using (var db = _fixture.Writer())
+            await db.Cards.Where(c => c.Id == archived[0].Id).ExecuteUpdateAsync(s =>
                 s.SetProperty(c => c.UpdatedAt, DateTime.UtcNow));
         var second = await PageAsync(board.Id, 2, first.NextPageToken);
         first.Cards.Select(c => c.Id).Concat(second.Cards.Select(c => c.Id))
@@ -199,13 +285,29 @@ public class CardListPaginationApiTests
 
     [Test] public async Task Fingerprint_and_page_share_a_database_snapshot()
     {
-        // A live continuation proves the two reads see one unchanged matching set.
         var board = await _fixture.BoardAsync();
-        await _fixture.CardsAsync(board.Id, 4);
-        var first = await PageAsync(board.Id, 2);
-        var second = await PageAsync(board.Id, 2, first.NextPageToken);
-        first.Cards.Select(c => c.Id).Concat(second.Cards.Select(c => c.Id))
-            .ShouldBe(await _fixture.OracleAsync(board.Id));
+        var cards = await _fixture.CardsAsync(board.Id, 4);
+        var before = await _fixture.OracleAsync(board.Id);
+        _fixture.Probe.Arm(board.Id);
+        var pending = PageAsync(board.Id, 2);
+        try
+        {
+            await _fixture.Probe.WaitForPageAsync();
+            await using (var db = _fixture.Writer())
+                (await db.Cards.Where(c => c.Id == cards[2].Id).ExecuteUpdateAsync(s =>
+                    s.SetProperty(c => c.UpdatedAt, cards[0].UpdatedAt.AddSeconds(1)))).ShouldBe(1);
+            (await _fixture.OracleAsync(board.Id))[0].ShouldBe(cards[2].Id);
+        }
+        finally { _fixture.Probe.Release(); }
+        var first = await pending;
+        _fixture.Probe.GateHits.ShouldBe(1);
+        _fixture.Probe.MetadataClosedAtGate.ShouldBeTrue();
+        _fixture.Probe.SameTransaction.ShouldBeTrue();
+        first.Cards.Select(c => c.Id).ShouldBe(before.Take(2));
+        first.Truncated.ShouldBeTrue();
+        await AssertChangedAsync(board.Id, first.NextPageToken!);
+        _fixture.Probe.Disarm();
+        (await DrainAsync(board.Id, 2)).ShouldBe(await _fixture.OracleAsync(board.Id));
     }
 
     [Test] public async Task Summary_previews_and_detail_remain_distinct()

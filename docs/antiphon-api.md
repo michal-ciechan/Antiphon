@@ -190,6 +190,21 @@ GET    /api/projects/setup-catalog                  ProjectSetupCatalogDto
 POST   /api/projects/setup                          ProjectSetupResultDto
 ```
 
+Card list and search use `limit` as a positive page size (default and ceiling
+`max(1, Cards:MaxListResults)`, normally 500); zero/negative is 422 on `limit`.
+Search trims `q`, requires 1–500 characters, and treats `%`, `_` and backslash
+literally. Invalid `q` is 422 on `q`. Invalid GUID, enum, timestamp or integer
+binding remains framework 400. A page token is opaque continuation data bound to
+the endpoint, filters and effective limit; changed or malformed tokens are 422 on
+`pageToken`. Each continuation rechecks matching membership and order in a short
+Repeatable Read snapshot. If either changed, it returns 409 `card_page_changed`
+with a restart instruction. Final pages have `truncated: false` and
+`nextPageToken: null`; search repeats its full 64-bit `total` on every page.
+`includeArchived=true` includes archived cards regardless of parent board/project
+archival state. Reads scan matching metadata per page, and leading-wildcard text
+search may scan the scoped cards; no text index is claimed. Use
+`scripts/card.ps1 list|search` for complete buffered enumeration.
+
 > A move into an active column **does not start an agent** unless `spawn: true` (CARD-0051), and
 > the orchestrator tick will not pick that card up either (CARD-0087).
 >

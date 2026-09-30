@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Enums;
@@ -29,11 +28,19 @@ internal sealed record CardPageToken(
             if (base64.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '+' and not '/' and not '='))
                 throw Invalid();
             var bytes = Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
+            using var document = JsonDocument.Parse(bytes);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                new[] { "Version", "Kind", "BoardId", "Status", "UpdatedSince", "Query",
+                    "IncludeArchived", "Limit", "AfterUpdatedAt", "AfterId", "Fingerprint" }
+                    .Any(name => !document.RootElement.TryGetProperty(name, out _)))
+                throw Invalid();
             var token = JsonSerializer.Deserialize<CardPageToken>(bytes);
             if (token is null || token.Version != CurrentVersion ||
                 token.Kind is not ("list" or "search") || token.Limit < 1 ||
                 token.AfterUpdatedAt.Kind != DateTimeKind.Utc || token.AfterId == Guid.Empty ||
-                token.Fingerprint.Length != 64 || !token.Fingerprint.All(Uri.IsHexDigit) ||
+                (token.UpdatedSince is DateTime since && since.Kind != DateTimeKind.Utc) ||
+                token.Fingerprint is null || token.Fingerprint.Length != 64 ||
+                !token.Fingerprint.All(Uri.IsHexDigit) ||
                 (token.Kind == "search" && string.IsNullOrWhiteSpace(token.Query)))
                 throw Invalid();
             return token;

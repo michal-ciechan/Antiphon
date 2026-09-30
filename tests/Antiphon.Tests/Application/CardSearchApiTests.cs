@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -78,7 +79,8 @@ public class CardSearchApiTests
             await db.Cards.Where(c => c.Id == ids[1]).ExecuteUpdateAsync(s => s.SetProperty(c => c.Alias, "markalias"));
             await db.Cards.Where(c => c.Id == ids[2]).ExecuteUpdateAsync(s => s.SetProperty(c => c.Title, "marktitle"));
             await db.Cards.Where(c => c.Id == ids[3]).ExecuteUpdateAsync(s => s.SetProperty(c => c.Description, "markdescription"));
-            await db.Cards.Where(c => c.Id == ids[4]).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, "[\"marklabel\"]"));
+            var labels = JsonSerializer.Serialize(new[] { "marklabel" });
+            await db.Cards.Where(c => c.Id == ids[4]).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, labels));
             await db.Cards.Where(c => c.Id == ids[5]).ExecuteUpdateAsync(s => s.SetProperty(c => c.TerminalReason, "markreason"));
         }
         foreach (var (term, card) in new[] { "MARKIDENT", "MARKALIAS", "MARKTITLE", "MARKDESCRIPTION", "MARKLABEL", "MARKREASON" }
@@ -153,18 +155,37 @@ public class CardSearchApiTests
     [Test] public async Task Literal_patterns_and_decoded_labels_do_not_overmatch()
     {
         var board = await _fixture.BoardAsync();
-        var cards = await _fixture.CardsAsync(board.Id, 4);
+        var cards = await _fixture.CardsAsync(board.Id, 9);
         await using (var db = _fixture.Writer())
         {
-            await db.Cards.Where(c => c.Id == cards[0].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, "[\"rate%done\"]"));
-            await db.Cards.Where(c => c.Id == cards[1].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, "[\"part_name\"]"));
-            await db.Cards.Where(c => c.Id == cards[2].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, "[\"snow 雪\"]"));
+            var percent = JsonSerializer.Serialize(new[] { "rate%done" });
+            var underscore = JsonSerializer.Serialize(new[] { "part_name" });
+            var snow = JsonSerializer.Serialize(new[] { "snow 雪" });
+            var slash = JsonSerializer.Serialize(new[] { "path\\name", "path\\name" });
+            var quote = JsonSerializer.Serialize(new[] { "say\"yes" });
+            var sql = JsonSerializer.Serialize(new[] { "' OR 1=1 --" });
+            var split = JsonSerializer.Serialize(new[] { "alpha", "beta" });
+            await db.Cards.Where(c => c.Id == cards[0].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, percent));
+            await db.Cards.Where(c => c.Id == cards[1].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, underscore));
+            await db.Cards.Where(c => c.Id == cards[2].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, snow));
             await db.Cards.Where(c => c.Id == cards[3].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.Title, "rateXdone partXname"));
+            await db.Cards.Where(c => c.Id == cards[4].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, slash));
+            await db.Cards.Where(c => c.Id == cards[5].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, quote));
+            await db.Cards.Where(c => c.Id == cards[6].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, sql));
+            await db.Cards.Where(c => c.Id == cards[7].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.Title, "alpha beta"));
+            await db.Cards.Where(c => c.Id == cards[8].Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.LabelsJson, split));
         }
         (await SearchAsync("rate%done", board.Id)).Cards.Single().Id.ShouldBe(cards[0].Id);
         (await SearchAsync("part_name", board.Id)).Cards.Single().Id.ShouldBe(cards[1].Id);
         (await SearchAsync("雪", board.Id)).Cards.Single().Id.ShouldBe(cards[2].Id);
         (await SearchAsync("rateXdone", board.Id)).Cards.Single().Id.ShouldBe(cards[3].Id);
+        var slashHit = await SearchAsync("path\\name", board.Id);
+        slashHit.Total.ShouldBe(1);
+        slashHit.Cards.Single().Id.ShouldBe(cards[4].Id);
+        (await SearchAsync("say\"yes", board.Id)).Cards.Single().Id.ShouldBe(cards[5].Id);
+        (await SearchAsync("say\\\"yes", board.Id)).Total.ShouldBe(0);
+        (await SearchAsync("' OR 1=1 --", board.Id)).Cards.Single().Id.ShouldBe(cards[6].Id);
+        (await SearchAsync("alpha beta", board.Id)).Cards.Single().Id.ShouldBe(cards[7].Id);
     }
 
     [Test] public async Task Invalid_search_and_changed_search_tokens_are_rejected()
@@ -184,10 +205,26 @@ public class CardSearchApiTests
         var board = await _fixture.BoardAsync();
         var cards = await _fixture.CardsAsync(board.Id, 1, "public-needle");
         await using (var db = _fixture.Writer())
+        {
             await db.Cards.Where(c => c.Id == cards[0].Id).ExecuteUpdateAsync(s =>
                 s.SetProperty(c => c.PrivateNotes, "secret-needle").SetProperty(c => c.ArchivedReason, "archive-needle"));
-        (await SearchAsync("secret-needle", board.Id)).Total.ShouldBe(0);
-        (await SearchAsync("archive-needle", board.Id, all: true)).Total.ShouldBe(0);
+            db.CardComments.Add(new CardComment
+            {
+                Id = Guid.NewGuid(), CardId = cards[0].Id, Body = "comment-needle", CreatedAt = DateTime.UtcNow
+            });
+            db.CardRevisions.Add(new CardRevision
+            {
+                Id = Guid.NewGuid(), CardId = cards[0].Id, RevisionNumber = 1,
+                Kind = CardRevisionKind.ContentEdit, Title = "revision-title-needle",
+                Description = "revision-description-needle", PrivateNotes = "revision-private-needle",
+                Reason = "revision-reason-needle", CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        foreach (var term in new[] { "secret-needle", "archive-needle", "comment-needle",
+            "revision-title-needle", "revision-description-needle", "revision-private-needle",
+            "revision-reason-needle" })
+            (await SearchAsync(term, board.Id, all: true)).Total.ShouldBe(0, term);
         using var client = _fixture.CreateClient();
         var response = await client.GetStringAsync($"/api/cards/search?q=public-needle&boardId={board.Id}");
         response.ShouldNotContain("secret-needle");
@@ -205,6 +242,28 @@ public class CardSearchApiTests
                 s.SetProperty(c => c.Title, "departed").SetProperty(c => c.Description, "departed"));
         await AssertChangedAsync("membership-needle", board.Id, token);
         (await SearchAsync("membership-needle", board.Id)).Total.ShouldBe(3);
+
+        var secondBoard = await _fixture.BoardAsync();
+        var barrierCards = await _fixture.CardsAsync(secondBoard.Id, 4, "barrier-needle");
+        var before = await _fixture.OracleAsync(secondBoard.Id);
+        _fixture.Probe.Arm(secondBoard.Id);
+        var pending = SearchAsync("barrier-needle", secondBoard.Id, 2);
+        try
+        {
+            await _fixture.Probe.WaitForPageAsync();
+            await using var writer = _fixture.Writer();
+            (await writer.Cards.Where(c => c.Id == barrierCards[2].Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.UpdatedAt, barrierCards[0].UpdatedAt.AddSeconds(1)))).ShouldBe(1);
+            (await _fixture.OracleAsync(secondBoard.Id))[0].ShouldBe(barrierCards[2].Id);
+        }
+        finally { _fixture.Probe.Release(); }
+        var first = await pending;
+        first.Total.ShouldBe(4);
+        first.Cards.Select(c => c.Id).ShouldBe(before.Take(2));
+        _fixture.Probe.MetadataClosedAtGate.ShouldBeTrue();
+        _fixture.Probe.SameTransaction.ShouldBeTrue();
+        await AssertChangedAsync("barrier-needle", secondBoard.Id, first.NextPageToken!);
+        _fixture.Probe.Disarm();
     }
 
     [Test] public async Task Nondefault_page_limit_and_null_fields_work()
