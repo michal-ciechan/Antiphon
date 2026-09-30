@@ -90,8 +90,8 @@ public class FakeHerdrServerListenerTests
         await using var fake = new FakeHerdrServer();
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
-        (await ErrorWithinAsync(fake.WaitUntilListeningAsync(cancelled.Token), "caller cancellation"))
-            .ShouldBeOfType<OperationCanceledException>();
+        (await ErrorWithinAsync(fake.WaitUntilListeningAsync(cancelled.Token), "caller cancellation")
+            is OperationCanceledException).ShouldBeTrue();
         fake.Start();
         await fake.WaitUntilListeningAsync();
         (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);

@@ -213,7 +213,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5), _timeProvider);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try { await listening.WaitAsync(timeout.Token); }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException($"FakeHerdrServer did not listen at '{EndpointPath}' within five seconds.");
         }
