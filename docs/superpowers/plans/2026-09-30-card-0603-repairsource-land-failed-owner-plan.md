@@ -1,7 +1,8 @@
 # CARD-0603: finish the RepairSource-to-Failed-owner landing handoff
 
-Date: 2026-09-30. Stage: Plan; next stage: TestDesign. Source examined:
-`d7456a2352d15391f37eca8781c16db499a3759d`. This artifact changes no product code.
+Date: 2026-09-30. Stage: TestDesign complete; next stage: Code. Plan source examined:
+`d7456a2352d15391f37eca8781c16db499a3759d`; TestDesign inspected plan/start commit
+`bc838ab35ac354e8ee163266fdbf79c57625c417`. This artifact changes no product code.
 Read CARD-0603 in full with `scripts/card.ps1 get CARD-0603` and its history: the
 single ContentEdit revision, 2026-09-22 10:28:20, adds the sibling-ref and stale
 Unconfirmed-operation incidents. Line references below are against that source SHA.
@@ -133,9 +134,108 @@ to these slices.
 
 ## Verification design
 
-This is a proposed executable design for the separate TestDesign stage, not a claim
-that any test or positive control ran during Plan. All paths below are under
-`tests/Antiphon.Tests/Application/` unless qualified otherwise.
+TestDesign validated the source and fixture wiring at the start commit above. The
+design is ready for Code: **six new methods, ten new executions, thirty existing
+executions, four checkpoint rows, eight positive controls**. These are inspected
+rosters and designed assertions, not executed test or Mutation evidence. All test
+paths below are under `tests/Antiphon.Tests/Application/` unless qualified otherwise.
+
+### Inspection
+
+| Bodies inspected | Finding / verification boundary |
+|---|---|
+| `TestHelpers/RepairSourceWorld.cs`, `RepairSourceSettlementTests.cs`, `TestHelpers/TurnSeeding.cs` | The owner initially succeeds; set its persisted failure before dispatch. `DoneReport` supplies the claim/handoff and `TurnSeeding` appends a terminal done token. Settlement is real; the transcript is fixture input, not provider/session-delivery evidence. V-1/V-2. |
+| `TestHelpers/DelegationTestServices.cs`, `TestHelpers/LandingSafetyHarness.cs`, `TestHelpers/ControlledTaskProgressGit.cs` | Graph registration uses `TryAdd`; register the optional verifier first. The Git wrapper delegates to real Git with fault hooks unset. Copy the queue-driving pattern, not another container graph. V-1/V-2/V-3. |
+| `AgentTaskLandRequestTests.cs`, `AgentTaskLandAdoptionTests.cs`, `RepairSourceLandRefusalTests.cs` | Existing argument counts are 13 admission, 7 publication and 3 RepairSource executions. The ordinary conflict code is `conflict`; the repair worker guard runs before request lookup. V-2/V-3/V-4, R-1/R-2/R-3. |
+| `server/Application/Services/{AgentTaskLandService,AgentTaskLandSourceResolver,AgentTaskLandingProtocol,AgentTaskLandingState,LandApproval}.cs` | Recovery revalidates owner-bound evidence and current origin tip, retains historical status, and separately confirms publication. A no-op rebase can skip the verifier. No authority change is needed. V-1/V-2, R-1/R-3. |
+| `DelegateScriptAdoptTests.cs`, `DelegateScriptRunner.cs`, `TestHelpers/LandApiStub.cs`, `scripts/delegate.ps1` | Five current script executions; self recovery with a full GUID performs a version GET and one owner POST, with no source lookup. V-5, R-2. |
+| `RepairSourceDocumentationTests.cs`, RepairSource/recovery passages in `docs/orchestration-loop.md`, `docs/ops-http.md`, `server/Bundles/orchestrator.md` | Two current Unit executions. Whole-document flag searches would not prove the new recipe; V-6 must extract the new bounded passage. |
+| `scripts/{build-slot,run-checkpoint}.ps1`, `src/Antiphon.SessionRunner/BuildSlotBroker.cs`, `docs/testing-and-build.md` | Passing the `.ps1` directly invokes it in the same PowerShell process; the broker reuses that holder's lease. The wrapper recipe below is source-validated, not a measured run. |
+
+### Joined fixture and decisive observations
+
+Use one fresh `RepairSourceWorld` per V-1/V-2 execution, with default
+`ExplicitIntegration=false`, ordinary RepairSource ownership and no phone-home policy.
+Keep the existing Succeeded-owner default for all old C499 callers. The extension is
+an optional `ILandingVerifier` argument/property, registered **before**
+`AddDelegationWorktreeGraph`, plus a small queue helper if useful. No successful Git
+result, repair settlement, source resolution or publication may be substituted.
+
+1. Persist owner `Status=Failed`, `FailureCode=CompletedWithoutProgress`, a nonempty
+   `unclaimed_or_unmatched_commit` reason and its historical `CompletedAt` before
+   `DispatchAsync`. Read the failure tuple back from a fresh context and retain it
+   for exact comparison (including PostgreSQL timestamp precision). Assert there
+   are no prior owner land requests/operations and no final-verification latch;
+   this is the narrow incident fixture, not a supersession scenario.
+2. Dispatch the queued repair with the real dispatcher. Require nonempty session ID,
+   `Dispatched`, `RepairSourceTaskId=owner.Id`, a different registered branch/path,
+   and a repair baseline at the owner's original pushed SHA. Commit `repair.md` with
+   known contents on the owner's tree using `CommitInOwnerTreeAsync(..., push: true)`.
+   Capture its real full SHA **S**; independently read the bare origin owner ref as S.
+3. `SettleAsync(DoneReport(..., S))` reaches the real reply service using the exact
+   repair task claim and terminal report token; do not manually set repair Succeeded.
+   From a fresh context require Succeeded, no repair failure, progress assessment
+   `ProgressObserved`, and a RepairSource/RepairSourceRemote evidence arm with
+   `OwnerTaskId=owner.Id`, `ClaimedSha=VerifiedSha=S` and the owner's registered path.
+   Read the owner ref from the persisted RepairSource baseline; the completion arm
+   has no full-ref field and its optional `ObservedRef` need not be set for RepairSource.
+   Require the historical owner failure tuple unchanged. The repair checkout remains
+   registered on its assigned branch at the original baseline, and `MergeTargetRef`
+   remains null. Zero landing rows exist at this point.
+4. V-1 seeds one `StageOutcome`: Review/Clean/Delegate, a distinct Review stage-task ID,
+   `SubjectTaskId=owner.Id`, owner full ref and repository, `ReviewedSourceSha=S`,
+   `CommissionedRound=Final`, `OrdinaryScopeCompleted=Full`, no superseding row. This
+   follows `AgentTaskLandAdoptionTests.AddReviewAsync`; it tests evidence consumption,
+   not Review evidence generation. Record target `refs/heads/master` before admission;
+   S must not already be contained there.
+5. Request owner self recovery with S and the evidence ID. Assert acceptance using an
+   assertion wrapper (`Should.NotThrowAsync`, then `Status == "queued"`), so PC-1
+   produces a named admission assertion failure. Supply a nonempty fixture Verify
+   filter, `/*/*/RepairSourceRecoveryLandingTests/C603_FailedOwnerLandsReviewedRepairedTip*`,
+   to exercise the injected verifier rather than the unchanged-base skip. Dequeue
+   **the actual** `AgentTaskLandQueue` entry; assert task ID, accepted request ID and
+   filter, then await `RunRequestAsync` in a fresh scope. Release that claim in
+   `finally`, as `LandingSafetyHarness.RunQueuedAsync` does. Do not synthesize a queue
+   entry, call the protocol in place of the worker, or turn Held into completion.
+6. Require `LandRunResult.Complete`, a completed nonpending request and its linked
+   operation from a fresh context. Both carry `OwnerReviewedSource`, original owner
+   status Failed, source task owner, owner full ref and the exact review ID; request
+   expected/resolved SHA and operation original/reviewed/verified SHA equal S. Require
+   `ApprovalKind=ReviewEvidence`, `ApprovalLandRequestId=request.Id`,
+   `RecoveryOwnerRemoteBeforeSha=RecoveryOwnerRemoteAfterSha=S`, and the preserved
+   owner failure tuple. Require one controlled verifier invocation on the operation's
+   detached land worktree with that filter and `VerificationPassed=true`.
+   `HasPublication(op)` must be true, with `Publication=Landed`, `RemoteConfirmedAt`
+   set and `ConfirmationMethod=push-endpoint-read-fetch-ancestry`. Independently run
+   Git against the bare origin: target tip and `ObservedRemoteTargetSha` equal S,
+   and `git show refs/heads/master:repair.md` equals the committed contents. The
+   fixture has no concurrent target changes, so exact S proves no manufactured
+   source commit was needed. Require zero repair-task requests/operations, no newly
+   manufactured Code task, and the repair checkout still present. Owner/land-worktree
+   cleanup may leave residue; never require their deletion as publication evidence.
+
+Use assertion messages naming the boundary and scenario. A helper returning expected
+constants, an in-memory entity never reloaded, `queued`, verifier success, or a
+Landed enum by itself cannot satisfy the joined test. Own/await each Git process;
+mark the new class Integration + Slow, register its fully qualified name in the slow
+allowlist, and use the assembly-local `ParallelLimiter<ProcessSpawnLimit>`. Existing
+schema isolation and fixture timeouts apply; no real Program, provider CLI, FakeClaude
+apphost or production session runner is needed.
+
+### Delivery inventory
+
+| Path / durable identity | Producer, persistence, consumer and receipt | Scope of evidence |
+|---|---|---|
+| Repair task ID + claim S + owner ID | Dispatcher baseline; seeded complete task report; real reply settlement writes progress evidence. | V-1/V-2 join real settlement to later land. Seeded transcript is explicit input; a caller note is not a delivery receipt. |
+| Owner ID + request ID + review ID/S + operation ID | `RequestAsync` commits and enqueues; real queue claim reaches `RunRequestAsync`, source resolver and protocol; bare-origin target read agrees with the durable confirmed operation. | V-1 reaches the actual destination. Admission/queue insertion alone cannot pass it. Existing request recovery is unchanged. |
+| Full owner GUID + S + review ID over CLI | Real PowerShell sends version GET and `/land/v2` POST; loopback stub captures verb, path and body. | V-5 proves serialization/targeting only, not server acceptance or publication; V-1 proves those service boundaries. |
+
+No asynchronous caller/session delivery path changes in these slices. Busy/eligible
+recipient, lost-wakeup and crash-recovery transport matrices remain owned by existing
+delivery tests; they are excluded here, not claimed from note rows, queue flags or
+the seeded transcript. No new delivery/recovery guard is introduced.
+
+### Proves it works now
 
 - **V-1 (1 new execution)** —
   `RepairSourceRecoveryLandingTests.C603_FailedOwnerLandsReviewedRepairedTip`.
@@ -159,8 +259,16 @@ that any test or positive control ran during Plan. All paths below are under
   an otherwise owner-ref/SHA-matching evidence row whose subject alone is the repair.
   Expect the ordinary status refusal, `recovery_review_required`, and
   `review_evidence_subject_mismatch`, respectively. Assert zero owner requests/ops,
-  unchanged remote target and unchanged owner failure fields. The intentionally
-  wrong-subject row isolates that check from the separately tested ref check.
+  unchanged remote target and unchanged owner failure fields. Specifically require
+  `ConflictException`, HTTP 409 and code `conflict` for `plain`, using the full real
+  repaired SHA in every request. Plain has no evidence/recovery flag; missing-review
+  has recovery true and a null evidence ID; repair-subject has recovery true and a
+  Clean Final/Full evidence row differing from V-1 only in `SubjectTaskId=repair.Id`.
+  Assert zero new land events/notifications, no land queue claim/activity and no
+  repair requests/ops after each refusal, compared with the post-settlement snapshot.
+  Do not drive the worker if the faulted admission unexpectedly queues: the admission
+  assertion itself must go red. The intentionally wrong-subject row isolates that
+  check from the separately tested ref check. Each argument owns a new fixture.
 - **V-3 (3 new executions)** —
   `RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery`,
   arguments `request`, `worker`, `protocol`. Exercise `RequestAsync`,
@@ -168,25 +276,67 @@ that any test or positive control ran during Plan. All paths below are under
   repair task with a Failed owner. Every entry throws the existing repair-owner code;
   its message contains the full owner ID, owner-as-Review-subject requirement,
   Clean Final/Full requirement and all three recovery flags. No requests or
-  operations are created for either task. Keep all three existing C499 tests.
+  operations are created for either task. Use the real dispatched/settled repair
+  setup with owner Failed; check 409, the existing code, `owner.Id.ToString("D")`
+  and `-Land <that-full-ID>` rather than only the short ID. Expected tokens are
+  authored in the test, never read back from the new helper. The worker call is
+  `RunRequestAsync(repair.Id, null, null, ct)`: its guard precedes `LandRequestedAt`
+  and request lookup, so **do not seed a land request** to reach it. The protocol
+  arm loads the repair and acquires/disposes a real repository lease. Capture
+  counts/queue state and target tips before each call; no new land event, request,
+  operation, queue activation or target change may follow. Keep all three C499 tests.
 - **V-4 (1 new execution)** —
   `AgentTaskLandRequestTests.C603_PlainFailedCodeOwnerRefusalNamesReviewedRecovery`.
   Plain Land on a Failed Code/Worktree owner remains a Conflict with the original
   status-refusal text and adds the explicit owner recovery recipe; no request/event/
   queue activation or status mutation. Exercise the service, not just the helper.
+  Reuse `SeedSucceededWorktreeAsync`/`CreateLand` and persist the intended state first.
+  Within this **one** test result, execute independent fixture cases for Failed and
+  Blocked Code/Worktree (no existing land): both require code `conflict`, 409, the old
+  `must have succeeded before it can land` phrase and the same full-owner guidance
+  assertions as V-3. Include exclusion cases: Canceled/Queued/Dispatched/Working
+  Code/Worktree, Failed Review/Worktree (all `conflict`); Failed Code/Shared
+  (`conflict`, Worktree refusal); Failed Mutation/Worktree
+  (`verification_publication_forbidden`). None
+  may suggest `-RecoverReviewedSource` or create land side effects. Use a fresh
+  context/queue per case and compare persisted failure tuple and land-event counts.
+  Finally exercise the existing ordinary NeedsResolution resume exception with a
+  real initially accepted Succeeded-owner request, then seed Blocked + NeedsResolution
+  + recovery mode None and release its queue claim. Plain retry with the same SHA
+  must reuse that request and queue normally, as
+  `C467_V01_ExplicitPostResumesResolvedConflictWithoutResettingAge` already demonstrates.
+  These internal boundary checks are not extra TUnit executions or extra CP runs.
 - **V-5 (1 new execution)** —
   `DelegateScriptAdoptTests.C603_RecoverReviewedSourcePostsOwnerIdentityToV2`.
   Use `LandApiStub` and the real PowerShell script. Full owner GUID, SHA and Review
   GUID yield one version probe and one POST to that owner's `/land/v2`, body has
   `recoverReviewedSource=true` and matching SHA/Review, no `adoptFromTaskId`, zero
-  legacy or repair-target POSTs. Exit 0. The existing invalid-arguments test remains.
+  legacy or repair-target POSTs. Require the entire captured roster to be exactly
+  `(GET, /api/version)` then `(POST, /api/agent-tasks/<full-owner-guid>/land/v2)`;
+  parse the body and assert `TryGetProperty` succeeds before checking the boolean,
+  so PC-7 fails an assertion rather than throwing `KeyNotFoundException`. The stub
+  is deliberately compatible/permissive and still returns queued when the flag is
+  missing; it must not implement the production gate under test. Exit 0. The existing
+  invalid-arguments test remains.
 - **V-6 (1 new execution)** —
   `RepairSourceDocumentationTests.C603_RepairSourceFailedOwnerRecipeNamesOwnerBoundReview`.
   Read the new bounded RepairSource-recovery subsection, the ops cross-link and the
   bundle's corresponding paragraph. Assert the owner Review subject, Failed status,
   full SHA/Review flags, and distinction from `-StartRef` adoption there. A flag found
   elsewhere in the document cannot satisfy this test. This is documentation-contract
-  evidence only; V-1 supplies behavior evidence.
+  evidence only; V-1 supplies behavior evidence. Give the orchestration recipe an
+  explicit `repairsource-failed-owner-recovery` anchor and unique bold title
+  `RepairSource succeeded; owner Failed`; extract through the next bold topic or
+  Markdown heading, asserting both bounds before content checks. Use the same unique
+  title to bound the bundle paragraph. Each bounded recipe must name `subjectTaskId`
+  as the original owner, Clean Final/Full, the full-SHA/evidence/self-recovery command,
+  preserved Failed history and the separate `-StartRef`/`-FromTask` route (with actual
+  RepairSource adoption prohibited). Check the ops link resolves to that exact anchor
+  and says owner-bound Review. Normalize whitespace only. Never fall back to a
+  whole-document search or another copy if the new block is missing.
+
+### Guards the regression
+
 - **R-1 — existing admission controls.** Select the nine arguments of
   `C753_RecoveryRefusesIneligibleOwnerOrReviewWithoutRequest`, the two of
   `C753_ExplicitReviewedRecoveryKeepsTerminalOwnerStatus`, and the two of
@@ -201,13 +351,32 @@ that any test or positive control ran during Plan. All paths below are under
   This preserves the meaningful publication boundary around the new incident test;
   it is not a replay of the historical malformed mirror-disagreement record.
 
-Fixture requirements: register `ILandingVerifier` with a controlled verifier for the
-joined test before graph registration (or explicitly replace it), so fixture landing
-does not run a nested repository build. Git, lease ownership, source resolution and
-remote observation remain real. No real Program host, provider CLI or production
-session runner is required. `RepairSourceWorld` already resolves the landing graph
-through `DelegationTestServices`; avoid a copied container graph. Own and await every
-command; use isolated schema counts and the assembly-local ProcessSpawnLimit.
+### Guard inventory and scope
+
+| Guard / assertion under control | Evidence | Positive control |
+|---|---|---|
+| G-1: existing Failed-owner recovery admission is reachable after real repair settlement | V-1 | PC-1 |
+| G-2: ordinary Land still requires Succeeded (outside the existing resume exception) | V-2 plain | PC-2 |
+| G-3: repair success does not replace a required recovery Review | V-2 missing-review | PC-3 |
+| G-4: self-recovery evidence subject must be owner, never repair | V-2 repair-subject | PC-4 |
+| G-5: each repair refusal gives an explicit owner recovery command | V-3 request/worker/protocol | PC-5 |
+| G-6: eligible ordinary status refusals disclose the recovery route | V-4 | PC-6 |
+| G-7: the real CLI carries explicit self-recovery authority to the owner endpoint | V-5 | PC-7 |
+| G-8: the incident-specific recipe states the owner Review subject in its own block | V-6 | PC-8 |
+
+Control inventory: **8 sites, 8 distinct PC mappings, 0 missing mappings, 0 duplicate
+PC mappings**. G-5/G-6/G-8 guard actionable guidance, not new landing authority.
+This is not a new mutation qualification of every CARD-0753 guard. Historical owner
+failure fields, Final/Full/unsuperseded SHA/ref/repository evidence, eligible roles,
+current remote tip, clean checkout, live-helper exclusion, publication identity and
+cleanup-only authority remain unchanged inherited contracts. V-1/V-2/V-4 and R-1/R-3
+assert the named boundaries; no new fault sites for those inherited contracts are
+commissioned here. SourceLanding rejection is also unchanged and outside the new
+V-4 matrix: its operation FK and immutable insert-time identity must not be fabricated
+by changing `SeedSucceededWorktreeAsync`'s already-saved task. Malformed legacy
+mirror-disagreement rows, real incident recovery,
+runner sibling publication, deployment, caller-message transport and full-suite
+qualification remain outside CARD-0603 verification for the reasons above.
 
 ### Positive controls
 
@@ -220,13 +389,13 @@ has a mapped production or documentation fault; argument rows are identified bel
 
 | PC | Test / argument coverage | Deliberate fault and required red observation |
 |---|---|---|
-| PC-1 | V-1 | Remove Failed from `LandApproval.RecoveryStatusEligible`. The positive flow cannot reach confirmed publication and fails on the recovery admission/outcome, despite real successful repair settlement. Restore and require publication green. |
+| PC-1 | V-1 | Remove Failed from `LandApproval.RecoveryStatusEligible`. Real repair settlement still succeeds; `RequestAsync` now throws `recovery_owner_ineligible` and the named `Should.NotThrowAsync` recovery-admission assertion fails. Restore and require publication green. |
 | PC-2 | V-2 `plain` | Disable only the ordinary non-Succeeded admission guard in `AgentTaskLandService.RequestAsync`. Plain Land now queues; the expected Conflict/zero-request assertion must fail. |
-| PC-3 | V-2 `missing-review` | In request admission bypass both the missing-review rejection and its immediate evidence-load call when the ID is absent, so null does not merely crash. The request queues without Review; expected `recovery_review_required` and zero persisted requests fail. |
+| PC-3 | V-2 `missing-review` | Delete only the null-evidence throw in the recovery block of `RequestAsync`, and wrap its `LoadRecoveryEvidenceAsync` call in `if (evidenceId is not null)`. Keep `source ??= task`, the recovery mode and request construction intact. The fixture's final-verification latch is false. Admission queues with null Review; `Should.ThrowAsync<ConflictException>` fails (expected `recovery_review_required`), rather than a null `.Value`/source crash or a downstream worker refusal. |
 | PC-4 | V-2 `repair-subject` | Disable the subject-ID comparison in `LandApproval.LoadUsableEvidenceAsync` while keeping SHA/ref/repository gates. The intentionally otherwise-matching row admits incorrectly; the subject refusal/zero-request assertion fails. |
 | PC-5 | V-3 all three entries | Remove `-RecoverReviewedSource` from the shared repair refusal guidance. All three entry-point argument results fail their actionable-message assertion while retaining their existing 409 code. This controls the new guidance, not merely the old refusal. |
 | PC-6 | V-4 | Restore the old ordinary Failed-owner refusal text without the recovery suffix. The new message assertion fails although the call still refuses. |
-| PC-7 | V-5 | Remove the `recoverReviewedSource` body assignment in `scripts/delegate.ps1:820`. The captured real script POST lacks the flag and fails the JSON-body assertion. |
+| PC-7 | V-5 | Remove the `recoverReviewedSource` body assignment in `scripts/delegate.ps1`'s Land branch. The permissive stub still accepts the real script POST and the JSON `TryGetProperty(...).ShouldBeTrue()` assertion fails; a missing-key exception is not the intended red. |
 | PC-8 | V-6 | Remove the owner-as-Review-subject sentence from the bounded new orchestration recipe while retaining other recovery documentation. The subsection assertion must fail. |
 
 PC-2/3 share the request method and run separately. PC-1/4/5 may share the approval
@@ -234,6 +403,32 @@ utility after S2 and also run separately; do not batch interacting faults. V-1/V
 are contract regressions expected to be green on current behavior, not pretend
 pre-fix reds. V-3/V-4/V-6 can expose the present missing guidance before S2/S3; V-5
 pins existing correct serialization. Mutation proves all can detect an actual fault.
+
+Every phase uses the following exact method filter and execution floor. Parameter
+rows are inspected in TRX; do not use a literal argument suffix. Baseline and restored
+green require all selected executions passed and zero skipped; red requires driver
+exit 1 and precisely the failure roster below, with zero skipped. The expected
+two surviving V-2 arguments are part of the control and must remain green.
+
+| PC | Exact `-Filter` | `-MinExecuted` / phase executed | Intended red counts / argument |
+|---|---|---:|---|
+| PC-1 | `/*/Antiphon.Tests.Application/RepairSourceRecoveryLandingTests/C603_FailedOwnerLandsReviewedRepairedTip*` | 1 | 1 failed, 0 passed; recovery admission |
+| PC-2 | `/*/Antiphon.Tests.Application/RepairSourceRecoveryLandingTests/C603_RepairSuccessDoesNotAuthorizeUnreviewedOwnerLand*` | 3 | 1 failed, 2 passed; plain |
+| PC-3 | `/*/Antiphon.Tests.Application/RepairSourceRecoveryLandingTests/C603_RepairSuccessDoesNotAuthorizeUnreviewedOwnerLand*` | 3 | 1 failed, 2 passed; missing-review |
+| PC-4 | `/*/Antiphon.Tests.Application/RepairSourceRecoveryLandingTests/C603_RepairSuccessDoesNotAuthorizeUnreviewedOwnerLand*` | 3 | 1 failed, 2 passed; repair-subject |
+| PC-5 | `/*/Antiphon.Tests.Application/RepairSourceLandRefusalTests/C603_RepairLandRefusalNamesReviewedOwnerRecovery*` | 3 | 3 failed, 0 passed; request/worker/protocol guidance |
+| PC-6 | `/*/Antiphon.Tests.Application/AgentTaskLandRequestTests/C603_PlainFailedCodeOwnerRefusalNamesReviewedRecovery*` | 1 | 1 failed, 0 passed; missing guidance |
+| PC-7 | `/*/Antiphon.Tests.Application/DelegateScriptAdoptTests/C603_RecoverReviewedSourcePostsOwnerIdentityToV2*` | 1 | 1 failed, 0 passed; missing JSON flag |
+| PC-8 | `/*/Antiphon.Tests.Application/RepairSourceDocumentationTests/C603_RepairSourceFailedOwnerRecipeNamesOwnerBoundReview*` | 1 | 1 failed, 0 passed; bounded owner-subject sentence |
+
+Use `-Expect Class.Method` from each filter, unique `bin-c603-pcN-<phase>/`
+outputs and fresh result directories in the SourceLanding task's external evidence
+root. Copy the unchanged checkpoint driver and its `lib/build-slot.ps1` there before
+mutation, following `docs/testing-and-build.md`'s Mutation recipe. Each cycle records
+the exact source patch/digest, completed build/run exit receipts and argument roster;
+restore exact source bytes, refresh timestamps and rebuild green before the next
+fault. Do not repair test assertions to accommodate a mutation. Unexpected baseline
+failures or a red caused only by setup/compilation return to Code; they are not PC passes.
 
 ### Execution, platform and receipt rules
 
@@ -249,7 +444,7 @@ testcontainer Docker/Postgres lane; the checkpoint script adds `UseAppHost=false
 These fixtures do not require the missing Linux FakeClaude apphost. A future fixture
 choice that launches it requires a plan revision, not a skip reported as coverage.
 
-Use the brief's CARD-0823 exception: **do not launch `tools/Antiphon.Checkpoints`**.
+Retain the Plan brief's CARD-0823 exception: **do not launch `tools/Antiphon.Checkpoints`**.
 Run one row at a time with `scripts/run-checkpoint.ps1` under the build-slot wrapper.
 Pass the `.ps1` directly after `--`, as below: the wrapper invokes a PowerShell script
 in its own process (`scripts/build-slot.ps1:120`), and the broker returns that holder's
@@ -258,11 +453,16 @@ second `pwsh` there, which would acquire another slot while the first remains he
 The row driver still performs its normal slot handling. Use no `-NoSlot` override.
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card0603-CP-1 -- ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c603-cp1/ -Filter '/*/Antiphon.Tests.Application/(RepairSourceRecoveryLandingTests*)|(RepairSourceLandRefusalTests*)/*' -Expect RepairSourceRecoveryLandingTests,RepairSourceLandRefusalTests -MinExecuted 10 -ResultsRoot .antiphon/c603-cp1-attempt1
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card0603-CP-1 -- ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c603-cp1/ -Filter '/*/Antiphon.Tests.Application/(RepairSourceRecoveryLandingTests*)|(RepairSourceLandRefusalTests*)/*' -Expect RepairSourceRecoveryLandingTests.C603_FailedOwnerLandsReviewedRepairedTip,RepairSourceRecoveryLandingTests.C603_RepairSuccessDoesNotAuthorizeUnreviewedOwnerLand,RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery,RepairSourceLandRefusalTests.C499_V24ii_LandRequestIsRefusedForARepairTask,RepairSourceLandRefusalTests.C499_V24iii_ProtocolEntryIsRefusedForARepairTask,RepairSourceLandRefusalTests.C499_V24iv_OwnerLandRequestStillQueues -MinExecuted 10 -ResultsRoot .antiphon/c603-cp1-attempt1
 ```
 
 Apply that command shape to each table row, with its exact name, output, filter,
-expected classes, minimum and a fresh results path. All four rows include their own
+expected roster, minimum and a fresh results path. For `-Expect`, pass all selected
+`Class.Method` names as one comma-separated argument: CP-1's two V-1/V-2 methods,
+V-3 and the three existing C499 methods; CP-2/CP-3's named method-filter operands;
+CP-4's six script and three documentation methods. Require the table's **exact** count
+and every argument row: `MinExecuted` alone is only a floor and cannot detect an
+accidental extra selection. All four rows include their own
 isolated build; no `-NoBuild` is planned. Run serially, including builds, because
 OutputPath does not isolate shared `obj/`. Retain each driver's build/run exit
 receipt, TRX roster and `CHECKPOINT CP-n` line with actual executed/passed/failed/
@@ -284,16 +484,17 @@ omit the broad Unit/Checkpoints namespace/full-suite rows that would import thos
 hangs; the exact affected Unit documentation class and integration methods provide
 this card's bounded scope. No retry loop, broad baseline suite, build of the solution,
 client build or E2E run is authorized by this table. Any added run must have a stated
-reason and cost in the report. No builds/tests are required for this Plan-only file.
+reason and cost in the report. No builds/tests are required for this documentation-only
+TestDesign change; runtime counts and PCs remain pending Code/Mutation.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp1/` | repair-to-publication | `/*/Antiphon.Tests.Application/(RepairSourceRecoveryLandingTests*)\|(RepairSourceLandRefusalTests*)/*` | V-1, V-2, V-3, R-2 | exactly 10: 4 new joined-flow + 3 new entry-point + 3 existing; both classes, 0 failed/skipped | 10 | 12 |
-| CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp2/` | recovery-admission | `/*/Antiphon.Tests.Application/AgentTaskLandRequestTests/(C603_PlainFailedCodeOwnerRefusalNamesReviewedRecovery*)\|(C753_RecoveryRefusesIneligibleOwnerOrReviewWithoutRequest*)\|(C753_ExplicitReviewedRecoveryKeepsTerminalOwnerStatus*)\|(C753_RecoverySupersedesOnlyAfterMergeHelperIsInactive*)` | V-4, R-1 | exactly 14: 1 + 9 + 2 + 2; all four methods, 0 failed/skipped | 14 | 8 |
-| CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp3/` | recovery-publication-guards | `/*/Antiphon.Tests.Application/AgentTaskLandAdoptionTests/(C753_ConflictedRecoveryPreservesOwnerStatusAndRefusesPlainResume*)\|(C753_SupersededConflictedOperationGetsFreshReviewedPublication*)\|(C753_DirtyOwnerCheckoutRefusesBeforeReviewedSourceMutation*)\|(C753_MovedReviewedRemoteTipRefusesWithoutTargetPublication*)\|(C753_ReviewedSelfRecoveryAlignsRewrittenOwnerSourceAndPublishes*)\|(C753_PublishedRecoveryCleanupRetryUsesPersistedOwnerAuthority*)` | R-3 | exactly 7: 2 + 1 + 1 + 1 + 1 + 1; all six methods, 0 failed/skipped | 7 | 12 |
-| CP-4 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp4/` | recovery-cli-and-recipe | `/*/Antiphon.Tests.Application/(DelegateScriptAdoptTests*)\|(RepairSourceDocumentationTests*)/*` | V-5, V-6, R-2 | exactly 9: 6 script + 3 documentation; both classes, 0 failed/skipped | 9 | 8 |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp1/` | repair-to-publication | `/*/Antiphon.Tests.Application/(RepairSourceRecoveryLandingTests*)\|(RepairSourceLandRefusalTests*)/*` | V-1, V-2, V-3, R-2 | exactly 10 passed: V-1=1, V-2=3, V-3=3, C499=3; 6 methods across both classes; 0 failed/skipped | 10 | 12 |
+| CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp2/` | recovery-admission | `/*/Antiphon.Tests.Application/AgentTaskLandRequestTests/(C603_PlainFailedCodeOwnerRefusalNamesReviewedRecovery*)\|(C753_RecoveryRefusesIneligibleOwnerOrReviewWithoutRequest*)\|(C753_ExplicitReviewedRecoveryKeepsTerminalOwnerStatus*)\|(C753_RecoverySupersedesOnlyAfterMergeHelperIsInactive*)` | V-4, R-1 | exactly 14 passed: 1 new result (internal boundary cases) + 9 + 2 + 2 existing arguments; all 4 methods; 0 failed/skipped | 14 | 8 |
+| CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp3/` | recovery-publication-guards | `/*/Antiphon.Tests.Application/AgentTaskLandAdoptionTests/(C753_ConflictedRecoveryPreservesOwnerStatusAndRefusesPlainResume*)\|(C753_SupersededConflictedOperationGetsFreshReviewedPublication*)\|(C753_DirtyOwnerCheckoutRefusesBeforeReviewedSourceMutation*)\|(C753_MovedReviewedRemoteTipRefusesWithoutTargetPublication*)\|(C753_ReviewedSelfRecoveryAlignsRewrittenOwnerSourceAndPublishes*)\|(C753_PublishedRecoveryCleanupRetryUsesPersistedOwnerAuthority*)` | R-3 | exactly 7 passed: 2 conflict arguments + 5 single existing results; all 6 methods; 0 failed/skipped | 7 | 12 |
+| CP-4 | S1-S3 | `tests/Antiphon.Tests -> bin-c603-cp4/` | recovery-cli-and-recipe | `/*/Antiphon.Tests.Application/(DelegateScriptAdoptTests*)\|(RepairSourceDocumentationTests*)/*` | V-5, V-6, R-2 | exactly 9 passed: script 5 existing + V-5, documentation 2 existing + V-6; all 9 methods across both classes; 0 failed/skipped | 9 | 8 |
 
 ### Cost
 
@@ -304,21 +505,25 @@ CP-1 and CP-3 are the slow rows: real Git, schema creation, dispatch/settlement 
 publication, estimated 12 minutes each. CP-2 and CP-4 still pay a fresh build and
 schema/PowerShell startup; neither is a seconds-only "unit check". Cold restore/image
 pulls and broker queue time are additional. Windows may take longer; report actuals
-rather than dropping a row to meet the estimate. TestDesign should revise cost if
-fixture measurements justify it, before Code commissions a changed manifest.
+rather than dropping a row to meet the estimate. TestDesign retained the estimates
+without running builds; there is no new timing evidence to justify changing them.
 
 Allow 2-4 hours for implementation/fixture authoring beyond the 40-minute ordinary
 floor, 1-2 hours for separate TestDesign, and about an hour for Review. Post-land
-Mutation is separate: eight method-scoped control cycles with distinct phase builds
-can add 2-4 hours, particularly the real-Git flow. Do not hide those runs in the
-ordinary estimate or claim PC-clean from the Code checkpoints.
+Mutation is separate: eight method-scoped control cycles, **24 isolated phase builds
+and 48 executions** (16 baseline, 16 red, 16 restored green), estimated **120-240
+minutes**, particularly the real-Git flow. This includes repeated selection of all
+three V-2 arguments for each of PC-2/3/4. No additional build-count saving is claimed:
+the requested four ordinary builds and independent fault cycles are preserved. Do not
+hide those runs in the ordinary estimate or claim PC-clean from the Code checkpoints.
 
 ## Acceptance and handoff
 
-TestDesign confirms the six new methods/ten expanded executions, makes every PC
-specific enough to produce the expected assertion red, and validates the same-process
-wrapper recipe without widening scope. Code implements the three slices and reports
-all four CP rows against committed clean source. Review checks that only guidance
+TestDesign confirmed the six new methods/ten expanded executions by source inspection,
+specified an assertion failure and phase roster for all eight PCs, and checked the
+same-process wrapper recipe against its implementation. Builds/tests/PCs were not run.
+Code implements the three slices and reports all four CP rows against committed clean
+source. Review checks that only guidance
 changed in production and that the joined regression actually publishes through
 the historical Failed owner.
 
@@ -328,7 +533,7 @@ incident, confirm the served `/api/version` includes the landed commit and `land
 publication alone is not activation. If a real Failed-owner RepairSource incident is
 available, use its current owner-bound Review and explicit recovery command and retain
 the receipt; do not manufacture code or repeat publication just for this card.
-The Plan stage neither deploys nor authorizes changing historical task statuses.
+Plan/TestDesign neither deploys nor authorizes changing historical task statuses.
 
-Next: **TestDesign**, using this artifact. The core recovery implementation already
+Next: **Code**, using this artifact. The core recovery implementation already
 exists; finish the incident regression and actionable handoff, preserving that contract.
