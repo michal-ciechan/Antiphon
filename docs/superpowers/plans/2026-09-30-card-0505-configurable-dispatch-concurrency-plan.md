@@ -536,6 +536,14 @@ nested in `DispatchConcurrencyScriptTests.cs`. No additional helper file is impl
 | F-X `ConcurrencyScriptRecorder` and `ConcurrencyScriptProcess` | Loopback HTTP recorder answers ordered GET/PUT/history fixtures. Real `pwsh -NoProfile -File scripts/dispatch-concurrency.ps1` with ArgumentList, owned temp settings/reason files, fake task-token sentinel, isolated ANTIPHON_API, captured stdout/stderr/exit. Clear inherited capability/token credentials before supplying the sentinel; assert it is absent from output. Always stop/await child and listener. Class carries assembly-local ParallelLimiter<ProcessSpawnLimit>. |
 
 F-S readbacks use new contexts/AsNoTracking; a tracked entity echo is not persistence proof.
+For project-scoped CreateAsync, seed an authenticated Orchestrator/Custom parent in
+Blocked status with ProjectId=P or Q; for the null bucket use a parent whose ProjectId
+is null. This exercises real caller-derived scope without the fixture parent consuming
+the open/parallel/queued counts in the tables. Token hashes use the production helper;
+only test-generated tokens reach the loopback host. Set unrelated MaxDepth=5,
+MaxTasksPerRoot=100 and MaxCostUsdPerRoot=1000 so those guards do not mask capacity.
+Manual HTTP requests supply an explicit allowed WorkingDirectory and ReadOnly workspace.
+Initialization tests start F-S with import deferred; all other consumers start after import.
 Use fresh stores per internal scenario where counts/revisions reset. Negative wire/settings
 cases compare settings, history, task/event and host/routing row snapshots before/after;
 fixture import is outside that comparison. The wire host must explicitly finish startup
