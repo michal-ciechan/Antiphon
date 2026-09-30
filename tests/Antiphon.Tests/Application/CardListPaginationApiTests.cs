@@ -179,7 +179,7 @@ public class CardListPaginationApiTests
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
         foreach (var mutate in new Action<JsonObject>[]
         {
-            j => j["Version"] = 2,
+            j => j["Version"] = 3,
             j => j.Remove("Fingerprint"),
             j => j["AfterUpdatedAt"] = "2026-09-30T00:00:00",
             j => j["AfterId"] = Guid.Empty.ToString(),
