@@ -381,7 +381,9 @@ public class ProviderQuotaRefusalAcceptanceTests
         }
         await s.H.Queue.FlushSessionAsync(s.H.SessionId, CancellationToken.None);
         await using var db = s.Db();
-        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId && m.Body.Contains("transient API error") && m.Status == QueuedMessageStatus.Pending)).ShouldBe(1);
+        var owned = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m =>
+            m.AgentSessionId == s.H.SessionId && m.Origin == QueuedMessageOrigin.Supervision);
+        owned.Status.ShouldBe(QueuedMessageStatus.Pending);
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId && m.Body == "human message")).ShouldBe(1);
     }
 
