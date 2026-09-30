@@ -228,7 +228,7 @@ public partial class ShadowCopyStoreTests
         {
             var before = ShadowCopyStore.ComputeContentSha8(source);
             Directory.CreateDirectory(Path.Combine(source, "TestResults"));
-            File.WriteAllText(Path.Combine(source, "TestResults", "report.html"), Guid.NewGuid().ToString());
+            File.WriteAllText(Path.Combine(source, "TestResults", "host.exe"), Guid.NewGuid().ToString());
             var after = ShadowCopyStore.ComputeContentSha8(source);
 
             after.ShouldBe(before);
