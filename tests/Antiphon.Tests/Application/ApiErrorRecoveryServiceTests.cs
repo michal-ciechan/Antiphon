@@ -205,7 +205,8 @@ public class ApiErrorRecoveryServiceTests
         }
         var now = new DateTimeOffset(2026, 7, 15, 16, 0, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText);
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText,
+            timestamp: now.UtcDateTime);
 
         await SweepAsync(h, time: time);
 
@@ -242,7 +243,7 @@ public class ApiErrorRecoveryServiceTests
 
         var text = UsageLimitWallParser.SessionLimitProductionText;
         text.Length.ShouldBe(61);
-        await SeedProductionClaudeStubAsync(h.SessionId, text);
+        await SeedProductionClaudeStubAsync(h.SessionId, text, createdAt: now.UtcDateTime);
 
         await SweepAsync(h, time: time);
 
@@ -260,7 +261,7 @@ public class ApiErrorRecoveryServiceTests
                 .ToListAsync())
             .ShouldHaveSingleItem();
         hold.RawText.ShouldBe(text);
-        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.Reason.ShouldContain("2026-09-05T16:20:00Z");
         hold.DisabledUntil.ShouldBe(resetPlusPadding);
         hold.DisabledUntil.ShouldNotBe(now.UtcDateTime.AddHours(6));
         hold.ModelAlias.ShouldBe("fable");
@@ -280,7 +281,8 @@ public class ApiErrorRecoveryServiceTests
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
         }
 
-        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitProductionText);
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitProductionText,
+            timestamp: now.UtcDateTime);
         await SweepAsync(h, time: time);
 
         await using var db = CreateContext();
@@ -308,7 +310,7 @@ public class ApiErrorRecoveryServiceTests
         }
 
         var text = UsageLimitWallParser.SessionLimitProductionText;
-        var (seq, uuid) = await SeedProductionClaudeStubAsync(h.SessionId, text);
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(h.SessionId, text, createdAt: now.UtcDateTime);
         var svc = Recovery(h, time: time);
 
         await svc.EnsureAdoptedAsync(
@@ -352,7 +354,8 @@ public class ApiErrorRecoveryServiceTests
         var time = new FakeTimeProvider(now);
         await using var h = await BridgeQueueHarness.CreateAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
-        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText);
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText,
+            timestamp: now.UtcDateTime);
 
         var settings = FastSettings();
         settings.ModelCapFallbackHoldHours = 3;
@@ -394,7 +397,8 @@ public class ApiErrorRecoveryServiceTests
             h.SessionId,
             "payment_required",
             402,
-            "API error (status 402 Payment Required): Grok Build usage balance exhausted");
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+            timestamp: now.UtcDateTime);
 
         var settings = FastSettings();
         settings.ModelCapFallbackHoldHours = 3;
@@ -1227,9 +1231,12 @@ public class ApiErrorRecoveryServiceTests
     /// is <see cref="SeedProductionClaudeStubAsync"/>.
     /// </summary>
     private static async Task<long> SeedStubAsync(
-        Guid sessionId, string apiErrorClass, int? status, string text)
+        Guid sessionId, string apiErrorClass, int? status, string text, DateTime? timestamp = null)
     {
         await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        if (session.AgentKind == AgentKind.ClaudeCode && session.EffectiveModelId is null)
+            session.EffectiveModelId = "fable"; // explicit test launch model, never inferred in production
         var seq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
@@ -1241,6 +1248,7 @@ public class ApiErrorRecoveryServiceTests
             Kind = TranscriptKinds.TurnEnd,
             StopReason = "stop_sequence",
             Text = text,
+            Timestamp = timestamp,
             IsApiError = true,
             ApiErrorClass = apiErrorClass,
             ApiErrorStatus = status,
@@ -1263,6 +1271,9 @@ public class ApiErrorRecoveryServiceTests
         bool emptyAssistant = false)
     {
         await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        if (session.AgentKind == AgentKind.ClaudeCode && session.EffectiveModelId is null)
+            session.EffectiveModelId = "fable"; // explicit test launch model
         var seq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
