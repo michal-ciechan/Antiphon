@@ -79,7 +79,10 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
                 (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued)).Status
                     .ShouldBe(QueuedMessageStatus.Pending);
-            await launch;
+            Exception? launchError = null;
+            try { await launch; }
+            catch (Exception ex) { launchError = ex; }
+            launchError.ShouldBeNull("the native readiness gate must complete before any receipt wait");
             await h.Runtime.SyncTranscriptAsync(h.SessionId, deadline.Token);
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
             {

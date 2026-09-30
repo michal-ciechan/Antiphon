@@ -546,8 +546,8 @@ These complete the V roster without adding methods or argument expansions.
   in later raw history. Assert decoded content limits **and actual UTF-8 file
   length**, valid escaping and truncation metadata, no sentinel in capture/log.
   D-5's 128 KiB file bound can be enforced by construction: two capped 8192-unit
-  fields expanded at most six ASCII bytes per unit, <=1024 metadata bytes and
-  <=4096 fixed-format bytes total <=103424 bytes. Assert that format budget;
+  fields expanded at most six ASCII bytes per unit, while the fixed metadata
+  consists only of bounded enum, GUID, timestamp and numeric values. Assert that format budget;
   do not invent an unreachable extra truncation branch and call it mutation-tested.
   If Code uses a separate reachable file-budget branch, add its own PC.
 - V-14 writes actual files with distinct ordered metadata and owns its temp root.
@@ -573,10 +573,10 @@ These complete the V roster without adding methods or argument expansions.
 
 The following control table is also the guard inventory: `G-n -> PC-n` is a
 one-to-one mapping, and its Guard column names the decision and boundary.
-There are **45 guards, 45 mapped controls, 0 missing and 0 duplicate PC mappings**.
+There are **44 active guards and 44 mapped controls, 0 missing and 0 duplicate PC mappings**.
 This expands the Plan's 19 cycles: independently bypassable reset, timing,
 current-frame input and diagnostic guards cannot share one mutation and be
-reported as individually controlled. All 45 use the same 17 V methods. R-1/R-2/R-3
+reported as individually controlled. All 44 use the same 17 V methods. R-1/R-2/R-3
 preserve existing delivery/rules/cleanup/turn behavior; they do not authorize
 mutations of unchanged shared queue, rules or Codex production code on this card.
 S1's evidence/provenance and clean-SHA/platform checks are commissioning/receipt
@@ -600,7 +600,7 @@ serially; do not claim independent batching savings.
 | G-2 -> PC-2 | V-2 | D-1 positive structure: admit bare `>` without qualified dashboard/footer. | `barePrompt.IsReady.ShouldBeFalse()`. |
 | G-3 -> PC-3 | V-3 | D-1 current-frame classification: classify raw history instead. | `actual.Reason.ShouldBe(expectedCurrentReason)`. |
 | G-4 -> PC-4 | V-4 | D-2 changed-input reset: retain candidate start after identity changes. | `readyBeforeNewThreshold.ShouldBeFalse()`. |
-| G-5 -> PC-5 | V-5 | D-2 two observations: remove the count floor. | `firstZeroSettleObservation.IsReady.ShouldBeFalse()`. |
+| G-5 -> PC-5 | V-5 | D-2 two observations: make the first positive observation return true when settle is zero (the new-region branch currently always returns false). Removing only the count comparison is inert because that branch already rejects the first observation. | `firstZeroSettleObservation.IsReady.ShouldBeFalse()`. |
 | G-6 -> PC-6 | V-6 | D-2 adapter wiring: restore legacy sequence-quiet wait. | Await its bounded result, then `ready.ShouldBeTrue()`; false is the red, not a test timeout. |
 | G-7 -> PC-7 | V-7 | D-4 prompt sign-in block: defer sign-in classification until positive readiness. | `launchBlock.ShouldNotBeNull()` and Kind equals ProviderSignInRequired after the bounded wait returns. |
 | G-8 -> PC-8 | V-8 | D-4 trust once: remove the trust-written latch. | `trustWrites.Count.ShouldBe(1)` on repeated current trust. |
@@ -631,7 +631,6 @@ serially; do not claim independent batching savings.
 | G-33 -> PC-33 | V-13 | D-5 screen bound before escaping: omit the screen source cap. | `decodedScreen.Length.ShouldBeLessThanOrEqualTo(8192)`. |
 | G-34 -> PC-34 | V-13 | D-5 raw-tail bound before escaping: omit the raw source cap. | `decodedRaw.Length.ShouldBeLessThanOrEqualTo(8192)` and expected last-tail content. |
 | G-35 -> PC-35 | V-13 | D-5 content escaping: write control characters literally. | `storedContentHasLiteralControls.ShouldBeFalse()` (excluding fixed format delimiters). |
-| G-36 -> PC-36 | V-13 | D-5 metadata byte budget: omit UTF-8 metadata truncation. | `metadataByteLength.ShouldBeLessThanOrEqualTo(1024)`. |
 | G-37 -> PC-37 | V-14 | D-5 owned completed files only: prune all `.txt` files. | `File.Exists(unrelatedSentinel).ShouldBeTrue()`. |
 | G-38 -> PC-38 | V-14 | D-5 minimum keep: permit keep 0 instead of clamping to 1. | `ownedCompletedFiles.Count.ShouldBe(1)` for configured 0/-1. |
 | G-39 -> PC-39 | V-14 | D-5 maximum keep: permit configured 101. | `ownedCompletedFiles.Count.ShouldBe(100)` after 101 captures. |
@@ -641,6 +640,12 @@ serially; do not claim independent batching savings.
 | G-43 -> PC-43 | V-12 | D-5 actual last-frame identity: capture the first frame instead of the last. | `capture.Sequence.ShouldBe(lastObservedSequence)` and its session/reason/time match. |
 | G-44 -> PC-44 | V-12 | D-5 no post-failure runner read: fetch another frame for the capture. | `readsAfterFailureDecision.ShouldBe(0)`; the extra fake read completes with distinct data. |
 | G-45 -> PC-45 | V-2 | D-2 preserve meaningful startup/MCP text: strip the whole spinner/status row before classification. | `blockedStatusFrame.IsReady.ShouldBeFalse()` despite intact composer chrome. |
+
+PC-36 is removed: the implementation has no metadata byte truncation or 1024-byte
+metadata budget. Its only whole-file cap is 128 KiB, and the two 8192-character
+source caps keep even fully escaped content below it. A mutation of the absent
+metadata guard cannot compile or produce a valid red; V-13 retains the real source
+and escaping bounds.
 
 Use the assertion expressions as named outcomes (retain equivalent explicit labels
 in Shouldly messages when Code chooses member names). A mutation must reach that
@@ -804,15 +809,15 @@ for TestDesign fixture/roster finalization. Missing 1.0.41 or irretrievable logs
 need a separately commissioned reproduction; this estimate cannot promise that
 evidence exists. S2/S3 authoring: **120 minutes**, plus ordinary Code verification
 49 = **169 minutes** before repairs and slot wait. Ordinary Review and landing are
-additional. SourceLanding Mutation: budget **42 unit control cycles** (PC-1..14
-and PC-18..45) at **9 minutes** each (baseline/red/green isolated builds), two DB
+additional. SourceLanding Mutation: budget **41 unit control cycles** (PC-1..14
+and PC-18..45 except removed PC-36) at **9 minutes** each (baseline/red/green isolated builds), two DB
 integration controls (PC-15/16) at **15** each, one Windows native control (PC-17)
 at **20**, plus **15** for restoration/reporting: 378 + 30 + 20 + 15 =
-**443 minutes**. This is 45 cycles / 135 method-scoped phase executions and builds,
+**434 minutes**. This is 44 cycles / 132 method-scoped phase executions and builds,
 not 45 additional ordinary tests. PC-17 requires a Windows SourceLanding task;
 portable PCs can use Linux. No batching discount because controls share production
-files/decisions. Ordinary V/R + Mutation verification floor is **492 minutes**;
-with S1's 75 and S2/S3 authoring's 120, the estimated total is **687 minutes**
+files/decisions. Ordinary V/R + Mutation verification floor is **483 minutes**;
+with S1's 75 and S2/S3 authoring's 120, the estimated total is **678 minutes**
 before ordinary Review/land, repairs, login/access delays and slot wait. This
 replaces Plan's 209-minute Mutation estimate; no measured runtime was obtained.
 Slot contention has no zero-wait guarantee and must be reported separately.
@@ -834,7 +839,7 @@ must follow the canonical checkout runbook and directly verify `/api/version`.
 
 TestDesign validation is static only: one Checkpoints heading, three 12-column
 rows, floors 42/32/10 (84 planned executions), nine existing class counts from
-source (37 methods / 67 cases), 17 planned new methods, and 45 distinct guard/PC
+source (37 methods / 67 cases), 17 planned new methods, and 44 active guard/PC
 mappings. Commands were file reads/searches, a compile-free Node census, Markdown
 manifest/cross-reference checks, PowerShell AST parsing of the three row command
 fences (no invocation), and `git diff --check`; no product build, test
