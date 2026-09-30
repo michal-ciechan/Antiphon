@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class BuildSlotClientTests
 {
     [Test]
@@ -177,7 +178,7 @@ public sealed class BuildSlotClientTests
             client.AcquireAsync(session, "CP-1", CancellationToken.None),
             client.AcquireAsync(session, "CP-2", CancellationToken.None));
         leases.Count(lease => lease.State == "granted").ShouldBe(1);
-        leases.Count(lease => lease.State == "unleased").ShouldBe(1);
+        leases.Count(lease => lease.State == "refused" && lease.ExitCode == ExitCodes.Invalid).ShouldBe(1);
         handler.LiveCount.ShouldBe(1);
         await leases.Single(lease => lease.State == "granted").DisposeAsync();
         handler.LiveCount.ShouldBe(0);
@@ -199,7 +200,7 @@ public sealed class BuildSlotClientTests
     private static ScriptedHttpHandler ScriptProbe()
     {
         var handler = new ScriptedHttpHandler();
-        handler.Enqueue(HttpStatusCode.OK, """{"enabled":true}""");
+        handler.Enqueue(HttpStatusCode.OK, """{"enabled":true,"budget":4,"maxCpuCount":4}""");
         return handler;
     }
 
@@ -225,6 +226,7 @@ public sealed class BuildSlotClientTests
             () => now,
             Delay,
             pid: pid,
+            processStartUtc: "2026-09-30T00:00:00.0000000Z",
             holders: holders);
         return (client, now);
     }
@@ -252,7 +254,7 @@ public sealed class BuildSlotClientTests
         {
             public int Pid { get; } = pid;
 
-            public string? ProcessStartUtc => null;
+            public string? ProcessStartUtc => "2026-09-30T00:00:00.0000000Z";
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }

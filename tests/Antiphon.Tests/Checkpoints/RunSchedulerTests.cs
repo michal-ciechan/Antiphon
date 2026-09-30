@@ -370,7 +370,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         {
             public int Pid { get; } = pid;
 
-            public string? ProcessStartUtc => null;
+            public string? ProcessStartUtc => "2026-09-30T00:00:00.0000000Z";
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
