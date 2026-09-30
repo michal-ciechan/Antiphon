@@ -1080,7 +1080,7 @@ public sealed class RemoteScriptContractTests
         Order(seed, "docker stop \"$donor\"", "docker cp \"$donor:/home/app/.nuget/packages/.\"").ShouldBeTrue();
         Order(seed, "c849_smoke \"$helper\" seed", "mv \"$stage\" \"$recovery\"").ShouldBeTrue();
         Order(seed, "docker start \"$donor\"", "mv \"$C849_READY.tmp-$RUN\" \"$C849_READY\"").ShouldBeTrue();
-        var status = LinuxShell(CacheStatusHarness() + """
+        var status = LinuxShell(CacheStatusHarness() + "\n" + """
             for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
                 c849_status_zero server2-temp reconnected
                 printf '%s reconnect=%s\n' "$STATUS" "$?"
@@ -1092,7 +1092,7 @@ public sealed class RemoteScriptContractTests
         foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
             status.ShouldContain(fault + " reconnect=1");
         status.ShouldContain("zero reconnect=0");
-        var ready = LinuxShell(CacheStatusHarness() + seed + """
+        var ready = LinuxShell(CacheStatusHarness() + "\n" + seed + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"; printf 'ready\n' > "$C849_READY"
@@ -1138,7 +1138,7 @@ public sealed class RemoteScriptContractTests
             "hardlink code=2 diagnosis=CacheDonorUnsafeEntry", "special code=2 diagnosis=CacheDonorUnsafeEntry",
             "path code=2 diagnosis=CacheDonorUnsafePath", "sibling-preserved" })
             output.ShouldContain(expected);
-        var gate = LinuxShell(CacheStatusHarness() + Block(Remote(), "c849_seed") + """
+        var gate = LinuxShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_seed") + "\n" + """
             c849_prepare() { :; }
             c849_image() { echo image; }
             c849_optional_donor() { echo donor; }
@@ -1180,7 +1180,7 @@ public sealed class RemoteScriptContractTests
         Order(retire, "c849_status_zero server2-temp", "compose_temp down -v").ShouldBeTrue();
         retire.ShouldContain("c849_require_ready");
         retire.ShouldContain("c849_budget_gate");
-        var output = LinuxShell(CacheStatusHarness() + retire + """
+        var output = LinuxShell(CacheStatusHarness() + "\n" + retire + "\n" + """
             C590_TEMP_RETIRED_AT=2026-09-30T00:00:00Z
             SERVER2_TEMP_ENV="$root/temp.env"; printf 'RUNNER_GROK_STORE_DIR=/x\n' > "$SERVER2_TEMP_ENV"
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
