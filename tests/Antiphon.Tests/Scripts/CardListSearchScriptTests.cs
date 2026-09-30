@@ -223,13 +223,18 @@ public sealed class CardListSearchScriptTests
         foreach (var tokens in new[] { new[] { "A", "A" }, new[] { "A", "B", "A" } })
         {
             using var cycle = new Stub();
-            cycle.Respond = (_, request) => new(200, Page(request - 1, 1, true,
-                tokens[Math.Min(request - 1, tokens.Length - 1)]));
+            cycle.Respond = (_, request) => request <= tokens.Length
+                ? new(200, Page(request - 1, 1, true, tokens[request - 1]))
+                : new(200, Page(request - 1, 1));
             var repeated = await RunAsync(cycle, "list", "-Status", "Backlog", "-Json");
+            cycle.Calls.Select(c => (c.Path, Token: c.Value("pageToken"))).ToArray()
+                .ShouldBe(tokens.Length == 2
+                    ? new[] { ("/api/cards", (string?)null), ("/api/cards", "A") }
+                    : new[] { ("/api/cards", (string?)null), ("/api/cards", "A"),
+                        ("/api/cards", "B") });
             repeated.ExitCode.ShouldNotBe(0);
             repeated.Stdout.ShouldBeNullOrWhiteSpace();
             repeated.Stderr.ShouldContain("page token");
-            cycle.Calls.Count.ShouldBe(tokens.Length);
         }
         using var caseSensitive = new Stub();
         caseSensitive.Respond = (_, request) => request switch
