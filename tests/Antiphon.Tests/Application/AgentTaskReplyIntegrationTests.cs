@@ -4484,7 +4484,7 @@ public partial class AgentTaskReplyIntegrationTests
     /// </summary>
     private static async Task SeedApiErrorStubTurnAsync(
         Guid sessionId, string prompt,
-        string errorText = "API Error: 429 Too many requests. Retry shortly.",
+        string errorText = "API Error: 429 Too many requests. Resets at 6:10pm (Europe/London).",
         string apiErrorClass = "rate_limit", int? apiErrorStatus = 429,
         string? narration = null)
     {
