@@ -1530,6 +1530,12 @@ c849_validate_seed_tree() {
         for version in "$package"/*; do
             [ -d "$version" ] || { printf 'CacheDonorVersionInvalid\n'; return 2; }
             if [ ! -s "$version/.nupkg.metadata" ]; then
+                case "$version" in
+                    "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20")
+                        printf 'AppHostDonorMetadataMissing\n'; return 2 ;;
+                    "$stage/packages/microsoft.netcore.app.ref/9.0.20")
+                        printf 'Net9ReferenceDonorMissing\n'; return 2 ;;
+                esac
                 rm -rf -- "$version" || { printf 'CacheDonorVersionIncomplete\n'; return 2; }
             fi
         done
