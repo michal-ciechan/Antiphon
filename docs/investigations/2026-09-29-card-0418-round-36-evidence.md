@@ -97,8 +97,70 @@ tool gate after dispatcher death; fresh transcript sync settled the original
 task and the pump published the sealed output. Receipt:
 `.antiphon/checkpoints/r36/DIAG-V15-q-20260930-023940-28ba/run.trx`.
 
-## Remaining ordinary work
+## V-17, V-18 and V-23 ordinary verdicts
 
-V-17, V-18 and V-23 code and test slices are present, pending their listed
-checkpoint receipts. R-2–R-6, R-9, R-11 and R-13–R-14 remain open until their
-whole-ID oracles are satisfied.
+V-17's owned, old correlation receives a late transcript confirmation without
+creating a second intent, an inbound-loss incident or an early reply stamp.
+After the conversion deadline, the pump publishes one annotated original
+fallback and settles that correlation; another TTL sweep stays silent. The
+attention test checks Pending/Converting/Ready/Publishing/Published/Failed/Held/
+PublishUncertain references and severity from fresh state. CP-5 and CP-7 pass.
+
+V-18 exercises profile clear/remove, channel disable/unbind/rebind and a
+cross-project replacement on both pre-launch and post-worker states. Profile
+revocation uses the original fallback; changed bindings hold without a send or
+success stamp. The final producer-call barrier races a binding update, which
+is revalidated before send. Two actual admissions across a same-name prompt
+file/settings edit retain distinct frozen prompt revisions and deadlines.
+CP-3 passes.
+
+V-23 checks a converted PDF whose base64 and metadata exceed a 2048-byte
+serialized payload cap: the pump discards the obsolete output, publishes the
+original within the cap once and creates no replacement worker. CP-4 retains
+the exact/+1 and near-default storage limits, and CP-11 crosses a disposable
+Redpanda broker with near-default serialized bytes, exact key, Unicode fields
+and original attachment bytes. CP-4, CP-5 and CP-11 pass.
+
+## Final checkpoint receipts
+
+The closed CP-1–CP-13 list ran on committed source
+`fb12fdb591110f78504b352dd83769b87155ad95`, with one isolated .NET build
+and exact plan filter per row. `scripts/run-checkpoint.ps1` acquired the build
+slot for CP-1–CP-11; CP-12/13 used `scripts/build-slot.ps1`. Logs and TRX
+files are under `.antiphon/checkpoints/r36-final/`.
+
+| Row | Executed / passed / failed / skipped | Verdict |
+|---|---:|---|
+| CP-1 Unit | 3491 / 3491 / 0 / 33 | Pass |
+| CP-2 source settlement | 373 / 373 / 0 / 0 | Pass |
+| CP-3 policy/schema | 34 / 34 / 0 / 0 | Pass; V-18 |
+| CP-4 file boundary | 64 / 64 / 0 / 0 | Pass; V-23 |
+| CP-5 purpose/deadline | 64 / 64 / 0 / 0 | Pass; V-17/V-23 |
+| CP-6 crash/transport | 30 / 30 / 0 / 0 | Pass; V-15 running C-3 |
+| CP-7 routing/attention | 320 / 320 / 0 / 0 | Pass; V-17 |
+| CP-8 existing deadlines | 71 / 69 / 2 / 0 | Inherited `PinnedAgentKindTests.T1/T2` `codex_desktop_unqualified`; no introduced failure |
+| CP-9 renderer | 19 / 19 / 0 / 0 | Pass |
+| CP-10 real browser | 1 / 1 / 0 / 0 | Pass after fixture build and same-row rerun |
+| CP-11 gateway wire | 125 / 125 / 0 / 0 | Pass; real broker V-23 |
+| CP-12 channels client | 26 / 26 / 0 / 0 | Pass, two files |
+| CP-13 client bundle | — | Pass, production Vite bundle |
+
+CP-10's first attempt ran one test and failed before rendering because this
+Docker host lacked the local `antiphon-card0418-browser:latest` fixture image.
+The two repository Dockerfiles were built under `CP-10-browser-fixture` build
+slot; its exact-filter rerun passed at
+`.antiphon/checkpoints/r36-final/CP-10-20260930-032356-910b/run.trx`.
+The resulting four-page PDF is
+`.antiphon/test-output/card-0418/v20-r7/66929bf74b1149fba6e66ec86c80f856/combined.pdf`
+(SHA-256 `4b616dab9334404e0a85fdbba5c669fbc99e4caad87d0261545b68d530fca45a`).
+I visually inspected all four `page-*.png` images there: each source begins on
+its own readable page, the table/code/Polish text/emoji are visible, and no
+section is blank or clipped. The test independently checked four pages,
+extracted sentinels and unchanged source hashes.
+
+The local ordinary V-1–V-24 matrix and its dependent R-1–R-13 oracles now have
+passing receipts, apart from the inherited CP-8 pair. R-14 and V-25 still
+require the separately authorized actual Slack destination receipt and evidence
+accounting; local fake, native transcript and broker receipts do not fulfill
+that live gate. PC-1–PC-30 stay pending for method-scoped SourceLanding Mutation,
+which is paused; this round did not claim any PC result.
