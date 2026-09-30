@@ -159,7 +159,7 @@ public class ProviderQuotaRefusalAcceptanceTests
         await using var db = s.Db();
         var attention = await AttentionServiceTests.BuildService(s.H.Runner, db: db, timeProvider: s.Clock)
             .GetAsync(CancellationToken.None, includeProgressProbe: false);
-        var row = attention.Items.Single(i => i.TaskId == s.TaskId);
+        var row = attention.Items.Single(i => i.TaskId == s.TaskId && i.Kind == AttentionKind.BlockedQuestion);
         row.Headline.ShouldContain("quota");
         row.ConditionKey.ShouldBe($"quota-blocked:{s.TaskId:N}");
     }
@@ -361,11 +361,24 @@ public class ProviderQuotaRefusalAcceptanceTests
         await using var s = await CreateAsync();
         await s.EmitAsync(Linux);
         await s.SettleAsync();
-        await s.H.Queue.EnqueueAsync(s.H.SessionId,
-            $"{DelegationReportFormatter.TaskMarker(s.TaskId)} {new Antiphon.Server.Application.Settings.ApiErrorRecoverySettings().TransientPrompt}",
-            MessageSendMode.WhenIdle, CancellationToken.None, origin: QueuedMessageOrigin.Supervision);
-        await s.H.Queue.EnqueueAsync(s.H.SessionId, "human message", MessageSendMode.WhenIdle,
-            CancellationToken.None, origin: QueuedMessageOrigin.Ui);
+        await using (var db = s.Db())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, Sequence = 1,
+                Origin = QueuedMessageOrigin.Supervision, Status = QueuedMessageStatus.Pending,
+                Body = $"{DelegationReportFormatter.TaskMarker(s.TaskId)} {new Antiphon.Server.Application.Settings.ApiErrorRecoverySettings().TransientPrompt}",
+                CreatedAt = IncidentAt.UtcDateTime,
+            });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, Sequence = 2,
+                Origin = QueuedMessageOrigin.Ui, Status = QueuedMessageStatus.Pending,
+                Body = "human message", CreatedAt = IncidentAt.UtcDateTime,
+                HoldUntil = HoldUntil.AddDays(1),
+            });
+            await db.SaveChangesAsync();
+        }
         await s.H.Queue.FlushSessionAsync(s.H.SessionId, CancellationToken.None);
         await using var db = s.Db();
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId && m.Body.Contains("transient API error") && m.Status == QueuedMessageStatus.Pending)).ShouldBe(1);
