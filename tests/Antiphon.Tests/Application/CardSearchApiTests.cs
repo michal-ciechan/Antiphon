@@ -191,7 +191,8 @@ public class CardSearchApiTests
         using var client = _fixture.CreateClient();
         var response = await client.GetStringAsync($"/api/cards/search?q=public-needle&boardId={board.Id}");
         response.ShouldNotContain("secret-needle");
-        response.ShouldNotContain("privateNotes");
+        using var json = JsonDocument.Parse(response);
+        json.RootElement.GetProperty("cards")[0].TryGetProperty("privateNotes", out _).ShouldBeFalse();
     }
 
     [Test] public async Task Search_membership_change_invalidates_the_next_page()
