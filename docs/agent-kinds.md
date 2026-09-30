@@ -317,6 +317,18 @@ outside `TranscriptTailer`.
 
 ## 5. Grok (xAI Grok Build TUI)
 
+**Startup readiness (CARD-0778).** The Grok adapter waits for the captured
+120x30 Grok Build 1.0.41 dashboard with an empty complete composer box, a blank
+status row two rows above it, and the exact enabled hint
+`  Shift+Tab:mode  │  Ctrl+x:shortcuts`. It scans upward from the bottom to find
+the box; header spinner, MCP counts and footer model/quota labels may redraw
+without resetting the one-second settle. `Starting session…` is still blocked:
+an early prompt was measured queuing until startup ended. Other terminal sizes
+fail closed until separately captured. Sign-in blocks without input; the
+measured 1.0.13 trust dialog is answered once with `y`, then the composer must
+still settle. A real 1.0.41 trust capture remains outstanding. The sixty-second
+maximum and two-second minimum process age remain within one bounded wait.
+
 **Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.7] [--rules <text>]
 (--session-id <guid> | --resume <guid>)` — decided from the on-disk session directory
 (`GROK_HOME/sessions/*/{id}/`), never from the row (CARD-0383).

@@ -7,6 +7,8 @@ Antiphon.Tests.Application.AgentTaskLandRemovalMatrixTests
 Antiphon.Tests.Application.SessionMessageQueuePtyIntegrationTests
 # CARD-0487: historical allowance, grok pty integration cost.
 Antiphon.Tests.Application.SessionMessageQueueGrokPtyIntegrationTests
+# CARD-0778: isolated migrated database and real Grok adapter startup/queue ordering.
+Antiphon.Tests.Application.GrokStartupReadyOrderingTests
 # CARD-0487: historical allowance, process probe cost.
 Antiphon.Tests.AgentTui.RunnerProcessProbeTests
 # CARD-0487: historical allowance, startup concurrency cost.

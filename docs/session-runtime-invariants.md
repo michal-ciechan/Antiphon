@@ -1,5 +1,15 @@
 # Session runtime invariants
 
+- **Grok startup readiness is a current-screen input gate (CARD-0778).** At the
+  captured 120x30 Grok Build 1.0.41 layout, the empty boxed composer, enabled
+  hint and blank status row must settle for one second despite decorative
+  header/MCP redraws. `Starting session…` queues work and is not ready. This
+  gate authorizes only the first write; the queue's baseline and complete
+  normalized `UserPrompt` remain the delivery verdict. Grok 1.0.41 drops the
+  LF of a bracketed-paste body, so a single-line nonce or the production
+  whitespace-insensitive whole-body matcher is required. Failed startup
+  captures are local diagnostics, not transcript receipts.
+
 - **Runner branch publication (CARD-0779).** A runner task's owned branch is published only as a
   fast-forward of its dispatch baseline. Settlement may publish the runner mirror's fast-forward
   tip on the task's behalf, then re-observes origin before moving the desktop checkout. A mirror
