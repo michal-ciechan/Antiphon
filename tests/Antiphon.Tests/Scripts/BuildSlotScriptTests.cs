@@ -88,11 +88,11 @@ public sealed class BuildSlotScriptTests
         "C800 WrapperStartsUnitFilterWithinDeadline releases the lease");
 
     [Test]
-    public Task C800_WrapperKeepsScriptCommandsInProcess() => RunC800CaseAsync("C800_WrapperKeepsScriptCommandsInProcess", 4,
-        "C800 WrapperKeepsScriptCommandsInProcess propagates exit 6 from a script command",
-        "C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged",
-        "C800 WrapperKeepsScriptCommandsInProcess an unsplatted array stays separate",
-        "C800 WrapperKeepsScriptCommandsInProcess an empty array element stays separate");
+    public Task C800_WrapperForwardsScriptTokens() => RunC800CaseAsync("C800_WrapperForwardsScriptTokens", 4,
+        "C800 WrapperForwardsScriptTokens propagates exit 6 from a script command",
+        "C800 WrapperForwardsScriptTokens a script command receives its tokens unchanged",
+        "C800 WrapperForwardsScriptTokens an unsplatted array stays separate",
+        "C800 WrapperForwardsScriptTokens an empty array element stays separate");
 
     [Test]
     public Task C800_WrapperLaunchesNativeExecutableLiterally() => RunC800CaseAsync("C800_WrapperLaunchesNativeExecutableLiterally", 3,
@@ -109,6 +109,31 @@ public sealed class BuildSlotScriptTests
             "C800 WrapperInterruptKillsChildAndReleasesLease the child is gone within 5 s",
             "C800 WrapperInterruptKillsChildAndReleasesLease the lease is released after the command");
     }
+
+    [Test]
+    public Task C845_WrapperBindsNamedScriptParameters() => RunC845CaseAsync(
+        "WrapperBindsNamedScriptParameters", ["file-true", "file-false", "inprocess-true", "inprocess-false"],
+        ["exits zero", "payload parses", "binds typed values", "runs outside the lease holder"]);
+
+    [Test]
+    public Task C845_WrapperPropagatesScriptExitCodes() => RunC845CaseAsync(
+        "WrapperPropagatesScriptExitCodes", ["exit0", "exit7", "exit23", "normal23", "parent37"],
+        ["propagates the process exit", "preserves body and stream sentinels"]);
+
+    [Test]
+    public Task C845_WrapperReleasesLeaseAfterScriptFailure() => RunC845CaseAsync(
+        "WrapperReleasesLeaseAfterScriptFailure", ["exit9", "throw", "binding", "unresolved"],
+        ["returns the failure exit", "observes the body boundary", "releases the granted lease in order"]);
+
+    [Test]
+    public Task C845_WrapperPreservesScriptPathsAndValues() => RunC845CaseAsync(
+        "WrapperPreservesScriptPathsAndValues", ["absolute", "pushed-relative"],
+        ["exits zero", "payload parses", "preserves literal values", "uses caller location", "resolves relative input", "does not evaluate text"]);
+
+    private static Task RunC845CaseAsync(string stem, string[] scenarios, string[] suffixes) =>
+        ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C845", "C845_" + stem,
+            scenarios.Length * suffixes.Length,
+            scenarios.SelectMany(scenario => suffixes.Select(suffix => $"C845 {stem} {scenario} {suffix}")).ToArray());
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C589", caseName, expectedRows, requiredRows);

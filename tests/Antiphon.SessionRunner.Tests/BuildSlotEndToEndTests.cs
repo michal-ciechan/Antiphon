@@ -121,11 +121,11 @@ public sealed class BuildSlotEndToEndTests
                      {
                          "-NoProfile", "-NonInteractive", "-File", Path.Combine(RepoRoot, "scripts", "build-slot.ps1"),
                          "-Label", label, "-SlotWaitMinutes", "2", "--",
-                         "pwsh", "-NoProfile", "-NonInteractive", "-File", hold, label, marks, holdSeconds.ToString(),
+                         hold, "-Seconds", holdSeconds.ToString(), "-File", marks, "-Name", label,
                      })
                 info.ArgumentList.Add(arg);
             info.Environment["ANTIPHON_BUILD_SLOTS_URL"] = host.SlotsUrl;
-            foreach (var seam in new[] { "C589_SLOT_SHIM", "C589_SLOT_SCRIPT", "C589_SLOT_WAIT_SECONDS", "C589_SLOT_RETRY_MS", "C589_SLOT_GRACE_SECONDS" })
+            foreach (var seam in new[] { "C589_SLOT_SHIM", "C589_SLOT_SCRIPT", "C589_SLOT_WAIT_SECONDS", "C589_SLOT_RETRY_MS", "C589_SLOT_GRACE_SECONDS", "C589_COMMAND_SHIM" })
                 info.Environment.Remove(seam);
 
             var process = new Process { StartInfo = info };

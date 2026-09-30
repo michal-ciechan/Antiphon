@@ -23,7 +23,7 @@ $script:CommandShim = Join-Path $here (Join-Path 'fixtures' 'c589-command-shim.p
 $script:Lease = 'c5890000-0000-4000-8000-000000000001'
 $script:SeamNames = @('ANTIPHON_BUILD_SLOTS_URL', 'C589_SLOT_SHIM', 'C589_SLOT_LOG', 'C589_SLOT_SCRIPT',
     'C589_SLOT_WAIT_SECONDS', 'C589_SLOT_GRACE_SECONDS', 'C589_SLOT_RETRY_MS', 'C589_COMMAND_SHIM', 'C589_COMMAND_EXIT',
-    'C589_COMMAND_SLEEP_SECONDS')
+    'C589_COMMAND_SLEEP_SECONDS', 'C845_WRAPPER', 'C845_PUSH_LOCATION', 'C845_CALLER_LOG', 'C845_SCENARIO')
 
 function New-C589Case {
     param([string]$Name)
@@ -62,8 +62,11 @@ function Invoke-C589Wrapper {
         [string]$WorkingDirectory = $script:RepoRoot,
         [int]$DeadlineSeconds = 120,
         [switch]$NoWait,
-        [switch]$DisableCommandShim
+        [switch]$DisableCommandShim,
+        [string]$CallerPath = ''
     )
+    $saved = @{}
+    foreach ($name in $script:SeamNames) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
     Set-C589Seams -Fx $Fx -SlotScript $SlotScript -WaitSeconds $WaitSeconds -GraceSeconds $GraceSeconds -RetryMs $RetryMs -CommandExit $CommandExit
     if ($DisableCommandShim) { Remove-Item Env:C589_COMMAND_SHIM -ErrorAction SilentlyContinue }
     try {
@@ -74,7 +77,8 @@ function Invoke-C589Wrapper {
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.WorkingDirectory = $WorkingDirectory
-        $launchArgs = @('-NoProfile', '-NonInteractive', '-File', $script:Wrapper) + @($WrapperArgs)
+        $launchTarget = $(if ($CallerPath) { $CallerPath } else { $script:Wrapper })
+        $launchArgs = @('-NoProfile', '-NonInteractive', '-File', $launchTarget) + @($WrapperArgs)
         if ($NoWait -and $IsLinux) {
             # The TUnit host ignores SIGINT, and its children inherit that disposition.
             # Perl resets it before exec, keeping the wrapper pid and literal argv.
@@ -88,7 +92,7 @@ function Invoke-C589Wrapper {
         $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
         $stderrTask = $proc.StandardError.ReadToEndAsync()
     } finally {
-        Clear-C589Seams
+        foreach ($name in $script:SeamNames) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     }
     if ($NoWait) { return [pscustomobject]@{ Process = $proc; StdoutTask = $stdoutTask; StderrTask = $stderrTask; Fx = $Fx } }
     return Wait-C589Wrapper -Running ([pscustomobject]@{ Process = $proc; StdoutTask = $stdoutTask; StderrTask = $stderrTask; Fx = $Fx }) -DeadlineSeconds $DeadlineSeconds
@@ -187,12 +191,12 @@ function Test-C800_WrapperStartsUnitFilterWithinDeadline {
     Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,CMD,DELETE') -Name 'C800 WrapperStartsUnitFilterWithinDeadline releases the lease' -Detail ($r.Calls -join ' | ')
 }
 
-function Test-C800_WrapperKeepsScriptCommandsInProcess {
+function Test-C800_WrapperForwardsScriptTokens {
     $fx = New-C589Case -Name 'c800-script'
     Set-Content -LiteralPath (Join-Path $fx.Root 'run.trx') -Value ''
     $r = Invoke-C589Wrapper -Fx $fx -WorkingDirectory $fx.Root -CommandExit 6 -DisableCommandShim -WrapperArgs @('-NoSlot', '--', $script:CommandShim, '--treenode-filter', '*.trx')
-    Assert-C487 -Cond ($r.Exit -eq 6) -Name 'C800 WrapperKeepsScriptCommandsInProcess propagates exit 6 from a script command' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
-    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ARGV') -ceq '["--treenode-filter","*.trx"]') -Name 'C800 WrapperKeepsScriptCommandsInProcess a script command receives its tokens unchanged' -Detail (Get-C589LoggedValue -Result $r -Prefix 'ARGV')
+    Assert-C487 -Cond ($r.Exit -eq 6) -Name 'C800 WrapperForwardsScriptTokens propagates exit 6 from a script command' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $r -Prefix 'ARGV') -ceq '["--treenode-filter","*.trx"]') -Name 'C800 WrapperForwardsScriptTokens a script command receives its tokens unchanged' -Detail (Get-C589LoggedValue -Result $r -Prefix 'ARGV')
 
     $ip = New-C589Case -Name 'c800-script-array'
     Set-C589Seams -Fx $ip -SlotScript 'granted' -WaitSeconds '' -GraceSeconds '' -RetryMs '10' -CommandExit 0
@@ -201,7 +205,7 @@ function Test-C800_WrapperKeepsScriptCommandsInProcess {
     try { & $script:Wrapper -NoSlot -- $script:CommandShim $array | Out-Null }
     finally { Clear-C589Seams }
     $ipResult = [pscustomobject]@{ Calls = @(Get-Content -LiteralPath $ip.Log) }
-    Assert-C487 -Cond ((Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $array -Compress)) -Name 'C800 WrapperKeepsScriptCommandsInProcess an unsplatted array stays separate' -Detail (Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $array -Compress)) -Name 'C800 WrapperForwardsScriptTokens an unsplatted array stays separate' -Detail (Get-C589LoggedValue -Result $ipResult -Prefix 'ARGV')
 
     $empty = New-C589Case -Name 'c800-script-empty'
     Set-C589Seams -Fx $empty -SlotScript 'granted' -WaitSeconds '' -GraceSeconds '' -RetryMs '10' -CommandExit 0
@@ -210,7 +214,7 @@ function Test-C800_WrapperKeepsScriptCommandsInProcess {
     try { & $script:Wrapper -NoSlot -- $script:CommandShim $emptyArray | Out-Null }
     finally { Clear-C589Seams }
     $emptyResult = [pscustomobject]@{ Calls = @(Get-Content -LiteralPath $empty.Log) }
-    Assert-C487 -Cond ((Get-C589LoggedValue -Result $emptyResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $emptyArray -Compress)) -Name 'C800 WrapperKeepsScriptCommandsInProcess an empty array element stays separate' -Detail (Get-C589LoggedValue -Result $emptyResult -Prefix 'ARGV')
+    Assert-C487 -Cond ((Get-C589LoggedValue -Result $emptyResult -Prefix 'ARGV') -ceq (ConvertTo-Json -InputObject $emptyArray -Compress)) -Name 'C800 WrapperForwardsScriptTokens an empty array element stays separate' -Detail (Get-C589LoggedValue -Result $emptyResult -Prefix 'ARGV')
 }
 
 function Test-C800_WrapperLaunchesNativeExecutableLiterally {
@@ -403,7 +407,216 @@ function Test-C589_WrapperRenews {
         -Name 'C589 WrapperRenews pid grant has no renewals' -Detail ($pidResult.Calls -join ' | ')
 }
 
-$script:C589ExpectedRows = 35 + 16 + $(if ($IsLinux) { 3 } else { 0 })
+function New-C845Caller {
+    param([string]$Path)
+    Set-Content -LiteralPath $Path -Encoding ASCII -Value @'
+if ($env:C845_PUSH_LOCATION) { Push-Location -LiteralPath $env:C845_PUSH_LOCATION }
+if ($env:C845_CALLER_LOG) {
+    $where = @{ location = (Get-Location).ProviderPath; currentDirectory = [Environment]::CurrentDirectory } | ConvertTo-Json -Compress
+    Set-Content -LiteralPath $env:C845_CALLER_LOG -Value $where
+}
+$global:LASTEXITCODE = 37
+$tokens = @($args)
+& $env:C845_WRAPPER @tokens
+$code = $LASTEXITCODE
+exit $code
+'@
+}
+
+function Invoke-C845Wrapper {
+    param($Fx, [string[]]$WrapperArgs, [string]$Scenario,
+        [string]$WorkingDirectory = $script:RepoRoot, [string]$CallerPath = '',
+        [string]$PushLocation = '', [string]$CallerLog = '')
+    $saved = @{}
+    foreach ($name in @('C845_WRAPPER', 'C845_PUSH_LOCATION', 'C845_CALLER_LOG', 'C845_SCENARIO')) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        $env:C845_WRAPPER = $script:Wrapper
+        $env:C845_PUSH_LOCATION = $PushLocation
+        $env:C845_CALLER_LOG = $CallerLog
+        $env:C845_SCENARIO = $Scenario
+        return Invoke-C589Wrapper -Fx $Fx -WrapperArgs $WrapperArgs -DisableCommandShim `
+            -WorkingDirectory $WorkingDirectory -CallerPath $CallerPath -DeadlineSeconds 30
+    } finally {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    }
+}
+
+function Get-C845Payload {
+    param($Result)
+    $lines = @($Result.Lines | Where-Object { $_ -clike 'PAYLOAD *' })
+    if ($lines.Count -ne 1) { return [pscustomobject]@{ Valid = $false; Data = $null } }
+    try {
+        $data = ([string]$lines[0]).Substring(8) | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $data) { throw 'empty JSON' }
+        return [pscustomobject]@{ Valid = $true; Data = $data }
+    } catch { return [pscustomobject]@{ Valid = $false; Data = $null } }
+}
+
+function Test-C845Lease {
+    param($Result, [string]$Order)
+    $posts = @($Result.Calls | Where-Object { $_ -like 'SLOT POST *' })
+    $deletes = @($Result.Calls | Where-Object { $_ -like 'SLOT DELETE *' })
+    return ($posts.Count -eq 1 -and $deletes.Count -eq 1 -and
+        $deletes[0] -ceq ('SLOT DELETE ' + $script:Lease) -and (Get-C589Order -Result $Result) -ceq $Order)
+}
+
+function Get-C845HolderPid {
+    param($Result)
+    $posts = @($Result.Calls | Where-Object { $_ -like 'SLOT POST *' })
+    if ($posts.Count -ne 1 -or $posts[0] -cnotmatch ' pid=([0-9]+) uri=') { return 0 }
+    return [int]$Matches[1]
+}
+
+function Test-C845_WrapperBindsNamedScriptParameters {
+    foreach ($scenario in @('file-true', 'file-false', 'inprocess-true', 'inprocess-false')) {
+        $fx = New-C589Case -Name ('c845-bind-' + $scenario)
+        $target = Join-Path $fx.Root 'bind.ps1'
+        Set-Content -LiteralPath $target -Encoding ASCII -Value @'
+param([string]$Name, [string]$Project, [string]$OutputPath, [int]$MinExecuted, [switch]$Switch, [string]$Expect)
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + $env:C845_SCENARIO)
+$payload = @{ name=$Name; project=$Project; outputPath=$OutputPath; minExecuted=$MinExecuted; flag=$Switch.IsPresent; expect=$Expect; pid=$PID } | ConvertTo-Json -Compress
+[Console]::Out.WriteLine('PAYLOAD ' + $payload)
+'@
+        $tokens = @('-Label', $scenario, '--', $target, '-Expect', 'A.One,B.Two', '-OutputPath', 'bin-c845/',
+            '-MinExecuted', '3', '-Project', 'project folder/app', '-Name', 'CP-1')
+        $flag = $scenario.EndsWith('true')
+        $tokens += $(if ($flag) { '-Switch' } else { '-Switch:$false' })
+        $caller = ''
+        if ($scenario.StartsWith('inprocess')) {
+            $caller = Join-Path $fx.Root 'caller.ps1'
+            New-C845Caller -Path $caller
+        }
+        $r = Invoke-C845Wrapper -Fx $fx -Scenario $scenario -WrapperArgs $tokens -CallerPath $caller
+        $payload = Get-C845Payload -Result $r
+        $d = $payload.Data
+        $fields = @('name', 'project', 'outputPath', 'minExecuted', 'flag', 'expect', 'pid')
+        $hasFields = $payload.Valid -and @($fields | Where-Object { $d.PSObject.Properties.Name -cnotcontains $_ }).Count -eq 0
+        $holder = Get-C845HolderPid -Result $r
+        $base = 'C845 WrapperBindsNamedScriptParameters ' + $scenario + ' '
+        Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq 0) -Name ($base + 'exits zero') -Detail $r.Text
+        Assert-C487 -Cond $hasFields -Name ($base + 'payload parses') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and $d.name -ceq 'CP-1' -and $d.project -ceq 'project folder/app' -and
+            $d.outputPath -ceq 'bin-c845/' -and $d.minExecuted -is [int] -and $d.minExecuted -eq 3 -and
+            $d.flag -is [bool] -and $d.flag -eq $flag -and $d.expect -ceq 'A.One,B.Two') `
+            -Name ($base + 'binds typed values') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and [int]$d.pid -gt 0 -and $holder -gt 0 -and [int]$d.pid -ne $holder -and
+            (Test-C845Lease -Result $r -Order 'POST,CMD,DELETE')) -Name ($base + 'runs outside the lease holder') `
+            -Detail ($r.Calls -join ' | ')
+    }
+}
+
+function Test-C845_WrapperPropagatesScriptExitCodes {
+    foreach ($scenario in @('exit0', 'exit7', 'exit23', 'normal23', 'parent37')) {
+        $fx = New-C589Case -Name ('c845-exit-' + $scenario)
+        $target = Join-Path $fx.Root 'exit.ps1'
+        $ending = switch ($scenario) {
+            'exit0' { 'exit 0' } 'exit7' { 'exit 7' } 'exit23' { 'exit 23' }
+            default { '$global:LASTEXITCODE = 23' }
+        }
+        Set-Content -LiteralPath $target -Encoding ASCII -Value (@'
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + $env:C845_SCENARIO)
+[Console]::Out.WriteLine('OUT-' + $env:C845_SCENARIO)
+[Console]::Error.WriteLine('ERR-' + $env:C845_SCENARIO)
+'@ + "`n" + $ending)
+        $caller = ''
+        if ($scenario -eq 'parent37') { $caller = Join-Path $fx.Root 'caller.ps1'; New-C845Caller -Path $caller }
+        $r = Invoke-C845Wrapper -Fx $fx -Scenario $scenario -WrapperArgs @('-Label', $scenario, '--', $target) -CallerPath $caller
+        $expected = switch ($scenario) { 'exit7' { 7 } 'exit23' { 23 } default { 0 } }
+        $base = 'C845 WrapperPropagatesScriptExitCodes ' + $scenario + ' '
+        Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq $expected) -Name ($base + 'propagates the process exit') -Detail $r.Text
+        Assert-C487 -Cond (@($r.Calls | Where-Object { $_ -ceq ('CMD ' + $scenario) }).Count -eq 1 -and
+            $r.Text.Contains('OUT-' + $scenario) -and $r.Text.Contains('ERR-' + $scenario)) `
+            -Name ($base + 'preserves body and stream sentinels') -Detail $r.Text
+    }
+}
+
+function Test-C845_WrapperReleasesLeaseAfterScriptFailure {
+    foreach ($scenario in @('exit9', 'throw', 'binding', 'unresolved')) {
+        $fx = New-C589Case -Name ('c845-fail-' + $scenario)
+        $target = Join-Path $fx.Root 'fail.ps1'
+        $arguments = @()
+        if ($scenario -eq 'exit9') {
+            Set-Content -LiteralPath $target -Encoding ASCII -Value 'Add-Content -LiteralPath $env:C589_SLOT_LOG -Value "CMD exit9"; exit 9'
+        } elseif ($scenario -eq 'throw') {
+            Set-Content -LiteralPath $target -Encoding ASCII -Value 'Add-Content -LiteralPath $env:C589_SLOT_LOG -Value "CMD throw"; throw "c845 termination"'
+        } elseif ($scenario -eq 'binding') {
+            Set-Content -LiteralPath $target -Encoding ASCII -Value 'param([int]$Count); Add-Content -LiteralPath $env:C589_SLOT_LOG -Value "CMD binding"'
+            $arguments = @('-Count', 'not-an-integer')
+        } else { $target = Join-Path $fx.Root 'missing-unique.ps1' }
+        $r = Invoke-C845Wrapper -Fx $fx -Scenario $scenario -WrapperArgs (@('-Label', $scenario, '--', $target) + $arguments)
+        $bodyExpected = $scenario -in @('exit9', 'throw')
+        $commands = @($r.Calls | Where-Object { $_ -like 'CMD *' })
+        $body = $(if ($bodyExpected) { $commands.Count -eq 1 -and $commands[0] -ceq ('CMD ' + $scenario) } else { $commands.Count -eq 0 })
+        $order = $(if ($bodyExpected) { 'POST,CMD,DELETE' } else { 'POST,DELETE' })
+        $exitExpected = $(if ($scenario -eq 'exit9') { $r.Exit -eq 9 } elseif ($scenario -eq 'unresolved') { $r.Exit -ne 0 } else { $r.Exit -eq 1 })
+        $base = 'C845 WrapperReleasesLeaseAfterScriptFailure ' + $scenario + ' '
+        Assert-C487 -Cond (-not $r.TimedOut -and $exitExpected) -Name ($base + 'returns the failure exit') -Detail $r.Text
+        Assert-C487 -Cond $body -Name ($base + 'observes the body boundary') -Detail ($r.Calls -join ' | ')
+        Assert-C487 -Cond (Test-C845Lease -Result $r -Order $order) -Name ($base + 'releases the granted lease in order') -Detail ($r.Calls -join ' | ')
+    }
+}
+
+function Test-C845_WrapperPreservesScriptPathsAndValues {
+    foreach ($scenario in @('absolute', 'pushed-relative')) {
+        $fx = New-C589Case -Name ('c845 path ' + $scenario)
+        $start = Join-Path $fx.Root 'start folder'
+        $work = $(if ($scenario -eq 'absolute') { $start } else { Join-Path $fx.Root 'pushed folder' })
+        $driver = Join-Path $work 'driver folder'
+        New-Item -ItemType Directory -Path $start, $work, $driver -Force | Out-Null
+        $input = Join-Path $work 'inputs'
+        New-Item -ItemType Directory -Path $input -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $input 'sentinel.txt') -Value ('read-' + $scenario)
+        $target = Join-Path $driver 'target.ps1'
+        Set-Content -LiteralPath $target -Encoding ASCII -Value @'
+param([string]$Spaces, [string]$Quotes, [AllowEmptyString()][string]$Empty,
+    [string]$Literal, [string]$Wildcard, [string]$Trailing, [string]$InputPath)
+Add-Content -LiteralPath $env:C589_SLOT_LOG -Value ('CMD ' + $env:C845_SCENARIO)
+$payload = @{ spaces=$Spaces; quotes=$Quotes; empty=$Empty; literal=$Literal; wildcard=$Wildcard;
+    trailing=$Trailing; inputPath=$InputPath; input=(Get-Content -LiteralPath $InputPath -Raw).Trim();
+    cwd=(Get-Location).ProviderPath } | ConvertTo-Json -Compress
+[Console]::Out.WriteLine('PAYLOAD ' + $payload)
+'@
+        $marker = Join-Path $fx.Root 'side-effect.txt'
+        $literal = '$([IO.File]::WriteAllText("' + $marker + '","bad"));$literal'
+        $values = @{ spaces = 'folder with spaces ' + $scenario; quotes = "single ' and double `" quote " + $scenario;
+            empty = ''; literal = $literal; wildcard = '*/*/[Category=Unit]'; trailing = 'folder\'; inputPath = 'inputs/sentinel.txt' }
+        $targetArg = $(if ($scenario -eq 'absolute') { $target } else { './driver folder/target.ps1' })
+        $tokens = @('-Label', $scenario, '--', $targetArg, '-Wildcard', $values.wildcard, '-Empty', '',
+            '-InputPath', $values.inputPath, '-Trailing', $values.trailing, '-Quotes', $values.quotes,
+            '-Literal', $values.literal, '-Spaces', $values.spaces)
+        $caller = ''; $callerLog = ''; $push = ''
+        if ($scenario -eq 'pushed-relative') {
+            $caller = Join-Path $fx.Root 'caller.ps1'; New-C845Caller -Path $caller
+            $callerLog = Join-Path $fx.Root 'caller.json'; $push = $work
+        }
+        $r = Invoke-C845Wrapper -Fx $fx -Scenario $scenario -WrapperArgs $tokens -WorkingDirectory $start `
+            -CallerPath $caller -PushLocation $push -CallerLog $callerLog
+        $payload = Get-C845Payload -Result $r
+        $d = $payload.Data
+        $fields = @('spaces', 'quotes', 'empty', 'literal', 'wildcard', 'trailing', 'inputPath', 'input', 'cwd')
+        $hasFields = $payload.Valid -and @($fields | Where-Object { $d.PSObject.Properties.Name -cnotcontains $_ }).Count -eq 0
+        $callerState = $null
+        if ($scenario -eq 'pushed-relative' -and (Test-Path -LiteralPath $callerLog)) {
+            try { $callerState = Get-Content -LiteralPath $callerLog -Raw | ConvertFrom-Json -ErrorAction Stop } catch { }
+        }
+        $base = 'C845 WrapperPreservesScriptPathsAndValues ' + $scenario + ' '
+        Assert-C487 -Cond (-not $r.TimedOut -and $r.Exit -eq 0) -Name ($base + 'exits zero') -Detail $r.Text
+        Assert-C487 -Cond $hasFields -Name ($base + 'payload parses') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and $d.spaces -ceq $values.spaces -and $d.quotes -ceq $values.quotes -and
+            $d.empty -ceq '' -and $d.literal -ceq $values.literal -and $d.wildcard -ceq $values.wildcard -and
+            $d.trailing -ceq $values.trailing) -Name ($base + 'preserves literal values') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and $d.cwd -ceq $work -and
+            ($scenario -eq 'absolute' -or ($null -ne $callerState -and $callerState.location -ceq $work -and
+            $callerState.currentDirectory -cne $callerState.location))) -Name ($base + 'uses caller location') -Detail $r.Text
+        Assert-C487 -Cond ($hasFields -and $d.inputPath -ceq $values.inputPath -and $d.input -ceq ('read-' + $scenario) -and
+            (Test-C845Lease -Result $r -Order 'POST,CMD,DELETE')) -Name ($base + 'resolves relative input') -Detail $r.Text
+        Assert-C487 -Cond (-not (Test-Path -LiteralPath $marker)) -Name ($base + 'does not evaluate text') -Detail $r.Text
+    }
+}
+
+$script:C589ExpectedRows = 39 + 16 + 50 + $(if ($IsLinux) { 3 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {
     if (-not (Test-Path -LiteralPath $required)) { throw ('missing ' + $required) }
@@ -416,6 +629,7 @@ if ($Case) {
 } else {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C589_')) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C800_')) { & $fn }
+    foreach ($fn in (Get-C487CaseFunctions -Prefix 'C845_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'build-slot-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { $script:C589ExpectedRows })
