@@ -71,6 +71,16 @@ It selects a BASE only: it sets no merge target, grants no land, and is not `-Re
 To land a `-StartRef` repair, Review its pushed tip with the repair named as subject, then
 `-Land <owner> -FromTask <repair> -ExpectedSourceSha <sha> -ReviewEvidenceId <id>`.
 
+**RepairSource succeeded; owner Failed.** Read the original owner's exact current pushed
+full SHA. Commission or reuse a current unsuperseded Clean Final/Full Review with
+`subjectTaskId` equal to the original Code/Worktree owner, bound to its ref, repository
+and full SHA. Run
+`pwsh -NoProfile -File scripts/delegate.ps1 -Land <owner-guid> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource`,
+then `-Status <owner-guid>` and confirm publication. The original owner's Failed
+status and failure fields remain historical. The separate `-StartRef` route above
+uses `-FromTask` and a Review of that separate source; an actual `-RepairSource`
+task cannot be used with `-FromTask`.
+
 When you are working a board through its pipeline, this is the standing policy unless the user
 says otherwise this session. Code and Review at two, and one task in each other pipeline stage
 (Investigate, Plan, TestDesign, Mutation), stages running in parallel with each other, each in

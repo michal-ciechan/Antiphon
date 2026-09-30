@@ -122,6 +122,24 @@ reviewed `-FromTask` adoption route below. If origin cannot be observed, dispatc
 ref and records an `owner remote unobserved` warning.
 Historical Failed status is preserved.
 
+<a id="repairsource-failed-owner-recovery"></a>
+**RepairSource succeeded; owner Failed.** Read the original owner's exact current pushed
+full SHA from its origin ref. Commission or reuse an unsuperseded Clean Final/Full Review
+whose `subjectTaskId` is the original Code/Worktree owner, with that owner's ref,
+repository and full SHA. Then request owner self recovery:
+
+```powershell
+pwsh -NoProfile -File scripts/delegate.ps1 -Land <owner-guid> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource
+pwsh -NoProfile -File scripts/delegate.ps1 -Status <owner-guid>
+```
+
+The registered owner checkout must be clean and on its branch. Inspect the status receipt
+for confirmed target publication; a queued request is not publication. The original owner's
+Failed status, failure code, reason and completion time remain historical. A separate
+`-StartRef` Code/Worktree source instead uses an owner Land with `-FromTask <source-guid>`
+and a Review whose `subjectTaskId` is that separate source. An actual `-RepairSource`
+task is ineligible for `-FromTask` adoption.
+
 **Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
 default base - continuing an interrupted stage, or picking up where another task's branch got to -
 pass the base as a DISPATCH PARAMETER, never as `git checkout -B ...` prose in the goal:
