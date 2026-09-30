@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.SessionRunner.Tests;
@@ -44,7 +43,7 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         _directory = directory;
         _marker = System.IO.Path.Combine(directory, "owner");
         WriteMarker(new LeaseMarker(1, "c801", _leaseId, path, Environment.ProcessId,
-            Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(), 0, 0));
+            Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(), 0, 0, 0, 0, 0));
         File.SetUnixFileMode(_marker, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         Path = path;
     }
@@ -62,19 +61,39 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         if (_marker is null || _leaseId is null) return;
         WriteMarker(new LeaseMarker(1, "c801", _leaseId, Path, Environment.ProcessId,
             Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(),
-            identity.Device, identity.Inode));
+            identity.Device, identity.Inode, identity.Mode, identity.ChangeSeconds, identity.ChangeNanoseconds));
     }
 
     private void WriteMarker(LeaseMarker marker)
     {
         using var file = new FileStream(_marker!, File.Exists(_marker) ? FileMode.Truncate : FileMode.CreateNew,
             FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(file, marker);
+        using (var writer = new StreamWriter(file, Encoding.ASCII, leaveOpen: true))
+            writer.Write(string.Join('\n', new[] {
+                marker.Schema.ToString(), marker.Fixture, marker.LeaseId, marker.SocketPath,
+                marker.OwnerPid.ToString(), marker.OwnerStartTicks.ToString(), marker.HostPidNamespace,
+                marker.SocketDevice.ToString(), marker.SocketInode.ToString(), marker.SocketMode.ToString(),
+                marker.SocketChangeSeconds.ToString(), marker.SocketChangeNanoseconds.ToString()
+            }));
         file.Flush(flushToDisk: true);
     }
 
+    private static LeaseMarker? ReadMarker(Stream stream)
+    {
+        using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+        var fields = reader.ReadToEnd().Split('\n');
+        if (fields.Length != 12 || !int.TryParse(fields[0], out var schema)
+            || !int.TryParse(fields[4], out var pid) || !long.TryParse(fields[5], out var started)
+            || !ulong.TryParse(fields[7], out var device) || !ulong.TryParse(fields[8], out var inode)
+            || !uint.TryParse(fields[9], out var mode) || !long.TryParse(fields[10], out var seconds)
+            || !long.TryParse(fields[11], out var nanoseconds)) return null;
+        return new LeaseMarker(schema, fields[1], fields[2], fields[3], pid, started,
+            fields[6], device, inode, mode, seconds, nanoseconds);
+    }
+
     private sealed record LeaseMarker(int Schema, string Fixture, string LeaseId, string SocketPath,
-        int OwnerPid, long OwnerStartTicks, string HostPidNamespace, ulong SocketDevice, ulong SocketInode);
+        int OwnerPid, long OwnerStartTicks, string HostPidNamespace, ulong SocketDevice, ulong SocketInode,
+        uint SocketMode, long SocketChangeSeconds, long SocketChangeNanoseconds);
 
     private static string NamespaceIdentity()
     {
@@ -99,7 +118,7 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
                 if (new DirectoryInfo(directory).LinkTarget is not null || new FileInfo(markerPath).LinkTarget is not null)
                     continue;
                 using var locked = new FileStream(markerPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-                var marker = JsonSerializer.Deserialize<LeaseMarker>(locked);
+                var marker = ReadMarker(locked);
                 if (marker is null || marker.Schema != 1 || marker.Fixture != "c801"
                     || marker.LeaseId != System.IO.Path.GetFileName(directory)[3..]
                     || marker.SocketPath != socketPath || marker.OwnerPid <= 0
@@ -108,7 +127,10 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
                     .SequenceEqual(new[] { markerPath, socketPath }.OrderBy(x => x, StringComparer.Ordinal)) == false)
                     continue;
                 if (!NativeFileIdentity.TryRead(socketPath, out var identity)
-                    || identity.Device != marker.SocketDevice || identity.Inode != marker.SocketInode)
+                    || identity.Device != marker.SocketDevice || identity.Inode != marker.SocketInode
+                    || identity.Mode != marker.SocketMode
+                    || identity.ChangeSeconds != marker.SocketChangeSeconds
+                    || identity.ChangeNanoseconds != marker.SocketChangeNanoseconds)
                     continue;
                 if (new FileInfo(socketPath).LinkTarget is not null) continue;
                 try
@@ -175,8 +197,10 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
                     _ownsSocketPath = true;
                     if (!NativeFileIdentity.TryRead(endpoint.Path, out _boundIdentity))
                         throw new IOException($"Cannot identify bound Herdr test socket: {endpoint.Path}");
-                    endpoint.RecordBoundSocket(_boundIdentity);
                     File.SetUnixFileMode(endpoint.Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    if (!NativeFileIdentity.TryRead(endpoint.Path, out _boundIdentity))
+                        throw new IOException($"Cannot identify protected Herdr test socket: {endpoint.Path}");
+                    endpoint.RecordBoundSocket(_boundIdentity);
                     socket.Listen(4);
                     _socket = socket;
                 }
@@ -245,7 +269,7 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
 
 internal static class NativeFileIdentity
 {
-    internal readonly record struct Identity(ulong Device, ulong Inode);
+    internal readonly record struct Identity(ulong Device, ulong Inode, uint Mode, long ChangeSeconds, long ChangeNanoseconds);
 
     internal static bool TryRead(string path, out Identity identity)
     {
@@ -258,7 +282,11 @@ internal static class NativeFileIdentity
             var device = OperatingSystem.IsMacOS()
                 ? (uint)Marshal.ReadInt32(buffer, 0)
                 : (ulong)Marshal.ReadInt64(buffer, 0);
-            identity = new Identity(device, (ulong)Marshal.ReadInt64(buffer, 8));
+            var mode = (uint)Marshal.ReadInt32(buffer, OperatingSystem.IsMacOS() ? 4 : 24);
+            var changedSeconds = OperatingSystem.IsMacOS() ? 0 : Marshal.ReadInt64(buffer, 104);
+            var changedNanoseconds = OperatingSystem.IsMacOS() ? 0 : Marshal.ReadInt64(buffer, 112);
+            identity = new Identity(device, (ulong)Marshal.ReadInt64(buffer, 8), mode,
+                changedSeconds, changedNanoseconds);
             return true;
         }
         finally { Marshal.FreeHGlobal(buffer); }

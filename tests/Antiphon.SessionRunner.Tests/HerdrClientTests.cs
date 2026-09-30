@@ -434,15 +434,13 @@ public class HerdrClientTests
 
     private static async Task ServePingThenSubscribeErrorAsync(FakeHerdrEndpoint pipeName)
     {
-        await ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        await ServeSequenceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("ping");
             await WriteLineAsync(writer,
                 $"{{\"id\":\"{request.GetProperty("id").GetString()}\",\"result\":{{\"type\":\"pong\",\"version\":\"0.8.2\",\"protocol\":20}}}}",
                 ct);
-        });
-
-        await ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        }, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("events.subscribe");
             var id = request.GetProperty("id").GetString();
@@ -507,15 +505,13 @@ public class HerdrClientTests
 
     private static async Task ServePingThenSubscriptionAsync(FakeHerdrEndpoint pipeName)
     {
-        await ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        await ServeSequenceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("ping");
             await WriteLineAsync(writer,
                 $"{{\"id\":\"{request.GetProperty("id").GetString()}\",\"result\":{{\"type\":\"pong\",\"version\":\"0.8.2\",\"protocol\":20}}}}",
                 ct);
-        });
-
-        await ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        }, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("events.subscribe");
             request.GetProperty("params").GetProperty("subscriptions")[0].GetProperty("type").GetString()
@@ -529,6 +525,24 @@ public class HerdrClientTests
                 "{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"w1:p1\",\"workspace_id\":\"w1\",\"agent_status\":\"idle\"}}",
                 ct);
         });
+    }
+
+    private static async Task ServeSequenceAsync(FakeHerdrEndpoint endpoint,
+        params Func<JsonElement, StreamWriter, CancellationToken, Task>[] handlers)
+    {
+        await using var listener = new FakeHerdrTransport(endpoint);
+        listener.Bind();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        foreach (var handler in handlers)
+        {
+            await using var stream = await listener.AcceptAsync(cts.Token, () => { });
+            using var reader = new StreamReader(stream, new UTF8Encoding(false), leaveOpen: true);
+            using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+            var line = await reader.ReadLineAsync(cts.Token);
+            line.ShouldNotBeNull();
+            using var request = JsonDocument.Parse(line!);
+            await handler(request.RootElement, writer, cts.Token);
+        }
     }
 
     private static Task WriteLineAsync(StreamWriter writer, string text, CancellationToken ct) =>
