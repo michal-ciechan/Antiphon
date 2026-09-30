@@ -4,12 +4,9 @@ Date: 2026-09-30. Stage: Plan, task `a2b4c9ee-a652-45b2-a579-3a20369bebdd`.
 Source inspected: `d7456a2352d15391f37eca8781c16db499a3759d`.
 TestDesign static audit: task `307e1a7f-1a23-4678-9e69-13c4a5978e29`, against
 `8864419001bc99363a5476ca55bbea9d08f04cbd` (the assigned Plan commit).
-Next stage: **Code**, with the **Windows S1 evidence gate still outstanding**.
-This dispatch finalizes the verification design only: the assigned Linux mirror
-cannot access the desktop, and its brief forbids builds/tests. No captured usable
-Grok layout or native receipt is supplied by this audit. Commission S1 on Windows
-first; product implementation must wait for its committed, reviewed predicate.
-This artifact changes no product code and does not claim native qualification.
+Next stage: **Code S2/S3**. S1 capture and predicate review are complete; the
+separate Windows CP-3 qualification remains outstanding. The recorded Grok 1.0.41
+layout is qualified only at 120x30 on the captured modern ConPTY backend.
 
 ## Problem and ground truth
 
@@ -53,28 +50,29 @@ Use one `SessionRunnerSnapshotDto` per observation through the existing
 `RunnerTerminalSession.GetSnapshotAsync`; raw output and rendered screen must be
 from that same response. Classify the rendered screen. Raw output is diagnostic
 and replay evidence, never authority for a key or a ready verdict. Positive
-evidence is the fixture-qualified Grok dashboard identity and actual empty input
-region with its input-enabled hint/footer. Pin exact supported layouts in S1;
+evidence is the fixture-qualified Grok dashboard at 120x30: scan upward from the
+bottom for an empty, complete composer box and derive its row/column bounds from
+its borders, not fixed row numbers. The hint row is exactly two spaces followed by
+`Shift+Tab:mode  │  Ctrl+x:shortcuts`; the status row two rows above the box is
+blank within the box's columns (a scrollbar glyph at column 119 is outside it).
+Header spinner, MCP counts and footer label text are decorative. Other terminal
+sizes fail closed until captured and qualified;
 a banner, cwd, `>`, OSC title, absent blocker, or arbitrary visible text alone is
 insufficient. Unknown layouts fail closed.
 
-**D-2 — Ignore animation only outside the qualified input state.** Settle a
-semantic region containing the recognized composer, its enabled state and relevant
-dashboard identity. Do not include terminal sequence, cursor blink, elapsed
-spinner glyphs, or an independently qualified decorative status row in its identity.
+**D-2 — Ignore animation only outside the qualified input state.** Settle the
+region from two rows above the box through the hint row, within the box's columns.
+It includes the status row and composer state; omit header and footer label text.
+Do not include terminal sequence, cursor blink or elapsed spinner glyphs.
 Do not strip all braille characters or whole MCP/startup lines from the screen:
 those lines may carry meaningful blocking text. At least two completed positive
 observations and `GrokReadyQuietPeriodMs` of the same semantic region are required.
 A changed region, missing frame, blocker or unrecognized frame resets settlement.
 
-The incident's `Starting session...` plus MCP `(0/2)` is **unqualified**, and is
-not an allow rule in this plan. Default it to `StartingSession`/not-ready. S1 may
-qualify a narrowly identified form as decorative only if the real CLI accepts a
-complete nonce prompt while that form is still present, before any ready-state
-transition. Otherwise only the subsequent proven input-enabled frame may settle;
-the unchanged stuck startup must fail with useful evidence. A product rule that
-accepts the incident state requires the S1 receipt and a reviewed TestDesign
-amendment. This is an evidence prerequisite, not a request to guess in Code.
+`Starting session…` on the status row is **not ready**: the early input was queued,
+the hint switched to `Ctrl+;:queue`, and the native prompt and stub user turn came
+after the idle transition. The incident's final frame **is ready** under this
+predicate; the old quiet gate reset on spinner redraws for all 60 seconds.
 
 **D-3 — One bounded wait, including modal handling.** Keep maximum 60000 ms,
 settle 1000 ms and minimum total age 2000 ms. Use an injectable `TimeProvider`
@@ -99,7 +97,9 @@ affirmative choice authorizes the existing `y`, once per wait. Continue observin
 after it leaves. `GrokTrustPromptSettleMs` remains a trust-clearance sub-budget,
 capped by the overall deadline; zero disables that sub-budget only, never positive
 composer verification. Old raw trust text cannot send `y` into an idle composer.
-No other startup modal is auto-answered.
+No other startup modal is auto-answered. The trust detector strings were measured
+on 1.0.13; V-8/V-9 trust frames are synthetic and a real 1.0.41 trust capture
+remains outstanding.
 
 **D-5 — Capture before teardown, with bounded content.** Add
 `server/Infrastructure/Agents/SessionRunner/GrokStartupCaptureStore.cs` and wire a
@@ -179,13 +179,10 @@ startup-state classification, finalizes the test methods below, and commits/push
 the evidence and plan. No product code is needed to finish this slice. Preserve
 the distinction between offline fixture replay and real Windows acceptance.
 
-### S1 execution sequence and evidence contract (TestDesign amendment)
+### S1 execution sequence and evidence contract (completed)
 
-S1 is **not complete**. Neither `startup-frames.json` nor `provenance.md` exists at
-the audited source. The incident's retained buffer was unavailable to Plan, and
-this task has neither Windows access nor authorization to spend a real Grok turn.
-The following is an ordered Windows prerequisite, not a claim that an existing
-capture command already does all of it:
+S1 completed in the Windows capture task `386a95bf`; the reviewed fixture and
+provenance are committed. The ordered sequence below records the evidence method.
 
 1. Dispatch a separate desktop task with `-Platform Windows -Worktree`, after
    checking live placement/accepting-new-work. Record its source SHA and CLI
@@ -256,7 +253,7 @@ capture command already does all of it:
    observed, V-1/V-6/V-17 have no qualified input: return to investigation rather
    than inventing a decorative spinner. Unknown/startup stays negative meanwhile.
 
-**S1 capture result (Code task `386a95bf`, 2026-09-30; predicate review pending).** Steps 1-6
+**S1 capture result (Code task `386a95bf`, 2026-09-30; reviewed CLEAN by Final Review `643ebcc5`).** Steps 1-6
 ran on the desktop against grok 1.0.41, the incident's version. The committed
 `startup-frames.json`/`provenance.md` hold two replayable reproductions, a screen-only sign-in
 capture, and the incident's full raw `.ansi.log` stream as partial evidence (found at
@@ -275,8 +272,8 @@ Other findings:
 - grok imports two MCP servers from outside `GROK_HOME`.
 - grok 1.0.41 drops the LF of a bracketed-paste body.
 
-See `provenance.md` for bounds, receipts and missing evidence. D-1/D-2 are not amended here: the
-next stage reviews the fixture and predicate before S2.
+See `provenance.md` for bounds, receipts and missing evidence. D-1/D-2 above
+record the reviewed predicate.
 
 Fixture schema is one JSON object with `schemaVersion: 1` and named `captures`.
 Each capture records `captureId`, incident/reproduction origin, CLI version,
@@ -455,8 +452,8 @@ transport, and only S1 proves the recorded real CLI layout.
 
 | ID | Class.Method (new unless marked regression) | Outcome to assert |
 |---|---|---|
-| V-1 | `GrokStartupReadinessTests.Captured_idle_frames_stay_ready_while_spinner_redraws` | Replay real raw chunks through `TerminalScreen`; qualified input-region identity remains equal while spinner frames and sequence differ; classifier marks each qualified frame positive. |
-| V-2 | `GrokStartupReadinessTests.Unknown_or_blocked_current_frames_never_become_ready` | Corpus of blank/ANSI-only, bare prompt, partial/nonempty composer, unqualified startup, working and modal frames is negative even when quiet; explicit expected reason per case. |
+| V-1 | `GrokStartupReadinessTests.Captured_idle_frames_stay_ready_while_spinner_redraws` | Replay `idle-…21944bcbd833` chunks 22–48 (3335–7954 ms) through `TerminalScreen`, checking the recorded checkpoints and line-ending-independent content digests in `provenance.md`; the qualified input-region identity remains equal while the header spinner/sequence change. |
+| V-2 | `GrokStartupReadinessTests.Unknown_or_blocked_current_frames_never_become_ready` | Replay `startup-…de8210c2232b` starting/queued checkpoints and `idle-…21944bcbd833` working and real nonempty composer checkpoints 49–55. Add a labelled synthetic other-size frame; blank/ANSI-only, bare prompt, partial composer and synthetic trust remain negative. Do not use `syn-nonempty-composer`, whose missing right border/trailing spaces cannot come from `TerminalScreen`. |
 | V-3 | `GrokStartupReadinessTests.Current_frame_overrides_raw_history` | Old ready/trust/sign-in raw text cannot override the opposite current rendered frame; no normalization that conflates past and present. |
 | V-4 | `GrokStartupReadinessTests.Composer_change_or_blocker_restarts_settle` | Gated timelines with changed input identity and intervening blocker each need a fresh entire settle interval. |
 | V-5 | `GrokStartupReadinessTests.Settle_requires_two_observations_and_elapsed_time` | Held second read never succeeds from clock advance alone; normal threshold and zero-settle both require two completed observations. |
@@ -469,9 +466,9 @@ transport, and only S1 proves the recorded real CLI layout.
 | V-12 | `RunnerGrokAdapterReadyTests.Timeout_captures_last_frame_and_io_failure_preserves_failure` | One capture of the actual last observed frame before false, reason/sequence linked to the session; log has metadata/path only. An unwritable destination still returns failure and permits caller cleanup. |
 | V-13 | `GrokStartupCaptureStoreTests.Content_is_bounded_and_sign_in_material_is_suppressed` | Oversized screen/raw are capped before escaping, null frame is explicit, original lengths/truncation recorded; sign-in sentinel never appears in file/log even if it survives in raw history. |
 | V-14 | `GrokStartupCaptureStoreTests.Retention_removes_only_owned_captures` | Keep boundary (including zero/negative/oversized configuration) leaves bounded own files and preserves an unrelated sentinel; actual filesystem results, not a constant comparison. |
-| V-15 | `GrokStartupReadyOrderingTests.Work_waits_for_ready_rules_ack_and_complete_prompt` | Production launch holds queued work during unqualified redraws, then positive gate enables rules refresh, matching ACK, ordinary work and whole persisted nonce `UserPrompt` in order. A scripted runner provides ACP/normalized data; this is an integration receipt, not live CLI proof. |
+| V-15 | `GrokStartupReadyOrderingTests.Work_waits_for_ready_rules_ack_and_complete_prompt` | Production launch holds queued work during unqualified redraws, then positive gate enables rules refresh, matching ACK, ordinary work and whole persisted **single-line** nonce `UserPrompt` in order. A scripted runner provides ACP/normalized data; this is an integration receipt, not live CLI proof. |
 | V-16 | `GrokStartupReadyOrderingTests.Unready_launch_cleans_up_and_keeps_work_pending` | All-budget unready spinner yields Failed and owned-generation cleanup, zero prompt/input, ordinary row still Pending/zero attempts, no fabricated transcript, diagnostic frame retained before disposal. |
-| V-17 | `SessionMessageQueueGrokPtyIntegrationTests.Captured_spinner_reaches_ready_and_complete_user_prompt` | Windows modern ConPTY, isolated runner client, actual Grok adapter and launch gate: captured redraw stream continues past the settle interval, launch becomes ready, queued nonce arrives whole via native tailer/runtime in exactly one UserPrompt. Assert pre-ready hold, sequence advance, no duplicate submit and child cleanup. |
+| V-17 | `SessionMessageQueueGrokPtyIntegrationTests.Captured_spinner_reaches_ready_and_complete_user_prompt` | Windows modern ConPTY, isolated runner client, actual Grok adapter and launch gate: captured redraw stream continues past the settle interval, launch becomes ready, queued **single-line** nonce arrives whole via native tailer/runtime in exactly one UserPrompt. Assert pre-ready hold, sequence advance, no duplicate submit and child cleanup. |
 | R-1 | Existing `RunnerGrokAdapterTrustPromptTests` (4), `RunnerGrokAdapterSignInPromptTests` (3), `GrokAdapterTests` (2), `RunnerGrokAdapterTurnCompleteTests` (7), `RunnerCodexAdapterReadyTests` (12 expanded) | Modal protections, factory choice, turn-completion/transcript floor and untouched Codex readiness behavior. |
 | R-2 | Existing `GrokRulesReadyOrderingTests` (2 expanded), `GrokRulesQueueBarrierTests` (28 expanded) | Rules receipt before ready and all existing queued/Now/send-now/expired-hold barriers. |
 | R-3 | Existing `SessionMessageQueueGrokPtyIntegrationTests` (4), `GrokDelegateEndToEndTests` (5) | FakeGrok's ordinary launch display still supports real delivery, spill, native transcript and delegate paths. |
