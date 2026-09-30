@@ -1443,14 +1443,17 @@ C849_SMOKE_SCRIPT
 }
 
 c849_status_zero() {
-    local runner="$1" body
+    local runner="$1" phase="${2:-pre}" body
     command -v jq >/dev/null || return 1
     body="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" || return 1
     printf '%s' "$body" | jq -e '
       .sessions != null and .runnerSessions != null and .queuedTasks != null and
       .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
-      .draining == true and .dispatchEligible == true and .acceptingNewWork == false and .redirectTo == "server2" and
+      .draining == true and .acceptingNewWork == false and .redirectTo == "server2" and
       .retireWhenIdle == true' >/dev/null
+    if [ "$phase" = reconnected ]; then
+        printf '%s' "$body" | jq -e '.dispatchEligible == true' >/dev/null
+    fi
 }
 
 c849_donor() {
@@ -1488,13 +1491,13 @@ c849_seed_failure() {
 c849_seed() {
     require_lane host
     c849_prepare yes
-    local image donor donor_image stage recovery helper payload_hash now i
+    local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i
     image="$(c849_image)"
     donor="$(c849_donor)"
     donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
     if [ -f "$C849_READY" ]; then
         c849_require_ready
-        c849_status_zero server2-temp || write_result false CacheDonorNotReady 2
+        c849_status_zero server2-temp reconnected || write_result false CacheDonorNotReady 2
         printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
         write_result true '' 0
     fi
@@ -1530,7 +1533,9 @@ c849_seed() {
         [ -d "$package" ] || c849_seed_failure "$donor" CacheDonorPackagesEmpty
         for version in "$package"/*; do
             [ -d "$version" ] || c849_seed_failure "$donor" CacheDonorVersionInvalid
-            [ -s "$version/.nupkg.metadata" ] || c849_seed_failure "$donor" CacheDonorVersionIncomplete
+            if [ ! -s "$version/.nupkg.metadata" ]; then
+                rm -rf -- "$version" || c849_seed_failure "$donor" CacheDonorVersionIncomplete
+            fi
         done
     done
     [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] \
@@ -1544,6 +1549,9 @@ c849_seed() {
         cache verify --cache /npm > "$CASE_DIR/npm-verify.txt" 2>&1 \
         || c849_seed_failure "$donor" NpmStagedIntegrityFailed
     payload_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+    reference_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" | cut -d' ' -f1)"
+    package_bytes="$(du -s -B1 "$stage/packages" | cut -f1)"
+    npm_bytes="$(du -s -B1 "$stage/npm" | cut -f1)"
     for item in "$C849_PACKAGES:packages" "$C849_NPM:npm"; do
         name="${item%%:*}"; source="${item#*:}"
         docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
@@ -1577,15 +1585,16 @@ c849_seed() {
     [ "$(docker inspect -f '{{.Id}}' "$donor")" = "$donor" ] \
         || write_result false CacheDonorIdentityChanged 2
     for i in $(seq 1 30); do
-        if c849_status_zero server2-temp; then break; fi
+        if c849_status_zero server2-temp reconnected; then break; fi
         sleep 2
     done
-    c849_status_zero server2-temp || write_result false CacheDonorReconnectFailed 2
+    c849_status_zero server2-temp reconnected || write_result false CacheDonorReconnectFailed 2
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf 'donor=%s\nimage=%s\ntime=%s\npayload-sha256=%s\nrecovery=%s\n' \
-        "$donor" "$donor_image" "$now" "$payload_hash" "$recovery" > "$C849_READY.tmp-$RUN"
+    printf 'donor=%s\nimage=%s\ntime=%s\npayload-sha256=%s\nreference-sha256=%s\npackage-bytes=%s\nnpm-bytes=%s\nrecovery=%s\n' \
+        "$donor" "$donor_image" "$now" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$C849_READY.tmp-$RUN"
     mv "$C849_READY.tmp-$RUN" "$C849_READY"
-    printf 'ready=true donor=%s payload-sha256=%s recovery=%s\n' "$donor" "$payload_hash" "$recovery" > "$CASE_DIR/seed.txt"
+    printf 'ready=true donor=%s payload-sha256=%s reference-sha256=%s package-bytes=%s npm-bytes=%s recovery=%s\n' \
+        "$donor" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$CASE_DIR/seed.txt"
     write_result true '' 0
 }
 
@@ -1605,6 +1614,94 @@ c849_require_ready() {
         "$image" /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost \
         2>/dev/null | cut -d' ' -f1)"
     [ "$actual" = "$expected" ] || write_result false CacheSeedPayloadChanged 2
+}
+
+# Read-only observation for preview. Do not call c849_prepare here: it can create
+# volumes and its uid probe writes to each mount.
+c849_observe_volume() {
+    local name="$1" role="$2" budget="$3" driver options owner schema actual_role mountpoint docker_root resolved bytes mode
+    case "$name:$role" in
+        "$C849_PACKAGES:nuget-packages"|"$C849_SCRATCH:nuget-scratch"|"$C849_NPM:npm-content") ;;
+        *) write_result false CacheTargetInvalid 2 ;;
+    esac
+    docker volume inspect "$name" >/dev/null 2>&1 || write_result false CacheVolumeMissing 2
+    driver="$(docker volume inspect -f '{{.Driver}}' "$name")"
+    options="$(docker volume inspect -f '{{json .Options}}' "$name")"
+    owner="$(docker volume inspect -f '{{index .Labels "io.antiphon.owner"}}' "$name")"
+    schema="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-schema"}}' "$name")"
+    actual_role="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-role"}}' "$name")"
+    if [ "$driver" != local ] || [[ "$options" != null && "$options" != '{}' ]] \
+        || [ "$owner" != server2-runner ] || [ "$schema" != 1 ] || [ "$actual_role" != "$role" ]; then
+        write_result false CacheVolumeForeign 2
+    fi
+    docker_root="$(docker info -f '{{.DockerRootDir}}')"
+    mountpoint="$(docker volume inspect -f '{{.Mountpoint}}' "$name")"
+    [ -n "$docker_root" ] && [ -n "$mountpoint" ] || write_result false CacheTargetInvalid 2
+    resolved="$(realpath -e -- "$mountpoint" 2>/dev/null)" || write_result false CacheTargetInvalid 2
+    if [ "$resolved" != "$docker_root/volumes/$name/_data" ] || [ -L "$mountpoint" ]; then
+        write_result false CacheTargetInvalid 2
+    fi
+    mode="$(sudo -n stat -c '%u:%g:%a' -- "$resolved")" || write_result false CacheRootInvalid 2
+    [ "$mode" = 1654:1654:700 ] || write_result false CacheRootOwnershipInvalid 2
+    bytes="$(sudo -n du -s -B1 -- "$resolved" | cut -f1)" || write_result false CacheSizeUnavailable 2
+    [[ "$bytes" =~ ^[0-9]+$ ]] || write_result false CacheSizeInvalid 2
+    printf '%s %s %s %s %s %s\n' "$name" "$role" "$resolved" "$mode" "$bytes" "$budget"
+}
+
+c849_preview() {
+    require_lane host
+    c849_lock
+    local roots="$CASE_DIR/volumes.txt" recovery recovery_bytes free_bytes available_kb sha now runner status_code status_file project container active broker occupancy
+    : > "$roots"
+    c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 >> "$roots"
+    c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 >> "$roots"
+    c849_observe_volume "$C849_NPM" npm-content 2147483648 >> "$roots"
+    recovery_bytes=0
+    if [ -s "$C849_READY" ]; then
+        recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
+        case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
+        [ -d "$recovery" ] && [ ! -L "$recovery" ] || write_result false CacheRecoveryMissing 2
+        recovery_bytes="$(sudo -n du -s -B1 -- "$recovery" | cut -f1)"
+    fi
+    available_kb="$(df -Pk "$(docker info -f '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
+    [[ "$available_kb" =~ ^[0-9]+$ ]] || write_result false CacheDiskUnavailable 2
+    free_bytes=$((available_kb * 1024))
+    sha="$(sha256sum "$roots" | cut -d' ' -f1)"
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'schema=1\nrun=%s\nsource-sha=%s\nvolume-sha256=%s\nrecovery-bytes=%s\nfree-bytes=%s\ncreated-at=%s\n' \
+        "$RUN" "$SHA" "$sha" "$recovery_bytes" "$free_bytes" "$now" > "$CASE_DIR/preview.txt"
+    awk '{if ($5 >= $6) state="OVER"; else if ($5 * 5 >= $6 * 4) state="WARN"; else state="OK"; printf "role=%s bytes=%s budget=%s state=%s\n", $2,$5,$6,state}' \
+        "$roots" > "$CASE_DIR/budgets.txt"
+    if [ "$free_bytes" -lt 21474836480 ]; then printf 'headroom=LOW\n' >> "$CASE_DIR/preview.txt"; else printf 'headroom=OK\n' >> "$CASE_DIR/preview.txt"; fi
+    : > "$CASE_DIR/consumers.txt"
+    for runner in server2 server2-temp; do
+        status_file="$CASE_DIR/.status-$runner"
+        status_code="$(curl -sS --max-time 15 -o "$status_file" -w '%{http_code}' \
+            "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status" 2>/dev/null || true)"
+        if [ "$status_code" = 200 ]; then
+            jq -r --arg r "$runner" '["runner="+$r,"sessions="+(.sessions|tostring),"runnerSessions="+(.runnerSessions|tostring),"queuedTasks="+(.queuedTasks|tostring),"draining="+(.draining|tostring),"accepting="+(.acceptingNewWork|tostring)]|join(" ")' \
+                "$status_file" >> "$CASE_DIR/consumers.txt" || printf 'runner=%s status=unknown\n' "$runner" >> "$CASE_DIR/consumers.txt"
+        else
+            printf 'runner=%s status=unknown\n' "$runner" >> "$CASE_DIR/consumers.txt"
+        fi
+        rm -f -- "$status_file"
+        project="$HOST_PROJECT"; [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
+        container="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter 'label=com.docker.compose.service=session-runner')"
+        active=unknown
+        if [ -n "$container" ]; then
+            active="$(docker exec "$container" /bin/sh -c \
+                "ps -eo uid,comm | awk '\$1==1654 && \$2 ~ /^(dotnet|nuget|npm|node)$/ {n++} END {print n+0}'" 2>/dev/null || true)"
+        fi
+        printf 'runner=%s cache-processes=%s\n' "$runner" "$active" >> "$CASE_DIR/consumers.txt"
+    done
+    broker="$(compose_host --profile broker ps -q build-slots 2>/dev/null || true)"
+    occupancy=unknown
+    if [ -n "$broker" ]; then
+        occupancy="$(docker exec "$broker" curl -fsS --max-time 10 http://127.0.0.1:8080/build-slots \
+            2>/dev/null | jq -r '.occupied // "unknown"' 2>/dev/null || true)"
+    fi
+    printf 'build-slots-occupied=%s\n' "$occupancy" >> "$CASE_DIR/consumers.txt"
+    write_result true '' 0
 }
 
 case_verify_runner_caches() {
@@ -2236,6 +2333,7 @@ case "$CASE" in
     retire-temp-runner) case_retire_temp_runner ;;
     runner-cache-seed) c849_seed ;;
     runner-cache-inventory) case_runner_cache_inventory ;;
+    runner-cache-prune-preview) c849_preview ;;
     verify-runner-caches) case_verify_runner_caches ;;
     verify-runner-caches-retired) case_verify_runner_caches_retired ;;
     custody-containment) case_custody_containment ;;
