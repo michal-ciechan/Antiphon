@@ -548,6 +548,7 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
             return Task.FromResult(arguments[0] switch
             {
                 "rev-parse" => new LandingGitResult(0, new string('1', 40), ""),
+                "remote" => new LandingGitResult(0, "https://github.com/example/antiphon.git", ""),
                 "push" => new LandingGitResult(0, "", ""),
                 _ => throw new NotSupportedException(arguments[0]),
             });
