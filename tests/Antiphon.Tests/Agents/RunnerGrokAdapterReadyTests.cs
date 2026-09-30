@@ -95,14 +95,21 @@ public class RunnerGrokAdapterReadyTests
         signin.Writes.ShouldBe(["y"]);
         var trustStart = Stopwatch.StartNew();
         var trustReads = 0;
-        var trustReady = GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(
-            ++trustReads == 1 ? new(Trust, Trust, 1, DateTime.UtcNow) : null),
-            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(250),
+        var lateTrustRead = new TaskCompletionSource<GrokStartupSnapshot?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var trustRelease = Task.Delay(200).ContinueWith(_ => lateTrustRead.TrySetResult(
+            new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow)));
+        var trustReady = GrokReadyWait.WaitAsync(_ => ++trustReads == 1
+                ? Task.FromResult<GrokStartupSnapshot?>(new(Trust, Trust, 1, DateTime.UtcNow))
+                : lateTrustRead.Task,
+            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(500),
                 TrustSettle = TimeSpan.FromMilliseconds(40), PollInterval = TimeSpan.FromMilliseconds(5) },
             (_, _) => Task.CompletedTask);
         var trustCompletion = await trustReady;
+        var trustCompletionElapsed = trustStart.Elapsed;
+        await trustRelease;
         trustCompletion.ShouldBeFalse();
-        trustStart.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(150), "trustCompletionElapsed");
+        trustCompletionElapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(150), "trustCompletionElapsed");
     }
 
     [Test]
@@ -123,9 +130,10 @@ public class RunnerGrokAdapterReadyTests
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(35) });
         var release = Task.Delay(75).ContinueWith(_ => hung.TrySetResult(frame));
         var boundedResult = await bounded;
+        var completionElapsed = began.Elapsed;
         await release;
         boundedResult.ShouldBeFalse();
-        began.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(70), "completionElapsed");
+        completionElapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(70), "completionElapsed");
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.Zero })).ShouldBeFalse();
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
