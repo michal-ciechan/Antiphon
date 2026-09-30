@@ -169,6 +169,25 @@ public sealed class RunnerTaskSettlementTests
             (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Completed);
         }
+
+        // (c) The same fallback publishes an unpushed runner tip before judging progress.
+        await using (var world = await RunnerSettlementWorld.CreateAsync(mirrorPublish: true))
+        {
+            await world.Git.EnsureRunnerAsync();
+            File.WriteAllText(Path.Combine(world.Git.Runner, "fallback.txt"), "runner work");
+            await world.Git.RunAsync(world.Git.Runner, "add", "fallback.txt");
+            await world.Git.RunAsync(world.Git.Runner, "commit", "-m", "fallback work");
+            var tip = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+            await world.EndDelegateSessionAsync();
+
+            await world.SettleAsync(RunnerSettlementWorld.Report("Done in runner mirror."), closingVerdict: false);
+
+            world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+            world.Task.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+            world.Evidence()!.RemoteSync!.MirrorPushed.ShouldBeTrue();
+            world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(tip);
+            (await world.Git.HeadAsync()).ShouldBe(tip);
+        }
     }
 
     [Test]
