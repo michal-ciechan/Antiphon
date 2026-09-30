@@ -1318,7 +1318,7 @@ c849_image() {
         case "$CASE" in
             runner-cache-seed|runner-cache-inventory|runner-cache-fixture|runner-cache-prune-preview|runner-cache-reset)
                 local donor marker_image
-                donor="$(c849_optional_donor)"
+                donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
                 if [ -n "$donor" ]; then
                     image="$(docker inspect -f '{{.Image}}' "$donor")" \
                         || write_result false CacheHelperImageMissing 2
@@ -1382,7 +1382,10 @@ c849_volume() {
         || write_result false CacheRootInvalid 2
     if [ "$stat_line" != 1654:1654:700 ]; then write_result false CacheRootOwnershipInvalid 2; fi
     if [ "$fresh" = 0 ] && [ "$create" = yes ] && [ ! -s "$C849_READY" ]; then
-        [ -z "$(docker ps -q --filter "volume=$name")" ] \
+        local consumers
+        consumers="$(docker ps -aq --filter "volume=$name")" \
+            || write_result false CacheUnmarkedUseUnknown 2
+        [ -z "$consumers" ] \
             || write_result false CacheUnmarkedInUse 2
         c849_empty_volume "$name" "$image" || write_result false CacheUnmarkedContent 2
     fi
@@ -1495,9 +1498,12 @@ c849_status_zero() {
 
 c849_donor() {
     local -a ids
-    mapfile -t ids < <(docker ps -aq \
+    local listed
+    listed="$(docker ps -aq \
         --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
-        --filter 'label=com.docker.compose.service=session-runner')
+        --filter 'label=com.docker.compose.service=session-runner')" \
+        || write_result false CacheDonorLookupFailed 2
+    if [ -n "$listed" ]; then mapfile -t ids <<< "$listed"; fi
     if [ "${#ids[@]}" -ne 1 ]; then write_result false CacheDonorIdentityInvalid 2; fi
     local service project image
     service="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "${ids[0]}")"
@@ -1512,19 +1518,23 @@ c849_donor() {
 
 c849_optional_donor() {
     local -a ids
-    mapfile -t ids < <(docker ps -aq \
+    local listed
+    listed="$(docker ps -aq \
         --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
-        --filter 'label=com.docker.compose.service=session-runner')
+        --filter 'label=com.docker.compose.service=session-runner')" \
+        || write_result false CacheDonorLookupFailed 2
+    if [ -n "$listed" ]; then mapfile -t ids <<< "$listed"; fi
     [ "${#ids[@]}" -le 1 ] || write_result false CacheDonorIdentityInvalid 2
-    if [ "${#ids[@]}" -eq 1 ]; then c849_donor; fi
+    if [ "${#ids[@]}" -eq 1 ]; then c849_donor || return 1; fi
     return 0
 }
 
 c849_empty_volume() {
-    local name="$1" image="$2"
-    [ -z "$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+    local name="$1" image="$2" listing
+    listing="$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
         --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
-        -c 'find /cache -mindepth 1 -print -quit' 2>/dev/null)" ]
+        -c 'find /cache -mindepth 1 -print -quit' 2>/dev/null)" || return 1
+    [ -z "$listing" ]
 }
 
 c849_seed_failure() {
@@ -1588,7 +1598,7 @@ c849_seed() {
     c849_prepare yes
     local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i
     image="$(c849_image)"
-    donor="$(c849_optional_donor)"
+    donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
     if [ -f "$C849_READY" ]; then
         c849_require_ready
         if [ -n "$donor" ]; then
@@ -1607,9 +1617,12 @@ c849_seed() {
     done
     # A tracked session count alone cannot see a separate cache writer. Refuse a donor with
     # any app-uid restore/build/npm process after its drain has reached zero.
-    if docker exec "$donor" /bin/sh -c "ps -eo uid,comm | awk '\$1==1654 && \$2 ~ /^(dotnet|nuget|npm|node)$/ {found=1} END {exit !found}'"; then
-        write_result false CacheDonorConsumerBusy 2
-    fi
+    local active ps_out
+    ps_out="$(docker exec "$donor" ps -eo uid,comm)" \
+        || write_result false CacheDonorConsumerUnknown 2
+    active="$(printf '%s\n' "$ps_out" | awk '$1==1654 && $2 ~ /^(dotnet|nuget|npm|node)$/ {n++} END {print n+0}')" \
+        || write_result false CacheDonorConsumerUnknown 2
+    [ "$active" = 0 ] || write_result false CacheDonorConsumerBusy 2
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
     stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
     mkdir -m 0700 "$stage/packages" "$stage/npm" || c849_seed_failure "$donor" CacheStageCreateFailed
@@ -1846,12 +1859,14 @@ c849_budget_gate() {
 }
 
 c849_prune_idle() {
-    local runner project container body broker mounted expected other active
+    local runner project container body broker mounted expected other active attached temp_ids
     if [ "$CASE" = runner-cache-fixture ]; then
         grep -Fxq 'runners=idle processes=0 leases=0' "$SERVER2_ROOT/fixture-consumers.txt" \
             || write_result false CacheConsumersBusy 2
         for mounted in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-            [ -z "$(docker ps -q --filter "volume=$mounted")" ] \
+            attached="$(docker ps -aq --filter "volume=$mounted")" \
+                || write_result false CacheConsumerUnknown 2
+            [ -z "$attached" ] \
                 || write_result false CacheConsumersBusy 2
         done
         return 0
@@ -1866,11 +1881,14 @@ c849_prune_idle() {
             || write_result false CacheConsumersBusy 2
         project="$HOST_PROJECT"; [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
         container="$(docker ps -q --filter "label=com.docker.compose.project=$project" \
-            --filter 'label=com.docker.compose.service=session-runner')"
+            --filter 'label=com.docker.compose.service=session-runner')" \
+            || write_result false CacheConsumerUnknown 2
         if [ -z "$container" ]; then
+            temp_ids="$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" \
+                || write_result false CacheConsumerUnknown 2
             [ "$runner" = server2-temp ] \
                 && printf '%s' "$body" | jq -e '.retiredAt != null' >/dev/null \
-                && [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ] \
+                && [ -z "$temp_ids" ] \
                 || write_result false CacheConsumerUnknown 2
             continue
         fi
@@ -1882,11 +1900,13 @@ c849_prune_idle() {
     # A third container attached to any cache is a consumer even if the two named
     # runners report zero. Compare IDs, not container names supplied by a task.
     for mounted in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        attached="$(docker ps -q --filter "volume=$mounted")" \
+            || write_result false CacheConsumerUnknown 2
         while read -r other; do
             [ -n "$other" ] || continue
             expected="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}:{{index .Config.Labels "com.docker.compose.service"}}' "$other")"
             case "$expected" in "$HOST_PROJECT:session-runner"|"$TEMP_PROJECT:session-runner") ;; *) write_result false CacheConsumersBusy 2 ;; esac
-        done < <(docker ps -q --filter "volume=$mounted")
+        done <<< "$attached"
     done
     broker="$(compose_host --profile broker ps -q build-slots 2>/dev/null || true)"
     [ -n "$broker" ] || write_result false CacheBuildSlotsUnavailable 2
@@ -1902,7 +1922,7 @@ c849_reset() {
     # A reset is only for an interrupted, unmarked seed. The common idle check
     # proves both runners drained and the build broker empty under this lock.
     c849_prune_idle
-    local image name role container
+    local image name role attached
     image="$(c849_image)"
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         case "$name" in
@@ -1910,13 +1930,17 @@ c849_reset() {
             "$C849_SCRATCH") role=nuget-scratch ;;
             "$C849_NPM") role=npm-content ;;
         esac
-        c849_volume "$name" "$role" no "$image"
+        c849_volume "$name" "$role" no "$image" || write_result false CacheVolumeInvalid 2
         # Include stopped containers; Docker refuses volume removal for them too.
-        [ -z "$(docker ps -aq --filter "volume=$name")" ] \
+        attached="$(docker ps -aq --filter "volume=$name")" \
+            || write_result false CacheResetUseUnknown 2
+        [ -z "$attached" ] \
             || write_result false CacheResetInUse 2
     done
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-        [ -z "$(docker ps -aq --filter "volume=$name")" ] \
+        attached="$(docker ps -aq --filter "volume=$name")" \
+            || write_result false CacheResetUseUnknown 2
+        [ -z "$attached" ] \
             || write_result false CacheResetInUse 2
         docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
             --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
