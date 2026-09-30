@@ -60,6 +60,17 @@ public sealed class RunnerSettlementSyncTests
     }
 
     [Test]
+    public async Task Bind_refusal_recovery_never_publishes_the_mirror()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var publisher = new LocalMirrorPublisher(world);
+        var result = await world.Service(publisher: publisher)
+            .SyncAsync(world.Task, CancellationToken.None, [world.Baseline]);
+        result.State.ShouldBe(RemoteSettlementSyncState.NoPushedProgress);
+        publisher.Calls.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Diverged_runner_mirror_blocks_without_changing_desktop()
     {
         await using var world = await SyncWorld.CreateAsync();
@@ -871,8 +882,10 @@ public sealed class RunnerSettlementSyncTests
         }
 
         public RemoteWorkspaceService Service(
-            TimeProvider? clock = null, IWorkspaceReservationJournal? reservations = null, Action? leaseBusy = null) =>
-            new(new UnusedDirectory(), Git, NullLogger<RemoteWorkspaceService>.Instance, Git, Leases, reservations)
+            TimeProvider? clock = null, IWorkspaceReservationJournal? reservations = null, Action? leaseBusy = null,
+            IRunnerMirrorPublisher? publisher = null) =>
+            new(new UnusedDirectory(), Git, NullLogger<RemoteWorkspaceService>.Instance, Git, Leases, reservations,
+                mirrorPublisher: publisher)
             {
                 Clock = clock ?? TimeProvider.System,
                 LeaseBusyObserved = leaseBusy,
