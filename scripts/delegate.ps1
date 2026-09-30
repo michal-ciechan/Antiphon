@@ -735,6 +735,10 @@ switch ($PSCmdlet.ParameterSetName) {
         } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }
         if ($task.progressEvidence) {
             $p = $task.progressEvidence
+            if ($p.remoteSync) {
+                $r = $p.remoteSync
+                Write-Output "Runner sync: $($r.state) $($r.reason); mirror=$($r.mirrorSha) $($r.mirrorRelation) pushed=$($r.mirrorPushed) dirty=$($r.mirrorDirty)"
+            }
             $origin = $null
             if ($p.sources) { $origin = @($p.sources)[0] }
             if ($p.assessment -eq 'Indeterminate' -or $p.reason) {

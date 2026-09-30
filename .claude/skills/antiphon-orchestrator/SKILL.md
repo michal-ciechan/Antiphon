@@ -12,6 +12,11 @@ tick by tick, and the specific traps that cost real time when missed.
 
 ## 0. Policy defaults, unless the user says otherwise
 
+For runner-bound Worktree tasks, never ask the delegate to rebase, amend or force-push its task
+branch. It must advance the owned branch by fast-forward pushes. Land performs the target rebase;
+use a fresh task with `-StartRef` when a different base is needed. A confirmation-only step is a
+Review task, not a Code task requiring new attributed progress (CARD-0779).
+
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
 

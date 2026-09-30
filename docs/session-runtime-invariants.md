@@ -1,5 +1,10 @@
 # Session runtime invariants
 
+- **Runner branch publication (CARD-0779).** A runner task's owned branch is published only as a
+  fast-forward of its dispatch baseline. Settlement may publish the runner mirror's fast-forward
+  tip on the task's behalf, then re-observes origin before moving the desktop checkout. A mirror
+  with unpublished commits is never removed without `Force`; diverged work remains for recovery.
+
 - **Host budget changes gate new dispatch only (CARD-0654).** The local limit and each runner's
   effective limit are evaluated when claiming new work. Lowering a budget or a runner's declared
   capacity below current occupancy leaves existing Working tasks and sessions running; it never
