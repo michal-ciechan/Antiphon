@@ -1083,7 +1083,8 @@ public sealed class RemoteScriptContractTests
                 case "$1" in
                     ps)
                         [ "$PS_FAIL" = yes ] && return 1
-                        if [[ "$*" == *volume=* ]] && { [ "$IN_USE" = yes ] || { [ "$2" = -aq ] && [ "$STOPPED_ONLY" = yes ]; }; then echo consumer
+                        if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer
+                        elif [[ "$*" == *volume=* ]] && [ "$2" = -aq ] && [ "$STOPPED_ONLY" = yes ]; then echo consumer
                         elif [[ "$*" == *'project=main'* ]]; then echo main; fi ;;
                     exec)
                         if [ "$2" = main ]; then echo 0
@@ -1208,7 +1209,8 @@ public sealed class RemoteScriptContractTests
                 printf '{"scenario":"retired","sha":"%s","tempDeployed":false,"oldDeployed":false,"oldDraining":false,"tempDraining":true,"tempRetiredAt":"2026-09-27T10:00:00Z","tempContainer":%s,"tempOffline":true,"faultRunner":"","faultField":"","faultKind":"","faultValue":null,"failVerify":""}\n' "$sha" "$container" > "$C727_TEST_STATE"
                 : > "$C727_TEST_TRACE"
                 pwsh -NoProfile -File "$repo/scripts/deploy-server2.ps1" -Rolling -Sha "$sha" -Phase deploy-temp > "$root/out" 2>&1
-                printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$?" "$(jq -r 'select(.kind=="case") | .name' "$C727_TEST_TRACE" | paste -sd, -)"
+                code=$?
+                printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$code" "$(sed -n 's/.*"kind":"case","name":"\([^"]*\)".*/\1/p' "$C727_TEST_TRACE" | paste -sd, -)"
             done
             """);
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
