@@ -1075,8 +1075,13 @@ public sealed class RemoteScriptContractTests
             docker() {
                 local name
                 case "$1" in
-                    ps) if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer; fi ;;
-                    exec) [ "$BROKER_BUSY" = yes ] && echo busy || echo zero ;;
+                    ps)
+                        if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer
+                        elif [[ "$*" == *'project=main'* ]]; then echo main; fi ;;
+                    exec)
+                        if [ "$2" = main ]; then echo 0
+                        elif [ "$BROKER_BUSY" = yes ]; then echo busy
+                        else echo zero; fi ;;
                     run)
                         if [[ "$*" =~ source=([^,]+),target=/cache ]] && [[ "$*" == *'find /cache -mindepth 1 -maxdepth 1 -exec rm -rf'* ]]; then
                             name="${BASH_REMATCH[1]}"
