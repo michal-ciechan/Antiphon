@@ -154,6 +154,32 @@ an unknown optional JSON property.
 After a Clean Final/Full Review of a `-StartRef` repair's pushed tip, `-FromTask` can adopt that
 branch into the original Code owner's source under the reviewed recovery contract above.
 
+#### Landing a `-StartRef` repair (CARD-0675)
+
+Review the repair's pushed tip with the **repair task** named as `subjectTaskId` in the Review
+brief. Use a Final round with full ordinary scope; Interim evidence cannot approve adoption. Take
+`review-evidence=<id>` from the Review completion header or `delegate.ps1 -Status <review>`.
+Then run:
+
+```
+pwsh -NoProfile -File scripts/delegate.ps1 -Land <owner> -FromTask <repair> -ExpectedSourceSha <S> -ReviewEvidenceId <id>
+pwsh -NoProfile -File scripts/delegate.ps1 -Status <owner>
+```
+
+The owner must be Succeeded, Blocked or Failed, never Canceled. The repair must be settled and
+not itself landing. Its recorded base must equal or descend from the owner's current remote or
+local tip. The owner's desktop worktree must exist, be clean and be checked out on its branch.
+`-Status <owner>` shows `Recovery: AdoptReviewedSource` and then `Recovery receipt:` with owner
+patch containment; uncontained owner commit IDs are printed when present.
+
+| Refusal | Action |
+|---|---|
+| `adopt_source_lineage` | Cut a new repair at the owner tip and Review it. |
+| `source_dirty`, `source_branch_mismatch` | Restore the owner's registered desktop checkout identity and clean state. |
+| `review_evidence_subject_mismatch`, `review_verification_scope_ineligible` | Review the repair itself in a Final/Full round. |
+| `adopt_source_remote_changed`, `adopt_source_push_rejected` | Inspect the owner remote tip and request a fresh reviewed adoption. |
+| `source_remote_diverged` | Plain land refused the diverged mirror; use `-FromTask` as above. |
+
 A delegate that nonetheless ends up off its own branch is no longer settled as a false failure.
 Antiphon reads the registered checkout's actual HEAD and accepts a task-scoped claim line
 (`[antiphon-progress:<full-guid> commit=<full-sha>]`, on its own unquoted line) reachable from it,

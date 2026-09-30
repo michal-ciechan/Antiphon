@@ -7,6 +7,23 @@ namespace Antiphon.Tests.Application;
 public class RepairSourceDocumentationTests
 {
     [Test]
+    public void C675_DocsNameTheStartRefRepairLandingRoute()
+    {
+        var root = FindRepoRoot();
+        var orchestration = File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"));
+        orchestration.ShouldContain("-FromTask");
+        orchestration.ShouldContain("adopt_source_lineage");
+        orchestration.ShouldContain("repair_source_owner_diverged");
+        File.ReadAllText(Path.Combine(root, "docs", "ops-http.md"))
+            .ShouldContain("repair_source_owner_remote_ahead");
+        File.ReadAllText(Path.Combine(root, "server", "Bundles", "orchestrator.md"))
+            .ShouldContain("-FromTask");
+        File.ReadAllText(Path.Combine(root, ".claude", "skills", "antiphon-delegate", "SKILL.md"))
+            .ShouldContain("-FromTask");
+        File.ReadAllText(Path.Combine(root, "docs", "antiphon-api.md"))
+            .ShouldContain("adoptFromTaskId");
+    }
+    [Test]
     public void C499_V31_DocsAndSkillNameTheRepairContract()
     {
         var root = FindRepoRoot();
