@@ -2107,6 +2107,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     childStartUtc: childStartUtc,
                     resumeLaunch: true,
                     sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(null),
+                    apiErrorTimeZoneId: null,
                     onBound: RecordTranscriptBinding,
                     onUnbound: RecordTranscriptUnbinding);
                 _tailer.Start();
@@ -2208,6 +2209,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     TranscriptPath = null,
                     How = null,
                     Format = TranscriptFormats.Codex,
+                    ApiErrorTimeZoneId = CodexTranscriptTailer.ResolveApiErrorTimeZoneId(request.Env),
                 });
 
                 _tailer = new CodexTranscriptTailer(
@@ -2218,6 +2220,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     childStartUtc: childStartUtc,
                     resumeLaunch: IsCodexResumeLaunch(request.Args),
                     sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(request.Env),
+                    apiErrorTimeZoneId: CodexTranscriptTailer.ResolveApiErrorTimeZoneId(request.Env),
                     onBound: RecordTranscriptBinding,
                     onUnbound: RecordTranscriptUnbinding);
                 _tailer.Start();
@@ -2800,6 +2803,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     childStartUtc: childStartUtc ?? sidecar!.ChildStartUtc,
                     resumeLaunch: sidecar!.ResumeLaunch,
                     knownTranscriptPath: sidecar.TranscriptPath,
+                    apiErrorTimeZoneId: sidecar.ApiErrorTimeZoneId,
                     onBound: RecordTranscriptBinding,
                     onUnbound: RecordTranscriptUnbinding);
                 _tailer.Start();

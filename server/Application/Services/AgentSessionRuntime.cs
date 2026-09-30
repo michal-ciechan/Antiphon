@@ -979,6 +979,7 @@ public sealed class AgentSessionRuntime
                     IsApiError = e.IsApiError,
                     ApiErrorClass = e.ApiErrorClass,
                     ApiErrorStatus = e.ApiErrorStatus,
+                    ApiErrorTimeZoneId = e.ApiErrorTimeZoneId,
                     Model = e.Model,
                     ModelCalls = e.ModelCalls,
                     CreatedAt = now,
@@ -1229,6 +1230,7 @@ public sealed class AgentSessionRuntime
         isApiError = e.IsApiError,
         apiErrorClass = e.ApiErrorClass,
         apiErrorStatus = e.ApiErrorStatus,
+        apiErrorTimeZoneId = e.ApiErrorTimeZoneId,
         model = e.Model,
         modelCalls = e.ModelCalls,
     };

@@ -1,5 +1,12 @@
 # Agent Card Lifecycle
 
+An attributable provider usage-limit API error blocks its delegated task with
+`SubscriptionQuotaExceeded` (CARD-0719). It keeps the session and worktree and leaves
+`CompletedAt` null. The failure reason names the parsed reset and padded hold deadline
+when known. Hold expiry alone does not resume the task: the orchestrator explicitly
+chooses a replacement provider and re-dispatches. A Manual hold retains its source
+and deadline when automatic evidence arrives.
+
 Antiphon tracks two related but separate states:
 
 - **Card status** is the board workflow location: `Backlog`, `InProgress`, `Review`, `Done`, `NeedsDecision`, or `Canceled`.

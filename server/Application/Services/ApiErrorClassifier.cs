@@ -27,14 +27,22 @@ public static class ApiErrorClassifier
         switch (apiErrorClass)
         {
             case "rate_limit":
+            case "usage_limit_exceeded":
                 return ApiErrorClassification.Wall;
-            case "server_error":
-            case TranscriptKinds.ApiErrorClasses.Transport:
-                return ApiErrorClassification.Transient;
             case "authentication_failed":
             case "model_not_found":
                 return ApiErrorClassification.NeedsHuman;
         }
+
+        // Only error stubs reach this classifier. A bounded, exact diagnostic can refine an
+        // otherwise generic wrapper; explicit auth and model failures above remain authoritative.
+        if (UsageLimitWallParser.IsQuotaRefusal(errorText: text)
+            && apiErrorStatus is not (400 or 401 or 404)
+            && apiErrorStatus is not >= 500)
+            return ApiErrorClassification.Wall;
+
+        if (apiErrorClass is "server_error" or TranscriptKinds.ApiErrorClasses.Transport)
+            return ApiErrorClassification.Transient;
 
         // Class missing or never-seen: the status is weaker evidence but still structural.
         return apiErrorStatus switch

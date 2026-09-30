@@ -63,7 +63,8 @@ public sealed class RunnerContractMapper
             e.SessionId, e.Sequence, e.Kind, e.Uuid, e.ParentUuid, e.Timestamp, e.Role, e.Text,
             e.ToolName, e.ToolInput, e.ToolUseId, e.ToolIsError, e.StopReason, e.ApiCallId,
             e.InputTokens, e.OutputTokens, e.CacheReadTokens, e.CacheCreationTokens,
-            e.IsApiError, e.ApiErrorClass, e.ApiErrorStatus, e.Model, e.ModelCalls);
+            e.IsApiError, e.ApiErrorClass, e.ApiErrorStatus, e.Model, e.ModelCalls,
+            e.ApiErrorTimeZoneId);
 
     public static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

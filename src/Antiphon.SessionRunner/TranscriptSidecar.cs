@@ -46,6 +46,9 @@ public sealed record TranscriptSidecar
     /// </summary>
     public string? Format { get; init; }
 
+    /// <summary>Provider process timezone captured at launch for local reset diagnostics.</summary>
+    public string? ApiErrorTimeZoneId { get; init; }
+
     /// <summary>How it was bound — see <c>TranscriptBindMethods</c>.</summary>
     public string? How { get; init; }
 

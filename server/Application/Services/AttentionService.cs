@@ -332,12 +332,13 @@ public sealed partial class AttentionService
                     $"Blocked — merge conflict; task {DelegationReportFormatter.Short(mergeId)} is resolving it",
                 BlockedKind.MergeConflict => "Blocked — merge conflict.",
                 BlockedKind.CostCeiling => "Blocked — run cost ceiling reached.",
+                BlockedKind.SubscriptionQuota => "Blocked — provider usage quota exceeded.",
                 _ => "Blocked — waiting on a human answer.",
             };
             var canContinue = kind == BlockedKind.Question
                 && task.AgentSessionId is not null
                 && !string.IsNullOrWhiteSpace(task.StandingAuthority);
-            var actions = kind == BlockedKind.CostCeiling
+            var actions = kind is BlockedKind.CostCeiling or BlockedKind.SubscriptionQuota
                 ? new[] { AttentionAction.Cancel, AttentionAction.Escalate }
                 : canContinue
                     ? new[] { AttentionAction.Continue, AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate }
@@ -363,6 +364,8 @@ public sealed partial class AttentionService
 
     private static BlockedKind ClassifyBlocked(AgentTask task, AgentTaskEventType latestBlockType)
     {
+        if (task.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
+            return BlockedKind.SubscriptionQuota;
         if (latestBlockType == AgentTaskEventType.Conflicted)
             return BlockedKind.MergeConflict;
         if (task.FailureReason is { } reason)

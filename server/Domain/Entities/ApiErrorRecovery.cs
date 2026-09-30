@@ -35,6 +35,7 @@ public class ApiErrorRecovery
 
     /// <summary>Evidence instant used to compute the reset. Never sweep-time now (CARD-0412).</summary>
     public DateTime? EvidenceAt { get; set; }
+    public DateTime? ResetAtUtc { get; set; }
 
     public CapacityEvidenceTimestampSource? EvidenceTimestampSource { get; set; }
 
@@ -61,6 +62,7 @@ public static class ApiErrorRecoveryReasons
     public const string NeedsHuman = "NeedsHuman";
     public const string UnknownExhausted = "UnknownExhausted";
     public const string WallParked = "WallParked";
+    public const string QuotaBlocked = "QuotaBlocked";
 
     /// <summary>
     /// CARD-0022: a per-model cap (or an unparseable Wall with a resolved alias) paused that

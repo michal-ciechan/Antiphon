@@ -31,4 +31,5 @@ public sealed record TranscriptEntryDto(
     string? ApiErrorClass = null,
     int? ApiErrorStatus = null,
     // message.model (CARD-0082) — null on pre-carriage rows and on API-error stubs.
-    string? Model = null);
+    string? Model = null,
+    string? ApiErrorTimeZoneId = null);

@@ -90,7 +90,8 @@ public sealed record SessionRunnerTranscriptEvent(
     // message.model (CARD-0082) — additive-optional, same lag-safe mix as the API-error fields.
     string? Model = null,
     // Grok turn_completed.usage.modelCalls (CARD-0157) — additive-optional, same mix.
-    int? ModelCalls = null);
+    int? ModelCalls = null,
+    string? ApiErrorTimeZoneId = null);
 
 public sealed record SessionRunnerTranscriptDto(
     Guid SessionId,

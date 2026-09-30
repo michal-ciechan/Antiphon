@@ -124,6 +124,12 @@ public sealed class CodexTranscriptNormalizer
     private TurnUsage? _cumulative;
     private TurnUsage _turnBaseline;
     private bool _sawUsageThisTurn;
+    private readonly string? _apiErrorTimeZoneId;
+
+    public CodexTranscriptNormalizer(string? apiErrorTimeZoneId = null)
+    {
+        _apiErrorTimeZoneId = apiErrorTimeZoneId;
+    }
 
     public IReadOnlyList<TranscriptPart> Normalize(string jsonLine)
     {
@@ -338,7 +344,8 @@ public sealed class CodexTranscriptNormalizer
                 ApiCallId: turnId,
                 InputTokens: inTok, OutputTokens: outTok,
                 CacheReadTokens: cacheRead, CacheCreationTokens: cacheWrite,
-                IsApiError: isError, ApiErrorClass: errorClass, ApiErrorStatus: errorStatus),
+                IsApiError: isError, ApiErrorClass: errorClass, ApiErrorStatus: errorStatus,
+                ApiErrorTimeZoneId: isError == true ? _apiErrorTimeZoneId : null),
         ];
     }
 

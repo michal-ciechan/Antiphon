@@ -1,5 +1,13 @@
 # Inspecting agents, boards and live sessions over HTTP
 
+For CARD-0719 quota refusals, inspect the task's `SubscriptionQuotaExceeded` failure
+code and Blocked event, its session transcript's API-error class and captured
+`apiErrorTimeZoneId`, and the `(kind, modelAlias)` availability hold. Automatic
+holds are `AutoDetected`; `ResetAtUtc` is the parsed instant and `DisabledUntil` is
+the reset plus two minutes. Old runners omit timezone evidence, so dated reset text
+gets an explicitly estimated finite hold. A Manual hold retains its deadline.
+Clearing or expiring a hold does not requeue a blocked delegate.
+
 The operator's map of the surface an orchestrator actually reaches for: which agents exist, what
 they are running, which boards and cards are open, and what a live session is doing. It is
 deliberately short and it is not the route map — [antiphon-api.md](antiphon-api.md) is that, and

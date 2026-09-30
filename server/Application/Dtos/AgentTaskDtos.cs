@@ -471,6 +471,7 @@ public enum BlockedKind
     MergeConflict = 1,
     CostCeiling = 2,
     RoutingExhausted = 3,
+    SubscriptionQuota = 4,
 }
 
 /// <summary>Where an answer to a blocked delegate was typed (CARD-0033). Recorded on the Replied event.</summary>

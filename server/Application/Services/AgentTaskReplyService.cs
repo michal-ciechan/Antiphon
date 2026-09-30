@@ -372,6 +372,23 @@ public sealed class AgentTaskReplyService
         {
             if (task.Status == AgentTaskStatus.Blocked)
             {
+                if (task.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
+                {
+                    var latestQuota = await db.ApiErrorRecoveries.AsNoTracking()
+                        .Where(r => r.AgentSessionId == task.AgentSessionId
+                            && r.ResolvedReason == ApiErrorRecoveryReasons.QuotaBlocked)
+                        .OrderByDescending(r => r.StubSequence)
+                        .FirstOrDefaultAsync(ct);
+                    if (latestQuota?.AppliedHoldId is Guid quotaHoldId)
+                    {
+                        var hold = await db.ModelAvailabilityHolds.AsNoTracking()
+                            .FirstOrDefaultAsync(h => h.Id == quotaHoldId, ct);
+                        if (hold is { ClearedAt: null }
+                            && (hold.DisabledUntil is null || hold.DisabledUntil > UtcNow()))
+                            throw new ConflictException(task.FailureReason ?? "Provider quota hold is active.",
+                                "subscription_quota_hold");
+                    }
+                }
                 if (task.AgentSessionId is not Guid blockedSessionId)
                     throw new ConflictException("The delegate's session is no longer available.");
 
@@ -1357,6 +1374,53 @@ public sealed class AgentTaskReplyService
                 await PublishAsync(task, ct);
             _logger.LogDebug("Task {ShortId}: ignoring stale API-error seq {Sequence}; session resumed at seq {Resumed}",
                 DelegationReportFormatter.Short(task.Id), stub.Sequence, resumed.Sequence);
+            return;
+        }
+
+        if (classification == ApiErrorClassification.Wall)
+        {
+            var hold = recovery?.AppliedHoldId is Guid holdId
+                ? await db.ModelAvailabilityHolds.AsNoTracking()
+                    .FirstOrDefaultAsync(h => h.Id == holdId, ct)
+                : null;
+            var reset = recovery?.ResetAtUtc;
+            var until = hold?.DisabledUntil;
+            var session = await db.AgentSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            var alias = hold?.ModelAlias ?? "model alias unresolved; hold not written";
+            var resetText = reset is { } resetAt
+                ? $"reset {resetAt:yyyy-MM-ddTHH:mm:ss}Z"
+                : "reset unavailable or unparseable; estimated hold";
+            var holdText = until is { } disabledUntil
+                ? $"hold until {disabledUntil:yyyy-MM-ddTHH:mm:ss}Z"
+                : "hold unavailable";
+            var quotaReason = $"Provider quota exceeded for {session?.AgentKind} {alias}: {resetText}; {holdText}. "
+                + $"Session {sessionId} remains owned; choose a provider and explicitly re-dispatch. "
+                + $"Diagnostic: {errorText}";
+            task.Status = AgentTaskStatus.Blocked;
+            task.FailureCode = AgentTaskFailureCode.SubscriptionQuotaExceeded;
+            task.FailureReason = quotaReason;
+            task.CompletedAt = null;
+            task.CapacityWaitId = null;
+            task.CapacityWaitRetained = false;
+            task.CapacityWaitReason = null;
+            task.ConcurrencyToken = Guid.NewGuid();
+            if (recovery is not null)
+            {
+                var tracked = await db.ApiErrorRecoveries.FirstOrDefaultAsync(r => r.Id == recovery.Id, ct);
+                if (tracked is not null)
+                {
+                    tracked.ResolvedAt = now;
+                    tracked.ResolvedReason = ApiErrorRecoveryReasons.QuotaBlocked;
+                    tracked.NextAttemptAt = null;
+                }
+            }
+            if (services.GetService<CapacityRecoveryService>() is { } capacity)
+                await capacity.SupersedeTaskWaitsOnAsync(db, task.Id, "subscription-quota-blocked", ct);
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Blocked, quotaReason, now));
+            await db.SaveChangesAsync(ct);
+            await DeliverToParentAsync(task, quotaReason, ct);
+            await PublishAsync(task, ct);
             return;
         }
 
