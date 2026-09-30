@@ -53,7 +53,7 @@ try
             },
         },
     });
-    if (config.Mode == "dispatch")
+    if (config.Mode is "dispatch" or "dispatch-running")
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -68,8 +68,23 @@ try
         services.AddSingleton(Options.Create(new GitSettings()));
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
-            s.DefaultDefinition = "claude";
+            var running = config.Mode == "dispatch-running";
+            s.DefaultDefinition = running ? "grok" : "claude";
+            s.GrokCredentialProbeEnabled = false;
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            if (running)
+                s.Definitions["grok"] = new AgentDefinition
+                {
+                    Kind = "Grok", Exe = config.WorkerExe!,
+                    ArgsTemplate = ["--always-approve", "--no-alt-screen"],
+                    Env = new Dictionary<string, string>
+                    {
+                        ["GROK_HOME"] = config.WorkerHome!,
+                        ["ANTIPHON_FAKE_REPORT_LINE"] = "1",
+                        ["ANTIPHON_FAKE_OUTBOUND_TOOL"] = "fixture:pdf",
+                        ["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"] = config.WorkerGate!,
+                    },
+                };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
@@ -83,13 +98,19 @@ try
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
-        services.AddSingleton<IAgentTaskLaunchSink, RefusingTaskLaunchSink>();
+        services.AddSingleton<IAgentTaskLaunchSink>(config.Mode == "dispatch-running"
+            ? new CapturingTaskLaunchSink(config.LaunchSpecPath!) : new RefusingTaskLaunchSink());
         services.AddSingleton<LandDeliveryBoundary>(new ProbeDispatchBoundary(
             config.ConnectionString, config.MarkerPath, config.Barrier, config.DeliveryId));
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
             .TickAsync(CancellationToken.None);
+        if (config.Mode == "dispatch-running")
+        {
+            await File.WriteAllTextAsync(config.MarkerPath, "dispatch-ready");
+            await Task.Delay(Timeout.InfiniteTimeSpan);
+        }
     }
     else if (config.Mode == "admit")
     {
@@ -154,7 +175,9 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     string? Mode = null, string WorkspaceRoot = "", Guid ProjectId = default,
     Guid ConverterAgentId = default, Guid ChannelId = default, Guid SessionId = default,
     Guid CorrelationId = default, bool AllowPublication = false,
-    bool FailPublishCommit = false, string? BootstrapServers = null, string? Topic = null);
+    bool FailPublishCommit = false, string? BootstrapServers = null, string? Topic = null,
+    string? WorkerExe = null, string? WorkerHome = null, string? WorkerGate = null,
+    string? LaunchSpecPath = null);
 
 internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
 {
@@ -220,6 +243,20 @@ internal sealed class RefusingTaskLaunchSink : IAgentTaskLaunchSink
     public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
         throw new InvalidOperationException("Unexpected external worker launch from crash probe.");
 }
+
+internal sealed class CapturingTaskLaunchSink(string path) : IAgentTaskLaunchSink
+{
+    public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+    {
+        var staged = path + ".tmp";
+        File.WriteAllText(staged, JsonSerializer.Serialize(new CapturedLaunch(sessionId, agentId,
+            acceptedGeneration, spec)));
+        File.Move(staged, path);
+    }
+}
+
+internal sealed record CapturedLaunch(Guid SessionId, Guid AgentId,
+    DateTime AcceptedGeneration, AgentLaunchSpec Spec);
 
 internal sealed class ProbeDispatchBoundary(string connectionString, string markerPath,
     string? barrier, Guid deliveryId)
