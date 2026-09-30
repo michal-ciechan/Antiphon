@@ -64,8 +64,36 @@ conversation directory than the deterministic transcript tailer watched. It
 now applies `AgentSessionService.BuildSessionIdentityArgs` with the captured
 session id before direct launch. Receipt:
 `.antiphon/checkpoints/r36/DIAG-V15-l-20260930-020653-1caf`.
+DIAG-V15-m confirmed the fake CLI and runner sidecar now name the same
+`updates.jsonl` and the converter wrote its output, but the linked task
+remained Dispatched until the catch-up watchdog expired. The next diagnostic
+compares native and persisted event kinds and marker presence to locate the
+remaining settlement gap. Receipt:
+`.antiphon/checkpoints/r36/DIAG-V15-m-20260930-021542-8d21`.
+DIAG-V15-n narrowed the remaining gap: native and database transcripts both
+contain `UserPrompt,AssistantText,TurnEnd`, the prompt has the task marker, and
+the assistant text has the `done` report token. The task still remained
+`Dispatched`; this is a settlement path issue, not a transcript gap. A scoped
+warning logger now records the task reply service's exception class for the
+next diagnostic. Receipt:
+`.antiphon/checkpoints/r36/DIAG-V15-n-20260930-022214-5e73`.
+DIAG-V15-o confirmed the same native/stored three-event turn and both markers,
+with no task-reply warning exception. This points to a turn-selection guard
+returning without settlement. The next diagnostic records the selector kind
+and skip codes. Receipt:
+`.antiphon/checkpoints/r36/DIAG-V15-o-20260930-022722-ceed`.
+DIAG-V15-p selected the task's marked turn with no skip code or warning, but
+the task still remained Dispatched. The fake Grok fixture had omitted
+`promptId` from the assistant chunk's metadata while putting `prompt_id` on
+the completion. The normalizer consequently gave AssistantText the anonymous
+segment id `:0` and TurnEnd the named prompt id. The task reply service
+correctly waited for the ending response's own text. The fixture now emits
+the same prompt id on the assistant chunk so the real normalizer can join the
+two records. Receipt:
+`.antiphon/checkpoints/r36/DIAG-V15-p-20260930-023404-f7a1`.
 
 ## Remaining ordinary work
 
-V-17, V-18 and V-23 are next in plan order. R-2–R-6, R-9, R-11 and R-13–R-14
-remain open until their whole-ID oracles are satisfied.
+V-17, V-18 and V-23 code and test slices are present, pending their listed
+checkpoint receipts. R-2–R-6, R-9, R-11 and R-13–R-14 remain open until their
+whole-ID oracles are satisfied.
