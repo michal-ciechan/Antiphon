@@ -516,6 +516,30 @@ public class ProviderQuotaRefusalAcceptanceTests
         await AssertBlockedAsync(s, Reset, HoldUntil);
     }
 
+    [Test]
+    public async Task Late_quota_text_refines_reset_without_rearming_retry()
+    {
+        await using var s = await CreateAsync();
+        await s.EmitAsync(string.Empty);
+        await s.SettleAsync();
+        (await s.ReadAsync()).Recovery.ResetAtUtc.ShouldBeNull();
+
+        await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().EnsureAdoptedAsync(
+            s.H.SessionId, 2, null, "usage_limit_exceeded", null, Linux,
+            CancellationToken.None);
+
+        var (task, recovery, hold) = await s.ReadAsync();
+        task.Status.ShouldBe(AgentTaskStatus.Blocked);
+        recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.QuotaBlocked);
+        recovery.NextAttemptAt.ShouldBeNull();
+        recovery.ResetAtUtc.ShouldBe(Reset);
+        hold.ShouldNotBeNull();
+        hold!.DisabledUntil.ShouldBe(HoldUntil);
+        await using var db = s.Db();
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == s.TaskId
+            && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
+    }
+
     private static async Task SeedDueUnknownAsync(Scenario s)
     {
         await using var db = s.Db();

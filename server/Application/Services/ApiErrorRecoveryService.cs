@@ -466,9 +466,7 @@ public sealed class ApiErrorRecoveryService
         bool isNew = true,
         string? providerTimeZoneId = null)
     {
-        if (row.ResolvedReason == ApiErrorRecoveryReasons.QuotaBlocked)
-            return row;
-
+        var alreadyQuotaBlocked = row.ResolvedReason == ApiErrorRecoveryReasons.QuotaBlocked;
         var evidenceAt = row.EvidenceAt ?? now;
         if (await IsWallSupersededAsync(db, sessionId, row.StubSequence, ct))
         {
@@ -535,15 +533,16 @@ public sealed class ApiErrorRecoveryService
 
         // A delegated quota refusal requires an operator choice. It never owns an automatic
         // capacity resume or a same-session retry; the task settlement writes Blocked.
-        if (openTaskId is not null
+        if (alreadyQuotaBlocked
+            || (openTaskId is not null
             && (owningTask!.Status == AgentTaskStatus.Blocked
                 || string.Equals(row.ApiErrorClass, "usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
-                || UsageLimitWallParser.IsQuotaRefusal(errorText)))
+                || UsageLimitWallParser.IsQuotaRefusal(errorText))))
         {
-            if (_capacityRecovery is not null)
+            if (_capacityRecovery is not null && openTaskId is not null)
                 await _capacityRecovery.SupersedeTaskWaitsOnAsync(db, openTaskId.Value,
                     "subscription-quota-blocked", ct);
-            if (row.LastEnqueuedAt is { } lastEnqueued)
+            if (openTaskId is not null && row.LastEnqueuedAt is { } lastEnqueued)
             {
                 // The old Unknown ladder could have left a pending retry. Cancel only rows
                 // owned by this recovery episode; ambiguous rows stay visible for the queue gate.
