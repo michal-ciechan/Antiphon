@@ -20,4 +20,18 @@ the host build slot. The baseline checkpoint will be rerun with that Linux
 environment setting inherited by the nested verifier build. No test body was
 changed for this recovery.
 
-Pending successful CP-1 through CP-5.
+CP-1 rerun at `8c42e138dae1ab896d86018976c846932ee1be7c` is green:
+3 executed, 3 passed, 0 failed, 0 skipped. Filter:
+`/*/*/AgentTaskLandSourceFreshnessTests/(C488_DetachedFollowUpPublishesReviewedFix*)|(C488_BehindSelectsRemote*)|(C488_DetachedFollowUpRequiresFetch*)`.
+Fresh TRX: `.antiphon/checkpoints/20260930-092454-d66b/rows/CP-1/run.trx`.
+Complete producer report copied verbatim to `.antiphon/c802-before-producer.json`
+(SHA256 `bd7fc85bbc66117ea8007be0799b75f6334635ee9587dda084370e3bd87198e4`).
+Host: Debian 12 x86_64, SDK 10.0.401; `UseAppHost=false` inherited by the
+miniature verifier. Build slot: unleased after 60 s broker wait. CP-1 wall:
+325 s; row wall: 175.826 s. Outer TRX durations (all passed): main
+`17.2107442` s, Behind alias `22.9444085` s, RequiresFetch alias
+`24.8679250` s. Combined three `65.0230777` s; aliases `47.8123335` s.
+Each identity invokes the main body, which calls the real landing verifier
+once and the independent target verifier once: 6 real invocations total.
+
+Pending CP-2 through CP-5.
