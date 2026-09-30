@@ -102,7 +102,7 @@ public class HerdrPaneChildKillTests
     {
         var node = ResolveNodeExe();
         if (node is null)
-            throw new TUnit.Core.Exceptions.SkipTestException("node.exe not found for CARD-0497 kill canary");
+            throw new FileNotFoundException("A native Node executable is required for the CARD-0497 kill canary.");
 
         await using var fake = new FakeHerdrServer();
         fake.Start();
@@ -125,7 +125,7 @@ public class HerdrPaneChildKillTests
             fake.SetPaneProcessInfo(
                 pane.PaneId,
                 shellPid: 1,
-                (dummy.Id, "node.exe"),
+                (dummy.Id, OperatingSystem.IsWindows() ? "node.exe" : "node"),
                 (99999, "pwsh.exe"));
 
             var sessionId = Guid.NewGuid();
@@ -474,15 +474,16 @@ public class HerdrPaneChildKillTests
 
     private static string? ResolveNodeExe()
     {
+        var fileName = OperatingSystem.IsWindows() ? "node.exe" : "node";
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var sibling = Path.Combine(programFiles, "nodejs", "node.exe");
-        if (File.Exists(sibling))
+        var sibling = Path.Combine(programFiles, "nodejs", fileName);
+        if (OperatingSystem.IsWindows() && File.Exists(sibling))
             return sibling;
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in path.Split(Path.PathSeparator))
         {
             if (string.IsNullOrWhiteSpace(dir)) continue;
-            var candidate = Path.Combine(dir, "node.exe");
+            var candidate = Path.Combine(dir, fileName);
             if (File.Exists(candidate))
                 return candidate;
         }
