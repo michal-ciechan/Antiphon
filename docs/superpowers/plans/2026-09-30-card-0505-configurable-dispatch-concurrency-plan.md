@@ -1,7 +1,9 @@
 # CARD-0505: configurable project and stage dispatch concurrency
 
 Plan, 2026-09-30. Source baseline: `5ae016a7de1313f4313ee8f7e4fc784175fa80e8`.
-Next stage: TestDesign. This artifact changes no product code or live settings.
+TestDesign, 2026-09-30, against `c45c4ba27cf5a9ceab976179c2836a76238132b4`.
+Next stage: Code, subject to the source-collision ordering below. This artifact changes
+no product code or live settings.
 
 ## Outcome and scope
 
@@ -68,10 +70,52 @@ CARD-0506 is Backlog and already declares its dependency on CARD-0505. Caller fo
 cross-link this plan into those two cards and CARD-0505; reuse CARD-0506 rather than filing
 another UI card. No cards were created or edited by this Plan task.
 
-Before Code, reconcile CARD-0749's land/implementation status and exact footprint. If its
-settings provider has landed, extend that provider and route rather than installing a
-competing source of truth. At this baseline, the concrete design below supplies that missing
-store; host-budget and runner-capacity APIs already implemented by CARD-0654 remain theirs.
+**TestDesign reconciliation (read-only board/task evidence, 2026-09-30).** The verified
+CARD-0505 title is **Configurable dispatch concurrency: parallel + queued limits per
+stage/project**. CARD-0749 is **Make delegation concurrency limits runtime-driven and
+API-overridable**, still Review, revision 16 (last move 2026-09-26T20:12:13Z). Its task
+list is not evidence that its original runtime scope is implemented:
+
+- Code `fd9aa660-f418-4a17-904e-4f89d2e32094` implemented **defaults only** at
+  `2197f3d8e524b2c50cf5de421bc8553a1090891f`. Landing operation
+  `710b302a-8bd7-492b-8c66-2d1e3022ddf2` reports Complete/Landed to master, confirmed
+  2026-09-26T12:38:42Z. Review `b1b80c61` is clean for that narrower scope.
+- Later CARD-0749 tasks concerned platform guidance, not a concurrency provider.
+  Code `b2059dec` landed as `e6806e723c1260690e92023d82a9b7c241d5560d` (operation
+  `c29111c1-eeaa-4d89-bc2e-9b6244067bf7`, confirmed 2026-09-26T20:15:15Z);
+  Review `663a02ac` is clean for that guidance. Both landed SHAs are ancestors of this
+  TestDesign baseline (`git merge-base --is-ancestor`, both exit 0).
+- The defaults diff from `7d6e3fe9` to `2197f3d8` overlaps this plan at exactly
+  `server/Application/Settings/DelegationSettings.cs`,
+  `tests/Antiphon.Tests/Application/AgentTaskConcurrencyLimitTests.cs`,
+  `tests/Antiphon.Tests/Application/AgentTaskPipelineStatusTests.cs`,
+  `scripts/delegate.ps1`, `docs/antiphon-api.md`, `docs/orchestration-loop.md` and
+  `server/Bundles/orchestrator.md`. Its other files were `AGENTS.md`,
+  `.claude/skills/antiphon-orchestrator/SKILL.md`,
+  `client/src/test/fixtures/contract/pipeline.json`,
+  `tests/Antiphon.Tests/Application/AgentTaskServiceIntegrationTests.cs` and
+  `tests/Antiphon.Tests/Application/PostLandMutationAdmissionTests.cs`; those stay
+  outside CARD-0505's edits. Platform guidance overlaps only the already-listed
+  `scripts/delegate.ps1`, `docs/orchestration-loop.md`, `server/Bundles/orchestrator.md`.
+- Original **unimplemented behavioral overlap**, now folded into S1-S3 here: audited
+  seed-once runtime limits, revisioned GET/PUT/history and provenance, live gate/pipeline/
+  refusal readers, and project inheritance. The specific consumer collisions are
+  `DelegationOpenGate.cs`, `AgentTaskDispatcher.cs`, `AgentTaskPipelineStatusService.cs`,
+  `ConcurrencyLimitException.cs`, `Program.cs`, `AppDbContext.cs`, the migration snapshot,
+  and the new DispatchConcurrency files listed below. There is no existing runtime
+  concurrency route/store to extend in this baseline. Do not launch a second CARD-0749
+  implementation of these behaviors. Its historical `MaxConcurrentTasks` absolute-cap
+  wording must not conflate a host budget with `MaxOpenTasks` project admission.
+- **Ordering is resolved:** the defaults/guidance prerequisites have landed. Code can
+  implement this plan's single store after the other active source collisions clear;
+  no additional CARD-0749 land is needed. Caller records the residual runtime scope as
+  covered by CARD-0505 on CARD-0749, without treating the defaults-only work as completion
+  of the runtime request. Existing host/runner capacity APIs remain CARD-0654's controls.
+  CARD-0506 remains the existing UI follow-up; do not create or implement another UI card.
+
+Reproduce the reconciliation with `card.ps1 get CARD-0749 -Board Antiphon`, its history,
+the board-scoped task list, and GET of the named tasks (detail uses `summary` plus
+`result`/`landing`). These were reads only; this task did not edit cards or settings.
 
 ## Design decisions
 
@@ -403,11 +447,20 @@ collision contract; do not broaden them silently. New paths are marked **new**.
 
 No `src/Antiphon.SessionRunner` or shared runner protocol changes, no UI, host-capacity
 implementation, routing-pin store, provider credentials/readiness, or deployment scripts.
-CARD-0849's stated `deploy/compose/c590-remote.sh` footprint does not intersect. CARD-0778's
-Grok-readiness work is outside these changes; its plan is the parent commit here. Confirm
-its final source paths before Code rather than editing adjacent readiness logic. The
-known substantive collision is CARD-0749 plus any task changing AgentTaskDispatcher,
-Program/AppDbContext or migration snapshot: defer overlapping Code until it lands.
+The board-scoped live task read on 2026-09-30 showed CARD-0849 Code `02b47ebb` and
+CARD-0778 Code `386a95bf` Dispatched, and CARD-0719 Review `1c31680d` Dispatched.
+CARD-0849's exact plan footprint (both server2 runner Compose files; c590-remote,
+c590-real, verify-docker-stack, deploy-server2, test-deploy-server2, both c727 fixture
+scripts, verify-card0849-caches; DockerStackContractTests, RemoteScriptContractTests;
+docs/docker-stack.md and docs/bootstrap.md) has **zero intersection** with S1-S3.
+Do not add deployment/cache changes here. CARD-0719 intersects at `docs/ops-http.md`;
+land that reviewed work before editing the same documentation. CARD-0778 intersects
+at `docs/session-runtime-invariants.md` (its actual readiness implementation is in
+RunnerGrokAdapter/FakeGrok and separate tests). Under the standing same-area rule,
+defer CARD-0505 Code until CARD-0778 lands; preserve both invariant sections when composing
+S3. Re-read the scoped task list at Code dispatch: a new owner of AgentTaskDispatcher,
+Program/AppDbContext, the migration snapshot or any listed shared doc also defers Code.
+The CARD-0749 defaults/guidance dependency is already landed, as reconciled above.
 
 ## Rollout and risks
 
@@ -454,6 +507,18 @@ interleavings and confirm selectors before Code. Do not replace outcome assertio
 tests of copied formulas or settings-only assertions that never exercise the real gate.
 
 ### Static census at the source baseline
+
+TestDesign independently repeated the source census at `c45c4ba2`: **123 methods /
+146 expanded results**, exactly matching the Plan. Enumerated every `.cs` path under
+`tests/Antiphon.Tests` with `rg --files`, selected containing top-level class names,
+counted `[Test]` methods and `max(1, Arguments-count)`, then inspected the selected
+attributes/bodies for generators and platform skips. Partial-file contributions:
+DispatchHoldVisibilityTests 14/17 + HostBudgetAdmissionTests 9/11 = 23/28;
+AgentTaskPipelineStatusTests 26/35 + AgentTaskPipelineStatusC557Tests 19/19 +
+HostBudgetPipelineTests 4/4 = 49/58. The endpoint class contributes its own 4/4.
+RunnerDefaultTests contains other classes deliberately outside CP-1. There are no
+method data sources/matrices or OS skips in this selected roster. Shared constructor
+`ClassDataSource<AntiphonWebAppFactory>` does not multiply the endpoint tests.
 
 Census walked test attributes and containing class names in `tests/Antiphon.Tests`,
 expanded `[Arguments]`, and merged partial classes. None of these selected methods uses
