@@ -442,7 +442,7 @@ function Get-CollectionQuery {
     if ($script:collectionLimitSupplied) {
         $parts += 'limit=' + [uri]::EscapeDataString([string]$Limit)
     }
-    if ($null -ne $PageToken) { $parts += 'pageToken=' + [uri]::EscapeDataString($PageToken) }
+    if (-not [string]::IsNullOrEmpty($PageToken)) { $parts += 'pageToken=' + [uri]::EscapeDataString($PageToken) }
     return '?' + ($parts -join '&')
 }
 
