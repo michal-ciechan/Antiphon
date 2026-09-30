@@ -619,7 +619,10 @@ public sealed class TaskPlatformDispatchTests
     private sealed class NoGit : ILandingGit
     {
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
-            Task.FromResult(new LandingGitResult(0, new string('1', 40), ""));
+            Task.FromResult(new LandingGitResult(0,
+                arguments.Count == 3 && arguments[0] == "remote" && arguments[1] == "get-url" && arguments[2] == "origin"
+                    ? "https://github.com/example/antiphon.git"
+                    : new string('1', 40), ""));
         public Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
         public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => Task.FromResult(path);
