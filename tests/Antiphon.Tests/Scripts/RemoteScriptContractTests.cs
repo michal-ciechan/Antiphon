@@ -1021,6 +1021,83 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("unmarked-preserved");
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Prune_refuses_stale_or_busy_authority()
+    {
+        // The second target is an escaping symlink. The first target has a prune
+        // candidate, so this catches a delete-before-whole-set-validation bug.
+        var output = LinuxShell(CachePruneHarness() + """
+            mkdir -p "$root/volumes/packages" "$root/volumes/scratch" "$root/volumes/npm"
+            printf 'untouched\n' > "$root/volumes/packages/sentinel"
+            mkdir -p "$root/outside"
+            ln -s "$root/outside" "$root/volumes/scratch-link"
+            make_preview "$root/volumes/scratch-link"
+            ( c849_prune ) > "$root/verdict" 2>&1
+            code=$?
+            printf 'exit=%s\n' "$code"
+            cat "$root/verdict"
+            [ "$(cat "$root/volumes/packages/sentinel")" = untouched ] && echo package-retained
+            [ ! -s "$root/docker-trace" ] && echo no-docker-mutation
+            [ ! -e "$root/outside/sentinel" ] && echo sibling-retained
+            """);
+        output.ShouldContain("exit=2");
+        output.ShouldContain("CacheTargetInvalid");
+        output.ShouldContain("package-retained");
+        output.ShouldContain("no-docker-mutation");
+        output.ShouldContain("sibling-retained");
+    }
+
+    private static string CachePruneHarness()
+    {
+        var text = Remote();
+        return """
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            mkdir -p "$root/case" "$root/server2/cache/previews" "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" "$root/recovery/packages/microsoft.netcore.app.ref/9.0.20"
+            CASE_DIR="$root/case"
+            SERVER2_ROOT="$root/server2"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            C849_PACKAGES=antiphon-runner-cache-nuget-packages
+            C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+            C849_NPM=antiphon-runner-cache-npm-content
+            C590_PREVIEW_RUN=c84900000000000000000
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            LANE=host
+            : > "$root/docker-trace"
+            printf 'host\n' > "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+            printf 'metadata\n' > "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
+            printf 'metadata\n' > "$root/recovery/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
+            hash="$(sha256sum "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+            printf 'recovery=%s\npayload-sha256=%s\nimage=sha256:%064d\n' "$root/recovery" "$hash" 0 > "$C849_READY"
+            require_lane() { [ "$1" = "$LANE" ]; }
+            c849_lock() { :; }
+            c849_prune_idle() { :; }
+            c849_require_ready() { :; }
+            c849_image() { echo image; }
+            sudo() { [ "$1" = -n ] && shift; "$@"; }
+            docker() { printf '%s\n' "$*" >> "$root/docker-trace"; [ "$1" = image ] && return 0; return 2; }
+            write_result() { printf 'DIAGNOSIS=%s\n' "$2"; exit "$3"; }
+            c849_observe_volume() {
+                local path="$root/volumes/packages"
+                [ "$2" = nuget-scratch ] && path="$SCRATCH_PATH"
+                [ "$2" = npm-content ] && path="$root/volumes/npm"
+                printf '%s %s %s 1654:1654:700 100 100\n' "$1" "$2" "$path"
+            }
+            make_preview() {
+                SCRATCH_PATH="$1"
+                local receipt="$SERVER2_ROOT/cache/previews/$C590_PREVIEW_RUN"
+                mkdir -p "$receipt"
+                c849_observe_volume "$C849_PACKAGES" nuget-packages 100 > "$receipt/volumes.txt"
+                c849_observe_volume "$C849_SCRATCH" nuget-scratch 100 >> "$receipt/volumes.txt"
+                c849_observe_volume "$C849_NPM" npm-content 100 >> "$receipt/volumes.txt"
+                local hash
+                hash="$(sha256sum "$receipt/volumes.txt" | cut -d' ' -f1)"
+                printf 'run=%s\nsource-sha=%s\nvolume-sha256=%s\ncreated-at=%s\n' "$C590_PREVIEW_RUN" "$SHA" "$hash" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$receipt/preview.txt"
+            }
+            """ + "\n" + Block(text, "c849_prune_validate_tree") + "\n" + Block(text, "c849_prune") + "\n";
+    }
+
     // The real Codex-home variables and function over a throwaway server2 root. sudo is a plain
     // call and the owner is the current uid, so the harness needs no privilege.
     private static string CachePrepareHarness()
