@@ -1351,6 +1351,61 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("retained verdict=retire-result=true:");
         output.ShouldContain("private-removed");
         output.ShouldNotContain("cache-lost");
+        var deployments = LinuxShell(Block(remote, "case_deploy_parent") + "\n" +
+            Block(remote, "case_deploy_temp_runner") + "\n" + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
+            SERVER2_ENV="$root/main.env"; SERVER2_TEMP_ENV="$root/temp.env"
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            C604_SERVER_ORIGIN=https://example.invalid
+            HOST_PROJECT=main; TEMP_PROJECT=temp; LANE=host
+            DEPLOY_KEY=x; PHONE_HOME_SECRET=x; CLAUDE_OAUTH_TOKEN_PATH=x
+            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x
+            RUNNER_GIT_USER_NAME=test; RUNNER_GIT_USER_EMAIL=test@example.invalid
+            require_lane() { :; }; ensure_checkout() { :; }
+            ensure_runner_boot_files() { :; }; retire_c590_leftovers() { :; }
+            broker_sha12() { echo aaaaaaaaaaaa; }
+            build_server2_images() { printf 'build\n' >> "$root/trace"; }
+            c849_prepare() {
+                if [ "$MODE" = prepare ]; then write_result false CacheRootNotWritable 2; fi
+                printf 'prepared\n' >> "$root/trace"
+            }
+            c849_require_ready() { write_result false CacheSeedRequired 2; }
+            c849_budget_gate() { echo unsafe-budget >> "$root/trace"; }
+            ensure_build_slots_broker() { echo unsafe-broker >> "$root/trace"; }
+            compose_host() { echo unsafe-compose >> "$root/trace"; }
+            compose_temp() { echo unsafe-compose >> "$root/trace"; }
+            docker() {
+                if [ "$1" = volume ] && [ "$2" = inspect ]; then echo "$root/state"; return 0; fi
+                echo unsafe-docker >> "$root/trace"; return 1
+            }
+            sudo() {
+                [ "$1" = -n ] && shift
+                if [ "$1" = test ]; then shift; test "$@"
+                elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nstate 30000000 1 25000000 1%% /state\n'
+                else return 1; fi
+            }
+            write_result() { printf 'deploy-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            for MODE in prepare ready; do
+                for target in parent temp; do
+                    printf 'seed\n' > "$SERVER2_ENV"
+                    : > "$root/trace"
+                    if [ "$target" = parent ]; then
+                        ( case_deploy_parent ) > "$root/result" 2>&1
+                    else
+                        ( case_deploy_temp_runner ) > "$root/result" 2>&1
+                    fi
+                    printf '%s %s verdict=%s\n' "$MODE" "$target" "$(cat "$root/result")"
+                    if grep -q '^unsafe-' "$root/trace"; then echo unsafe-deploy; fi
+                done
+            done
+            """);
+        foreach (var target in new[] { "parent", "temp" })
+        {
+            deployments.ShouldContain("prepare " + target + " verdict=deploy-result=false:CacheRootNotWritable");
+            deployments.ShouldContain("ready " + target + " verdict=deploy-result=false:CacheSeedRequired");
+        }
+        deployments.ShouldNotContain("unsafe-deploy");
     }
 
     [Test]
