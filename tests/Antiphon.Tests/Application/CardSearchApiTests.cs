@@ -58,12 +58,13 @@ public class CardSearchApiTests
     {
         var board = await _fixture.BoardAsync();
         var cards = await _fixture.CardsAsync(board.Id, 605);
+        var oldestId = cards[^1].Id;
         await using (var db = _fixture.Writer())
-            await db.Cards.Where(c => c.Id == cards[^1].Id).ExecuteUpdateAsync(s =>
+            await db.Cards.Where(c => c.Id == oldestId).ExecuteUpdateAsync(s =>
                 s.SetProperty(c => c.Description, "needle-0846"));
         var result = await SearchAsync("needle-0846", board.Id);
         result.Total.ShouldBe(1);
-        result.Cards.Single().Id.ShouldBe(cards[^1].Id);
+        result.Cards.Single().Id.ShouldBe(oldestId);
     }
 
     [Test] public async Task Every_public_search_field_matches_independently()
