@@ -157,6 +157,11 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                         _logger?.LogWarning(
                             "Session {SessionId} {Message}", _terminal.SessionId, message);
                     }
+                    else if (message.StartsWith("codex-startup ready", StringComparison.Ordinal))
+                    {
+                        _logger?.LogInformation(
+                            "Session {SessionId} {Message}", _terminal.SessionId, message);
+                    }
                     else
                     {
                         _logger?.LogDebug(

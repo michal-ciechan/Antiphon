@@ -75,11 +75,12 @@ public sealed class SessionInputLog
     /// </summary>
     public bool MatchesRecordedInput(string? candidateText)
     {
-        if (!PromptSubmissionMatch.TryBuildNeedle(candidateText, out var needle))
+        if (!PromptSubmissionMatch.TryBuildNeedle(candidateText, out _))
             return false;
 
         lock (_gate)
-            return _buffer.Length > 0 && _buffer.ToString().Contains(needle, StringComparison.Ordinal);
+            return _buffer.Length > 0
+                && PromptSubmissionMatch.IsConfirmedBy(candidateText, _buffer.ToString());
     }
 
     /// <summary>
