@@ -402,8 +402,27 @@ census before any build; do not run --list-tests or test discovery for this stag
 | ReportWriterTests | 6 / 6 | 5 / 5 | 6 |
 | ReportMergerTests | 1 / 1 | 1 / 1 | 1 |
 | ProcessSpawnLimitTests | 3 / 3 | 3 / 3 | 3 |
-| Whole Checkpoints namespace (informational, not a new run) | 155 / 161 | 250 / 259 | 288 cases / 279 methods including the 18 new methods |
-| Whole Unit selection | 2459 / 3592 | historical execution totals are not used | 3675 cases / 2539 methods including 10 new Unit methods |
+| Whole Checkpoints namespace (informational, not a new run) | 155 / 161 | 250 / 259 | 290 cases / 281 methods at Code HEAD plus the 18 new methods |
+| Whole Unit selection | 2459 / 3592 | historical execution totals are not used | 3679 cases / 2543 methods at Code HEAD plus 10 new Unit methods |
+
+**Code source re-census at assigned HEAD `6bf159cf6` (before execution):**
+the landed tree contains 263 Checkpoints methods / 272 expanded cases and
+2533 Unit methods / 3669 expanded cases. The Roslyn syntax census expands
+`Arguments` and the 18 `DispatchHoldLedgerTests.HoldSentences` cases; no test
+host was launched. `Get-NamespaceCensus` independently records 272 selected,
+with 11 declared Windows skips (10 Linux recovery cases plus
+`DetachedLauncherTests.executor_survives_its_starter`) and 18 Linux skips
+(14 Windows recovery cases plus four Windows timeout cases). The named R-1,
+R-2, R-3 rosters remain 51, 13, and 3 cases. Compared with the frozen
+additive projection, the Checkpoints namespace is +2 cases; the current
+`TimeoutTests.total_deadline_skips_a_queued_build_without_starting_it` and
+`DetachedLauncherTests.executor_survives_its_starter` are present. The Unit
+selection is +4 cases net, with four landed
+`PostLandRetrospectiveContractTests` methods among the intervening changes.
+After the 18 planned CARD-0833 methods, the frozen target is 281 Checkpoints
+methods / 290 cases and 2543 Unit methods / 3679 cases. Linux's Unit outcome
+partition remains 33 named skips, hence 3646 executed/passed. Re-run this
+source census and reconcile exact names after S3 before launching checkpoints.
 
 R-1 is the first five classes: **45 methods / 51 cases** after additive landing.
 ExitCodeTests is its one seven-case method. R-2 is the next four classes:
@@ -648,8 +667,8 @@ is `--treenode-filter '/*/Antiphon.Tests.Checkpoints/(BuildSlotClientTests*)|(Ru
 Parenthesize each OR operand in the class segment, not the whole path; never
 split full paths at pipes. Single-method controls use the formula above with
 no method wildcard, because each listed method is non-parameterized.
-The additive-landing census above freezes **85 named executions**, plus **3675
-selected Unit cases** (3642 executions and 33 declared Linux skips). Unit overlaps
+The Code re-census above freezes **85 named executions**, plus **3679
+selected Unit cases** (3646 executions and 33 declared Linux skips). Unit overlaps
 named Unit members. Named rows require zero failures and zero skips. Reconcile
 the actual prerequisite landing before running; this is a closed selection, not
 an open-ended floor. Min is only the tool's mechanical lower-bound check; exact
@@ -662,7 +681,7 @@ roster/count/outcome equality in Expect is an additional acceptance requirement.
 | CP-3 | all | CP-1 | slot-regression | `/*/Antiphon.Tests.Checkpoints/(BuildSlotClientTests*)\|(RunSchedulerTests*)\|(RowRunnerTests*)\|(ExitCodeTests*)\|(BaselineComparerTests*)/*` | R-1 | exactly 51 executed/passed, 0 failed/skipped | 51 | 4 | 5 | true |
 | CP-4 | all | CP-1 | receipt-regression | `/*/Antiphon.Tests.Checkpoints/(CheckpointAppTests*)\|(CheckpointLineTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)/*` | R-2 | exactly 13 executed/passed, 0 failed/skipped | 13 | 2 | 3 | true |
 | CP-5 | all | CP-1 | process-limit | `/*/Antiphon.Tests/ProcessSpawnLimitTests*/*` | R-3 | exactly 3 executed/passed, 0 failed/skipped | 3 | 1 | 1 | true |
-| CP-6 | all | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | R-4 | exact census: 3675 selected; Linux 3642 executed/passed, 33 named skips, 0 failed | 3642 | 12 | 15 | true |
+| CP-6 | all | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | R-4 | exact census: 3679 selected; Linux 3646 executed/passed, 33 named skips, 0 failed | 3646 | 12 | 15 | true |
 
 ## Handoff and completion
 
