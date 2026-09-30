@@ -310,6 +310,115 @@ public sealed partial class ChannelOutboundDeliveryTests
     }
 
     [Test]
+    public async Task Serialized_payload_budget_includes_all_fields()
+    {
+        const int cap = 2048;
+        var root = Directory.CreateTempSubdirectory("c0418-output-wire-").FullName;
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var now = DateTime.UtcNow;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        try
+        {
+            using var raw = JsonDocument.Parse("""{"note":"zażółć ✨","format":"file"}""");
+            var originalBytes = "# original source"u8.ToArray();
+            var original = new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"),
+                ReplyHandle = "thread-✨", RawOverrides = raw.RootElement.Clone(),
+                Text = "original answer",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "źródło.md", Mime = "text/markdown", Content = originalBytes }],
+            };
+            var snapshot = await files.StageAsync(deliveryId, original, CancellationToken.None);
+            var addition = new byte[1500];
+            Random.Shared.NextBytes(addition);
+            await File.WriteAllBytesAsync(Path.Combine(snapshot.OutputDirectory, "combined.pdf"), addition);
+            await File.WriteAllTextAsync(Path.Combine(snapshot.OutputDirectory, "manifest.json"),
+                JsonSerializer.Serialize(new
+                {
+                    version = 1, deliveryId, disposition = "converted",
+                    files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                        mime = "application/pdf", length = addition.Length,
+                        sha256 = Convert.ToHexStringLower(SHA256.HashData(addition)) } },
+                }));
+            var converted = original with
+            {
+                Attachments = [.. original.Attachments,
+                    new OutboundAttachment { Kind = AttachmentKind.File, Name = "combined.pdf",
+                        Mime = "application/pdf", Content = addition }],
+            };
+            JsonSerializer.SerializeToUtf8Bytes(converted,
+                global::Antiphon.Messaging.MessagingJson.Options).Length.ShouldBeGreaterThan(cap);
+            JsonSerializer.SerializeToUtf8Bytes(original with
+            {
+                Text = ChannelOutboundService.AnnotateFallback(original.Text, true),
+            }, global::Antiphon.Messaging.MessagingJson.Options).Length.ShouldBeLessThan(cap);
+
+            await using (var seed = new AppDbContext(options))
+            {
+                seed.Projects.Add(new Project { Id = projectId, Name = "wire-" + projectId.ToString("N"),
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "wire",
+                    CreatedAt = now, UpdatedAt = now });
+                seed.Agents.Add(new Agent { Id = agentId, BoardId = boardId, Name = "wire",
+                    Slug = "wire-" + agentId.ToString("N"), WorkingDirectory = root });
+                seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                    ExternalId = channelId.ToString("N"), AgentId = agentId,
+                    CreatedAt = now, UpdatedAt = now });
+                seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                {
+                    Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"),
+                    ChannelId = channelId, ProjectId = projectId, InboundAgentId = agentId,
+                    SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "",
+                    PromptRevision = new string('a', 64), InputPath = snapshot.ReplyPath,
+                    InputSha256 = snapshot.ReplySha256, Trigger = "EveryAgentReply",
+                    ConversionTaskId = taskId, State = ChannelOutboundDeliveryState.Converting,
+                    CreatedAt = now, DeadlineAt = now.AddHours(1),
+                });
+                seed.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, ProjectId = projectId,
+                    AgentId = agentId, Title = "Convert", Goal = "Make PDF",
+                    WorkingDirectory = root, RepoPath = root,
+                    OutboundDeliveryId = deliveryId, Status = AgentTaskStatus.Succeeded,
+                    CreatedAt = now, CompletedAt = now,
+                });
+                await seed.SaveChangesAsync();
+            }
+            await using (var pumpDb = new AppDbContext(options))
+            {
+                var pump = new ChannelOutboundDeliveryPump(pumpDb, null!, files, producer,
+                    Options.Create(new AntiphonMessagingOptions { MaxMessageBytes = cap }),
+                    TimeProvider.System, NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(0);
+            }
+            var sent = producer.SentReplies.ShouldHaveSingleItem();
+            sent.Text.ShouldBe(ChannelOutboundService.AnnotateFallback(original.Text, true));
+            sent.Attachments.ShouldHaveSingleItem().Content.ShouldBe(originalBytes);
+            JsonSerializer.SerializeToUtf8Bytes(sent,
+                global::Antiphon.Messaging.MessagingJson.Options).Length.ShouldBeLessThan(cap);
+            await using var check = new AppDbContext(options);
+            var delivery = await check.ChannelOutboundDeliveries.AsNoTracking()
+                .SingleAsync(d => d.Id == deliveryId);
+            delivery.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            delivery.ConversionOutcome.ShouldBe("Fallback");
+            delivery.OutputPath.ShouldBeNull();
+            delivery.PublicationAttempts.ShouldBe(1);
+            (await check.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Fallback_annotation_uses_actual_wire_budget_and_overcap_keeps_stamps_null()
     {
         const int cap = 2048;
