@@ -6,12 +6,15 @@ using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Messaging.Slack;
 using Antiphon.Messaging.Tests.FakeSlack;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
+using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,6 +30,119 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class ChannelOutboundDeliveryTests
 {
+    [Test]
+    public async Task Pending_conversion_is_not_an_inbound_lost_reply()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = isolated.ConnectionString,
+            PreserveDatabaseOnDispose = true,
+            TimeProvider = clock,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0,
+                PendingReplyTtlMinutes = 30 },
+        });
+        var chat = await h.BindChannelAsync();
+        var root = Directory.CreateTempSubdirectory("c0418-owned-ttl-").FullName;
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var deliveryId = Guid.NewGuid();
+        const string prompt = "[Telegram] old question awaiting a converted answer";
+        var correlationId = await h.SeedPendingMessageAsync(prompt, deliveryAttempts: 1,
+            baselineSequence: await h.CurrentTranscriptMaxSequenceAsync(),
+            createdAtUtc: h.Now.AddHours(-2), origin: QueuedMessageOrigin.Channel,
+            conversationKey: $"telegram:{chat}");
+        try
+        {
+            var frozen = await files.StageAsync(deliveryId, new ChannelReply
+            {
+                Channel = "telegram", ConversationId = chat, ReplyHandle = chat,
+                Text = "frozen original",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                    Name = "source.md", Mime = "text/markdown", Content = "# source"u8.ToArray() }],
+            }, CancellationToken.None);
+            var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+            Guid channelId;
+            Guid projectId;
+            await using (var seed = new AppDbContext(options))
+            {
+                var channel = await seed.ChatChannels.SingleAsync(c => c.ExternalId == chat);
+                channelId = channel.Id;
+                projectId = await seed.Agents.Where(a => a.Id == h.AgentId)
+                    .Join(seed.Boards, a => a.BoardId, b => b.Id, (a, b) => b.ProjectId)
+                    .SingleAsync();
+                seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                {
+                    Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"),
+                    ChannelId = channelId, ProjectId = projectId, InboundAgentId = h.AgentId,
+                    SourceSessionId = h.SessionId, SendKind = "main", ProfileName = "",
+                    PromptRevision = new string('a', 64), InputPath = frozen.ReplyPath,
+                    InputSha256 = frozen.ReplySha256, Trigger = "EveryAgentReply",
+                    State = ChannelOutboundDeliveryState.Converting,
+                    ConversionTaskId = Guid.NewGuid(), CreatedAt = h.Now.AddMinutes(-3),
+                    DeadlineAt = h.Now.AddMinutes(1),
+                });
+                (await seed.SessionQueuedMessages.SingleAsync(m => m.Id == correlationId))
+                    .ChannelOutboundDeliveryId = deliveryId;
+                await seed.SaveChangesAsync();
+            }
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId,
+            [
+                new SessionRunnerTranscriptEvent(h.SessionId, 1, TranscriptKinds.UserPrompt,
+                    "owned-prompt", null, DateTimeOffset.UtcNow, "user", prompt,
+                    null, null, null, null, null),
+                new SessionRunnerTranscriptEvent(h.SessionId, 2, TranscriptKinds.AssistantText,
+                    "owned-answer", null, DateTimeOffset.UtcNow, "assistant", "late answer",
+                    null, null, null, null, null),
+                new SessionRunnerTranscriptEvent(h.SessionId, 3, TranscriptKinds.TurnEnd,
+                    "owned-end", null, DateTimeOffset.UtcNow, "assistant", null,
+                    null, null, null, null, TranscriptKinds.StopReasons.EndTurn),
+            ], 3));
+            await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+            (await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None)).ShouldBe(0);
+            (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+            h.Messaging.SentReplies.ShouldBeEmpty();
+            await using (var check = new AppDbContext(options))
+            {
+                var owned = await check.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId);
+                owned.ChannelOutboundDeliveryId.ShouldBe(deliveryId);
+                owned.ChannelReplySettledAt.ShouldBeNull();
+                (await check.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == deliveryId)).State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+                (await check.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                    && i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(0);
+            }
+
+            clock.Advance(TimeSpan.FromMinutes(2));
+            await using (var pumpDb = new AppDbContext(options))
+            {
+                var pump = new ChannelOutboundDeliveryPump(pumpDb, null!, files, h.Messaging,
+                    Options.Create(new AntiphonMessagingOptions()), clock,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(0);
+            }
+            var sent = h.Messaging.SentReplies.ShouldHaveSingleItem();
+            sent.Text.ShouldContain("frozen original");
+            await using (var check = new AppDbContext(options))
+            {
+                var delivery = await check.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == deliveryId);
+                delivery.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+                delivery.ConversionOutcome.ShouldBe("Expired");
+                (await check.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.Id == correlationId)).ChannelReplySettledAt.ShouldNotBeNull();
+            }
+            (await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None)).ShouldBe(0);
+            await using var finalDb = new AppDbContext(options);
+            (await finalDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+                && i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(0);
+            h.Messaging.SentReplies.Count.ShouldBe(1);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Test]
     [Arguments("corrupt")]
     [Arguments("missing")]

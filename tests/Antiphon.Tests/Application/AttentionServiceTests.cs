@@ -48,6 +48,9 @@ public partial class AttentionServiceTests
     {
         var channelId = Guid.NewGuid();
         var deliveryId = Guid.NewGuid();
+        var projectId = Guid.NewGuid();
+        var sourceSessionId = Guid.NewGuid();
+        var conversionTaskId = Guid.NewGuid();
         await using var db = CreateContext();
         var now = DateTime.UtcNow;
         db.ChatChannels.Add(new ChatChannel
@@ -58,23 +61,47 @@ public partial class AttentionServiceTests
         db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
         {
             Id = deliveryId, SourceKey = new string('a', 64), ChannelId = channelId,
-            ProjectId = Guid.NewGuid(), SourceSessionId = Guid.NewGuid(),
+            ProjectId = projectId, SourceSessionId = sourceSessionId,
             SendKind = "main", PromptRevision = new string('b', 64),
             InputPath = "frozen", InputSha256 = new string('c', 64),
-            State = ChannelOutboundDeliveryState.PublishUncertain,
+            ConversionTaskId = conversionTaskId,
+            State = ChannelOutboundDeliveryState.Held,
             FailureReason = "Broker acceptance unknown", CreatedAt = now, DeadlineAt = now,
         });
         await db.SaveChangesAsync();
         try
         {
-            await using var projectionDb = CreateContext();
-            var row = (await BuildService(new FakeRunnerClient(), db: projectionDb)
+            foreach (var state in new[] { ChannelOutboundDeliveryState.Held,
+                ChannelOutboundDeliveryState.Failed, ChannelOutboundDeliveryState.PublishUncertain })
+            {
+                await db.ChannelOutboundDeliveries.Where(d => d.Id == deliveryId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.State, state));
+                for (var read = 0; read < 2; read++)
+                {
+                    await using var projectionDb = CreateContext();
+                    var row = (await BuildService(new FakeRunnerClient(), db: projectionDb)
+                            .GetAsync(CancellationToken.None)).Items
+                        .Single(i => i.ConditionKey == $"channel-outbound:{deliveryId:N}");
+                    row.Kind.ShouldBe(AttentionKind.ChannelOutboundDelivery);
+                    row.Severity.ShouldBe(state == ChannelOutboundDeliveryState.PublishUncertain
+                        ? AlertSeverity.Critical : AlertSeverity.Error);
+                    row.TaskId.ShouldBe(conversionTaskId);
+                    row.Evidence.ShouldContain(deliveryId.ToString("D"));
+                    row.Evidence.ShouldContain(channelId.ToString("D"));
+                    row.Evidence.ShouldContain(projectId.ToString("D"));
+                    row.Evidence.ShouldContain(conversionTaskId.ToString("D"));
+                    row.Evidence.ShouldContain(sourceSessionId.ToString("D"));
+                    row.Headline.ShouldContain("Broker acceptance unknown");
+                }
+                (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                    .State.ShouldBe(state);
+            }
+            await db.ChannelOutboundDeliveries.Where(d => d.Id == deliveryId)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.State, ChannelOutboundDeliveryState.Published));
+            await using var publishedDb = CreateContext();
+            (await BuildService(new FakeRunnerClient(), db: publishedDb)
                     .GetAsync(CancellationToken.None)).Items
-                .Single(i => i.ConditionKey == $"channel-outbound:{deliveryId:N}");
-            row.Kind.ShouldBe(AttentionKind.ChannelOutboundDelivery);
-            row.Severity.ShouldBe(AlertSeverity.Critical);
-            row.Evidence.ShouldContain(deliveryId.ToString("D"));
-            row.Headline.ShouldContain("Broker acceptance unknown");
+                .ShouldNotContain(i => i.ConditionKey == $"channel-outbound:{deliveryId:N}");
         }
         finally
         {
