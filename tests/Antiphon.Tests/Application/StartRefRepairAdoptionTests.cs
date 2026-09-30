@@ -41,7 +41,7 @@ public sealed class StartRefRepairAdoptionTests
     [Test]
     public async Task C675_PlainLandOnDivergedMirrorStillRefuses()
     {
-        await using var c = await Case.CreateAsync("remote");
+        await using var c = await Case.CreateAsync("remote", AgentTaskStatus.Succeeded);
         await c.H.RequestAsync(expectedSourceSha: c.S);
         c.H.Fixture.Git.Trace.Clear();
         await c.H.RunQueuedAsync();
@@ -98,7 +98,7 @@ public sealed class StartRefRepairAdoptionTests
         c.H.Fixture.Git.Trace.Clear();
         await c.H.RunQueuedAsync();
         await using var db = c.H.CreateContext();
-        (await db.AgentTaskLandRequests.SingleAsync()).SourceRefusalReason.ShouldBe("source_branch_mismatch");
+        (await db.AgentTaskLandRequests.SingleAsync()).SourceRefusalReason.ShouldBe("detached_head");
         (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
         c.H.Fixture.Git.Trace.ShouldNotContain(a => a.Length > 0 && (a[0] == "push" || a[0] == "update-ref"));
         (await c.H.Fixture.RequiredAsync(c.H.Fixture.Repository, "for-each-ref", "refs/antiphon/land"))
