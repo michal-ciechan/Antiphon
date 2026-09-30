@@ -37,6 +37,13 @@ uses the production `GrokRulesRefreshService.QueueLaunchBriefAsync` after the
 direct runner starts, then the real queue delivers that persisted row. It also
 waits for the dispatch cut marker's complete contents before killing the probe.
 
+The first CP-6 rerun on `716d2751550539a7fe38a392dae7a6b0419ea037`
+executed 31 / passed 30 / failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/CP-6-20260930-043726-0f61/`. The remaining
+failure was a fixture write of null `StartedAt` from the direct runner DTO;
+the persisted session already owns its accepted generation, so the fixture now
+changes only `Status` to Running. The complete-marker change passed its case.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
