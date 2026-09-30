@@ -112,7 +112,9 @@ public sealed record CardDto(
     public RequiredPlatform RequiredPlatform { get; init; } = RequiredPlatform.Any;
 }
 
-public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated);
+public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated, string? NextPageToken = null);
+
+public sealed record CardSearchDto(IReadOnlyList<CardDto> Cards, long Total, bool Truncated, string? NextPageToken);
 
 public sealed record ExternalIssueDto(
     TrackerKind TrackerKind,

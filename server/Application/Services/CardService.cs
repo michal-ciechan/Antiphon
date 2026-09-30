@@ -1,4 +1,6 @@
 using System.Data;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -58,6 +60,7 @@ public sealed class CardService : IScheduledCardActions
 
     /// <summary>CARD-0350: an alias is at most five words. Rejected, never truncated.</summary>
     public const int MaxAliasWords = 5;
+    public const int MaxSearchQueryLength = 500;
 
     /// <summary>
     /// The author recorded on a revision nothing human asked for. Self-reported like every other
@@ -218,12 +221,45 @@ public sealed class CardService : IScheduledCardActions
         DateTime? updatedSince,
         CardStatus? status,
         Guid? boardId,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? limit = null,
+        string? pageToken = null,
+        bool includeArchived = false)
     {
-        IQueryable<Card> query = _db.Cards
-            .AsNoTracking()
-            .Where(card => card.ArchivedAt == null);
+        var page = await ReadPageAsync("list", updatedSince, status, boardId, null,
+            limit, pageToken, includeArchived, ct);
+        return new CardListDto(page.Cards, page.Truncated, page.NextPageToken);
+    }
 
+    public async Task<CardSearchDto> SearchAsync(string? q, CardStatus? status, Guid? boardId,
+        int? limit, string? pageToken, bool includeArchived, CancellationToken ct)
+    {
+        var term = q?.Trim();
+        if (string.IsNullOrWhiteSpace(term) || term.Length > MaxSearchQueryLength)
+            throw new ValidationException("q", $"q must contain 1 to {MaxSearchQueryLength} characters after trimming.");
+        var page = await ReadPageAsync("search", null, status, boardId, term,
+            limit, pageToken, includeArchived, ct);
+        return new CardSearchDto(page.Cards, page.Total, page.Truncated, page.NextPageToken);
+    }
+
+    private async Task<(IReadOnlyList<CardDto> Cards, long Total, bool Truncated, string? NextPageToken)>
+        ReadPageAsync(string kind, DateTime? updatedSince, CardStatus? status, Guid? boardId,
+            string? queryText, int? requestedLimit, string? pageToken, bool includeArchived, CancellationToken ct)
+    {
+        if (requestedLimit <= 0)
+            throw new ValidationException("limit", "limit must be positive.");
+        var effectiveLimit = Math.Min(requestedLimit ?? Math.Max(1, _cards.MaxListResults),
+            Math.Max(1, _cards.MaxListResults));
+        CardPageToken? token = null;
+        if (pageToken is not null)
+        {
+            token = CardPageToken.Decode(pageToken);
+            token.RequireScope(kind, boardId, status, updatedSince, queryText, includeArchived, effectiveLimit);
+        }
+
+        IQueryable<Card> query = CardReadQuery.Create(_db, queryText);
+        if (!includeArchived)
+            query = query.Where(card => card.ArchivedAt == null);
         if (updatedSince is DateTime since)
             query = query.Where(card => card.UpdatedAt >= since);
         if (status is CardStatus requestedStatus)
@@ -231,23 +267,53 @@ public sealed class CardService : IScheduledCardActions
         if (boardId is Guid requestedBoardId)
             query = query.Where(card => card.BoardId == requestedBoardId);
 
-        var limit = Math.Max(1, _cards.MaxListResults);
-        var cards = await query
+        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        // Include a version byte, then fixed-width UUID and UTC ticks for every matching row.
+        hash.AppendData([1]);
+        long total = 0;
+        await foreach (var row in query.OrderBy(card => card.Id)
+            .Select(card => new { card.Id, card.UpdatedAt }).AsAsyncEnumerable().WithCancellation(ct))
+        {
+            var encoded = new byte[24];
+            row.Id.TryWriteBytes(encoded.AsSpan(0, 16));
+            BinaryPrimitives.WriteInt64BigEndian(encoded.AsSpan(16), row.UpdatedAt.ToUniversalTime().Ticks);
+            hash.AppendData(encoded);
+            total++;
+        }
+        var fingerprint = Convert.ToHexString(hash.GetHashAndReset());
+        if (token is not null && !string.Equals(token.Fingerprint, fingerprint, StringComparison.Ordinal))
+            throw new ConflictException("Matching cards changed during pagination; restart without pageToken.",
+                "card_page_changed");
+
+        var pageQuery = query;
+        if (token is not null)
+            pageQuery = pageQuery.Where(card => card.UpdatedAt < token.AfterUpdatedAt ||
+                (card.UpdatedAt == token.AfterUpdatedAt && card.Id.CompareTo(token.AfterId) > 0));
+        var cards = await pageQuery
             .Include(card => card.AssignedAgent)
             .Include(card => card.ActiveWorkflowRun)!.ThenInclude(run => run!.CurrentStage)
             .Include(card => card.ExternalIssueRef)
             .OrderByDescending(card => card.UpdatedAt)
             .ThenBy(card => card.Id)
-            .Take(limit + 1)
+            .Take(effectiveLimit + 1)
             .ToListAsync(ct);
 
-        var truncated = cards.Count > limit;
+        var truncated = cards.Count > effectiveLimit;
         if (truncated)
             cards.RemoveAt(cards.Count - 1);
-
-        return new CardListDto(
-            cards.Select(card => BoardService.ToSummaryDto(BoardService.ToCardDto(card), _cards.SummaryPreviewChars)).ToList(),
-            truncated);
+        string? next = null;
+        if (truncated)
+        {
+            var last = cards[^1];
+            next = new CardPageToken(CardPageToken.CurrentVersion, kind, boardId, status, updatedSince,
+                queryText, includeArchived, effectiveLimit, last.UpdatedAt.ToUniversalTime(), last.Id,
+                fingerprint).Encode();
+        }
+        var summaries = cards.Select(card => BoardService.ToSummaryDto(
+            BoardService.ToCardDto(card), _cards.SummaryPreviewChars)).ToList();
+        await transaction.CommitAsync(ct);
+        return (summaries, total, truncated, next);
     }
 
     /// <summary>
