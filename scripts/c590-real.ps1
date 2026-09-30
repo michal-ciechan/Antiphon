@@ -272,7 +272,14 @@ function Invoke-C590LiveCase {
     $tokenCopied = $false
     $tempRetiredAt = ''
     if ($Case -eq 'retire-temp-runner') {
-        if ($names -contains 'tempRetiredAt' -and $Manifest.tempRetiredAt) { $tempRetiredAt = [string]$Manifest.tempRetiredAt }
+        if ($names -contains 'tempRetiredAt' -and $Manifest.tempRetiredAt) {
+            # CARD-0780. ConvertFrom-Json returns ISO-8601 text as [datetime]; [string] gives a
+            # culture date that the guard rejects. Restore the runner's ISO-8601 UTC form.
+            $rawRetiredAt = $Manifest.tempRetiredAt
+            $tempRetiredAt = if ($rawRetiredAt -is [datetime]) {
+                $rawRetiredAt.ToUniversalTime().ToString('o')
+            } else { [string]$rawRetiredAt }
+        }
         if ($tempRetiredAt -and $tempRetiredAt -notmatch '^[0-9TZ:+.-]{10,40}$') { throw 'tempRetiredAt rejected' }
     }
     try {

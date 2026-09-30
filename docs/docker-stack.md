@@ -77,3 +77,4 @@ SourceLanding Mutation runs on Windows (`windows-job-v1`) or on the persistent s
 The class accounting checked into `tests/linux-test-roster.json` is the executable copy of the frozen plan roster. Do not drop a class because Linux is red.
 
 Windows CP-1 through CP-5 passed on `3569ed7cd520e3a76bafc0643feb1da0b42c73ca`. Live cases run on server2 through `scripts/c590-remote.sh`, invoked by `scripts/verify-docker-stack.ps1` when `ANTIPHON_C590_STUB` is unset. Evidence for a run is `/work/test-evidence/<run-id>/<case>/`. Stub mode still answers `UnknownCase` for a case the local guards do not implement.
+PowerShell 7's `ConvertFrom-Json` returns an ISO-8601-looking manifest `tempRetiredAt` as `[datetime]`, so `Invoke-C590LiveCase` reformats it with `ToUniversalTime().ToString('o')` before validating; a case must never cast such a field directly to `[string]` (CARD-0780).
