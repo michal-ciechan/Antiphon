@@ -675,8 +675,15 @@ public sealed class ChannelOutboundRecoveryTests
             var childPid = child.Id;
             var childStarted = child.StartTime;
             using (var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-                while (!File.Exists(markerPath))
+                while (true)
                 {
+                    var marker = File.Exists(markerPath) ? await File.ReadAllTextAsync(markerPath) : "";
+                    var complete = cut == "conversion-dispatched"
+                        ? marker.StartsWith($"dispatch-warning-claim-committed|{acceptedId:N}|",
+                            StringComparison.Ordinal) && marker.Length >=
+                            $"dispatch-warning-claim-committed|{acceptedId:N}|".Length + 32
+                        : running ? marker == "dispatch-ready" : marker.Length > 0;
+                    if (complete) break;
                     child.HasExited.ShouldBeFalse("probe exited before its admission/task barrier");
                     await Task.Delay(25, watchdog.Token);
                 }
@@ -718,19 +725,30 @@ public sealed class ChannelOutboundRecoveryTests
                 var nativeTaskId = (await nativeDb.AgentTasks.AsNoTracking()
                     .SingleAsync(t => t.OutboundDeliveryId == acceptedId)).Id;
                 var requestPath = Path.Combine(storeRoot, acceptedId.ToString("N"), "request.json");
-                var queuedBrief = await nativeDb.SessionQueuedMessages.AsNoTracking()
-                    .SingleAsync(m => m.AgentSessionId == nativeSessionId
-                        && m.Origin == QueuedMessageOrigin.Delegation && m.ExecutionTaskId == nativeTaskId);
-                queuedBrief.Body.ShouldContain(requestPath);
-                queuedBrief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(nativeTaskId));
                 await nativeDb.AgentSessions.Where(s => s.Id == nativeSessionId)
                     .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running)
                         .SetProperty(x => x.StartedAt, started.AcceptedStartedAt));
                 await using (var initialServer = BuildNativeRecoveryProvider(
                     isolated.ConnectionString, nativeRunner))
                 {
-                    await initialServer.GetRequiredService<SessionMessageQueueService>()
+                    var initialQueue = initialServer.GetRequiredService<SessionMessageQueueService>();
+                    // Grok's rules launch defers its task brief. Run the production
+                    // post-rules brief producer against the captured task, then use
+                    // the ordinary queue to type that persisted row into the pty.
+                    var session = await nativeDb.AgentSessions.SingleAsync(s => s.Id == nativeSessionId);
+                    await initialServer.GetRequiredService<GrokRulesRefreshService>()
+                        .QueueLaunchBriefAsync(nativeDb, session, initialQueue, CancellationToken.None);
+                    var queuedBrief = await nativeDb.SessionQueuedMessages.AsNoTracking()
+                        .SingleAsync(m => m.AgentSessionId == nativeSessionId
+                            && m.Origin == QueuedMessageOrigin.Delegation && m.SourceTaskId == nativeTaskId);
+                    (await nativeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == nativeTaskId))
+                        .Goal.ShouldContain(requestPath);
+                    queuedBrief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(nativeTaskId));
+                    await initialQueue
                         .SendNowAsync(nativeSessionId, queuedBrief.Id, CancellationToken.None);
+                    (await nativeRunner.GetTranscriptAsync(nativeSessionId, CancellationToken.None))
+                        .Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt
+                            && e.Text != null && e.Text.Contains(queuedBrief.Body));
                 }
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 try
@@ -751,13 +769,10 @@ public sealed class ChannelOutboundRecoveryTests
                         + $"screenHasTask={buffer.Buffer.Contains(DelegationReportFormatter.TaskMarker(nativeTaskId))}; "
                         + $"screenHasReady={buffer.Buffer.Contains("Fake Grok ready")}; "
                         + $"screenHasToolFailure={buffer.Buffer.Contains("Outbound tool failed")}; "
-                        + $"queuedBrief={queuedBrief.Id:D}");
+                        + $"queuedTask={nativeTaskId:D}");
                 }
                 (await File.ReadAllTextAsync(workerGate + ".held"))
                     .ShouldBe(acceptedId.ToString("D"));
-                (await nativeRunner.GetTranscriptAsync(nativeSessionId, CancellationToken.None))
-                    .Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt
-                        && e.Text != null && e.Text.Contains(queuedBrief.Body));
             }
             child.Id.ShouldBe(childPid);
             child.StartTime.ShouldBe(childStarted);
@@ -1382,9 +1397,11 @@ public sealed class ChannelOutboundRecoveryTests
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new DelegationSettings()));
+        services.AddSingleton(Options.Create(new GrokRulesSettings()));
         services.AddSingleton(Options.Create(new DeliverablesSettings()));
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<GrokRulesRefreshService>();
         services.AddSingleton<AgentTaskReplyService>();
         services.AddSingleton<ILogger<AgentTaskReplyService>>(NullLogger<AgentTaskReplyService>.Instance);
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();

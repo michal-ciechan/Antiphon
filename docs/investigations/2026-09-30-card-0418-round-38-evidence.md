@@ -22,8 +22,21 @@ merging master. The round-36/37 ledger claims were corrected at their source.
 
 ## Checkpoint receipts
 
-Pending. Run the plan's exact CP-1 through CP-13 filters on committed source;
-at minimum CP-5, CP-6, CP-7 are affected. Record each native count and any
-inherited CP-8 `PinnedAgentKindTests.T1/T2` failure here. V-25 remains pending
-because this task authorizes no live send. PC-1 through PC-30 remain pending
-for paused method-scoped SourceLanding Mutation.
+Initial committed slice `bdb22d39f21aa0d1952df933af1b032d883129ad`:
+
+| Row | Executed / passed / failed / skipped | Verdict |
+|---|---:|---|
+| CP-5 | 66 / 66 / 0 / 0 | Pass, including both held-before-conversion deadline cases. |
+| CP-6 | 31 / 29 / 2 / 0 | Red: running case assumed Grok's brief predated rules initialization; conversion-dispatched observed a marker file before its contents were flushed. |
+
+Both rows used one isolated build and the literal plan filters through
+`scripts/run-checkpoint.ps1` with granted build slots. Native receipts are under
+`.antiphon/checkpoints/r38/CP-5-20260930-042455-f5a9/` and
+`.antiphon/checkpoints/r38/CP-6-20260930-042831-5674/`. The next slice
+uses the production `GrokRulesRefreshService.QueueLaunchBriefAsync` after the
+direct runner starts, then the real queue delivers that persisted row. It also
+waits for the dispatch cut marker's complete contents before killing the probe.
+
+Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
+task authorizes no live send. PC-1 through PC-30 remain pending for paused
+method-scoped SourceLanding Mutation.
