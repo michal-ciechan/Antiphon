@@ -514,7 +514,8 @@ public sealed class ChannelOutboundRecoveryTests
                 var fakeDll = Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.dll");
                 File.Exists(fakeDll).ShouldBeTrue();
                 await File.WriteAllTextAsync(workerExe,
-                    "#!/bin/sh\nexec dotnet '" + fakeDll.Replace("'", "'\\''") + "' \"$@\"\n");
+                    "#!/bin/sh\nstty raw -echo\nexec dotnet '"
+                    + fakeDll.Replace("'", "'\\''") + "' \"$@\"\n");
                 File.SetUnixFileMode(workerExe,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
