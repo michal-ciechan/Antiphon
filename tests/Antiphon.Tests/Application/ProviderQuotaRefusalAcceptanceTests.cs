@@ -67,7 +67,8 @@ public class ProviderQuotaRefusalAcceptanceTests
     }
 
     private static async Task<Scenario> CreateAsync(AgentKind kind = AgentKind.Codex,
-        string? alias = "gpt-6-sol", DateTimeOffset? at = null)
+        string? alias = null, DateTimeOffset? at = null,
+        AgentModelLevel tier = AgentModelLevel.High)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(at ?? IncidentAt);
@@ -88,7 +89,7 @@ public class ProviderQuotaRefusalAcceptanceTests
                 Id = id, RootTaskId = id, AgentSessionId = h.SessionId, AgentId = h.AgentId,
                 Status = AgentTaskStatus.Dispatched, Title = "Quota replay", Goal = "Complete the card",
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Docs,
-                ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Shared,
+                ModelLevel = tier, Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = h.TempRoot, ReplyTo = AgentTaskReplyTo.None,
                 CreatedAt = (at ?? IncidentAt).UtcDateTime.AddMinutes(-2),
                 DispatchedAt = (at ?? IncidentAt).UtcDateTime.AddMinutes(-1),
@@ -135,7 +136,8 @@ public class ProviderQuotaRefusalAcceptanceTests
         foreach (var (error, index) in errors)
         {
             var at = error.GetProperty("timestamp").GetDateTimeOffset();
-            await using var s = await CreateAsync(at: at);
+            var tier = sessionPrefix == "faddd3e4" ? AgentModelLevel.Frontier : AgentModelLevel.High;
+            await using var s = await CreateAsync(at: at, tier: tier);
             var marker = DelegationReportFormatter.TaskMarker(s.TaskId);
             var firstSequence = rows[0].GetProperty("sequence").GetInt64();
             var events = new List<RunnerTranscriptEvent>
@@ -169,6 +171,10 @@ public class ProviderQuotaRefusalAcceptanceTests
                 events.Select(RunnerContractMapper.MapTranscript).ToList());
             await s.SettleAsync();
             await AssertBlockedAsync(s, Reset, HoldUntil);
+            var replay = await s.ReadAsync();
+            replay.Hold!.ModelAlias.ShouldBe(ModelLevelAliases.For(AgentKind.Codex, tier));
+            await using (var launch = s.Db())
+                (await launch.AgentSessions.SingleAsync(x => x.Id == s.H.SessionId)).EffectiveModelId.ShouldBeNull();
             s.Clock.Advance(TimeSpan.FromDays(2));
             await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
             await using var verify = s.Db();
@@ -423,6 +429,24 @@ public class ProviderQuotaRefusalAcceptanceTests
     }
 
     [Test]
+    public async Task Delegated_generic_wall_without_model_holds_tier_and_schedules_retry()
+    {
+        await using var s = await CreateAsync();
+        await s.EmitAsync("Rate limit exceeded; resets 6:10pm (Europe/London)", "rate_limit", 429);
+        await s.SettleAsync();
+        var (task, recovery, hold) = await s.ReadAsync();
+        task.Status.ShouldBe(AgentTaskStatus.Working);
+        recovery.Classification.ShouldBe(ApiErrorClassification.Wall);
+        recovery.NextAttemptAt.ShouldNotBeNull();
+        hold.ShouldNotBeNull();
+        hold!.ModelAlias.ShouldBe(ModelLevelAliases.For(AgentKind.Codex, AgentModelLevel.High));
+        hold.DisabledUntil.ShouldBe(recovery.NextAttemptAt);
+        hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
+        await using var db = s.Db();
+        (await db.AgentSessions.SingleAsync(x => x.Id == s.H.SessionId)).EffectiveModelId.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Quota_without_subscription_sample_still_holds_model()
     {
         await using var s = await CreateAsync();
@@ -460,7 +484,7 @@ public class ProviderQuotaRefusalAcceptanceTests
     }
 
     [Test]
-    public async Task Missing_alias_or_zone_blocks_without_fabricated_reset()
+    public async Task Missing_zone_uses_tier_alias_and_estimated_hold_without_fabricated_reset()
     {
         await using var s = await CreateAsync(alias: null);
         await s.EmitAsync(Linux, zone: null);
@@ -468,8 +492,10 @@ public class ProviderQuotaRefusalAcceptanceTests
         var result = await s.ReadAsync();
         result.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
         result.Recovery.ResetAtUtc.ShouldBeNull();
-        result.Hold.ShouldBeNull();
-        result.Task.FailureReason.ShouldContain("model alias unresolved");
+        result.Hold.ShouldNotBeNull();
+        result.Hold!.ModelAlias.ShouldBe(ModelLevelAliases.For(AgentKind.Codex, AgentModelLevel.High));
+        result.Hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
+        result.Task.FailureReason.ShouldContain("reset timezone unavailable");
     }
 
     [Test]
