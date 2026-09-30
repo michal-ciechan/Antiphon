@@ -67,6 +67,18 @@ The dispatcher brief was persisted through `QueueLaunchBriefAsync`, but
 The next exact-method diagnostic records the native stdin burst shape and
 transcript at that refusal; no LF-as-Enter mode has been restored.
 
+The second exact V-15 diagnostic on
+`c1426bd5b5e4d4c8ecb8ac02072583914abfbeff` executed 1 / passed 0 /
+failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-045317-a171/`.
+FakeGrok received the 677-byte brief with LF and a later separate one-byte LF,
+and rendered the brief. The converter's tool gate holds the turn before FakeGrok
+emits output or a transcript row, so synchronous `SendNowAsync` correctly
+refused to mark delivery while the gate was held. The fixture now keeps that
+real queue send in flight, cuts the dispatcher at the held tool, releases the
+tool, then requires queue completion and a native matching `UserPrompt` before
+the rebuilt server reconciles the task and sends its own second prompt.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
