@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.Configuration;
@@ -26,6 +27,84 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerSettlementSyncTests
 {
+    [Test]
+    public async Task Unpushed_runner_commit_is_published_and_desktop_fast_forwards()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.EnsureRunnerAsync();
+        File.WriteAllText(Path.Combine(world.Runner, "unpublished.txt"), "work");
+        await world.RunAsync(world.Runner, "add", "unpublished.txt");
+        await world.RunAsync(world.Runner, "commit", "-m", "unpublished");
+        var tip = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+        var publisher = new LocalMirrorPublisher(world);
+
+        var result = await world.Service(publisher: publisher).SyncAsync(world.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized, result.Reason);
+        result.MirrorSha.ShouldBe(tip);
+        result.MirrorRelation.ShouldBe("descends");
+        result.MirrorPushed.ShouldBeTrue();
+        result.DesktopAfterSha.ShouldBe(tip);
+        (await world.HeadAsync()).ShouldBe(tip);
+        publisher.Calls.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Unavailable_mirror_feature_keeps_no_progress_verdict_with_evidence()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var result = await world.Service().SyncAsync(world.Task, CancellationToken.None);
+        result.State.ShouldBe(RemoteSettlementSyncState.NoPushedProgress);
+        result.MirrorInspection.ShouldBe(RemoteSettlementSyncReasons.MirrorUnavailable);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    [Test]
+    public async Task Diverged_runner_mirror_blocks_without_changing_desktop()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.EnsureRunnerAsync();
+        File.WriteAllText(Path.Combine(world.Desktop, "master.txt"), "new base");
+        await world.RunAsync(world.Desktop, "add", "master.txt");
+        await world.RunAsync(world.Desktop, "commit", "-m", "master advanced");
+        await world.RunAsync(world.Desktop, "push", "origin", "master");
+        await world.RunAsync(world.Runner, "fetch", "origin", "master");
+        await world.RunAsync(world.Runner, "reset", "--hard", "origin/master");
+        var tip = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+
+        var result = await world.Service(publisher: new LocalMirrorPublisher(world))
+            .SyncAsync(world.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Refused);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.MirrorDiverged);
+        result.MirrorSha.ShouldBe(tip);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    private sealed class LocalMirrorPublisher(SyncWorld world) : IRunnerMirrorPublisher
+    {
+        public int Calls { get; private set; }
+
+        public async Task<PhoneHomeWorkspacePublishResponse?> PublishAsync(
+            AgentTask task, string baselineSha, string? remoteSha, CancellationToken ct)
+        {
+            Calls++;
+            await world.EnsureRunnerAsync();
+            var tip = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+            var baseAncestor = await world.TryRunAsync(world.Runner, "merge-base", "--is-ancestor", baselineSha, tip);
+            var status = await world.RunAsync(world.Runner, "status", "--porcelain");
+            if (baseAncestor != 0)
+                return new(tip, "diverged", false, status.Length > 0, false, null);
+            if (tip == (remoteSha ?? baselineSha))
+                return new(tip, "equal", true, status.Length > 0, false, null);
+            var forward = await world.TryRunAsync(world.Runner, "merge-base", "--is-ancestor", remoteSha ?? baselineSha, tip);
+            if (forward != 0)
+                return new(tip, "diverged", true, status.Length > 0, false, null);
+            var push = await world.TryRunAsync(world.Runner, "push", "origin", world.FullRef + ":" + world.FullRef);
+            return new(tip, "descends", true, status.Length > 0, push == 0,
+                push == 0 ? null : "push_rejected");
+        }
+    }
     [Test]
     public async Task Pushed_tip_fast_forwards_exact_owned_checkout()
     {
@@ -888,6 +967,9 @@ public sealed class RunnerSettlementSyncTests
             result.ExitCode.ShouldBe(0, "git " + string.Join(' ', arguments));
             return result.Output.Trim();
         }
+
+        public async Task<int> TryRunAsync(string directory, params string[] arguments) =>
+            (await ExecAsync(directory, arguments)).ExitCode;
 
         private static async Task<LandingGitResult> ExecAsync(string directory, IReadOnlyList<string> arguments)
         {

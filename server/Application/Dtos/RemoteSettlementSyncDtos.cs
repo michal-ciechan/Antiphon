@@ -36,7 +36,12 @@ public sealed record RemoteSettlementSyncResult(
     string? DesktopBeforeSha = null,
     string? DesktopAfterSha = null,
     string? ObservationRef = null,
-    string? EndpointFingerprint = null)
+    string? EndpointFingerprint = null,
+    string? MirrorSha = null,
+    string? MirrorRelation = null,
+    bool? MirrorDirty = null,
+    bool MirrorPushed = false,
+    string? MirrorInspection = null)
 {
     public bool Confirmed => State is RemoteSettlementSyncState.Synchronized or RemoteSettlementSyncState.NoPushedProgress
         && DesktopAfterSha is not null;
@@ -50,6 +55,9 @@ public static class RemoteSettlementSyncReasons
     public const string NoPushedProgress = "runner_no_pushed_progress";
     public const string BranchNotPushed = "runner_branch_not_pushed";
     public const string ReportedCommitNotPushed = "runner_reported_commit_not_pushed";
+    public const string MirrorDiverged = "runner_mirror_diverged";
+    public const string MirrorPublishFailed = "runner_mirror_publish_failed";
+    public const string MirrorUnavailable = "runner_mirror_unavailable";
     public const string Dirty = "runner_sync_dirty";
     public const string Sequencer = "runner_sync_sequencer_active";
     public const string IdentityMismatch = "runner_sync_identity_mismatch";

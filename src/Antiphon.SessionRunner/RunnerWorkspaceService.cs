@@ -330,8 +330,18 @@ public sealed partial class RunnerWorkspaceService
         }
         if (!request.Publish || relation != "descends")
             return new(tip, relation, descendsFromBaseline, dirty, false, null);
-        var push = await GitAsync(path, ct, "push", "origin",
-            "refs/heads/" + request.Branch + ":refs/heads/" + request.Branch);
+        using var pushBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        pushBudget.CancelAfter(TimeSpan.FromSeconds(60));
+        (int ExitCode, string Stdout, string Stderr) push;
+        try
+        {
+            push = await GitAsync(path, pushBudget.Token, "push", "origin",
+                "refs/heads/" + request.Branch + ":refs/heads/" + request.Branch);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new(tip, relation, descendsFromBaseline, dirty, false, "push_rejected");
+        }
         // Git stderr can contain a credential-bearing remote URL; keep only a stable refusal.
         return push.ExitCode == 0
             ? new(tip, relation, descendsFromBaseline, dirty, true, null)

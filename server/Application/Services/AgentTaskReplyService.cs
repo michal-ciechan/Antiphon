@@ -807,9 +807,19 @@ public sealed class AgentTaskReplyService
         string? remoteBlockWarning = null;
         if (remoteBlock is not null)
         {
-            remoteBlockWarning = $"Runner sync {remote.Result!.State.ToString().ToLowerInvariant()}: {remoteBlock}. "
-                + "The report is retained and the desktop checkout was left as found; repair it, then reply "
-                + "to this task for a fresh completion report.";
+            var sync = remote.Result!;
+            remoteBlockWarning = $"Runner sync {sync.State.ToString().ToLowerInvariant()}: {remoteBlock}. "
+                + (sync.Reason == RemoteSettlementSyncReasons.MirrorDiverged
+                    ? $"Runner '{task.RunnerId}' mirror {task.RemoteWorktreePath} is at {sync.MirrorSha}, "
+                      + $"baseline {sync.BaselineSha}. This branch is fast-forward-only. Dispatch a fresh Code task "
+                      + $"on the same runner with -Runner {task.RunnerId} -StartRef <wanted-base>; cherry-pick "
+                      + $"the retained commits from local branch {task.WorktreeBranch} and push."
+                    : sync.Reason == RemoteSettlementSyncReasons.Diverged
+                        ? $"Review the pushed tip {sync.RemoteSha} (Worktree Review with -StartRef {sync.RemoteSha}), "
+                          + $"then delegate.ps1 -Land <owner> -ExpectedSourceSha {sync.RemoteSha} "
+                          + "-ReviewEvidenceId <guid> -RecoverReviewedSource."
+                        : "The report is retained and the desktop checkout was left as found; repair it, then reply "
+                          + "to this task for a fresh completion report.");
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, remoteBlockWarning, now));
         }
 
@@ -3199,8 +3209,15 @@ public sealed class AgentTaskReplyService
             or "claimed_commit_unreachable" or "no_movement")
             reason += " " + evaluated.Reason + ".";
         else if (evaluated.Evidence.RemoteSync is not null && evaluated.Reason is { } runnerReason)
-            reason += $" No new pushed commit was observed on {evaluated.Evidence.RemoteSync.FullRef} "
-                + "(uncommitted or unpushed runner work cannot be seen from here): " + runnerReason + ".";
+        {
+            var mirror = evaluated.Evidence.RemoteSync;
+            reason += $" No new pushed commit was observed on {mirror.FullRef}: {runnerReason}.";
+            if (mirror.MirrorSha is not null || mirror.MirrorInspection is not null)
+                reason += $" Runner mirror {task.RemoteWorktreePath} on '{task.RunnerId}' is at "
+                    + $"{mirror.MirrorSha ?? "unknown"}, {mirror.MirrorRelation ?? "unknown"}, "
+                    + $"dirty={mirror.MirrorDirty?.ToString().ToLowerInvariant() ?? "unknown"}; "
+                    + $"inspection={mirror.MirrorInspection ?? "ok"}.";
+        }
         task.FailureCode = AgentTaskFailureCode.CompletedWithoutProgress;
         return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body, reason);
     }

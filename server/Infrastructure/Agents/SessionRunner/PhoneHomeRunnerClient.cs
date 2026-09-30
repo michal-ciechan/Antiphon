@@ -200,6 +200,13 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<PhoneHomeWorkspaceMirrorResponse>(frame) ?? throw Missing("workspace-mirror");
     }
 
+    public async Task<PhoneHomeWorkspacePublishResponse> PublishWorkspaceAsync(
+        PhoneHomeWorkspacePublishRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspacePublish, request, ct);
+        return Read<PhoneHomeWorkspacePublishResponse>(frame) ?? throw Missing("workspace-publish");
+    }
+
     /// <summary>
     /// CARD-0604 D-19 (Cut B). Custody lives on the producer. The desktop asks the bound runner
     /// for it and imports the exact bytes; it never reconstructs a status from anything local.

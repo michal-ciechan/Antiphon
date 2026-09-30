@@ -1009,7 +1009,7 @@ public sealed class AgentTaskDispatcher
         var oldPath = task.RemoteWorktreePath;
         if (_remoteWorkspace is not null && !string.IsNullOrWhiteSpace(oldPath))
         {
-            var residue = await _remoteWorkspace.RemoveMirrorAsync(task, ct);
+            var residue = await _remoteWorkspace.RemoveMirrorAsync(task, ct, task.WorktreeBaseSha);
             if (residue is not null)
             {
                 _db.AgentTaskEvents.Add(new AgentTaskEvent
