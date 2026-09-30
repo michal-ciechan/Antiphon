@@ -790,8 +790,16 @@ public sealed class ApiErrorRecoveryService
         if (fromAgent is not null)
             return fromAgent;
 
-        // A tier is not evidence of the actual model the provider rejected.
-        return null;
+        var taskLevel = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => (AgentModelLevel?)t.ModelLevel)
+            .FirstOrDefaultAsync(ct);
+        if (taskLevel is { } level)
+            return ModelLevelAliases.For(kind, level);
+        if (agent is not null)
+            return ModelLevelAliases.For(kind, agent.ModelLevel);
+        return ModelLevelAliases.For(kind, AgentModelLevel.High);
     }
 
     private static void Resolve(ApiErrorRecovery row, DateTime now, string reason)
