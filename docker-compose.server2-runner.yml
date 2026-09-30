@@ -103,6 +103,7 @@ services:
       - work:/work
       - runner-state:/state
       - dind-data:/var/lib/docker
+      - runner-tmp:/tmp
       # CARD-0628 D-1: the `claude setup-token` OAuth token, as a FILE and never an environment
       # entry (an environment entry is readable by anyone who can `docker inspect`). deploy-parent
       # writes it from the vault to the host file (0600, always present, empty when the vault had
@@ -176,6 +177,7 @@ volumes:
   work:
   runner-state:
   dind-data:
+  runner-tmp:
 
 networks:
   antiphon-build-slots:
