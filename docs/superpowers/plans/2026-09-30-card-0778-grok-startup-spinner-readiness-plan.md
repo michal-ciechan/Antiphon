@@ -256,6 +256,28 @@ capture command already does all of it:
    observed, V-1/V-6/V-17 have no qualified input: return to investigation rather
    than inventing a decorative spinner. Unknown/startup stays negative meanwhile.
 
+**S1 capture result (Code task `386a95bf`, 2026-09-30; predicate review pending).** Steps 1-6
+ran on the desktop against grok 1.0.41, the incident's version. The committed
+`startup-frames.json`/`provenance.md` hold two replayable reproductions, a screen-only sign-in
+capture, and the incident's full raw `.ansi.log` stream as partial evidence (found at
+`C:\logs\antiphon\session-runner\<id:N>.ansi.log`; no chunk timing). Offline replay matches every
+checkpoint.
+
+A positive spinner layout **was** observed and receipted. An empty composer box, the exact idle
+hint `Shift+Tab:mode  │  Ctrl+x:shortcuts` and a blank status row, while an ASCII header spinner
+and MCP counter redraw, accepted a whole nonce prompt immediately.
+
+The disputed `Starting session…` state **queues** input (`#1` row, `Ctrl+;:queue`) until startup
+ends, so it is not qualified. Working frames reuse the empty box but change the hint and status row.
+
+Other findings:
+- The trust dialog was not reproducible with a disposable API-key home.
+- grok imports two MCP servers from outside `GROK_HOME`.
+- grok 1.0.41 drops the LF of a bracketed-paste body.
+
+See `provenance.md` for bounds, receipts and missing evidence. D-1/D-2 are not amended here: the
+next stage reviews the fixture and predicate before S2.
+
 Fixture schema is one JSON object with `schemaVersion: 1` and named `captures`.
 Each capture records `captureId`, incident/reproduction origin, CLI version,
 source SHA, OS/backend/no-fallback evidence, session ID, UTC/monotonic clock
