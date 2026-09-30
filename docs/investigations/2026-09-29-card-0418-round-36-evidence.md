@@ -56,6 +56,14 @@ through reconciliation; its only reported failure was a pty-host directory
 deletion race in `finally`, which masked any preceding verdict. The fixture
 now explicitly stops its owned runner and retries teardown. Receipts:
 `.antiphon/checkpoints/r36/DIAG-V15-{j,k}-*`.
+DIAG-V15-l passed the native gate and teardown but timed out waiting for task
+settlement. The captured dispatcher spec is a pre-launch-queue spec: production
+`AgentSessionService` appends Grok's `--session-id` before calling the runner.
+The direct fixture skipped that transform, so FakeGrok wrote to a different
+conversation directory than the deterministic transcript tailer watched. It
+now applies `AgentSessionService.BuildSessionIdentityArgs` with the captured
+session id before direct launch. Receipt:
+`.antiphon/checkpoints/r36/DIAG-V15-l-20260930-020653-1caf`.
 
 ## Remaining ordinary work
 

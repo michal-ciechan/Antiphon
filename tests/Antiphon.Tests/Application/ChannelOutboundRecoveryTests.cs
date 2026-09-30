@@ -646,7 +646,16 @@ public sealed class ChannelOutboundRecoveryTests
                 nativeEnv["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
                 if (!OperatingSystem.IsWindows())
                     nativeEnv["ANTIPHON_FAKE_LF_ENTER"] = "1";
-                spec = spec with { Env = nativeEnv };
+                // The launch queue ordinarily passes this dispatcher spec through
+                // AgentSessionService before the runner, adding Grok's durable
+                // conversation id. The direct test runner must perform that same
+                // transform or its tailer follows a different updates.jsonl.
+                spec = spec with
+                {
+                    Env = nativeEnv,
+                    Args = AgentSessionService.BuildSessionIdentityArgs(
+                        spec.Args, nativeSessionId, resumeMode: null),
+                };
                 if (!OperatingSystem.IsWindows())
                 {
                     // CP rows intentionally build with UseAppHost=false on Linux. The
