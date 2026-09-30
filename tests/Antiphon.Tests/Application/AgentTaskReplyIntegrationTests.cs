@@ -3848,10 +3848,9 @@ public partial class AgentTaskReplyIntegrationTests
 
     /// <summary>
     /// The 2026-08-17 live miss, replayed under S5a-3: tasks ee0a18a5 and 27e20988 were killed by
-    /// the account session limit, and both settled <c>Succeeded</c> with "You've hit your usage
-    /// limit…" stored as their Result. The error text is still not a report. A parsed session-limit
-    /// Wall defers: the task stays Working, no parent failure note, the delegate is not
-    /// released.
+    /// the account session limit, and both settled <c>Succeeded</c> with the error text stored as
+    /// their Result. The error text is still not a report. This fixture uses a generic rate-limit
+    /// Wall to exercise retry; quota refusals have separate blocked-task coverage.
     /// </summary>
     [Test]
     public async Task a_retryable_api_error_defers_the_task_and_never_stores_the_error_text()
@@ -4105,7 +4104,7 @@ public partial class AgentTaskReplyIntegrationTests
         await SeedApiErrorStubTurnAsync(
             sessionId,
             DelegationReportFormatter.TaskMarker(task.Id),
-            errorText: "API Error: 429 You've hit your usage limit.");
+            errorText: "API Error: 429 Too many requests. Retry shortly.");
         await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
         var logger = new SettlementLogger();
         var factory = new TestScopeFactory();
@@ -4480,11 +4479,11 @@ public partial class AgentTaskReplyIntegrationTests
     /// The measured API-error stub shape (sessions 19b6bdbb / 3c8cef08, 2026-08-17; CARD-0072
     /// sweep): ONE synthetic assistant record, normalized to an AssistantText carrying the error
     /// string plus a <c>stop_sequence</c> TurnEnd, with S1's three fields stamped on both rows.
+    /// The default is a generic rate limit for the older Wall retry tests.
     /// </summary>
     private static async Task SeedApiErrorStubTurnAsync(
         Guid sessionId, string prompt,
-        string errorText =
-            "API Error: 429 You've hit your usage limit. Your limit will reset at 6:10pm (Europe/London).",
+        string errorText = "API Error: 429 Too many requests. Retry shortly.",
         string apiErrorClass = "rate_limit", int? apiErrorStatus = 429,
         string? narration = null)
     {
