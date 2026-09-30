@@ -39,6 +39,7 @@ public class RepairSourceLandRefusalTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var queue = scope.ServiceProvider.GetRequiredService<AgentTaskLandQueue>();
         var eventsBefore = await db.AgentTaskEvents.CountAsync();
+        var notificationsBefore = await db.AgentTaskLandNotifications.CountAsync();
         var targetBefore = (await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", "refs/heads/master")).StdOut.Trim();
         ConflictException error;
         if (entry == "request")
@@ -70,6 +71,7 @@ public class RepairSourceLandRefusalTests
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
         (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
         (await db.AgentTaskEvents.CountAsync()).ShouldBe(eventsBefore);
+        (await db.AgentTaskLandNotifications.CountAsync()).ShouldBe(notificationsBefore);
         queue.PendingCount.ShouldBe(0);
         (await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", "refs/heads/master"))
             .StdOut.Trim().ShouldBe(targetBefore);
