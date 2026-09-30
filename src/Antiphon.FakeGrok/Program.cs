@@ -262,6 +262,7 @@ internal static class Program
 
         var banner = GetArg(args, "--banner") ?? "Fake Grok ready";
         var debugInput = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1";
+        var lfEnter = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_LF_ENTER") == "1";
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
         var clip = StdinClipModel.FromEnvironment();
         var placeholder = PastePlaceholderModel.FromEnvironment();
@@ -494,6 +495,10 @@ internal static class Program
             // Measured 1.0.5: every \r is Enter — including one trailing a text burst — and \n is
             // dropped from typed input (no Claude-style paste window, no literal newline).
             var work = text.Replace("\r\n", "\r");
+            // Linux PTY fixtures can receive a typed Enter as LF in the same read
+            // as its body. Opt in only for that transport; the measured Windows
+            // Grok composer continues to drop bare typed LF.
+            if (lfEnter) work = work.Replace('\n', '\r');
             var trailingCr = work.EndsWith('\r');
             if (trailingCr) work = work[..^1];
             var segments = work.Split('\r');
