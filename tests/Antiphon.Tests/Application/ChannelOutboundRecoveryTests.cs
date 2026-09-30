@@ -594,6 +594,7 @@ public sealed class ChannelOutboundRecoveryTests
 
         Process? child = null;
         DirectSessionRunnerClient? nativeRunner = null;
+        var nativeSessionId = Guid.Empty;
         Guid? dispatchedSessionId = null;
         try
         {
@@ -636,7 +637,7 @@ public sealed class ChannelOutboundRecoveryTests
                 (await File.ReadAllTextAsync(markerPath)).ShouldBe("dispatch-ready");
                 using var launchDocument = JsonDocument.Parse(await File.ReadAllTextAsync(launchSpecPath));
                 var launch = launchDocument.RootElement;
-                var nativeSessionId = launch.GetProperty("SessionId").GetGuid();
+                nativeSessionId = launch.GetProperty("SessionId").GetGuid();
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
@@ -713,6 +714,9 @@ public sealed class ChannelOutboundRecoveryTests
                 await child.WaitForExitAsync(watchdog.Token);
             child.Dispose();
             child = null;
+            if (running)
+                (await nativeRunner!.GetAsync(nativeSessionId, CancellationToken.None))
+                    .Status.ShouldBe("Running");
 
             await using (var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
             {
@@ -903,14 +907,29 @@ public sealed class ChannelOutboundRecoveryTests
         }
         finally
         {
-            if (nativeRunner is not null) await nativeRunner.DisposeAsync();
+            if (nativeRunner is not null)
+            {
+                if (nativeSessionId != Guid.Empty
+                    && (await nativeRunner.GetAsync(nativeSessionId, CancellationToken.None)).Status
+                        is "Running" or "Starting")
+                    await nativeRunner.KillAsync(nativeSessionId, CancellationToken.None);
+                await nativeRunner.DisposeAsync();
+            }
             if (child is not null)
             {
                 if (!child.HasExited) child.Kill(entireProcessTree: true);
                 await child.WaitForExitAsync();
                 child.Dispose();
             }
-            Directory.Delete(root, recursive: true);
+            // The detached pty-host can finish its final manifest/log write just
+            // after KillAsync returns. Keep cleanup bounded without masking the
+            // test's publication verdict with that teardown race.
+            for (var attempt = 0; ; attempt++)
+            {
+                try { Directory.Delete(root, recursive: true); break; }
+                catch (IOException) when (attempt < 20) { await Task.Delay(100); }
+                catch (UnauthorizedAccessException) when (attempt < 20) { await Task.Delay(100); }
+            }
         }
     }
 
