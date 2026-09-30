@@ -1448,7 +1448,7 @@ public sealed class RemoteScriptContractTests
                 .Select(name => Block(text, name))) + "\n";
     }
 
-    private static string CacheStatusHarness() => Block(Remote(), "c849_status_zero") + """
+    private static string CacheStatusHarness() => Block(Remote(), "c849_status_zero") + "\n" + """
         root="$(mktemp -d)"
         trap 'rm -rf "$root"' EXIT
         STATUS=zero
