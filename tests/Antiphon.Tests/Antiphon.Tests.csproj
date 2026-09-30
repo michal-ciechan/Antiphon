@@ -138,4 +138,14 @@
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json" LogicalName="Card0449.EffortCaptures.json" />
   </ItemGroup>
+  <!-- The detached pty-host relaunches Environment.ProcessPath. Build its real
+       native apphost even when a Linux checkpoint uses UseAppHost=false. -->
+  <Target Name="CopyOwnedPtyHostAppHost" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
+    <PropertyGroup><_PtyHostNativeDir>$(TargetDir)ptyhost-native/</_PtyHostNativeDir></PropertyGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(_PtyHostNativeDir)" />
+    <Copy SourceFiles="$(_PtyHostNativeDir)Antiphon.PtyHost"
+          DestinationFiles="$(TargetDir)Antiphon.PtyHost" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

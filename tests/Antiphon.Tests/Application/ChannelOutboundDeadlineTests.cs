@@ -1,6 +1,7 @@
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -20,6 +21,103 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class ChannelOutboundDeadlineTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Resume_held_before_conversion_preserves_work_or_annotates_expired_original(bool expired)
+    {
+        var now = DateTime.UtcNow;
+        var clock = new FakeTimeProvider(new DateTimeOffset(now));
+        var root = Directory.CreateTempSubdirectory("c0418-held-conversion-").FullName;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "outbound"));
+        var producer = new FakeAntiphonMessagingClient();
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var deliveryId = Guid.NewGuid();
+        try
+        {
+            var snapshot = await files.StageAsync(deliveryId, new ChannelReply
+            {
+                Channel = "fake", ConversationId = channelId.ToString("N"), Text = "frozen original",
+            }, CancellationToken.None);
+            await using var db = new AppDbContext(options);
+            db.Projects.Add(new Project { Id = projectId, Name = "held-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "held",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.AddRange(
+                new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                    Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = root },
+                new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = root,
+                    Kind = AgentKind.Grok });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = inboundId, Enabled = false,
+                OutboundAgentProfile = "held-pdf", CreatedAt = now, UpdatedAt = now });
+            db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+            {
+                Id = deliveryId, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                ProjectId = projectId, InboundAgentId = inboundId, ConverterAgentId = converterId,
+                SourceSessionId = Guid.NewGuid(), SendKind = "main", ProfileName = "held-pdf",
+                PromptRevision = new string('a', 64), PromptText = "Convert.",
+                Trigger = "EveryAgentReply", InputPath = snapshot.ReplyPath,
+                InputSha256 = snapshot.ReplySha256, State = ChannelOutboundDeliveryState.Pending,
+                CreatedAt = now, DeadlineAt = now.AddSeconds(30),
+            });
+            await db.SaveChangesAsync();
+            var profiles = new ChannelOutboundSettings();
+            profiles.Profiles["held-pdf"] = new ChannelOutboundProfile
+            {
+                ProjectId = projectId, AgentId = converterId, PromptFile = "convert.md",
+                Trigger = ChannelOutboundTrigger.EveryAgentReply,
+            };
+            var tasks = new AgentTaskService(db,
+                new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+                Options.Create(new Antiphon.Server.Application.Settings.DelegationSettings { AllowedRoots = [root] }),
+                new MockEventBus(), new RecordingSessionStopper(), clock,
+                NullLogger<AgentTaskService>.Instance);
+            var pump = new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks),
+                files, producer, Options.Create(new Antiphon.Messaging.Client.AntiphonMessagingOptions()),
+                clock, NullLogger<ChannelOutboundDeliveryPump>.Instance, Options.Create(profiles));
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Held);
+            await db.ChatChannels.Where(c => c.Id == channelId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Enabled, true));
+            if (expired) clock.Advance(TimeSpan.FromMinutes(1));
+            var service = new ChannelOutboundService(db, files, producer, Options.Create(profiles), clock);
+            await service.ResumeHeldAsync(deliveryId, CancellationToken.None);
+            (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                .State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+            (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+            var prepared = await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId);
+            if (expired)
+            {
+                prepared.State.ShouldBe(ChannelOutboundDeliveryState.Ready);
+                prepared.ConversionOutcome.ShouldBe("Fallback");
+                prepared.ConversionTaskId.ShouldBeNull();
+                (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(0);
+                (await pump.TickAsync(CancellationToken.None)).ShouldBe(1);
+                producer.SentReplies.ShouldHaveSingleItem().Text.ShouldContain("Conversion unavailable");
+                (await db.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == deliveryId))
+                    .State.ShouldBe(ChannelOutboundDeliveryState.Published);
+            }
+            else
+            {
+                prepared.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+                prepared.ConversionTaskId.ShouldNotBeNull();
+                (await db.AgentTasks.CountAsync(t => t.OutboundDeliveryId == deliveryId)).ShouldBe(1);
+                producer.SentReplies.ShouldBeEmpty();
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Test]
     public async Task Deadline_crossing_the_final_creation_barrier_never_launches_a_worker()
     {
