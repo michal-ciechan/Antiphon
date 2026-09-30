@@ -271,13 +271,116 @@ public sealed class AgentTaskLandSourceFreshnessTests
     }
 
     [Test]
-    public async Task C488_BehindSelectsRemote() => await C488_DetachedFollowUpPublishesReviewedFix();
+    public async Task C488_BehindSelectsRemote()
+    {
+        await using var h = new LandingProtocolHarness();
+        await h.InitializeAsync();
+        var a = h.Git.SeedSha;
+        var b = h.Git.AdvanceRemoteSource();
+        b.ShouldNotBe(a);
+        h.Git.SourceHead.ShouldBe(a);
+        const string filter = "/*/*/Fixture/*";
+        var queued = await h.RequestAsync(filter: filter, expectedSourceSha: b);
+        queued.Status.ShouldBe("queued");
+        h.Git.Commands.Clear();
+        h.Git.Trace.Clear();
+
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == queued.RequestId);
+        request.SourceRefusalReason.ShouldBeNull();
+        request.State.ShouldBe(LandRequestState.Completed);
+        request.SourceResolutionState.ShouldBe(LandSourceResolutionState.Resolved);
+        request.SourceRelationship.ShouldBe(LandSourceRelationship.Behind);
+        request.LocalBeforeSha.ShouldBe(a);
+        request.RemoteSourceSha.ShouldBe(b);
+        request.CandidateSourceSha.ShouldBe(b);
+        request.ResolvedSourceSha.ShouldBe(b);
+        request.ExpectedSourceSha.ShouldBe(b);
+        var op = await db.AgentTaskLandings.SingleAsync(o => o.ApprovalLandRequestId == queued.RequestId);
+        op.SchemaVersion.ShouldBe(3);
+        op.OriginalSourceSha.ShouldBe(b);
+        op.ReviewedSourceSha.ShouldBe(b);
+        op.PreparationInputSha.ShouldBe(b);
+        op.SourceLocalSha.ShouldBe(a);
+        op.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        op.VerifiedSourceSha.ShouldNotBeNull();
+        h.Verifier.Calls.ShouldBe(1);
+        h.Verifier.Invocations.ShouldHaveSingleItem().ShouldBe((op.LandWorktreePath, filter));
+        h.Git.RemoteTarget.ShouldBe(op.VerifiedSourceSha);
+        h.Git.RemoteSource.ShouldBe(b);
+        h.Git.Commands.ShouldNotContain(c => c.Directory == h.Git.Source
+            && c.Arguments.Length > 0
+            && new[] { "merge", "reset", "rebase", "stash" }.Contains(c.Arguments[0]));
+    }
 
     [Test]
     public async Task C488_StaleApprovalStopsBeforeFf() => await C488_StaleApprovalRefusesDetachedFix();
 
     [Test]
-    public async Task C488_DetachedFollowUpRequiresFetch() => await C488_DetachedFollowUpPublishesReviewedFix();
+    public async Task C488_DetachedFollowUpRequiresFetch()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var reader = new LandingGitFixture.FixtureGit(Path.Combine(fixture.Root, "home"), fixture.TaskId);
+        async Task<string> ArrangeReadAsync(string repository, params string[] args)
+        {
+            var result = await reader.RunAsync(repository, args, CancellationToken.None);
+            result.Succeeded.ShouldBeTrue(result.Diagnostic);
+            return result.Output.Trim();
+        }
+
+        var a = fixture.SeedSha;
+        var trackingRef = "refs/remotes/origin/" + fixture.SourceRef["refs/heads/".Length..];
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "--verify", fixture.SourceRef)).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "--verify", trackingRef)).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Observer, "rev-parse", "HEAD")).ShouldBe(a);
+        File.Exists(Path.Combine(fixture.Observer, ".git", "objects", "info", "alternates")).ShouldBeFalse();
+        await ArrangeReadAsync(fixture.Observer, "checkout", "--detach", a);
+        var nonce = "c802-independent-" + Guid.NewGuid().ToString("N") + "\n";
+        await File.WriteAllTextAsync(Path.Combine(fixture.Observer, "nonce.txt"), nonce);
+        await ArrangeReadAsync(fixture.Observer, "add", "nonce.txt");
+        await ArrangeReadAsync(fixture.Observer, "commit", "-m", "independent remote B");
+        var b = await ArrangeReadAsync(fixture.Observer, "rev-parse", "HEAD");
+        b.ShouldNotBe(a);
+        await ArrangeReadAsync(fixture.Observer, "push", "origin", "HEAD:" + fixture.SourceRef);
+        (await ArrangeReadAsync(fixture.Remote, "rev-parse", "--verify", fixture.SourceRef + "^{commit}")).ShouldBe(b);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "HEAD")).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Source, "rev-parse", "HEAD")).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "--verify", fixture.SourceRef)).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "--verify", trackingRef)).ShouldBe(a);
+        var absent = await reader.RunAsync(fixture.Repository, ["cat-file", "-e", b + "^{commit}"], CancellationToken.None);
+        absent.Succeeded.ShouldBeFalse("B must be absent from the canonical object store before observation");
+
+        var prefix = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source-observed";
+        var observed = await fixture.Git.ObserveSourceAsync(fixture.Repository, fixture.SourceRef, prefix, CancellationToken.None);
+        observed.Accepted.ShouldBeTrue(observed.Reason);
+        observed.Reason.ShouldBeNull();
+        observed.Sha.ShouldBe(b);
+        observed.Fingerprint.ShouldNotBeNull().Length.ShouldBe(64);
+        var pin = observed.ObservationRef.ShouldNotBeNull();
+        pin.StartsWith(prefix + "/", StringComparison.Ordinal).ShouldBeTrue();
+
+        var resolved = await reader.RunAsync(fixture.Repository, ["rev-parse", "--verify", pin + "^{commit}"], CancellationToken.None);
+        resolved.Succeeded.ShouldBeTrue(resolved.Diagnostic);
+        resolved.Output.Trim().ShouldBe(b);
+        var present = await reader.RunAsync(fixture.Repository, ["cat-file", "-e", b + "^{commit}"], CancellationToken.None);
+        present.Succeeded.ShouldBeTrue(present.Diagnostic);
+        var content = await reader.RunAsync(fixture.Repository, ["show", pin + ":nonce.txt"], CancellationToken.None);
+        content.Succeeded.ShouldBeTrue(content.Diagnostic);
+        content.Output.ShouldBe(nonce);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "HEAD")).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Source, "rev-parse", "HEAD")).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "--verify", fixture.SourceRef)).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Repository, "rev-parse", "--verify", trackingRef)).ShouldBe(a);
+        (await ArrangeReadAsync(fixture.Remote, "rev-parse", "--verify", fixture.SourceRef + "^{commit}")).ShouldBe(b);
+        var fetches = fixture.Git.Commands.Where(c => c.Directory == fixture.Repository
+            && c.Arguments.Length > 0 && c.Arguments[0] == "fetch").ToArray();
+        fetches.Length.ShouldBe(1);
+        fetches[0].Arguments.ShouldBe(["fetch", "--no-tags", "--no-write-fetch-head", fixture.Remote,
+            fixture.SourceRef + ":" + pin]);
+    }
 
     [Test]
     public async Task C488_EqualCandidateNeedsApproval()

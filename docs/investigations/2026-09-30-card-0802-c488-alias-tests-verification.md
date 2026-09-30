@@ -34,7 +34,7 @@ miniature verifier. Build slot: unleased after 60 s broker wait. CP-1 wall:
 Each identity invokes the main body, which calls the real landing verifier
 once and the independent target verifier once: 6 real invocations total.
 
-Pending CP-2 through CP-5.
+CP-3 through CP-5 remain pending.
 
 The first CP-2 attempt at `f3386cc04707d2628a3d1ba87c9535827c2d2915`
 is retained at `.antiphon/checkpoints/20260930-093158-f7a6/`, with its
@@ -46,3 +46,47 @@ The task-local adapter folds each such record, checks that no state marker was
 lost, then applies the same pinned strict parser. This changes census input
 framing only; raw diagnostics remain retained. The rerun uses the existing
 CP-1 producer output and performs no test execution.
+
+CP-2 rerun at `9fe5b1fca35510a8f8418961c52917535e42f2dc` passed:
+0 tests executed, discovery wall 86 s including 60 s unleased slot wait.
+The full unfiltered TUnit 1.44.0 / MTP 2.2.2 census contains **13,118
+expanded UIDs**. The affected class has **47 source methods / 59 expanded
+UIDs**; the main and both aliases each occur once. Raw logs, folded log,
+export and normalized identities are under `.antiphon/c802-census/before/`.
+The two CARD-0590 roster JSONs are frozen at source commit
+`ceff11d83eee33b1ebbd45dee64a1821cd753dde`, count 40 and source hash
+`ad8333885cf14c876f3eb9e76621f3654edbecb16647114b9a61a172c1f2b91f`.
+They exclude this process-spawning class from that historical admitted-Linux
+subset. Current 47/59 is the full assembly discovery; neither roster was
+changed or relabeled as Unit.
+
+## Unit selection frozen before CP-4
+
+CP-2 found **U=3,567** Unit-category UIDs, with zero Unit OptIn/Explicit
+exclusions. On this Linux host, the source-conditioned skip ledger is:
+
+| Class and exact methods | Expanded skips | Source condition |
+|---|---:|---|
+| `TimeoutTests.windows_quick_row_finishes_beside_a_slow_row`, `windows_row_arguments_round_trip_intact`, `windows_chatty_row_drains_interleaved_stdout_and_stderr`, `windows_row_timeout_kills_the_start_b_grandchild` | 4 | Windows child-process behavior |
+| `LandingRemovalPolicyControlTests.C665_LockedFileMidDeleteResumesOnLaterPass`, `C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded` | 2 | Windows file sharing locks |
+| `AgentRegistrySettingsTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine` | 1 | Windows npm shim layout |
+| `GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls` (12 argument rows) | 12 | Windows-only argv guard |
+| `AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash` | 1 | Windows drive-rooted path |
+| `SessionDeliveryProfileTests.Phone_home_Grok_never_uses_local_modern_evidence`, `Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind` | 2 | Modern ConPTY evidence only on Windows |
+| `PtyDeliveryCeilingsTests.A_runner_on_the_inbox_conhost_downgrades_a_modern_server`, `A_runner_on_the_modern_backend_confirms_the_raised_ceilings`, `A_silent_runner_leaves_this_processes_own_decision_standing` | 3 | Shipped conpty.dll unavailable on Linux |
+| `ClaudeRemoteControlLaunchArgsTests.Off_settings_path_round_trips_through_LaunchArgvGuard` | 1 | Windows CommandLineToArgvW |
+| `AgentExecutableResolverTests.Resolves_sibling_flavor_when_configured_one_is_gone` | 1 | Windows executable flavors |
+| `DirectoryBrowseServiceTests.prefix_returns_matching_child_directories`, `partial_leaf_matches_substring_within_child_name`, `trailing_slash_lists_children_of_that_directory`, `existing_path_reports_exists_true`, `caches_within_ttl_and_refreshes_after` | 5 | Windows MockFileSystem drive letters |
+| `DelegationReportFormatterTests.reported_repository_paths_normalize_relative_and_absolute_windows_forms` | 1 | Windows drive-rooted report paths |
+
+Thus **S=33** documented skips and **E=U-S=3,534** expected executed
+and passed results, with zero failures. CP-4 will join TRX result
+multiplicities to the selected census; a mismatch will be investigated and
+recorded rather than silently changing this frozen expectation.
+
+## Pending controls
+
+CARD-0802 focused cases exercise the ordinary PC-31/44 seams. Their
+compiling mutation variants and all other historical C488/C494 PCs remain
+pending post-land method-scoped SourceLanding Mutation; no nightly or
+ordinary green run will discharge them.

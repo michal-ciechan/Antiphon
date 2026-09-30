@@ -329,7 +329,7 @@ Code adds a small public test wrapper per PC suffix when several cases share a s
 | G-28 | D-4/D-5: Request coordinates remain bound at mutation | PC-28 |
 | G-29 | D-2/D-5: Accepted evidence snapshot is immutable despite later findings | PC-29 |
 | G-30 | D-5/D-7: Unknown request/operation schema refuses | PC-30 |
-| G-31 | D-3: Source observation actually fetches fresh remote work | PC-31 |
+| G-31 | D-3: Source observation actually fetches fresh remote work. CARD-0802: SF.C488_DetachedFollowUpRequiresFetch independently starts with B absent from the canonical object store, then requires the real source observation to fetch and pin B with its unique bytes; the retained main case still proves published behavior. | PC-31 |
 | G-32 | D-3: Exactly one push endpoint is selected | PC-32 |
 | G-33 | D-3: Source comes from push endpoint, not fetch URL | PC-33 |
 | G-34 | D-3: Observation reads exact SourceFullRef | PC-34 |
@@ -342,7 +342,7 @@ Code adds a small public test wrapper per PC suffix when several cases share a s
 | G-41 | D-3: Confirmed missing remote source refuses | PC-41 |
 | G-42 | D-3: Unreadable/malformed remote never falls back offline | PC-42 |
 | G-43 | D-3: Fetch failure cannot reuse stale observation | PC-43 |
-| G-44 | D-3: Behind source selects approved remote candidate | PC-44 |
+| G-44 | D-3: Behind source selects approved remote candidate. CARD-0802: SF.C488_BehindSelectsRemote independently checks the production resolver's committed request and operation fields through the controlled harness; the retained main case still proves real Git publication and behavior. | PC-44 |
 | G-45 | D-3: Behind source requires E=R before FF | PC-45 |
 | G-46 | D-3: Equal source still requires E=candidate | PC-46 |
 | G-47 | D-3: Approved local-ahead commits cannot be dropped | PC-47 |
@@ -496,7 +496,7 @@ Do not replace test assertions, inject a fake test failure, remove tests or acce
 | PC-28 | Use edited task coordinates without matching request snapshot | SF.C488_RequestCoordinatesRechecked | coordinate change refuses before next mutation | db |
 | PC-29 | Select latest StageOutcome again when worker resumes | SF.C488_AcceptedEvidenceIsSnapshot | accepted evidence ID/E remain original; later Found cannot silently rebind/revoke | db |
 | PC-30 | Treat any version >=2 as supported | ST.C488_UnknownVersionRefuses | mutation/publication predicate false for unknown version | unit |
-| PC-31 | Return local/tracking snapshot without exact source fetch | SF.C488_DetachedFollowUpRequiresFetch | B incident records fetched B and independently publishes its unique fix | git |
+| PC-31 | Return local/tracking snapshot without exact source fetch | SF.C488_DetachedFollowUpRequiresFetch | CARD-0802 focused real-Git control: B is absent before observation, then its exact source-to-pin fetch, pin commit and unique nonce bytes are present while local/tracking refs remain A. SF.C488_DetachedFollowUpPublishesReviewedFix separately proves publication of B's fix. Positive control remains pending SourceLanding Mutation. | git |
 | PC-32 | Take first endpoint when multiple push URLs exist | SG.C488_AmbiguousPushEndpointRefuses | specific refusal, neither endpoint mutated | git |
 | PC-33 | Read remote.origin.url instead of resolved push URL | SG.C488_PushEndpointIsSourceAuthority | remote B from push repo selected; fetch-only decoy C never selected | git |
 | PC-34 | Use branch merge/default target ref in source lookup | SG.C488_ExactSourceRefObserved | requested full source ref and candidate B match, decoy ref ignored | git |
@@ -509,7 +509,7 @@ Do not replace test assertions, inject a fake test failure, remove tests or acce
 | PC-41 | Treat ls-remote exit 2 as local-only success | SG.C488_MissingSourceRefuses | source_remote_missing and no mutation | git |
 | PC-42 | Return local candidate on source read failure | SG.C488_UnreadableSourceRefuses | specific remote-read/parse refusal; candidate unavailable | git |
 | PC-43 | Return prior pin after failed fetch | SG.C488_FailedFetchCannotReusePin | failure refuses despite existing old pin/FETCH_HEAD | git |
-| PC-44 | Prefer stale local L when L is ancestor of R | SF.C488_BehindSelectsRemote | Original=Reviewed=B and independent target contains B production bytes | git |
+| PC-44 | Prefer stale local L when L is ancestor of R | SF.C488_BehindSelectsRemote | CARD-0802 focused production resolver control: Behind request resolves B and persists Original=Reviewed=PreparationInput=B, SourceLocal=A, then lands through one controlled verifier call. SF.C488_DetachedFollowUpPublishesReviewedFix separately proves B's published production bytes. Positive control remains pending SourceLanding Mutation. | git |
 | PC-45 | Allow E=old L while fast-forwarding to R | SF.C488_StaleApprovalStopsBeforeFf | reviewed_source_mismatch with A/A/B/B and no source merge/rebase/verifier/push/cleanup | git |
 | PC-46 | Skip E comparison in equal branch | SF.C488_EqualCandidateNeedsApproval | mismatched E refuses before operation creation | db |
 | PC-47 | Always select R even when R is ancestor of approved L | SG.C488_LocalAheadRetained | candidate E=L, relationship LocalAhead, remote remains seed | git |
