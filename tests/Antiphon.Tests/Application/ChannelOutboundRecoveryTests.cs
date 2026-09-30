@@ -1389,9 +1389,19 @@ public sealed class ChannelOutboundRecoveryTests
         {
             var observed = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
             var buffer = await runner.GetBufferAsync(sessionId, CancellationToken.None);
+            await using var diagnosticDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+            var storedPrompts = await diagnosticDb.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt)
+                .OrderBy(e => e.Sequence).ToListAsync();
+            var attempted = await diagnosticDb.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.Id == probeId);
             throw new InvalidOperationException("Post-restart queued prompt failed: "
                 + $"nativeKinds={string.Join(',', observed.Entries.Select(e => e.Kind))}; "
                 + $"promptSeen={observed.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt && e.Text?.Contains(probeText) == true)}; "
+                + $"storedPromptSeq={string.Join(',', storedPrompts.Select(e => e.Sequence))}; "
+                + $"storedProbe={storedPrompts.Any(e => e.Text?.Contains(probeText) == true)}; "
+                + $"baseline={attempted.LastDeliveryBaselineSequence}; "
+                + $"nativeExact={observed.Entries.Where(e => e.Kind == TranscriptKinds.UserPrompt && e.Text?.Contains(probeText) == true).All(e => PromptSubmissionMatch.IsCompleteIn(probeText, e.Text))}; "
                 + $"screenHasProbe={buffer.Buffer.Contains(probeText)}; "
                 + $"inputShape={(inputShapePath is not null && File.Exists(inputShapePath) ? await File.ReadAllTextAsync(inputShapePath) : "absent")}", ex);
         }
