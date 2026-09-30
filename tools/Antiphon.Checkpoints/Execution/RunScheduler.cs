@@ -53,19 +53,18 @@ public sealed class RunScheduler
             build => build.Id,
             build => new BuildProgress { Id = build.Id, State = "pending" },
             StringComparer.Ordinal);
+        var neededBuilds = request.Rows.Where(row => !row.IsCommand).Select(row => row.Build).ToHashSet(StringComparer.Ordinal);
+        foreach (var build in buildStates.Values.Where(build => !neededBuilds.Contains(build.Id)))
+            build.State = "unused";
         request.State.Builds = buildStates.Values.ToList();
         request.State.Rows = request.Rows.Select(row => new RowProgress { Id = row.Id, State = "queued" }).ToList();
         Publish(request);
-
-        var buildTasks = request.Manifest.Builds
-            .Where(build => request.Rows.Any(row => row.Build == build.Id && !row.IsCommand))
-            .Select(build => BuildOneAsync(request, build, buildStates[build.Id], session, total.Token))
-            .ToList();
 
         var pending = request.Rows.ToList();
         var reportedBuilds = new HashSet<string>(StringComparer.Ordinal);
         var running = new List<(CheckpointSpec Spec, Task<RowRunResult> Task, RowProgress Progress)>();
         var finished = new List<RowRunResult>();
+        Task? buildTask = null;
 
         try
         {
@@ -85,6 +84,8 @@ public sealed class RunScheduler
                     finished.Add(Placeholder(row, state, code));
                 }
 
+                SkipPendingBuilds(request, buildStates);
+
                 if (totalTimedOut || externallyCanceled && !ownerEnded)
                     _driver.Kill(entireProcessTree: true);
                 Publish(request);
@@ -100,6 +101,7 @@ public sealed class RunScheduler
                     Mark(request, row.Id, admissionBlock, ExitCodes.OwnerEnded);
                     finished.Add(Placeholder(row, admissionBlock, ExitCodes.OwnerEnded));
                 }
+                SkipPendingBuilds(request, buildStates);
                 Publish(request);
             }
             else
@@ -111,10 +113,28 @@ public sealed class RunScheduler
                     finished.Add(Placeholder(row, "build-failed", ExitCodes.Invalid));
                 }
 
+                var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
+                // A ready exclusive row claims the idle lane before the next build does.
+                var readyExclusive = running.Count == 0 && pending.FirstOrDefault(row =>
+                    row.IsCommand || buildStates.TryGetValue(row.Build ?? "", out var progress) && progress.State == "ok") is { } ready
+                    && IsExclusive(ready, request);
+                if (buildTask is null && !exclusiveRunning && !readyExclusive)
+                {
+                    var nextBuild = pending.FirstOrDefault(row => !row.IsCommand &&
+                        buildStates.TryGetValue(row.Build ?? "", out var progress) && progress.State == "pending");
+                    if (nextBuild is not null)
+                    {
+                        var spec = request.Manifest.Builds.First(build => build.Id == nextBuild.Build);
+                        buildTask = BuildOneAsync(request, spec, buildStates[spec.Id], session, total.Token);
+                        request.State.MaxConcurrentBuilds = Math.Max(request.State.MaxConcurrentBuilds, 1);
+                        Publish(request);
+                    }
+                }
+
                 while (true)
                 {
-                    var exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
-                    if (Pick(pending, running.Count, request, buildStates, exclusiveRunning) is not CheckpointSpec next)
+                    exclusiveRunning = running.Any(item => IsExclusive(item.Spec, request));
+                    if (Pick(pending, running.Count, request, buildStates, exclusiveRunning, buildTask is not null) is not CheckpointSpec next)
                         break;
                     pending.Remove(next);
                     var rowProgress = request.State.Rows.First(row => row.Id == next.Id);
@@ -132,17 +152,23 @@ public sealed class RunScheduler
                 }
             }
 
-            if (running.Count == 0)
+            if (running.Count == 0 && buildTask is null)
             {
-                var waiting = pending.Any(row => !row.IsCommand && buildStates.TryGetValue(row.Build ?? "", out var build) && build.State is "pending" or "building");
-                var incomplete = buildTasks.Where(task => !task.IsCompleted).ToList();
-                if (!waiting || incomplete.Count == 0)
+                if (!pending.Any(row => !row.IsCommand && buildStates.TryGetValue(row.Build ?? "", out var build) && build.State == "pending"))
                     break;
-                await Task.WhenAny(incomplete).ConfigureAwait(false);
                 continue;
             }
 
-            var completed = await Task.WhenAny(running.Select(item => item.Task)).ConfigureAwait(false);
+            var tasks = running.Select(item => (Task)item.Task).ToList();
+            if (buildTask is not null)
+                tasks.Add(buildTask);
+            var completed = await Task.WhenAny(tasks).ConfigureAwait(false);
+            if (completed == buildTask)
+            {
+                await buildTask!.ConfigureAwait(false);
+                buildTask = null;
+                continue;
+            }
             var index = running.FindIndex(item => item.Task == completed);
             var (spec, task, progress) = running[index];
             running.RemoveAt(index);
@@ -187,7 +213,8 @@ public sealed class RunScheduler
 
         try
         {
-            await Task.WhenAll(buildTasks).ConfigureAwait(false);
+            if (buildTask is not null)
+                await buildTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -210,9 +237,9 @@ public sealed class RunScheduler
                 try { await task.ConfigureAwait(false); }
                 catch { /* preserve the original scheduler failure after draining */ }
             }
-            foreach (var task in buildTasks)
+            if (buildTask is not null)
             {
-                try { await task.ConfigureAwait(false); }
+                try { await buildTask.ConfigureAwait(false); }
                 catch { /* preserve the original scheduler failure after draining */ }
             }
             throw;
@@ -358,7 +385,8 @@ public sealed class RunScheduler
         int running,
         SchedulerRequest request,
         Dictionary<string, BuildProgress> builds,
-        bool exclusiveRunning)
+        bool exclusiveRunning,
+        bool buildInFlight)
     {
         if (exclusiveRunning)
             return null;
@@ -373,7 +401,7 @@ public sealed class RunScheduler
             }
 
             if (IsExclusive(row, request))
-                return running == 0 ? row : null;
+                return running == 0 && !buildInFlight ? row : null;
             return running < Math.Max(1, request.Width) ? row : null;
         }
 
@@ -382,6 +410,13 @@ public sealed class RunScheduler
 
     private static bool BuildFailed(CheckpointSpec row, Dictionary<string, BuildProgress> builds) =>
         !row.IsCommand && builds.TryGetValue(row.Build ?? "", out var build) && build.State == "failed";
+
+    private static void SkipPendingBuilds(SchedulerRequest request, Dictionary<string, BuildProgress> builds)
+    {
+        foreach (var build in builds.Values.Where(build => build.State == "pending"))
+            build.State = "skipped";
+        Publish(request);
+    }
 
     private static void Mark(SchedulerRequest request, string id, string state, int exitCode)
     {

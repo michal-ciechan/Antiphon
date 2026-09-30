@@ -12,6 +12,38 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class TimeoutTests
 {
     [Test]
+    public async Task total_deadline_skips_a_queued_build_without_starting_it()
+    {
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, async (_, token) =>
+        {
+            await Task.Delay(Timeout.Infinite, token);
+            return new DriverResult(0, "", "");
+        });
+        var manifest = new CheckpointManifest();
+        manifest.Builds.Add(new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" });
+        manifest.Builds.Add(new BuildSpec { Id = "bin-b", Project = "tests/Antiphon.Tests", OutputPath = "bin-b/" });
+        manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-1", "bin-a"));
+        manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-2", "bin-b"));
+        var result = await new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
+        {
+            Manifest = manifest,
+            Rows = manifest.Checkpoints,
+            RunDirectory = CheckpointFixtures.TempDir(),
+            WorkingDirectory = CheckpointFixtures.TempDir(),
+            State = new RunState { RunId = "t", StartedAt = DateTimeOffset.UtcNow },
+            Slots = new FixedSlotClient("unavailable"),
+            Width = 2,
+            TotalTimeout = TimeSpan.FromMilliseconds(200),
+        }, CancellationToken.None);
+        driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+        result.State.Builds.Single(build => build.Id == "bin-a").State.ShouldBe("failed");
+        result.State.Builds.Single(build => build.Id == "bin-b").State.ShouldBe("skipped");
+        result.Rows.All(row => row.State == "skipped").ShouldBeTrue();
+        result.ExitCode.ShouldBe(5);
+    }
+
+    [Test]
     public async Task row_deadline_marks_timeout_without_global_driver_kill()
     {
         var driver = new FakeDriver();

@@ -8,6 +8,147 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class RunSchedulerTests
 {
     [Test]
+    public async Task builds_never_overlap_even_with_free_slots_and_width_two()
+    {
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = InstantDriver(driver =>
+        {
+            driver.When(request => CheckpointFixtures.IsBuild(request) && request.Arguments.Contains("--property:OutputPath=bin-a/"),
+                async (_, token) => { await first.Task.WaitAsync(token); return new DriverResult(0, "", ""); });
+            driver.When(CheckpointFixtures.IsBuild,
+                async (_, token) => { await second.Task.WaitAsync(token); return new DriverResult(0, "", ""); });
+        });
+        var manifest = TwoBuildRows();
+        var task = Schedule(driver, manifest, manifest.Checkpoints, 2);
+        try
+        {
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) == 1);
+            await Task.Delay(100);
+            driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+            first.TrySetResult();
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) == 2);
+        }
+        finally { first.TrySetResult(); second.TrySetResult(); }
+        var result = await task;
+        driver.MaxInFlightFor(CheckpointFixtures.IsBuild).ShouldBe(1);
+        result.State.MaxConcurrentBuilds.ShouldBe(1);
+        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+    }
+
+    [Test]
+    public async Task rows_of_a_finished_build_run_while_the_next_build_is_in_flight()
+    {
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = new FakeDriver();
+        driver.When(request => CheckpointFixtures.IsBuild(request) && request.Arguments.Contains("--property:OutputPath=bin-b/"),
+            async (_, token) => { await second.Task.WaitAsync(token); return new DriverResult(0, "", ""); });
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        var manifest = TwoBuildRows();
+        var task = Schedule(driver, manifest, manifest.Checkpoints, 2);
+        try { await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsRun) == 1); }
+        finally { second.TrySetResult(); }
+        var result = await task;
+        driver.Starts.Single(start => CheckpointFixtures.IsRun(start.Request) && start.Request.Arguments.Contains("--property:OutputPath=bin-a/"))
+            .InFlight.Any(CheckpointFixtures.IsBuild).ShouldBeTrue();
+        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+    }
+
+    [Test]
+    public async Task serial_runs_one_activity_at_a_time_builds_included()
+    {
+        var driver = InstantDriver();
+        var manifest = TwoBuildRows();
+        var result = await Schedule(driver, manifest, manifest.Checkpoints, 2, serialAll: true);
+        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+        driver.Starts.Select(start => CheckpointFixtures.IsBuild(start.Request) ? "build" : "run")
+            .ShouldBe(["build", "run", "build", "run"]);
+        driver.MaxInFlight.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task an_exclusive_row_keeps_the_build_lane_idle_until_it_finishes()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = InstantDriver(driver => driver.When(CheckpointFixtures.IsRun, async (request, token) =>
+        {
+            if (request.Arguments.Contains("--property:OutputPath=bin-a/")) await release.Task.WaitAsync(token);
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+            return new DriverResult(0, "", "");
+        }));
+        var manifest = TwoBuildRows();
+        manifest.Checkpoints[0].Serial = true;
+        var task = Schedule(driver, manifest, manifest.Checkpoints, 2);
+        try
+        {
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsRun) == 1);
+            await Task.Delay(100);
+            driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+        }
+        finally { release.TrySetResult(); }
+        var result = await task;
+        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+        driver.MaxInFlight.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task an_exclusive_row_waits_for_the_in_flight_build_of_another_row()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = new FakeDriver();
+        driver.When(request => CheckpointFixtures.IsBuild(request) && request.Arguments.Contains("--property:OutputPath=bin-b/"),
+            async (_, token) => { await release.Task.WaitAsync(token); return new DriverResult(0, "", ""); });
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        var manifest = TwoBuildRows();
+        manifest.Checkpoints.Insert(1, CheckpointFixtures.Row("CP-3", "bin-a", serial: true));
+        var task = Schedule(driver, manifest, manifest.Checkpoints, 2);
+        try
+        {
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) == 2);
+            await Task.Delay(100);
+            driver.Count(CheckpointFixtures.IsRun).ShouldBe(1);
+        }
+        finally { release.TrySetResult(); }
+        await task;
+        driver.Starts.Single(start => CheckpointFixtures.IsRun(start.Request) && start.Request.Arguments.Any(arg => arg.Contains("CP-3Tests")))
+            .InFlight.Any(CheckpointFixtures.IsBuild).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task builds_start_in_the_order_rows_first_need_them()
+    {
+        var driver = InstantDriver();
+        var manifest = TwoBuildRows();
+        manifest.Builds.Reverse();
+        await Schedule(driver, manifest, manifest.Checkpoints, 2);
+        driver.Starts.Where(start => CheckpointFixtures.IsBuild(start.Request))
+            .Select(start => start.Request.Arguments.Single(arg => arg.StartsWith("--property:OutputPath=")))
+            .ShouldBe(["--property:OutputPath=bin-a/", "--property:OutputPath=bin-b/"]);
+    }
+
+    [Test]
+    public async Task unreferenced_builds_end_unused_and_state_records_one_concurrent_build()
+    {
+        var driver = InstantDriver();
+        var manifest = TwoBuildRows();
+        manifest.Builds.Add(new BuildSpec { Id = "bin-unused", Project = "tests/Antiphon.Tests", OutputPath = "bin-unused/" });
+        var result = await Schedule(driver, manifest, manifest.Checkpoints, 2);
+        result.State.Builds.Single(build => build.Id == "bin-unused").State.ShouldBe("unused");
+        result.State.Builds.Count(build => build.State == "ok").ShouldBe(2);
+        result.State.MaxConcurrentBuilds.ShouldBe(1);
+    }
+
+    [Test]
     public async Task builds_each_output_once()
     {
         var driver = InstantDriver();
@@ -166,9 +307,20 @@ public sealed class RunSchedulerTests
         return manifest;
     }
 
-    private static FakeDriver InstantDriver()
+    private static CheckpointManifest TwoBuildRows()
+    {
+        var manifest = new CheckpointManifest();
+        manifest.Builds.Add(new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" });
+        manifest.Builds.Add(new BuildSpec { Id = "bin-b", Project = "tests/Antiphon.Tests", OutputPath = "bin-b/" });
+        manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-1", "bin-a"));
+        manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-2", "bin-b"));
+        return manifest;
+    }
+
+    private static FakeDriver InstantDriver(Action<FakeDriver>? beforeDefaults = null)
     {
         var driver = new FakeDriver();
+        beforeDefaults?.Invoke(driver);
         driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
         driver.When(CheckpointFixtures.IsRun, (request, _) =>
         {
@@ -207,7 +359,7 @@ public sealed class RunSchedulerTests
         }
     }
 
-    private static Task<SchedulerResult> Schedule(FakeDriver driver, CheckpointManifest manifest, IReadOnlyList<CheckpointSpec> rows, int width)
+    private static Task<SchedulerResult> Schedule(FakeDriver driver, CheckpointManifest manifest, IReadOnlyList<CheckpointSpec> rows, int width, bool serialAll = false)
     {
         var root = CheckpointFixtures.TempDir();
         foreach (var row in rows)
@@ -223,6 +375,7 @@ public sealed class RunSchedulerTests
             Slots = new FixedSlotClient("unavailable"),
             Commit = new string('a', 40),
             Width = width,
+            SerialAll = serialAll,
             TotalTimeout = TimeSpan.FromMinutes(5),
         }, CancellationToken.None);
     }
