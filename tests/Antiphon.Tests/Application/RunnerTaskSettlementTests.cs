@@ -21,6 +21,24 @@ namespace Antiphon.Tests.Application;
 public sealed class RunnerTaskSettlementTests
 {
     [Test]
+    public async Task Unpushed_runner_commit_is_salvaged_before_completion()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(mirrorPublish: true);
+        await world.Git.EnsureRunnerAsync();
+        File.WriteAllText(Path.Combine(world.Git.Runner, "salvaged.txt"), "work");
+        await world.Git.RunAsync(world.Git.Runner, "add", "salvaged.txt");
+        await world.Git.RunAsync(world.Git.Runner, "commit", "-m", "salvaged");
+        var tip = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+
+        await world.SettleAsync(RunnerSettlementWorld.Report("Implemented in runner mirror."));
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Evidence()!.RemoteSync!.MirrorSha.ShouldBe(tip);
+        world.Evidence()!.RemoteSync!.MirrorPushed.ShouldBeTrue();
+        (await world.Git.HeadAsync()).ShouldBe(tip);
+        (await world.NoteAsync())!.Body.ShouldContain(tip);
+    }
+    [Test]
     public async Task Runner_push_settles_success_without_claim()
     {
         await using var world = await RunnerSettlementWorld.CreateAsync();

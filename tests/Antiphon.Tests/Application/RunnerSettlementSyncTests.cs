@@ -75,12 +75,13 @@ public sealed class RunnerSettlementSyncTests
     {
         await using var world = await SyncWorld.CreateAsync();
         await world.EnsureRunnerAsync();
-        File.WriteAllText(Path.Combine(world.Desktop, "master.txt"), "new base");
-        await world.RunAsync(world.Desktop, "add", "master.txt");
-        await world.RunAsync(world.Desktop, "commit", "-m", "master advanced");
-        await world.RunAsync(world.Desktop, "push", "origin", "master");
-        await world.RunAsync(world.Runner, "fetch", "origin", "master");
-        await world.RunAsync(world.Runner, "reset", "--hard", "origin/master");
+        await world.RunAsync(world.Runner, "checkout", "--orphan", "unrelated-base");
+        File.WriteAllText(Path.Combine(world.Runner, "unrelated.txt"), "new root");
+        await world.RunAsync(world.Runner, "add", "unrelated.txt");
+        await world.RunAsync(world.Runner, "commit", "-m", "unrelated root");
+        var unrelated = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+        await world.RunAsync(world.Runner, "checkout", world.Branch);
+        await world.RunAsync(world.Runner, "reset", "--hard", unrelated);
         var tip = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
 
         var result = await world.Service(publisher: new LocalMirrorPublisher(world))
@@ -92,7 +93,7 @@ public sealed class RunnerSettlementSyncTests
         (await world.HeadAsync()).ShouldBe(world.Baseline);
     }
 
-    private sealed class LocalMirrorPublisher(SyncWorld world) : IRunnerMirrorPublisher
+    internal sealed class LocalMirrorPublisher(SyncWorld world) : IRunnerMirrorPublisher
     {
         public int Calls { get; private set; }
 

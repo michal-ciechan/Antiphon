@@ -40,11 +40,13 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public LeaseBusySignal LeaseBusy { get; } = new();
 
     private readonly bool _fenced;
+    private readonly bool _mirrorPublish;
 
-    private RunnerSettlementWorld(SyncWorld git, bool fenced, bool controlledSyncClock)
+    private RunnerSettlementWorld(SyncWorld git, bool fenced, bool controlledSyncClock, bool mirrorPublish)
     {
         Git = git;
         _fenced = fenced;
+        _mirrorPublish = mirrorPublish;
         SyncClock = controlledSyncClock ? new FakeTimeProvider() : null;
     }
 
@@ -56,9 +58,10 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     /// so a lease-busy wait ends only when the test advances it.</param>
     public static async Task<RunnerSettlementWorld> CreateAsync(
         AgentTaskRole role = AgentTaskRole.Code, bool pushBranch = true, bool fenced = false, bool profiled = false,
-        bool controlledSyncClock = false)
+        bool controlledSyncClock = false, bool mirrorPublish = false)
     {
-        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced, controlledSyncClock);
+        var world = new RunnerSettlementWorld(await SyncWorld.CreateAsync(pushBranch), fenced, controlledSyncClock,
+            mirrorPublish);
         world.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         world.BuildServices();
 
@@ -164,10 +167,13 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             services.AddScoped<IWorkspaceReservationJournal>(sp => new WorkspaceReservationJournal(
                 sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System));
             services.AddScoped(sp => Git.Service(
-                SyncClock, sp.GetRequiredService<IWorkspaceReservationJournal>(), LeaseBusy.Observe));
+                SyncClock, sp.GetRequiredService<IWorkspaceReservationJournal>(), LeaseBusy.Observe,
+                _mirrorPublish ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null));
         }
         else
-            services.AddScoped(_ => Git.Service(SyncClock, leaseBusy: LeaseBusy.Observe));
+            services.AddScoped(_ => Git.Service(SyncClock, leaseBusy: LeaseBusy.Observe,
+                publisher: _mirrorPublish
+                    ? new Antiphon.Tests.Application.RunnerSettlementSyncTests.LocalMirrorPublisher(Git) : null));
         services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
         services.AddScoped(sp => new TaskCompletionProgressService(
             sp.GetRequiredService<ITaskProgressGit>(),
