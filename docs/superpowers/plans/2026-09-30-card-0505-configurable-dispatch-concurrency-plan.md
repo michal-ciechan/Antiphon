@@ -15,8 +15,8 @@ parallel and queue limits. Apply subsequent API edits without restarting the ser
 CARD-0505's September 13 description is historical: neither absolute three nor a
 universal role cap of one describes this checkout. The related UI card already exists:
 **CARD-0506**. **CARD-0749**, currently Review, overlaps the runtime-settings portion;
-coordinate it before commissioning Code. Its description is not evidence that its
-implementation is present in this baseline.
+the TestDesign reconciliation below folds its remaining runtime scope into this plan.
+Its description is not evidence that its implementation is present in this baseline.
 
 ### Verified current state
 
@@ -327,9 +327,9 @@ take the create key while holding the parallel key, or acquire further owner/rep
 locks after the parallel key. Take the parallel key even for a LegacyOpen decision, so
 a concurrent mode switch cannot pass through a stale no-gate path. Dispatch decreases
 Queued and increases parallel; it need not take the create key to free a queue slot.
-TestDesign must pin the interleaving with create, PUT and all three dispatch paths; if
-an existing nested helper violates the new late-lock boundary, refactor only that
-boundary and amend the declared footprint before Code.
+The TestDesign schedules below pin create, PUT and all three dispatch interleavings.
+The warm/standing helper boundary amendment below keeps the late-lock refactor inside
+the declared footprint; any additional source path requires a recorded amendment.
 
 On a hold, roll back tentative task/agent/session database changes, preserve the Queued
 row, and use the existing deduplicated `TraceHeldAsync`/HeldAged path. No Failed/Blocked
@@ -601,9 +601,9 @@ partial files, not filenames; inspect source for generators before counting. No
 
 ### New test roster and required assertions
 
-The names below are the planned TestDesign contract: **54 new unparameterized tests**,
-not claimed existing tests. Each item separated by a semicolon is one method. TestDesign
-must implement these names or update the exact manifest/expanded arithmetic before Code.
+The names below are the TestDesign contract: **54 new unparameterized tests**,
+not claimed existing tests. Each item separated by a semicolon is one method. Code
+must implement these names or update the exact manifest/expanded arithmetic before its run.
 Group IDs map coverage and positive controls; the fixed count is not an excuse to omit
 edge-case assertions within a method. Unit policy tests use production policy; persistence
 and gate tests use isolated PostgreSQL schemas, not EF InMemory.
@@ -855,6 +855,27 @@ assertions. No mutant has been executed by this TestDesign task.
 | G-14c untruncated totals | PC-14c | Count the Take(12) display list as total. | Same V-5 method: `problem-total`, total15/list12/omitted3. |
 | G-15 no automatic conflict overwrite | PC-15 | Re-fetch revision and resend PUT once after409. | V-8 `Conflict_is_not_retried_or_overwritten`: `single-conflict-put`, exactly1 PUT/nonzero exit even though recorder would accept retry. |
 
+### Static manifest audit completed by TestDesign
+
+Node source/Markdown audit and `git diff --check` passed. This was a static check against
+the importer source, not an invocation of the checkpoint tool, build or test discovery.
+It checked one Checkpoints heading; the nine required columns in order; nine cells per
+row after unescaping pipes; three unique CP/group/build-output identities; existing
+project path; S1/S2/S3 ordering; exact class selector prefixes with no extra existing
+class matches; and full V-1..V-8/R-1..R-5 coverage. It compared all 54 detailed method
+names with the roster, with no missing/duplicate methods, and all 44 G/PC identities
+with no missing/duplicate mapping. Expanded arithmetic independently reproduced:
+
+- CP-1: 11 existing + 27 proposed = 38, 8 minutes.
+- CP-2: 69 existing + 16 proposed = 85, 16 minutes.
+- CP-3: 66 existing + 11 proposed = 77, 12 minutes.
+- 17 selected classes; 123 existing methods / 146 expanded results; 54 new methods;
+  200 expected ordinary executions; ordinary time floor 36 minutes.
+
+Constructor fixture injection and internal matrix iterations are not extra executions.
+The selected source has no method generators or platform skips. Actual TRX counts and
+all positive-control RED/restore/GREEN evidence remain Code/Mutation obligations.
+
 ### Cost
 
 Ordinary Code checkpoint floor is **36 minutes** (8 + 16 + 12), estimated, not measured.
@@ -867,8 +888,8 @@ the actual ceiling remains 45, not an instruction to broaden or omit the row.
 
 Allow approximately **180–240 additional minutes** for the 54 concrete tests, integration
 and late-lock refactor; Code commissioning estimate is **216–276 minutes** including V/R.
-Post-land Mutation floor is **220 minutes estimated**: setup/build8 + restored ordinary
-V/R36 + 44 method-scoped variants at4 minutes each for edit/build/red/restore/build/green
+Post-land Mutation floor is **220 minutes estimated**: setup/build 8 + restored ordinary
+V/R 36 + 44 method-scoped variants at 4 minutes each for edit/build/red/restore/build/green
 (176). Each variant selects exactly the method in its table row, Min1; shared assertions
 do not multiply execution counts. Record every mutant, assertion, restoration and actual
 cost. No full-suite or native-provider battery is hidden in that budget. Targeted classes
