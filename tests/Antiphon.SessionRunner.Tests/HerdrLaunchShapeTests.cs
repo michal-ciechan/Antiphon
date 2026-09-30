@@ -535,8 +535,10 @@ public class HerdrLaunchShapeTests
     private static RunnerLaunchRequest GkpRequest(Guid sessionId, string cwd, IReadOnlyDictionary<string, string> env) =>
         new(
             sessionId,
-            @"C:\Program Files\PowerShell\7\pwsh.exe",
-            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", @"C:\Users\x\.local\bin\gkp.ps1", "--project", "$env:X_LLM_PROJECT"],
+            OperatingSystem.IsWindows() ? @"C:\Program Files\PowerShell\7\pwsh.exe" : "pwsh",
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                OperatingSystem.IsWindows() ? @"C:\Users\x\.local\bin\gkp.ps1" : Path.Combine(cwd, "gkp.ps1"),
+                "--project", "$env:X_LLM_PROJECT"],
             env,
             cwd,
             Cols: 120,
@@ -913,9 +915,17 @@ public class HerdrLaunchShapeTests
             CancellationToken.None);
         dto.Status.ShouldBe("Running");
         fake.LastLaunchScriptContent.ShouldNotBeNull();
-        fake.LastLaunchScriptContent.ShouldContain("node.exe");
-        fake.LastLaunchScriptContent.ShouldContain("codex.js");
-        fake.LastLaunchScriptContent.ShouldNotContain("codex.cmd");
+        if (OperatingSystem.IsWindows())
+        {
+            fake.LastLaunchScriptContent.ShouldContain("node.exe");
+            fake.LastLaunchScriptContent.ShouldContain("codex.js");
+            fake.LastLaunchScriptContent.ShouldNotContain("codex.cmd");
+        }
+        else
+        {
+            fake.LastLaunchScriptContent.ShouldContain(layout.ShimPath);
+            fake.LastLaunchScriptContent.ShouldContain("codex.cmd");
+        }
         HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, "node.exe").ShouldBeTrue();
         HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Codex, "cmd.exe").ShouldBeTrue();
 
