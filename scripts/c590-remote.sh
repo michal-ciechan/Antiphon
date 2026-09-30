@@ -1300,9 +1300,11 @@ C849_NPM=antiphon-runner-cache-npm-content
 C849_READY="$SERVER2_ROOT/cache/seed-accepted"
 c849_lock() {
     require_lane host
+    [ "${C849_LOCK_HELD:-0}" = 1 ] && return 0
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/locks"
     exec 9>"$SERVER2_ROOT/locks/cache-maintenance.lock"
     flock -w 60 9 || write_result false CacheMaintenanceBusy 2
+    C849_LOCK_HELD=1
 }
 
 c849_evidence_dir() {
@@ -1361,6 +1363,8 @@ c849_volume() {
         || write_result false CacheRootInvalid 2
     if [ "$stat_line" != 1654:1654:700 ]; then write_result false CacheRootOwnershipInvalid 2; fi
     if [ "$fresh" = 0 ] && [ "$create" = yes ] && [ ! -s "$C849_READY" ]; then
+        [ -z "$(docker ps -q --filter "volume=$name")" ] \
+            || write_result false CacheUnmarkedInUse 2
         c849_empty_volume "$name" "$image" || write_result false CacheUnmarkedContent 2
     fi
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
@@ -1500,6 +1504,44 @@ c849_seed_failure() {
     write_result false "$diagnosis" 2
 }
 
+c849_validate_seed_relative() {
+    local path="$1"
+    case "$path" in
+        ''|/*|.|..|./*|../*|*/../*|*/..|*/./*|*/.)
+            printf 'CacheDonorUnsafePath\n'; return 2 ;;
+    esac
+    if [[ "$path" == *$'\n'* || "$path" == *$'\r'* ]]; then
+        printf 'CacheDonorUnsafePath\n'; return 2
+    fi
+}
+
+c849_validate_seed_tree() {
+    local stage="$1" package version entry relative
+    if [ -n "$(find "$stage" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)" ] \
+        || [ -n "$(find "$stage" -type f -links +1 -print -quit)" ]; then
+        printf 'CacheDonorUnsafeEntry\n'; return 2
+    fi
+    while IFS= read -r -d '' entry; do
+        relative="${entry#"$stage"/}"
+        c849_validate_seed_relative "$relative" || return 2
+    done < <(find "$stage" -mindepth 1 -print0)
+    for package in "$stage/packages"/*; do
+        [ -d "$package" ] || { printf 'CacheDonorPackagesEmpty\n'; return 2; }
+        for version in "$package"/*; do
+            [ -d "$version" ] || { printf 'CacheDonorVersionInvalid\n'; return 2; }
+            if [ ! -s "$version/.nupkg.metadata" ]; then
+                rm -rf -- "$version" || { printf 'CacheDonorVersionIncomplete\n'; return 2; }
+            fi
+        done
+    done
+    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] \
+        || { printf 'AppHostDonorMissing\n'; return 2; }
+    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
+        || { printf 'AppHostDonorMetadataMissing\n'; return 2; }
+    [ -s "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
+        || { printf 'Net9ReferenceDonorMissing\n'; return 2; }
+}
+
 c849_seed() {
     require_lane host
     c849_prepare yes
@@ -1531,31 +1573,11 @@ c849_seed() {
         || c849_seed_failure "$donor" CacheDonorPackageCopyFailed
     docker cp "$donor:/home/app/.npm/_cacache/." "$stage/npm" >/dev/null 2>&1 \
         || c849_seed_failure "$donor" CacheDonorNpmCopyFailed
-    if [ -n "$(find "$stage" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)" ] \
-        || [ -n "$(find "$stage" -type f -links +1 -print -quit)" ]; then
-        c849_seed_failure "$donor" CacheDonorUnsafeEntry
-    fi
-    # An unexpected mounted/path-shaped entry is never an import source. Docker cp
-    # gives us a host tree, so validate every name before mounting it in a helper.
-    if find "$stage" -mindepth 1 -print0 | xargs -0 -r -n 1 basename | grep -Eq '^\.{1,2}$|[[:cntrl:]]'; then
-        c849_seed_failure "$donor" CacheDonorUnsafePath
-    fi
-    local package version
-    for package in "$stage/packages"/*; do
-        [ -d "$package" ] || c849_seed_failure "$donor" CacheDonorPackagesEmpty
-        for version in "$package"/*; do
-            [ -d "$version" ] || c849_seed_failure "$donor" CacheDonorVersionInvalid
-            if [ ! -s "$version/.nupkg.metadata" ]; then
-                rm -rf -- "$version" || c849_seed_failure "$donor" CacheDonorVersionIncomplete
-            fi
-        done
-    done
-    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] \
-        || c849_seed_failure "$donor" AppHostDonorMissing
-    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
-        || c849_seed_failure "$donor" AppHostDonorMetadataMissing
-    [ -s "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
-        || c849_seed_failure "$donor" Net9ReferenceDonorMissing
+    # Validate the stopped donor's staged copy before the first import. The same
+    # function is exercised by the isolated fixture's malformed-tree controls.
+    local tree_diagnosis
+    tree_diagnosis="$(c849_validate_seed_tree "$stage")" \
+        || c849_seed_failure "$donor" "$tree_diagnosis"
     docker run --rm --network none --user 0:0 --entrypoint npm \
         --mount "type=bind,source=$stage/npm,target=/npm/_cacache" "$image" \
         cache verify --cache /npm >/dev/null 2>&1 \
@@ -1823,7 +1845,7 @@ c849_prune() {
         || write_result false CachePreviewStale 2
     c849_prune_idle
     c849_require_ready
-    local name role path mode bytes budget selected=0 image recovery main_container temp_container expected_hash actual_hash donor_image
+    local name role path mode bytes budget selected=0 image recovery main_container temp_container expected_hash actual_hash donor_image required_bytes
     image="$(c849_image)"
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
     [ -d "$recovery/packages" ] && [ ! -L "$recovery" ] \
@@ -1836,10 +1858,22 @@ c849_prune() {
     [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
         && docker image inspect "$donor_image" >/dev/null 2>&1 \
         || write_result false CacheRecoveryImageMissing 2
+    # Complete the authority and target preflight before the first destructive
+    # operation. A later invalid root must not leave an earlier root half-cleared.
     while read -r name role path mode bytes budget; do
         c849_prune_validate_tree "$path" "$path"
+        case "$role" in nuget-packages|nuget-scratch|npm-content) ;; *) write_result false CacheTargetInvalid 2 ;; esac
+        required_bytes=0
+        if [ "$role" = nuget-packages ]; then
+            required_bytes="$(du -s -B1 "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20" "$recovery/packages/microsoft.netcore.app.ref/9.0.20" | awk '{s+=$1} END {print s+0}')" \
+                || write_result false CacheRecoveryMissing 2
+        fi
+        [ "$required_bytes" -le "$budget" ] || write_result false CacheBudgetExceeded 2
+        if [ $((bytes * 5)) -ge $((budget * 4)) ]; then selected=$((selected + 1)); fi
+    done < "$CASE_DIR/volumes-now.txt"
+    [ "$selected" -gt 0 ] || write_result false CacheNoPruneCandidate 2
+    while read -r name role path mode bytes budget; do
         if [ $((bytes * 5)) -lt $((budget * 4)) ]; then continue; fi
-        selected=$((selected + 1))
         case "$role" in
             nuget-packages)
                 docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
@@ -1866,7 +1900,6 @@ c849_prune() {
             *) write_result false CacheTargetInvalid 2 ;;
         esac
     done < "$CASE_DIR/volumes-now.txt"
-    [ "$selected" -gt 0 ] || write_result false CacheNoPruneCandidate 2
     main_container="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" --filter 'label=com.docker.compose.service=session-runner')"
     temp_container="$(docker ps -q --filter "label=com.docker.compose.project=$TEMP_PROJECT" --filter 'label=com.docker.compose.service=session-runner')"
     [ -n "$main_container" ] || write_result false CacheConsumerUnknown 2
@@ -1897,6 +1930,310 @@ C849_REFILL
     printf 'pruned=%s receipt=%s refill=passed smokes=%s admission=held\n' \
         "$selected" "$C590_PREVIEW_RUN" "$([ -n "$temp_container" ] && printf 2 || printf 1)" > "$CASE_DIR/prune.txt"
     write_result true '' 0
+}
+
+# The Fixture case uses only run-scoped Docker resources. A failed group is a
+# refusal; it never falls through to a passing summary or touches the live names.
+c849_fixture_model() {
+    local model="$1" key name target env
+    for item in \
+        'runner-nuget-packages:antiphon-runner-cache-nuget-packages:/home/app/.nuget/packages:NUGET_PACKAGES:/home/app/.nuget/packages' \
+        'runner-nuget-scratch:antiphon-runner-cache-nuget-scratch:/var/cache/antiphon/nuget-scratch:NUGET_SCRATCH:/var/cache/antiphon/nuget-scratch' \
+        'runner-npm-content:antiphon-runner-cache-npm-content:/home/app/.npm/_cacache:NPM_CONFIG_CACHE:/home/app/.npm'; do
+        IFS=: read -r key name target env expected <<< "$item"
+        jq -e --arg k "$key" '.volumes[$k].external == true' "$model" >/dev/null \
+            || { printf 'ExternalRequired\n'; return 2; }
+        jq -e --arg k "$key" --arg n "$name" '.volumes[$k].name == $n' "$model" >/dev/null \
+            || { printf 'CacheIdentityMismatch\n'; return 2; }
+        jq -e --arg k "$key" --arg t "$target" \
+            '[.services["session-runner"].volumes[] | select(.source == $k and .target == $t and .type == "volume" and .volume.nocopy == true)] | length == 1' \
+            "$model" >/dev/null || { printf 'CacheMountTooBroad\n'; return 2; }
+        jq -e --arg k "$env" --arg v "$expected" \
+            '.services["session-runner"].environment[$k] == $v' "$model" >/dev/null \
+            || { printf 'ScratchPathMismatch\n'; return 2; }
+    done
+    jq -e '.services["session-runner"].environment.TMPDIR == "/tmp"' "$model" >/dev/null \
+        || { printf 'PrivateVolumeCollision\n'; return 2; }
+    for item in 'runner-tmp:/tmp' 'work:/work' 'runner-state:/state' 'dind-data:/var/lib/docker'; do
+        IFS=: read -r key target <<< "$item"
+        jq -e --arg k "$key" --arg t "$target" \
+            '[.services["session-runner"].volumes[] | select(.source == $k and .target == $t and .type == "volume")] | length == 1' \
+            "$model" >/dev/null || { printf 'PrivateVolumeCollision\n'; return 2; }
+        jq -e --arg k "$key" '.volumes[$k].external != true' "$model" >/dev/null \
+            || { printf 'PrivateVolumeCollision\n'; return 2; }
+    done
+}
+
+c849_fixture_control() {
+    local id="$1" diagnosis="$2" actual="$CASE_DIR/.control-$id" code=0
+    shift 2
+    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) > "$actual" 2>&1 || code=$?
+    [ "$code" -ne 0 ] && grep -Fxq "$diagnosis" "$actual" \
+        || write_result false "ControlNotSensitive $id" 2
+    printf '%s %s\n' "$id" "$diagnosis" >> "$CASE_DIR/fixture-control-variants.txt"
+    if ! grep -q "^CONTROL $id " "$CASE_DIR/fixture-controls.txt"; then
+        printf 'CONTROL %s expected-red observed=%s\n' "$id" "$diagnosis" >> "$CASE_DIR/fixture-controls.txt"
+    fi
+}
+
+c849_fixture_model_fault() {
+    local model="$1" filter="$2" altered="$SERVER2_ROOT/model-fault.json"
+    jq "$filter" "$model" > "$altered" || return 1
+    c849_fixture_model "$altered"
+}
+
+c849_fixture_compose() {
+    local dir="$SERVER2_ROOT/compose" env="$SERVER2_ROOT/compose/fixture.env" project file
+    mkdir -p "$dir"
+    for file in token gitconfig codex-home deploy-key phone-home grok-home; do
+        : > "$dir/$file"
+    done
+    cat > "$env" <<EOF
+SOURCE_SHA12=${SHA:0:12}
+BUILD_SLOTS_SHA12=${SHA:0:12}
+PHONE_HOME_SERVER_ORIGIN=http://127.0.0.1:9
+CLAUDE_OAUTH_TOKEN_FILE=$dir/token
+RUNNER_GIT_IDENTITY_FILE=$dir/gitconfig
+RUNNER_CODEX_HOME_DIR=$dir/codex-home
+ANTIPHON_DEPLOY_KEY_FILE=$dir/deploy-key
+PHONE_HOME_SECRET_FILE=$dir/phone-home
+RUNNER_GROK_STORE_DIR=$dir/grok-home
+EOF
+    docker compose --env-file "$env" -p "c849${RUN}main" -f "$CHECKOUT/docker-compose.server2-runner.yml" config --format json > "$dir/main.json" \
+        || write_result false FixtureComposeRenderFailed 2
+    docker compose --env-file "$env" -p "c849${RUN}temp" -f "$CHECKOUT/docker-compose.server2-runner.yml" \
+        -f "$CHECKOUT/docker-compose.server2-runner.temp.yml" config --format json > "$dir/temp.json" \
+        || write_result false FixtureComposeRenderFailed 2
+    for model in "$dir/main.json" "$dir/temp.json"; do
+        c849_fixture_model "$model" || write_result false FixtureComposeInvalid 2
+    done
+    c849_fixture_control PC-01 ExternalRequired c849_fixture_model_fault "$dir/main.json" '.volumes["runner-nuget-packages"].external = false'
+    c849_fixture_control PC-02 CacheIdentityMismatch c849_fixture_model_fault "$dir/temp.json" '.volumes["runner-nuget-packages"].name = "foreign"'
+    c849_fixture_control PC-03 ScratchPathMismatch c849_fixture_model_fault "$dir/main.json" 'del(.services["session-runner"].environment.NUGET_SCRATCH)'
+    c849_fixture_control PC-04 PrivateVolumeCollision c849_fixture_model_fault "$dir/temp.json" '.volumes["runner-tmp"].external = true'
+    c849_fixture_control PC-05 CacheMountTooBroad c849_fixture_model_fault "$dir/main.json" '(.services["session-runner"].volumes[] | select(.source == "runner-nuget-packages")).target = "/home/app/.nuget"'
+    printf 'PASS F-1\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
+c849_fixture_cleanup() {
+    local name
+    [ -f "$CASE_DIR/.fixture-volumes" ] || return 0
+    while read -r name; do
+        [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] || continue
+        docker volume rm "$name" >/dev/null 2>&1 || true
+    done < "$CASE_DIR/.fixture-volumes"
+}
+
+c849_fixture_volume_fault() {
+    local kind="$1" name="$2" role="$3" image="$4"
+    write_result() { printf '%s\n' "$2"; exit "$3"; }
+    if [ "$kind" = label ] || [ "$kind" = options ]; then
+        docker() {
+            if [ "$1" = volume ] && [ "$2" = inspect ] && [ "${3:-}" = -f ]; then
+                case "$kind:$4" in
+                    label:*io.antiphon.owner*) printf 'foreign\n'; return 0 ;;
+                    options:*'.Options'*) printf '{"device":"foreign"}\n'; return 0 ;;
+                esac
+            fi
+            command docker "$@"
+        }
+    fi
+    c849_volume "$name" "$role" no "$image"
+}
+
+c849_fixture_prepare() {
+    local image name original_mode
+    C849_PACKAGES="c849${RUN}-packages"
+    C849_SCRATCH="c849${RUN}-scratch"
+    C849_NPM="c849${RUN}-npm"
+    C849_READY="$SERVER2_ROOT/cache/fixture-seed-accepted"
+    : > "$CASE_DIR/.fixture-volumes"
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] \
+            || write_result false FixtureNamespaceInvalid 2
+        docker volume inspect "$name" >/dev/null 2>&1 \
+            && write_result false FixtureNamespaceOccupied 2
+        printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    done
+    image="$(c849_image)"
+    c849_prepare yes
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+            --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+            -c 'printf "fixture-payload\n" > /cache/fixture-sentinel; chmod 0700 /cache/fixture-sentinel' \
+            || write_result false FixtureRootNotWritable 2
+    done
+    printf 'accepted\n' > "$C849_READY"
+    c849_prepare yes
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+            --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+            -c 'test "$(cat /cache/fixture-sentinel)" = fixture-payload && test "$(stat -c %a /cache)" = 700 && test "$(stat -c %a /cache/fixture-sentinel)" = 700' \
+            || write_result false FixturePrepareNotIdempotent 2
+    done
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
+        -c 'chown 0:0 /cache' || write_result false FixtureControlSetupFailed 2
+    c849_fixture_control PC-06 CacheRootOwnershipInvalid c849_fixture_volume_fault owner "$C849_PACKAGES" nuget-packages "$image"
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
+        -c 'chown 1654:1654 /cache; chmod 0755 /cache' || write_result false FixtureControlSetupFailed 2
+    c849_fixture_control PC-07 CacheRootOwnershipInvalid c849_fixture_volume_fault mode "$C849_PACKAGES" nuget-packages "$image"
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
+        -c 'chmod 0700 /cache' || write_result false FixtureControlSetupFailed 2
+    ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"
+    c849_fixture_control PC-08 CacheTargetInvalid c849_prune_validate_tree "$CASE_DIR/.fixture-escape" "$CASE_DIR/.fixture-escape"
+    c849_fixture_control PC-09 CacheVolumeForeign c849_fixture_volume_fault label "$C849_PACKAGES" nuget-packages "$image"
+    c849_fixture_control PC-10 CacheVolumeForeign c849_fixture_volume_fault options "$C849_PACKAGES" nuget-packages "$image"
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
+        -c 'test "$(cat /cache/fixture-sentinel)" = fixture-payload && test "$(stat -c %a /cache)" = 700' \
+        || write_result false FixtureControlMutatedSibling 2
+    printf 'PASS F-2\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
+c849_fixture_tree_fault() {
+    local fault="$1" tree="$SERVER2_ROOT/.tree-$fault"
+    cp -a "$SERVER2_ROOT/.donor-tree" "$tree" || return 1
+    case "$fault" in
+        host) rm -f "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ;;
+        metadata) : > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ;;
+        reference) : > "$tree/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ;;
+        symlink) ln -s "$CASE_DIR" "$tree/packages/escape" ;;
+        hardlink) ln "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" "$tree/packages/escape" ;;
+        special) mkfifo "$tree/packages/escape" ;;
+    esac
+    c849_validate_seed_tree "$tree"
+}
+
+c849_fixture_seed() {
+    local image donor tree name before after recovery npm_work
+    image="$(c849_image)"
+    TEMP_PROJECT="c849${RUN}temp"
+    C849_PACKAGES="c849${RUN}seed-packages"
+    C849_SCRATCH="c849${RUN}seed-scratch"
+    C849_NPM="c849${RUN}seed-npm"
+    C849_READY="$SERVER2_ROOT/cache/fixture-seed-ready"
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    done
+    tree="$SERVER2_ROOT/.donor-tree"
+    mkdir -p "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" \
+        "$tree/packages/microsoft.netcore.app.ref/9.0.20" "$tree/npm"
+    printf 'fixture-native-host\n' > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+    chmod 0755 "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+    printf 'fixture-metadata\n' > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
+    printf 'fixture-metadata\n' > "$tree/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
+    c849_validate_seed_tree "$tree" || write_result false FixtureDonorTreeInvalid 2
+    c849_fixture_control PC-12 AppHostDonorMissing c849_fixture_tree_fault host
+    c849_fixture_control PC-13 AppHostDonorMetadataMissing c849_fixture_tree_fault metadata
+    c849_fixture_control PC-13 Net9ReferenceDonorMissing c849_fixture_tree_fault reference
+    c849_fixture_control PC-14 CacheDonorUnsafePath c849_validate_seed_relative '../escape'
+    c849_fixture_control PC-14 CacheDonorUnsafePath c849_validate_seed_relative '/tmp/escape'
+    c849_fixture_control PC-15 CacheDonorUnsafeEntry c849_fixture_tree_fault symlink
+    c849_fixture_control PC-15 CacheDonorUnsafeEntry c849_fixture_tree_fault hardlink
+    c849_fixture_control PC-15 CacheDonorUnsafeEntry c849_fixture_tree_fault special
+    donor="$(docker create --name "c849-${RUN}-donor" \
+        --label "com.docker.compose.project=$TEMP_PROJECT" \
+        --label com.docker.compose.service=session-runner \
+        --entrypoint sleep "$image" infinity)" || write_result false FixtureDonorCreateFailed 2
+    printf '%s\n' "$donor" > "$CASE_DIR/.fixture-donor"
+    docker start "$donor" >/dev/null || write_result false FixtureDonorStartFailed 2
+    docker exec "$donor" mkdir -p /home/app/.nuget/packages /home/app/.npm/_cacache \
+        || write_result false FixtureDonorSetupFailed 2
+    docker cp "$tree/packages/." "$donor:/home/app/.nuget/packages/" \
+        || write_result false FixtureDonorCopyFailed 2
+    npm_work="$SERVER2_ROOT/npm-work"
+    mkdir -p "$npm_work/package" "$npm_work/cache"
+    printf '{"name":"c849-fixture","version":"1.0.0"}\n' > "$npm_work/package/package.json"
+    printf 'C849_NPM_SEED\n' > "$npm_work/package/sentinel"
+    tar -czf "$npm_work/package.tgz" -C "$npm_work" package
+    docker run --rm --network none --user 0:0 --entrypoint npm \
+        --mount "type=bind,source=$npm_work,target=/fixture" "$image" \
+        cache add /fixture/package.tgz --cache /fixture/cache >/dev/null \
+        || write_result false FixtureNpmCacheCreateFailed 2
+    docker cp "$npm_work/cache/_cacache/." "$donor:/home/app/.npm/_cacache/" \
+        || write_result false FixtureDonorNpmCopyFailed 2
+    c849_fixture_control PC-11 CacheDonorIdentityInvalid c849_fixture_wrong_donor
+    ( c849_status_zero() {
+          [ "$1" = server2-temp ] || return 1
+          [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]
+      }
+      c849_smoke() {
+          docker exec -u 1654:1654 "$1" /bin/sh -c \
+              'test -s /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata && test -s /home/app/.nuget/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata' \
+              || write_result false FixtureSeedProbeFailed 2
+          printf 'fixture-seed-smoke=passed\n' > "$CASE_DIR/.fixture-seed-smoke"
+      }
+      c849_seed ) || write_result false FixtureSeedFailed 2
+    [ -s "$CASE_DIR/.fixture-seed-smoke" ] && [ -s "$C849_READY" ] \
+        || write_result false FixtureSeedMarkerOrderInvalid 2
+    recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
+    [ -s "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
+        && [ -s "$CASE_DIR/npm-integrity.txt" ] \
+        && [ -n "$(find "$recovery/npm" -type f -print -quit)" ] \
+        || write_result false FixtureRecoveryMissing 2
+    before="$(sha256sum "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+    after="$(sed -n 's/^payload-sha256=//p' "$C849_READY" | head -n 1)"
+    [ "$before" = "$after" ] && [ "$(stat -c %a "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = 755 ] \
+        || write_result false FixtureSeedPayloadChanged 2
+    [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ] \
+        || write_result false FixtureDonorNotRestarted 2
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
+        -c 'printf "keep-after-rerun\n" > /cache/rerun-sentinel' \
+        || write_result false FixtureSeedRerunSetupFailed 2
+    ( c849_status_zero() { [ "$1" = server2-temp ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]; }
+      c849_seed ) || write_result false FixtureSeedRerunFailed 2
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
+        -c 'test "$(cat /cache/rerun-sentinel)" = keep-after-rerun' \
+        || write_result false FixtureSeedRerunOverwrote 2
+    printf '%s\n' "c849${RUN}busy-packages" >> "$CASE_DIR/.fixture-volumes"
+    c849_fixture_control PC-16 CacheUnmarkedInUse c849_fixture_unmarked_consumer "$image"
+    docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null \
+        || write_result false FixtureConsumerCleanupFailed 2
+    rm -f "$CASE_DIR/.fixture-busy"
+    printf 'PASS F-3\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
+c849_fixture_wrong_donor() {
+    TEMP_PROJECT="c849${RUN}wrong"
+    c849_donor
+}
+
+c849_fixture_unmarked_consumer() {
+    local image="$1" name="c849${RUN}busy-packages" helper
+    C849_PACKAGES="$name"
+    C849_READY="$SERVER2_ROOT/cache/unmarked-ready"
+    c849_volume "$name" nuget-packages yes "$image"
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+        -c 'printf "unmarked\n" > /cache/sentinel' || return 1
+    helper="$(docker run -d --name "c849-${RUN}-consumer" --network none --entrypoint sleep \
+        --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" infinity)" || return 1
+    printf '%s\n' "$helper" > "$CASE_DIR/.fixture-busy"
+    c849_volume "$name" nuget-packages yes "$image"
+}
+
+c849_fixture() {
+    require_lane host
+    c849_lock
+    # Keep every stage, marker, preview and recovery below this case's private
+    # evidence tree; only the shared maintenance lock belongs to the live root.
+    SERVER2_ROOT="/tmp/c849-fixture-$RUN"
+    [ ! -e "$SERVER2_ROOT" ] || write_result false FixtureNamespaceOccupied 2
+    mkdir -m 0700 -p "$SERVER2_ROOT/cache"
+    : > "$CASE_DIR/fixture-controls.txt"
+    : > "$CASE_DIR/fixture-control-variants.txt"
+    : > "$CASE_DIR/fixture-groups.txt"
+    trap 'if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
+    c849_fixture_compose
+    c849_fixture_prepare
+    c849_fixture_seed
+    write_result false CacheFixtureIncomplete 2
 }
 
 case_verify_runner_caches() {
@@ -2552,7 +2889,7 @@ case "$CASE" in
     runner-cache-inventory) case_runner_cache_inventory ;;
     runner-cache-prune-preview) c849_preview ;;
     runner-cache-prune) c849_prune ;;
-    runner-cache-fixture) write_result false CacheFixtureNotImplemented 2 ;;
+    runner-cache-fixture) c849_fixture ;;
     verify-runner-caches) case_verify_runner_caches ;;
     verify-runner-caches-retired) case_verify_runner_caches_retired ;;
     custody-containment) case_custody_containment ;;
