@@ -278,7 +278,7 @@ public sealed class BuildSlotClientTests
             if (request.Method == HttpMethod.Delete)
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
             var body = request.Method == HttpMethod.Get
-                ? "{\"enabled\":true}"
+                ? "{\"enabled\":true,\"budget\":2,\"maxCpuCount\":2}"
                 : "{\"leaseId\":\"L-renew\",\"maxCpuCount\":2,\"renewEverySeconds\":1}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
