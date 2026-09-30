@@ -216,6 +216,8 @@ Allowed test files:
 - Existing `tests/Antiphon.Tests/Checkpoints/BuildSlotClientTests.cs` (change the
   shared-lease expectation to refusal, preserve both landed null-renewal methods, add limiter; projected post-prerequisite roster is 12).
 - Existing `tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs` (only make synthetic GET listings structurally valid; preserve prerequisite temp ownership).
+- Existing `tests/Antiphon.Tests/Checkpoints/RunSchedulerTests.cs`: its synthetic `SlotPids` fixture must now supply the static UTC wire start that the strict client requires; its regression assertions and test roster remain unchanged.
+- `scripts/lib/checkpoint-usage.ps1` is a necessary additive census exception: `CheckpointTempUsageTests.namespace_census_matches_compiled_checkpoint_cases` requires its selected count to move from 272 to 290 when the 18 planned cases are added. Only that number changes; no usage protocol or runner behavior changes.
 - Existing `tests/Antiphon.Tests/ProcessSpawnLimitTests.cs` (register spawning classes).
 
 Allowed docs: this plan and `docs/testing-and-build.md`. No project/package change
@@ -225,7 +227,7 @@ their cleanup implementation. Existing regression tests may be read, not silentl
 expanded or rewritten to accept a regression; any additional file/test need must
 be recorded in a committed footprint/manifest amendment before execution.
 
-Out of scope: `scripts/`, `server/`, `src/`, broker settings/contracts, deployment,
+Out of scope: other `scripts/`, `server/`, `src/`, broker settings/contracts, deployment,
 ownership guard semantics, secret custody, temp reclamation, source certification,
 and CARD-0850 output-accounting behavior. Do not edit generated `docs/cards/`.
 

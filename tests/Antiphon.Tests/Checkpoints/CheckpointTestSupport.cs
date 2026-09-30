@@ -99,7 +99,7 @@ internal sealed class PidIdempotentSlotHandler : HttpMessageHandler
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (request.Method == HttpMethod.Get)
-            return Json(HttpStatusCode.OK, """{"enabled":true,"maxConcurrent":4}""");
+            return Json(HttpStatusCode.OK, """{"enabled":true,"budget":4,"maxCpuCount":4}""");
         if (request.Method == HttpMethod.Delete)
         {
             var id = request.RequestUri?.Segments.LastOrDefault()?.Trim('/') ?? "";
