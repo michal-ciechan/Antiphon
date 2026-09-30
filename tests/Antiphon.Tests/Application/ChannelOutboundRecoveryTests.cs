@@ -641,7 +641,9 @@ public sealed class ChannelOutboundRecoveryTests
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
                 var nativeInputShape = Path.Combine(root, "native-input-shape.txt");
-                spec.Env["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
+                var nativeEnv = spec.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
+                nativeEnv["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
+                spec = spec with { Env = nativeEnv };
                 if (!OperatingSystem.IsWindows())
                 {
                     // CP rows intentionally build with UseAppHost=false on Linux. The
