@@ -125,11 +125,15 @@ internal static class Program
         var inputLog = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_INPUT_LOG");
 
         var stdout = Console.OpenStandardOutput();
+        var outputGate = new object();
         void Write(string s)
         {
             var bytes = Encoding.UTF8.GetBytes(s);
-            stdout.Write(bytes, 0, bytes.Length);
-            stdout.Flush();
+            lock (outputGate)
+            {
+                stdout.Write(bytes, 0, bytes.Length);
+                stdout.Flush();
+            }
         }
 
         Write($"""
@@ -329,6 +333,47 @@ internal static class Program
             foreach (var strictLine in StrictArgvLines())
                 Write(strictLine + "\r\n");
         Write(IdleTitle);
+        // CARD-0778: the 1.0.41 120x30 ready shape. Keep the historical marker above it
+        // for existing harnesses; readiness uses only this measured empty composer region.
+        var topBorder = "  ╭" + new string('─', 114) + "╮";
+        var composerRow = "  │ >" + new string(' ', 112) + "│";
+        const string footerLabel = " grok-4.7 · always-approve ─╯";
+        var bottomBorder = "  ╰" + new string('─', 118 - 3 - footerLabel.Length) + footerLabel;
+        Write("\x1b[23;1H\x1b[2K\x1b[25;1H" + topBorder
+            + "\x1b[26;1H" + composerRow + "\x1b[27;1H" + bottomBorder
+            + "\x1b[29;1H  Shift+Tab:mode  │  Ctrl+x:shortcuts\x1b[30;1H");
+
+        // Native V-17 can repeat the captured positive redraw chunk span. This is a
+        // synthetic repetition, not claimed as original chronology. The writer is joined
+        // before a submitted prompt can produce echo or ACP output.
+        var replayPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_GROK_REPLAY_PATH");
+        CancellationTokenSource? replayStop = null;
+        Task? replayWriter = null;
+        if (!string.IsNullOrWhiteSpace(replayPath))
+        {
+            using var replayDoc = JsonDocument.Parse(File.ReadAllText(replayPath));
+            var capture = replayDoc.RootElement.GetProperty("captures").EnumerateObject()
+                .Single(x => x.Name.StartsWith("idle-", StringComparison.Ordinal)).Value;
+            var redraws = capture.GetProperty("chunks").EnumerateArray()
+                .Where(x => x.GetProperty("index").GetInt32() is >= 22 and <= 48)
+                .Select(x => x.GetProperty("text").GetString()!).ToArray();
+            replayStop = new CancellationTokenSource();
+            var stop = replayStop.Token;
+            replayWriter = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!stop.IsCancellationRequested)
+                        foreach (var redraw in redraws)
+                        {
+                            stop.ThrowIfCancellationRequested();
+                            Write(redraw);
+                            await Task.Delay(70, stop);
+                        }
+                }
+                catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+            }, stop);
+        }
 
         var gate = new object();
         var pending = new List<(long AtMs, byte[] Bytes)>();
@@ -393,6 +438,14 @@ internal static class Program
                 }
             }
             if (drained is null) continue;
+            if (replayStop is not null)
+            {
+                replayStop.Cancel();
+                replayWriter!.GetAwaiter().GetResult();
+                replayStop.Dispose();
+                replayStop = null;
+                replayWriter = null;
+            }
 
             var bursts = new List<byte[]>();
             var current = new List<byte>();
@@ -425,6 +478,12 @@ internal static class Program
             }
         }
 
+        if (replayStop is not null)
+        {
+            replayStop.Cancel();
+            replayWriter!.GetAwaiter().GetResult();
+            replayStop.Dispose();
+        }
         return 0;
 
         void ProcessBurst(byte[] burst)

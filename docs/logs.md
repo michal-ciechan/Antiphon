@@ -50,6 +50,17 @@ The 2026-09-27 desktop follow-up retrieved the dashboard (HTTP 200). Proposed du
 
 ## Agent transcripts
 
+Failed Grok startup waits store one bounded last-observed frame under
+`%TEMP%\antiphon-grok-startup\grok-startup-*.txt` by default, or
+`Agents:GrokStartupCaptureDirectory` when configured. The store retains 10
+completed captures by default (`Agents:GrokStartupCaptureKeep`, clamped to
+1–100); it caps screen and raw tail at 8,192 UTF-16 units each before escaping
+controls, and suppresses both entirely after a sign-in screen is seen. The
+server log records the session, outcome, last screen reason, elapsed time,
+sequence and capture path, without screen text or credential paths. Retrieve
+only the named local file for diagnosis; it is not a transcript receipt and is
+not automatically uploaded.
+
 The server-normalized transcript is the delivery evidence. Obtain a live session id from `GET /api/agents`, then retrieve `GET /api/sessions/{id}/transcript?since=0`; `scripts/logs.ps1 -Source transcripts` does this for live agent sessions using the task token when supplied. Use `GET http://localhost:17204/sessions/{id}/transcript` only for runner-local diagnosis, not as the authoritative historic record.
 
 Database retention is 7 days for normalized transcript rows (`Retention:TranscriptRetentionDays`). Runner sidecars in `C:\logs\antiphon\session-runner\transcripts\<sessionId>.json` are restart/adoption state, not the complete provider transcript, and non-live files are pruned after 14 days. Native provider stores are diagnostic-only and can contain unrelated conversation content: Claude is `${CLAUDE_CONFIG_DIR:-%USERPROFILE%\\.claude}\\projects\\<encoded-cwd>\\*.jsonl`; Codex is `${CODEX_HOME:-%USERPROFILE%\\.codex}\\sessions\\yyyy\\MM\\dd\\rollout-*.jsonl`; Grok is `${GROK_HOME:-%USERPROFILE%\\.grok}\\sessions\\<url-encoded-cwd>\\<session-id>\\updates.jsonl`. Read only the known session's file and never open `auth.json` or credential files.

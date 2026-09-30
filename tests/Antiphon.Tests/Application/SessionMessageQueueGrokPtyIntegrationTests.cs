@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -27,6 +28,93 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 public class SessionMessageQueueGrokPtyIntegrationTests
 {
+    [Test]
+    public async Task Captured_spinner_reaches_ready_and_complete_user_prompt()
+    {
+        if (!IsWindows) throw new SkipTestException("CARD-0778 CP-3 requires Windows modern ConPTY");
+        if (!File.Exists(FakeGrokExe)) throw new SkipTestException("fakegrok.exe was not staged");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var logRoot = Path.Combine(Path.GetTempPath(), "c778-native-" + Guid.NewGuid().ToString("N"));
+        await using var client = new DirectSessionRunnerClient(logRoot, ptyBackend: ModernBackend);
+        var factory = new NativeReadyFactory(client);
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ISessionRunnerClient>(client);
+                services.AddSingleton<IAgentProtocolAdapterFactory>(factory);
+            },
+        });
+        h.Runtime.TryRemove(h.SessionId, out var old).ShouldBeTrue();
+        if (old is not null) await old.DisposeAsync();
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            session.AgentKind = AgentKind.Grok;
+            session.Status = SessionStatus.Starting;
+            await db.SaveChangesAsync();
+        }
+        const string nonce = "C778NATIVEWHOLE0778";
+        var body = "Whole native readiness nonce " + nonce;
+        var queued = await h.SeedPendingMessageAsync(body);
+        var grokHome = Path.Combine(h.TempRoot, "grok-home");
+        var fixture = Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "card0778", "startup-frames.json");
+        var spec = new AgentLaunchSpec("fakegrok", AgentKind.Grok, FakeGrokExe,
+            ["--session-id", h.SessionId.ToString("D"), "--cwd", h.TempRoot],
+            new Dictionary<string, string>
+            {
+                ["GROK_HOME"] = grokHome,
+                ["ANTIPHON_FAKE_GROK_REPLAY_PATH"] = fixture,
+            }, h.TempRoot, 120, 30);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var scope = h.Provider.CreateScope();
+        var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
+            .LaunchInteractiveAsync(h.SessionId, h.AgentId, spec, null, false, null, deadline.Token);
+        try
+        {
+            await Task.Delay(250, deadline.Token);
+            launch.IsCompleted.ShouldBeFalse("the ready region needs its full settle interval");
+            await h.Queue.FlushSessionAsync(h.SessionId, deadline.Token);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+                (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued)).Status
+                    .ShouldBe(QueuedMessageStatus.Pending);
+            await launch;
+            await h.Runtime.SyncTranscriptAsync(h.SessionId, deadline.Token);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var message = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued);
+                message.Status.ShouldBe(QueuedMessageStatus.Sent);
+                var prompts = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt).ToListAsync();
+                prompts.Count(t => t.Text?.Contains(nonce, StringComparison.Ordinal) == true).ShouldBe(1);
+                prompts.Single(t => t.Text?.Contains(nonce, StringComparison.Ordinal) == true).Text.ShouldContain(body);
+            }
+            // The direct client's capability is static. Read the host's actual launch decision.
+            var hostLog = Path.Combine(client.PtyHostManifestDir, "logs", h.SessionId.ToString("N") + ".log");
+            File.Exists(hostLog).ShouldBeTrue();
+            File.ReadAllText(hostLog).ShouldContain("pty backend: ModernConPty (requested 'modern')");
+        }
+        finally
+        {
+            deadline.Cancel();
+            try { await launch; } catch { }
+            try { await client.KillAsync(h.SessionId, CancellationToken.None); } catch { }
+        }
+    }
+
+    private sealed class NativeReadyFactory(ISessionRunnerClient client) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => new RunnerGrokAdapter(client,
+            Options.Create(new AgentRegistrySettings
+            {
+                GrokReadyMaxWaitMs = 5000, GrokReadyQuietPeriodMs = 1000,
+                GrokReadyMinTotalWaitMs = 0,
+            }), Options.Create(new SupervisionSettings
+            {
+                DeliveryVerification = new DeliveryVerificationSettings { Enabled = false },
+            }));
+    }
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
     private static string FakeGrokExe =>
