@@ -66,8 +66,14 @@ guessing "no".
 | `ClaudeCode` | `claude.exe` | yes | **yes — the only one** | transcript (JSONL) | yes |
 | `Grok` | `grok.exe` (xAI Grok Build TUI) | yes, worker only | no | transcript (ACP `updates.jsonl`) | yes (CARD-0187) |
 | `Codex` | `codex.cmd` rewritten to `node.exe` + installed `codex.js` on Windows (CARD-0497); native `codex.exe` unchanged | yes, worker only | no | transcript (rollout JSONL) | yes (CARD-0187) |
+
 | `OpenCode` | `opencode` / a wrapper | no | no | quiet-time only | **no** — refused |
 | `Raw` | any command (`pwsh.exe`, …) | no | no | quiet-time only | **no** — refused |
+
+On Linux phone-home runners, ingested Codex transcripts currently contain prompts, assistant
+text and turn ends but no tool-call rows (CARD-0779). Git push output therefore cannot be
+audited from that transcript; the runner mirror's SHA, relation and dirty flag in task progress
+evidence are the available settlement facts. Tool-call ingestion is a separate follow-up.
 
 Capacity auto-resume (CARD-0412) paces recovery **per execution kind**: supervisor reconciliation grants at most one outstanding slot per `AgentKind`, oldest blocked wait first. A Claude wait does not consume Grok's admission clock.
 

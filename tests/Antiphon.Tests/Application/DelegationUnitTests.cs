@@ -233,6 +233,41 @@ public class DelegationWorkspaceBoundaryTests
 public class DelegationReportFormatterTests
 {
     [Test]
+    public void Runner_worktree_brief_names_mirror_and_fast_forward_contract()
+    {
+        var task = NewTask();
+        task.Workspace = WorkspaceMode.Worktree;
+        task.RunnerId = "server2";
+        task.WorktreePath = "C:\\Antiphon\\worktrees\\task-7f3a2b91";
+        task.RemoteWorktreePath = "/work/worktrees/task-7f3a2b91";
+        task.WorktreeBranch = "feat/card-task-7f3a2b91";
+        task.WorktreeBaseSha = new string('a', 40);
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain("--- runner branch contract ---");
+        brief.ShouldContain(task.RemoteWorktreePath);
+        brief.ShouldContain(task.WorktreeBranch);
+        brief.ShouldContain(task.WorktreeBaseSha);
+        brief.ShouldContain("[antiphon-progress:" + task.Id.ToString("D"));
+        brief.ShouldContain("never rebase");
+        brief.ShouldContain("Assigned checkout: runner mirror " + task.RemoteWorktreePath);
+        brief.Split("--- runner branch contract ---")[1].Split("\n\n")[0]
+            .All(c => c < 128).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Desktop_and_shared_briefs_omit_runner_branch_contract()
+    {
+        var task = NewTask();
+        task.Workspace = WorkspaceMode.Worktree;
+        task.RunnerId = null;
+        task.WorktreePath = "C:\\Antiphon\\worktrees\\task-7f3a2b91";
+        task.WorktreeBranch = "feat/card-task-7f3a2b91";
+        DelegationReportFormatter.BuildBrief(task, Settings).ShouldNotContain("--- runner branch contract ---");
+        task.RunnerId = "server2";
+        task.Workspace = WorkspaceMode.Shared;
+        DelegationReportFormatter.BuildBrief(task, Settings).ShouldNotContain("--- runner branch contract ---");
+    }
+    [Test]
     public void the_header_carries_the_session_bit_only_when_supplied()
     {
         var task = new AgentTask { Id = Guid.NewGuid(), Title = "Liveness" };

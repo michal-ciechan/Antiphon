@@ -206,6 +206,25 @@ public static class DelegationReportFormatter
             sb.AppendLine();
         }
 
+        if (RemoteWorkspaceService.IsEligible(task)
+            && !string.IsNullOrWhiteSpace(task.RemoteWorktreePath)
+            && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
+        {
+            sb.AppendLine($"Assigned checkout: runner mirror {task.RemoteWorktreePath}; desktop checkout {task.WorktreePath}.");
+            sb.AppendLine($"Assigned branch: {task.WorktreeBranch}.");
+            sb.AppendLine("--- runner branch contract ---");
+            sb.AppendLine($"You work in the runner mirror {task.RemoteWorktreePath} on branch {task.WorktreeBranch}; "
+                + $"the desktop checkout {task.WorktreePath} is not reachable from here.");
+            sb.AppendLine($"Commit on this branch only and push after every slice with "
+                + $"`git push origin HEAD:refs/heads/{task.WorktreeBranch}`.");
+            sb.AppendLine($"The branch is fast-forward-only from {task.WorktreeBaseSha}: never rebase, amend or reset "
+                + "a pushed commit, and never force-push; landing rebases onto the target itself.");
+            sb.AppendLine("If your brief asks you to rebase this branch, report blocked and say so.");
+            sb.AppendLine($"Before your final message run `git ls-remote origin refs/heads/{task.WorktreeBranch}` "
+                + $"and include the line `[antiphon-progress:{task.Id:D} commit=<that sha>]`.");
+            sb.AppendLine("Unpublished work is retained in the runner mirror for recovery.").AppendLine();
+        }
+
         if (task.WorktreeBaseSource == WorktreeBaseSource.CardCurrent
             && task.WorktreeBaseTaskId is Guid sourceTaskId)
         {

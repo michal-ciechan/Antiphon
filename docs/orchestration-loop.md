@@ -681,6 +681,12 @@ follow-up, `-Agent`, or a routing pin that names an existing agent keeps that ag
 
 ## 3. Writing a brief
 
+**Runner task branches are fast-forward-only (CARD-0779).** Never ask a runner-bound Worktree
+delegate to rebase, amend, reset a pushed commit, or force-push its task branch. The server
+publishes a safe unpushed mirror tip at settlement. To bring source current, land the task (the
+land rebases onto the target) or dispatch a fresh task with `-StartRef` on the wanted base.
+Confirmation-only work belongs in Review, not a Code task requiring a new commit.
+
 **The standing rules are delivered automatically now (CARD-0058). Do not retype them.** Every
 delegate launches with `server/Bundles/delegate-basics.md` composed into its
 `--append-system-prompt` — foreground-only, no sub-delegation, commit-and-push each slice,
@@ -862,6 +868,21 @@ curl -s localhost:17202/api/sessions/<sessionId>/transcript
 ---
 
 ## 5. Order the landings and read the outcome lines
+
+### Runner sync outcomes (CARD-0779)
+
+The task's dispatch baseline is B, origin's exact owned-branch tip is S, and its runner mirror
+tip is T. `runner_no_pushed_progress` means S and T stayed at B; a Code task needs new attributed
+work. `runner_mirror_unavailable` in evidence means the runner could not be inspected or lacks
+`workspacePublishV1`; inspect that runner and its retained mirror. `runner_mirror_publish_failed`
+means T descends from S but its plain push failed; repair the runner's push access and retry
+settlement. `runner_mirror_diverged` means T is rebased, reset or behind S: keep the mirror,
+dispatch a fresh Code task pinned to that runner with `-StartRef` at the wanted base, cherry-pick
+the retained commits from the old local branch, and push the new task branch. `runner_sync_diverged`
+means S itself diverged from B after a force-push. Review that exact pushed S in a Worktree Review
+with `-StartRef <S>`, then use `delegate.ps1 -Land <owner> -ExpectedSourceSha <S>
+-ReviewEvidenceId <guid> -RecoverReviewedSource`. The last recovery is explicit; settlement does
+not adopt a rewritten branch.
 
 **`next: land` in the completion header is the cue to run `-Land`** (CARD-0146 D2/§1) — read it
 off `next=land` rather than deciding from the report body that a stage is done. `next: code` or
