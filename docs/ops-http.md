@@ -96,7 +96,8 @@ readiness or qualification alone cannot resolve a real-service outage.
 | Card-file policy and cleanup state | GET | `/api/boards/{id}/card-files/status` |
 | Explicit card-file policy update | PUT | `/api/boards/{id}/card-files/settings` (both policy and expected-policy booleans) |
 | Reconcile permitted card files and revoked exports | POST | `/api/boards/{id}/card-files/sync` (`?dryRun=true`; HTTP 200 may describe a refusal) |
-| A board's cards | GET | `/api/cards?boardId={guid}` |
+| A board's cards | GET | `/api/cards?boardId={guid}&limit=&pageToken=&includeArchived=` — bounded, resumable summary pages; `card.ps1 list -Board <name> -Json` exhausts them |
+| Search cards | GET | `/api/cards/search?q={literal}&boardId=&status=&limit=&pageToken=&includeArchived=` — all-board search if unscoped; `card.ps1 search '<phrase>' -Board <name> -All` exhausts pages |
 | One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
 | Move a card | PATCH | `/api/cards/{id}` `{ boardColumnId, concurrencyToken, reason?, spawn? }`. A move into a terminal column returns `taskSettlement` (`canceled` and `leftOpen` short ids) when it settled or left a bound task; the property is omitted when there was nothing to settle (CARD-0738). `card.ps1 move` / `close` print `tasks canceled` and `tasks still working` lines from it. |
 | Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `card.ps1 diagnose CARD-nnnn` (`-NoWait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
@@ -151,9 +152,12 @@ if ($env:ANTIPHON_TASK_TOKEN) { $h['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK
 (Invoke-RestMethod "$api/api/agents" -Headers $h) |
     Select-Object name, status, @{n='session';e={$_.liveSession.id}}
 
-# a board's id from its name, then its cards (the cards read is a { cards, truncated } envelope)
+# a board's id from its name, then its cards (one bounded page; follow nextPageToken)
 $board = (Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -eq 'Antiphon'
-(Invoke-RestMethod "$api/api/cards?boardId=$($board.id)" -Headers $h).cards | Select-Object identifier, title, status
+pwsh -NoProfile -File scripts/card.ps1 list -Board Antiphon -Json
+# duplicate check: search stored full fields, then inspect a candidate's full detail
+pwsh -NoProfile -File scripts/card.ps1 search '<distinctive phrase>' -Board Antiphon -All
+pwsh -NoProfile -File scripts/card.ps1 get CARD-0846 -Board Antiphon
 
 # delegated work in flight (occupancy) -- always an envelope; read .items. Prefer ?projectId=
 # on an Antiphon-board question. Status names are case-insensitive, a comma list unions,
@@ -207,10 +211,17 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
   `GET /api/agent-tasks/pipeline` rather than a hand-filtered list. The status filter itself is
   correct and pinned (`AgentTaskListStatusFilterTests`, `AgentTaskListEndpointTests`).
 
-- **`GET /api/cards` REFUSES AN UNFILTERED READ.** At least one of `boardId`, `status` or
-  `updatedSince` is required; without one it is a **400** whose detail says exactly that. There is
-  no `limit` or `pageSize` — a `?limit=1` probe is the 400, not a paging failure. Filter, then take
-  what you need client-side.
+- **CARD LISTS ARE BOUNDED PAGES.** `GET /api/cards` still requires `boardId`, `status` or
+  `updatedSince`; `limit`, `pageToken` and `includeArchived` do not count as scope. The response
+  is `{cards,truncated,nextPageToken}` in `updatedAt DESC, id ASC` order. Follow each token until
+  `truncated=false` and the token is null. `GET /api/cards/search` requires a nonblank literal
+  `q` and returns `{cards,total,truncated,nextPageToken}`; it searches identifier, alias, title,
+  full description, decoded labels and full terminal reason. Both endpoints default to live cards;
+  `includeArchived=true` includes archived cards. `limit` is a page size capped at 500, never a
+  total cap. A continuation with changed matching rows is 409 `card_page_changed`; restart from
+  page one. `card.ps1 list` and `search` buffer all pages or fail. A lack of matches in a capped
+  list or text preview does not establish absence, and a failed enumeration cannot establish
+  "no duplicate". Inspect a search hit with `card.ps1 get` for full text.
 
 - **SNAPSHOT IS RUNNER-ONLY.** `GET :17204/sessions/{id}/snapshot` renders the screen; the server
   has `buffer` and `transcript` and no snapshot at all. Grepping `SessionEndpoints.cs` for it finds

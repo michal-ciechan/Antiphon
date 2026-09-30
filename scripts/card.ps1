@@ -30,6 +30,10 @@
 #   -Token <guid>: it is sent verbatim and a stale one is the server's 409, which is the point.
 #
 # Verbs:
+#   card.ps1 list      (-Board <name|guid> | -Status <status> | -UpdatedSince <UTC>)
+#                      [-All] [-Limit <page size>] [-Json]
+#   card.ps1 search    '<phrase>' [-Board <name|guid>] [-Status <status>]
+#                      [-All] [-Limit <page size>] [-Json]
 #   card.ps1 get       CARD-0051 [-Json]
 #   card.ps1 history   CARD-0051 [-Json]
 #   card.ps1 new       -Board <name|guid> -Title <t> [-DescriptionFile p | -Description s]
@@ -53,6 +57,12 @@
 #                      [-By name] [-OverrideHumanRatings]
 #   card.ps1 -Limits
 #
+# list/search always follow every continuation and buffer results until complete. -Limit is a
+# page-size hint capped by the server, not a total result cap. -All includes archived cards and
+# does not control paging. Search matches stored full text; returned text is still previewed.
+# For duplicate checks, search '<distinctive phrase>' -Board <name> -All, then get each candidate.
+# A capped list, preview, failed page or changed-enumeration 409 cannot prove absence.
+#
 # A move into an ACTIVE column does NOT start an agent unless you pass -Spawn (CARD-0051 slice 3).
 # The tick will not pick that card up either (CARD-0087); -Spawn or POST /spawn starts it.
 # When it would have, the script says so instead of leaving you to find out later.
@@ -67,7 +77,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
-    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder', 'order')]
+    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder', 'order', 'list', 'search')]
     [string]$Verb,
 
     # The card, in any form it gets written down: CARD-0051, card-51, '#51', 51, or its guid.
@@ -78,6 +88,19 @@ param(
     # identifier when the same number exists on more than one board.
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Board,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Backlog', 'InProgress', 'Review', 'Done', 'NeedsDecision', 'Canceled')]
+    [string]$Status,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$UpdatedSince,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$All,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [int]$Limit,
 
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Title,
@@ -305,12 +328,13 @@ function Read-TextArgument {
 }
 
 function Resolve-BoardId {
-    param([string]$NameOrGuid)
+    param([string]$NameOrGuid, [switch]$IncludeArchived)
     $parsed = [guid]::Empty
     if ([guid]::TryParse($NameOrGuid, [ref]$parsed)) {
         return $NameOrGuid
     }
-    $all = Invoke-Antiphon -Method GET -Path '/api/boards'
+    $boardsPath = if ($IncludeArchived) { '/api/boards?includeArchived=true' } else { '/api/boards' }
+    $all = Invoke-Antiphon -Method GET -Path $boardsPath
     $hits = @($all | Where-Object { $_.name -and $_.name.ToLowerInvariant() -eq $NameOrGuid.ToLowerInvariant() })
     if ($hits.Count -eq 0) {
         Write-Error ("No board named '{0}'. Known boards: {1}" -f $NameOrGuid, (($all | ForEach-Object { $_.name }) -join ', '))
@@ -405,6 +429,75 @@ function Write-CardLine {
     Write-Output ("{0}  {1}  {2}/{3}  {4} ({5})  {6}{7}" -f `
             $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $rankBit, $prov, $TheCard.title, $labels)
     if ($TheCard.requiredPlatform) { Write-Output ("platform    {0}" -f $TheCard.requiredPlatform) }
+}
+
+function Get-CollectionQuery {
+    param([string]$PageToken)
+    $parts = @()
+    if ($script:resolvedBoardId) { $parts += 'boardId=' + [uri]::EscapeDataString([string]$script:resolvedBoardId) }
+    if ($Status) { $parts += 'status=' + [uri]::EscapeDataString($Status) }
+    if ($Verb -eq 'list' -and $UpdatedSince) { $parts += 'updatedSince=' + [uri]::EscapeDataString($UpdatedSince) }
+    if ($Verb -eq 'search') { $parts += 'q=' + [uri]::EscapeDataString($Card) }
+    if ($All) { $parts += 'includeArchived=true' }
+    if ($script:collectionLimitSupplied) {
+        $parts += 'limit=' + [uri]::EscapeDataString([string]$Limit)
+    }
+    if ($null -ne $PageToken) { $parts += 'pageToken=' + [uri]::EscapeDataString($PageToken) }
+    return '?' + ($parts -join '&')
+}
+
+function Invoke-CardCollection {
+    $endpoint = if ($Verb -eq 'search') { '/api/cards/search' } else { '/api/cards' }
+    $cards = New-Object 'System.Collections.Generic.List[object]'
+    $ids = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $tokens = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $token = $null
+    $total = $null
+    for ($pageNumber = 0; $pageNumber -lt 100000; $pageNumber++) {
+        $page = Invoke-Antiphon -Method GET -Path ($endpoint + (Get-CollectionQuery -PageToken $token))
+        if ($null -eq $page -or $null -eq $page.cards) {
+            Write-Error 'Card enumeration response has no cards array.'; exit 1
+        }
+        if ($Verb -eq 'search') {
+            if ($null -eq $page.total -or [long]$page.total -lt 0) {
+                Write-Error 'Card search response has no valid total.'; exit 1
+            }
+            if ($null -eq $total) { $total = [long]$page.total }
+            elseif ($total -ne [long]$page.total) { Write-Error 'Card search total changed during pagination; restart.'; exit 1 }
+        }
+        $batch = @($page.cards)
+        if ($page.truncated -and $batch.Count -eq 0) { Write-Error 'Card enumeration returned an empty continuing page.'; exit 1 }
+        foreach ($item in $batch) {
+            if ($null -eq $item -or [string]::IsNullOrWhiteSpace([string]$item.id)) {
+                Write-Error 'Card enumeration returned a card without an id.'; exit 1
+            }
+            if (-not $ids.Add([string]$item.id)) { Write-Error 'Card enumeration repeated a card id; restart.'; exit 1 }
+            $cards.Add($item)
+        }
+        $next = [string]$page.nextPageToken
+        if ([bool]$page.truncated -ne (-not [string]::IsNullOrEmpty($next))) {
+            Write-Error 'Card enumeration returned contradictory truncated and nextPageToken fields; server may be too old.'; exit 1
+        }
+        if (-not $page.truncated) {
+            if ($Verb -eq 'search' -and $cards.Count -ne $total) {
+                Write-Error 'Card search final count differs from total; restart.'; exit 1
+            }
+            if ($Verb -eq 'list') { $total = $cards.Count }
+            $result = [pscustomobject]@{ cards = @($cards.ToArray()); total = [long]$total; truncated = $false; nextPageToken = $null }
+            if ($Json) { $result | ConvertTo-Json -Depth 8; return }
+            $scope = if ($script:resolvedBoardId) { "board $script:resolvedBoardId" } else { 'all boards' }
+            Write-Output ("{0} cards in {1}. Text below is previewed; use card.ps1 get <hit> for full text." -f $cards.Count, $scope)
+            foreach ($item in $cards) {
+                Write-CardLine $item
+                if (-not $script:resolvedBoardId) { Write-Output ("board       {0}" -f $item.boardId) }
+            }
+            return
+        }
+        if (-not $tokens.Add($next)) { Write-Error 'Card enumeration repeated a page token; restart.'; exit 1 }
+        [Console]::Error.WriteLine(("Card page {0}: {1} returned; continuing for complete enumeration." -f ($pageNumber + 1), $cards.Count))
+        $token = $next
+    }
+    Write-Error 'Card enumeration exceeded the page safety limit; restart.'; exit 1
 }
 
 function Write-CardFileStatus {
@@ -506,6 +599,29 @@ if ($PSBoundParameters.ContainsKey('Priority')) {
     exit 1
 }
 
+$collectionVerb = $Verb -in @('list', 'search')
+$script:collectionLimitSupplied = $PSBoundParameters.ContainsKey('Limit')
+if (-not $collectionVerb -and ($PSBoundParameters.ContainsKey('Status') -or
+        $PSBoundParameters.ContainsKey('UpdatedSince') -or $All -or $script:collectionLimitSupplied)) {
+    Write-Error '-Status, -UpdatedSince, -All and -Limit apply only to list/search.'; exit 1
+}
+if ($collectionVerb) {
+    if ($script:collectionLimitSupplied -and $Limit -le 0) { Write-Error '-Limit must be positive.'; exit 1 }
+    if ($Verb -eq 'list' -and -not [string]::IsNullOrWhiteSpace($Card)) {
+        Write-Error 'list takes no card argument. Use -Board, -Status or -UpdatedSince.'; exit 1
+    }
+    if ($Verb -eq 'list' -and [string]::IsNullOrWhiteSpace($Board) -and
+        [string]::IsNullOrWhiteSpace($Status) -and [string]::IsNullOrWhiteSpace($UpdatedSince)) {
+        Write-Error 'list requires -Board, -Status or -UpdatedSince; -All is not a scope.'; exit 1
+    }
+    if ($Verb -eq 'search' -and [string]::IsNullOrWhiteSpace($Card)) {
+        Write-Error 'search requires a nonblank phrase as its second argument.'; exit 1
+    }
+    if ($Verb -eq 'search' -and $PSBoundParameters.ContainsKey('UpdatedSince')) {
+        Write-Error '-UpdatedSince applies only to list.'; exit 1
+    }
+}
+
 $script:resolvedBoardId = $null
 $notesSupplied = $PSBoundParameters.ContainsKey('PrivateNotesFile')
 if (($notesSupplied -or $ClearPrivateNotes -or $PSBoundParameters.ContainsKey('CardFileVisibility')) -and $Verb -notin @('new', 'edit')) {
@@ -528,10 +644,12 @@ if ($notesSupplied) {
     }
 }
 if (-not [string]::IsNullOrWhiteSpace($Board)) {
-    $script:resolvedBoardId = Resolve-BoardId $Board
+    $script:resolvedBoardId = Resolve-BoardId $Board -IncludeArchived:($collectionVerb -and $All)
 }
 
 switch ($Verb) {
+    'list' { Invoke-CardCollection; return }
+    'search' { Invoke-CardCollection; return }
     'get' {
         $theCard = Get-CardOrFail
         if ($Json) { $theCard | ConvertTo-Json -Depth 8; return }
