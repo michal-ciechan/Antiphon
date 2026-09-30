@@ -1,8 +1,14 @@
 # CARD-0801: cross-platform FakeHerdrServer and real Herdr transport
 
-Date: 2026-09-30. Stage: Plan. Baseline: `5f5baeb702b9e4db378866d80e862fca27b62b6e`.
-Next: TestDesign, to check the expanded transport/identity and process-fixture scope before Code.
-This document includes the ordinary verification manifest and proposed mutation controls.
+Date: 2026-09-30. Stage: TestDesign. Plan baseline: `5f5baeb702b9e4db378866d80e862fca27b62b6e`.
+TestDesign source: `4c6d95f380ce20e845147d5f2996721eb9280017`. Next: Code.
+This document freezes the ordinary verification manifest and assertion-based mutation controls.
+
+Live card title verified with `scripts/card.ps1 get CARD-0801 -Board Antiphon`:
+**Make FakeHerdrServer cross-platform (unix socket on Linux) so Herdr integration tests run on Linux**.
+TestDesign independently recounted source attributes, including same-line attributes and partial
+classes: **69 methods / 110 results in eight server classes; 335 methods / 497 results in 24 runner
+classes**. No builds, tests, or runtime portability claims are part of this static validation.
 
 ## Decision and evidence
 
@@ -127,6 +133,16 @@ headed classes are outside acceptance; do not start an operator Herdr or real pr
 ## Design
 
 ### D1. A real platform connector, with an owned Stream and backend identity
+
+**Production behavior and gate.** This enables real Linux/macOS connections where Antiphon
+currently throws before connecting; it is not merely a fake implementation change. The real
+Herdr already uses pathname Unix sockets. Preserve `HerdrSettings.Enabled=false` by default,
+`SessionBackend.PtyHost=0`, and the per-agent opt-in. This checkout explicitly sets Enabled=true,
+so Unix users who already selected Herdr will now reach their daemon: document that activation
+risk and the unchanged PowerShell-pane launch requirement. Select transport strictly by host OS:
+Windows always retains named pipes even when `SocketPath` is set; no Unix fallback after Windows
+connection failure. Leave deployed settings unchanged. CP-1/CP-2 and the separate Windows
+verification must prove this branch and the disabled default through the public client.
 
 Add a small internal `HerdrConnection`/`HerdrTransport` implementation in the runner. Connection
 ownership includes the stream and optional peer process identity; request parsing accepts
