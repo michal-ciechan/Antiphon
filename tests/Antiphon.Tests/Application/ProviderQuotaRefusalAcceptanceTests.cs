@@ -361,23 +361,23 @@ public class ProviderQuotaRefusalAcceptanceTests
         await using var s = await CreateAsync();
         await s.EmitAsync(Linux);
         await s.SettleAsync();
-        await using (var db = s.Db())
+        await using (var seed = s.Db())
         {
-            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
             {
                 Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, Sequence = 1,
                 Origin = QueuedMessageOrigin.Supervision, Status = QueuedMessageStatus.Pending,
                 Body = $"{DelegationReportFormatter.TaskMarker(s.TaskId)} {new Antiphon.Server.Application.Settings.ApiErrorRecoverySettings().TransientPrompt}",
                 CreatedAt = IncidentAt.UtcDateTime,
             });
-            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
             {
                 Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, Sequence = 2,
                 Origin = QueuedMessageOrigin.Ui, Status = QueuedMessageStatus.Pending,
                 Body = "human message", CreatedAt = IncidentAt.UtcDateTime,
                 HoldUntil = HoldUntil.AddDays(1),
             });
-            await db.SaveChangesAsync();
+            await seed.SaveChangesAsync();
         }
         await s.H.Queue.FlushSessionAsync(s.H.SessionId, CancellationToken.None);
         await using var db = s.Db();
