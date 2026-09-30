@@ -1215,8 +1215,15 @@ public sealed class RemoteScriptContractTests
             """);
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
         wrapper.ShouldContain("retired-container=true exit=2 cases=runner-cache-seed");
-        var noContainer = LinuxShell(Block(Remote(), "c849_no_temp_containers") + "\n" + """
+        var noContainer = LinuxShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_no_temp_containers") + "\n" + seed + "\n" + """
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"; printf 'ready\n' > "$C849_READY"
+            RUN=red; LANE=host
             TEMP_PROJECT=antiphon-runner-temp
+            require_lane() { :; }
+            c849_prepare() { :; }; c849_image() { echo image; }
+            c849_optional_donor() { :; }; c849_require_ready() { :; }
             write_result() { printf 'host-refusal=%s\n' "$2"; exit "$3"; }
             docker() {
                 [ "$1" = ps ] || return 1
@@ -1224,9 +1231,9 @@ public sealed class RemoteScriptContractTests
                 return 0
             }
             TEMP_CONTAINER=no
-            ( c849_no_temp_containers ); printf 'host-empty=%s\n' "$?"
+            ( c849_seed ); printf 'host-empty=%s\n' "$?"
             TEMP_CONTAINER=yes
-            ( c849_no_temp_containers ); printf 'host-present=%s\n' "$?"
+            ( c849_seed ); printf 'host-present=%s\n' "$?"
             """);
         noContainer.ShouldContain("host-empty=0");
         noContainer.ShouldContain("host-refusal=CacheTempContainerExists");
