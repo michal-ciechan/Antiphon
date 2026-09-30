@@ -217,7 +217,7 @@ in-memory state; none starts a process or touches a broker.
 | R-1 | The 7 existing scheduler methods (each output built once, rows wait for their build, width two, Pty alone, serial alone, failed build fails only its rows and the next build still runs, distinct leases) pass unchanged | `RunSchedulerTests` existing roster |
 | R-2 | Row deadline, total deadline with one build, the four Windows-only process tests (skip on Linux), deadline arithmetic | `TimeoutTests` existing roster |
 | R-3 | `wait` behaviour, existing heartbeat wording, empty progress | `WaitCommandTests` existing roster |
-| R-4 | Ownership admission, settlement during two command drivers, per-build and per-row owner rechecks, slot-wait cancellation, uncertainty and late settlement all still pass through the rewritten loop | `CheckpointTaskOwnershipTests` (24 methods; CARD-0828 says the uncertainty pair passes when the class runs on its own, which is how CP-5 runs it) |
+| R-4 | Ownership admission, settlement during two command drivers, per-build and per-row owner rechecks, slot-wait cancellation, uncertainty and late settlement all still pass through the rewritten loop | `CheckpointTaskOwnershipTests` (23 methods by source count and first-run TRX; CARD-0828 says the uncertainty pair passes when the class runs on its own, which is how CP-5 runs it) |
 | R-5 | Serial import round-trip drives the scheduler with command rows and still sees `MaxConcurrentRows == 1`; every importer refusal and fixture is unchanged | `CheckpointImportTests` (20 methods) |
 
 ### Existing tests affected
@@ -254,7 +254,7 @@ at about 4 minutes each on Linux (28 minutes) plus one fresh isolated build (8 m
 | CP-2 | all | CP-1 | timeouts | `/*/*/TimeoutTests/*` | V-7, R-2 | all 8 listed; Linux 4 executed and 4 skipped (Windows-only), Windows 8 executed; 0 failed | 4 | 1 | 3 | false | n/a |
 | CP-3 | all | CP-1 | wait-heartbeat | `/*/*/WaitCommandTests/*` | V-8, R-3 | all 9 methods, 0 failed/skipped | 9 | 1 | 2 | false | n/a |
 | CP-4 | all | CP-1 | report-summary | `/*/*/ReportWriterTests/*` | V-6b | all 6 methods, 0 failed/skipped | 6 | 1 | 1 | false | n/a |
-| CP-5 | all | `tests/Antiphon.Tests -> bin-c810b/` | ownership-live-lane | `/*/*/CheckpointTaskOwnershipTests/*` | R-4, V-9 | all 24 methods, 0 failed/skipped; the run's report.json shows maxConcurrentBuilds 1 and two builds ok | 24 | 6 | 9 | true | n/a |
+| CP-5 | all | `tests/Antiphon.Tests -> bin-c810b/` | ownership-live-lane | `/*/*/CheckpointTaskOwnershipTests/*` | R-4, V-9 | all 23 methods, 0 failed/skipped; the run's report.json shows maxConcurrentBuilds 1 and two builds ok | 23 | 6 | 9 | true | n/a |
 | CP-6 | all | CP-5 | importer-serial | `/*/*/CheckpointImportTests/*` | R-5 | all 20 methods, 0 failed/skipped | 20 | 4 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | all | CP-5 | doc-contract | `/*/*/CheckpointManifestDocumentationTests/*` | V-10 | all 7 methods, 0 failed/skipped | 7 | 1 | 1 | false | n/a |
 

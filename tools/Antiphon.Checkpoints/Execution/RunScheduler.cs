@@ -117,7 +117,8 @@ public sealed class RunScheduler
                 // A ready exclusive row claims the idle lane before the next build does.
                 var readyExclusive = running.Count == 0 && pending.FirstOrDefault(row =>
                     row.IsCommand || buildStates.TryGetValue(row.Build ?? "", out var progress) && progress.State == "ok") is { } ready
-                    && IsExclusive(ready, request);
+                    && IsExclusive(ready, request) &&
+                    (request.SerialAll || ready.IsCommand || !reportedBuilds.Contains(ready.Build ?? ""));
                 if (buildTask is null && !exclusiveRunning && !readyExclusive)
                 {
                     var nextBuild = pending.FirstOrDefault(row => !row.IsCommand &&
@@ -129,6 +130,13 @@ public sealed class RunScheduler
                         request.State.MaxConcurrentBuilds = Math.Max(request.State.MaxConcurrentBuilds, 1);
                         Publish(request);
                     }
+                }
+
+                if (buildTask?.IsCompleted == true)
+                {
+                    await buildTask.ConfigureAwait(false);
+                    buildTask = null;
+                    continue;
                 }
 
                 while (true)
