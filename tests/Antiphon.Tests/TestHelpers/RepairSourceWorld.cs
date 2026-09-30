@@ -32,6 +32,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     public string OwnerSha { get; private set; } = "";
     public bool ExplicitIntegration { get; init; }
     public bool OrdinaryCodeTask { get; init; }
+    public ILandingVerifier? LandingVerifier { get; init; }
 
     /// <summary>
     /// CARD-0613. Do not seed <see cref="Repair"/> as a hand-built row; the test creates it through
@@ -59,7 +60,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
 
     public static async Task<RepairSourceWorld> CreateAsync(
         bool explicitIntegration = false, bool ordinaryCodeTask = false, bool createTaskThroughService = false,
-        PhoneHomeLaunchPolicy? phoneHome = null)
+        PhoneHomeLaunchPolicy? phoneHome = null, ILandingVerifier? landingVerifier = null)
     {
         var world = new RepairSourceWorld
         {
@@ -67,6 +68,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
             OrdinaryCodeTask = ordinaryCodeTask,
             CreateTaskThroughService = createTaskThroughService,
             PhoneHome = phoneHome,
+            LandingVerifier = landingVerifier,
         };
         await world.InitializeAsync();
         return world;
@@ -212,6 +214,8 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddSingleton<IRepositoryMutationLease>(Leases);
         services.AddSingleton<ILandingGit>(Git);
         services.AddSingleton<ITaskProgressGit>(Git);
+        if (LandingVerifier is not null)
+            services.AddSingleton(LandingVerifier);
         services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Repo.WorktreeRoot,
