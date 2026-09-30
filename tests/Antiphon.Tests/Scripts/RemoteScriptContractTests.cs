@@ -1339,7 +1339,8 @@ public sealed class RemoteScriptContractTests
     public void C849_Saved_donor_archive_is_checked_and_imported_without_a_container()
     {
         var remote = Remote();
-        var output = LinuxShell(CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
+        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+            CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
             Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
             SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
@@ -1362,6 +1363,10 @@ public sealed class RemoteScriptContractTests
                     image:inspect) printf 'sha256:%064d\n' 0 ;;
                     volume:inspect) echo "$root/state" ;;
                     run:*)
+                        if [[ "$*" == *'--entrypoint pwsh'* ]]; then
+                            pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage"
+                            return $?
+                        fi
                         if [[ "$*" == *'cache verify'* ]]; then return 0; fi
                         if [[ "$*" == *'cp -a /seed/.'* ]]; then
                             local source='' target='' arg
@@ -1422,7 +1427,8 @@ public sealed class RemoteScriptContractTests
     public void C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters()
     {
         var remote = Remote();
-        var output = LinuxShell(CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
+        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+            CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_prune_idle") + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
@@ -1442,6 +1448,10 @@ public sealed class RemoteScriptContractTests
                 esac
             }
             docker() {
+                if [ "$1" = run ] && [[ "$*" == *'--entrypoint pwsh'* ]]; then
+                    pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$SOURCE" -Stage "$STAGE"
+                    return $?
+                fi
                 if [ "$1" = ps ]; then
                     [ "$PS_ERROR" = yes ] && return 1
                     [[ "$*" == *'project=main'* ]] && echo main
@@ -1463,7 +1473,8 @@ public sealed class RemoteScriptContractTests
             tar -cf "$root/missing.tar" -C "$tree" .
             for fault in traversal symlink missing; do
                 stage="$root/stage-$fault"; mkdir -p "$stage/packages" "$stage/npm"
-                diagnosis="$(c849_saved_copy "$root/$fault.tar" "$stage")"; code=$?
+                SOURCE="$root/$fault.tar" STAGE="$stage"
+                diagnosis="$(c849_saved_copy "$SOURCE" "$STAGE" image)"; code=$?
                 if [ "$code" = 0 ]; then diagnosis="$(c849_validate_seed_tree "$stage")"; code=$?; fi
                 printf '%s code=%s diagnosis=%s\n' "$fault" "$code" "$diagnosis"
             done
