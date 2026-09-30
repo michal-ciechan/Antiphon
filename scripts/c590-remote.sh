@@ -1552,6 +1552,8 @@ c849_seed() {
     if [ -f "$C849_READY" ]; then
         c849_require_ready
         c849_status_zero server2-temp reconnected || write_result false CacheDonorNotReady 2
+        c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
+            > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
         printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
         write_result true '' 0
     fi
@@ -1624,6 +1626,8 @@ c849_seed() {
         sleep 2
     done
     c849_status_zero server2-temp reconnected || write_result false CacheDonorReconnectFailed 2
+    c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
+        > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'donor=%s\nimage=%s\ntime=%s\npayload-sha256=%s\nreference-sha256=%s\npackage-bytes=%s\nnpm-bytes=%s\nrecovery=%s\n' \
         "$donor" "$donor_image" "$now" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$C849_READY.tmp-$RUN"
@@ -2836,6 +2840,9 @@ case_verify_runner_caches() {
         printf '%s' "$status" | jq -e '.acceptingNewWork == true and .draining == false' >/dev/null \
             || write_result false CacheRunnerNotAccepting 2
     fi
+    printf '%s' "$status" | jq -c '{buildVersion,dispatchEligible,acceptingNewWork,draining,sessions,runnerSessions,queuedTasks}' \
+        > "$CASE_DIR/status.json" || write_result false CacheRunnerStatusInvalid 2
+    sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"
     local project container
     project="$HOST_PROJECT"
     [ "$C590_RUNNER_ID" = server2-temp ] && project="$TEMP_PROJECT"
@@ -2888,10 +2895,19 @@ case_verify_runner_caches_retired() {
     require_lane host
     c849_prepare no
     c849_require_ready
+    local rollback_image
+    rollback_image="$(sed -n 's/^image=//p' "$C849_READY" | head -n 1)"
+    [[ "$rollback_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        && docker image inspect "$rollback_image" >/dev/null 2>&1 \
+        || write_result false CacheRollbackImageMissing 2
+    printf 'rollback-image=%s\n' "$rollback_image" > "$CASE_DIR/rollback.txt"
     local status
     status="$(c849_status_body server2)" || write_result false MainRunnerStatusUnavailable 2
     printf '%s' "$status" | jq -e --arg sha "$SHA" '.buildVersion == $sha and .dispatchEligible == true and .acceptingNewWork == true and .draining == false' >/dev/null \
         || write_result false MainRunnerNotAccepting 2
+    printf '%s' "$status" | jq -c '{buildVersion,dispatchEligible,acceptingNewWork,draining,sessions,runnerSessions,queuedTasks}' \
+        > "$CASE_DIR/status.json" || write_result false MainRunnerStatusInvalid 2
+    sed -n 's/^payload-sha256=//p' "$C849_READY" > "$CASE_DIR/seed-hash.txt"
     if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ]; then
         write_result false TempContainersRemain 2
     fi

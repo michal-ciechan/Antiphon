@@ -49,6 +49,28 @@ $map = @{
 }
 $cases = if ($Case -eq 'Both') { @('verify-runner-caches', 'verify-runner-caches') } else { @($map[$Case]) }
 $runners = if ($Case -eq 'Both') { @('server2', 'server2-temp') } else { @('') }
+function Read-C849Receipt {
+    param([int]$Index, [string]$Name)
+    $path = Join-Path (Join-Path (Join-Path $evidence $Index) $cases[$Index]) $Name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "C849 receipt missing: $Name" }
+    return [System.IO.File]::ReadAllText($path)
+}
+function Assert-C849Status {
+    param([string]$Text, [bool]$Accepting, [bool]$RequireIdle = $false)
+    $status = $Text | ConvertFrom-Json
+    if ($null -eq $status.sessions -or $null -eq $status.runnerSessions -or $null -eq $status.queuedTasks -or
+        $status.sessions -lt 0 -or $status.runnerSessions -lt 0 -or $status.queuedTasks -lt 0) {
+        throw 'C849 unknown runner counters'
+    }
+    if ($RequireIdle -and ($status.sessions -ne 0 -or $status.runnerSessions -ne 0 -or $status.queuedTasks -ne 0)) {
+        throw 'C849 runner is busy'
+    }
+    if ($Accepting -and ($status.buildVersion -cne $Sha -or $status.dispatchEligible -ne $true -or
+            $status.acceptingNewWork -ne $true -or $status.draining -ne $false)) {
+        throw 'C849 runner acceptance receipt invalid'
+    }
+    return $status
+}
 for ($i = 0; $i -lt $cases.Count; $i++) {
     $remoteCase = $cases[$i]
     $manifest = [ordered]@{
@@ -66,5 +88,77 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'verify-docker-stack.ps1') -Case $remoteCase -Manifest $manifestPath
     if ($LASTEXITCODE -ne 0) { throw "C849 case failed: $remoteCase runner=$($runners[$i]) evidence=$($manifest.evidenceRoot)" }
+    $verdict = (Read-C849Receipt $i 'c590-result.json') | ConvertFrom-Json
+    if ($verdict.accepted -ne $true -or $verdict.exit -ne 0) { throw "C849 case receipt refused: $remoteCase" }
 }
-Write-Output "C849 case=$Case source=$Sha evidence=$evidence"
+switch ($Case) {
+    'Fixture' {
+        $summary = Read-C849Receipt 0 'fixture-summary.txt'
+        foreach ($line in @('source-sha=' + $Sha, 'inventories=2', 'groups=9', 'controls=26',
+                'expected-red=26', 'production-mutations=0')) {
+            if (($summary -split "`n" | ForEach-Object Trim) -cnotcontains $line) { throw "C849 fixture receipt missing $line" }
+        }
+        if ($summary -cnotmatch '(?m)^image-id=sha256:[0-9a-f]{64}\r?$') { throw 'C849 fixture image receipt invalid' }
+        $groups = @((Read-C849Receipt 0 'fixture-groups.txt') -split "`n" | Where-Object { $_ -match '^PASS F-[1-9]$' })
+        $controls = @((Read-C849Receipt 0 'fixture-controls.txt') -split "`n" | Where-Object { $_ -match '^CONTROL PC-[0-9]{2} expected-red observed=' })
+        if ($groups.Count -ne 9 -or $controls.Count -ne 26) { throw 'C849 fixture roster incomplete' }
+        Write-Output 'C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0'
+    }
+    'Seed' {
+        $seed = Read-C849Receipt 0 'seed.txt'
+        $status = Assert-C849Status (Read-C849Receipt 0 'status.json') $false $true
+        if ($seed -notmatch '(?m)^ready=true donor=[0-9a-f]{64}(?:\r)?$' -and
+            $seed -notmatch '(?m)^ready=true donor=[0-9a-f]{12,64} (?:.*)$') { throw 'C849 seed receipt invalid' }
+        if ($status.draining -ne $true -or $status.acceptingNewWork -ne $false -or
+            $status.dispatchEligible -ne $true -or $status.retireWhenIdle -ne $true -or
+            $status.redirectTo -ne 'server2') { throw 'C849 donor reconnect receipt invalid' }
+        Write-Output 'C849_SEED donor=server2-temp ready=true smoke=passed recovery=retained'
+    }
+    'Both' {
+        $hashes = @()
+        for ($i = 0; $i -lt 2; $i++) {
+            [void](Assert-C849Status (Read-C849Receipt $i 'status.json') $true)
+            $smoke = Read-C849Receipt $i 'smoke-summary.txt'
+            if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK') { throw 'C849 smoke receipt invalid' }
+            $mounts = Read-C849Receipt $i 'runner-mounts.txt'
+            foreach ($volume in @('antiphon-runner-cache-nuget-packages', 'antiphon-runner-cache-nuget-scratch', 'antiphon-runner-cache-npm-content')) {
+                if ($mounts -cnotmatch [regex]::Escape($volume)) { throw "C849 shared mount missing: $volume" }
+            }
+            $private = if ($i -eq 0) { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
+            if ($mounts -cnotmatch [regex]::Escape($private + ' /tmp true')) { throw 'C849 private tmp mount invalid' }
+            $hashes += (Read-C849Receipt $i 'seed-hash.txt').Trim()
+        }
+        if ($hashes[0] -cnotmatch '^[0-9a-f]{64}$' -or $hashes[0] -cne $hashes[1]) { throw 'C849 seed payload differs' }
+        Write-Output 'C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0'
+    }
+    'Retired' {
+        [void](Assert-C849Status (Read-C849Receipt 0 'status.json') $true)
+        $smoke = Read-C849Receipt 0 'smoke-summary.txt'
+        $mounts = Read-C849Receipt 0 'runner-mounts.txt'
+        $hash = (Read-C849Receipt 0 'seed-hash.txt').Trim()
+        $rollback = Read-C849Receipt 0 'rollback.txt'
+        if ($smoke -notmatch 'uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' -or
+            $mounts -cnotmatch 'antiphon-runner_runner-tmp /tmp true' -or $hash -cnotmatch '^[0-9a-f]{64}$' -or
+            $rollback -cnotmatch '^rollback-image=sha256:[0-9a-f]{64}\r?\n?$') {
+            throw 'C849 retired receipt invalid'
+        }
+        Write-Output 'C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0'
+    }
+    'PrunePreview' {
+        $previewReceipt = Read-C849Receipt 0 'preview.txt'
+        if ($previewReceipt -cnotmatch '(?m)^schema=1\r?$' -or
+            $previewReceipt -cnotmatch '(?m)^volume-sha256=[0-9a-f]{64}\r?$') { throw 'C849 preview receipt invalid' }
+        Write-Output "C849_PRUNE_PREVIEW source=$Sha evidence=$evidence"
+    }
+    'Prune' {
+        $prune = Read-C849Receipt 0 'prune.txt'
+        if ($prune -cnotmatch 'pruned=[1-3] .*refill=passed smokes=[12] admission=held') { throw 'C849 prune receipt invalid' }
+        Write-Output "C849_PRUNE source=$Sha evidence=$evidence"
+    }
+    'Inventory' {
+        [void](Read-C849Receipt 0 'server2-status.json')
+        [void](Read-C849Receipt 0 'server2-temp-status.json')
+        Write-Output "C849_INVENTORY runners=2 source=$Sha evidence=$evidence"
+    }
+}
+Write-Output "C849_RECEIPT case=$Case source=$Sha evidence=$evidence"
