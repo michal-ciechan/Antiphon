@@ -97,6 +97,7 @@ public enum PhoneHomeOperation
 
     /// <summary>CARD-0654. Change the runner's own persisted launch seat limit.</summary>
     SetCapacity = 31,
+    WorkspacePublish = 32,
 }
 
 public sealed record PhoneHomeSetCapacityRequest(int Capacity, string Reason);
@@ -183,7 +184,13 @@ public sealed record PhoneHomeWorkspaceMirrorRequest(string Branch, string Sha, 
 public sealed record PhoneHomeWorkspaceMirrorResponse(string Path);
 
 /// <summary>Remove a mirror created by <see cref="PhoneHomeOperation.WorkspaceMirror"/>.</summary>
-public sealed record PhoneHomeWorkspaceRemoveRequest(string Path, bool Force = false);
+public sealed record PhoneHomeWorkspaceRemoveRequest(string Path, bool Force = false, string? PublishedSha = null);
+
+public sealed record PhoneHomeWorkspacePublishRequest(
+    string Path, string Branch, string BaselineSha, string? RemoteSha, bool Publish);
+
+public sealed record PhoneHomeWorkspacePublishResponse(
+    string? Tip, string Relation, bool? DescendsFromBaseline, bool Dirty, bool Pushed, string? Refusal);
 
 public sealed record PhoneHomeWorkspaceRemoveResponse(bool Removed, string? Residue);
 
@@ -213,6 +220,7 @@ public static class PhoneHomeProblemTypes
     public const string BootConflict = "phone_home_boot_conflict";
     public const string UnsupportedOperation = "phone_home_unsupported_operation";
     public const string UnsupportedTarget = "phone_home_unsupported_target";
+    public const string UnpublishedWork = "phone_home_unpublished_work";
     public const string RepositoryNotAdmitted = "phone_home_repository_not_admitted";
     public const string RepositoryMismatch = "phone_home_repository_mismatch";
     public const string RepositoryPushUnauthorized = "phone_home_repository_push_unauthorized";

@@ -222,6 +222,12 @@ public sealed class PhoneHomeCommandDispatcher
                         ?? throw new ArgumentException("Workspace remove body is required.");
                     return Result(request, await Workspace().RemoveAsync(body, ct));
                 }),
+                PhoneHomeOperation.WorkspacePublish => await MutateAsync(request, async () =>
+                {
+                    var body = request.Payload?.Deserialize<PhoneHomeWorkspacePublishRequest>(PhoneHomeFraming.Json)
+                        ?? throw new ArgumentException("Workspace publish body is required.");
+                    return Result(request, await Workspace().PublishAsync(body, ct));
+                }),
                 // CARD-0604 D-19 (Cut B). Custody and the verification snapshot for a Mutation
                 // bound to this runner. Each is a typed body; nothing here takes a shell string.
                 PhoneHomeOperation.ReadCustody => await MutateAsync(request, async () =>
