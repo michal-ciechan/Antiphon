@@ -52,8 +52,33 @@ abrupt process-death C-3 receipt.
 
 ## Checkpoint receipts
 
-Pending. PC-1–PC-30 remain reserved for method-scoped SourceLanding Mutation;
-ordinary and nightly green do not discharge them.
+The Final checkpoint selection ran on committed code at
+`28db8f37ca426fc8504a44081e2cfcd0c5a160cb`. Each .NET row used
+`scripts/run-checkpoint.ps1` with its plan filter, minimum and named classes;
+CP-12/13 used `scripts/build-slot.ps1`. The row logs and TRX files are under
+`.antiphon/checkpoints/r35-final-*` in this worktree (ignored build evidence).
+
+| Row | Executed / passed / failed / skipped | Verdict |
+|---|---:|---|
+| CP-1 Unit | 3491 / 3491 / 0 / 33 | Pass; `TUNIT_MAX_PARALLEL_TESTS=2` |
+| CP-2 source settlement | 373 / 373 / 0 / 0 | Pass |
+| CP-3 policy/schema | 32 / 32 / 0 / 0 | Pass |
+| CP-4 file boundary | 64 / 64 / 0 / 0 | Pass |
+| CP-5 purpose/deadline | 62 / 62 / 0 / 0 | Pass |
+| CP-6 crash/transport | 29 / 29 / 0 / 0 | Pass |
+| CP-7 routing/attention | 320 / 320 / 0 / 0 | Pass; `TUNIT_MAX_PARALLEL_TESTS=2` |
+| CP-8 existing deadlines | 71 / 69 / 2 / 0 | Inherited `PinnedAgentKindTests.T1/T2` `codex_desktop_unqualified`; no introduced failure |
+| CP-9 renderer | 19 / 19 / 0 / 0 | Pass |
+| CP-10 real browser | 1 / 1 / 0 / 0 | Pass; `ANTIPHON_HEADED_TESTS=1` |
+| CP-11 gateway wire | 125 / 125 / 0 / 0 | Pass; `ANTIPHON_BROKER_TESTS=1` |
+| CP-12 channels client | 26 / 26 / 0 / 0 | Pass, two files |
+| CP-13 client bundle | — | Pass, production Vite bundle |
+
+CP-8's own TRX is
+`.antiphon/checkpoints/r35-final-CP-8/CP-8-20260930-002525-1f4a/run.trx`;
+the two exceptions both come from `AgentTaskService.CreateAsync`'s pre-existing
+desktop Codex qualification guard. PC-1–PC-30 remain reserved for method-scoped
+SourceLanding Mutation; ordinary and nightly green do not discharge them.
 
 ## V-16 publication outcomes
 
@@ -62,7 +87,7 @@ producer outcomes under a real isolated database: blocked before acceptance,
 two definite queue refusals then acceptance, three definite refusals, and an
 ambiguous exception. It hashes the actual serialized payload and checks that
 delivery, correlation, source and channel stamps agree only after acceptance;
-inbound routing fields stay frozen. Checkpoint receipt pending.
+inbound routing fields stay frozen. Final CP-5 executed 62 / passed 62.
 The first CP-5 build on `51bd3ba3a` did not reach tests: two references to
 `MessagingJson` were ambiguous between the Messaging and Client namespaces.
 Both now select the actual `Antiphon.Messaging.MessagingJson.Options` wire contract.
@@ -74,7 +99,8 @@ V-16 remains open for source completeness and multi-target outcomes.
 `Source_publication_requires_all_four_members_or_a_complete_zip` now adds four
 actual publication variants (one/four Markdown attachments and incomplete/complete
 zip), comparing the accepted serialized payload to the frozen original and
-checking the source delivery stamp after publication. Receipt pending.
+checking the source delivery stamp after publication. Final CP-5 executed
+62 / passed 62.
 The first CP-5 run on `68535c0630ed04f77032d63297d742ab8c7630f4`
 executed 61 / passed 60 / failed 1 at `.antiphon/checkpoints/r35-cp5-c/`:
 the complete-zip fixture used a name outside `IsSafeStoredSourceName`'s
@@ -88,7 +114,7 @@ passed 61 / failed 0 at
 two-channel send from one source task: A accepts once, B returns three definite
 pre-acceptance queue refusals, and a repeated pump tick must not replay A.
 It compares each delivery's state, attempt count, correlation stamp and the
-source task stamp. Receipt pending.
+source task stamp. Final CP-5 executed 62 / passed 62.
 The first CP-5 build on `bca86d551` did not run tests: the two-target fixture
 declared `ChannelOutboundSnapshot` without importing its Application.Interfaces
 namespace. That import is now explicit.
