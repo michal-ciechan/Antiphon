@@ -120,7 +120,7 @@ ensure_dirs() {
         # CARD-0660 (amended): the Codex home under the server2 root belongs to uid 1654 and holds
         # the runner's live sign-in. Handing it to mc would lock the runner out of it (0700), and
         # walking it would read its entries, so the reset prunes it: ensure_runner_codex_home owns it.
-        sudo -n find "$SERVER2_ROOT" -path "$CODEX_HOME_PATH" -prune -o -exec chown -h mc:mc {} +
+        sudo -n find "$SERVER2_ROOT" \( -path "$CODEX_HOME_PATH" -o -path "$SERVER2_ROOT/cache" \) -prune -o -exec chown -h mc:mc {} +
     fi
     mkdir -p "$CASE_DIR" "$EVIDENCE_ROOT"
     cat > /work/test-evidence/current.env <<EOF
@@ -1293,6 +1293,382 @@ build_server2_images() {
         || write_result false StateInitBuildFailed 2
 }
 
+# CARD-0849: these names are deliberately fixed. The project names never prefix them.
+C849_PACKAGES=antiphon-runner-cache-nuget-packages
+C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+C849_NPM=antiphon-runner-cache-npm-content
+C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+c849_lock() {
+    require_lane host
+    sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/locks"
+    exec 9>"$SERVER2_ROOT/locks/cache-maintenance.lock"
+    flock -w 60 9 || write_result false CacheMaintenanceBusy 2
+}
+
+c849_evidence_dir() {
+    require_lane host
+    sudo -n install -d -o mc -g mc -m 0700 "$CASE_DIR"
+}
+
+c849_image() {
+    local image="antiphon-server2/session-testing:${SHA:0:12}"
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        case "$CASE" in
+            runner-cache-seed|runner-cache-inventory|runner-cache-fixture|runner-cache-prune-preview)
+                image="$(docker inspect -f '{{.Image}}' "$(c849_donor)")" \
+                    || write_result false CacheHelperImageMissing 2 ;;
+            *) write_result false CacheHelperImageMissing 2 ;;
+        esac
+    fi
+    printf '%s' "$image"
+}
+
+c849_volume() {
+    local name="$1" role="$2" create="$3" image="$4" fresh=0
+    case "$name:$role" in
+        "$C849_PACKAGES:nuget-packages"|"$C849_SCRATCH:nuget-scratch"|"$C849_NPM:npm-content") ;;
+        *) write_result false CacheTargetInvalid 2 ;;
+    esac
+    if ! docker volume inspect "$name" >/dev/null 2>&1; then
+        if [ "$create" != yes ]; then write_result false CacheVolumeMissing 2; fi
+        docker volume create --driver local \
+            --label io.antiphon.owner=server2-runner \
+            --label io.antiphon.cache-schema=1 \
+            --label "io.antiphon.cache-role=$role" "$name" >/dev/null \
+            || write_result false CacheVolumeCreateFailed 2
+        fresh=1
+    fi
+    local driver options owner schema actual_role
+    driver="$(docker volume inspect -f '{{.Driver}}' "$name")"
+    options="$(docker volume inspect -f '{{json .Options}}' "$name")"
+    owner="$(docker volume inspect -f '{{index .Labels "io.antiphon.owner"}}' "$name")"
+    schema="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-schema"}}' "$name")"
+    actual_role="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-role"}}' "$name")"
+    if [ "$driver" != local ] || [[ "$options" != null && "$options" != '{}' ]] \
+        || [ "$owner" != server2-runner ] || [ "$schema" != 1 ] || [ "$actual_role" != "$role" ]; then
+        write_result false CacheVolumeForeign 2
+    fi
+    if [ "$fresh" = 1 ]; then
+        docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+            --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+            -c 'chown 1654:1654 /cache && chmod 0700 /cache' >/dev/null \
+            || write_result false CacheVolumeInitFailed 2
+    fi
+    local stat_line
+    stat_line="$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+        -c 'test ! -L /cache && test -d /cache && stat -c %u:%g:%a /cache' 2>/dev/null)" \
+        || write_result false CacheRootInvalid 2
+    if [ "$stat_line" != 1654:1654:700 ]; then write_result false CacheRootOwnershipInvalid 2; fi
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+        -c 'set -eu; p="/cache/.c849-probe-$1"; (umask 077; : > "$p"); mv "$p" "$p.moved"; rm "$p.moved"' sh "$RUN" >/dev/null \
+        || write_result false CacheRootNotWritable 2
+    printf '%s %s %s\n' "$name" "$role" "$stat_line" >> "$CASE_DIR/cache-roots.txt"
+}
+
+c849_prepare() {
+    local create="$1" image
+    image="$(c849_image)"
+    c849_lock
+    c849_volume "$C849_PACKAGES" nuget-packages "$create" "$image"
+    c849_volume "$C849_SCRATCH" nuget-scratch "$create" "$image"
+    c849_volume "$C849_NPM" npm-content "$create" "$image"
+}
+
+c849_assert_mounts() {
+    local container="$1" mounted expected destination project
+    project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$container")"
+    case "$project" in "$HOST_PROJECT"|"$TEMP_PROJECT") ;; *) write_result false CacheRunnerIdentityInvalid 2 ;; esac
+    for expected in "$C849_PACKAGES:/home/app/.nuget/packages" \
+        "$C849_SCRATCH:/var/cache/antiphon/nuget-scratch" \
+        "$C849_NPM:/home/app/.npm/_cacache"; do
+        mounted="${expected%%:*}"; destination="${expected#*:}"
+        if ! docker inspect -f '{{range .Mounts}}{{println .Type .Name .Destination .RW}}{{end}}' "$container" \
+            | grep -Fxq "volume $mounted $destination true"; then
+            write_result false CacheMountMismatch 2
+        fi
+    done
+    for expected in "$project"'_runner-tmp:/tmp' "$project"'_work:/work' \
+        "$project"'_runner-state:/state' "$project"'_dind-data:/var/lib/docker'; do
+        mounted="${expected%%:*}"; destination="${expected#*:}"
+        if ! docker inspect -f '{{range .Mounts}}{{println .Type .Name .Destination .RW}}{{end}}' "$container" \
+            | grep -Fxq "volume $mounted $destination true"; then
+            write_result false RunnerPrivateMountMissing 2
+        fi
+    done
+    [ "$(docker exec "$container" stat -c %a /tmp)" = 1777 ] \
+        || write_result false RunnerTmpModeInvalid 2
+    docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Type .Name .Destination .RW}}{{end}}{{end}}' \
+        "$container" > "$CASE_DIR/runner-mounts.txt"
+}
+
+c849_smoke() {
+    local container="$1" runner_id="$2"
+    docker exec -u 1654:1654 -e HOME=/home/app -i "$container" /bin/sh -s > "$CASE_DIR/smoke.txt" <<'C849_SMOKE_SCRIPT' \
+        || write_result false CacheSmokeFailed 2
+set -eu
+test "$(id -u)" = 1654
+test "$NUGET_PACKAGES" = /home/app/.nuget/packages
+test "$NUGET_SCRATCH" = /var/cache/antiphon/nuget-scratch
+test "$NPM_CONFIG_CACHE" = /home/app/.npm
+test -s /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata
+test -s /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost
+test ! -d /usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20
+curl -fsS http://build-slots:8080/build-slots >/dev/null
+root="$(mktemp -d /tmp/c849-smoke-XXXXXXXX)"
+trap 'rm -rf "$root"' EXIT
+mkdir -p "$root/empty"
+cat > "$root/Smoke.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup></Project>
+EOF
+printf 'System.Console.WriteLine("CARD0849_APPHOST_OK");\n' > "$root/Program.cs"
+printf '<configuration><packageSources><clear/><add key="empty" value="%s"/></packageSources></configuration>\n' "$root/empty" > "$root/NuGet.Config"
+cat > "$root/driver.sh" <<'EOF'
+#!/bin/sh
+set -eu
+cd "$1"
+dotnet restore Smoke.csproj --configfile NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
+dotnet build Smoke.csproj --no-restore -p:UseAppHost=true -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
+test "$(./bin/Debug/net9.0/linux-x64/Smoke)" = CARD0849_APPHOST_OK
+EOF
+export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
+pwsh -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1 -Label c849-smoke -- /bin/sh "$root/driver.sh" "$root" >/dev/null
+printf 'C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n'
+C849_SMOKE_SCRIPT
+    if ! grep -q '^C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK$' "$CASE_DIR/smoke.txt"; then
+        write_result false CacheSmokeReceiptMissing 2
+    fi
+    printf 'C849_SMOKE runner=%s uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n' "$runner_id" >> "$CASE_DIR/smoke-summary.txt"
+}
+
+c849_status_zero() {
+    local runner="$1" body
+    command -v jq >/dev/null || return 1
+    body="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" || return 1
+    printf '%s' "$body" | jq -e '
+      .sessions != null and .runnerSessions != null and .queuedTasks != null and
+      .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
+      .draining == true and .acceptingNewWork == false and .redirectTo == "server2" and
+      .retireWhenIdle == true' >/dev/null
+}
+
+c849_donor() {
+    local -a ids
+    mapfile -t ids < <(docker ps -aq \
+        --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
+        --filter 'label=com.docker.compose.service=session-runner')
+    if [ "${#ids[@]}" -ne 1 ]; then write_result false CacheDonorIdentityInvalid 2; fi
+    docker inspect -f '{{.Id}}' "${ids[0]}"
+}
+
+c849_empty_volume() {
+    local name="$1" image="$2"
+    [ -z "$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+        -c 'find /cache -mindepth 1 -print -quit' 2>/dev/null)" ]
+}
+
+c849_seed_failure() {
+    local donor="$1" diagnosis="$2"
+    if [ "$(docker inspect -f '{{.State.Running}}' "$donor" 2>/dev/null || true)" = false ]; then
+        docker start "$donor" >/dev/null 2>&1 || true
+    fi
+    write_result false "$diagnosis" 2
+}
+
+c849_seed() {
+    require_lane host
+    c849_prepare yes
+    local image donor donor_image stage recovery helper payload_hash now i
+    image="$(c849_image)"
+    donor="$(c849_donor)"
+    donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
+    if [ -f "$C849_READY" ]; then
+        c849_require_ready
+        c849_status_zero server2-temp || write_result false CacheDonorNotReady 2
+        printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
+        write_result true '' 0
+    fi
+    c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        c849_empty_volume "$name" "$image" || write_result false CacheUnmarkedContent 2
+    done
+    # A tracked session count alone cannot see a separate cache writer. Refuse a donor with
+    # any app-uid restore/build/npm process after its drain has reached zero.
+    if docker exec "$donor" /bin/sh -c "ps -eo uid,comm | awk '\$1==1654 && \$2 ~ /^(dotnet|nuget|npm|node)$/ {found=1} END {exit !found}'"; then
+        write_result false CacheDonorConsumerBusy 2
+    fi
+    sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
+    stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
+    mkdir -m 0700 "$stage/packages" "$stage/npm"
+    c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
+    docker stop "$donor" >/dev/null || write_result false CacheDonorStopFailed 2
+    docker cp "$donor:/home/app/.nuget/packages/." "$stage/packages" >/dev/null 2>&1 \
+        || c849_seed_failure "$donor" CacheDonorPackageCopyFailed
+    docker cp "$donor:/home/app/.npm/_cacache/." "$stage/npm" >/dev/null 2>&1 \
+        || c849_seed_failure "$donor" CacheDonorNpmCopyFailed
+    if [ -n "$(find "$stage" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)" ] \
+        || [ -n "$(find "$stage" -type f -links +1 -print -quit)" ]; then
+        c849_seed_failure "$donor" CacheDonorUnsafeEntry
+    fi
+    local package version
+    for package in "$stage/packages"/*; do
+        [ -d "$package" ] || c849_seed_failure "$donor" CacheDonorPackagesEmpty
+        for version in "$package"/*; do
+            [ -d "$version" ] || c849_seed_failure "$donor" CacheDonorVersionInvalid
+            [ -s "$version/.nupkg.metadata" ] || c849_seed_failure "$donor" CacheDonorVersionIncomplete
+        done
+    done
+    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] \
+        || c849_seed_failure "$donor" AppHostDonorMissing
+    [ -s "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
+        || c849_seed_failure "$donor" Net9ReferenceDonorMissing
+    docker run --rm --network none --user 0:0 --entrypoint npm \
+        --mount "type=bind,source=$stage/npm,target=/npm/_cacache" "$image" \
+        cache verify --cache /npm > "$CASE_DIR/npm-verify.txt" 2>&1 \
+        || c849_seed_failure "$donor" NpmStagedIntegrityFailed
+    payload_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+    for item in "$C849_PACKAGES:packages" "$C849_NPM:npm"; do
+        name="${item%%:*}"; source="${item#*:}"
+        docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+            --mount "type=bind,source=$stage/$source,target=/seed,readonly" \
+            --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+            -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache; find /cache -type d -exec chmod u+rwx {} +; find /cache -type f -exec chmod u+rw {} +' \
+            >/dev/null || c849_seed_failure "$donor" CacheSeedImportFailed
+    done
+    helper="c849-seed-$RUN"
+    docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 \
+        --entrypoint sleep -e HOME=/home/app \
+        -e NUGET_PACKAGES=/home/app/.nuget/packages \
+        -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
+        -e NPM_CONFIG_CACHE=/home/app/.npm \
+        -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
+        --mount "type=volume,source=$C849_PACKAGES,target=/home/app/.nuget/packages,volume-nocopy" \
+        --mount "type=volume,source=$C849_SCRATCH,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
+        --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
+        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
+        "$image" infinity >/dev/null || c849_seed_failure "$donor" CacheSeedProbeStartFailed
+    if ! (c849_smoke "$helper" seed); then
+        docker rm -f "$helper" >/dev/null 2>&1 || true
+        c849_seed_failure "$donor" CacheSeedSmokeFailed
+    fi
+    docker rm -f "$helper" >/dev/null 2>&1 || true
+    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    [ ! -e "$recovery" ] || c849_seed_failure "$donor" CacheRecoveryExists
+    mv "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
+    docker start "$donor" >/dev/null || write_result false CacheDonorRestartFailed 2
+    for i in $(seq 1 30); do
+        if c849_status_zero server2-temp; then break; fi
+        sleep 2
+    done
+    c849_status_zero server2-temp || write_result false CacheDonorReconnectFailed 2
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'donor=%s\nimage=%s\ntime=%s\npayload-sha256=%s\nrecovery=%s\n' \
+        "$donor" "$donor_image" "$now" "$payload_hash" "$recovery" > "$C849_READY.tmp-$RUN"
+    mv "$C849_READY.tmp-$RUN" "$C849_READY"
+    printf 'ready=true donor=%s payload-sha256=%s recovery=%s\n' "$donor" "$payload_hash" "$recovery" > "$CASE_DIR/seed.txt"
+    write_result true '' 0
+}
+
+c849_require_ready() {
+    [ -s "$C849_READY" ] || write_result false CacheSeedRequired 2
+    local recovery
+    recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
+    case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
+    [ -d "$recovery/packages" ] && [ -d "$recovery/npm" ] \
+        || write_result false CacheRecoveryMissing 2
+    local expected actual image
+    expected="$(sed -n 's/^payload-sha256=//p' "$C849_READY" | head -n 1)"
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || write_result false CacheSeedMarkerInvalid 2
+    image="$(c849_image)"
+    actual="$(docker run --rm --network none --user 1654:1654 --entrypoint sha256sum \
+        --mount "type=volume,source=$C849_PACKAGES,target=/home/app/.nuget/packages,volume-nocopy" \
+        "$image" /home/app/.nuget/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost \
+        2>/dev/null | cut -d' ' -f1)"
+    [ "$actual" = "$expected" ] || write_result false CacheSeedPayloadChanged 2
+}
+
+case_verify_runner_caches() {
+    require_lane host
+    case "${C590_RUNNER_ID:-}" in server2|server2-temp) ;; *) write_result false CacheRunnerInvalid 2 ;; esac
+    c849_prepare no
+    c849_require_ready
+    local project container
+    project="$HOST_PROJECT"
+    [ "$C590_RUNNER_ID" = server2-temp ] && project="$TEMP_PROJECT"
+    container="$(docker ps -q --filter "label=com.docker.compose.project=$project" \
+        --filter 'label=com.docker.compose.service=session-runner')"
+    [ -n "$container" ] || write_result false CacheRunnerUnavailable 2
+    c849_assert_mounts "$container"
+    c849_smoke "$container" "$C590_RUNNER_ID"
+    write_result true '' 0
+}
+
+case_runner_cache_inventory() {
+    require_lane host
+    command -v jq >/dev/null || write_result false CacheInventoryToolMissing 2
+    local runner project container image status
+    for runner in server2 server2-temp; do
+        project="$HOST_PROJECT"
+        [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
+        container="$(docker ps -aq --filter "label=com.docker.compose.project=$project" \
+            --filter 'label=com.docker.compose.service=session-runner')"
+        [ -n "$container" ] || write_result false CacheInventoryRunnerMissing 2
+        image="$(docker inspect -f '{{.Image}}' "$container")"
+        printf 'runner=%s container=%s image=%s\n' "$runner" "$container" "$image" \
+            >> "$CASE_DIR/identities.txt"
+        docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Type .Name .Destination .RW}}{{end}}{{end}}' \
+            "$container" > "$CASE_DIR/$runner-mounts.txt" \
+            || write_result false CacheInventoryMountsUnavailable 2
+        status="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" \
+            || write_result false CacheInventoryStatusUnavailable 2
+        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,draining,retiredAt,dispatchEligible,acceptingNewWork,buildVersion}' \
+            > "$CASE_DIR/$runner-status.json" || write_result false CacheInventoryStatusInvalid 2
+        if [ "$(docker inspect -f '{{.State.Running}}' "$container")" = true ]; then
+            docker exec -u 1654:1654 -e HOME=/home/app "$container" /bin/sh -c '
+                dotnet nuget locals all --list
+                npm config get cache
+                for p in /home/app/.nuget/packages /home/app/.npm/_cacache /home/app/.local/share/NuGet/http-cache /tmp/NuGetScratchapp; do
+                    if [ -d "$p" ]; then du -s -B1 "$p"; else printf "absent %s\n" "$p"; fi
+                done
+                stat -c "%u:%g %a %n" /tmp /home/app/.nuget/packages
+            ' > "$CASE_DIR/$runner-cache-paths.txt" \
+                || write_result false CacheInventoryPathsUnavailable 2
+        else
+            printf 'stopped\n' > "$CASE_DIR/$runner-cache-paths.txt"
+        fi
+    done
+    write_result true '' 0
+}
+
+case_verify_runner_caches_retired() {
+    require_lane host
+    c849_prepare no
+    c849_require_ready
+    if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ]; then
+        write_result false TempContainersRemain 2
+    fi
+    local volume
+    for volume in runner-tmp work runner-state dind-data; do
+        if docker volume inspect "${TEMP_PROJECT}_$volume" >/dev/null 2>&1; then
+            write_result false TempPrivateVolumeRemains 2
+        fi
+    done
+    docker volume inspect "${HOST_PROJECT}_runner-tmp" >/dev/null 2>&1 \
+        || write_result false MainTmpMissing 2
+    local container tmp_mode
+    container="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" \
+        --filter 'label=com.docker.compose.service=session-runner')"
+    [ -n "$container" ] || write_result false MainRunnerUnavailable 2
+    c849_assert_mounts "$container"
+    tmp_mode="$(docker exec "$container" stat -c %a /tmp)" || write_result false MainTmpUnavailable 2
+    [ "$tmp_mode" = 1777 ] || write_result false MainTmpModeInvalid 2
+    c849_smoke "$container" server2
+    write_result true '' 0
+}
+
 case_deploy_parent() {
     require_lane host
     ensure_checkout
@@ -1319,6 +1695,8 @@ BUILD_SLOTS_SHA12=$pinned_broker_sha12
 EOF
 
     build_server2_images
+    c849_prepare yes
+    c849_require_ready
     ensure_build_slots_broker
 
     # CARD-0631 D-10: a fresh work volume gets its checkout before the runner exists.
@@ -1409,6 +1787,8 @@ EOF
     # Both refuse before anything is retired or accepted.
     verify_runner_git_identity "$container" /
     verify_runner_checkout "$container"
+    c849_assert_mounts "$container"
+    c849_smoke "$container" server2
 
     # The new deployment is proven: this round's own superseded build products go now (D-5).
     retire_superseded_server2_images "${SHA:0:12}"
@@ -1470,6 +1850,8 @@ case_deploy_temp_runner() {
     fi
     RUNNER_GROK_STORE_DIR="$grok_dir"
     build_server2_images
+    c849_prepare yes
+    c849_require_ready
     ensure_build_slots_broker
 
     cat > "$SERVER2_TEMP_ENV" <<EOF
@@ -1548,6 +1930,8 @@ EOF
     fi
     verify_runner_git_identity "$container" /
     verify_runner_checkout "$container"
+    c849_assert_mounts "$container"
+    c849_smoke "$container" server2-temp
     docker exec "$container" docker info --format '{{.Name}}' > "$CASE_DIR/daemon-name.txt" 2>&1 \
         || write_result false NestedDaemonUnavailable 2
     docker exec "$container" hostname > "$CASE_DIR/runner-hostname.txt"
@@ -1567,9 +1951,17 @@ EOF
 case_retire_temp_runner() {
     require_lane host
     if [ -z "${C590_TEMP_RETIRED_AT:-}" ]; then write_result false TempRunnerNotRetired 2; fi
+    c849_status_zero server2-temp || write_result false TempRunnerNotIdle 2
+    c849_prepare no
+    c849_require_ready
     if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
     RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
     compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || write_result false TempComposeDownFailed 2
+    local image
+    image="$(c849_image)"
+    c849_volume "$C849_PACKAGES" nuget-packages no "$image"
+    c849_volume "$C849_SCRATCH" nuget-scratch no "$image"
+    c849_volume "$C849_NPM" npm-content no "$image"
     printf 'down retiredAt=%s\n' "$C590_TEMP_RETIRED_AT" > "$CASE_DIR/temp-down.txt"
     write_result true '' 0
 }
@@ -1781,9 +2173,21 @@ case_throwaway() {
 trap 'ec=$?; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
 
 detect_lane > /dev/null
-ensure_dirs
+case "$CASE" in
+    runner-cache-inventory|runner-cache-fixture|runner-cache-seed|verify-runner-caches|verify-runner-caches-retired|runner-cache-prune-preview|runner-cache-prune)
+        # The cache lane is host-only and must never invoke ensure_dirs: it recursively chowns
+        # /work and the server2 root, which may contain live runner state and recovery data.
+        if [ "$LANE" != host ]; then printf 'DIAGNOSIS=WrongLane\n'; exit 2; fi
+        if [[ ! "$RUN" =~ ^[a-z0-9]{1,64}$ ]] || [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'DIAGNOSIS=CacheManifestInvalid\n'; exit 2
+        fi
+        c849_evidence_dir
+        ;;
+    *) ensure_dirs ;;
+esac
 printf '%s\n' "$LANE" > "$CASE_DIR/lane.txt"
-if [ "${C590_REEXEC:-}" != "1" ]; then
+if [ "${C590_REEXEC:-}" != "1" ] && [[ "$CASE" != runner-cache-* ]] \
+    && [[ "$CASE" != verify-runner-caches* ]]; then
     ensure_checkout
     export C590_REEXEC=1
     exec bash "$CHECKOUT/scripts/c590-remote.sh"
@@ -1813,6 +2217,10 @@ case "$CASE" in
     deploy-parent) case_deploy_parent ;;
     deploy-temp-runner) case_deploy_temp_runner ;;
     retire-temp-runner) case_retire_temp_runner ;;
+    runner-cache-seed) c849_seed ;;
+    runner-cache-inventory) case_runner_cache_inventory ;;
+    verify-runner-caches) case_verify_runner_caches ;;
+    verify-runner-caches-retired) case_verify_runner_caches_retired ;;
     custody-containment) case_custody_containment ;;
     nested-residue) case_nested_residue ;;
     persistent-restart) case_persistent_restart ;;

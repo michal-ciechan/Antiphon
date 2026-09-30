@@ -95,6 +95,9 @@ services:
       Serilog__LogPath: /state/runner-logs
       Agents__GrokCredentialProbeEnabled: "false"
       TMPDIR: /tmp
+      NUGET_PACKAGES: /home/app/.nuget/packages
+      NUGET_SCRATCH: /var/cache/antiphon/nuget-scratch
+      NPM_CONFIG_CACHE: /home/app/.npm
       # CARD-0631 D-9 (amended): the runner's git identity is the mounted file below. The
       # entrypoint exports the same path for the runner; naming it here as well gives every
       # `docker exec` (deploy-parent's probes, an operator shell) the identity the runner uses.
@@ -104,6 +107,21 @@ services:
       - runner-state:/state
       - dind-data:/var/lib/docker
       - runner-tmp:/tmp
+      - type: volume
+        source: runner-nuget-packages
+        target: /home/app/.nuget/packages
+        volume:
+          nocopy: true
+      - type: volume
+        source: runner-nuget-scratch
+        target: /var/cache/antiphon/nuget-scratch
+        volume:
+          nocopy: true
+      - type: volume
+        source: runner-npm-content
+        target: /home/app/.npm/_cacache
+        volume:
+          nocopy: true
       # CARD-0628 D-1: the `claude setup-token` OAuth token, as a FILE and never an environment
       # entry (an environment entry is readable by anyone who can `docker inspect`). deploy-parent
       # writes it from the vault to the host file (0600, always present, empty when the vault had
@@ -178,6 +196,15 @@ volumes:
   runner-state:
   dind-data:
   runner-tmp:
+  runner-nuget-packages:
+    external: true
+    name: antiphon-runner-cache-nuget-packages
+  runner-nuget-scratch:
+    external: true
+    name: antiphon-runner-cache-nuget-scratch
+  runner-npm-content:
+    external: true
+    name: antiphon-runner-cache-npm-content
 
 networks:
   antiphon-build-slots:

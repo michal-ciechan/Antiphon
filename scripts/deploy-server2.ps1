@@ -62,6 +62,17 @@ function Get-RunnerStatus {
     return Invoke-RunnerRequest -Method GET -RunnerId $RunnerId -Suffix '/status'
 }
 
+function Assert-ZeroCounters {
+    param($Status, [string]$RunnerId)
+    if ($null -eq $Status) { throw "RunnerStatusMissing $RunnerId" }
+    foreach ($name in @('sessions', 'runnerSessions', 'queuedTasks')) {
+        if ($Status.PSObject.Properties.Name -notcontains $name -or $null -eq $Status.$name) {
+            throw "RunnerCounterUnknown $RunnerId $name"
+        }
+        if ([int]$Status.$name -ne 0) { throw "RunnerBusy $RunnerId $name" }
+    }
+}
+
 function Wait-RunnerStatus {
     param([string]$RunnerId, [scriptblock]$Ready, [int]$Minutes, [string]$Diagnosis)
     $deadline = [datetime]::UtcNow.AddMinutes($Minutes)
@@ -77,7 +88,7 @@ function Wait-RunnerStatus {
 }
 
 function Invoke-HostCase {
-    param([string]$Case, [string]$TempRetiredAt = '')
+    param([string]$Case, [string]$TempRetiredAt = '', [string]$RunnerId = '')
     $manifest = [ordered]@{
         evidenceRoot = $evidenceRoot
         sourceSha = $Sha
@@ -85,6 +96,7 @@ function Invoke-HostCase {
         c604Branch = 'master'
     }
     if ($TempRetiredAt) { $manifest.tempRetiredAt = $TempRetiredAt }
+    if ($RunnerId) { $manifest.runnerId = $RunnerId }
     $manifestPath = Join-Path $evidenceRoot ("$Case.manifest.json")
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
     $verifier = if ($env:C727_TEST_VERIFY_STUB) { $env:C727_TEST_VERIFY_STUB } else { Join-Path $PSScriptRoot 'verify-docker-stack.ps1' }
@@ -97,13 +109,32 @@ function Invoke-Phase {
     switch ($Name) {
         'deploy-temp' {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
-            if ($null -eq $s -or [string]$s.buildVersion -ne $Sha -or -not $s.acceptingNewWork) {
-                if ($null -ne $s -and ($s.sessions -gt 0 -or $s.runnerSessions -gt 0 -or $s.queuedTasks -gt 0)) {
-                    throw 'TempRunnerBusy'
+            if ($null -eq $s) { throw 'TempRunnerStatusMissing' }
+            if ([string]$s.buildVersion -ne $Sha) {
+                Assert-ZeroCounters -Status $s -RunnerId 'server2-temp'
+                if (-not $s.draining) {
+                    [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain' -Body @{
+                        reason = 'CARD-0849 cache migration'; redirectTo = 'server2'; retireWhenIdle = $true
+                    })
+                    $s = Get-RunnerStatus -RunnerId 'server2-temp'
+                    Assert-ZeroCounters -Status $s -RunnerId 'server2-temp'
                 }
+                if (-not $s.draining -or [string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle) {
+                    throw 'TempRunnerDrainConflict'
+                }
+                Invoke-HostCase -Case 'runner-cache-seed'
                 Invoke-HostCase -Case 'deploy-temp-runner'
             }
             [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes 5 -Diagnosis 'TempRunnerNotEligible' -Ready {
+                param($s) $s.dispatchEligible -eq $true -and [string]$s.buildVersion -eq $Sha
+            })
+            Invoke-HostCase -Case 'verify-runner-caches' -RunnerId 'server2-temp'
+            $s = Get-RunnerStatus -RunnerId 'server2-temp'
+            if ($s.draining) {
+                if ([string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle) { throw 'TempRunnerDrainConflict' }
+                [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0849 cache verification passed' })
+            }
+            [void](Wait-RunnerStatus -RunnerId 'server2-temp' -Minutes 5 -Diagnosis 'TempRunnerNotAcceptingNewWork' -Ready {
                 param($s) $s.acceptingNewWork -eq $true -and [string]$s.buildVersion -eq $Sha
             })
         }
@@ -130,14 +161,18 @@ function Invoke-Phase {
         'redeploy-old' {
             $s = Get-RunnerStatus -RunnerId 'server2'
             if ($null -eq $s) { throw 'OldRunnerStatusMissing' }
-            if ($s.sessions -ne 0 -or $s.runnerSessions -ne 0 -or $s.queuedTasks -ne 0) { throw 'OldRunnerStillBusy' }
-            if ([string]$s.buildVersion -ne $Sha -and -not $s.draining) { throw 'OldRunnerNotDraining' }
-            if ([string]$s.buildVersion -ne $Sha) { Invoke-HostCase -Case 'deploy-parent' }
+            if ([string]$s.buildVersion -ne $Sha) {
+                Assert-ZeroCounters -Status $s -RunnerId 'server2'
+                if (-not $s.draining -or [string]$s.redirectTo -ne 'server2-temp' -or $s.retireWhenIdle) { throw 'OldRunnerDrainConflict' }
+                Invoke-HostCase -Case 'deploy-parent'
+            }
             [void](Wait-RunnerStatus -RunnerId 'server2' -Minutes 5 -Diagnosis 'OldRunnerNotDispatchEligible' -Ready {
                 param($s) $s.dispatchEligible -eq $true -and [string]$s.buildVersion -eq $Sha
             })
+            Invoke-HostCase -Case 'verify-runner-caches' -RunnerId 'server2'
             $s = Get-RunnerStatus -RunnerId 'server2'
             if ($s.draining) {
+                if ([string]$s.redirectTo -ne 'server2-temp' -or $s.retireWhenIdle) { throw 'OldRunnerDrainConflict' }
                 [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2' -Suffix '/drain/clear' -Body @{ reason = 'CARD-0727 rolling upgrade complete' })
             }
             [void](Wait-RunnerStatus -RunnerId 'server2' -Minutes 5 -Diagnosis 'OldRunnerNotAcceptingNewWork' -Ready {
@@ -165,7 +200,8 @@ function Invoke-Phase {
         }
         'retire-temp' {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
-            if ($null -eq $s -or -not $s.retiredAt) { throw 'TempRunnerNotRetired' }
+            if ($null -eq $s -or -not $s.retiredAt -or -not $s.draining) { throw 'TempRunnerNotRetired' }
+            Assert-ZeroCounters -Status $s -RunnerId 'server2-temp'
             $retiredAt = if ($s.retiredAt -is [datetime]) {
                 $s.retiredAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
             } else { [string]$s.retiredAt }

@@ -244,7 +244,7 @@ public sealed class DockerStackContractTests
                 && line.TrimEnd().EndsWith(':'))
             .Select(line => line.Trim().TrimEnd(':'))
             .ToList();
-        blocks.ShouldBe(["state-init", "session-runner", "build-slots", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data", "runner-tmp", "antiphon-build-slots"]);
+        blocks.ShouldBe(["state-init", "session-runner", "build-slots", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data", "runner-tmp", "runner-nuget-packages", "runner-nuget-scratch", "runner-npm-content", "antiphon-build-slots"]);
         DockerStackDocuments.Service(Text("docker-compose.server2-runner.yml"), "build-slots")
             .ShouldContain("profiles: [broker]");
     }
@@ -261,6 +261,71 @@ public sealed class DockerStackContractTests
         runner.ShouldNotContain("runner-state:");
         runner.ShouldNotContain("healthcheck:");
     }
+
+    [Test]
+    public void C849_Cache_volumes_are_external_narrow_and_nocopy()
+    {
+        var source = Text("docker-compose.server2-runner.yml").Replace("\r\n", "\n");
+        ValidateC849Base(source).ShouldBeTrue();
+        foreach (var (from, to) in new[]
+        {
+            ("external: true", "external: false"),
+            ("antiphon-runner-cache-nuget-packages", "another-volume"),
+            ("antiphon-runner-cache-nuget-scratch", "another-volume"),
+            ("antiphon-runner-cache-npm-content", "another-volume"),
+            ("NUGET_PACKAGES: /home/app/.nuget/packages", "NUGET_PACKAGES: /tmp/packages"),
+            ("NUGET_SCRATCH: /var/cache/antiphon/nuget-scratch", "NUGET_SCRATCH: /tmp/scratch"),
+            ("NPM_CONFIG_CACHE: /home/app/.npm", "NPM_CONFIG_CACHE: /tmp/npm"),
+            ("nocopy: true", "nocopy: false")
+        })
+            ValidateC849Base(source.Replace(from, to, StringComparison.Ordinal)).ShouldBeFalse($"accepted mutation of {from}");
+    }
+
+    [Test]
+    public void C849_Temp_inherits_caches_and_keeps_private_state()
+    {
+        var overlay = Text("docker-compose.server2-runner.temp.yml").Replace("\r\n", "\n");
+        ValidateC849Overlay(overlay).ShouldBeTrue();
+        foreach (var addition in new[]
+        {
+            "      - runner-nuget-packages:/tmp\n",
+            "      - runner-tmp:/tmp\n",
+            "      - /home/app:/home/app\n"
+        })
+            ValidateC849Overlay(overlay + addition).ShouldBeFalse();
+        foreach (var file in new[] { "docker-compose.yml", "docker-compose.dev.yml", "docker-compose.test.yml" })
+            Text(file).ShouldNotContain("antiphon-runner-cache-");
+        var baseText = Text("docker-compose.server2-runner.yml");
+        DockerStackDocuments.Service(baseText, "state-init").ShouldNotContain("runner-nuget-packages");
+        DockerStackDocuments.Service(baseText, "build-slots").ShouldNotContain("runner-nuget-packages");
+    }
+
+    private static bool ValidateC849Base(string source)
+    {
+        var runner = DockerStackDocuments.Service(source, "session-runner");
+        var volumeSection = source[(source.IndexOf("\nvolumes:\n", StringComparison.Ordinal) + 1)..];
+        foreach (var (key, name, destination, environment) in new[]
+        {
+            ("runner-nuget-packages", "antiphon-runner-cache-nuget-packages", "/home/app/.nuget/packages", "NUGET_PACKAGES: /home/app/.nuget/packages"),
+            ("runner-nuget-scratch", "antiphon-runner-cache-nuget-scratch", "/var/cache/antiphon/nuget-scratch", "NUGET_SCRATCH: /var/cache/antiphon/nuget-scratch"),
+            ("runner-npm-content", "antiphon-runner-cache-npm-content", "/home/app/.npm/_cacache", "NPM_CONFIG_CACHE: /home/app/.npm")
+        })
+        {
+            if (!volumeSection.Contains($"  {key}:\n    external: true\n    name: {name}\n", StringComparison.Ordinal) ||
+                !runner.Contains($"source: {key}\n        target: {destination}\n        volume:\n          nocopy: true", StringComparison.Ordinal) ||
+                !runner.Contains(environment, StringComparison.Ordinal)) return false;
+        }
+        return runner.Contains("TMPDIR: /tmp", StringComparison.Ordinal) &&
+            source.Split("external: true", StringSplitOptions.None).Length == 5;
+    }
+
+    private static bool ValidateC849Overlay(string overlay) =>
+        overlay.Contains("PhoneHome__RunnerId: server2-temp", StringComparison.Ordinal) &&
+        overlay.Contains("RUNNER_GROK_STORE_DIR", StringComparison.Ordinal) &&
+        !overlay.Contains("runner-nuget-", StringComparison.Ordinal) &&
+        !overlay.Contains("runner-npm-content", StringComparison.Ordinal) &&
+        !overlay.Contains("runner-tmp:/tmp", StringComparison.Ordinal) &&
+        !overlay.Contains("- /home/app:/home/app", StringComparison.Ordinal);
 
     [Test]
     public void Server2_broker_is_unprivileged_and_pinned_separately()

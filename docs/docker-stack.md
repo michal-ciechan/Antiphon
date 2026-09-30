@@ -1,5 +1,68 @@
 # Self-contained Docker stack (CARD-0590)
 
+## Shared server2 runner caches (CARD-0849)
+
+`docker-compose.server2-runner.yml` declares three external local Docker volumes shared by
+the `antiphon-runner` and `antiphon-runner-temp` Compose projects:
+
+| Volume | Container path | Purpose |
+|---|---|---|
+| `antiphon-runner-cache-nuget-packages` | `/home/app/.nuget/packages` | NuGet global packages |
+| `antiphon-runner-cache-nuget-scratch` | `/var/cache/antiphon/nuget-scratch` | NuGet cross-process filesystem locks |
+| `antiphon-runner-cache-npm-content` | `/home/app/.npm/_cacache` | npm package content |
+
+Each mount uses `volume.nocopy: true`. The runner sets `NUGET_PACKAGES`, `NUGET_SCRATCH`
+and `NPM_CONFIG_CACHE` to those paths. The shared scratch path is part of the package-cache
+contract: a process must use the shared package and scratch pair together, or a fully
+private pair. Worktrees, `obj`, `bin`, `node_modules`, `/state`, `/work`, `/tmp`, provider
+homes, configuration and credentials remain outside these caches. In particular, each
+runner project's `runner-tmp` volume stays private and `/tmp` stays mode 1777.
+
+The host helper accepts only these names, the local driver, empty driver options and
+labels `io.antiphon.owner=server2-runner`, `io.antiphon.cache-schema=1` and the matching
+cache role. It initializes roots as uid/gid 1654 at mode 0700 and probes create, rename
+and delete as that uid. A foreign volume, unsafe root or unmarked content is a refusal.
+The maintenance lock is `/home/mc/antiphon-server2/locks/cache-maintenance.lock`.
+These external volumes survive `docker compose down -v`; that command still removes the
+temp project's private work, state, dind and tmp volumes.
+
+Before the first temp recreation, refresh both runner statuses and cache inventory. Wait
+for the already drained temp runner to reach fresh non-null zero `sessions`,
+`runnerSessions` and `queuedTasks`. Use the explicit Seed front door from the reviewed
+desktop checkout with `C849_DEPLOY_SHA` set to its full landed SHA. The host helper stops
+only that idle donor container, copies the NuGet packages and npm content from its
+writable layer, checks complete net9 host/reference packages, and starts the same old
+container again under its drain after the disconnected apphost probe and recovery copy.
+Do not replace or retire that donor when Seed has refused or before its reconnect with
+fresh zero counters is recorded. No `/tmp` contents or NuGet scratch locks are copied.
+
+The rolling sequence remains explicit: CP-3 Fixture and inventory, Seed, `deploy-temp`,
+`drain-old`, `redeploy-old`, CP-4 Both, `drain-temp`, `retire-temp`, then CP-5 Retired.
+The deploy wrapper verifies the real mounts and a uid-1654 net9 apphost restore, build
+and executable run before clearing either drain, even on a same-SHA rerun. A failed
+verification leaves the affected runner held. CP-3/4/5 are trusted desktop and host
+operations at those gates; repo tests alone do not establish live acceptance.
+
+The initial size budgets are 10 GiB packages, 2 GiB npm content and 256 MiB scratch.
+Review `du -s -B1` for each at every deployment, before retirement and at least weekly;
+warn at 80%, and require maintenance above a budget or below 20 GiB backing-space
+headroom. These are review limits, not Docker quotas. Cleanup starts with
+`pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case PrunePreview` and only
+then `-Case Prune -Preview <receipt-path>`. Both runners must remain drained with zero
+counters, no cache consumers and no active host build leases. Preserve volume roots and
+one bounded recovery generation. Refill required packages under a build lease and pass
+the disconnected smoke before admission; never clear all NuGet locals, prune Docker
+volumes, or remove a mount root. Preserve the recovery generation for seven days after
+successful activation, then remove only its recorded path during maintenance.
+
+For rollback, keep the previous runner and state-init image IDs under explicit rollback
+tags before the rollout. Drain before replacing either container and verify the image
+SHA, mounts, private `/tmp` mode and apphost before clearing its drain. Keep shared
+packages and shared scratch together when a prior image can use them. If the mount design
+is suspect, drain every consumer and use a private package/scratch pair seeded from the
+saved recovery copy. Retain external caches for diagnosis; never force-stop a live task
+to meet a rollout estimate.
+
 **No application service ever mounts a Docker socket.** Superseded 2026-09-22 by CARD-0604: the sibling-socket lane is retired, and with it `docker-compose.session-testing.yml` and `DOCKER_SOCKET_GID`. The netns split it caused (a mapped port lands in the HOST's namespace while the test process reads its own `localhost`) is why Testcontainers never worked on that shape.
 
 The root `Dockerfile` publishes the server for `linux-x64` with SDK 10 and the ASP.NET 9 runtime. `docker/session-runner-grok/Dockerfile` keeps the phone-home runtime as its default target. `receipt-probe` adds FakeGrok and no Docker tooling at all. `session-testing` is the **persistent server2 runner**: it carries the whole Docker engine from one pinned tarball (`dockerd`, `containerd`, `runc`, the shims, `docker-proxy`, `ctr`), `iptables` pinned to the legacy backend (server2 is kernel 4.15 with iptables 1.6.1), `iproute2`, `openssh-client`, SDK 10 with runtimes 9 and 10, Node 22 and PowerShell. `runtime-base` (and so every runner target) carries Grok 1.0.40 and Claude Code 2.1.280, pinned by SHA-256 `1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b` and verified with `sha256sum -c` before install (CARD-0628); no credential for either is ever baked. Every runner target needs **minimum Git 2.43**: `LandingGit`, `GuardedWorktreeRemoval` and `GuardedVerificationRemoval` run `git show-ref --exists` (new in 2.43) to tell a missing ref from a lookup error, and landing inspection fails on anything older. Debian bookworm ships 2.39.5 and bookworm-backports carries no git, so the `git-build` stage compiles Git 2.47.3 from the kernel.org tarball pinned by SHA-256 `c073471530e92b716641ea2b381fcd0ece53eea9a76a9c5415f93f89e870dd5f` (verified with `sha256sum -c` before unpacking), with `sysconfdir=/etc` so the baked `/etc/gitconfig` stays in force; `runtime-base` copies it to `/usr/local`, installs no apt git, and fails the build when `git --version` is below `GIT_MINIMUM_VERSION` (CARD-0661). Raising the pin means a new version/SHA-256 pair, never dropping the check. It starts as root under tini so `docker/session-runner-grok/dind-entrypoint.sh` can run its own `dockerd`, then drops the runner to uid 1654 with the `docker-nested` group (gid 1656). A dead daemon takes the container down; `restart: unless-stopped` brings both back.

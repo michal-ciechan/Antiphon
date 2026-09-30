@@ -10,13 +10,14 @@ if ($Method -eq 'POST') {
     if ($RunnerId -eq 'server2' -and $Suffix -eq '/drain') { $state.oldDraining = $true }
     if ($RunnerId -eq 'server2' -and $Suffix -eq '/drain/clear') { $state.oldDraining = $false }
     if ($RunnerId -eq 'server2-temp' -and $Suffix -eq '/drain') { $state.tempDraining = $true }
+    if ($RunnerId -eq 'server2-temp' -and $Suffix -eq '/drain/clear') { $state.tempDraining = $false }
     $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
     Write-Output '{}'
     exit 0
 }
 if ($Suffix -ne '/status') { exit 1 }
 if ($RunnerId -eq 'server2-temp') {
-    if ($state.scenario -eq 'missing' -or ($state.scenario -eq 'happy' -and -not $state.tempDeployed)) {
+    if ($state.scenario -eq 'missing') {
         Write-Output '__404__'
         exit 0
     }
@@ -24,7 +25,7 @@ if ($RunnerId -eq 'server2-temp') {
     $retiredAt = $null
     if ($state.tempDraining) { $retiredAt = '2026-09-27T10:00:00Z' }
     [ordered]@{
-        acceptingNewWork = $accepting; dispatchEligible = $true; buildVersion = $state.sha
+        acceptingNewWork = $accepting; dispatchEligible = ($state.scenario -ne 'ineligible'); buildVersion = $(if ($state.tempDeployed) { $state.sha } else { 'old' })
         draining = [bool]$state.tempDraining; redirectTo = $(if ($state.tempDraining) { 'server2' } else { $null })
         retireWhenIdle = [bool]$state.tempDraining; retiredAt = $retiredAt
         sessions = 0; runnerSessions = 0; queuedTasks = 0

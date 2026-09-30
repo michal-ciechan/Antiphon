@@ -2,6 +2,10 @@
 
 The self-contained server2 stack (CARD-0590) is documented in [docker-stack.md](docker-stack.md). It does not replace the Aspire dev stack below.
 
+Server2's shared runner download caches, stopped-donor seed and drain-gated rollout are
+in [docker-stack.md](docker-stack.md#shared-server2-runner-caches-card-0849). A container
+recreated before the external caches are seeded loses the packages in its writable layer.
+
 For everyday operation, use the [canonical local restart runbook](apphost-runbook.md):
 first start, AppHost or runner restart, verification, locks, exits and Job Object caveats.
 

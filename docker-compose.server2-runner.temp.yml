@@ -9,4 +9,6 @@ services:
       - default
       - antiphon-build-slots
     volumes:
+      # The three external cache mounts inherit from the base runner; this project keeps
+      # its own work, state, dind and tmp volumes when it is removed with down -v.
       - ${RUNNER_GROK_STORE_DIR:?RUNNER_GROK_STORE_DIR is required}:/state/grok
