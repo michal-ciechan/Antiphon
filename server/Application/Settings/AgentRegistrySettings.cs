@@ -106,15 +106,20 @@ public class AgentRegistrySettings
     public int OpenCodeReadyMaxWaitMs { get; set; } = 60000;
     public int OpenCodeDoneQuietPeriodMs { get; set; } = 3000;
     public int OpenCodeDoneMaxWaitMs { get; set; } = 300000;
+    /// <summary>Unchanged qualified Grok composer region, independent of header redraws.</summary>
     public int GrokReadyQuietPeriodMs { get; set; } = 1000;
     public int GrokReadyMaxWaitMs { get; set; } = 60000;
     public int GrokReadyMinTotalWaitMs { get; set; } = 2000;
     /// <summary>
     /// How long <c>RunnerGrokAdapter.WaitForReadyAsync</c> waits for Grok's directory-trust
     /// dialog to leave the rendered screen after sending <c>y</c> (CARD-0315). Zero skips the
-    /// verify and treats the send as success.
+    /// trust-clearance sub-budget only; positive composer verification still applies.
     /// </summary>
     public int GrokTrustPromptSettleMs { get; set; } = 15000;
+    /// <summary>Local diagnostic directory for failed Grok startup waits.</summary>
+    public string? GrokStartupCaptureDirectory { get; set; }
+    /// <summary>Completed captures retained in that directory, clamped to 1..100.</summary>
+    public int GrokStartupCaptureKeep { get; set; } = 10;
     public int GrokDoneQuietPeriodMs { get; set; } = 3000;
     public int GrokDoneMaxWaitMs { get; set; } = 300000;
 

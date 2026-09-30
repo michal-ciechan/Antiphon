@@ -43,18 +43,14 @@ public class RunnerGrokAdapterSignInPromptTests
                      No, quit                     n
         """;
 
-    private const string ReadyScreen = """
-        C:\Antiphon\worktrees\card-task-8e8e1ce3
-
-        >
-        """;
+    private static string ReadyScreen => GrokStartupFixture.ReadyScreen();
 
     [Test]
     public async Task A_sign_in_screen_is_not_ready_and_types_nothing()
     {
         var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
         var client = new ScreenScriptedRunnerClient(SignInScreen, clearedBy: "y", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(grokHome), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -73,7 +69,7 @@ public class RunnerGrokAdapterSignInPromptTests
     {
         var client = new ScreenScriptedRunnerClient(
             SignInPlusTrustScreen, clearedBy: "y", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -87,7 +83,7 @@ public class RunnerGrokAdapterSignInPromptTests
     public async Task A_trust_only_screen_is_unchanged_from_CARD_0315()
     {
         var client = new ScreenScriptedRunnerClient(TrustScreen, clearedBy: "y", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);

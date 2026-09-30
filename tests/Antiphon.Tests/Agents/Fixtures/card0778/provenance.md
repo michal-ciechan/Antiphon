@@ -17,7 +17,7 @@ No product code was changed. The predicate below is **evidence for review**, not
 | `conpty.dll` / `OpenConsole.exe` (probe output) | `39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8` / `b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160` |
 | `Antiphon.Agents.Pty.dll` / `Antiphon.SessionRunner.dll` / `Antiphon.FakeLlmApi.dll` (built from the source SHA) | `4bdb5d538516f93118521cb7da9063abdb89c8635529dab2c75dd8bccc7d00d8` / `7c1838254d2c2a1978ce01ec259db9c480ee60c55ce6a4a1c223387fcaedf947` / `70ee902df50cf192410048a5b89056dd0326cdd603a7d21d90581a9081784d46` |
 | Probe source (task-owned, ignored `.antiphon/c778-probe/Program.cs`, not committed) | `e2d9b21d8212dca838cb80145e9784b7c8239eb68751179dd0d0731056c753ef` (last capture build; later edits added read-only verify/diff modes) |
-| `startup-frames.json` committed blob | git blob `2e24da5f63b6cbf5d8731f10e12af9463b9c805e`; LF bytes SHA-256 `0ecef35286943a370b87d21871ec3063c52cafe93585b66f77849ed5caab5674`. Windows `core.autocrlf` working copies differ byte-wise, so tests should use the content digests below |
+| `startup-frames.json` S1 committed blob | git blob `2e24da5f63b6cbf5d8731f10e12af9463b9c805e`; LF bytes SHA-256 `0ecef35286943a370b87d21871ec3063c52cafe93585b66f77849ed5caab5674`. S2 adds only the labelled synthetic `syn-other-size-120x29` frame: resulting blob `e6cc9f49714b8594838ad5dc9be9782be0a39b35`, LF SHA-256 `dc3aa919b9717b14057225231cc252d01918ef1e0f9b229e2b6538899caa6dd0`. Captured chunks and checkpoints retain the content digests below; Windows `core.autocrlf` working copies differ byte-wise. |
 
 Content digests (SHA-256 of UTF-8; line-ending independent):
 

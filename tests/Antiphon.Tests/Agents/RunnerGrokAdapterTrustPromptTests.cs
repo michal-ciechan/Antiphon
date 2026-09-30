@@ -31,17 +31,13 @@ public class RunnerGrokAdapterTrustPromptTests
                      No, quit                     n
         """;
 
-    private const string ReadyScreen = """
-        C:\Antiphon\worktrees\card-task-8e8e1ce3
-
-        >
-        """;
+    private static string ReadyScreen => GrokStartupFixture.ReadyScreen();
 
     [Test]
     public async Task A_launch_into_an_untrusted_directory_answers_y_before_reporting_ready()
     {
         var client = new ScreenScriptedRunnerClient(TrustScreen, clearedBy: "y", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -56,7 +52,7 @@ public class RunnerGrokAdapterTrustPromptTests
     public async Task A_healthy_launch_types_nothing()
     {
         var client = new ScreenScriptedRunnerClient(ReadyScreen, clearedBy: "y", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
@@ -67,7 +63,7 @@ public class RunnerGrokAdapterTrustPromptTests
     public async Task A_trust_dialog_that_does_not_clear_is_not_ready()
     {
         var client = new ScreenScriptedRunnerClient(TrustScreen, clearedBy: "never", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -80,7 +76,7 @@ public class RunnerGrokAdapterTrustPromptTests
     public async Task Enter_is_not_the_affirmative_key()
     {
         var client = new ScreenScriptedRunnerClient(TrustScreen, clearedBy: "\r", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse(
