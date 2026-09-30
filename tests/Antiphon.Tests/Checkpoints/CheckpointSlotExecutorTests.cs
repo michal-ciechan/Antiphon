@@ -168,7 +168,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         try
         {
             Console.SetOut(output);
-            var exit = await Program.RunAsync(["row", "--repo-root", TempDir(), "--name", "CP-1",
+            var exit = await Antiphon.Checkpoints.Program.RunAsync(["row", "--repo-root", TempDir(), "--name", "CP-1",
                 "--project", "tests/Antiphon.Tests", "--output-path", "bin-c833/",
                 "--filter", "/*/*/ExampleSurfaceTests/*"], runtime);
             exit.ShouldBe(2);
