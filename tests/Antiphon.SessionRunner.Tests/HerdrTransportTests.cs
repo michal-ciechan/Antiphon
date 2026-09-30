@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;

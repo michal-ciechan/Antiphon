@@ -210,8 +210,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         Task listening;
         lock (_listenGate)
             listening = _listening.Task;
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(5), _timeProvider);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5), _timeProvider);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try { await listening.WaitAsync(timeout.Token); }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
