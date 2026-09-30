@@ -48,7 +48,21 @@ public sealed class GrokStartupReadyOrderingTests
             await h.Queue.FlushSessionAsync(h.SessionId, deadline.Token);
             runner.Writes.ShouldBeEmpty();
             runner.ReleaseReady();
-            await launch;
+            try { await launch; }
+            catch (Exception ex)
+            {
+                await using var failedDb = new Antiphon.Server.Infrastructure.Data.AppDbContext(
+                    TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                var state = await failedDb.AgentSessions.AsNoTracking().Where(s => s.Id == h.SessionId)
+                    .Select(s => new { s.Status, s.GrokRulesState, s.GrokRulesFailure }).SingleAsync();
+                var rows = await failedDb.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == h.SessionId)
+                    .Select(m => new { m.Status, m.RulesRefreshKey, m.RulesAcknowledgedAt, m.DeliveryAttempts })
+                    .ToListAsync();
+                throw new InvalidOperationException(
+                    $"C778 ordering: writes={runner.Writes.Count} submits={runner.SubmittedBodies.Count} "
+                    + $"state={state} rows={string.Join(';', rows)}", ex);
+            }
             await h.Runtime.SyncTranscriptAsync(h.SessionId, deadline.Token);
             await using var db = new Antiphon.Server.Infrastructure.Data.AppDbContext(
                 TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
