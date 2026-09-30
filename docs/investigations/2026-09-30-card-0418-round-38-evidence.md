@@ -88,6 +88,15 @@ was stale: it expected the dispatch-created session to remain `Starting` even
 though the direct runner and queue now correctly advanced it to `Running`.
 The cut assertion now distinguishes the running case.
 
+The fourth exact V-15 diagnostic on
+`afa47ce2232ca5acca7b307099f7574371f5ade6` executed 1 / passed 0 /
+failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-050210-320b/`.
+The first queue send and native converter task now pass the cut and settlement
+checks. The rebuilt server's second `SendNowAsync` refused its prompt because
+no matching transcript record appeared in the verification window. The next
+diagnostic captures native kinds, prompt match, screen and byte shape there.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
