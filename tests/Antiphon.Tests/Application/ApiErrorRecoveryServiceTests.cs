@@ -198,11 +198,8 @@ public class ApiErrorRecoveryServiceTests
     public async Task Session_limit_stub_schedules_one_resume_at_reset_plus_padding()
     {
         await using var h = await CreateHarnessAsync();
-        await using (var stamp = CreateContext())
-        {
-            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
-        }
+        await using (var launch = CreateContext())
+            (await launch.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).EffectiveModelId.ShouldBeNull();
         var now = new DateTimeOffset(2026, 7, 15, 16, 0, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
         await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText,
@@ -221,7 +218,7 @@ public class ApiErrorRecoveryServiceTests
                 .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
                 .ToListAsync())
             .ShouldHaveSingleItem();
-        hold.ModelAlias.ShouldNotBe("<synthetic>");
+        hold.ModelAlias.ShouldBe(ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.High));
         hold.DisabledUntil.ShouldBe(row.NextAttemptAt);
         hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
     }
@@ -235,11 +232,6 @@ public class ApiErrorRecoveryServiceTests
         var time = new FakeTimeProvider(now);
         await using var h = await BridgeQueueHarness.CreateAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
-        await using (var stamp = CreateContext())
-        {
-            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
-        }
 
         var text = UsageLimitWallParser.SessionLimitProductionText;
         text.Length.ShouldBe(61);
@@ -264,7 +256,7 @@ public class ApiErrorRecoveryServiceTests
         hold.Reason.ShouldContain("2026-09-05T16:20:00Z");
         hold.DisabledUntil.ShouldBe(resetPlusPadding);
         hold.DisabledUntil.ShouldNotBe(now.UtcDateTime.AddHours(6));
-        hold.ModelAlias.ShouldBe("fable");
+        hold.ModelAlias.ShouldBe(ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.High));
         await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
     }
 
@@ -275,11 +267,6 @@ public class ApiErrorRecoveryServiceTests
         var time = new FakeTimeProvider(now);
         await using var h = await BridgeQueueHarness.CreateAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
-        await using (var stamp = CreateContext())
-        {
-            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
-        }
 
         await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitProductionText,
             timestamp: now.UtcDateTime);
@@ -303,11 +290,6 @@ public class ApiErrorRecoveryServiceTests
         var time = new FakeTimeProvider(now);
         await using var h = await BridgeQueueHarness.CreateAsync(
             new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
-        await using (var stamp = CreateContext())
-        {
-            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
-        }
 
         var text = UsageLimitWallParser.SessionLimitProductionText;
         var (seq, uuid) = await SeedProductionClaudeStubAsync(h.SessionId, text, createdAt: now.UtcDateTime);
@@ -1234,9 +1216,6 @@ public class ApiErrorRecoveryServiceTests
         Guid sessionId, string apiErrorClass, int? status, string text, DateTime? timestamp = null)
     {
         await using var db = CreateContext();
-        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
-        if (session.AgentKind == AgentKind.ClaudeCode && session.EffectiveModelId is null)
-            session.EffectiveModelId = "fable"; // explicit test launch model, never inferred in production
         var seq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
@@ -1271,9 +1250,6 @@ public class ApiErrorRecoveryServiceTests
         bool emptyAssistant = false)
     {
         await using var db = CreateContext();
-        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
-        if (session.AgentKind == AgentKind.ClaudeCode && session.EffectiveModelId is null)
-            session.EffectiveModelId = "fable"; // explicit test launch model
         var seq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
