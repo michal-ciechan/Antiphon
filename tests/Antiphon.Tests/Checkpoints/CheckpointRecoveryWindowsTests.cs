@@ -251,7 +251,11 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         var locked = Path.Combine(sampled, "locked");
         Directory.CreateDirectory(locked);
         var directory = new DirectoryInfo(locked);
-        System.Security.AccessControl.DirectorySecurity? originalAcl = null;
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var deny = new System.Security.AccessControl.FileSystemAccessRule(user,
+            System.Security.AccessControl.FileSystemRights.ListDirectory,
+            System.Security.AccessControl.AccessControlType.Deny);
+        var denyApplied = false;
         try
         {
             File.WriteAllBytes(Path.Combine(locked, "payload.bin"), RandomNumberGenerator.GetBytes(128 * 1024));
@@ -260,14 +264,10 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
             readable.Exit.ShouldBe(0, readable.Error);
             long.Parse(readable.Output.Trim(), System.Globalization.CultureInfo.InvariantCulture)
                 .ShouldBeGreaterThanOrEqualTo(128 * 1024);
-            var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
-            var deny = new System.Security.AccessControl.FileSystemAccessRule(user,
-                System.Security.AccessControl.FileSystemRights.ListDirectory,
-                System.Security.AccessControl.AccessControlType.Deny);
-            originalAcl = directory.GetAccessControl();
             var restrictedAcl = directory.GetAccessControl();
             restrictedAcl.AddAccessRule(deny);
             directory.SetAccessControl(restrictedAcl);
+            denyApplied = true;
             var denied = await UsageLibrary.InvokeAsync(RegisterCheckpointChild, work, body);
             denied.Exit.ShouldNotBe(0, "an unreadable subfolder must fail the sample, not read as zero: " + denied.Output);
             denied.Error.ShouldContain("Allocated-byte sample failed");
@@ -275,9 +275,19 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
         }
         finally
         {
-            try { if (originalAcl is not null) directory.SetAccessControl(originalAcl); }
+            // Writing back an earlier ACL snapshot leaves the deny in place; remove the rule itself.
+            try
+            {
+                if (denyApplied)
+                {
+                    var acl = directory.GetAccessControl();
+                    acl.RemoveAccessRule(deny).ShouldBeTrue("the deny rule this test added must be removable");
+                    directory.SetAccessControl(acl);
+                }
+            }
             finally { if (Directory.Exists(work)) Directory.Delete(work, recursive: true); }
         }
+        Directory.Exists(work).ShouldBeFalse("the access-denied fixture must not outlive its test");
     }
 
     [Test]

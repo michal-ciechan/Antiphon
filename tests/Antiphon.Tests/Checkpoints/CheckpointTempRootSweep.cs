@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Checkpoints;
+using Antiphon.TestSupport;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
@@ -386,12 +388,43 @@ internal static class CheckpointTempSweepAssemblyHook
     {
         var target = Environment.GetEnvironmentVariable("C804_ROSTER_FILE");
         if (string.IsNullOrWhiteSpace(target)) return;
-        var selected = context.AllTests.Select(test => new
+        CheckpointRoster.Write(target, context.AllTests.Select(test => new CheckpointRoster.Case(
+            test.Id, test.Metadata.TestDetails.ClassType, test.Metadata.TestDetails.MethodName,
+            test.Metadata.TestDetails.TestName)));
+    }
+}
+
+internal static class CheckpointRoster
+{
+    public sealed record Case(string Id, Type ClassType, string Method, string DisplayName);
+
+    // AllTests still lists [Explicit] cases the wildcard usage filters never run, so a
+    // roster that kept them could never join the TRX (55 Full cases on this source).
+    public static bool IsExplicit(Type classType, string method) =>
+        classType.IsDefined(typeof(ExplicitAttribute), inherit: true)
+        || classType.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .Any(candidate => candidate.Name == method && candidate.IsDefined(typeof(ExplicitAttribute), inherit: true));
+
+    // Reflection inventory of the compiled cases a wildcard selection runs, independent
+    // of TUnit's own selection: one per [Arguments] row, else one per [Test] method.
+    public static IReadOnlyList<(string ClassName, string Method)> CompiledCases(Assembly assembly, string? ns = null) =>
+        assembly.GetTypes()
+            .Where(type => type.IsClass && !type.IsAbstract && (ns is null || type.Namespace == ns))
+            .SelectMany(type => TestClassificationMetadata.GetTestMethods(type)
+                .Where(method => !IsExplicit(type, method.Name))
+                .SelectMany(method => Enumerable.Repeat((type.FullName!, method.Name),
+                    Math.Max(1, method.GetCustomAttributes(typeof(ArgumentsAttribute), inherit: true).Length))))
+            .OrderBy(test => test.Item1, StringComparer.Ordinal).ThenBy(test => test.Item2, StringComparer.Ordinal)
+            .ToArray();
+
+    public static void Write(string target, IEnumerable<Case> tests)
+    {
+        var selected = tests.Where(test => !IsExplicit(test.ClassType, test.Method)).Select(test => new
         {
             id = test.Id,
-            className = test.Metadata.TestDetails.ClassType.FullName,
-            method = test.Metadata.TestDetails.MethodName,
-            displayName = test.Metadata.TestDetails.TestName,
+            className = test.ClassType.FullName,
+            method = test.Method,
+            displayName = test.DisplayName,
         }).OrderBy(test => test.id).ToArray();
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         try
