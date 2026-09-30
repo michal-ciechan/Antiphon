@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -12,6 +13,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -22,6 +24,180 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class ChannelOutboundPolicyTests
 {
+    [Test]
+    public async Task Revocation_and_rebinding_revalidate_before_launch_and_publish()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var root = Directory.CreateTempSubdirectory("c0418-policy-flight-").FullName;
+        var files = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var producer = new FakeAntiphonMessagingClient();
+        var projectId = Guid.NewGuid();
+        var otherProjectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var otherBoardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var replacementId = Guid.NewGuid();
+        var crossProjectId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var profile = new ChannelOutboundProfile { ProjectId = projectId,
+            AgentId = converterId, PromptFile = "convert.md",
+            Trigger = ChannelOutboundTrigger.EveryAgentReply };
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile> { ["convert"] = profile },
+        });
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "convert.md"), "Frozen original prompt");
+            await using (var seed = new AppDbContext(options))
+            {
+                seed.Projects.AddRange(
+                    new Project { Id = projectId, Name = "policy-" + projectId.ToString("N"),
+                        CreatedAt = now, UpdatedAt = now },
+                    new Project { Id = otherProjectId, Name = "policy-" + otherProjectId.ToString("N"),
+                        CreatedAt = now, UpdatedAt = now });
+                seed.Boards.AddRange(
+                    new Board { Id = boardId, ProjectId = projectId, Name = "policy",
+                        CreatedAt = now, UpdatedAt = now },
+                    new Board { Id = otherBoardId, ProjectId = otherProjectId, Name = "other",
+                        CreatedAt = now, UpdatedAt = now });
+                seed.Agents.AddRange(
+                    new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                        Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = root },
+                    new Agent { Id = replacementId, BoardId = boardId, Name = "replacement",
+                        Slug = "replacement-" + replacementId.ToString("N"), WorkingDirectory = root },
+                    new Agent { Id = crossProjectId, BoardId = otherBoardId, Name = "cross",
+                        Slug = "cross-" + crossProjectId.ToString("N"), WorkingDirectory = root },
+                    new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                        Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = root });
+                await seed.SaveChangesAsync();
+            }
+
+            async Task<Guid> SeedDeliveryAsync(string phase, bool validOutput = false)
+            {
+                var channelId = Guid.NewGuid();
+                var id = Guid.NewGuid();
+                var snapshot = await files.StageAsync(id, new ChannelReply
+                {
+                    Channel = "fake", ConversationId = channelId.ToString("N"),
+                    Text = "frozen source " + id.ToString("N"),
+                    Attachments = [new OutboundAttachment { Kind = AttachmentKind.File,
+                        Name = "source.md", Mime = "text/markdown", Content = "# source"u8.ToArray() }],
+                }, CancellationToken.None);
+                await using var seed = new AppDbContext(options);
+                seed.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                    ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                    OutboundAgentProfile = "convert", Enabled = true,
+                    CreatedAt = now, UpdatedAt = now });
+                seed.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+                {
+                    Id = id, SourceKey = Guid.NewGuid().ToString("N"), ChannelId = channelId,
+                    ProjectId = projectId, InboundAgentId = inboundId,
+                    SourceSessionId = Guid.NewGuid(), SendKind = "main",
+                    ProfileName = "convert", ConverterAgentId = converterId,
+                    PromptRevision = new string('a', 64), PromptText = "Frozen original prompt",
+                    Trigger = "EveryAgentReply", InputPath = snapshot.ReplyPath,
+                    InputSha256 = snapshot.ReplySha256,
+                    State = phase == "pending" ? ChannelOutboundDeliveryState.Pending
+                        : ChannelOutboundDeliveryState.Ready,
+                    ConversionOutcome = phase == "ready" ? "Converted" : null,
+                    OutputPath = phase == "ready"
+                        ? validOutput ? snapshot.ReplyPath : "obsolete-output" : null,
+                    OutputSha256 = phase == "ready"
+                        ? validOutput ? snapshot.ReplySha256 : new string('b', 64) : null,
+                    CreatedAt = now, DeadlineAt = now.AddHours(1),
+                });
+                await seed.SaveChangesAsync();
+                return id;
+            }
+
+            foreach (var phase in new[] { "pending", "ready" })
+            foreach (var change in new[] { "profile_clear", "profile_remove",
+                "disable", "unbind", "rebind", "cross_project" })
+            {
+                var id = await SeedDeliveryAsync(phase);
+                await using (var changeDb = new AppDbContext(options))
+                {
+                    var channel = await changeDb.ChatChannels
+                        .SingleAsync(c => c.Id == changeDb.ChannelOutboundDeliveries
+                            .Where(d => d.Id == id).Select(d => d.ChannelId).Single());
+                    switch (change)
+                    {
+                        case "profile_clear": channel.OutboundAgentProfile = null; break;
+                        case "profile_remove": settings.Value.Profiles.Remove("convert"); break;
+                        case "disable": channel.Enabled = false; break;
+                        case "unbind": channel.AgentId = null; break;
+                        case "rebind": channel.AgentId = replacementId; break;
+                        case "cross_project": channel.AgentId = crossProjectId; break;
+                    }
+                    await changeDb.SaveChangesAsync();
+                }
+                await using (var pumpDb = new AppDbContext(options))
+                {
+                    var pump = new ChannelOutboundDeliveryPump(pumpDb, null!, files, producer,
+                        Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                        NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+                    (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+                    if (change.StartsWith("profile_", StringComparison.Ordinal))
+                        (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+                }
+                await using (var check = new AppDbContext(options))
+                {
+                    var row = await check.ChannelOutboundDeliveries.AsNoTracking()
+                        .SingleAsync(d => d.Id == id);
+                    if (change.StartsWith("profile_", StringComparison.Ordinal))
+                    {
+                        row.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+                        row.ConversionOutcome.ShouldBe("Revoked");
+                        row.OutputPath.ShouldBeNull();
+                        producer.SentReplies.Single(r => r.ConversationId == row.ChannelId.ToString("N"))
+                            .Text.ShouldContain("frozen source");
+                    }
+                    else
+                    {
+                        row.State.ShouldBe(ChannelOutboundDeliveryState.Held);
+                        row.PublishedAt.ShouldBeNull();
+                        producer.SentReplies.ShouldNotContain(r =>
+                            r.ConversationId == row.ChannelId.ToString("N"));
+                    }
+                    row.ConversionTaskId.ShouldBeNull();
+                    (await check.AgentTasks.CountAsync(t => t.OutboundDeliveryId == id)).ShouldBe(0);
+                }
+                settings.Value.Profiles["convert"] = profile;
+            }
+
+            var raceId = await SeedDeliveryAsync("ready", validOutput: true);
+            await using (var raceDb = new AppDbContext(options))
+            {
+                var pump = new ChannelOutboundDeliveryPump(raceDb, null!, files, producer,
+                    Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+                    NullLogger<ChannelOutboundDeliveryPump>.Instance, settings);
+                pump.ProbeBarrierAsync = async (boundary, id, _) =>
+                {
+                    if (boundary != "before-producer-call" || id != raceId) return;
+                    await using var update = new AppDbContext(options);
+                    var channelId = await update.ChannelOutboundDeliveries
+                        .Where(d => d.Id == raceId).Select(d => d.ChannelId).SingleAsync();
+                    await update.ChatChannels.Where(c => c.Id == channelId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(c => c.AgentId, replacementId));
+                };
+                (await pump.TickAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
+            }
+            await using (var check = new AppDbContext(options))
+            {
+                var raced = await check.ChannelOutboundDeliveries.AsNoTracking()
+                    .SingleAsync(d => d.Id == raceId);
+                raced.State.ShouldBe(ChannelOutboundDeliveryState.Held);
+                raced.PublishedAt.ShouldBeNull();
+                producer.SentReplies.ShouldNotContain(r =>
+                    r.ConversationId == raced.ChannelId.ToString("N"));
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Test]
     [Arguments("disabled")]
     [Arguments("unbound")]
