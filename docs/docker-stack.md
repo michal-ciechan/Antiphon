@@ -37,6 +37,33 @@ writable layer, checks complete net9 host/reference packages, and starts the sam
 container again under its drain after the disconnected apphost probe and recovery copy.
 Do not replace or retire that donor when Seed has refused or before its reconnect with
 fresh zero counters is recorded. No `/tmp` contents or NuGet scratch locks are copied.
+When the old temp container has already been retired, import the operator's saved cache
+archive explicitly. From the reviewed, landed desktop checkout, set `C849_DEPLOY_SHA`
+to that checkout's full SHA and run:
+
+```powershell
+pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar
+```
+
+`-SavedDonor` is an absolute path on server2, never a desktop file. A directory is also
+accepted. Its cache roots may be `packages` and `npm`, `.nuget/packages` and
+`.npm/_cacache`, or `home/app/.nuget/packages` and `home/app/.npm/_cacache`. The
+archive is inspected before extraction; links, traversal, other entries and oversized
+content refuse. Both runner statuses must be drained with zero counters (only the
+retired temp's disconnected `runnerSessions` may be null), the temp project must have
+no containers, all cache volumes must have no attached containers, and the build broker
+must be idle. Seed checks the volume identities and labels, the complete net9 host and
+reference packages, npm integrity and a leased uid-1654 apphost build before retaining
+the recovery copy and publishing the ready marker. A rerun verifies that marker and its
+payload. The saved archive stays untouched.
+
+If the import refuses after copying into an unmarked volume, leave both drains held and
+use the Reset command below only after confirming all cache consumers are detached;
+then correct the source and repeat Seed. To roll back a completed import, drain both
+runners, retain the saved archive and recovery copy, and switch to the prior image only
+after its cache mount and apphost smoke checks pass. When there is no saved donor, warm
+a temporary runner in its private cache, drain it to zero, then use Seed without
+`-SavedDonor` before deploying either runner against the shared volumes.
 After temp retirement, an accepted ready marker and verified volume payload allow the
 next `deploy-temp` to reuse the caches when the status is retired, unavailable and not
 dispatch eligible, its bound sessions and queue are zero, and the host confirms the
@@ -76,6 +103,7 @@ a rolling phase or clear admission on its own.
 |---|---|---|
 | Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0` |
 | Drained temp donor, before recreation | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed` | `C849_SEED donor=server2-temp ready=true smoke=passed recovery=retained` |
+| Retired temp, saved donor available | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar` | `C849_SEED donor=saved ready=true smoke=passed recovery=retained` |
 | After redeploy-old, before drain-temp, CP-4 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both` | `C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0` |
 | After retire-temp, CP-5 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Retired` | `C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0` |
 

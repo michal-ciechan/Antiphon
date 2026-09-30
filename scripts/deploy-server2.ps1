@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha,
     [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp')]
     [string]$Phase = 'all',
+    [string]$SavedDonor = '',
     [ValidateRange(1, 10080)][int]$WaitIdleMinutes = 480
 )
 
@@ -26,6 +27,8 @@ try { $headers['X-Antiphon-Operator-Token'] = Get-RunnerOperatorToken }
 catch { [Console]::Error.WriteLine('OperatorTokenMissing: the owner-only token file is absent or empty.'); exit 2 }
 
 $Sha = $Sha.ToLowerInvariant()
+if ($SavedDonor -and ($SavedDonor -cnotmatch '^/[A-Za-z0-9._/-]{1,500}$' -or
+        $SavedDonor.Contains('..') -or $SavedDonor.Contains('//'))) { throw 'CacheSavedDonorPathInvalid' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $runId = 'c727' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $evidenceRoot = Join-Path $repoRoot ('.antiphon/rolling-server2/' + $runId)
@@ -119,6 +122,7 @@ function Invoke-HostCase {
     }
     if ($TempRetiredAt) { $manifest.tempRetiredAt = $TempRetiredAt }
     if ($RunnerId) { $manifest.runnerId = $RunnerId }
+    if ($Case -eq 'runner-cache-seed' -and $SavedDonor) { $manifest.savedDonor = $SavedDonor }
     $manifestPath = Join-Path $evidenceRoot ("$Case.manifest.json")
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
     $verifier = if ($env:C727_TEST_VERIFY_STUB) { $env:C727_TEST_VERIFY_STUB } else { Join-Path $PSScriptRoot 'verify-docker-stack.ps1' }

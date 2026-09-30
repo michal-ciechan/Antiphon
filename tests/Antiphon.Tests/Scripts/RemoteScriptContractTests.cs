@@ -20,8 +20,9 @@ public sealed class RemoteScriptContractTests
 
         // The runner image has no python3 at all: every JSON write, every count and every context
         // check is shell. One `python3` reintroduced anywhere kills the whole nested lane.
-        Executable(text, "python3").ShouldBeEmpty("nested lane invokes python3");
-        Executable(text, "python ").ShouldBeEmpty("nested lane invokes python");
+        var nestedText = text.Replace(Block(text, "c849_saved_copy"), "", StringComparison.Ordinal);
+        Executable(nestedText, "python3").ShouldBeEmpty("nested lane invokes python3");
+        Executable(nestedText, "python ").ShouldBeEmpty("nested lane invokes python");
 
         // sudo is the host lane's alone: the nested lane runs as uid 1654, whose ONLY sudo grant
         // is the two custody helpers (CARD-0604 D-17), so a general sudo invocation from nested
@@ -1331,6 +1332,202 @@ public sealed class RemoteScriptContractTests
         cleanup.ShouldContain("seed-failure=Interrupted");
         cleanup.ShouldContain("stage-cleaned");
         cleanup.ShouldContain("cleanup-sibling-retained");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Saved_donor_archive_is_checked_and_imported_without_a_container()
+    {
+        var remote = Remote();
+        var output = LinuxShell(CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
+            Block(remote, "c849_seed_failure") + "\n" + Block(remote, "c849_seed") + "\n" +
+            Block(remote, "case_deploy_parent") + "\n" + Block(remote, "case_deploy_temp_runner") + "\n" + """
+            SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"
+            mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/volumes/packages" "$root/volumes/npm"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            C849_PACKAGES=packages; C849_SCRATCH=scratch; C849_NPM=npm
+            RUN=red; LANE=host; TEMP_PROJECT=temp
+            tar -cf "$root/donor.tar" -C "$tree" .
+            C590_SAVED_DONOR="$root/donor.tar"
+            c849_prepare() { :; }; c849_image() { echo image; }
+            c849_optional_donor() { :; }; c849_no_temp_containers() { :; }
+            c849_prune_idle() { printf 'idle\n' >> "$root/trace"; }
+            c849_empty_volume() { :; }
+            c849_smoke() { printf 'smoke\n' >> "$root/trace"; }
+            c849_status_body() { printf '{"sessions":0,"runnerSessions":null,"queuedTasks":0,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","dispatchEligible":false,"acceptingNewWork":false}\n'; }
+            jq() { cat; }
+            sudo() { mkdir -p "${@: -1}"; }
+            docker() {
+                case "$1:$2" in
+                    image:inspect) printf 'sha256:%064d\n' 0 ;;
+                    volume:inspect) echo "$root/state" ;;
+                    run:*)
+                        if [[ "$*" == *'cache verify'* ]]; then return 0; fi
+                        if [[ "$*" == *'cp -a /seed/.'* ]]; then
+                            local source='' target='' arg
+                            for arg in "$@"; do
+                                case "$arg" in
+                                    type=bind,source=*) source="${arg#*source=}"; source="${source%%,*}" ;;
+                                    type=volume,source=*) target="${arg#*source=}"; target="${target%%,*}" ;;
+                                esac
+                            done
+                            cp -a "$source/." "$root/volumes/$target/"; return 0
+                        fi
+                        if [[ "$*" == *'--entrypoint sleep'* ]]; then echo helper; return 0; fi
+                        return 0 ;;
+                    rm:*) return 0 ;;
+                esac
+                return 1
+            }
+            require_lane() { :; }
+            write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            ( c849_seed ) > "$root/result" 2>&1
+            printf 'success=%s %s\n' "$?" "$(cat "$root/result")"
+            test -s "$C849_READY" && echo marker-written
+            grep -q '^donor=saved$' "$C849_READY" && echo saved-identity
+            test -s "$root/volumes/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" && echo payload-imported
+            test -d "$SERVER2_ROOT/cache/recovery-$RUN" && echo recovery-retained
+            printf 'idle-count=%s smoke-count=%s\n' "$(grep -c '^idle$' "$root/trace")" "$(grep -c '^smoke$' "$root/trace")"
+            SERVER2_ENV="$root/main.env"; printf 'ready\n' > "$SERVER2_ENV"
+            mkdir -p "$root/state/grok"
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; HOST_PROJECT=main
+            C604_SERVER_ORIGIN=https://example.invalid
+            DEPLOY_KEY=x; PHONE_HOME_SECRET=x; CLAUDE_OAUTH_TOKEN_PATH=x
+            GIT_IDENTITY_PATH=x; CODEX_HOME_PATH=x
+            RUNNER_GIT_USER_NAME=test; RUNNER_GIT_USER_EMAIL=test@example.invalid
+            ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
+            retire_c590_leftovers() { :; }; broker_sha12() { echo aaaaaaaaaaaa; }
+            build_server2_images() { :; }
+            c849_require_ready() { test -s "$C849_READY" || write_result false CacheSeedRequired 2; }
+            c849_budget_gate() { write_result false PastSeedGate 2; }
+            sudo() {
+                [ "$1" = -n ] && shift
+                if [ "$1" = test ]; then shift; test "$@"
+                elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nstate 30000000 1 25000000 1%% /state\n'
+                else mkdir -p "${@: -1}"; fi
+            }
+            for target in parent temp; do
+                ( case_deploy_$([ "$target" = parent ] && echo parent || echo temp_runner) ) > "$root/deploy" 2>&1
+                printf 'deploy-%s=%s\n' "$target" "$(cat "$root/deploy")"
+            done
+            """);
+        foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
+            "payload-imported", "recovery-retained", "idle-count=3 smoke-count=1",
+            "deploy-parent=seed-result=false:PastSeedGate", "deploy-temp=seed-result=false:PastSeedGate" })
+            output.ShouldContain(expected);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Saved_donor_rejects_unsafe_archives_missing_pack_and_busy_counters()
+    {
+        var remote = Remote();
+        var output = LinuxShell(CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
+            Block(remote, "c849_prune_idle") + "\n" + """
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            RUN=red; CASE=runner-cache-seed; HOST_PROJECT=main; TEMP_PROJECT=temp
+            C849_PACKAGES=packages; C849_SCRATCH=scratch; C849_NPM=npm
+            write_result() { printf 'refusal=%s\n' "$2"; exit "$3"; }
+            compose_host() { echo broker; }
+            c849_status_body() { if [ "$1" = server2-temp ]; then printf 'temp-retired'; else printf '%s' "$STATUS"; fi; }
+            jq() {
+                local body; body="$(cat)"
+                case "$body" in
+                    main-zero|broker-idle) return 0 ;;
+                    temp-retired)
+                        [[ "$*" == *'.runnerSessions != null'* ]] && return 1
+                        return 0 ;;
+                    *) return 1 ;;
+                esac
+            }
+            docker() {
+                if [ "$1" = ps ]; then
+                    [ "$PS_ERROR" = yes ] && return 1
+                    [[ "$*" == *'project=main'* ]] && echo main
+                    return 0
+                fi
+                if [ "$1" = exec ]; then
+                    [ "$2" = main ] && echo 0 || echo broker-idle
+                    return 0
+                fi
+                return 1
+            }
+            tar -cf "$root/good.tar" -C "$tree" .
+            mkdir -p "$root/bad"; printf 'bad\n' > "$root/bad/escape"
+            tar -cf "$root/traversal.tar" -C "$root/bad" --transform='s|escape|../escape|' escape
+            ln -s "$root/outside" "$tree/packages/link"
+            tar -cf "$root/symlink.tar" -C "$tree" .
+            rm "$tree/packages/link"
+            rm "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+            tar -cf "$root/missing.tar" -C "$tree" .
+            for fault in traversal symlink missing; do
+                stage="$root/stage-$fault"; mkdir -p "$stage/packages" "$stage/npm"
+                diagnosis="$(c849_saved_copy "$root/$fault.tar" "$stage")"; code=$?
+                if [ "$code" = 0 ]; then diagnosis="$(c849_validate_seed_tree "$stage")"; code=$?; fi
+                printf '%s code=%s diagnosis=%s\n' "$fault" "$code" "$diagnosis"
+            done
+            for STATUS in main-zero main-busy main-unknown; do
+                ( c849_prune_idle ) > "$root/verdict" 2>&1
+                printf '%s code=%s verdict=%s\n' "$STATUS" "$?" "$(cat "$root/verdict")"
+            done
+            STATUS=main-zero; PS_ERROR=yes
+            ( c849_prune_idle ) > "$root/verdict" 2>&1
+            printf 'ps-error code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
+            STATUS=main-zero; PS_ERROR=no
+            ( c849_prune_idle ) > "$root/verdict" 2>&1
+            printf 'retired code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
+            """);
+        output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
+        output.ShouldContain("symlink code=2 diagnosis=CacheDonorUnsafeEntry");
+        output.ShouldContain("missing code=2 diagnosis=AppHostDonorMissing");
+        output.ShouldContain("main-busy code=2 verdict=refusal=CacheConsumersBusy");
+        output.ShouldContain("main-unknown code=2 verdict=refusal=CacheConsumersBusy");
+        output.ShouldContain("ps-error code=2 verdict=refusal=CacheConsumerUnknown");
+        output.ShouldContain("retired code=0 verdict=");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Retired_guard_refuses_docker_ps_errors()
+    {
+        var output = LinuxShell(Block(Remote(), "c849_no_temp_containers") + "\n" + """
+            TEMP_PROJECT=temp
+            write_result() { printf 'guard=%s\n' "$2"; exit "$3"; }
+            docker() { [ "$1" = ps ] && return 1; return 0; }
+            ( c849_no_temp_containers ) > /tmp/c849-guard-$$ 2>&1
+            printf 'exit=%s verdict=%s\n' "$?" "$(cat /tmp/c849-guard-$$)"
+            rm -f /tmp/c849-guard-$$
+            """);
+        output.ShouldContain("exit=2 verdict=guard=CacheDonorLookupFailed");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Deploy_temp_names_saved_import_when_seed_is_missing()
+    {
+        var remote = Remote();
+        var output = LinuxShell(Block(remote, "c849_require_ready") + "\n" +
+            Block(remote, "case_deploy_temp_runner") + "\n" + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR" "$root/state/grok"
+            SERVER2_ROOT="$root/server2"; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            SERVER2_ENV="$root/main.env"; printf 'ready\n' > "$SERVER2_ENV"
+            SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; RUN=red; LANE=host
+            require_lane() { :; }; ensure_checkout() { :; }; ensure_runner_boot_files() { :; }
+            build_server2_images() { :; }; c849_prepare() { :; }
+            write_result() { printf 'deploy=%s\n' "$2"; exit "$3"; }
+            docker() { [ "$1:$2" = volume:inspect ] && echo "$root/state"; }
+            sudo() {
+                [ "$1" = -n ] && shift
+                if [ "$1" = test ]; then shift; test "$@"
+                elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nstate 30000000 1 25000000 1%% /state\n'; fi
+            }
+            ( case_deploy_temp_runner ) > "$root/out" 2>&1
+            printf 'exit=%s verdict=%s\n' "$?" "$(cat "$root/out")"
+            """);
+        output.ShouldContain("exit=2 verdict=deploy=CacheSeedRequired:");
+        output.ShouldContain("scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar");
     }
 
     [Test]

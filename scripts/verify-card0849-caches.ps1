@@ -5,7 +5,8 @@ param(
     [ValidateSet('Inventory', 'Fixture', 'Seed', 'Reset', 'Both', 'Retired', 'PrunePreview', 'Prune')]
     [string]$Case,
     [string]$Sha = '',
-    [string]$Preview = ''
+    [string]$Preview = '',
+    [string]$SavedDonor = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -15,6 +16,9 @@ $head = (& git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -ne $Sha) { throw 'C849 source SHA does not equal checkout HEAD' }
 if ($Case -eq 'Prune' -and -not $Preview) { throw 'Prune requires -Preview receipt path' }
 if ($Case -ne 'Prune' -and $Preview) { throw 'Preview belongs to Prune only' }
+if ($SavedDonor -and $Case -ne 'Seed') { throw 'SavedDonor belongs to Seed only' }
+if ($SavedDonor -and ($SavedDonor -cnotmatch '^/[A-Za-z0-9._/-]{1,500}$' -or
+        $SavedDonor.Contains('..') -or $SavedDonor.Contains('//'))) { throw 'CacheSavedDonorPathInvalid' }
 if ($Preview) {
     $candidate = [System.IO.Path]::GetFullPath($Preview)
     $base = [System.IO.Path]::GetFullPath((Join-Path $repo '.antiphon'))
@@ -84,6 +88,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
     if ($Case -eq 'Both' -or $Case -eq 'Retired') { $manifest.expectAccepting = $true }
     if ($Preview) { $manifest.preview = $Preview }
     if ($previewRunId) { $manifest.previewRunId = $previewRunId }
+    if ($SavedDonor) { $manifest.savedDonor = $SavedDonor }
     New-Item -ItemType Directory -Path $manifest.evidenceRoot -Force | Out-Null
     $manifestPath = Join-Path $manifest.evidenceRoot 'manifest.json'
     $manifest | ConvertTo-Json -Compress | Set-Content -LiteralPath $manifestPath -Encoding ascii
@@ -107,6 +112,15 @@ switch ($Case) {
     }
     'Seed' {
         $seed = Read-C849Receipt 0 'seed.txt'
+        if ($seed -match '(?m)^ready=true donor=saved(?: |\r?$)') {
+            $status = Read-C849Receipt 0 'status.json' | ConvertFrom-Json
+            if ($status.sessions -ne 0 -or $status.queuedTasks -ne 0 -or
+                ($null -ne $status.runnerSessions -and $status.runnerSessions -ne 0) -or
+                $status.draining -ne $true -or $status.retireWhenIdle -ne $true -or
+                $status.redirectTo -ne 'server2') { throw 'C849 saved donor status invalid' }
+            Write-Output 'C849_SEED donor=saved ready=true smoke=passed recovery=retained'
+            break
+        }
         if ($seed -match '(?m)^ready=true donor=\r?$') {
             Write-Output 'C849_SEED donor=none ready=true recovery=retained'
             break
