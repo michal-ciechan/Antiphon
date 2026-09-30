@@ -215,7 +215,9 @@ public class ProviderQuotaRefusalAcceptanceTests
         }
         await using var db = s.Db();
         (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == s.TaskId && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
-        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId && m.Origin == QueuedMessageOrigin.Supervision)).ShouldBe(0);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId
+            && m.Origin == QueuedMessageOrigin.Supervision
+            && m.Status != QueuedMessageStatus.Canceled)).ShouldBe(0);
     }
 
     [Test]
@@ -350,6 +352,36 @@ public class ProviderQuotaRefusalAcceptanceTests
         await s.SettleAsync();
         await AssertBlockedAsync(s, Reset, HoldUntil);
         (await s.ReadAsync()).Recovery.AttemptCount.ShouldBe(3);
+
+        await using var due = await CreateAsync();
+        await due.EmitAsync(Linux);
+        var oldQueueId = Guid.NewGuid();
+        await using (var db = due.Db())
+        {
+            db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(), AgentSessionId = due.H.SessionId, StubSequence = 2,
+                Classification = ApiErrorClassification.Unknown, ApiErrorClass = "usage_limit_exceeded",
+                DetectedAt = IncidentAt.UtcDateTime.AddMinutes(-5),
+                NextAttemptAt = IncidentAt.UtcDateTime.AddSeconds(-1),
+                LastEnqueuedAt = IncidentAt.UtcDateTime.AddMinutes(-1), AttemptCount = 1,
+            });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = oldQueueId, AgentSessionId = due.H.SessionId, Sequence = 1,
+                Origin = QueuedMessageOrigin.Supervision, Status = QueuedMessageStatus.Pending,
+                Body = $"{DelegationReportFormatter.TaskMarker(due.TaskId)} {new Antiphon.Server.Application.Settings.ApiErrorRecoverySettings().TransientPrompt}",
+                CreatedAt = IncidentAt.UtcDateTime.AddMinutes(-1),
+            });
+            await db.SaveChangesAsync();
+        }
+        await due.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
+        await due.SettleAsync();
+        await AssertBlockedAsync(due, Reset, HoldUntil);
+        await using var verify = due.Db();
+        (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == oldQueueId))
+            .Status.ShouldBe(QueuedMessageStatus.Canceled);
+        (await due.ReadAsync()).Recovery.AttemptCount.ShouldBe(1);
     }
 
     [Test]
