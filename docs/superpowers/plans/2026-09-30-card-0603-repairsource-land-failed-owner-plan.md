@@ -150,7 +150,7 @@ paths below are under `tests/Antiphon.Tests/Application/` unless qualified other
 | `server/Application/Services/{AgentTaskLandService,AgentTaskLandSourceResolver,AgentTaskLandingProtocol,AgentTaskLandingState,LandApproval}.cs` | Recovery revalidates owner-bound evidence and current origin tip, retains historical status, and separately confirms publication. A no-op rebase can skip the verifier. No authority change is needed. V-1/V-2, R-1/R-3. |
 | `DelegateScriptAdoptTests.cs`, `DelegateScriptRunner.cs`, `TestHelpers/LandApiStub.cs`, `scripts/delegate.ps1` | Five current script executions; self recovery with a full GUID performs a version GET and one owner POST, with no source lookup. V-5, R-2. |
 | `RepairSourceDocumentationTests.cs`, RepairSource/recovery passages in `docs/orchestration-loop.md`, `docs/ops-http.md`, `server/Bundles/orchestrator.md` | Two current Unit executions. Whole-document flag searches would not prove the new recipe; V-6 must extract the new bounded passage. |
-| `scripts/{build-slot,run-checkpoint}.ps1`, `src/Antiphon.SessionRunner/BuildSlotBroker.cs`, `docs/testing-and-build.md` | Passing the `.ps1` directly invokes it in the same PowerShell process; the broker reuses that holder's lease. The wrapper recipe below is source-validated, not a measured run. |
+| `scripts/{build-slot,run-checkpoint}.ps1`, `src/Antiphon.SessionRunner/BuildSlotBroker.cs`, `docs/testing-and-build.md` | CARD-0845 moves a direct `.ps1` wrapper target into a child PowerShell process; `run-checkpoint.ps1` takes its own lease. The corrected direct checkpoint recipe below is source-validated, not a measured run. |
 
 ### Joined fixture and decisive observations
 
@@ -445,18 +445,16 @@ These fixtures do not require the missing Linux FakeClaude apphost. A future fix
 choice that launches it requires a plan revision, not a skip reported as coverage.
 
 Retain the Plan brief's CARD-0823 exception: **do not launch `tools/Antiphon.Checkpoints`**.
-Run one row at a time with `scripts/run-checkpoint.ps1` under the build-slot wrapper.
-Pass the `.ps1` directly after `--`, as below: the wrapper invokes a PowerShell script
-in its own process (`scripts/build-slot.ps1:120`), and the broker returns that holder's
-existing lease (`src/Antiphon.SessionRunner/BuildSlotBroker.cs:79`). Do not insert a
-second `pwsh` there, which would acquire another slot while the first remains held.
-The row driver still performs its normal slot handling. Use no `-NoSlot` override.
+Run one row at a time with `scripts/run-checkpoint.ps1` directly through `pwsh -File`.
+It takes and releases its own slot. CARD-0845 moves `.ps1` wrapper targets into a child;
+wrapping this self-leasing driver would hold one lease while the child waits for another.
+Use no `-NoSlot` override.
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card0603-CP-1 -- ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c603-cp1/ -Filter '/*/Antiphon.Tests.Application/(RepairSourceRecoveryLandingTests*)|(RepairSourceLandRefusalTests*)/*' -Expect RepairSourceRecoveryLandingTests.C603_FailedOwnerLandsReviewedRepairedTip,RepairSourceRecoveryLandingTests.C603_RepairSuccessDoesNotAuthorizeUnreviewedOwnerLand,RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery,RepairSourceLandRefusalTests.C499_V24ii_LandRequestIsRefusedForARepairTask,RepairSourceLandRefusalTests.C499_V24iii_ProtocolEntryIsRefusedForARepairTask,RepairSourceLandRefusalTests.C499_V24iv_OwnerLandRequestStillQueues -MinExecuted 10 -ResultsRoot .antiphon/c603-cp1-attempt1
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c603-cp1/ -Filter '/*/Antiphon.Tests.Application/(RepairSourceRecoveryLandingTests*)|(RepairSourceLandRefusalTests*)/*' -Expect RepairSourceRecoveryLandingTests.C603_FailedOwnerLandsReviewedRepairedTip,RepairSourceRecoveryLandingTests.C603_RepairSuccessDoesNotAuthorizeUnreviewedOwnerLand,RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery,RepairSourceLandRefusalTests.C499_V24ii_LandRequestIsRefusedForARepairTask,RepairSourceLandRefusalTests.C499_V24iii_ProtocolEntryIsRefusedForARepairTask,RepairSourceLandRefusalTests.C499_V24iv_OwnerLandRequestStillQueues -MinExecuted 10 -ResultsRoot .antiphon/c603-cp1-attempt1
 ```
 
-Apply that command shape to each table row, with its exact name, output, filter,
+Apply that direct command shape to each table row, with its exact name, output, filter,
 expected roster, minimum and a fresh results path. For `-Expect`, pass all selected
 `Class.Method` names as one comma-separated argument: CP-1's two V-1/V-2 methods,
 V-3 and the three existing C499 methods; CP-2/CP-3's named method-filter operands;
@@ -521,7 +519,7 @@ hide those runs in the ordinary estimate or claim PC-clean from the Code checkpo
 
 TestDesign confirmed the six new methods/ten expanded executions by source inspection,
 specified an assertion failure and phase roster for all eight PCs, and checked the
-same-process wrapper recipe against its implementation. Builds/tests/PCs were not run.
+direct self-leasing checkpoint recipe against its implementation. Builds/tests/PCs were not run.
 Code implements the three slices and reports all four CP rows against committed clean
 source. Review checks that only guidance
 changed in production and that the joined regression actually publishes through
