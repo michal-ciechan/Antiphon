@@ -636,6 +636,22 @@ public sealed class ChannelOutboundRecoveryTests
                 var launch = launchDocument.RootElement;
                 var nativeSessionId = launch.GetProperty("SessionId").GetGuid();
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
+                if (!OperatingSystem.IsWindows())
+                {
+                    // CP rows intentionally build with UseAppHost=false on Linux. The
+                    // direct runner needs an executable in its content-addressed host copy.
+                    var hostLauncher = Path.Combine(AppContext.BaseDirectory, "Antiphon.PtyHost");
+                    if (!File.Exists(hostLauncher))
+                    {
+                        var stagedLauncher = hostLauncher + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                        await File.WriteAllTextAsync(stagedLauncher,
+                            "#!/bin/sh\nexec dotnet \"$(dirname \"$0\")/Antiphon.PtyHost.dll\" \"$@\"\n");
+                        File.SetUnixFileMode(stagedLauncher,
+                            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                        try { File.Move(stagedLauncher, hostLauncher); }
+                        catch (IOException) when (File.Exists(hostLauncher)) { File.Delete(stagedLauncher); }
+                    }
+                }
                 nativeRunner = new DirectSessionRunnerClient(Path.Combine(root, "runner-logs"));
                 var started = await nativeRunner.StartAsync(nativeSessionId, spec, CancellationToken.None);
                 started.Status.ShouldBe("Running");
