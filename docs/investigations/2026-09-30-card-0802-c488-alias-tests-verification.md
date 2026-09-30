@@ -34,7 +34,7 @@ miniature verifier. Build slot: unleased after 60 s broker wait. CP-1 wall:
 Each identity invokes the main body, which calls the real landing verifier
 once and the independent target verifier once: 6 real invocations total.
 
-CP-5 remains pending.
+All five checkpoints are complete; failed prerequisite attempts are retained below.
 
 The first CP-2 attempt at `f3386cc04707d2628a3d1ba87c9535827c2d2915`
 is retained at `.antiphon/checkpoints/20260930-093158-f7a6/`, with its
@@ -126,9 +126,9 @@ diagnostic `dotnet restore --runtime linux-x64` on the same miniature
 solution fetched `Microsoft.NETCore.App.Host.linux-x64` 9.0.20 into the
 task host's NuGet cache; a second leased diagnostic build without
 `UseAppHost=false` then passed. These were prerequisites to diagnose
-the checkpoint failure, not additional Antiphon test coverage. The next
-S2-S3 attempt can run both rows without the variable, keeping a green
-group report for CP-5's producer gate. The initial attribution to an
+the checkpoint failure, not additional Antiphon test coverage. This
+enabled the green S2-S3 run below without the variable and supplied
+CP-5's producer report. The initial attribution to an
 environment collision was incomplete: the missing host pack was the
 underlying defect when apphost generation was enabled.
 
@@ -172,3 +172,26 @@ reductions. These are case durations, distinct from row/group walls and
 from CARD-0802's historical 187.870 s main-case sample. The retained
 `C494_DetachedFixVerifierFailurePreventsPublication` separately passed
 in 10.1536085 s in the final class run.
+
+## Final census and disposition
+
+CP-5 at `e782006a95e8b2710b19489634a3f7f8731f4c6d`, run
+`.antiphon/checkpoints/20260930-103059-68bb/`, exited 0 with no build
+or test execution (executed/passed/failed/skipped = 0/0/0/0).
+Its after discovery found **13,118** expanded UIDs, **47/59** affected
+class methods/cases, the three named C488 identities once each, and
+**3,567** Unit-selected UIDs. The entire normalized before and after
+identity files are byte-identical, SHA256
+`bbcf2a4a0111a105d8fab2ccd2d3d9e97476fdb574d8c1d7c53f29d2aee63fcc`;
+added=[], removed=[], delta=0. The assembly hashes changed as expected
+because two test bodies changed. CP-5 used the same SHA256 task-owned
+driver as CP-2 and its retained CP-3 producer output; the producer-to-census
+commit difference was evidence-only Markdown. Its slot broker was unavailable
+for 60 s; row wall was 84 s.
+
+The ordinary checkpoint ledger is CP-1 **3/3/0/0**, CP-2 discovery
+**0/0/0/0**, CP-3 **59/59/0/0**, CP-4 **3,534/3,534/0/33**,
+CP-5 discovery **0/0/0/0** (executed/passed/failed/skipped). The two
+focused aliases and all original names are discoverable and green;
+the main and negative verifier bodies were unchanged. PC-31/44 and the
+other positive controls remain pending for post-land SourceLanding Mutation.
