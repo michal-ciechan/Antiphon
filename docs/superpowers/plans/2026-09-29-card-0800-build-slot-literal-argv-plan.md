@@ -8,6 +8,13 @@ read with `scripts/card.ps1 get CARD-0800`. Owner docs read: `docs/testing-and-b
 (Build slots, Checkpoint manifest, Checkpoint runner tool), `docs/orchestration-loop.md` for the
 stage contract.
 
+**2026-09-30 supersession (CARD-0845):** D-2's `ExternalScript` call-operator
+branch and V-3's in-process claim are superseded: a resolved `.ps1` target now
+runs in a child PowerShell 7 `-File` process so named parameters bind by name.
+The four-assertion `C800_WrapperKeepsScriptCommandsInProcess` case is renamed
+`C800_WrapperForwardsScriptTokens`. This note does not revise the historical
+measurements, completed checkpoint counts or positive-control results below.
+
 ## Outcome and scope
 
 Make `scripts/build-slot.ps1` start its wrapped command with the exact argv it was given, on

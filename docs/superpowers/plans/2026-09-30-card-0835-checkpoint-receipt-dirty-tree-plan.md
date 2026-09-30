@@ -593,9 +593,10 @@ Keep Linux's script default `UseAppHost=false`; no FakeClaude apphost-dependent 
 is selected. DB rows need the established isolated PostgreSQL test environment.
 
 CARD-0823 was read: the tool's broker-null crash can leak a lease before building.
-Use `scripts/run-checkpoint.ps1` for these rows, under `scripts/build-slot.ps1`, as
-the task brief requires. The tool is tested in-process with fake slots, not used as
-the outer launcher. CARD-0818's wedged executor-log concurrency test and CARD-0828's
+Use `scripts/run-checkpoint.ps1` directly for these rows; it takes its own slot.
+CARD-0845 moves a wrapped `.ps1` target into a child process, so an outer build-slot
+wrapper would create a nested lease wait. The tool is tested in-process with fake
+slots, not used as the outer launcher. CARD-0818's wedged executor-log concurrency test and CARD-0828's
 owner-watch uncertainty pair are excluded: neither is needed for the source change.
 No Unit-lane or Checkpoints-namespace sweep is authorized. New terminal tests use
 bounded gates with unconditional release/cancel/await cleanup instead of those
@@ -633,17 +634,14 @@ results root per round and `-ExpectedSourceSha` on every ordinary row:
 
 ```powershell
 $sourceSha = (git rev-parse HEAD).Trim()
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label card-0835-CP-1 -- ./scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c835/ -Filter '/*/*/CheckpointSourceStateTests/*' -MinExecuted 5 -Expect CheckpointSourceStateTests -ExpectedSourceSha $sourceSha -ResultsRoot .antiphon/c835-linux-r1
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c835/ -Filter '/*/*/CheckpointSourceStateTests/*' -MinExecuted 5 -Expect CheckpointSourceStateTests -ExpectedSourceSha $sourceSha -ResultsRoot .antiphon/c835-linux-r1
 ```
 
-Pass the `.ps1` command directly as shown, **not** a second `pwsh -File` process:
-`build-slot.ps1:126-128` calls PowerShell scripts in its process and
-`BuildSlotBroker.cs:80-87` returns the existing lease to that same PID/start identity.
-This avoids nested processes holding one lease each while waiting for another.
-The inner row releases after its child exits; the wrapper's final duplicate release
-can report unknown lease. Do not solve that diagnostic with `-NoSlot` or broker
-changes. If a deployment's lease mode cannot support this documented same-holder
-invocation, report the row blocked rather than launching an unleased alternative.
+Invoke the checkpoint driver directly as shown. It acquires and releases one lease
+for its build and run. `BuildSlotBroker.cs:80-87` binds a lease to the holder PID and
+start time; a child launched by `build-slot.ps1` cannot reuse its parent's lease.
+Do not add an outer wrapper, `-NoSlot` or broker changes. At a budget of one, the
+parent would hold the only slot while its self-leasing child waits.
 
 For CP-2 onward substitute the exact row filter/min/Expect class names, add
 `-NoBuild`, and keep `bin-c835/`. On Windows use a new root
