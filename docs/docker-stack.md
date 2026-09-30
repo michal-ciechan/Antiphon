@@ -43,6 +43,34 @@ and executable run before clearing either drain, even on a same-SHA rerun. A fai
 verification leaves the affected runner held. CP-3/4/5 are trusted desktop and host
 operations at those gates; repo tests alone do not establish live acceptance.
 
+Run the following from the trusted desktop checkout after setting `C849_DEPLOY_SHA` to
+the full reviewed, landed SHA. The front door requires checkout HEAD to equal it and
+prints the local receipt directory under `.antiphon/c849-<run-id>/`. It does not start
+a rolling phase or clear admission on its own.
+
+| Gate | Command | Required receipt summary |
+|---|---|---|
+| Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=26 expectedRed=26 inventories=2 failures=0 productionMutations=0` |
+| Drained temp donor, before recreation | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed` | `C849_SEED donor=server2-temp ready=true smoke=passed recovery=retained` |
+| After redeploy-old, before drain-temp, CP-4 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both` | `C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0` |
+| After retire-temp, CP-5 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Retired` | `C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0` |
+
+`-Case Inventory` refreshes two read-only status and mount receipts. The Fixture case
+uses run-scoped Docker resources and records `PASS F-1` through `PASS F-9` and all
+`CONTROL PC-01` through `PC-26` expected refusals. It reads production only for the
+two inventories and a validated copy of the donor's net9 host/reference package.
+Its temporary containers, networks and volumes are removed by exact recorded names;
+the production cache names are outside its namespace. A nonzero case or missing
+receipt leaves the checkpoint pending. CP-3/4/5 are operational gates after Review,
+not Code-stage repo tests.
+
+Each front-door invocation copies filtered host evidence into its printed local
+directory. The fixture summary contains source/image identity, group/control counts
+and no package data. Both stores separate status, mount, seed-hash and apphost smoke
+receipts for each runner. Keep those receipts with the rollout record. The full
+`docker inspect` output, environment, cache archive, package metadata contents and
+provider credentials do not belong in that record.
+
 The initial size budgets are 10 GiB packages, 2 GiB npm content and 256 MiB scratch.
 Review `du -s -B1` for each at every deployment, before retirement and at least weekly;
 warn at 80%, and require maintenance above a budget or below 20 GiB backing-space
