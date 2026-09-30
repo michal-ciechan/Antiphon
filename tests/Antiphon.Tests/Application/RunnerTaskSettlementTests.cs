@@ -38,6 +38,33 @@ public sealed class RunnerTaskSettlementTests
         (await world.Git.HeadAsync()).ShouldBe(tip);
         (await world.NoteAsync())!.Body.ShouldContain(tip);
     }
+
+    [Test]
+    public async Task Rebased_runner_mirror_blocks_with_retained_tip_and_recovery()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(mirrorPublish: true);
+        await world.Git.EnsureRunnerAsync();
+        await world.Git.RunAsync(world.Git.Runner, "checkout", "--orphan", "rebased-root");
+        File.WriteAllText(Path.Combine(world.Git.Runner, "rebased.txt"), "rebased");
+        await world.Git.RunAsync(world.Git.Runner, "add", "rebased.txt");
+        await world.Git.RunAsync(world.Git.Runner, "commit", "-m", "rebased root");
+        var tip = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+        await world.Git.RunAsync(world.Git.Runner, "checkout", world.Git.Branch);
+        await world.Git.RunAsync(world.Git.Runner, "reset", "--hard", tip);
+
+        await world.SettleAsync(RunnerSettlementWorld.Report("Committed after rebase."));
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.MirrorDiverged);
+        world.Evidence()!.RemoteSync!.MirrorSha.ShouldBe(tip);
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        Directory.Exists(world.Git.Runner).ShouldBeTrue();
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldContain(world.Git.Task.RemoteWorktreePath!);
+        note.ShouldContain(tip);
+        note.ShouldContain(world.Git.Baseline);
+        note.ShouldContain("-StartRef");
+    }
     [Test]
     public async Task Runner_push_settles_success_without_claim()
     {
@@ -76,6 +103,7 @@ public sealed class RunnerTaskSettlementTests
         {
             await world.SettleAsync(RunnerSettlementWorld.Report("Done, all pushed."));
             AssertNoPush(world, RemoteSettlementSyncReasons.NoPushedProgress, "Done, all pushed.");
+            world.Task.FailureReason!.ShouldContain(RemoteSettlementSyncReasons.MirrorUnavailable);
             (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
             (await world.EventsAsync()).ShouldNotContain(e => e.Type == AgentTaskEventType.Merged);
         }

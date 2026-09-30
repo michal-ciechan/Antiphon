@@ -90,6 +90,59 @@ public sealed class RunnerWorkspaceServiceTests
     }
 
     [Test]
+    public async Task Publish_refuses_an_active_sequencer_before_push()
+    {
+        using var scratch = Scratch.Create();
+        var starts = new List<ProcessStartInfo>();
+        var service = scratch.Service(scratch.Clone, starts);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        var gitDir = Scratch.Git(mirror, "rev-parse", "--absolute-git-dir").Trim();
+        File.WriteAllText(Path.Combine(gitDir, "MERGE_HEAD"), scratch.PublishedSha + "\n");
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, null, true), CancellationToken.None);
+        answer.Refusal.ShouldBe("sequencer_active");
+        starts.ShouldNotContain(psi => psi.ArgumentList.FirstOrDefault() == "push");
+    }
+
+    [Test]
+    public async Task Publish_reports_rejected_non_fast_forward_without_exposing_origin()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        File.WriteAllText(Path.Combine(mirror, "runner.txt"), "runner");
+        Scratch.Git(mirror, "add", "runner.txt");
+        Scratch.Git(mirror, "commit", "-m", "runner");
+        Scratch.Git(scratch.Origin, "checkout", Scratch.Branch);
+        File.WriteAllText(Path.Combine(scratch.Origin, "other.txt"), "other");
+        Scratch.Git(scratch.Origin, "add", "other.txt");
+        Scratch.Git(scratch.Origin, "commit", "-m", "other");
+        Scratch.Git(scratch.Origin, "checkout", Scratch.Published);
+
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, scratch.Sha, true), CancellationToken.None);
+        answer.Relation.ShouldBe("descends");
+        answer.Pushed.ShouldBeFalse();
+        answer.Refusal.ShouldBe("push_rejected");
+        (answer.Refusal ?? "").ShouldNotContain(scratch.Origin);
+    }
+
+    [Test]
+    public async Task Publish_classifies_a_tip_behind_the_advertised_remote()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        File.WriteAllText(Path.Combine(mirror, "later.txt"), "later");
+        Scratch.Git(mirror, "add", "later.txt");
+        Scratch.Git(mirror, "commit", "-m", "later");
+        var later = Scratch.Git(mirror, "rev-parse", "HEAD").Trim();
+        Scratch.Git(mirror, "reset", "--hard", scratch.Sha);
+
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, later, true), CancellationToken.None);
+        answer.Relation.ShouldBe("behind");
+        answer.Pushed.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Remove_refuses_committed_unpublished_tip_unless_forced()
     {
         using var scratch = Scratch.Create();
@@ -113,6 +166,21 @@ public sealed class RunnerWorkspaceServiceTests
         var service = scratch.Service(scratch.Clone);
         var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
         (await service.RemoveAsync(new(mirror, PublishedSha: scratch.Sha), CancellationToken.None)).Removed.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Remove_allows_a_tip_which_is_ancestor_of_published_sha()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        File.WriteAllText(Path.Combine(mirror, "published.txt"), "published");
+        Scratch.Git(mirror, "add", "published.txt");
+        Scratch.Git(mirror, "commit", "-m", "published");
+        var published = Scratch.Git(mirror, "rev-parse", "HEAD").Trim();
+        Scratch.Git(mirror, "reset", "--hard", scratch.Sha);
+
+        (await service.RemoveAsync(new(mirror, PublishedSha: published), CancellationToken.None)).Removed.ShouldBeTrue();
     }
     [Test]
     public async Task Mirror_of_a_second_repository_clones_beside_the_primary_and_removes_through_its_own_checkout()

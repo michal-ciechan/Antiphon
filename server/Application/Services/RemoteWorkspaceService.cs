@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
@@ -609,7 +610,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         {
             _logger.LogWarning(
                 ex, "Remote mirror {Path} for task {Task} could not be removed", task.RemoteWorktreePath, task.Id);
-            return task.RemoteWorktreePath + " (" + ex.Message + ")";
+            return ex is ConflictException { Code: PhoneHomeProblemTypes.UnpublishedWork }
+                ? task.RemoteWorktreePath + " (" + ex.Message + ")"
+                : task.RemoteWorktreePath;
         }
     }
 

@@ -319,12 +319,12 @@ public sealed partial class RunnerWorkspaceService
         else if (descendsFromBaseline == false) relation = "diverged";
         else
         {
-            var forward = await GitAsync(path, ct, "merge-base", "--is-ancestor", remote, tip);
+            var forward = await GitAsync(path, ct, "merge-base", "--is-ancestor", remote!, tip);
             if (forward.ExitCode == 0) relation = "descends";
             else if (forward.ExitCode != 1) relation = "unknown";
             else
             {
-                var reverse = await GitAsync(path, ct, "merge-base", "--is-ancestor", tip, remote);
+                var reverse = await GitAsync(path, ct, "merge-base", "--is-ancestor", tip, remote!);
                 relation = reverse.ExitCode switch { 0 => "behind", 1 => "diverged", _ => "unknown" };
             }
         }
