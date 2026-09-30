@@ -112,9 +112,22 @@ frozen, but had 3,528 passed and **6 failed**. All failures are argument
 rows of `TestClassificationPolicyTests.C487_G065`, `C487_G066`,
 `C487_G067` and `C487_G069`: their nested probe builds an apphost and
 then searches for its executable. The process-wide `UseAppHost=false`
-needed for CP-3's real miniature verifier suppressed those probe apphosts.
-This is an environment collision between the two rows, not a changed
-assertion in CARD-0802. The full failed result and TRX are retained in
-that run. CP-4 will be rerun alone from a new committed evidence slice,
-without that process-wide variable; the checkpoint tool still applies its
-own Linux `UseAppHost=false` to the outer isolated build.
+suppressed those probe apphosts. The full failed result and TRX are
+retained in that run.
+
+The committed CP-4-only rerun at `5bad55b1ec9ceeb431fdd43ab2882e5db900574a`
+without that variable, run `.antiphon/checkpoints/20260930-100343-c621/`,
+still failed: 3,534 executed, 3,527 passed, 7 failed, 33 skipped. The
+six probe failures changed to `MSB3030` because this host lacked the
+.NET 9 Linux apphost pack; one unrelated
+`ResilienceBudgetTests.Slow_first_attempt_consumes_the_same_budget`
+timing assertion also exceeded its 12 s ceiling under load. A leased
+diagnostic `dotnet restore --runtime linux-x64` on the same miniature
+solution fetched `Microsoft.NETCore.App.Host.linux-x64` 9.0.20 into the
+task host's NuGet cache; a second leased diagnostic build without
+`UseAppHost=false` then passed. These were prerequisites to diagnose
+the checkpoint failure, not additional Antiphon test coverage. The next
+S2-S3 attempt can run both rows without the variable, keeping a green
+group report for CP-5's producer gate. The initial attribution to an
+environment collision was incomplete: the missing host pack was the
+underlying defect when apphost generation was enabled.
