@@ -6210,6 +6210,10 @@ public sealed class AgentTaskDispatcher
         return BindRefusalResult.None;
     }
 
+    private const string RepairSourceIdentityUnavailable = "repair_source_identity_unavailable";
+    private const string RepairSourceOwnerRemoteAhead = "repair_source_owner_remote_ahead";
+    private const string RepairSourceOwnerDiverged = "repair_source_owner_diverged";
+
     private sealed record RepairSourcePrep(string? OwnerSha, List<string> Warnings, string? FailureReason);
 
     private async Task<RepairSourcePrep> PrepareRepairSourceAsync(AgentTask task, CancellationToken ct)
@@ -6274,6 +6278,25 @@ public sealed class AgentTaskDispatcher
                 $"repair_source_identity_unavailable: {DelegationReportFormatter.Short(owner.Id)} {registered.Path}");
         }
 
+        var remote = await ObserveRemoteForBaselineAsync(task.RepoPath, ownerRef, task.Id, ct);
+        if (remote.State == ProgressRemoteState.Present && remote.Sha is { } remoteSha && remoteSha != local.Sha)
+        {
+            var localBehind = await _progressGit.IsAncestorAsync(task.RepoPath, local.Sha, remoteSha, ct);
+            if (localBehind is null)
+                return new(null, warnings, $"{RepairSourceIdentityUnavailable}: owner ancestry could not be read.");
+            if (localBehind.Value)
+                return new(null, warnings, RepairSourceCurrencyReason(RepairSourceOwnerRemoteAhead, owner.Id,
+                    local.Sha, remoteSha, "behind origin"));
+            var remoteBehind = await _progressGit.IsAncestorAsync(task.RepoPath, remoteSha, local.Sha, ct);
+            if (remoteBehind is null)
+                return new(null, warnings, $"{RepairSourceIdentityUnavailable}: owner ancestry could not be read.");
+            if (!remoteBehind.Value)
+                return new(null, warnings, RepairSourceCurrencyReason(RepairSourceOwnerDiverged, owner.Id,
+                    local.Sha, remoteSha, "diverged from origin"));
+        }
+        else if (remote.State == ProgressRemoteState.Unavailable)
+            warnings.Add($"owner remote unobserved ({remote.Reason ?? "source_remote_unreadable"}); repair base is the desktop ref {local.Sha}.");
+
         warnings.Add($"occupied source {ownerRef} at {owner.WorktreePath ?? registered.Path}; routing to an isolated branch at {local.Sha}.");
         var dirty = await _progressGit.RunAsync(registered.Path,
             ["status", "--porcelain", "--untracked-files=all"], ct);
@@ -6282,6 +6305,11 @@ public sealed class AgentTaskDispatcher
 
         return new(local.Sha, warnings, null);
     }
+
+    private static string RepairSourceCurrencyReason(string code, Guid ownerId, string local, string remote,
+        string relationship) => $"{code}: owner {DelegationReportFormatter.Short(ownerId)} local={local} remote={remote}. "
+            + $"The desktop mirror is {relationship}; dispatch -Worktree -StartRef {remote} and land it with "
+            + $"-Land <owner> -FromTask <repair> after Review.";
 
     private sealed record BaselineCapture(string? Json, string? Warning, string? FailureReason);
 

@@ -24,6 +24,73 @@ namespace Antiphon.Tests.Application;
 public class RepairSourceDispatchTests
 {
     [Test]
+    [Timeout(90_000)]
+    [Arguments("behind")]
+    [Arguments("diverged")]
+    public async Task C675_RepairSourceRefusesWhenOwnerRemoteIsAheadOrDiverged(string kind)
+    {
+        await using var world = await RepairSourceWorld.CreateAsync();
+        var remote = kind == "behind"
+            ? await world.CommitFromSecondCloneAsync(world.OwnerRef, "remote advance")
+            : await RewriteOwnerFromMasterAsync(world);
+        var before = await world.Snapshot();
+        var (repair, _) = await world.DispatchAsync();
+        repair.Status.ShouldBe(AgentTaskStatus.Failed);
+        repair.FailureReason.ShouldStartWith(kind == "behind"
+            ? "repair_source_owner_remote_ahead" : "repair_source_owner_diverged");
+        repair.FailureReason.ShouldContain(world.OwnerSha);
+        repair.FailureReason.ShouldContain(remote);
+        repair.FailureReason.ShouldContain("-StartRef");
+        repair.WorktreePath.ShouldBeNull();
+        var after = await world.Snapshot();
+        after.LocalOwnerTip.ShouldBe(before.LocalOwnerTip);
+        after.RemoteOwnerTip.ShouldBe(before.RemoteOwnerTip);
+        after.OwnerHead.ShouldBe(before.OwnerHead);
+        world.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "fetch"
+            && a.Any(x => x.StartsWith("refs/heads/", StringComparison.Ordinal)
+                || x.StartsWith("refs/remotes/", StringComparison.Ordinal)));
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    [Arguments("equal")]
+    [Arguments("local-ahead")]
+    [Arguments("unreachable")]
+    public async Task C675_RepairSourceProceedsWhenRemoteEqualLocalAheadOrUnreachable(string kind)
+    {
+        await using var world = await RepairSourceWorld.CreateAsync();
+        var baseSha = world.OwnerSha;
+        if (kind == "local-ahead")
+            baseSha = await world.CommitInOwnerTreeAsync("local ahead", push: false);
+        if (kind == "unreachable")
+            Directory.Move(world.Remote, world.Remote + ".offline");
+        var (repair, _) = await world.DispatchAsync();
+        repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        repair.WorktreeBaseSha.ShouldBe(baseSha);
+        (await ScratchGitRepo.GitInAsync(repair.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(baseSha);
+        if (kind == "unreachable")
+            (await world.Warnings()).ShouldContain(w => w.Detail.Contains("owner remote unobserved"));
+        world.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "fetch"
+            && a.Any(x => x.StartsWith("refs/heads/", StringComparison.Ordinal)
+                || x.StartsWith("refs/remotes/", StringComparison.Ordinal)));
+    }
+
+    private static async Task<string> RewriteOwnerFromMasterAsync(RepairSourceWorld world)
+    {
+        var clone = Path.Combine(world.Repo.WorktreeRoot, "rewrite-" + Guid.NewGuid().ToString("N")[..8]);
+        (await ScratchGitRepo.GitInAsync(world.Repo.WorktreeRoot,
+            "clone", "--branch", "master", world.Remote, clone)).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(clone, "remote-only.md"), "replacement\n");
+        (await ScratchGitRepo.GitInAsync(clone, "add", "remote-only.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", "rewrite owner remote")).Ok.ShouldBeTrue();
+        var sha = (await ScratchGitRepo.GitInAsync(clone, "rev-parse", "HEAD")).StdOut.Trim();
+        (await ScratchGitRepo.GitInAsync(clone, "push",
+            $"--force-with-lease={world.OwnerRef}:{world.OwnerSha}", "origin", $"HEAD:{world.OwnerRef}"))
+            .Ok.ShouldBeTrue();
+        return sha;
+    }
+    [Test]
     public async Task C499_V02_FreshCodeWorktreeRepairIsAccepted()
     {
         using var repo = new ScratchGitRepo("c499-v02");

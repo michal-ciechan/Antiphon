@@ -408,6 +408,11 @@ be an authorized Code/Worktree task in the same project and git common directory
 `GET /api/agent-tasks/{id}` exposes `repairSourceTaskId` and `progressEvidence`
 (`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
 returns 409 `repair_source_landing_owner_required`.
+Dispatch refuses a `repairSourceTaskId` whose desktop owner ref is behind origin with
+`repair_source_owner_remote_ahead`, or diverged with `repair_source_owner_diverged`. Its failure
+reason gives both SHAs and directs a fresh `-Worktree -StartRef <remote-sha>` task to the reviewed
+`-Land <owner> -FromTask <repair>` adoption route. An unreachable origin leaves the desktop base
+in place and emits an `owner remote unobserved` warning.
 
 `POST /api/agent-tasks` accepts optional `worktreeBaseRequestedRef` (CARD-0613), exposed by
 `delegate.ps1 -StartRef`. It is the commit-ish the task's OWN fresh worktree branch is cut at:

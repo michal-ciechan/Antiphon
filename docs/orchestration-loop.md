@@ -115,6 +115,11 @@ ref. `-RepairSource` alone sets no merge target and grants no Land: a repair tas
 (or an explicit merge target equal to the owner's branch). A task tagged `-RepairSource` is not
 eligible for `-FromTask` adoption. A separate Code/Worktree source started with `-StartRef` can
 be adopted after its pushed tip is reviewed; the original owner remains the landing target.
+At dispatch, `-RepairSource` checks the owner's desktop ref against origin. A mirror behind origin
+fails with `repair_source_owner_remote_ahead`; a diverged mirror fails with
+`repair_source_owner_diverged`. Use `-Worktree -StartRef <remote-sha>` for the repair and the
+reviewed `-FromTask` adoption route below. If origin cannot be observed, dispatch uses the desktop
+ref and records an `owner remote unobserved` warning.
 Historical Failed status is preserved.
 
 **Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
