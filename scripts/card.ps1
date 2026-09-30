@@ -458,6 +458,11 @@ function Invoke-CardCollection {
         if ($null -eq $page -or $null -eq $page.cards) {
             Write-Error 'Card enumeration response has no cards array.'; exit 1
         }
+        if ($null -eq $page.PSObject.Properties['truncated'] -or
+            $page.truncated -isnot [bool] -or
+            $null -eq $page.PSObject.Properties['nextPageToken']) {
+            Write-Error 'Card enumeration response has no valid pagination fields; server may be too old.'; exit 1
+        }
         if ($Verb -eq 'search') {
             if ($null -eq $page.total -or [long]$page.total -lt 0) {
                 Write-Error 'Card search response has no valid total.'; exit 1
@@ -475,7 +480,8 @@ function Invoke-CardCollection {
             $cards.Add($item)
         }
         $next = [string]$page.nextPageToken
-        if ([bool]$page.truncated -ne (-not [string]::IsNullOrEmpty($next))) {
+        if (($page.truncated -and [string]::IsNullOrWhiteSpace($next)) -or
+            (-not $page.truncated -and $null -ne $page.nextPageToken)) {
             Write-Error 'Card enumeration returned contradictory truncated and nextPageToken fields; server may be too old.'; exit 1
         }
         if (-not $page.truncated) {
@@ -619,6 +625,13 @@ if ($collectionVerb) {
     }
     if ($Verb -eq 'search' -and $PSBoundParameters.ContainsKey('UpdatedSince')) {
         Write-Error '-UpdatedSince applies only to list.'; exit 1
+    }
+    if ($Verb -eq 'list' -and $PSBoundParameters.ContainsKey('UpdatedSince')) {
+        $parsedSince = [DateTimeOffset]::MinValue
+        if ([string]::IsNullOrWhiteSpace($UpdatedSince) -or
+            -not [DateTimeOffset]::TryParse($UpdatedSince, [ref]$parsedSince)) {
+            Write-Error '-UpdatedSince must be a valid timestamp.'; exit 1
+        }
     }
 }
 

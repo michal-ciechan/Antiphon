@@ -38,9 +38,9 @@ public sealed class CardListSearchScriptTests
         public Func<Call, int, Reply>? Respond;
         public string BaseUrl { get; }
 
-        public Stub()
+        public Stub(string prefix = "")
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
+            BaseUrl = EphemeralHttpListener.BindLoopback(_listener).TrimEnd('/') + prefix;
             _pump = Task.Run(PumpAsync);
         }
 
@@ -55,7 +55,7 @@ public sealed class CardListSearchScriptTests
                 var call = new Call(request.Url!.AbsolutePath, request.Url.Query, request.Headers["X-Antiphon-Task-Token"]);
                 Calls.Add(call);
                 Reply reply;
-                if (call.Path == "/api/boards")
+                if (call.Path.EndsWith("/api/boards", StringComparison.Ordinal))
                     reply = new(200, $"[{{\"id\":\"{BoardId}\",\"name\":\"Antiphon\"}}]");
                 else
                     reply = Respond?.Invoke(call, Calls.Count) ?? new(200, Page(0, 0));
@@ -167,25 +167,41 @@ public sealed class CardListSearchScriptTests
 
     [Test] public async Task Old_or_inconsistent_pagination_fails_without_results()
     {
-        foreach (var broken in new[] { Page(0, 1, true), Page(0, 1, false, "unexpected"),
-            Page(0, 0, true, "next") })
+        foreach (var broken in new[] { Page(0, 1, true), Page(0, 1, true, " "),
+            Page(0, 1, false, "unexpected"), Page(0, 0, true, "next") })
         {
             using var stub = new Stub();
             stub.Respond = (_, _) => new(200, broken);
             var run = await RunAsync(stub, "list", "-Status", "Backlog", "-Json");
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
+            run.Stderr.ShouldContain("enumeration");
         }
-        using var cycle = new Stub();
-        cycle.Respond = (_, _) => new(200, Page(0, 1, true, "again"));
-        var repeated = await RunAsync(cycle, "list", "-Status", "Backlog", "-Json");
-        repeated.ExitCode.ShouldNotBe(0);
-        repeated.Stdout.ShouldBeNullOrWhiteSpace();
+        foreach (var tokens in new[] { new[] { "A", "A" }, new[] { "A", "B", "A" } })
+        {
+            using var cycle = new Stub();
+            cycle.Respond = (_, request) => new(200, Page(request - 1, 1, true,
+                tokens[Math.Min(request - 1, tokens.Length - 1)]));
+            var repeated = await RunAsync(cycle, "list", "-Status", "Backlog", "-Json");
+            repeated.ExitCode.ShouldNotBe(0);
+            repeated.Stdout.ShouldBeNullOrWhiteSpace();
+            repeated.Stderr.ShouldContain("page token");
+            cycle.Calls.Count.ShouldBe(tokens.Length);
+        }
+        using var caseSensitive = new Stub();
+        caseSensitive.Respond = (_, request) => request switch
+        {
+            1 => new(200, Page(0, 1, true, "A")),
+            2 => new(200, Page(1, 1, true, "a")),
+            _ => new(200, Page(2, 1))
+        };
+        (await RunAsync(caseSensitive, "list", "-Status", "Backlog", "-Json")).ExitCode.ShouldBe(0);
+        caseSensitive.Calls.Count.ShouldBe(3);
     }
 
     [Test] public async Task Later_http_failure_and_changed_scope_do_not_emit_partial_json()
     {
-        foreach (var status in new[] { 404, 409, 500 })
+        foreach (var status in new[] { 409, 500 })
         {
             using var stub = new Stub();
             stub.Respond = (call, _) => call.Value("pageToken") is null
@@ -195,7 +211,15 @@ public sealed class CardListSearchScriptTests
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
             run.Stderr.ShouldContain("restart");
+            stub.Calls.Count.ShouldBe(2);
         }
+        using var missingSearch = new Stub();
+        missingSearch.Respond = (_, _) => new(404, "{\"detail\":\"no search route\"}");
+        var missing = await RunAsync(missingSearch, "search", "needle", "-Json");
+        missing.ExitCode.ShouldNotBe(0);
+        missing.Stdout.ShouldBeNullOrWhiteSpace();
+        missingSearch.Calls.Count.ShouldBe(1);
+        missingSearch.Calls[0].Path.ShouldBe("/api/cards/search");
     }
 
     [Test] public async Task Duplicate_ids_and_inconsistent_totals_are_errors()
@@ -210,13 +234,27 @@ public sealed class CardListSearchScriptTests
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
         }
+        using var within = new Stub();
+        within.Respond = (_, _) => new(200, Page(0, 2, total: 2, duplicate: 1));
+        var duplicate = await RunAsync(within, "search", "needle", "-Json");
+        duplicate.ExitCode.ShouldNotBe(0);
+        duplicate.Stderr.ShouldContain("repeated a card id");
+        using var greater = new Stub();
+        greater.Respond = (call, _) => call.Value("pageToken") is null
+            ? new(200, Page(0, 1, true, "next", 1)) : new(200, Page(1, 1, total: 1));
+        var tooMany = await RunAsync(greater, "search", "needle", "-Json");
+        tooMany.ExitCode.ShouldNotBe(0);
+        tooMany.Stderr.ShouldContain("final count differs");
     }
 
     [Test] public async Task Collection_argument_errors_are_local()
     {
         foreach (var args in new[] { new[] { "list" }, new[] { "list", "-All" },
-            new[] { "search" }, new[] { "search", " " }, new[] { "list", "CARD-1", "-Status", "Done" },
+            new[] { "search" }, new[] { "search", " ", "-Board", "Antiphon" },
+            new[] { "list", "CARD-1", "-Status", "Done", "-Board", "Antiphon" },
             new[] { "list", "-Status", "Done", "-Limit", "0" },
+            new[] { "list", "-Board", "Antiphon", "-UpdatedSince", "nonsense" },
+            new[] { "list", "-Board", "Antiphon", "-Status", "NoSuchStatus" },
             new[] { "search", "needle", "-UpdatedSince", "2026-09-30T00:00:00Z" },
             new[] { "get", "CARD-1", "-All" } })
         {
@@ -241,16 +279,25 @@ public sealed class CardListSearchScriptTests
                 JsonDocument.Parse(run.Stdout).RootElement.GetProperty("cards").GetArrayLength().ShouldBe(count);
             }
         }
+        using var humanStub = new Stub();
+        humanStub.Respond = (_, _) => new(200, Page(0, 1));
+        var human = await RunAsync(humanStub, "list", "-Status", "Done");
+        human.ExitCode.ShouldBe(0, human.Stderr);
+        human.Stdout.ShouldContain("1 cards in all boards");
+        human.Stdout.ShouldContain("previewed");
+        human.Stdout.ShouldContain("card.ps1 get");
+        human.Stdout.ShouldContain(BoardId);
     }
 
     [Test] public async Task Every_page_preserves_base_and_task_header()
     {
-        using var stub = new Stub();
+        using var stub = new Stub("/fixture");
         stub.Respond = (call, _) => call.Value("pageToken") is null
             ? new(200, Page(0, 1, true, "next")) : new(200, Page(1, 1));
-        var run = await RunAsync(stub, "list", "-Status", "Done", "-Json");
+        var run = await RunAsync(stub, "list", "-Board", "Antiphon", "-Status", "Done", "-Json");
         run.ExitCode.ShouldBe(0, run.Stderr);
-        stub.Calls.Count.ShouldBe(2);
+        stub.Calls.Count.ShouldBe(3);
+        stub.Calls.All(c => c.Path.StartsWith("/fixture/api/", StringComparison.Ordinal)).ShouldBeTrue();
         stub.Calls.All(c => c.TaskToken == "synthetic-task-token").ShouldBeTrue();
     }
 
@@ -264,5 +311,6 @@ public sealed class CardListSearchScriptTests
         run.ExitCode.ShouldBe(0, run.Stderr);
         stub.Calls.Count.ShouldBe(2);
         stub.Calls.All(c => c.Value("updatedSince") == since).ShouldBeTrue();
+        stub.Calls[1].Value("pageToken").ShouldBe("next");
     }
 }
