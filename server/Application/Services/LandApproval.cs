@@ -12,6 +12,16 @@ internal static class LandApproval
     public const string FinalReviewRequiredCode = "final_verification_review_required";
     public const string ScopeIneligibleCode = "review_verification_scope_ineligible";
 
+    public static string ReviewedOwnerRecoveryGuidance(Guid ownerId) =>
+        $"If the original owner is Failed or Blocked, commission a Clean Final/Full Review of its current pushed tip " +
+        $"with the owner {ownerId:D} as subjectTaskId, then run " +
+        $"pwsh -NoProfile -File scripts/delegate.ps1 -Land {ownerId:D} " +
+        "-ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource.";
+
+    public static string RepairSourceOwnerRefusal(Guid ownerId) =>
+        $"Repair tasks cannot be landed; commission Land on the original owner {ownerId:D}. " +
+        ReviewedOwnerRecoveryGuidance(ownerId);
+
     /// <summary>
     /// CARD-0544 D-5 recovery gate. A pending or resumed land for a latched owner re-reads the
     /// latch and its persisted approval before any further mutation. Returns a refusal code, or

@@ -84,7 +84,7 @@ public sealed class AgentTaskLandService
         await _db.Entry(task).ReloadAsync(ct);
         if (task.RepairSourceTaskId is Guid repairOwner)
             throw new ConflictException(
-                $"Repair tasks cannot be landed; commission Land on the original owner {DelegationReportFormatter.Short(repairOwner)}.",
+                LandApproval.RepairSourceOwnerRefusal(repairOwner),
                 "repair_source_landing_owner_required");
         if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
             throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
@@ -106,7 +106,9 @@ public sealed class AgentTaskLandService
                 && r.IsPending && r.State == LandRequestState.NeedsResolution
                 && r.RecoveryMode == LandRecoveryMode.None, ct);
         if (recoveryMode == LandRecoveryMode.None && task.Status != AgentTaskStatus.Succeeded && !resumeConflict)
-            throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
+            throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land." +
+                (task.Role == AgentTaskRole.Code && task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Blocked
+                    ? " " + LandApproval.ReviewedOwnerRecoveryGuidance(task.Id) : ""));
         WorkspaceReservationSnapshot? admitted = null;
         var committed = false;
         var retiredHelpers = new List<Guid>();
@@ -368,7 +370,7 @@ public sealed class AgentTaskLandService
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
         if (task is not null && task.RepairSourceTaskId is Guid repairOwner)
             throw new ConflictException(
-                $"Repair tasks cannot be landed; commission Land on the original owner {DelegationReportFormatter.Short(repairOwner)}.",
+                LandApproval.RepairSourceOwnerRefusal(repairOwner),
                 "repair_source_landing_owner_required");
         if (task is not null && (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null))
             throw new ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");

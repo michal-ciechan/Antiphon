@@ -24,6 +24,77 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskLandRequestTests
 {
     [Test]
+    public async Task C603_PlainFailedCodeOwnerRefusalNamesReviewedRecovery()
+    {
+        var cases = new (AgentTaskStatus Status, AgentTaskRole Role, WorkspaceMode Workspace, bool Guided, string Code)[]
+        {
+            (AgentTaskStatus.Failed, AgentTaskRole.Code, WorkspaceMode.Worktree, true, "conflict"),
+            (AgentTaskStatus.Blocked, AgentTaskRole.Code, WorkspaceMode.Worktree, true, "conflict"),
+            (AgentTaskStatus.Canceled, AgentTaskRole.Code, WorkspaceMode.Worktree, false, "conflict"),
+            (AgentTaskStatus.Queued, AgentTaskRole.Code, WorkspaceMode.Worktree, false, "conflict"),
+            (AgentTaskStatus.Dispatched, AgentTaskRole.Code, WorkspaceMode.Worktree, false, "conflict"),
+            (AgentTaskStatus.Working, AgentTaskRole.Code, WorkspaceMode.Worktree, false, "conflict"),
+            (AgentTaskStatus.Failed, AgentTaskRole.Review, WorkspaceMode.Worktree, false, "conflict"),
+            (AgentTaskStatus.Failed, AgentTaskRole.Code, WorkspaceMode.Shared, false, "conflict"),
+            (AgentTaskStatus.Failed, AgentTaskRole.Mutation, WorkspaceMode.Worktree, false, "verification_publication_forbidden"),
+        };
+        foreach (var scenario in cases)
+        {
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var db = CreateContext(schema);
+            var owner = await SeedSucceededWorktreeAsync(db);
+            owner.Status = scenario.Status;
+            owner.Role = scenario.Role;
+            owner.Workspace = scenario.Workspace;
+            owner.FailureCode = AgentTaskFailureCode.CompletedWithoutProgress;
+            owner.FailureReason = "historical failure";
+            await db.SaveChangesAsync();
+            var originalCompleted = owner.CompletedAt;
+            var queue = new AgentTaskLandQueue();
+            var land = CreateLand(db, queue, Frozen(DateTime.UtcNow));
+            var beforeEvents = await db.AgentTaskEvents.CountAsync();
+            var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
+                new LandAgentTaskRequest(ExpectedSourceSha: new string('a', 40)), default));
+            error.Code.ShouldBe(scenario.Code);
+            error.StatusCode.ShouldBe(409);
+            if (scenario.Guided)
+            {
+                error.Message.ShouldContain("must have succeeded before it can land");
+                error.Message.ShouldContain("-Land " + owner.Id.ToString("D"));
+                error.Message.ShouldContain("subjectTaskId");
+                error.Message.ShouldContain("Clean Final/Full Review");
+                error.Message.ShouldContain("-ExpectedSourceSha <full-sha>");
+                error.Message.ShouldContain("-ReviewEvidenceId <review-evidence-id>");
+                error.Message.ShouldContain("-RecoverReviewedSource");
+            }
+            else error.Message.ShouldNotContain("-RecoverReviewedSource");
+            (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
+            (await db.AgentTaskLandings.CountAsync()).ShouldBe(0);
+            (await db.AgentTaskEvents.CountAsync()).ShouldBe(beforeEvents);
+            queue.PendingCount.ShouldBe(0);
+            await db.Entry(owner).ReloadAsync();
+            owner.Status.ShouldBe(scenario.Status);
+            owner.FailureCode.ShouldBe(AgentTaskFailureCode.CompletedWithoutProgress);
+            owner.FailureReason.ShouldBe("historical failure");
+            owner.CompletedAt.ShouldBe(originalCompleted);
+        }
+        await using var resumeSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var resumeDb = CreateContext(resumeSchema);
+        var resumedOwner = await SeedSucceededWorktreeAsync(resumeDb);
+        var resumeQueue = new AgentTaskLandQueue();
+        var resumeLand = CreateLand(resumeDb, resumeQueue, Frozen(DateTime.UtcNow));
+        var first = await resumeLand.RequestAsync(resumedOwner.Id, Approve(), default);
+        resumeQueue.Release(resumedOwner.Id);
+        var prior = await resumeDb.AgentTaskLandRequests.SingleAsync(r => r.Id == first.RequestId);
+        prior.State = LandRequestState.NeedsResolution;
+        resumedOwner.Status = AgentTaskStatus.Blocked;
+        await resumeDb.SaveChangesAsync();
+        var retry = await resumeLand.RequestAsync(resumedOwner.Id, Approve(), default);
+        retry.RequestId.ShouldBe(first.RequestId);
+        resumeQueue.PendingCount.ShouldBe(1);
+    }
+
+    [Test]
     [Arguments("canceled", "recovery_owner_ineligible")]
     [Arguments("missing", "review_evidence_missing")]
     [Arguments("interim", "review_verification_scope_ineligible")]
