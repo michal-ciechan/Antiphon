@@ -2,8 +2,11 @@
 
 Plan task `45703b71-bd8a-4236-a145-0dcdc81b965b`, 2026-09-30. Inspected source:
 `7f28d2bb247ba1c0f785336f5decd4a16b5577c1`. Linux is the acceptance platform.
-This commit is documentation only. No build, test, lease acquisition, deployment,
-task-token change, or card write was performed for this Plan.
+TestDesign task `da7e1d0b-f9f0-40b1-9715-6cc6e5ef38b8`, 2026-09-30, audited
+`5cd8d0b9da70a011d55a50ae8c0e7e0ebf8db190` and prerequisite source
+`1dcc03c0a596dbd1fa857ee93293c6dfbf05828a`. This document is the only edited file.
+No build, test execution, lease acquisition, deployment, task-token change, or
+card write was performed. Counts below are static source census, not run evidence.
 
 ## Outcome and verified cause
 
@@ -29,7 +32,7 @@ repeated by this Plan.
 | Probe versus acquisition | `ProbeAsync` GET accepts HTTP 200 immediately. The acquire loop silently retries an unrecognized POST response every five seconds until its 60-second grace expires. | The card's suspected GET probe is not where an initial GET 200 loses the lease. It is the subsequent POST 400 path. Both paths need diagnostics. |
 | Why scripts work | `scripts/lib/build-slot.ps1:76-83` reads the selected `-HolderPid` process's UTC start time and includes it in the POST. Lines 108-120 start renewal only when the grant supplies a positive interval. | There is no alternative request flag for renew mode. Both modes use the same request. Copy the wire contract, not the script's broad unexpected-response fallback. |
 | Renewal contract | `BuildSlotBroker.GrantOf` supplies `renewEverySeconds` only in renew mode. `BuildSlotClient.RenewUntilReleasedAsync` already posts `/build-slots/{leaseId}/renew` and disposal stops renewal before DELETE. | Preserve renewal and per-driver holders. Do not substitute the executor's single PID for every driver. |
-| Launch refusal propagation | The scheduler's build and row paths, and `Program.Row`, currently check only `ExitCodes.SlotTimeout`. | Returning another nonzero lease result alone is insufficient: all three launch boundaries must honor it. |
+| Launch refusal propagation | The scheduler's build and row paths, `Program.Row`, and `BaselineComparer.RunLeased` currently check only `ExitCodes.SlotTimeout`. | Returning another nonzero lease result alone is insufficient: all four launch boundaries must honor it. The baseline path was missing from the original Plan. |
 
 The canonical 400 body reconstructed from `BuildSlotBroker` and
 `BuildSlotRoutes.Problem` is below; `<pid>` denotes the submitted integer. This
@@ -166,6 +169,18 @@ owners before Code; a board column or a pushed branch alone is not publication.
 | CARD-0850 | Backlog. Edits `CheckpointApp.cs`, `Report/ReportWriter.cs`, report tests and likely output/report model fields for `--keep-outputs` and selected build counts. | Not a prerequisite. Run after 0833, preferably after 0835, with an explicit handoff. Preserve its ownership of output cleanup truth; do not fold that feature into this card. |
 | CARD-0823 | Backlog text describes null **response** `renewEverySeconds` causing `TryGetInt32` to throw after grant. `9c019896816392a29114d865c7e6df9d5dfc65de`, already in this baseline, adds the Number-kind check and `pid_liveness_grant_with_null_renewal_is_granted_without_renewing`. Overlap: `Slots/BuildSlotClient.cs`, its tests, and possibly `CheckpointApp.cs` crash diagnostics. | The missing **request** `processStartUtc` is a different mismatch. The null-reader fix is already present, so no additional 0823 landing is required for Linux Code. Preserve it when consuming 0804/0805; serialize any remaining 0823 lease-exception/inner-error work. Do not claim the entire card resolved from this inspection. |
 
+**Dispatch hold:** do not launch CARD-0833 Code until the caller has a confirmed
+publication outcome for the complete CARD-0804/0805 owner `3895bec1`, including
+its required qualification, and has reserved the checkpoint-tool edit lane.
+`git ls-remote` during TestDesign still showed master at `5cd8d0b9` and that
+owner branch at `1dcc03c0`; this is source evidence, not a landing receipt.
+Then serialize **0804/0805 land -> 0833 Code/Review/land -> 0835 Code/Review/land
+-> 0850**. No concurrent 0833/0835 checkpoint-tool edits. If order changes,
+consume the earlier confirmed landing and commit a fresh census/footprint
+amendment before the next Code run. Do not dispatch either overlapping writer
+on the assumption that the other is merely pushed. CARD-0853 owns the separate
+restart-time missing-token investigation; it is not a prerequisite here.
+
 Cut the eventual Code worktree from the confirmed prerequisite result. This Plan
 branch stays fast-forward-only from its assigned base; no rebase/reset of a
 pushed task branch is part of this plan.
@@ -180,13 +195,14 @@ in the post-land Mutation stage, not against this active Plan branch.
 | Slice | Work | Decisive result |
 |---|---|---|
 | S1: valid holder identity | Capture/cache the real child start time; clean up failed identity capture. Keep distinct holders and renewal/null compatibility. Add the executor HTTP seam and strict broker fixture. | The real executor holder passes the foreign-PID broker validation and each running driver owns a distinct grant. |
-| S2: refusal and evidence | Implement D-2/D-3; honor any nonzero slot exit at build, scheduled row, and direct row boundaries; preserve diagnostics through reports. | A 400 causes one POST, no grace sleep, no driver, exit 2, and a durable reason/body. Transport fallback remains explicit. |
+| S2: refusal and evidence | Implement D-2/D-3; honor any nonzero slot exit at build, scheduled row, direct row, and baseline driver boundaries; preserve diagnostics through reports. | A 400 causes one POST, no grace sleep, no driver, exit 2, and a durable reason/body. Transport fallback remains explicit. |
 | S3: regressions and owner documentation | Complete the named tests, process-spawn registration, and update the two build-slot/checkpoint-tool sections of the owner doc. | Closed manifest passes on Linux; receipts prove grants; Windows scope is reported separately. |
 
 Allowed production files, all relative to `tools/Antiphon.Checkpoints/`:
 
 - `Slots/LeaseHolder.cs`, `Slots/BuildSlotClient.cs`, new `Slots/SlotDiagnostic.cs`.
 - `CheckpointApp.cs`, `Program.cs`.
+- `Baseline/BaselineComparer.cs` (TestDesign amendment: honor refusal in `RunLeased`; retain a bounded diagnostic in `ToolRuns`; no worktree cleanup-policy changes).
 - `Execution/RunScheduler.cs`, `Execution/RowRunner.cs`.
 - `State/RunState.cs`.
 - `Report/CheckpointLine.cs`, `Report/ReportModel.cs`, `Report/ReportMerger.cs`,
@@ -198,7 +214,8 @@ Allowed test files:
 - New `tests/Antiphon.Tests/Checkpoints/CheckpointSlotExecutorTests.cs`.
 - New `tests/Antiphon.Tests/Checkpoints/BuildSlotBrokerFixture.cs`.
 - Existing `tests/Antiphon.Tests/Checkpoints/BuildSlotClientTests.cs` (change the
-  shared-lease expectation to refusal, retain existing 11-case roster, add limiter).
+  shared-lease expectation to refusal, preserve both landed null-renewal methods, add limiter; projected post-prerequisite roster is 12).
+- Existing `tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs` (only make synthetic GET listings structurally valid; preserve prerequisite temp ownership).
 - Existing `tests/Antiphon.Tests/ProcessSpawnLimitTests.cs` (register spawning classes).
 
 Allowed docs: this plan and `docs/testing-and-build.md`. No project/package change
@@ -214,119 +231,369 @@ and CARD-0850 output-accounting behavior. Do not edit generated `docs/cards/`.
 
 ## Verification design
 
+### Inspection and refusal propagation
+
+Bodies inspected: `LeaseHolder`, `BuildSlotClient`, `CheckpointApp`, `Program.Row`,
+`RunScheduler`, `RowRunner`, `BaselineComparer`, `RunState`, `ExitCodes`, and the
+four report producers; real `BuildSlotBroker`/`BuildSlotRoutes`; existing slot,
+scheduler, row, app, line, merger, baseline and process-limiter tests and their
+shared helpers. Prerequisite temp scope, executor acknowledgement, usage roster,
+native fixtures and changed test declarations were also inspected. The proposed
+new fixture/tests do **not** exist yet; this audit freezes their construction and
+assertions, not a claim that an implemented fixture passed.
+
+| Boundary | Current hole | Required result and detector |
+|---|---|---|
+| Probe -> acquire | `SlotSession` has only Mode/CPU; unknown modes fall into POST. | Carry refusal exit/reason/diagnostic; a refused probe creates no holder or POST. V-3. |
+| Holder -> POST | Actual child exists, but its start is null. | Capture once, serialize actual child UTC identity; capture failure disposes and returns exit 2. V-1/V-11/V-18. |
+| Lease -> build | `BuildOneAsync` admits exit 2 through the CPU-4 fallback. | Test nonzero before driver/CPU selection; store admission exit/reason/wait on build progress. V-13. |
+| Failed build -> dependent rows | `BuildFailed` produces an empty generic placeholder; `BuildReport` fabricates slot=skipped and n/a counts. | Preserve build admission facts on every dependent row, zero executed tests, exit 2 (or 4 for slot timeout), slot=refused/timeout and original wait. Ordinary compiler failure remains build-failed. V-13. |
+| Lease -> scheduled row | `RunRowAsync` checks only exit 4; refused commands can execute. | Refusal result before `RowRunner`, same reason/wait in progress/result/line. V-14, including a TUnit row after a successful build as an internal case. |
+| Lease -> direct row | `Program.RunAsync` does not forward runtime into Row; Row checks only exit 4. | Forward HTTP/driver/output seams, use the real holder/client; return 2 with a refusal CHECKPOINT line and no build/test. V-17. |
+| Lease -> baseline driver | `BaselineComparer.RunLeased` also checks only exit 4. | Return the nonzero admission result before any driver; diagnostic in ToolRuns, no claim of baseline execution/classification. V-14 internal baseline case; R-1 adds its five existing regressions. |
+| Result -> persistent report | `ToReportRow` and `ReportMerger.Clone` currently have no slot fields. | Typed Slot/SlotReason/WaitedSeconds and admission exit survive state, JSON, Markdown/line and merge. V-13. |
+| Report -> caller exit | `ExitCodes.FromRowStates` already gives 2 precedence over 1. | Refused rows reach that aggregation; final state and returned exit are 2, not executor-crashed 6 or successful 0. V-13/V-14/V-17; existing seven exit-code cases. |
+
+Do not rely on a log message to block launch, or parse a formatted line to recover
+structured admission state. A probe-only refusal must also emit selected-row
+receipts through the normal scheduler/report path. For direct Row the public
+receipt is the emitted CHECKPOINT/EXIT CODE output; it has no existing full-run
+report.json contract. Capture that output through an optional runtime TextWriter
+(default Console.Out), not a process-global Console.SetOut change. The ordinary
+executor's full diagnostic remains in its owned executor.log.
+
+### Delivery inventory
+
+There is no new agent/session queue, caller prompt or transcript delivery here.
+The asynchronous paths being changed have these local receipts:
+
+| Producer -> destination | Identity and persistence | Recovery/observable receipt |
+|---|---|---|
+| Holder/client -> broker routes | PID + captured UTC start, label; broker lease ID after grant | Actual serialized HTTP request and real route response; retry reuses identity, replacement changes it; V-1/V-11. A GET 200 is not a lease. |
+| Admission -> driver scheduler | Run ID + build ID/CP ID; build/row progress and refusal result | Await executor completion; driver call roster plus final state/report prove refusal or grant, including dependent rows; V-11/V-13/V-14/V-17. |
+| Client Note -> executor writer -> caller report | Run ID + label + operation; bounded executor.log, report.json, report.md and CP line | Await the existing writer flush/disposal, reopen files, deserialize, then merge through real ReportMerger and render again; V-8/V-9/V-13. No new crash-replay promise is introduced. |
+| Lease owner -> renewal/release | Lease ID; renew/DELETE request roster and holder handle | Cancellation/drain completes before DELETE; broker live set and exact child exit observed before fixture cleanup; V-8/V-12/V-15/V-18. |
+
 ### Production-path fixture and failure detection
 
-Use a test-owned in-process `HttpMessageHandler` adapter over the **real**
-`BuildSlotBroker` with fake liveness/memory/time dependencies. Deserialize the
-actual JSON request as `BuildSlotRequest`, call `TryAcquire`, and return the
-same status/Problem Details/grant shape as `BuildSlotRoutes`. Its liveness probe
-returns null for every requested PID to model the separate Linux broker
-container; renew-mode liveness is governed by renew calls. Configure budget 2,
-CPU 6, no memory floor, and short renewal interval for the renewal test. Test
-setup must first prove that a null-start request returns the exact 400 and that
-the same valid PID/label plus UTC start is admitted, then reset fixture state.
-This qualification is an internal assertion, not an extra TUnit execution.
+Replace the proposed hand-written broker response adapter with an in-process
+ASP.NET **TestServer mapping the real BuildSlotRoutes.MapBuildSlotRoutes** and
+real BuildSlotBroker. Microsoft.AspNetCore.Mvc.Testing already supplies the
+TestHost dependency; no new package/project reference is needed. Follow the
+service setup in `tests/Antiphon.SessionRunner.Tests/BuildSlotTestHost.cs`, but
+use UseTestServer/CreateHandler, no Kestrel port and no real runner Program.
+Register explicit fixture-owned options, memory, clock and liveness services;
+ignore ambient runner settings. Use renew liveness, budget 2, CPU 6, memory floor
+0. The foreign-PID liveness probe always returns null. Broker time must not age
+past grace while a driver is deliberately gated.
 
-Add optional `SlotHandler`, `SlotClock`, and `SlotDelay` runtime seams and route
-them into the normal client construction. Leave `Runtime.Slots` unset in executor
-acceptance tests. Keep the production `ProcessLeaseHolderSource`, log callback,
-and acquisition/renew/release code. Reuse that construction for `Program.Row` and
-forward the existing runtime driver seam there so its refusal can be observed
-without starting a real build. Do not inject a pre-granted slot or a holder with
-a prefilled timestamp into the decisive executor test.
+Qualification sends a positive PID/nonblank label with null start through the
+real routes: assert HTTP 400, type/title build_slot_invalid and the exact detail.
+The same PID/label plus a valid UTC start must yield a real grant; DELETE it and
+assert zero occupancy before acceptance. These internal assertions add no TUnit
+executions. No fixture can return a constant granted/refused SlotLease. Only
+malformed/transport/503 contract cases use scripted HTTP responses, explicitly
+separate from the decisive real-route tests.
 
-Run `CheckpointApp.ExecuteAsync` over minimal request/resolved-manifest files in
-the prerequisite's owned temp scope. Use a fake driver that writes tiny valid
-TRX files and records the broker's live grant at each build/test start. Gate two
-rows to overlap; assert each has a different holder/grant and release of one
-does not release its sibling. Assert the reported PID belongs to the actual
-holder and its parsed UTC time matches that process's start (allow only the
-small platform conversion tolerance), then assert holders are gone after owned
-disposal. Never boot real server Program or contact production services.
+Add optional runtime SlotHandler, SlotClock and SlotDelay inputs to the normal
+BuildSlotClient construction; `Runtime.Slots` stays **unset**. Preserve the real
+ProcessLeaseHolderSource and Note callback in executor and Row. A delegating
+request recorder captures the actual outbound body. For V-13/V-14/V-17 only,
+a fault adapter removes processStartUtc from a copy **after recording the valid
+original body**, then sends it to the real route. Thus the 400 is produced by
+real broker validation without breaking holder creation as test setup. No mutation
+changes this adapter. The fake driver is a harmless spy writing tiny TRX files;
+it must record and return even if accidentally called on refusal (do not throw
+in setup and mask the intended no-driver assertion).
 
-Use fake acquisition time so restoring the old 60-second loop fails an outcome
-assertion quickly, not a wall-clock timeout. Renewal uses a bounded event gate
-on its first observed POST; do not give its background loop an instantly
-completed fake delay. Every gate is released/canceled and awaited in `finally`.
-New spawning tests are Integration and carry the assembly-local
-`ParallelLimiter<ProcessSpawnLimit>`; nonspawning contract tests are Unit.
+V-11 uses one successful build and two rows that can overlap. At each driver
+entry record live lease/holder/label, parsed UTC start versus Process.StartTime,
+and build -maxcpucount:6. UTC comparison uses an independently retained Process handle, tolerance at most
+1 ms. To test the cached getter itself without replacing the executor source,
+V-11 also owns a real ProcessLeaseHolder.Start subcase: read its property twice
+separated by 10 ms, assert exact string equality and the independent start time,
+and dispose in finally. Merely checking the request retry copy would miss a
+getter that returns UtcNow, since AcquireAsync reads it once. Record both rows'
+active grants and the sibling surviving the first release. Controller gates
+release independently of whether a second driver/renewal ever arrives: always
+complete or cancel/await every task in finally, then assert the completed driver
+and grant roster. A missing second start must produce a roster assertion, never
+an indefinite wait for that start.
+
+Acquisition time is virtual and advances by the requested delay; sticky terminal
+responses allow the old 60-second loop to finish and fail `delay-count == 0`.
+Renewal uses real cancellable delay, not that instantly completed acquisition
+delay. In V-12 the driver finishes on an independent observation window spanning
+two configured renewal intervals, whether a renew occurs or not; after normal
+completion assert the recorded renew count/order. No `WaitAsync` timeout is a
+PC red. V-8 can hold a renew response through cancellation, release it via an
+independent controller, and assert its completion precedes DELETE. Cleanup tests
+snapshot broker occupancy/child liveness **before** fallback fixture disposal.
+The fixture finally cleans only its own captured identities, even under a mutant.
+
+V-18's optional start-time reader is inside LeaseHolder, defaults to the actual
+process read, and can be forwarded by the real holder source. Its throwing test
+callback retains an independent Process handle for the newly started child.
+Assert admission exit 2, zero broker requests and child exit when acquisition
+returns; then finally reap that exact owned child if the assertion failed.
+This seam cannot replace holder creation or prefill a timestamp in V-11.
+
+Use the prerequisite's owned temp base and real executor-ack contract. Do not
+bypass acknowledgement or allocate unowned roots. All new executor methods are
+Integration with ParallelLimiter<ProcessSpawnLimit>. Contract methods spawn no
+children and are Unit; fake QueueHolders are appropriate only there. Add the
+limiter to existing BuildSlotClientTests, which already starts a real holder.
+Update its scripted GET listings (including PidIdempotentSlotHandler) to valid
+broker listing shapes/positive CPU values without relaxing the new parser.
+Do not mutate/unset ambient credentials: fake owner lookup and handler explicitly
+supply synthetic bindings, with the missing-token case confined to V-16.
 
 ### New ordinary roster
 
 All names below are single, non-parameterized `[Test]` methods. Internal variants
-are not extra executions. TestDesign must retain these totals or amend the table
-explicitly. Assertions are against production outcomes, not constants returned
+are not extra executions. The TestDesign keeps 18 new methods (10 contract + 8 executor); expanded
+internal scenarios below do not add methods or executions. Assertions are against production outcomes, not constants returned
 by a fixture pretending to be the client.
 
 | ID | Class and method | Assertions that must detect a defect |
 |---|---|---|
 | V-1 | `CheckpointSlotContractTests.holder_identity_is_preserved_in_acquire_and_retry` | Valid PID/start pair is identical on busy retry; a replacement carries its own pair; strict broker accepts it. |
-| V-2 | `CheckpointSlotContractTests.definitive_acquire_400_refuses_without_delay` | Exit 2/refused, exactly one POST, zero delays, exact invalid detail preserved; holder disposed. |
-| V-3 | `CheckpointSlotContractTests.probe_400_refuses_without_delay` | Rejected session, no acquire POST, zero delays, GET status/body retained. |
+| V-2 | `CheckpointSlotContractTests.definitive_acquire_400_refuses_without_delay` | Per internal 400/401/403/404/unrecognized-409 case: exit 2/refused, exactly one POST, zero delays, exact invalid detail preserved; holder disposed. The real-route 400 remains the decisive case. |
+| V-3 | `CheckpointSlotContractTests.probe_400_refuses_without_delay` | Rejected session and AcquireAsync result both carry exit 2/CPU 0; no holder or POST, zero delays, GET status/body retained. Internal 400/401/403/unexpected 4xx cases use the same refusal predicate. |
 | V-4 | `CheckpointSlotContractTests.malformed_probe_success_is_refused` | Malformed and shape-invalid GET 200 cannot become enabled/unleased. |
 | V-5 | `CheckpointSlotContractTests.malformed_grant_is_refused` | Missing lease, malformed JSON and invalid CPU grant cannot admit work; release a newly identified grant if later validation fails, without releasing another driver's grant. |
 | V-6 | `CheckpointSlotContractTests.transport_fallback_carries_last_failure_after_bounded_grace` | GET and POST transport-only variants use bounded virtual grace, CPU 4, explicit fallback reason and last observation; cancellation does not become fallback. |
-| V-7 | `CheckpointSlotContractTests.answered_server_error_never_becomes_successful_unleased` | GET and POST 503 variants exhaust bounded retry then exit 2 with status/body. |
+| V-7 | `CheckpointSlotContractTests.answered_server_error_never_becomes_successful_unleased` | GET and POST 503 variants exhaust bounded retry then exit 2 with status/body; an answered 503 followed only by transport failures still refuses and retains that observation. |
 | V-8 | `CheckpointSlotContractTests.renew_and_release_diagnostics_keep_status_and_body` | Renewal and release failures have operation/status/detail; renewal cancellation drains before DELETE. |
-| V-9 | `CheckpointSlotContractTests.diagnostics_are_bounded_and_escape_body_controls` | Overlong/multiline response yields a bounded single-line excerpt and truncation marker; synthetic reflected token is redacted. |
+| V-9 | `CheckpointSlotContractTests.diagnostics_are_bounded_and_escape_body_controls` | Overlong/multiline response yields a bounded single-line excerpt and truncation marker; synthetic reflected token is redacted; two interleaved acquisition labels retain their own diagnostics, never a shared LastError. |
 | V-10 | `CheckpointSlotContractTests.compatible_modes_preserve_limits_and_reasons` | Initial 404 reason/no POST; disabled listing and explicit unlimited grant honor CPU limit without a held lease. |
 | V-11 | `CheckpointSlotExecutorTests.executor_reachable_broker_grants_build_and_rows` | Normal composition and real holders: build and two rows granted; CPU 6 applied to build; distinct simultaneous leases; fresh report lines/JSON agree; zero held leases/holders on completion. Also compare held start value across reads/retries. |
-| V-12 | `CheckpointSlotExecutorTests.executor_renews_until_driver_finishes_then_releases` | Keep a fake driver running through a real renewal tick; observe matching renew before release and no renewal after disposal; holder exits. |
-| V-13 | `CheckpointSlotExecutorTests.executor_rejection_launches_no_build_or_rows_and_reports_reason` | Reachable broker rejects acquisition: no driver calls, exit 2, dependent rows preserve reason/wait, executor.log contains body/status; reason survives report JSON and ReportMerger. |
-| V-14 | `CheckpointSlotExecutorTests.executor_row_rejection_does_not_run_command` | Command-only manifest, acquisition 400: zero commands, exit 2 and reason in receipt. |
+| V-12 | `CheckpointSlotExecutorTests.executor_renews_until_driver_finishes_then_releases` | Driver exits independently after two renewal intervals; completed request roster contains matching renew before release, none after disposal, and holder exit. Missing renewal fails the count assertion after normal completion. |
+| V-13 | `CheckpointSlotExecutorTests.executor_rejection_launches_no_build_or_rows_and_reports_reason` | Reachable broker rejects acquisition: no driver calls, exit 2, dependent rows preserve reason/wait, executor.log contains body/status; reason survives report JSON and ReportMerger. An internal scripted GET-400 case proves probe refusal also reaches dependent-row receipts. |
+| V-14 | `CheckpointSlotExecutorTests.executor_row_rejection_does_not_run_command` | Command-only and built-TUnit manifests: row acquisition 400 yields zero row-driver calls, exit 2 and reason. Internal BaselineComparer case uses the same real client/holder and route rejection; no baseline git/build/test driver calls, refusal retained in ToolRuns. |
 | V-15 | `CheckpointSlotExecutorTests.executor_cancellation_releases_lease_and_holder` | Cancellation while a fake driver owns a grant drains it and the holder; no leaked active lease. |
-| V-16 | `CheckpointSlotExecutorTests.executor_missing_owner_token_stops_before_slot_probe` | Synthetic bound owner without token yields exit 7/owner-unverified, zero slot requests and zero drivers. Ambient credentials are not used or unset. |
+| V-16 | `CheckpointSlotExecutorTests.executor_missing_owner_token_stops_before_slot_probe` | Synthetic bound owner without token yields exit 7/owner-unverified, no host.txt/git.txt capture, zero slot requests and zero drivers. Ambient credentials are not used or unset. |
 | V-17 | `CheckpointSlotExecutorTests.row_entrypoint_rejection_invokes_no_driver` | `Program.RunAsync` row path uses real slot client/holder; 400 returns exit 2, no build/test call, receipt includes reason. |
-| V-18 | `CheckpointSlotExecutorTests.failed_start_time_capture_disposes_new_holder` | A narrow injected start-time reader throws after the real holder starts; capture its identity in the fixture, assert it exits before the failed creation returns, and assert no broker request. Fixture finally retains cleanup of that exact owned child. |
+| V-18 | `CheckpointSlotExecutorTests.failed_start_time_capture_disposes_new_holder` | A narrow injected start-time reader throws after the real holder starts; capture its identity in the fixture, assert exit 2/slot refusal (not executor-crashed), assert child exit before failed acquisition returns, and assert no broker request. Fixture finally retains cleanup of that exact owned child. |
 
-R-1: `BuildSlotClientTests` **11**, `RunSchedulerTests` **14**,
-`RowRunnerTests` **13**, `ExitCodeTests` **7 expanded Arguments cases** = **45**.
-R-2: `CheckpointAppTests` **3**, `CheckpointLineTests` **3**, `ReportWriterTests`
-**6**, `ReportMergerTests` **1** = **13**. R-3: `ProcessSpawnLimitTests` **3**.
-These are source-derived baseline counts, not executed evidence. R-4 is the
-required Unit lane with a conservative floor of 3,500 executions; the 0804/0805
-owner reported 3,567 executed and 33 declared skips on its branch. Record the
-actual fresh TRX total and every skip instead of treating that historic total as
-an exact census of a later merged tree.
+### Static census and landing reconciliation
 
-Do not sweep the entire Checkpoints namespace: it includes unrelated known
-CARD-0818/0828 concurrency/owner-watch hazards. The named executor tests cover
-ownership composition with bounded gates; TaskOwnerGuard itself is unchanged.
-The Unit row remains required by the owner recipe. A known unrelated failure is
-reported and triaged, not silently filtered out. Reconcile roster drift from
-prerequisite landings before the first run, preserving a closed manifest.
+Census method: load the installed Roslyn parser into PowerShell (ParseText only,
+no compilation), inspect tracked C# Test method syntax nodes, count each Arguments
+attribute as one case, otherwise one per method. Strings/comments containing fake
+Test attributes do not count. Unit includes class/method Category(Unit), linked
+`tests/Shared/TestClassificationGuardTests.cs`, and the 18 statically enumerated
+`DispatchHoldLedgerTests.HoldSentences` cases (one MethodDataSource method).
+No other Unit matrix/repeat/data-source expansion was found; CancellationToken
+parameters do not multiply cases. Exclude helper/child-host assemblies. Count
+methods and cases separately, preserving full namespace/class/method/argument
+identities, not just aggregate totals. Code can repeat this read-only source
+census before any build; do not run --list-tests or test discovery for this stage.
 
-### Positive controls, pending post-land Mutation
+| Selection | TestDesign base 5cd8d0b9 methods / cases | Prerequisite branch 1dcc03c0 methods / cases | Required additive landing + CARD-0833 cases |
+|---|---:|---:|---:|
+| BuildSlotClientTests | 11 / 11 | 11 / 11 | 12 (the two branches add differently named null-renewal regressions) |
+| RunSchedulerTests | 14 / 14 | 7 / 7 | 14 |
+| RowRunnerTests | 13 / 13 | 13 / 13 | 13 |
+| ExitCodeTests | 1 / 7 | 1 / 7 | 7 |
+| BaselineComparerTests | 5 / 5 | 5 / 5 | 5 |
+| CheckpointAppTests | 3 / 3 | 3 / 3 | 3 |
+| CheckpointLineTests | 3 / 3 | 3 / 3 | 3 |
+| ReportWriterTests | 6 / 6 | 5 / 5 | 6 |
+| ReportMergerTests | 1 / 1 | 1 / 1 | 1 |
+| ProcessSpawnLimitTests | 3 / 3 | 3 / 3 | 3 |
+| Whole Checkpoints namespace (informational, not a new run) | 155 / 161 | 250 / 259 | 288 cases / 279 methods including the 18 new methods |
+| Whole Unit selection | 2459 / 3592 | historical execution totals are not used | 3675 cases / 2539 methods including 10 new Unit methods |
 
-Each control changes a production decision and must compile, execute the named
-method with a nonzero count, fail its intended assertion, then pass after fresh
-restoration/build. Timeouts, fixture failures and zero-test runs are not red
-proof. Ordinary Code/Review precedes land; controls belong in the original
-card's post-land verification companion and immutable SourceLanding snapshot.
+R-1 is the first five classes: **45 methods / 51 cases** after additive landing.
+ExitCodeTests is its one seven-case method. R-2 is the next four classes:
+**13 methods / 13 cases**. R-3 is ProcessSpawnLimitTests: **3 / 3**. Including
+V-1..V-18, CP-1..CP-5 select **79 methods / 85 cases**, all passed, zero skips.
+This explicitly supersedes the original 79-case plan: +5 baseline regressions,
++1 prerequisite null-renewal regression. Each row's exact class members must
+match the source census, not merely meet MinExecuted.
 
-| PC | Compiling defect variant | Exact detecting method(s) |
-|---|---|---|
-| PC-1 | Restore `ProcessStartUtc => null`. | V-11: strict broker returns 400 and grant/driver assertions fail. |
-| PC-2 | Serialize no start time, or reuse the old holder pair after replacement (two independent variants). | V-1. |
-| PC-3 | Turn POST 400 into successful unleased fallback; separately retain the 60-second retry before refusal (two variants). | V-2 (exit or delay count), V-13 (no driver). |
-| PC-4 | Treat GET 400 as unavailable/unleased. | V-3. |
-| PC-5 | Accept invalid GET 200; separately accept grant without lease (two variants). | V-4; V-5. |
-| PC-6 | Treat exhausted answered 503 as successful unleased. | V-7. |
-| PC-7 | Drop fallback reason; separately skip transport grace (two variants). | V-6. |
-| PC-8 | Disable renew for a positive interval. | V-12. |
-| PC-9 | Omit DELETE, or omit owned-holder disposal (two independent variants). | V-15, with fixture finally cleanup retained. |
-| PC-10 | Restore launch guards that check only slot timeout (build, scheduled row, direct row as three variants). | V-13; V-14; V-17 respectively. |
-| PC-11 | Discard broker body in log; separately drop slot reason when mapping/merging reports (two variants). | V-13, V-8. |
-| PC-12 | Remove diagnostic bounding/escaping; separately remove reflected-token redaction (two variants). | V-9. |
-| PC-13 | Ignore the owner admission result at executor entry. | V-16. |
-| PC-14 | Restore `TryGetInt32` on JSON null. | Existing `BuildSlotClientTests.pid_liveness_grant_with_null_renewal_is_granted_without_renewing`. |
-| PC-15 | Return successful unleased on exhausted duplicate grant. | Updated existing `BuildSlotClientTests.a_shared_pid_lease_is_not_claimed_by_the_second_driver`. |
-| PC-16 | Treat explicit disabled/unlimited mode as enabled without a grant. | V-10. |
-| PC-17 | Omit child disposal when start-time capture throws. | V-18; the fixture's independent finally cleanup still runs. |
+The prerequisite branch and current master are different source populations.
+Do not replace master's extra seven scheduler, one report-writer, one timeout
+and one wait-command case with its older versions. Preserve both
+`pid_liveness_grant_with_null_renewal_is_granted_without_renewing` and
+`null_renewal_interval_is_granted_without_renewal` unless a reviewed, committed
+manifest amendment explicitly consolidates them. The prerequisite adds 105 new
+methods/108 cases in new classes and that one null test; 69/72 of the new-class
+methods/cases are Unit. Thus the additive namespace is **261 methods / 270
+cases before 0833**, and Unit is **2529 methods / 3665 cases**. The brief's
+`261 cases` is not reproducible as expanded cases: 261 is the projected method
+count. At the inspected prerequisite tip the count is 250/259, not its stale
+plan's 256 cases; its four-case completed_wait method adds three expansions,
+and ExitCodeTests adds six. No future landing is claimed from these projections.
 
-There are **17 controls / 26 defect variants**. V-18's reader seam belongs inside
-`Slots/LeaseHolder.cs`; its production default reads the actual process start
-time. No controls have been executed in this Plan.
+CARD-0804/0805 CP-9/CP-10 belong to that owner's namespace-usage protocol, not
+this six-row manifest. Their filter remains `/*/Antiphon.Tests.Checkpoints/*/*`.
+Both passes must use the **same committed SHA and exact census-derived roster**,
+including parameter IDs, and match that roster to complete TRX results. For the
+inspected branch alone the static Linux expectation is 259 selected / 241
+executed / 18 OS skips; after the additive landing it is 270 / 252 / 18; with
+0833's portable 18 it is 288 / 270 / 18. Do not reuse 256, 261 or a historical
+floor in those usage receipts. The 18 exclusions are 14 Windows recovery methods
+and four TimeoutTests Windows methods. Confirm any host-capability skips by exact
+name/reason instead of claiming those as executed. CARD-0835 plans five
+CheckpointSourceStateTests and six CheckpointSourceExecutionTests in this same
+namespace: another **11** cases, giving 299 selected if nothing else changes.
+Re-census its actual landing; do not run this namespace now or alter its usage
+scripts in this card. This document gives the caller the reconciliation obligation.
+
+R-4 (CP-6) is exact census equality for the full Unit lane. Current base has 3592
+selected cases, 33 declared Linux skips and 3559 expected executed cases on a
+fully capable Linux test host. Add prerequisite Unit delta 73 and 0833 delta 10:
+**3675 selected = 3642 executed/passed + 33 skipped**, zero failed. The 33 are:
+GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls
+(12 Arguments); DirectoryBrowseServiceTests' five RequireWindowsDrives callers;
+PtyDeliveryCeilingsTests' three RequireRedistributable callers;
+SessionDeliveryProfileTests' two RequireLocalModernConPty callers; the four
+TimeoutTests windows_* methods; LandingRemovalPolicyControlTests.C665_LockedFileMidDeleteResumesOnLaterPass
+and .C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded; and one each at
+AgentRegistrySettingsTests.The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine,
+AgentExecutableResolverTests.Resolves_sibling_flavor_when_configured_one_is_gone,
+AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash,
+ClaudeRemoteControlLaunchArgsTests.Off_settings_path_round_trips_through_LaunchArgvGuard,
+and DelegationReportFormatterTests.reported_repository_paths_normalize_relative_and_absolute_windows_forms.
+The three redistributable skips require the Linux host without shipped ConPTY;
+if capability changes, amend the selected outcome partition before execution.
+Symlink/permission failures or any additional skip are reported and triaged,
+not silently subtracted. Windows uses its own census-derived outcome partition;
+Linux's 33 skips are not portable Windows expectations.
+
+**Freeze gate before Code's first checkpoint:** read the confirmed prerequisite
+landing SHA, preserve the union above, statically census the actual committed
+S1-S3 tree and commit its exact per-row methods/cases/skip partition in this
+section. The table below is frozen to the explicitly calculated additive tree,
+not permission to run stale numbers after an intervening commit. If the landed
+roster differs, enumerate the named delta and update Expect/Min together before
+execution. No open-ended >= rule or historic count can satisfy this gate. No
+extra build/discovery run is needed. The normal CP TRX must then prove exact set
+and multiplicity equality, including no unintended class-prefix matches.
+The prerequisite C804_ROSTER_FILE hook may supplement that comparison during
+these runs; it is not execution evidence by itself.
+
+The Unit row overlaps Unit members of the named rows. Do not add a whole
+Checkpoints sweep: known CARD-0818/0828 concurrency/owner-watch hazards are not
+expanded into extra named runs. Their presence in the required Unit lane remains
+visible; inherited failures require triage and cannot silently change selection.
+
+### Guard inventory and positive controls, pending post-land Mutation
+
+The original **17 PC groups / 26 variants** are audited individually in rows
+1-26 below; the Original column preserves that crosswalk. They were insufficient:
+V-8 had no detecting control (old PC-11 incorrectly named it for report merging),
+renewal could fail only by timeout, and baseline admission plus independent
+cleanup/serialization predicates were omitted. Rows 27-48 add the missing cuts
+without adding TUnit methods. Final inventory: **48 independently bypassable
+guards, 48 distinct PCs, missing=0, duplicate guard-to-PC mappings=0**. More than
+one guard may use the same method, but each mutation/run is separate.
+
+Each row G-n maps only to PC-n. The Guard/defect column names the production
+invariant and compiling change; the Assertion column is the exact assertion
+label Code must use in that method. Do not mutate fixture responses, assertions
+or setup. Keep other guards valid so the target cannot be masked by another
+refusal. Normal method completion with the named assertion failure is required;
+a timeout, leaked-fixture teardown exception, compilation failure, unrelated
+exception or zero-test selection is not a red control.
+
+| G / PC | Original variant | Production guard / compiling defect | Single detecting method | Named assertion after bounded completion |
+|---|---|---|---|---|
+| 1 | PC-1 | Real holder identity: restore ProcessStartUtc => null. | V-11 | actual-driver-roster: one build and two rows executed with grants; run-exit=0. |
+| 2 | PC-2A | Wire identity: omit serialized processStartUtc. | V-1 | outbound-start-equals-holder: every actual request contains the expected timestamp. |
+| 3 | PC-2B | Replacement identity: keep the old PID/start after opening replacement. | V-1 | replacement-pair: second holder's pair is used, old holder disposed once. |
+| 4 | PC-3A | Definitive acquire refusal: return successful unleased on POST 400. | V-2 | acquire-refused-exit: exit 2, state refused, CPU 0. |
+| 5 | PC-3B | Immediate refusal: retain the former retry/grace before returning 400 refusal. | V-2 | acquire-delay-count: zero delays and one POST (virtual clock lets the mutant return). |
+| 6 | PC-4 | Definitive probe refusal: turn GET 400 into unavailable/unleased. | V-3 | probe-refused-exit: rejected session with exit 2/status/detail. |
+| 7 | PC-5A | Valid probe shape: accept malformed/shape-invalid GET 200. | V-4 | invalid-probe-refused: every malformed/shape/CPU case refuses. |
+| 8 | PC-5B | Grant identity required: accept POST 200 with no lease and no unlimited flag. | V-5 | missing-lease-refused: exit 2, no admitted work. |
+| 9 | PC-6 | Answered server error: exhausted 503 becomes successful unleased. | V-7 | answered-error-refused: both GET and POST end exit 2 with 503 detail. |
+| 10 | PC-7A | Explicit fallback evidence: discard transport fallback reason. | V-6 | fallback-reason: runner_unreachable and last exception retained. |
+| 11 | PC-7B | Transport grace: fall back on first exception. | V-6 | transport-grace: virtual elapsed equals configured grace and expected retry count. |
+| 12 | PC-8 | Renewable grants: disable renewal for positive interval. | V-12 | renew-before-release: completed request roster has matching renew before DELETE; independent driver window ends normally. |
+| 13 | PC-9A | Release custody: omit DELETE. | V-15 | released-lease: DELETE count one and broker live leases zero, before fallback cleanup. |
+| 14 | PC-9B | Holder custody: omit owned-holder disposal. | V-15 | owned-holder-exited: captured child is gone after normal disposal, before fallback cleanup. |
+| 15 | PC-10A | Build admission: restore timeout-only check in BuildOneAsync. | V-13 | build-driver-count: zero builds and rows despite spy being safe to call. |
+| 16 | PC-10B | Scheduled admission: restore timeout-only check in RunRowAsync. | V-14 | refused-row-driver-count: zero command/TUnit row calls. |
+| 17 | PC-10C | Direct admission: restore timeout-only check in Program.Row. | V-17 | direct-driver-count: zero build/test calls and emitted exit 2. |
+| 18 | PC-11A | Durable error body: omit broker body from acquisition Note. | V-13 | durable-acquire-detail: reopened executor.log contains operation=acquire, status=400, reason and exact broker detail. |
+| 19 | PC-11B | Merge preservation: omit SlotReason in ReportMerger.Clone. | V-13 | merged-slot-reason: deserialized merged row retains build_slot_invalid. V-8 is not a report test. |
+| 20 | PC-12A (bounding) | Bounded diagnostics: remove 2048-character excerpt cap. | V-9 | excerpt-bound: capped body plus fixed marker, with truncation reported. |
+| 21 | PC-12B | Secret reflection: omit synthetic-token redaction. | V-9 | token-absent: reflected sentinel absent from diagnostic/log/receipt. |
+| 22 | PC-13 | Owner admission: force entryAdmitted=true after the initial owner check, retaining later checks. | V-16 | owner-before-evidence: host.txt/git.txt do not exist. This named file-roster assertion detects the bypass even if later checks/canceled tokens still prevent HTTP and drivers. |
+| 23 | PC-14 | Null renewal compatibility: restore TryGetInt32 on JSON null. | BuildSlotClientTests.pid_liveness_grant_with_null_renewal_is_granted_without_renewing | null-renewal-granted: capture exception/result, then assert the outcome is exception-free, granted and exit 0; either raw exception or a translated refusal fails this assertion. |
+| 24 | PC-15 | Duplicate ownership: exhausted duplicate grants return successful unleased. | BuildSlotClientTests.a_shared_pid_lease_is_not_claimed_by_the_second_driver | duplicate-refused: second exit 2/CPU 0, first lease remains live until its own release. |
+| 25 | PC-16 (disabled GET) | Explicit disabled broker: treat enabled=false listing as enabled. | V-10 | disabled-no-post: supplied CPU honored and zero acquire/renew/delete calls. |
+| 26 | PC-17 | Failed capture cleanup: omit child disposal when start-time reader throws. | V-18 | failed-capture-child-exited: exact child handle observes exit before failed acquisition returns. |
+| 27 | added | Renewal diagnostics: discard answered renew status/body. | V-8 | renew-diagnostic: operation/label/status/detail of the scripted renewal error present. |
+| 28 | added | Release diagnostics: discard answered DELETE status/body. | V-8 | release-diagnostic: operation/label/status/detail of the scripted release error present. |
+| 29 | added | Drain before release: issue DELETE before cancellation/await of renewal. | V-8 | renewal-drained-before-delete: completion event precedes DELETE; no later renew. |
+| 30 | added | Cancellation: return a successful fallback lease from the caller-cancellation catch. | V-6 | cancellation-propagated: cancellation captured, no successful lease/fallback or extra requests. |
+| 31 | added | Invalid-grant custody: omit release of a newly acquired lease whose later validation fails. | V-5 | invalid-grant-released: that unique lease released once, pre-existing sibling remains live. |
+| 32 | added | Dependent receipt: turn build admission refusal into generic build-failed placeholder. | V-13 | dependent-admission: every dependent row keeps exit/state/reason/wait and zero execution in reopened state and report. |
+| 33 | added | Report mapping: omit SlotReason when mapping result -> ReportRow. | V-13 | persisted-slot-reason: original report.json retains reason before merge. |
+| 34 | added | Stable captured identity: return current UTC time on each holder read. | V-11 | cached-holder-start: repeat reads/outbound retries equal captured Process.StartTime, within 1 ms. |
+| 35 | added | Grant CPU: replace admitted MaxCpuCount with fallback 4. | V-11 | granted-build-cpu: actual build argv contains -maxcpucount:6. |
+| 36 | added | Per-driver identity: serialize the executor parent PID/start for every holder. | V-11 | simultaneous-holder-roster: two distinct actual child identities/grants, plus sibling survives first release. Controller finishes without waiting forever for a missing row. |
+| 37 | added | Baseline admission: restore timeout-only check in BaselineComparer.RunLeased. | V-14 | baseline-driver-count: zero baseline driver calls; ToolRuns retains refusal. |
+| 38 | added | JSON syntax: catch malformed grant JSON and treat it as admitted. | V-5 | malformed-grant-refused: exit 2/CPU 0, no admitted lease. |
+| 39 | added | Grant CPU validity: accept zero/negative/wrong-kind CPU as fallback 4. | V-5 | invalid-cpu-refused: each invalid CPU grant refuses, cleanup still observed. |
+| 40 | PC-12A split | Single-line diagnostics: omit escaping of body control characters. | V-9 | diagnostic-one-line: raw CR/LF/NUL absent; escaped content retained within cap. |
+| 41 | PC-16 split | Explicit unlimited grant: treat POST unlimited=true as a missing-lease error. | V-10 | unlimited-grant-limit: exit 0/supplied CPU, no renewal/release. |
+| 42 | added | Probe refusal propagation: let AcquireAsync process a refused SlotSession as enabled. | V-3 | refused-session-no-acquire: no holder/POST, lease exit 2/CPU 0. |
+| 43 | added | Sticky answered error: discard remembered 503 when a later request has a transport exception. | V-7 | answered-then-unanswered-refused: grace ends exit 2 with preserved 503 observation. |
+| 44 | added | Capture failure admission: map start-reader exception to successful unleased. | V-18 | failed-capture-admission: exit 2/refused/CPU 0, zero broker calls. |
+| 45 | added | New process limiter: remove CheckpointSlotExecutorTests' limiter attribute. | ProcessSpawnLimitTests.Process_spawning_classes_carry_the_limiter | CheckpointSlotExecutorTests must carry the limiter (existing reflection assertion). |
+| 46 | added | Existing holder-test limiter: remove BuildSlotClientTests' limiter attribute. | ProcessSpawnLimitTests.Process_spawning_classes_carry_the_limiter | BuildSlotClientTests must carry the limiter (existing reflection assertion). |
+| 47 | added | 404 compatibility evidence: discard broker_not_found on initial GET 404. | V-10 | initial-404-reason: unavailable/CPU 4, broker_not_found, no acquire/delay. |
+| 48 | added | Acquisition-local evidence: replace immutable/local observations with a shared last-error value. | V-9 | diagnostics-stay-with-label: interleaved acquisitions retain their distinct status/detail/label. |
+
+The original PC-12A/PC-16 each hid two independently bypassable guards; rows
+40/41 split them. Diagnostic failures and refusal propagation no longer borrow
+an unrelated detecting method. PC-23 updates the existing method's exception
+capture/assertion only; it does not add another test. V-1 uses known, non-null
+fake holder pairs and a bounded duplicate-response sequence followed by a valid
+replacement grant. V-2 uses a sticky 400 response and virtual time, so a retrying
+mutant reaches the intended counter assertion. V-13 includes nonzero prior busy
+wait before rejection as well as immediate rejection, so dropping wait evidence
+can actually fail. V-5 includes a distinct pre-existing lease so cleanup cannot
+pass by releasing every ID. V-9's concurrent scripted requests are released in
+opposite order to detect a shared observation field. Supply its redaction token
+through an optional client diagnostic input sourced from Runtime.EnvironmentLookup
+in composition (production default reads the existing environment lookup); never
+set or read a real task token in the test. Redact, escape, then bound the excerpt,
+so control-character expansion cannot evade the cap. The duplicate-lease method
+includes both no-holder and exhausted-replacement cases, asserting the bounded
+replacement count and preserving the first driver's live grant.
+
+Every PC is **method-scoped**, including baseline, red and restored green.
+For a V-n substitute its Class.method from the 18-row roster into the exact
+single argument `--treenode-filter '/*/Antiphon.Tests.Checkpoints/Class*/method'`.
+For PCs 23/24 use the full methods printed above with the same namespace; for
+45/46 use `/*/Antiphon.Tests/ProcessSpawnLimitTests*/Process_spawning_classes_carry_the_limiter`.
+All 48 controls select exactly **one** non-parameterized TUnit result per phase,
+zero skips and no other method. Do not use the whole class, namespace, a CP row,
+or an OR of full filter paths for a PC. New tests use internal loops, never
+Arguments, so this count stays one. Store actual assertion messages and TRX
+names/counters. Each variant needs a compiling production defect, intended
+assertion red, exact restoration, fresh build and restored green; refresh source
+timestamps so a mutant DLL cannot be reused. Ordinary Code/Review precedes
+land; all 48 PCs plus discovery stay pending on the original card's post-land
+verification companion at the immutable SourceLanding commit.
+
+### Scope limits
+
+The real broker routes and foreign-PID validation are reused, not changed.
+Their general FIFO, memory-floor, TTL and liveness policies remain owned by
+CARD-0589 and its broker tests. Existing busy/memory-floor/exit-4 client behavior
+is retained by R-1; Code must not redesign those guards in this repair. If the
+implementation changes an independently bypassable policy outside the 48 cuts,
+amend the named control and cost before handoff instead of claiming it covered.
+Renewal-loss handling for an already running driver, owner/token policy,
+checkpoint temp recovery, CARD-0835 source authority, and CARD-0850 cleanup
+accounting remain out of scope. No new live queue or deployment test is needed.
 
 ### Execution procedure and cost
 
@@ -357,42 +624,56 @@ Fixes use a new commit and rerun the affected group with fresh results; enumerat
 all reruns and reasons. Report unedited CP lines, expected versus actual counts,
 failures/skips, build and row slot state, log/report paths and the tested SHA.
 
-Linux ordinary floor: **34 minutes**, plus **2 minutes** leased tool bootstrap,
+Linux ordinary floor: **35 minutes**, plus **2 minutes** leased tool bootstrap,
 authoring estimate **180 minutes**, and observed slot waits: Code estimate
-**216 minutes** before queueing. Windows estimates total **46 minutes** plus
+**217 minutes** before queueing. Windows estimates total **47 minutes** plus
 bootstrap if separately commissioned. Linux is required; Windows smoke/regression
 qualification is a separate reported result and is not claimed from Linux or
 from the existing null-response unit test alone. The new tests should be portable.
 
-Mutation estimate: 26 variants at 6 minutes per method-scoped restored cycle =
-156 minutes, plus 20 minutes discovery/report/restoration = **176 minutes**.
-Combined Linux authoring + bootstrap + ordinary + Mutation estimate is **392
-minutes**. These are planning allowances, not measured durations.
+Mutation estimate: 48 variants at 6 minutes per method-scoped restored cycle =
+288 minutes, plus 20 minutes discovery/report/restoration = **308 minutes**.
+Combined Linux authoring + bootstrap + ordinary + Mutation estimate is **525
+minutes**. The added baseline regression row cost is one minute; splitting the
+22 missing control variants adds 132 Mutation minutes. Build reuse still saves
+five ordinary rebuilds; no unmeasured runtime saving is claimed. These are planning allowances, not measured durations.
 
 ### Checkpoints
 
 One isolated build plus one exact filter per row; `CP-1` reuse means the same
 build at the same committed `all` source, without another build. Filters use
-trailing `*` on class operands; table `\|` becomes literal `|` at the CLI.
-There are **79 named executions**, plus the Unit lane (which overlaps Unit
-members of the named roster). Named rows require zero failures and zero skips.
+trailing `*` on every class operand; table `\|` becomes literal `|` at the CLI.
+The whole filter is one quoted argv value. For CP-3, the exact invocation operand
+is `--treenode-filter '/*/Antiphon.Tests.Checkpoints/(BuildSlotClientTests*)|(RunSchedulerTests*)|(RowRunnerTests*)|(ExitCodeTests*)|(BaselineComparerTests*)/*'`.
+Parenthesize each OR operand in the class segment, not the whole path; never
+split full paths at pipes. Single-method controls use the formula above with
+no method wildcard, because each listed method is non-parameterized.
+The additive-landing census above freezes **85 named executions**, plus **3675
+selected Unit cases** (3642 executions and 33 declared Linux skips). Unit overlaps
+named Unit members. Named rows require zero failures and zero skips. Reconcile
+the actual prerequisite landing before running; this is a closed selection, not
+an open-ended floor. Min is only the tool's mechanical lower-bound check; exact
+roster/count/outcome equality in Expect is an additional acceptance requirement.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c833/` | slot-contract | `/*/*/CheckpointSlotContractTests*/*` | V-1-V-10 | exactly 10 executed/passed, 0 failed/skipped | 10 | 12 | 18 | true |
-| CP-2 | all | CP-1 | slot-executor | `/*/*/CheckpointSlotExecutorTests*/*` | V-11-V-18 | exactly 8 executed/passed, 0 failed/skipped | 8 | 4 | 5 | true |
-| CP-3 | all | CP-1 | slot-regression | `/*/*/(BuildSlotClientTests*)\|(RunSchedulerTests*)\|(RowRunnerTests*)\|(ExitCodeTests*)/*` | R-1 | exactly 45 executed/passed, 0 failed/skipped | 45 | 3 | 4 | true |
-| CP-4 | all | CP-1 | receipt-regression | `/*/*/(CheckpointAppTests*)\|(CheckpointLineTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)/*` | R-2 | exactly 13 executed/passed, 0 failed/skipped | 13 | 2 | 3 | true |
-| CP-5 | all | CP-1 | process-limit | `/*/*/ProcessSpawnLimitTests*/*` | R-3 | exactly 3 executed/passed, 0 failed/skipped | 3 | 1 | 1 | true |
-| CP-6 | all | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | R-4 | all selected Unit cases; >= 3500 executed, 0 failed; enumerate every skip and actual total | 3500 | 12 | 15 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c833/` | slot-contract | `/*/Antiphon.Tests.Checkpoints/CheckpointSlotContractTests*/*` | V-1-V-10 | exactly 10 executed/passed, 0 failed/skipped | 10 | 12 | 18 | true |
+| CP-2 | all | CP-1 | slot-executor | `/*/Antiphon.Tests.Checkpoints/CheckpointSlotExecutorTests*/*` | V-11-V-18 | exactly 8 executed/passed, 0 failed/skipped | 8 | 4 | 5 | true |
+| CP-3 | all | CP-1 | slot-regression | `/*/Antiphon.Tests.Checkpoints/(BuildSlotClientTests*)\|(RunSchedulerTests*)\|(RowRunnerTests*)\|(ExitCodeTests*)\|(BaselineComparerTests*)/*` | R-1 | exactly 51 executed/passed, 0 failed/skipped | 51 | 4 | 5 | true |
+| CP-4 | all | CP-1 | receipt-regression | `/*/Antiphon.Tests.Checkpoints/(CheckpointAppTests*)\|(CheckpointLineTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)/*` | R-2 | exactly 13 executed/passed, 0 failed/skipped | 13 | 2 | 3 | true |
+| CP-5 | all | CP-1 | process-limit | `/*/Antiphon.Tests/ProcessSpawnLimitTests*/*` | R-3 | exactly 3 executed/passed, 0 failed/skipped | 3 | 1 | 1 | true |
+| CP-6 | all | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | R-4 | exact census: 3675 selected; Linux 3642 executed/passed, 33 named skips, 0 failed | 3642 | 12 | 15 | true |
 
 ## Handoff and completion
 
-Next is TestDesign: audit the refusal propagation and fixture cuts, reconcile
-the 18 new methods/26 PC variants and prerequisite roster drift, then hand off
-Code with the closed manifest. Code waits for confirmed CARD-0804/0805 land and
-the caller's checkpoint-tool edit lane. The missing-token issue is a separate
-recommended investigation, not a dependency for producing this plan.
+TestDesign is complete: 18 proposed methods, 48 distinct mapped guard/control
+variants, real holder/HTTP-route composition, four refusal launch gates and
+source-derived checkpoint counts are specified. No test or PC has executed.
+Next is Code, held until confirmed CARD-0804/0805 publication/qualification and
+the caller's exclusive checkpoint-tool lane. Code consumes that landed tree,
+commits the exact census reconciliation before checkpoint execution, and lands
+before CARD-0835 starts its overlapping edits; CARD-0850 follows. CARD-0853
+remains the separate missing-token investigation.
 
 Code completion requires Linux ordinary results at a pushed SHA, granted build
 and row leases against the enabled host broker, no leaked fixture leases/holders,
