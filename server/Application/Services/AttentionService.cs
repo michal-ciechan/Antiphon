@@ -320,6 +320,13 @@ public sealed partial class AttentionService
         {
             var at = blockedAt.TryGetValue(task.Id, out var stamp) ? stamp : task.DispatchedAt;
             var kind = ClassifyBlocked(task, latestType.GetValueOrDefault(task.Id));
+            var quotaAlias = kind == BlockedKind.SubscriptionQuota
+                ? await _db.ModelAvailabilityHolds.AsNoTracking()
+                    .Where(h => h.SourceTaskId == task.Id)
+                    .OrderByDescending(h => h.HitAt)
+                    .Select(h => h.ModelAlias)
+                    .FirstOrDefaultAsync(ct)
+                : null;
 
             // FailureReason is what the dispatcher and the conflict path write; the question path
             // writes the delegate's own words to Result and leaves FailureReason null. Preferring
@@ -356,7 +363,11 @@ public sealed partial class AttentionService
                 Evidence(primary, checkDigests.GetValueOrDefault(task.Id)),
                 at,
                 costs.GetValueOrDefault(task.Id),
-                actions));
+                actions,
+                ModelKind: kind == BlockedKind.SubscriptionQuota ? task.AgentKind.ToString() : null,
+                ModelAlias: quotaAlias,
+                ConditionKey: kind == BlockedKind.SubscriptionQuota
+                    ? $"quota-blocked:{task.Id:N}" : null));
         }
 
         return items;
