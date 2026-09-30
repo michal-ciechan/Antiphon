@@ -36,6 +36,14 @@ public class RunnerGrokAdapterReadyTests
         client.SnapshotReads.ShouldBeGreaterThanOrEqualTo(2);
         client.BufferReads.ShouldBe(0);
         client.Writes.ShouldBeEmpty();
+        // With zero settlement there are exactly two completed observations. A
+        // second DTO fetch inside either decision violates snapshot coherence.
+        var coherent = new ScriptedClient([Ready]);
+        await using var coherentAdapter = NewAdapter(coherent, max: 250, settle: 0);
+        await coherentAdapter.StartAsync(Spec(), CancellationToken.None);
+        (await coherentAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
+        coherent.SnapshotReads.ShouldBe(2, "snapshotReads must equal completedDecisions");
+        coherent.BufferReads.ShouldBe(0);
     }
 
     [Test]
@@ -136,6 +144,18 @@ public class RunnerGrokAdapterReadyTests
             MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
             PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = floorClock });
         floor.ShouldBeFalse("readyWithFloorModal");
+        var trustClock = new JumpClock();
+        var trustReads = 0;
+        var trustBudgetReady = await GrokReadyWait.WaitAsync(async _ =>
+        {
+            if (++trustReads == 2) await Task.Delay(30);
+            return new GrokStartupSnapshot(trustReads == 1 ? Trust : Ready,
+                "", trustReads, DateTime.UtcNow);
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(100),
+            Settle = TimeSpan.Zero, TrustSettle = TimeSpan.Zero,
+            PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = trustClock },
+            (_, _) => { trustClock.Advance(TimeSpan.FromMilliseconds(80)); return Task.CompletedTask; });
+        trustBudgetReady.ShouldBeFalse("trustCompletionElapsed must stay inside originalMax");
         var utcClock = new JumpClock();
         var utcReads = 0;
         var utcStarted = Stopwatch.StartNew();
@@ -193,7 +213,7 @@ public class RunnerGrokAdapterReadyTests
             content.ShouldContain($"frameSequence: {client.SnapshotReads}");
             client.BufferReads.ShouldBe(0);
             logger.Messages.ShouldHaveSingleItem();
-            string.Join("\n", logger.Messages).ShouldNotContain(sentinel, "log allowlist");
+            string.Join("\n", logger.Messages).ShouldNotContain(sentinel);
             var blockedPath = Path.Combine(root, "not-a-directory");
             File.WriteAllText(blockedPath, "sentinel");
             var bad = new ScriptedClient([""]);
@@ -202,7 +222,17 @@ public class RunnerGrokAdapterReadyTests
             await second.StartAsync(Spec(), CancellationToken.None);
             (await second.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
             logger.Messages.Count.ShouldBe(2);
-            string.Join("\n", logger.Messages).ShouldNotContain(sentinel, "log allowlist on write failure");
+            string.Join("\n", logger.Messages).ShouldNotContain(sentinel);
+            var lastFrameRoot = Path.Combine(root, "last-frame");
+            var lastFrameClient = new ScriptedClient(["first observed frame", "extra forbidden read"]);
+            await using var lastFrameAdapter = NewAdapter(lastFrameClient, max: 35,
+                captureDirectory: lastFrameRoot);
+            await lastFrameAdapter.StartAsync(Spec(), CancellationToken.None);
+            (await lastFrameAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+            var lastCapture = File.ReadAllText(Directory.GetFiles(lastFrameRoot,
+                "grok-startup-*.txt").Single());
+            lastCapture.ShouldContain("frameSequence: 1");
+            lastFrameClient.SnapshotReads.ShouldBe(1, "readsAfterFailureDecision");
             var failureReads = 0;
             var snapshotFailureReady = await GrokReadyWait.WaitAsync(_ =>
             {
@@ -224,6 +254,18 @@ public class RunnerGrokAdapterReadyTests
             GrokReadyMinTotalWaitMs = 0, GrokTrustPromptSettleMs = trust,
             GrokStartupCaptureDirectory = captureDirectory,
         }), logger: logger);
+
+    internal static async Task<bool> AnimatedAdapterReadyAsync()
+    {
+        using var document = GrokStartupFixture.Read();
+        var screens = GrokStartupFixture.Capture(document, "idle-").GetProperty("checkpoints")
+            .EnumerateArray().Where(x => x.GetProperty("expectedReason").GetString() == "Ready")
+            .Select(x => x.GetProperty("screen").GetString()!).ToArray();
+        var client = new ScriptedClient(screens, loop: true);
+        await using var adapter = NewAdapter(client, max: 250, settle: 60);
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        return await adapter.WaitForReadyAsync(CancellationToken.None);
+    }
 
     private static AgentLaunchSpec Spec() => new("grok", AgentKind.Grok, "grok.exe", [],
         new Dictionary<string, string>(), "/tmp", 120, 30, SessionId: Guid.NewGuid());

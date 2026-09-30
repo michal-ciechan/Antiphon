@@ -1942,56 +1942,56 @@
      "elapsedMs": 4059.24,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > C                                                                                                              │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 17,
      "elapsedMs": 4060.99,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Ca                                                                                                             │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 18,
      "elapsedMs": 4063.91,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Car                                                                                                            │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 19,
      "elapsedMs": 4065.23,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Card                                                                                                           │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 20,
      "elapsedMs": 4068.07,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Card                                                                                                           │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 21,
      "elapsedMs": 4068.82,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Card 0                                                                                                         │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 22,
      "elapsedMs": 4069.57,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Card 07                                                                                                        │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 23,
      "elapsedMs": 4111.35,
      "screen": "\n  ~/X/X/Xxxxxxxx/xxxx0000-xxx-xxxxxxx-00000000000000-xx0000x0000x                                          [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    - Starting session… 0.5s\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ > Card 0778 readiness probe, harmless.Reply with the single word ok. Nonce C778NONCE2b37d4dc7908429994           │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.7 · always-approve ─╯\n\n  Enter:send  │  Alt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts\n",
      "expectedReason": "ComposerUnavailable",
-     "basis": "Starting session status row present (input queues; see probe A)"
+     "basis": "Composer geometry is incomplete while Starting session remains visible; input still queues."
     },
     {
      "afterChunk": 24,

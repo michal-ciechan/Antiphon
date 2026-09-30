@@ -112,7 +112,7 @@ public class GrokStartupReadinessTests
     }
 
     [Test]
-    public void Composer_change_or_blocker_restarts_settle()
+    public async Task Composer_change_or_blocker_restarts_settle()
     {
         var tracker = new GrokReadyTracker(TimeSpan.FromMilliseconds(1000));
         var ready = GrokStartupScreen.Classify(GrokStartupFixture.ReadyScreen());
@@ -139,10 +139,12 @@ public class GrokStartupReadinessTests
         negative.Observe(ready, TimeSpan.FromMilliseconds(1000)).ShouldBeFalse(
             "readyAfterNegativeBeforeThreshold");
         negative.Observe(ready, TimeSpan.FromMilliseconds(1950)).ShouldBeTrue();
+        (await RunnerGrokAdapterReadyTests.AnimatedAdapterReadyAsync()).ShouldBeTrue(
+            "a stable composer must settle while the captured spinner changes every read");
     }
 
     [Test]
-    public void Settle_requires_two_observations_and_elapsed_time()
+    public async Task Settle_requires_two_observations_and_elapsed_time()
     {
         var ready = GrokStartupScreen.Classify(GrokStartupFixture.ReadyScreen());
         ready.IsReady.ShouldBeTrue();
@@ -153,6 +155,8 @@ public class GrokStartupReadinessTests
         var zero = new GrokReadyTracker(TimeSpan.Zero);
         zero.Observe(ready, TimeSpan.Zero).ShouldBeFalse();
         zero.Observe(ready, TimeSpan.Zero).ShouldBeTrue();
+        (await RunnerGrokAdapterReadyTests.AnimatedAdapterReadyAsync()).ShouldBeTrue(
+            "elapsed settlement must not wait for a quiet terminal sequence");
     }
 
     private static string Digest(string content) => Convert.ToHexStringLower(
