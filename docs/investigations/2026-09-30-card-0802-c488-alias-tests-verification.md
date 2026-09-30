@@ -10,4 +10,14 @@
 
 ## Checkpoint results
 
-Pending CP-1 through CP-5.
+The first CP-1 attempt at `b57343396a14b26093c865e3cecb140a69fd4385` is retained at
+`.antiphon/checkpoints/20260930-091428-142a/`: 3 executed, 0 passed, 3 failed,
+0 skipped. Each failure was the fixture's nested verifier build. A separate,
+explicitly diagnostic build of the same miniature solution reproduced SDK
+`10.0.401` error `MSB3030`, missing `obj/Antiphon.Tests/debug/apphost`; the same
+build passed with process environment `UseAppHost=false`. The diagnostic used
+the host build slot. The baseline checkpoint will be rerun with that Linux
+environment setting inherited by the nested verifier build. No test body was
+changed for this recovery.
+
+Pending successful CP-1 through CP-5.
