@@ -1156,10 +1156,20 @@ public sealed class RemoteScriptContractTests
             STATUS=zero
             c849_status_zero server2-temp reconnected
             printf 'zero reconnect=%s\n' "$?"
+            DISPATCH=bad
+            jq() {
+                local opt="$1" expression="$2" input
+                input="$(cat)"
+                if [[ "$expression" == *dispatchEligible* ]]; then return 1; fi
+                [ "$input" = zero ]
+            }
+            c849_status_zero server2-temp reconnected
+            printf 'dispatch-unknown reconnect=%s\n' "$?"
             """);
         foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
             status.ShouldContain(fault + " reconnect=1");
         status.ShouldContain("zero reconnect=0");
+        status.ShouldContain("dispatch-unknown reconnect=1");
         var ready = LinuxShell(CacheStatusHarness() + "\n" + seed + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
@@ -1275,8 +1285,14 @@ public sealed class RemoteScriptContractTests
             write_result() { printf 'retire-result=%s:%s\n' "$1" "$2"; exit "$3"; }
             c849_prepare() { :; }; c849_require_ready() { :; }; c849_budget_gate() { :; }
             c849_image() { echo image; }
-            c849_volume() { [ "$VOLUME_FAIL" != yes ]; }
-            compose_temp() { printf 'compose %s\n' "$*" >> "$root/trace"; }
+            c849_volume() {
+                [ "$VOLUME_FAIL" != yes ] || return 1
+                [ -s "$root/volumes/$1/sentinel" ]
+            }
+            compose_temp() {
+                printf 'compose %s\n' "$*" >> "$root/trace"
+                rm -rf "$root/temp-private"
+            }
             for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
                 : > "$root/trace"
                 ( case_retire_temp_runner ) > "$root/result" 2>&1
@@ -1286,11 +1302,26 @@ public sealed class RemoteScriptContractTests
             STATUS=zero; VOLUME_FAIL=yes
             ( case_retire_temp_runner ) > "$root/result" 2>&1
             printf 'lost-volume verdict=%s\n' "$(cat "$root/result")"
+            mkdir -p "$root/temp-private"
+            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                mkdir -p "$root/volumes/$name"
+                printf 'keep\n' > "$root/volumes/$name/sentinel"
+            done
+            VOLUME_FAIL=no
+            ( case_retire_temp_runner ) > "$root/result" 2>&1
+            printf 'retained verdict=%s\n' "$(cat "$root/result")"
+            [ ! -e "$root/temp-private" ] && echo private-removed
+            for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                [ -s "$root/volumes/$name/sentinel" ] || echo cache-lost
+            done
             """);
         foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
             output.ShouldContain(fault + " verdict=retire-result=false:TempRunnerNotIdle");
         output.ShouldNotContain("unsafe-down");
         output.ShouldContain("lost-volume verdict=retire-result=false:");
+        output.ShouldContain("retained verdict=retire-result=true:");
+        output.ShouldContain("private-removed");
+        output.ShouldNotContain("cache-lost");
     }
 
     [Test]
