@@ -882,7 +882,7 @@ public sealed class ChannelOutboundRecoveryTests
                     await nativeDeliveryServer!.DisposeAsync();
                     nativeDeliveryServer = null;
                     await ReconcileNativeWorkerAsync(isolated.ConnectionString,
-                        nativeRunner!, taskId, dispatchedSessionId!.Value);
+                        nativeRunner!, taskId, dispatchedSessionId!.Value, nativeInputShape);
                     convertedBytes = await File.ReadAllBytesAsync(Path.Combine(outputDir, "combined.pdf"));
                     convertedBytes.ShouldBe("%PDF-1.4 running converter fixture\n"u8.ToArray());
                 }
@@ -1331,7 +1331,7 @@ public sealed class ChannelOutboundRecoveryTests
     }
 
     private static async Task ReconcileNativeWorkerAsync(string connectionString,
-        DirectSessionRunnerClient runner, Guid taskId, Guid sessionId)
+        DirectSessionRunnerClient runner, Guid taskId, Guid sessionId, string? inputShapePath)
     {
         await using var provider = BuildNativeRecoveryProvider(connectionString, runner);
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
@@ -1384,7 +1384,17 @@ public sealed class ChannelOutboundRecoveryTests
         await queue.EnqueueAsync(sessionId, probeText, MessageSendMode.WhenIdle,
             CancellationToken.None, onCreated: id => probeId = id, deliverIfIdle: false);
         probeId.ShouldNotBe(Guid.Empty);
-        await queue.SendNowAsync(sessionId, probeId, CancellationToken.None);
+        try { await queue.SendNowAsync(sessionId, probeId, CancellationToken.None); }
+        catch (Exception ex)
+        {
+            var observed = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
+            var buffer = await runner.GetBufferAsync(sessionId, CancellationToken.None);
+            throw new InvalidOperationException("Post-restart queued prompt failed: "
+                + $"nativeKinds={string.Join(',', observed.Entries.Select(e => e.Kind))}; "
+                + $"promptSeen={observed.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt && e.Text?.Contains(probeText) == true)}; "
+                + $"screenHasProbe={buffer.Buffer.Contains(probeText)}; "
+                + $"inputShape={(inputShapePath is not null && File.Exists(inputShapePath) ? await File.ReadAllTextAsync(inputShapePath) : "absent")}", ex);
+        }
         using var probeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         while (true)
         {
