@@ -361,17 +361,20 @@ public class HerdrClientTests
         var server = ServePingThenSubscribeErrorAsync(pipeName);
         var client = ClientFor(pipeName);
 
-        var error = await Should.ThrowAsync<HerdrApiException>(async () =>
+        Exception? observed = null;
+        try
         {
             await foreach (var _ in client.SubscribeEventsAsync(
                                [new HerdrSubscription(HerdrEventTypes.PaneAgentStatusChangedSubscribe, "w9:p9")],
                                CancellationToken.None))
             {
             }
-        });
+        }
+        catch (Exception ex) { observed = ex; }
 
-        error.Code.ShouldBe("pane_not_found");
         await server;
+        var error = observed.ShouldBeOfType<HerdrApiException>(observed?.ToString());
+        error.Code.ShouldBe("pane_not_found");
     }
 
     [Test]

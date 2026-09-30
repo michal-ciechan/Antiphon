@@ -162,6 +162,8 @@ public class FakeHerdrServerListenerTests
                 Should.Throw<SocketException>(() => collision.Bind(new UnixDomainSocketEndPoint(endpoint.Path)));
                 File.Delete(endpoint.Path);
                 File.WriteAllText(endpoint.Path, "replacement-owned-by-test");
+                NativeFileIdentity.TryRead(endpoint.Path, out var replacement).ShouldBeTrue();
+                replacement.ShouldNotBe(original, "C801_REPLACEMENT_PRESERVED");
             }
         }
         if (!OperatingSystem.IsWindows())
