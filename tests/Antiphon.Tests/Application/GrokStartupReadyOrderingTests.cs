@@ -202,6 +202,7 @@ public sealed class GrokStartupReadyOrderingTests
             SnapshotReads++;
             _sequence++;
             var screen = _ready.Task.IsCompleted ? GrokStartupFixture.ReadyScreen() : StartingScreen;
+            if (_body is not null) screen += "\n" + _body;
             return Task.FromResult(new SessionRunnerSnapshotDto(id, screen, screen, _sequence, _started));
         }
         private static string StartingScreen
