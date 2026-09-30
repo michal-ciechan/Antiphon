@@ -641,16 +641,19 @@ public sealed class ChannelOutboundRecoveryTests
                     // CP rows intentionally build with UseAppHost=false on Linux. The
                     // direct runner needs an executable in its content-addressed host copy.
                     var hostLauncher = Path.Combine(AppContext.BaseDirectory, "Antiphon.PtyHost");
-                    if (!File.Exists(hostLauncher))
-                    {
-                        var stagedLauncher = hostLauncher + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                        await File.WriteAllTextAsync(stagedLauncher,
-                            "#!/bin/sh\nexec dotnet \"$(dirname \"$0\")/Antiphon.PtyHost.dll\" \"$@\"\n");
-                        File.SetUnixFileMode(stagedLauncher,
-                            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                        try { File.Move(stagedLauncher, hostLauncher); }
-                        catch (IOException) when (File.Exists(hostLauncher)) { File.Delete(stagedLauncher); }
-                    }
+                    var stagedLauncher = hostLauncher + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    await File.WriteAllTextAsync(stagedLauncher,
+                        "#!/bin/sh\n"
+                        + "if [ \"$1\" = --spawn ]; then\n"
+                        + "  shift\n"
+                        + "  setsid \"$0\" \"$@\" </dev/null >/dev/null 2>&1 &\n"
+                        + "  echo $!\n"
+                        + "  exit 0\n"
+                        + "fi\n"
+                        + "exec dotnet \"$(dirname \"$0\")/Antiphon.PtyHost.dll\" \"$@\"\n");
+                    File.SetUnixFileMode(stagedLauncher,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                    File.Move(stagedLauncher, hostLauncher, overwrite: true);
                 }
                 nativeRunner = new DirectSessionRunnerClient(Path.Combine(root, "runner-logs"));
                 var started = await nativeRunner.StartAsync(nativeSessionId, spec, CancellationToken.None);
