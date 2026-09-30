@@ -72,6 +72,15 @@ internal static class OutboundRequestMode
 
             var output = Path.Combine(requestDirectory, "output");
             Directory.CreateDirectory(output);
+            if (tool == "fixture:pdf")
+            {
+                var bytes = "%PDF-1.4 running converter fixture\n"u8.ToArray();
+                File.WriteAllBytes(Path.Combine(output, "combined.pdf"), bytes);
+                WriteOutputManifest(output, deliveryId, bytes);
+                result = $"Converted {sourceFiles.Length} frozen Markdown sources in the running fixture.";
+                succeeded = true;
+                return true;
+            }
             var toolManifest = Path.Combine(requestDirectory, "pdf-input.json");
             File.WriteAllText(toolManifest, JsonSerializer.Serialize(new
             {
@@ -114,13 +123,7 @@ internal static class OutboundRequestMode
             var bytes = File.ReadAllBytes(pdfPath);
             if (bytes.Length == 0)
                 throw new InvalidDataException("The PDF tool produced an empty file.");
-            File.WriteAllText(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(new
-            {
-                version = 1, deliveryId, disposition = "converted",
-                files = new[] { new { path = "combined.pdf", name = "combined.pdf",
-                    mime = "application/pdf", length = bytes.Length,
-                    sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes)) } },
-            }));
+            WriteOutputManifest(output, deliveryId, bytes);
             File.WriteAllText(Path.Combine(output, "fakegrok-tool-evidence.json"), JsonSerializer.Serialize(new
             {
                 deliveryId, tool, argumentList = start.ArgumentList.ToArray(), exitCode = child.ExitCode,
@@ -135,4 +138,13 @@ internal static class OutboundRequestMode
         }
         return true;
     }
+
+    private static void WriteOutputManifest(string output, Guid deliveryId, byte[] bytes) =>
+        File.WriteAllText(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(new
+        {
+            version = 1, deliveryId, disposition = "converted",
+            files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                mime = "application/pdf", length = bytes.Length,
+                sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes)) } },
+        }));
 }
