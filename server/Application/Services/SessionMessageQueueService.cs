@@ -568,6 +568,12 @@ public sealed partial class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
 
+            // A recovery can be claimed just before the quota refusal is adopted. This check
+            // runs under the same per-session lock as insertion and inline delivery.
+            if (origin == QueuedMessageOrigin.Supervision
+                && await IsQuotaRetrySuppressedAsync(db, sessionId, trimmed, ct))
+                return await GetQueueAsync(sessionId, ct);
+
             if (mentionOccurrenceId is Guid occurrenceId)
             {
                 var existing = await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == occurrenceId, ct);
@@ -1856,6 +1862,34 @@ public sealed partial class SessionMessageQueueService
         messages.Where(m => m.DeliveryAttempts == 1 && m.ExecutionTaskId != null)
             .Select(m => m.ExecutionDeadlineAt).Min();
 
+    private async Task<bool> IsQuotaRetrySuppressedAsync(
+        AppDbContext db, Guid sessionId, string body, CancellationToken ct)
+    {
+        var shortId = DelegationReportFormatter.TryReadTaskMarkerId(body);
+        if (shortId is null)
+            return false;
+        var tasks = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .Select(t => new { t.Id, t.Status, t.FailureCode })
+            .ToListAsync(ct);
+        var matching = tasks.Where(t => string.Equals(
+                DelegationReportFormatter.Short(t.Id), shortId, StringComparison.OrdinalIgnoreCase)
+            && (body == $"{DelegationReportFormatter.TaskMarker(t.Id)} {_apiErrorRecovery.TransientPrompt}"
+                || body == $"{DelegationReportFormatter.TaskMarker(t.Id)} {_apiErrorRecovery.WallPrompt}"))
+            .ToList();
+        if (matching.Count == 0)
+            return false;
+        if (matching.Any(t => t.Status == AgentTaskStatus.Blocked
+            && t.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded))
+            return true;
+        var latestReason = await db.ApiErrorRecoveries.AsNoTracking()
+            .Where(r => r.AgentSessionId == sessionId)
+            .OrderByDescending(r => r.StubSequence)
+            .Select(r => r.ResolvedReason)
+            .FirstOrDefaultAsync(ct);
+        return latestReason == ApiErrorRecoveryReasons.QuotaBlocked;
+    }
+
     private async Task<FlushResult> DeliverNextLockedAsync(
         AppDbContext db,
         Guid sessionId,
@@ -1982,21 +2016,14 @@ public sealed partial class SessionMessageQueueService
                 || m.MaintenanceAcceptedStartedAt is not { } deferredG
                 || SessionGeneration.Equal(deferredG, sessionGeneration))
             .ToList();
-        var quotaBlocked = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId
-                && t.Status == AgentTaskStatus.Blocked
-                && t.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
-            .Select(t => t.Id)
-            .ToListAsync(ct);
-        if (quotaBlocked.Count > 0)
+        if (deliverable.Any(m => m.Origin == QueuedMessageOrigin.Supervision))
         {
-            var retryBodies = quotaBlocked.SelectMany(id => new[]
-            {
-                $"{DelegationReportFormatter.TaskMarker(id)} {_apiErrorRecovery.TransientPrompt}",
-                $"{DelegationReportFormatter.TaskMarker(id)} {_apiErrorRecovery.WallPrompt}",
-            }).ToHashSet(StringComparer.Ordinal);
-            deliverable = deliverable.Where(m => m.Origin != QueuedMessageOrigin.Supervision
-                || !retryBodies.Contains(m.Body)).ToList();
+            var retained = new List<SessionQueuedMessage>(deliverable.Count);
+            foreach (var message in deliverable)
+                if (message.Origin != QueuedMessageOrigin.Supervision
+                    || !await IsQuotaRetrySuppressedAsync(db, sessionId, message.Body, ct))
+                    retained.Add(message);
+            deliverable = retained;
         }
         if (deliverable.Count == 0)
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
@@ -2250,6 +2277,14 @@ public sealed partial class SessionMessageQueueService
             if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(retrySnap.RenderedScreen, body))
                 return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings);
         }
+
+        // Recheck after composing the run, while the delivery lock is still held and before an
+        // attempt is charged. A concurrent adoption may have blocked its recovery after the
+        // earlier pending-row selection.
+        foreach (var message in run)
+            if (message.Origin == QueuedMessageOrigin.Supervision
+                && await IsQuotaRetrySuppressedAsync(db, sessionId, message.Body, ct))
+                return FlushResult.Nothing;
 
         // Stamped BEFORE a byte is typed, and deliberately NOT undone by the revert on failure: the
         // attempt happened, and the baseline is what the next attempt's late-confirm reads. A crash
