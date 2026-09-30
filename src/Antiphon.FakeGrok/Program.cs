@@ -824,7 +824,7 @@ internal static class Program
                         sessionUpdate = "agent_message_chunk",
                         content = new { type = "text", text = assistant }
                     },
-                    _meta = Meta()
+                    _meta = new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs, promptId }
                 }
             }));
             AppendShared(updates, JsonSerializer.Serialize(new
