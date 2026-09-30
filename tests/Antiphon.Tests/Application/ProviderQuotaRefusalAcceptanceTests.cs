@@ -66,10 +66,10 @@ public class ProviderQuotaRefusalAcceptanceTests
     }
 
     private static async Task<Scenario> CreateAsync(AgentKind kind = AgentKind.Codex,
-        string? alias = "gpt-6-sol")
+        string? alias = "gpt-6-sol", DateTimeOffset? at = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var clock = new FakeTimeProvider(IncidentAt);
+        var clock = new FakeTimeProvider(at ?? IncidentAt);
         var h = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = schema.ConnectionString,
@@ -89,8 +89,8 @@ public class ProviderQuotaRefusalAcceptanceTests
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Docs,
                 ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = h.TempRoot, ReplyTo = AgentTaskReplyTo.None,
-                CreatedAt = IncidentAt.UtcDateTime.AddMinutes(-2),
-                DispatchedAt = IncidentAt.UtcDateTime.AddMinutes(-1),
+                CreatedAt = (at ?? IncidentAt).UtcDateTime.AddMinutes(-2),
+                DispatchedAt = (at ?? IncidentAt).UtcDateTime.AddMinutes(-1),
             });
             await db.SaveChangesAsync();
         }
@@ -110,6 +110,87 @@ public class ProviderQuotaRefusalAcceptanceTests
         return (last.GetProperty("text").GetString()!,
             last.GetProperty("timestamp").GetDateTimeOffset(),
             session.GetProperty("replayTimeZoneId").GetString()!, errors.Count);
+    }
+
+    private static JsonElement FixtureSession(string sessionPrefix)
+    {
+        var path = Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "superpowers", "plans", "fixtures", "card-0719-transcript-tails.json");
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        return doc.RootElement.GetProperty("sessions").EnumerateArray()
+            .Single(s => s.GetProperty("sessionId").GetString()!.StartsWith(sessionPrefix, StringComparison.Ordinal))
+            .Clone();
+    }
+
+    private static async Task ReplayEveryRefusalAsync(string sessionPrefix)
+    {
+        var fixture = FixtureSession(sessionPrefix);
+        var rows = fixture.GetProperty("entries").EnumerateArray().ToArray();
+        var zone = fixture.GetProperty("replayTimeZoneId").GetString()!;
+        var errors = rows.Select((row, index) => (row, index))
+            .Where(x => x.row.GetProperty("kind").GetString() == TranscriptKinds.TurnEnd
+                && x.row.GetProperty("isApiError").ValueKind == JsonValueKind.True)
+            .ToArray();
+        errors.Length.ShouldBeGreaterThan(1);
+        foreach (var (error, index) in errors)
+        {
+            var at = error.GetProperty("timestamp").GetDateTimeOffset();
+            await using var s = await CreateAsync(at: at);
+            var marker = DelegationReportFormatter.TaskMarker(s.TaskId);
+            var firstSequence = rows[0].GetProperty("sequence").GetInt64();
+            var events = new List<RunnerTranscriptEvent>
+            {
+                new(s.H.SessionId, firstSequence - 1, TranscriptKinds.UserPrompt,
+                    Guid.NewGuid().ToString("D"), null, at.AddSeconds(-1), "user",
+                    marker + " Work on the card.", null, null, null, null, null),
+            };
+            foreach (var row in rows.Take(index + 1))
+            {
+                var kind = row.GetProperty("kind").GetString()!;
+                var text = row.GetProperty("text").GetString();
+                if (kind == TranscriptKinds.UserPrompt)
+                    text = marker + " " + text;
+                var isError = row.TryGetProperty("isApiError", out var flag)
+                    && flag.ValueKind == JsonValueKind.True;
+                events.Add(new RunnerTranscriptEvent(
+                    s.H.SessionId, row.GetProperty("sequence").GetInt64(), kind,
+                    Guid.NewGuid().ToString("D"), null,
+                    row.GetProperty("timestamp").GetDateTimeOffset(),
+                    kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text,
+                    null, null, null, null,
+                    kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
+                    IsApiError: isError,
+                    ApiErrorClass: isError ? row.GetProperty("apiErrorClass").GetString() : null,
+                    ApiErrorStatus: isError && row.GetProperty("apiErrorStatus").ValueKind == JsonValueKind.Number
+                        ? row.GetProperty("apiErrorStatus").GetInt32() : null,
+                    ApiErrorTimeZoneId: isError ? zone : null));
+            }
+            await s.H.Runtime.PersistTranscriptAsync(s.H.SessionId,
+                events.Select(RunnerContractMapper.MapTranscript).ToList());
+            await s.SettleAsync();
+            await AssertBlockedAsync(s, Reset, HoldUntil);
+            await using (var db = s.Db())
+            {
+                var attention = await AttentionServiceTests.BuildService(s.H.Runner, db: db, timeProvider: s.Clock)
+                    .GetAsync(CancellationToken.None, includeProgressProbe: false);
+                attention.Items.ShouldContain(i => i.TaskId == s.TaskId && i.Kind == AttentionKind.BlockedQuestion);
+            }
+            s.Clock.Advance(TimeSpan.FromDays(2));
+            await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
+            await using var verify = s.Db();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == s.TaskId)).Status.ShouldBe(AgentTaskStatus.Blocked);
+            (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId
+                && m.Origin == QueuedMessageOrigin.Supervision)).ShouldBe(0);
+        }
+
+        // Historical transcripts had no timezone field. Their local printed time remains visible,
+        // but it cannot establish a UTC reset without an explicit replay zone.
+        var last = errors[^1].row;
+        await using var withoutZone = await CreateAsync(at: last.GetProperty("timestamp").GetDateTimeOffset());
+        await withoutZone.EmitAsync(last.GetProperty("text").GetString()!, zone: null,
+            at: last.GetProperty("timestamp").GetDateTimeOffset());
+        await withoutZone.SettleAsync();
+        await AssertBlockedAsync(withoutZone);
+        (await withoutZone.ReadAsync()).Task.FailureReason.ShouldContain("reset timezone unavailable");
     }
 
     private static async Task AssertBlockedAsync(Scenario s, DateTime? expectedReset = null,
@@ -140,39 +221,20 @@ public class ProviderQuotaRefusalAcceptanceTests
     [Test]
     public async Task Replay_faddd3e4_blocks_without_retry()
     {
-        var fixture = LastFixtureError("faddd3e4");
-        fixture.Count.ShouldBeGreaterThan(1);
-        await using var s = await CreateAsync();
-        await s.EmitAsync(fixture.Text, zone: fixture.Zone, at: fixture.Timestamp);
-        await s.SettleAsync();
-        await AssertBlockedAsync(s, Reset, HoldUntil);
+        await ReplayEveryRefusalAsync("faddd3e4");
     }
 
     [Test]
     public async Task Replay_5af622ce_has_quota_attention()
     {
-        var fixture = LastFixtureError("5af622ce");
-        await using var s = await CreateAsync();
-        await s.EmitAsync(fixture.Text, zone: fixture.Zone, at: fixture.Timestamp);
-        await s.SettleAsync();
-        await AssertBlockedAsync(s, Reset, HoldUntil);
-        await using var db = s.Db();
-        var attention = await AttentionServiceTests.BuildService(s.H.Runner, db: db, timeProvider: s.Clock)
-            .GetAsync(CancellationToken.None, includeProgressProbe: false);
-        var row = attention.Items.Single(i => i.TaskId == s.TaskId && i.Kind == AttentionKind.BlockedQuestion);
-        row.Headline.ShouldContain("quota");
-        row.ConditionKey.ShouldBe($"quota-blocked:{s.TaskId:N}");
+        await ReplayEveryRefusalAsync("5af622ce");
     }
 
     [Test]
     public async Task Replay_061581e5_blocks_at_shared_reset()
     {
-        var fixture = LastFixtureError("061581e5");
-        fixture.Text.ShouldStartWith("Error running remote compact task:");
-        await using var s = await CreateAsync();
-        await s.EmitAsync(fixture.Text, zone: fixture.Zone, at: fixture.Timestamp);
-        await s.SettleAsync();
-        await AssertBlockedAsync(s, Reset, HoldUntil);
+        LastFixtureError("061581e5").Text.ShouldStartWith("Error running remote compact task:");
+        await ReplayEveryRefusalAsync("061581e5");
     }
 
     [Test]

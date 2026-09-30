@@ -306,9 +306,34 @@ public sealed class ApiErrorRecoveryService
         if (openTaskId is { } taskId)
             prompt = $"{DelegationReportFormatter.TaskMarker(taskId)} {prompt}";
 
+        // Claim the due rung with a conditional durable update. Another sweep cannot fire the
+        // same row, and an adoption that resolves it before this update makes the claim fail.
+        // A failed enqueue is retried after the short claim lease without charging an attempt.
+        var expectedDue = recovery.NextAttemptAt.Value;
+        var claimUntil = UtcNow().AddMinutes(2);
+        var claimed = await db.ApiErrorRecoveries
+            .Where(r => r.Id == recovery.Id && r.ResolvedAt == null
+                && r.NextAttemptAt == expectedDue && r.AttemptCount == recovery.AttemptCount)
+            .ExecuteUpdateAsync(update => update.SetProperty(r => r.NextAttemptAt, (DateTime?)claimUntil), ct);
+        if (claimed != 1)
+            return false;
+
         await _queue.EnqueueAsync(
             recovery.AgentSessionId, prompt, MessageSendMode.WhenIdle, ct,
             origin: QueuedMessageOrigin.Supervision);
+
+        await db.Entry(recovery).ReloadAsync(ct);
+        if (recovery.ResolvedAt is not null)
+            return false;
+        if (openTaskId is { } claimedTaskId
+            && await db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id == claimedTaskId
+                && t.Status == AgentTaskStatus.Blocked
+                && t.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded, ct))
+        {
+            Resolve(recovery, UtcNow(), ApiErrorRecoveryReasons.QuotaBlocked);
+            await db.SaveChangesAsync(ct);
+            return false;
+        }
 
         var now = UtcNow();
         recovery.AttemptCount++;
