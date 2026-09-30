@@ -161,12 +161,18 @@ public sealed partial class PhoneHomeRollingRunnerTests
             host.Capacity = options?.PeerACapacity ?? 4;
             var storeA = Guid.NewGuid();
             var storeB = Guid.NewGuid();
+            var workspaceCapabilities = new RunnerCapabilitiesDto(
+                "ModernConPty", "modern", "test", false,
+                Features: [RunnerCapabilityFeatures.WorkspaceRepositoryV1,
+                    RunnerCapabilityFeatures.WorkspacePublishV1], Platform: "linux");
             var peerA = await host.ConnectPeerAsync(
-                runnerId: RollingRunnerSettings.Server2, storeId: storeA, secret: secretA);
+                runnerId: RollingRunnerSettings.Server2, storeId: storeA, secret: secretA,
+                capabilities: workspaceCapabilities);
             if (options?.PeerBCapacity is int peerBCapacity)
                 host.Capacity = peerBCapacity;
             var peerB = await host.ConnectPeerAsync(
-                runnerId: RollingRunnerSettings.Server2Temp, storeId: storeB, secret: secretB);
+                runnerId: RollingRunnerSettings.Server2Temp, storeId: storeB, secret: secretB,
+                capabilities: workspaceCapabilities);
             host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2));
             host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2Temp));
             var directory = options?.Directory?.Invoke(host) ?? (ISessionRunnerDirectory)host.Directory;

@@ -599,8 +599,12 @@ public sealed partial class PhoneHomeRollingRunnerTests
         await using var world = await RollingWorld.StartAsync();
         world.PeerARemoveErrors = 1;
         const string oldPath = "/work/worktrees/stuck";
+        var dispatchSha = new string('a', 40);
         var id = await world.SeedQueuedAsync(RollingRunnerSettings.Server2, "remove-fails", task =>
-            task.RemoteWorktreePath = oldPath);
+        {
+            task.RemoteWorktreePath = oldPath;
+            task.WorktreeBaseSha = dispatchSha;
+        });
         (await PostDrainAsync(
                 world, RollingRunnerSettings.Server2, new DrainBody("remove fails", RollingRunnerSettings.Server2Temp), token: true))
             .StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -614,6 +618,9 @@ public sealed partial class PhoneHomeRollingRunnerTests
         var saved = await world.ReadTaskAsync(id);
         saved.Task.RunnerId.ShouldBe(RollingRunnerSettings.Server2Temp);
         (await world.EventTextAsync(id)).ShouldContain(text => text.Contains(oldPath, StringComparison.Ordinal));
+        world.PeerA.Incoming.Single(frame => frame.Operation == PhoneHomeOperation.WorkspaceRemove)
+            .Payload!.Value.Deserialize<PhoneHomeWorkspaceRemoveRequest>(PhoneHomeFraming.Json)!
+            .PublishedSha.ShouldBe(dispatchSha);
         world.PeerB.Launches.Count.ShouldBe(1);
     }
 
