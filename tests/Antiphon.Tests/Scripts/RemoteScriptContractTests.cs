@@ -46,6 +46,9 @@ public sealed class RemoteScriptContractTests
         var cacheLock = Block(text, "c849_lock");
         var cacheEvidence = Block(text, "c849_evidence_dir");
         var cacheSeed = Block(text, "c849_seed");
+        var cacheObserve = Block(text, "c849_observe_volume");
+        var cachePreview = Block(text, "c849_preview");
+        var cachePruneTree = Block(text, "c849_prune_validate_tree");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
@@ -53,7 +56,10 @@ public sealed class RemoteScriptContractTests
                 || codexHome.Contains(line, StringComparison.Ordinal)
                 || cacheLock.Contains(line, StringComparison.Ordinal)
                 || cacheEvidence.Contains(line, StringComparison.Ordinal)
-                || cacheSeed.Contains(line, StringComparison.Ordinal))
+                || cacheSeed.Contains(line, StringComparison.Ordinal)
+                || cacheObserve.Contains(line, StringComparison.Ordinal)
+                || cachePreview.Contains(line, StringComparison.Ordinal)
+                || cachePruneTree.Contains(line, StringComparison.Ordinal))
                 .ShouldBeTrue("sudo outside a declared host-lane case or helper: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
         var codexCommands = Commands(codexHome);
@@ -938,8 +944,164 @@ public sealed class RemoteScriptContractTests
         output.ShouldNotContain("/s2/secrets/codex");
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Cache_cases_use_only_the_validated_host_lane()
+    {
+        var remote = Remote();
+        var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
+        var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/verify-card0849-caches.ps1"));
+        foreach (var name in new[] { "runner-cache-inventory", "runner-cache-fixture", "runner-cache-seed",
+                     "verify-runner-caches", "verify-runner-caches-retired", "runner-cache-prune-preview", "runner-cache-prune" })
+        {
+            bridge.ShouldContain("'" + name + "'");
+            remote.ShouldContain(name + ")");
+        }
+        remote.ShouldContain("if [ \"$LANE\" != host ]; then printf 'DIAGNOSIS=WrongLane");
+        remote.ShouldContain("c849_evidence_dir");
+        bridge.ShouldContain("CacheEvidencePathInvalid");
+        bridge.ShouldContain("CachePreviewInvalid");
+        front.ShouldContain("C849_DEPLOY_SHA");
+        front.ShouldContain("CachePreviewInvalid");
+        var result = LinuxShell("root='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" +
+            "pwsh -NoProfile -File \"$root/scripts/verify-card0849-caches.ps1\" -Case Inventory -Sha bad 2>&1 || true\n");
+        result.ShouldContain("C849_DEPLOY_SHA must be the reviewed full lowercase SHA");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Cache_prepare_is_idempotent_and_preserves_payloads()
+    {
+        var output = LinuxShell(CachePrepareHarness() + """
+            set -e
+            c849_prepare yes
+            for n in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                printf 'sentinel-%s\n' "$n" > "$root/volumes/$n/payload"
+                chmod 0700 "$root/volumes/$n/payload"
+            done
+            printf 'sibling\n' > "$root/sibling"
+            mkdir -p "$(dirname "$C849_READY")"; printf 'accepted\n' > "$C849_READY"
+            c849_prepare yes
+            for n in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+                [ "$(cat "$root/volumes/$n/payload")" = "sentinel-$n" ]
+                [ "$(stat -c %a "$root/volumes/$n/payload")" = 700 ]
+                [ -z "$(find "$root/volumes/$n" -name '.c849-probe-*' -print -quit)" ]
+                echo "preserved $n"
+            done
+            [ "$(cat "$root/sibling")" = sibling ]
+            echo sibling-preserved
+            """);
+        foreach (var role in new[] { "nuget-packages", "nuget-scratch", "npm-content" })
+            output.ShouldContain("preserved antiphon-runner-cache-" + role);
+        output.ShouldContain("sibling-preserved");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Cache_prepare_refuses_foreign_or_unsafe_roots()
+    {
+        var output = LinuxShell(CachePrepareHarness() + """
+            for fault in driver options owner schema role mode symlink file unmarked name; do
+                rm -rf "$root/volumes"; mkdir -p "$root/volumes"
+                FAULT="$fault"
+                if [ "$fault" = unmarked ]; then
+                    mkdir -p "$root/volumes/$C849_PACKAGES"
+                    printf 'keep\n' > "$root/volumes/$C849_PACKAGES/payload"
+                fi
+                target="$C849_PACKAGES"; [ "$fault" = name ] && target=foreign-cache
+                ( set -e; c849_volume "$target" nuget-packages yes image ) 2>&1
+                echo "$fault exit=$?"
+                if [ "$fault" = unmarked ]; then
+                    [ "$(cat "$root/volumes/$C849_PACKAGES/payload")" = keep ] && echo unmarked-preserved
+                fi
+            done
+            """);
+        foreach (var fault in new[] { "driver", "options", "owner", "schema", "role", "mode", "symlink", "file", "unmarked", "name" })
+            output.ShouldContain(fault + " exit=2");
+        output.ShouldContain("unmarked-preserved");
+    }
+
     // The real Codex-home variables and function over a throwaway server2 root. sudo is a plain
     // call and the owner is the current uid, so the harness needs no privilege.
+    private static string CachePrepareHarness()
+    {
+        var text = Remote();
+        return """
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            mkdir -p "$root/volumes" "$root/case" "$root/outside"
+            CASE_DIR="$root/case"
+            SERVER2_ROOT="$root/server2"
+            RUN=c849test
+            LANE=host
+            FAULT=''
+            C849_PACKAGES=antiphon-runner-cache-nuget-packages
+            C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+            C849_NPM=antiphon-runner-cache-npm-content
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            write_result() { printf 'RESULT accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
+            require_lane() { [ "$1" = "$LANE" ]; }
+            c849_lock() { :; }
+            docker() {
+                local verb="$1" sub="${2:-}" name format code mount path arg
+                shift
+                case "$verb:$sub" in
+                    image:inspect) return 0 ;;
+                    volume:inspect)
+                        shift
+                        if [ "${1:-}" = -f ]; then format="$2"; name="$3"; else name="$1"; fi
+                        [ -e "$root/volumes/$name" ] || [ -L "$root/volumes/$name" ] || return 1
+                        case "$format" in
+                            *'.Driver'*) [ "$FAULT" = driver ] && echo nfs || echo local ;;
+                            *'.Options'*) [ "$FAULT" = options ] && echo '{"device":"foreign"}' || echo '{}' ;;
+                            *'io.antiphon.owner'*) [ "$FAULT" = owner ] && echo foreign || echo server2-runner ;;
+                            *'io.antiphon.cache-schema'*) [ "$FAULT" = schema ] && echo 2 || echo 1 ;;
+                            *'io.antiphon.cache-role'*)
+                                if [ "$FAULT" = role ]; then echo wrong
+                                elif [ "$name" = "$C849_SCRATCH" ]; then echo nuget-scratch
+                                elif [ "$name" = "$C849_NPM" ]; then echo npm-content
+                                else echo nuget-packages; fi ;;
+                        esac
+                        return 0 ;;
+                    volume:create)
+                        name="${@: -1}"
+                        if [ "$FAULT" = symlink ]; then ln -s "$root/outside" "$root/volumes/$name"
+                        elif [ "$FAULT" = file ]; then printf 'file\n' > "$root/volumes/$name"
+                        else mkdir -p "$root/volumes/$name"; fi
+                        echo "$name"; return 0 ;;
+                    run:*)
+                        for ((i=1;i<=$#;i++)); do
+                            arg="${!i}"
+                            if [ "$arg" = --mount ]; then j=$((i+1)); mount="${!j}"; fi
+                            if [ "$arg" = -c ]; then j=$((i+1)); code="${!j}"; fi
+                        done
+                        name="${mount#*source=}"; name="${name%%,*}"
+                        path="$root/volumes/$name"
+                        case "$code" in
+                            *'stat -c'*)
+                                [ "$FAULT" = symlink ] && return 1
+                                [ "$FAULT" = file ] && return 1
+                                [ "$FAULT" = mode ] && echo 1654:1654:755 || echo 1654:1654:700
+                                return 0 ;;
+                            *'.c849-probe-'*)
+                                [ -d "$path" ] || return 1
+                                printf 'probe\n' > "$path/.c849-probe-$RUN"
+                                mv "$path/.c849-probe-$RUN" "$path/.c849-probe-$RUN.moved"
+                                rm "$path/.c849-probe-$RUN.moved"; return 0 ;;
+                            *'find /cache -mindepth'*)
+                                find "$path" -mindepth 1 -print -quit; return 0 ;;
+                            *'chown 1654'*)
+                                [ -d "$path" ] || return 1
+                                chmod 0700 "$path"; return 0 ;;
+                        esac
+                        return 2 ;;
+                esac
+                return 2
+            }
+            """ + "\n" + string.Join('\n', new[] { "c849_image", "c849_empty_volume", "c849_volume", "c849_prepare" }
+                .Select(name => Block(text, name))) + "\n";
+    }
+
     private static string CodexHomeHarness(string text) =>
         string.Join('\n',
             "root=\"$(mktemp -d)\"",
