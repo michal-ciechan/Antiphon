@@ -108,12 +108,25 @@ this deployment's runner appsettings turns it on. Other settings:
 | Setting | Default | Meaning |
 |---|---|---|
 | `Session` | null | explicit named herdr session; same precedence as herdr's own `--session`, ahead of `HERDR_SOCKET_PATH` and `HERDR_SESSION` |
-| `ConnectTimeoutMs` | 5 000 | bound on opening the named-pipe connection |
+| `SocketPath` | null | instance-scoped native endpoint override; takes precedence over `Session` and environment discovery |
+| `ConnectTimeoutMs` | 5 000 | bound on opening the native local connection |
 | `ExpectedProtocol` | 20 | the wire protocol this client was compiled and tested against |
 | `EventsReconnectMinSeconds` / `MaxSeconds` | 1 / 30 | event-pump reconnect backoff, doubling |
 
-Socket resolution order: `SessionRunner:Herdr:Session` → `HERDR_SOCKET_PATH` →
-`HERDR_SESSION` → `%APPDATA%\herdr\herdr.sock`.
+Endpoint resolution order: internal test override → `SessionRunner:Herdr:SocketPath` →
+`SessionRunner:Herdr:Session` → `HERDR_SOCKET_PATH` → `HERDR_SESSION` → platform default.
+Windows uses its existing named-pipe names under `%APPDATA%\herdr`; setting `SocketPath` on
+Windows still selects a named pipe. Linux and macOS use pathname Unix sockets. Their configuration
+root is an absolute `XDG_CONFIG_HOME`, else an absolute `$HOME/.config`, else the system temporary
+directory. A named session resolves to `herdr/sessions/<name>/herdr.sock` under that root;
+`Session=default` and the unnamed default resolve to `herdr/herdr.sock`. A relative explicit Unix
+endpoint is refused, and the client does not create configuration directories.
+
+The connector reads the peer process from the connected pipe or Unix socket and combines its PID
+with its observed process start time. An unreadable peer identity remains unavailable; disposal
+then refuses to close a pane. Enabling Herdr on Unix now reaches an already running Herdr daemon
+through its native socket. The pane launch path still requires a PowerShell shell; this transport
+change does not add a Unix shell launch policy.
 
 **The runner advertises `herdr` in `GET /capabilities` only when `Enabled` is true.** That is not
 cosmetic: the server's capability gate would otherwise green-light a launch that `HerdrClient` then
