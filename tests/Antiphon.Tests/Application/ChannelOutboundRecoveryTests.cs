@@ -7,6 +7,7 @@ using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -17,6 +18,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -476,6 +478,7 @@ public sealed class ChannelOutboundRecoveryTests
     [Arguments("admission-committed")]
     [Arguments("conversion-task-committed")]
     [Arguments("conversion-dispatched")]
+    [Arguments("conversion-running")]
     public async Task Process_death_preserves_ownership_at_each_boundary(string cut)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-admission-" + Guid.NewGuid().ToString("N"));
@@ -494,9 +497,29 @@ public sealed class ChannelOutboundRecoveryTests
         var evidencePath = Path.Combine(root, "accepted.bin");
         var markerPath = Path.Combine(root, "barrier");
         var configPath = Path.Combine(root, "probe.json");
+        var launchSpecPath = Path.Combine(root, "native-launch.json");
+        var workerHome = Path.Combine(root, "native-grok");
+        var workerGate = Path.Combine(root, "native-gate");
+        var workerExe = OperatingSystem.IsWindows()
+            ? Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe")
+            : Path.Combine(root, "fakegrok-cli");
         var probeDll = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
             "Antiphon.ChannelOutbound.Probe.dll");
         File.Exists(probeDll).ShouldBeTrue();
+        if (cut == "conversion-running")
+        {
+            Directory.CreateDirectory(workerHome);
+            if (!OperatingSystem.IsWindows())
+            {
+                var fakeDll = Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.dll");
+                File.Exists(fakeDll).ShouldBeTrue();
+                await File.WriteAllTextAsync(workerExe,
+                    "#!/bin/sh\nexec dotnet '" + fakeDll.Replace("'", "'\\''") + "' \"$@\"\n");
+                File.SetUnixFileMode(workerExe,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            File.Exists(workerExe).ShouldBeTrue();
+        }
         var expectedReply = new ChannelReply
         {
             Channel = "fake", ConversationId = channelId.ToString("N"),
@@ -546,6 +569,8 @@ public sealed class ChannelOutboundRecoveryTests
                 WorkspaceRoot = root, ProjectId = projectId, ConverterAgentId = converterId,
                 ChannelId = channelId, SessionId = sessionId, CorrelationId = correlationId,
                 AllowPublication = allowPublication,
+                WorkerExe = workerExe, WorkerHome = workerHome, WorkerGate = workerGate,
+                LaunchSpecPath = launchSpecPath,
             }));
         }
 
@@ -566,19 +591,30 @@ public sealed class ChannelOutboundRecoveryTests
         }
 
         Process? child = null;
+        DirectSessionRunnerClient? nativeRunner = null;
         Guid? dispatchedSessionId = null;
         try
         {
-            var afterTaskCreation = cut is "conversion-task-committed" or "conversion-dispatched";
+            var running = cut == "conversion-running";
+            var afterTaskCreation = cut is "conversion-task-committed" or "conversion-dispatched"
+                or "conversion-running";
             if (afterTaskCreation)
                 await RunToExitAsync("admit");
             var acceptedId = afterTaskCreation ? await ReadDeliveryIdAsync() : Guid.Empty;
-            if (cut == "conversion-dispatched")
+            if (running)
+            {
+                await using var update = new AppDbContext(
+                    TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+                await update.Agents.Where(a => a.Id == converterId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.Kind, AgentKind.Grok));
+            }
+            if (cut is "conversion-dispatched" or "conversion-running")
                 await RunToExitAsync("prepare", acceptedId);
             await WriteConfigAsync(cut switch
                 {
                     "conversion-task-committed" => "prepare",
                     "conversion-dispatched" => "dispatch",
+                    "conversion-running" => "dispatch-running",
                     _ => "admit",
                 }, cut, acceptedId);
             child = StartProbe(probeDll, configPath);
@@ -593,6 +629,34 @@ public sealed class ChannelOutboundRecoveryTests
             if (cut == "conversion-dispatched")
                 (await File.ReadAllTextAsync(markerPath)).ShouldStartWith(
                     $"dispatch-warning-claim-committed|{acceptedId:N}|");
+            if (running)
+            {
+                (await File.ReadAllTextAsync(markerPath)).ShouldBe("dispatch-ready");
+                using var launchDocument = JsonDocument.Parse(await File.ReadAllTextAsync(launchSpecPath));
+                var launch = launchDocument.RootElement;
+                var nativeSessionId = launch.GetProperty("SessionId").GetGuid();
+                var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
+                nativeRunner = new DirectSessionRunnerClient(Path.Combine(root, "runner-logs"));
+                var started = await nativeRunner.StartAsync(nativeSessionId, spec, CancellationToken.None);
+                started.Status.ShouldBe("Running");
+                var nativeTaskId = (await new AppDbContext(
+                    TestDbFixture.CreateDbContextOptions(isolated.ConnectionString))
+                    .AgentTasks.AsNoTracking().SingleAsync(t => t.OutboundDeliveryId == acceptedId)).Id;
+                var requestPath = Path.Combine(storeRoot, acceptedId.ToString("N"), "request.json");
+                await nativeRunner.SendInputAsync(nativeSessionId,
+                    $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
+                    CancellationToken.None);
+                await nativeRunner.SendInputAsync(nativeSessionId, "\r", CancellationToken.None);
+                using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                while (!File.Exists(workerGate + ".held"))
+                {
+                    (await nativeRunner.GetAsync(nativeSessionId, CancellationToken.None))
+                        .Status.ShouldBe("Running");
+                    await Task.Delay(25, nativeWatchdog.Token);
+                }
+                (await File.ReadAllTextAsync(workerGate + ".held"))
+                    .ShouldBe(acceptedId.ToString("D"));
+            }
             child.Id.ShouldBe(childPid);
             child.StartTime.ShouldBe(childStarted);
             child.Kill(entireProcessTree: true);
@@ -634,7 +698,7 @@ public sealed class ChannelOutboundRecoveryTests
                 }
                 (await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.Id == channelId))
                     .LastReplyAt.ShouldBeNull();
-                if (cut == "conversion-dispatched")
+                if (cut is "conversion-dispatched" or "conversion-running")
                 {
                     var dispatched = await verify.AgentTasks.AsNoTracking()
                         .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
@@ -669,7 +733,7 @@ public sealed class ChannelOutboundRecoveryTests
                 await RunToExitAsync("admit");
             acceptedId = await ReadDeliveryIdAsync();
             byte[]? convertedBytes = null;
-            if (cut == "conversion-dispatched")
+            if (cut is "conversion-dispatched" or "conversion-running")
             {
                 // The killed dispatcher already committed the task/session owner. A fresh
                 // transcript-settlement service consumes that same task's actual closing turn.
@@ -685,18 +749,29 @@ public sealed class ChannelOutboundRecoveryTests
                 }
                 var outputDir = Path.Combine(storeRoot, acceptedId.ToString("N"), "output");
                 Directory.CreateDirectory(outputDir);
-                convertedBytes = "%PDF-1.4 recovered worker result"u8.ToArray();
-                await File.WriteAllBytesAsync(Path.Combine(outputDir, "combined.pdf"), convertedBytes);
-                await File.WriteAllTextAsync(Path.Combine(outputDir, "manifest.json"),
-                    JsonSerializer.Serialize(new
-                    {
-                        version = 1, deliveryId = acceptedId, disposition = "converted",
-                        files = new[] { new { path = "combined.pdf", name = "combined.pdf",
-                            mime = "application/pdf", length = convertedBytes.Length,
-                            sha256 = Sha256(convertedBytes).ToLowerInvariant() } },
-                    }));
-                await AgentTaskReplyIntegrationTests.SettleExistingConversionTaskAsync(
-                    isolated.ConnectionString, taskId, dispatchedSessionId!.Value);
+                if (running)
+                {
+                    await File.WriteAllTextAsync(workerGate + ".release", "release");
+                    await ReconcileNativeWorkerAsync(isolated.ConnectionString,
+                        nativeRunner!, taskId, dispatchedSessionId!.Value);
+                    convertedBytes = await File.ReadAllBytesAsync(Path.Combine(outputDir, "combined.pdf"));
+                    convertedBytes.ShouldBe("%PDF-1.4 running converter fixture\n"u8.ToArray());
+                }
+                else
+                {
+                    convertedBytes = "%PDF-1.4 recovered worker result"u8.ToArray();
+                    await File.WriteAllBytesAsync(Path.Combine(outputDir, "combined.pdf"), convertedBytes);
+                    await File.WriteAllTextAsync(Path.Combine(outputDir, "manifest.json"),
+                        JsonSerializer.Serialize(new
+                        {
+                            version = 1, deliveryId = acceptedId, disposition = "converted",
+                            files = new[] { new { path = "combined.pdf", name = "combined.pdf",
+                                mime = "application/pdf", length = convertedBytes.Length,
+                                sha256 = Sha256(convertedBytes).ToLowerInvariant() } },
+                        }));
+                    await AgentTaskReplyIntegrationTests.SettleExistingConversionTaskAsync(
+                        isolated.ConnectionString, taskId, dispatchedSessionId!.Value);
+                }
                 await using (var settled = new AppDbContext(
                     TestDbFixture.CreateDbContextOptions(isolated.ConnectionString)))
                 {
@@ -757,7 +832,7 @@ public sealed class ChannelOutboundRecoveryTests
             frozen.Attachments.ShouldHaveSingleItem().Content.ShouldBe("# crash source"u8.ToArray());
             File.Exists(evidencePath).ShouldBe(afterTaskCreation);
             await AssertDeliveryAttentionAsync(isolated.ConnectionString, 0, acceptedId);
-            if (cut == "conversion-dispatched")
+            if (cut is "conversion-dispatched" or "conversion-running")
             {
                 var retained = await final.AgentTasks.AsNoTracking()
                     .SingleAsync(t => t.OutboundDeliveryId == acceptedId);
@@ -779,6 +854,7 @@ public sealed class ChannelOutboundRecoveryTests
         }
         finally
         {
+            if (nativeRunner is not null) await nativeRunner.DisposeAsync();
             if (child is not null)
             {
                 if (!child.HasExited) child.Kill(entireProcessTree: true);
@@ -1102,6 +1178,50 @@ public sealed class ChannelOutboundRecoveryTests
         start.ArgumentList.Add(dll);
         start.ArgumentList.Add(config);
         return Process.Start(start) ?? throw new InvalidOperationException("Could not start outbound probe.");
+    }
+
+    private static async Task ReconcileNativeWorkerAsync(string connectionString,
+        DirectSessionRunnerClient runner, Guid taskId, Guid sessionId)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton<ISessionRunnerClient>(runner);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings()));
+        services.AddSingleton(Options.Create(new DeliverablesSettings()));
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<AgentTaskReplyService>();
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddSingleton<DeliverableBundleService>();
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "c0418-native-recovery-worktrees"),
+        });
+        services.AddScoped<AgentTaskService>();
+        await using var provider = services.BuildServiceProvider();
+        var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        while (true)
+        {
+            await runtime.SyncTranscriptAsync(sessionId, watchdog.Token);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, watchdog.Token);
+            if (task.Status == AgentTaskStatus.Succeeded)
+                break;
+            task.Status.ShouldNotBe(AgentTaskStatus.Failed, task.FailureReason);
+            await Task.Delay(100, watchdog.Token);
+        }
+        var native = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
+        native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt);
+        native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText
+            && e.Text != null && e.Text.Contains(DelegationReportFormatter.ReportToken(taskId, "done")));
+        native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd);
     }
 
     [Test]
