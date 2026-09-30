@@ -34,7 +34,7 @@ miniature verifier. Build slot: unleased after 60 s broker wait. CP-1 wall:
 Each identity invokes the main body, which calls the real landing verifier
 once and the independent target verifier once: 6 real invocations total.
 
-CP-3 through CP-5 remain pending.
+CP-5 remains pending.
 
 The first CP-2 attempt at `f3386cc04707d2628a3d1ba87c9535827c2d2915`
 is retained at `.antiphon/checkpoints/20260930-093158-f7a6/`, with its
@@ -131,3 +131,44 @@ S2-S3 attempt can run both rows without the variable, keeping a green
 group report for CP-5's producer gate. The initial attribution to an
 environment collision was incomplete: the missing host pack was the
 underlying defect when apphost generation was enabled.
+
+## Green S2-S3 producer and timing
+
+The final S2-S3 run at `c7a81aeae736d7fe56b4312b50fea731a0321259`,
+`.antiphon/checkpoints/20260930-101423-dfab/`, passed both rows. Its
+complete `report.json` is copied verbatim to
+`.antiphon/c802-after-producer.json` (SHA256
+`847a1b71941a9b2215ecea726b6a3f9a7820ff777ccb600e6559e4dc8f055ae8`).
+The host was Debian 12 x86_64 with SDK 10.0.401; .NET 9 host pack 9.0.20
+was now cached. Both rows waited 60 s for an unavailable build-slot broker
+and ran unleased at the checkpoint tool's restricted CPU budget. The group
+wall was 848.7 s. CP-3 row wall was 191.1 s and CP-4 row wall was 307.7 s.
+
+| CP | Exact filter | Executed | Passed | Failed | Skipped | Fresh TRX |
+|---|---|---:|---:|---:|---:|---|
+| CP-3 | `/*/*/AgentTaskLandSourceFreshnessTests/*` | 59 | 59 | 0 | 0 | `.antiphon/checkpoints/20260930-101423-dfab/rows/CP-3/run.trx` |
+| CP-4 | `/*/*/*/*[Category=Unit]` | 3,534 | 3,534 | 0 | 33 | `.antiphon/checkpoints/20260930-101423-dfab/rows/CP-4/run.trx` |
+
+The CP-4 TRX contains all 3,567 selected Unit identities, counting the
+33 `NotExecuted` skip rows. Joining every TRX test ID through its
+`TestDefinitions/UnitTest/TestMethod` to CP-2's selected discovery by
+Class.Method multiplicity found **zero missing or extra results**.
+The 33 skip identities and their multiplicities matched the frozen ledger.
+
+| C488 method | CP-1 before, s | Final CP-3 after, s | Outcome | Real verifier invocations before → after |
+|---|---:|---:|---|---:|
+| `C488_DetachedFollowUpPublishesReviewedFix` | 17.2107442 | 15.7216391 | passed → passed | 2 → 2 |
+| `C488_BehindSelectsRemote` | 22.9444085 | 0.8081520 | passed → passed | 2 → 0 |
+| `C488_DetachedFollowUpRequiresFetch` | 24.8679250 | 0.3138557 | passed → passed | 2 → 0 |
+| **Combined aliases** | **47.8123335** | **1.1220077** | | **4 → 0** |
+| **Combined three** | **65.0230777** | **16.8436468** | | **6 → 2** |
+
+The final aliases were **97.7%** faster combined and all three were
+**74.1%** faster combined by outer TRX duration, exceeding the plan's
+80%/40% measurement goals. The final CP-3 run had the installed .NET 9
+host pack and no process-wide `UseAppHost=false`; the first green CP-3
+run under CP-1's earlier override independently measured 98.3%/71.0%
+reductions. These are case durations, distinct from row/group walls and
+from CARD-0802's historical 187.870 s main-case sample. The retained
+`C494_DetachedFixVerifierFailurePreventsPublication` separately passed
+in 10.1536085 s in the final class run.
