@@ -304,6 +304,8 @@ function Invoke-C590LiveCase {
     $previewRunId = ''
     if ($names -contains 'previewRunId') { $previewRunId = [string]$Manifest.previewRunId }
     if ($previewRunId -and $previewRunId -cnotmatch '^c849[0-9a-f]{16}0$') { throw 'CachePreviewInvalid' }
+    $expectAccepting = '0'
+    if ($names -contains 'expectAccepting' -and $Manifest.expectAccepting -eq $true) { $expectAccepting = '1' }
     if ($names -contains 'runnerId' -and $Manifest.runnerId) { $runnerId = [string]$Manifest.runnerId }
     if ($Case -eq 'verify-runner-caches' -and $runnerId -notin @('server2', 'server2-temp')) {
         throw 'runnerId rejected'
@@ -367,6 +369,7 @@ function Invoke-C590LiveCase {
             "export C590_TEMP_RETIRED_AT='$tempRetiredAt'"
             "export C590_RUNNER_ID='$runnerId'"
             "export C590_PREVIEW_RUN='$previewRunId'"
+            "export C590_EXPECT_ACCEPTING='$expectAccepting'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '
         $code = Invoke-C590Ssh $remote

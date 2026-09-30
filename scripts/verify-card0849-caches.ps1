@@ -58,6 +58,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
         c604Branch = 'master'
     }
     if ($runners[$i]) { $manifest.runnerId = $runners[$i] }
+    if ($Case -eq 'Both' -or $Case -eq 'Retired') { $manifest.expectAccepting = $true }
     if ($Preview) { $manifest.preview = $Preview }
     if ($previewRunId) { $manifest.previewRunId = $previewRunId }
     New-Item -ItemType Directory -Path $manifest.evidenceRoot -Force | Out-Null

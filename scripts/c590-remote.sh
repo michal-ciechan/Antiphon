@@ -1445,10 +1445,19 @@ C849_SMOKE_SCRIPT
     printf 'C849_SMOKE runner=%s uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n' "$runner_id" >> "$CASE_DIR/smoke-summary.txt"
 }
 
+c849_status_body() {
+    local runner="$1" response code
+    response="$(curl -sS --max-time 15 -w '\n%{http_code}' \
+        "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" || return 1
+    code="${response##*$'\n'}"
+    [ "$code" = 200 ] || return 1
+    printf '%s' "${response%$'\n'*}"
+}
+
 c849_status_zero() {
     local runner="$1" phase="${2:-pre}" body
     command -v jq >/dev/null || return 1
-    body="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" || return 1
+    body="$(c849_status_body "$runner")" || return 1
     printf '%s' "$body" | jq -e '
       .sessions != null and .runnerSessions != null and .queuedTasks != null and
       .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
@@ -1694,7 +1703,7 @@ c849_preview() {
         active=unknown
         if [ -n "$container" ]; then
             active="$(docker exec "$container" /bin/sh -c \
-                "ps -eo uid,comm | awk '\$1==1654 && \$2 ~ /^(dotnet|nuget|npm|node)$/ {n++} END {print n+0}'" 2>/dev/null || true)"
+                "ps -eo uid,args | awk '\$1==1654 && \$0 !~ /Antiphon.SessionRunner/ {n++} END {print n+0}'" 2>/dev/null || true)"
         fi
         printf 'runner=%s cache-processes=%s\n' "$runner" "$active" >> "$CASE_DIR/consumers.txt"
     done
@@ -1736,7 +1745,7 @@ c849_budget_gate() {
 c849_prune_idle() {
     local runner project container body broker mounted expected other active
     for runner in server2 server2-temp; do
-        body="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/$runner/status")" \
+        body="$(c849_status_body "$runner")" \
             || write_result false CacheStatusUnavailable 2
         printf '%s' "$body" | jq -e '
             .sessions != null and .runnerSessions != null and .queuedTasks != null and
@@ -1754,7 +1763,7 @@ c849_prune_idle() {
             continue
         fi
         active="$(docker exec "$container" /bin/sh -c \
-            "ps -eo uid,args | awk '\$1==1654 && \$2 ~ /(dotnet|nuget|npm|node)/ && \$0 !~ /Antiphon.SessionRunner.dll/ {n++} END {print n+0}'")" \
+            "ps -eo uid,args | awk '\$1==1654 && \$0 !~ /Antiphon.SessionRunner/ {n++} END {print n+0}'")" \
             || write_result false CacheConsumerUnknown 2
         [ "$active" = 0 ] || write_result false CacheConsumersBusy 2
     done
@@ -1895,6 +1904,14 @@ case_verify_runner_caches() {
     case "${C590_RUNNER_ID:-}" in server2|server2-temp) ;; *) write_result false CacheRunnerInvalid 2 ;; esac
     c849_prepare no
     c849_require_ready
+    local status
+    status="$(c849_status_body "$C590_RUNNER_ID")" || write_result false CacheRunnerStatusUnavailable 2
+    printf '%s' "$status" | jq -e --arg sha "$SHA" '.buildVersion == $sha and .dispatchEligible == true' >/dev/null \
+        || write_result false CacheRunnerVersionMismatch 2
+    if [ "${C590_EXPECT_ACCEPTING:-0}" = 1 ]; then
+        printf '%s' "$status" | jq -e '.acceptingNewWork == true and .draining == false' >/dev/null \
+            || write_result false CacheRunnerNotAccepting 2
+    fi
     local project container
     project="$HOST_PROJECT"
     [ "$C590_RUNNER_ID" = server2-temp ] && project="$TEMP_PROJECT"
@@ -1947,6 +1964,10 @@ case_verify_runner_caches_retired() {
     require_lane host
     c849_prepare no
     c849_require_ready
+    local status
+    status="$(c849_status_body server2)" || write_result false MainRunnerStatusUnavailable 2
+    printf '%s' "$status" | jq -e --arg sha "$SHA" '.buildVersion == $sha and .dispatchEligible == true and .acceptingNewWork == true and .draining == false' >/dev/null \
+        || write_result false MainRunnerNotAccepting 2
     if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ]; then
         write_result false TempContainersRemain 2
     fi
@@ -2255,7 +2276,7 @@ case_retire_temp_runner() {
     if [ -z "${C590_TEMP_RETIRED_AT:-}" ]; then write_result false TempRunnerNotRetired 2; fi
     c849_status_zero server2-temp || write_result false TempRunnerNotIdle 2
     local live_retired_at
-    live_retired_at="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/server2-temp/status" \
+    live_retired_at="$(c849_status_body server2-temp \
         | jq -r '.retiredAt // empty')" || write_result false TempRunnerStatusUnavailable 2
     [ -n "$live_retired_at" ] || write_result false TempRunnerNotRetired 2
     [ "$(date -u -d "$live_retired_at" +%s 2>/dev/null)" = \
