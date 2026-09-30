@@ -47,6 +47,118 @@ public sealed class RunnerSettlementSyncTests
         result.DesktopAfterSha.ShouldBe(tip);
         (await world.HeadAsync()).ShouldBe(tip);
         publisher.Calls.ShouldBe(1);
+        world.Git.Commands.Count(c => c.StartsWith("ls-remote ", StringComparison.Ordinal)).ShouldBe(2);
+        world.Git.Commands.ShouldNotContain(c => c.Contains("FETCH_HEAD", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task Missing_origin_branch_is_published_from_the_runner_mirror()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.EnsureRunnerAsync();
+        await world.RunAsync(world.Desktop, "push", "origin", "--delete", world.Branch);
+        File.WriteAllText(Path.Combine(world.Runner, "first.txt"), "work");
+        await world.RunAsync(world.Runner, "add", "first.txt");
+        await world.RunAsync(world.Runner, "commit", "-m", "first work");
+        var tip = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+        var publisher = new LocalMirrorPublisher(world);
+
+        var result = await world.Service(publisher: publisher).SyncAsync(world.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized, result.Reason);
+        result.MirrorPushed.ShouldBeTrue();
+        (await world.HeadAsync()).ShouldBe(tip);
+        (await world.RunAsync(world.Desktop, "ls-remote", "origin", world.FullRef)).ShouldStartWith(tip);
+        publisher.Calls.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Dirty_equal_runner_mirror_keeps_no_progress_verdict()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.EnsureRunnerAsync();
+        File.WriteAllText(Path.Combine(world.Runner, "dirty.txt"), "uncommitted");
+
+        var result = await world.Service(publisher: new LocalMirrorPublisher(world))
+            .SyncAsync(world.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.NoPushedProgress);
+        result.MirrorSha.ShouldBe(world.Baseline);
+        result.MirrorRelation.ShouldBe("equal");
+        result.MirrorDirty.ShouldBe(true);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    [Test]
+    public async Task Origin_advance_during_mirror_publish_is_unavailable_without_moving_desktop()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.EnsureRunnerAsync();
+        File.WriteAllText(Path.Combine(world.Runner, "runner.txt"), "runner");
+        await world.RunAsync(world.Runner, "add", "runner.txt");
+        await world.RunAsync(world.Runner, "commit", "-m", "runner");
+        var tip = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+        var publisher = new LocalMirrorPublisher(world)
+        {
+            BeforePush = async () =>
+            {
+                var competing = Path.Combine(world.Root, "competing");
+                await world.RunAsync(world.Root, "clone", "-b", world.Branch, world.Origin, competing);
+                await world.RunAsync(competing, "config", "user.email", "competing@example.invalid");
+                await world.RunAsync(competing, "config", "user.name", "competing test");
+                File.WriteAllText(Path.Combine(competing, "competing.txt"), "competing");
+                await world.RunAsync(competing, "add", "competing.txt");
+                await world.RunAsync(competing, "commit", "-m", "competing");
+                await world.RunAsync(competing, "push", "origin", "HEAD:" + world.FullRef);
+            },
+        };
+
+        var result = await world.Service(publisher: publisher).SyncAsync(world.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.MirrorPublishFailed);
+        result.MirrorSha.ShouldBe(tip);
+        result.MirrorInspection.ShouldBe("push_rejected");
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    [Test]
+    public async Task Mirror_publish_is_bounded_by_the_settlement_sync_budget()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var publisher = new BlockingMirrorPublisher();
+        var clock = new FakeTimeProvider();
+        var service = world.Service(clock, publisher: publisher);
+
+        var sync = service.SyncAsync(world.Task, CancellationToken.None);
+        (await System.Threading.Tasks.Task.WhenAny(publisher.Entered, sync)).ShouldBe(publisher.Entered);
+        clock.Advance(service.SyncBudget);
+        var result = await sync;
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.Timeout);
+        publisher.Cancelled.ShouldBeTrue();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    internal sealed class BlockingMirrorPublisher : IRunnerMirrorPublisher
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public System.Threading.Tasks.Task Entered => _entered.Task;
+        public bool Cancelled { get; private set; }
+
+        public async Task<PhoneHomeWorkspacePublishResponse?> PublishAsync(
+            AgentTask task, string baselineSha, string? remoteSha, CancellationToken ct)
+        {
+            _entered.TrySetResult();
+            try { await System.Threading.Tasks.Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                Cancelled = true;
+                throw;
+            }
+            return null;
+        }
     }
 
     [Test]
@@ -96,6 +208,7 @@ public sealed class RunnerSettlementSyncTests
     internal sealed class LocalMirrorPublisher(SyncWorld world) : IRunnerMirrorPublisher
     {
         public int Calls { get; private set; }
+        public Func<System.Threading.Tasks.Task>? BeforePush { get; init; }
 
         public async Task<PhoneHomeWorkspacePublishResponse?> PublishAsync(
             AgentTask task, string baselineSha, string? remoteSha, CancellationToken ct)
@@ -112,6 +225,8 @@ public sealed class RunnerSettlementSyncTests
             var forward = await world.TryRunAsync(world.Runner, "merge-base", "--is-ancestor", remoteSha ?? baselineSha, tip);
             if (forward != 0)
                 return new(tip, "diverged", true, status.Length > 0, false, null);
+            if (BeforePush is not null)
+                await BeforePush();
             var push = await world.TryRunAsync(world.Runner, "push", "origin", world.FullRef + ":" + world.FullRef);
             return new(tip, "descends", true, status.Length > 0, push == 0,
                 push == 0 ? null : "push_rejected");
