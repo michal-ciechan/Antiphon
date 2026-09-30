@@ -1055,6 +1055,69 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("package-retained");
         output.ShouldContain("no-docker-mutation");
         output.ShouldContain("sibling-retained");
+        var reset = LinuxShell(CacheStatusHarness() + "\n" +
+            Block(Remote(), "c849_prune_idle") + "\n" + Block(Remote(), "c849_reset") + "\n" + """
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache" "$root/volumes"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            C849_PACKAGES=packages; C849_SCRATCH=scratch; C849_NPM=npm
+            RUN=red; LANE=host; HOST_PROJECT=main; TEMP_PROJECT=temp
+            for name in packages scratch npm; do
+                mkdir -m 700 "$root/volumes/$name"
+                printf 'partial\n' > "$root/volumes/$name/payload"
+            done
+            printf 'keep\n' > "$root/sibling"
+            require_lane() { :; }; c849_lock() { :; }; c849_image() { echo image; }
+            c849_volume() { [ "$LABELS_OK" = yes ] || write_result false CacheVolumeForeign 2; }
+            c849_empty_volume() { [ -z "$(find "$root/volumes/$1" -mindepth 1 -print -quit)" ]; }
+            compose_host() { echo broker; }
+            write_result() { printf 'reset-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            docker() {
+                local name
+                case "$1" in
+                    ps) if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer; fi ;;
+                    exec) [ "$BROKER_BUSY" = yes ] && echo busy || echo zero ;;
+                    run)
+                        if [[ "$*" =~ source=([^,]+),target=/cache ]] && [[ "$*" == *'find /cache -mindepth 1 -maxdepth 1 -exec rm -rf'* ]]; then
+                            name="${BASH_REMATCH[1]}"
+                            rm -f "$root/volumes/$name/payload"
+                            return 0
+                        fi
+                        return 1 ;;
+                esac
+                return 0
+            }
+            for fault in sessions null unknown broker inuse foreign marker success; do
+                STATUS=zero; BROKER_BUSY=no; IN_USE=no; LABELS_OK=yes
+                case "$fault" in
+                    sessions|null|unknown) STATUS="$fault" ;;
+                    broker) BROKER_BUSY=yes ;;
+                    inuse) IN_USE=yes ;;
+                    foreign) LABELS_OK=no ;;
+                    marker) printf 'ready\n' > "$C849_READY" ;;
+                esac
+                ( c849_reset ) > "$root/result" 2>&1
+                printf '%s verdict=%s\n' "$fault" "$(cat "$root/result")"
+                if [ "$fault" != success ]; then
+                    [ -f "$root/volumes/packages/payload" ] || echo unsafe-clear
+                fi
+                rm -f "$C849_READY"
+            done
+            [ ! -e "$root/volumes/packages/payload" ] && echo cleared
+            [ "$(stat -c %a "$root/volumes/packages")" = 700 ] && echo root-retained
+            [ "$(cat "$root/sibling")" = keep ] && echo reset-sibling-retained
+            """);
+        foreach (var (fault, diagnosis) in new[] {
+            ("sessions", "CacheConsumersBusy"), ("null", "CacheConsumersBusy"),
+            ("unknown", "CacheConsumersBusy"), ("broker", "CacheBuildSlotsBusy"),
+            ("inuse", "CacheConsumersBusy"), ("foreign", "CacheVolumeForeign"),
+            ("marker", "CacheSeedAlreadyReady") })
+            reset.ShouldContain(fault + " verdict=reset-result=false:" + diagnosis);
+        reset.ShouldContain("success verdict=reset-result=true:");
+        reset.ShouldContain("cleared");
+        reset.ShouldContain("root-retained");
+        reset.ShouldContain("reset-sibling-retained");
+        reset.ShouldNotContain("unsafe-clear");
     }
 
     [Test]
@@ -1144,7 +1207,8 @@ public sealed class RemoteScriptContractTests
             c849_optional_donor() { echo donor; }
             c849_empty_volume() { :; }
             docker() { printf 'docker %s\n' "$*" >> "$root/docker-trace"; return 1; }
-            sudo() { shift; "$@"; }
+            c849_seed_failure() { write_result false "$2" 2; }
+            sudo() { :; }
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"
@@ -1162,6 +1226,22 @@ public sealed class RemoteScriptContractTests
         foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
             gate.ShouldContain(fault + " verdict=seed-result=false:CacheDonorNotIdleDrained");
         gate.ShouldNotContain("unsafe-stop");
+        var cleanup = LinuxShell("""
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            SERVER2_ROOT="$root/server2"; RUN=red
+            mkdir -p "$SERVER2_ROOT/cache"
+            stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
+            printf 'partial\n' > "$stage/payload"
+            printf 'keep\n' > "$root/sibling"
+            write_result() { printf 'seed-failure=%s\n' "$2"; exit "$3"; }
+            """ + "\n" + Block(Remote(), "c849_seed_failure") + "\n" + """
+            ( c849_seed_failure '' Interrupted )
+            [ -e "$stage" ] && echo stage-left || echo stage-cleaned
+            [ "$(cat "$root/sibling")" = keep ] && echo cleanup-sibling-retained
+            """);
+        cleanup.ShouldContain("seed-failure=Interrupted");
+        cleanup.ShouldContain("stage-cleaned");
+        cleanup.ShouldContain("cleanup-sibling-retained");
     }
 
     [Test]
