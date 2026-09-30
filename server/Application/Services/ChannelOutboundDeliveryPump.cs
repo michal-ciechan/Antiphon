@@ -299,6 +299,10 @@ public sealed class ChannelOutboundDeliveryPump
             await _db.SaveChangesAsync(ct);
             if (ProbeBarrierAsync is { } beforeCallBarrier)
                 await beforeCallBarrier("before-producer-call", delivery.Id, ct);
+            // The producer call can be delayed after the earlier Ready validation.
+            // A binding change that commits during that wait owns the final decision.
+            if (!await RevalidateAsync(delivery, beforePublish: true, ct))
+                return;
             var callAt = UtcNow();
             if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d =>
                     d.Id == delivery.Id && d.Version == delivery.Version
