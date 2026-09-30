@@ -643,6 +643,8 @@ public sealed class ChannelOutboundRecoveryTests
                 var nativeInputShape = Path.Combine(root, "native-input-shape.txt");
                 var nativeEnv = spec.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
                 nativeEnv["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
+                if (!OperatingSystem.IsWindows())
+                    nativeEnv["ANTIPHON_FAKE_LF_ENTER"] = "1";
                 spec = spec with { Env = nativeEnv };
                 if (!OperatingSystem.IsWindows())
                 {
@@ -678,13 +680,6 @@ public sealed class ChannelOutboundRecoveryTests
                 await nativeRunner.SendInputAsync(nativeSessionId,
                     $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
                     CancellationToken.None);
-                // FakeGrok prints Ready before its stdin reader begins. Wait until
-                // it consumes the body, or a fast Enter joins that same burst and
-                // is treated as pasted text instead of a submit.
-                using (var bodyWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
-                    while (!File.Exists(nativeInputShape))
-                        await Task.Delay(25, bodyWatchdog.Token);
-                await Task.Delay(50);
                 await nativeRunner.SendInputAsync(nativeSessionId,
                     OperatingSystem.IsWindows() ? "\r" : "\n", CancellationToken.None);
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));

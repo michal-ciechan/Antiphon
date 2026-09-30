@@ -25,6 +25,83 @@ namespace Antiphon.Tests.Application;
 public sealed class ChannelOutboundPolicyTests
 {
     [Test]
+    public async Task Same_name_prompt_edits_affect_only_new_admissions()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(isolated.ConnectionString);
+        var root = Directory.CreateTempSubdirectory("c0418-prompt-revision-").FullName;
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inboundId = Guid.NewGuid();
+        var converterId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var originalPrompt = "Convert the first frozen request.";
+        var editedPrompt = "Convert future requests with new instructions.";
+        var promptPath = Path.Combine(root, "convert.md");
+        var settings = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = new Dictionary<string, ChannelOutboundProfile>
+            {
+                ["convert"] = new() { ProjectId = projectId, AgentId = converterId,
+                    PromptFile = "convert.md", Trigger = ChannelOutboundTrigger.EveryAgentReply,
+                    TimeoutSeconds = 120 },
+            },
+        });
+        try
+        {
+            await File.WriteAllTextAsync(promptPath, originalPrompt);
+            await using var db = new AppDbContext(options);
+            db.Projects.Add(new Project { Id = projectId, Name = "prompt-" + projectId.ToString("N"),
+                CreatedAt = now, UpdatedAt = now });
+            db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "prompt",
+                CreatedAt = now, UpdatedAt = now });
+            db.Agents.AddRange(
+                new Agent { Id = inboundId, BoardId = boardId, Name = "inbound",
+                    Slug = "inbound-" + inboundId.ToString("N"), WorkingDirectory = root },
+                new Agent { Id = converterId, BoardId = boardId, Name = "converter",
+                    Slug = "converter-" + converterId.ToString("N"), WorkingDirectory = root });
+            db.ChatChannels.Add(new ChatChannel { Id = channelId, Provider = "fake",
+                ExternalId = channelId.ToString("N"), AgentId = inboundId,
+                OutboundAgentProfile = "convert", Enabled = true,
+                CreatedAt = now, UpdatedAt = now });
+            await db.SaveChangesAsync();
+            var outbound = new ChannelOutboundService(db,
+                new ChannelOutboundFileStore(Path.Combine(root, "store")),
+                new FakeAntiphonMessagingClient(), settings, TimeProvider.System);
+            var reply = new ChannelReply { Channel = "fake", ConversationId = channelId.ToString("N"),
+                Text = "source answer", Attachments = [new OutboundAttachment
+                {
+                    Kind = AttachmentKind.File, Name = "source.md", Mime = "text/markdown",
+                    Content = "# source"u8.ToArray(),
+                }] };
+            var sessionId = Guid.NewGuid();
+            (await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
+                new ChannelOutboundSource(sessionId, 1, 2, 3, "main", []),
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            await File.WriteAllTextAsync(promptPath, editedPrompt);
+            settings.Value.Profiles["convert"].TimeoutSeconds = 300;
+            (await outbound.SendAsync(reply with { Text = "next source answer" },
+                ChannelOutboundOrigin.AgentReply,
+                new ChannelOutboundSource(sessionId, 4, 5, 6, "main", []),
+                CancellationToken.None)).ShouldBe(ChannelOutboundSendOutcome.Deferred);
+            await using var check = new AppDbContext(options);
+            var rows = await check.ChannelOutboundDeliveries.AsNoTracking()
+                .Where(d => d.ChannelId == channelId).OrderBy(d => d.PromptSequence).ToListAsync();
+            rows.Count.ShouldBe(2);
+            rows[0].PromptText.ShouldBe(originalPrompt);
+            rows[0].PromptRevision.ShouldBe(Convert.ToHexStringLower(
+                SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(originalPrompt))));
+            rows[1].PromptText.ShouldBe(editedPrompt);
+            rows[1].PromptRevision.ShouldBe(Convert.ToHexStringLower(
+                SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(editedPrompt))));
+            rows[0].DeadlineAt.Subtract(rows[0].CreatedAt).TotalSeconds.ShouldBeInRange(119, 121);
+            rows[1].DeadlineAt.Subtract(rows[1].CreatedAt).TotalSeconds.ShouldBeInRange(299, 301);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Test]
     public async Task Revocation_and_rebinding_revalidate_before_launch_and_publish()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
