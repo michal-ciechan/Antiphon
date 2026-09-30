@@ -42,6 +42,7 @@ public sealed class ReportBuild
     public string State { get; set; } = "";
     public double Seconds { get; set; }
     public string Slot { get; set; } = "";
+    public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
 }
 
@@ -54,6 +55,9 @@ public sealed class ReportRow
     public string? Build { get; set; }
     public string State { get; set; } = "";
     public int ExitCode { get; set; }
+    public string? Slot { get; set; }
+    public string? SlotReason { get; set; }
+    public int WaitedSeconds { get; set; }
     public int? Executed { get; set; }
     public int? Passed { get; set; }
     public int? Failed { get; set; }

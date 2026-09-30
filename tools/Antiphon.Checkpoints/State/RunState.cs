@@ -71,7 +71,9 @@ public sealed class BuildProgress
     public string State { get; set; } = "pending";
     public double Seconds { get; set; }
     public string Slot { get; set; } = "";
+    public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    public int AdmissionExitCode { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
 }
 
@@ -84,4 +86,7 @@ public sealed class RowProgress
     public DateTimeOffset? LastOutputAt { get; set; }
     public string? Line { get; set; }
     public int ExitCode { get; set; }
+    public string Slot { get; set; } = "";
+    public string? SlotReason { get; set; }
+    public int WaitedSeconds { get; set; }
 }
