@@ -10,6 +10,30 @@ namespace Antiphon.Tests.Application;
 public sealed class DelegateScriptAdoptTests
 {
     [Test]
+    public async Task C603_RecoverReviewedSourcePostsOwnerIdentityToV2()
+    {
+        var owner = Guid.NewGuid();
+        var review = Guid.NewGuid();
+        var sha = new string('a', 40);
+        await using var server = LandApiStub.Compatible(new string('b', 40));
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Land", owner.ToString("D"),
+            "-ExpectedSourceSha", sha, "-ReviewEvidenceId", review.ToString("D"), "-RecoverReviewedSource");
+        result.ExitCode.ShouldBe(0, result.Output);
+        server.Requests.Count.ShouldBe(2);
+        server.Requests[0].Method.ShouldBe("GET");
+        server.Requests[0].Path.ShouldBe("/api/version");
+        server.Requests[1].Method.ShouldBe("POST");
+        server.Requests[1].Path.ShouldBe($"/api/agent-tasks/{owner:D}/land/v2");
+        using var body = JsonDocument.Parse(server.Requests[1].Body);
+        body.RootElement.TryGetProperty("recoverReviewedSource", out var recoveryFlag).ShouldBeTrue();
+        recoveryFlag.GetBoolean().ShouldBeTrue();
+        body.RootElement.GetProperty("expectedSourceSha").GetString().ShouldBe(sha);
+        body.RootElement.GetProperty("reviewEvidenceId").GetGuid().ShouldBe(review);
+        body.RootElement.TryGetProperty("adoptFromTaskId", out _).ShouldBeFalse();
+        server.LegacyLandPosts.ShouldBe(0);
+    }
+
+    [Test]
     public async Task C675_StatusPrintsReviewEvidenceOfAReviewTask()
     {
         var review = Guid.NewGuid();

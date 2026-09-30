@@ -417,6 +417,9 @@ be an authorized Code/Worktree task in the same project and git common directory
 `GET /api/agent-tasks/{id}` exposes `repairSourceTaskId` and `progressEvidence`
 (`assessment`, `reason`, `sources[].origin` / `ownerTaskId` / `commit`). Land on a repair task
 returns 409 `repair_source_landing_owner_required`.
+For a successful RepairSource with a Failed original owner, use an owner-bound Clean
+Final/Full Review and explicit owner self recovery; the exact command and publication
+checks are in [RepairSource succeeded; owner Failed](orchestration-loop.md#repairsource-failed-owner-recovery).
 Dispatch refuses a `repairSourceTaskId` whose desktop owner ref is behind origin with
 `repair_source_owner_remote_ahead`, or diverged with `repair_source_owner_diverged`. Its failure
 reason gives both SHAs and directs a fresh `-Worktree -StartRef <remote-sha>` task to the reviewed
