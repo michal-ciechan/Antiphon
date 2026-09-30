@@ -2517,6 +2517,104 @@ JS
     printf 'PASS F-6\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
+c849_fixture_nonexternal_loss() {
+    local root="$SERVER2_ROOT/compose-retention" project="c849${RUN}negative" volume
+    docker compose -p "$project" -f "$root/negative.yml" up -d >/dev/null || return 1
+    volume="${project}_cache"
+    docker compose -p "$project" -f "$root/negative.yml" down >/dev/null || return 1
+    docker compose -p "$project" -f "$root/negative.yml" down -v >/dev/null || return 1
+    if docker volume inspect "$volume" >/dev/null 2>&1; then return 1; fi
+    printf 'ExternalCacheLost\n'; return 2
+}
+
+c849_fixture_retention() {
+    local image root main temp name volume target
+    image="$(c849_image)"
+    root="$SERVER2_ROOT/compose-retention"
+    main="c849${RUN}main"; temp="c849${RUN}temp"
+    mkdir -p "$root"
+    cat > "$root/shared.yml" <<EOF
+services:
+  probe:
+    image: $image
+    entrypoint: ["sleep", "infinity"]
+    volumes:
+      - type: volume
+        source: packages
+        target: /home/app/.nuget/packages
+      - type: volume
+        source: scratch
+        target: /var/cache/antiphon/nuget-scratch
+      - type: volume
+        source: npm
+        target: /home/app/.npm/_cacache
+      - runner-tmp:/tmp
+      - work:/work
+      - runner-state:/state
+      - dind-data:/var/lib/docker
+volumes:
+  packages: {external: true, name: $C849_PACKAGES}
+  scratch: {external: true, name: $C849_SCRATCH}
+  npm: {external: true, name: $C849_NPM}
+  runner-tmp: {}
+  work: {}
+  runner-state: {}
+  dind-data: {}
+EOF
+    # A separate project has its own non-external cache and no surviving
+    # consumer. The negative control must observe its deletion on down -v.
+    cat > "$root/negative.yml" <<EOF
+services:
+  probe:
+    image: $image
+    entrypoint: ["sleep", "infinity"]
+    volumes:
+      - cache:/cache
+volumes:
+  cache: {}
+EOF
+    docker compose -p "$main" -f "$root/shared.yml" up -d >/dev/null \
+        || write_result false FixtureMainComposeFailed 2
+    docker compose -p "$temp" -f "$root/shared.yml" up -d >/dev/null \
+        || write_result false FixtureTempComposeFailed 2
+    for name in "$main" "$temp"; do
+        docker compose -p "$name" -f "$root/shared.yml" exec -T probe /bin/sh -c \
+            'test "$(stat -c %a /tmp)" = 1777' \
+            || write_result false FixtureTmpModeInvalid 2
+    done
+    for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        case "$volume" in
+            "$C849_PACKAGES") target=/home/app/.nuget/packages ;;
+            "$C849_SCRATCH") target=/var/cache/antiphon/nuget-scratch ;;
+            "$C849_NPM") target=/home/app/.npm/_cacache ;;
+        esac
+        docker compose -p "$temp" -f "$root/shared.yml" exec -T probe /bin/sh -c \
+            'printf "retained\n" > "$1/retention-sentinel"' sh "$target" \
+            || write_result false FixtureRetentionWriteFailed 2
+    done
+    docker compose -p "$temp" -f "$root/shared.yml" up -d --force-recreate >/dev/null \
+        || write_result false FixtureTempRecreateFailed 2
+    docker compose -p "$temp" -f "$root/shared.yml" down -v >/dev/null \
+        || write_result false FixtureTempDownFailed 2
+    for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        docker volume inspect "$volume" >/dev/null 2>&1 \
+            || write_result false FixtureExternalCacheLost 2
+    done
+    docker compose -p "$main" -f "$root/shared.yml" exec -T probe /bin/sh -c \
+        'test "$(cat /home/app/.nuget/packages/retention-sentinel)" = retained && test "$(cat /var/cache/antiphon/nuget-scratch/retention-sentinel)" = retained && test "$(cat /home/app/.npm/_cacache/retention-sentinel)" = retained && test "$(stat -c %a /tmp)" = 1777' \
+        || write_result false FixtureRetentionReadFailed 2
+    for volume in runner-tmp work runner-state dind-data; do
+        docker volume inspect "${temp}_$volume" >/dev/null 2>&1 \
+            && write_result false FixtureTempPrivateVolumeRetained 2
+        docker volume inspect "${main}_$volume" >/dev/null 2>&1 \
+            || write_result false FixtureMainPrivateVolumeLost 2
+    done
+    c849_fixture_control PC-20 ExternalCacheLost c849_fixture_nonexternal_loss
+    docker compose -p "$main" -f "$root/shared.yml" down -v >/dev/null \
+        || write_result false FixtureMainDownFailed 2
+    printf 'PASS F-7\n' >> "$CASE_DIR/fixture-groups.txt"
+}
+
 c849_fixture() {
     require_lane host
     c849_lock
@@ -2528,13 +2626,14 @@ c849_fixture() {
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     : > "$CASE_DIR/fixture-groups.txt"
-    trap 'if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
+    trap 'if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed
     c849_fixture_nuget_race
     c849_fixture_apphost
     c849_fixture_npm
+    c849_fixture_retention
     write_result false CacheFixtureIncomplete 2
 }
 
