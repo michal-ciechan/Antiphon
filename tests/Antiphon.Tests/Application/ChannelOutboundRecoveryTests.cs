@@ -13,6 +13,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -1288,15 +1289,35 @@ public sealed class ChannelOutboundRecoveryTests
         await using var provider = services.BuildServiceProvider();
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(45));
-        while (true)
+        try
         {
-            await runtime.SyncTranscriptAsync(sessionId, watchdog.Token);
+            while (true)
+            {
+                await runtime.SyncTranscriptAsync(sessionId, watchdog.Token);
+                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, watchdog.Token);
+                if (task.Status == AgentTaskStatus.Succeeded)
+                    break;
+                task.Status.ShouldNotBe(AgentTaskStatus.Failed, task.FailureReason);
+                await Task.Delay(100, watchdog.Token);
+            }
+        }
+        catch (OperationCanceledException) when (watchdog.IsCancellationRequested)
+        {
+            var nativeSnapshot = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
-            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, watchdog.Token);
-            if (task.Status == AgentTaskStatus.Succeeded)
-                break;
-            task.Status.ShouldNotBe(AgentTaskStatus.Failed, task.FailureReason);
-            await Task.Delay(100, watchdog.Token);
+            var stored = await db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId).OrderBy(e => e.Sequence).ToListAsync();
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+            var marker = DelegationReportFormatter.TaskMarker(taskId);
+            var token = DelegationReportFormatter.ReportToken(taskId, "done");
+            throw new InvalidOperationException("Native task reconciliation timed out: "
+                + $"status={task.Status}; nativeKinds={string.Join(',', nativeSnapshot.Entries.Select(e => e.Kind))}; "
+                + $"nativePromptMarker={nativeSnapshot.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt && e.Text?.Contains(marker) == true)}; "
+                + $"nativeReportToken={nativeSnapshot.Entries.Any(e => e.Kind == TranscriptKinds.AssistantText && e.Text?.Contains(token) == true)}; "
+                + $"storedKinds={string.Join(',', stored.Select(e => e.Kind))}; "
+                + $"storedPromptMarker={stored.Any(e => e.Kind == "UserPrompt" && e.Text?.Contains(marker) == true)}; "
+                + $"storedReportToken={stored.Any(e => e.Kind == "AssistantText" && e.Text?.Contains(token) == true)}");
         }
         var native = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
         native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt);
