@@ -1048,6 +1048,188 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("sibling-retained");
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Seed_publishes_complete_payloads_before_its_marker()
+    {
+        var output = LinuxShell(CacheSeedTreeHarness() + """
+            before="$(sha256sum "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+            mkdir -p "$tree/packages/unrelated/1.0.0"
+            printf 'partial\n' > "$tree/packages/unrelated/1.0.0/partial"
+            c849_validate_seed_tree "$tree"
+            after="$(sha256sum "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
+            [ "$before" = "$after" ] && echo payload-hash-preserved
+            [ "$(stat -c %a "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = 755 ] && echo executable-preserved
+            [ ! -e "$tree/packages/unrelated/1.0.0" ] && echo incomplete-excluded
+            [ -s "$tree/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] && echo reference-complete
+            """);
+        output.ShouldContain("payload-hash-preserved");
+        output.ShouldContain("executable-preserved");
+        output.ShouldContain("incomplete-excluded");
+        output.ShouldContain("reference-complete");
+        var seed = Block(Remote(), "c849_seed");
+        Order(seed, "docker stop \"$donor\"", "docker cp \"$donor:/home/app/.nuget/packages/.\"").ShouldBeTrue();
+        Order(seed, "c849_smoke \"$helper\" seed", "mv \"$stage\" \"$recovery\"").ShouldBeTrue();
+        Order(seed, "docker start \"$donor\"", "mv \"$C849_READY.tmp-$RUN\" \"$C849_READY\"").ShouldBeTrue();
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Seed_refuses_invalid_donors_and_partial_payloads()
+    {
+        var output = LinuxShell(CacheSeedTreeHarness() + """
+            for fault in host metadata reference symlink hardlink special; do
+                copy="$root/$fault"; cp -a "$tree" "$copy"
+                case "$fault" in
+                    host) rm "$copy/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ;;
+                    metadata) : > "$copy/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ;;
+                    reference) : > "$copy/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ;;
+                    symlink) ln -s "$root/outside" "$copy/packages/escape" ;;
+                    hardlink) ln "$copy/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" "$copy/packages/escape" ;;
+                    special) mkfifo "$copy/packages/escape" ;;
+                esac
+                diagnosis="$(c849_validate_seed_tree "$copy")"; code=$?
+                printf '%s code=%s diagnosis=%s\n' "$fault" "$code" "$diagnosis"
+            done
+            for path in '../escape' '/tmp/escape'; do
+                diagnosis="$(c849_validate_seed_relative "$path")"; code=$?
+                printf 'path code=%s diagnosis=%s\n' "$code" "$diagnosis"
+            done
+            [ "$(cat "$root/sibling")" = keep ] && echo sibling-preserved
+            """);
+        foreach (var expected in new[] {
+            "host code=2 diagnosis=AppHostDonorMissing", "metadata code=2 diagnosis=AppHostDonorMetadataMissing",
+            "reference code=2 diagnosis=Net9ReferenceDonorMissing", "symlink code=2 diagnosis=CacheDonorUnsafeEntry",
+            "hardlink code=2 diagnosis=CacheDonorUnsafeEntry", "special code=2 diagnosis=CacheDonorUnsafeEntry",
+            "path code=2 diagnosis=CacheDonorUnsafePath", "sibling-preserved" })
+            output.ShouldContain(expected);
+    }
+
+    [Test]
+    public void C849_Deploy_prepares_and_verifies_before_acceptance()
+    {
+        var remote = Remote();
+        foreach (var name in new[] { "case_deploy_parent", "case_deploy_temp_runner" })
+        {
+            var body = Block(remote, name);
+            Order(body, "c849_prepare yes", "seed_runner_checkout").ShouldBeTrue(name);
+            Order(body, "c849_require_ready", "seed_runner_checkout").ShouldBeTrue(name);
+            Order(body, "c849_assert_mounts", "c849_smoke").ShouldBeTrue(name);
+        }
+        Order(Block(remote, "case_deploy_parent"), "c849_smoke", "retire_superseded_server2_images").ShouldBeTrue();
+        var retire = Block(remote, "case_retire_temp_runner");
+        Order(retire, "c849_status_zero server2-temp", "compose_temp down -v").ShouldBeTrue();
+        retire.ShouldContain("c849_require_ready");
+        retire.ShouldContain("c849_budget_gate");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Prune_preview_is_read_only_and_bounded()
+    {
+        var text = Remote();
+        var output = LinuxShell(Block(text, "c849_budget_state") + "\n" + Block(text, "c849_headroom_state") + "\n" + """
+            for n in 79 80 99 100 101; do printf '%s=%s\n' "$n" "$(c849_budget_state "$n" 100)"; done
+            printf 'below=%s\n' "$(c849_headroom_state 21474836479)"
+            printf 'at=%s\n' "$(c849_headroom_state 21474836480)"
+            """);
+        foreach (var value in new[] { "79=OK", "80=WARN", "99=WARN", "100=OVER", "101=OVER", "below=LOW", "at=OK" })
+            output.ShouldContain(value);
+        var preview = Block(text, "c849_preview");
+        preview.ShouldNotContain("c849_prepare");
+        preview.ShouldNotContain("docker stop");
+        preview.ShouldNotContain("docker volume create");
+        preview.ShouldNotContain("chmod ");
+        preview.ShouldContain("c849_observe_volume");
+        preview.ShouldContain("c849_budget_state");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Prune_and_rollback_retain_roots_and_recovery()
+    {
+        var output = LinuxShell(CachePruneHarness() + """
+            CASE=runner-cache-fixture
+            mkdir -p "$root/volumes/packages" "$root/volumes/scratch" "$root/volumes/npm"
+            chmod 0700 "$root/volumes/packages" "$root/volumes/scratch" "$root/volumes/npm"
+            mkdir -p "$root/volumes/packages/unrelated/1.0.0"
+            printf 'remove\n' > "$root/volumes/packages/unrelated/1.0.0/payload"
+            printf 'remove\n' > "$root/volumes/scratch/lock"
+            printf 'remove\n' > "$root/volumes/npm/content"
+            make_preview "$root/volumes/scratch"
+            docker() {
+                local args="$*" target
+                if [ "$1" = image ]; then return 0; fi
+                [ "$1" = run ] || return 2
+                case "$args" in
+                    *"source=$C849_PACKAGES,target=/cache"*) target="$root/volumes/packages" ;;
+                    *"source=$C849_SCRATCH,target=/cache"*) target="$root/volumes/scratch" ;;
+                    *"source=$C849_NPM,target=/cache"*) target="$root/volumes/npm" ;;
+                    *) return 2 ;;
+                esac
+                if [[ "$args" == *'find /cache -mindepth'* ]]; then
+                    if [ "$target" = "$root/volumes/packages" ]; then rm -rf "$target/unrelated"; else rm -f "$target"/*; fi
+                    printf 'clear %s\n' "$target" >> "$root/docker-trace"
+                elif [[ "$args" == *'cp -a'* ]]; then
+                    cp -a "$root/recovery/packages/." "$target/"
+                    printf 'refill %s\n' "$target" >> "$root/docker-trace"
+                fi
+            }
+            c849_fixture_refill() {
+                [ -s "$root/volumes/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] || return 2
+                printf 'smoke-after-refill\n' >> "$root/docker-trace"
+            }
+            c849_budget_gate() { :; }
+            ( c849_prune ) > "$root/verdict" 2>&1
+            code=$?
+            printf 'exit=%s\n' "$code"
+            [ -d "$root/volumes/packages" ] && [ "$(stat -c %a "$root/volumes/packages")" = 700 ] && echo root-retained
+            [ ! -e "$root/volumes/packages/unrelated" ] && [ ! -e "$root/volumes/scratch/lock" ] && [ ! -e "$root/volumes/npm/content" ] && echo selected-cleared
+            [ -s "$root/recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] && echo recovery-retained
+            cat "$root/docker-trace"
+            """);
+        output.ShouldContain("exit=0");
+        output.ShouldContain("root-retained");
+        output.ShouldContain("selected-cleared");
+        output.ShouldContain("recovery-retained");
+        output.ShouldContain("smoke-after-refill");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Cache_receipts_exclude_credentials_and_payloads()
+    {
+        var output = LinuxShell(Block(Remote(), "c849_fixture_receipt") + "\n" + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            printf 'source-sha=%040d\nimage-id=sha256:%064d\ninventories=2\n' 0 0 > "$root/valid"
+            c849_fixture_receipt "$root/valid" "$root/receipt"
+            grep -Fxq inventories=2 "$root/receipt" && echo aggregates-retained
+            printf 'credential=TOKEN_SENTINEL_C849_CONTENT\n' > "$root/toxic"
+            diagnosis="$(c849_fixture_receipt "$root/toxic" "$root/rejected")"; code=$?
+            printf 'toxic-code=%s diagnosis=%s\n' "$code" "$diagnosis"
+            [ ! -s "$root/rejected" ] && echo toxic-not-exported
+            """);
+        output.ShouldContain("aggregates-retained");
+        output.ShouldContain("toxic-code=2 diagnosis=EvidenceNotAllowListed");
+        output.ShouldContain("toxic-not-exported");
+    }
+
+    private static string CacheSeedTreeHarness()
+    {
+        var text = Remote();
+        return """
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            tree="$root/tree"
+            mkdir -p "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" "$tree/packages/microsoft.netcore.app.ref/9.0.20" "$tree/npm" "$root/outside"
+            printf 'host-payload\n' > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+            chmod 0755 "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
+            printf 'metadata\n' > "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
+            printf 'metadata\n' > "$tree/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata"
+            printf 'keep\n' > "$root/sibling"
+            """ + "\n" + Block(text, "c849_validate_seed_relative") + "\n" + Block(text, "c849_validate_seed_tree") + "\n";
+    }
+
     private static string CachePruneHarness()
     {
         var text = Remote();
@@ -1082,7 +1264,7 @@ public sealed class RemoteScriptContractTests
                 local path="$root/volumes/packages"
                 [ "$2" = nuget-scratch ] && path="$SCRATCH_PATH"
                 [ "$2" = npm-content ] && path="$root/volumes/npm"
-                printf '%s %s %s 1654:1654:700 100 100\n' "$1" "$2" "$path"
+                printf '%s %s %s 1654:1654:700 100000 100000\n' "$1" "$2" "$path"
             }
             make_preview() {
                 SCRATCH_PATH="$1"

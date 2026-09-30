@@ -1692,6 +1692,21 @@ c849_observe_volume() {
     printf '%s %s %s %s %s %s\n' "$name" "$role" "$resolved" "$mode" "$bytes" "$budget"
 }
 
+c849_budget_state() {
+    local bytes="$1" budget="$2"
+    [[ "$bytes" =~ ^[0-9]+$ && "$budget" =~ ^[0-9]+$ ]] && [ "$budget" -gt 0 ] \
+        || { printf 'CacheBudgetInvalid\n'; return 2; }
+    if [ "$bytes" -ge "$budget" ]; then printf 'OVER\n'
+    elif [ $((bytes * 5)) -ge $((budget * 4)) ]; then printf 'WARN\n'
+    else printf 'OK\n'; fi
+}
+
+c849_headroom_state() {
+    local free="$1"
+    [[ "$free" =~ ^[0-9]+$ ]] || { printf 'CacheDiskUnavailable\n'; return 2; }
+    if [ "$free" -lt 21474836480 ]; then printf 'LOW\n'; else printf 'OK\n'; fi
+}
+
 c849_preview() {
     require_lane host
     c849_lock
@@ -1714,9 +1729,12 @@ c849_preview() {
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'schema=1\nrun=%s\nsource-sha=%s\nvolume-sha256=%s\nrecovery-bytes=%s\nfree-bytes=%s\ncreated-at=%s\n' \
         "$RUN" "$SHA" "$sha" "$recovery_bytes" "$free_bytes" "$now" > "$CASE_DIR/preview.txt"
-    awk '{if ($5 >= $6) state="OVER"; else if ($5 * 5 >= $6 * 4) state="WARN"; else state="OK"; printf "role=%s bytes=%s budget=%s state=%s\n", $2,$5,$6,state}' \
-        "$roots" > "$CASE_DIR/budgets.txt"
-    if [ "$free_bytes" -lt 21474836480 ]; then printf 'headroom=LOW\n' >> "$CASE_DIR/preview.txt"; else printf 'headroom=OK\n' >> "$CASE_DIR/preview.txt"; fi
+    : > "$CASE_DIR/budgets.txt"
+    while read -r name role path mode bytes budget; do
+        printf 'role=%s bytes=%s budget=%s state=%s\n' "$role" "$bytes" "$budget" \
+            "$(c849_budget_state "$bytes" "$budget")" >> "$CASE_DIR/budgets.txt"
+    done < "$roots"
+    printf 'headroom=%s\n' "$(c849_headroom_state "$free_bytes")" >> "$CASE_DIR/preview.txt"
     : > "$CASE_DIR/consumers.txt"
     if [ "$CASE" = runner-cache-fixture ]; then
         [ -s "$SERVER2_ROOT/fixture-consumers.txt" ] \
