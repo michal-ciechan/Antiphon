@@ -38,8 +38,11 @@ container again under its drain after the disconnected apphost probe and recover
 Do not replace or retire that donor when Seed has refused or before its reconnect with
 fresh zero counters is recorded. No `/tmp` contents or NuGet scratch locks are copied.
 After temp retirement, an accepted ready marker and verified volume payload allow the
-next `deploy-temp` to reuse the caches without a donor container. If a donor container
-exists, Seed still requires its drained zero-counter status and reconnect receipt.
+next `deploy-temp` to reuse the caches when the status is retired, unavailable and not
+dispatch eligible, its bound sessions and queue are zero, and the host confirms the
+temp project has no containers. The absent live connection may make only
+`runnerSessions` null. If a donor container exists, Seed still requires its drained
+zero-counter status and reconnect receipt.
 
 An interrupted first Seed may leave imported content without a ready marker. For that
 specific state, drain both runners and wait for zero `sessions`, `runnerSessions` and

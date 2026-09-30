@@ -1083,7 +1083,7 @@ public sealed class RemoteScriptContractTests
                 case "$1" in
                     ps)
                         [ "$PS_FAIL" = yes ] && return 1
-                        if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer
+                        if [[ "$*" == *volume=* ]] && { [ "$IN_USE" = yes ] || { [ "$2" = -aq ] && [ "$STOPPED_ONLY" = yes ]; }; then echo consumer
                         elif [[ "$*" == *'project=main'* ]]; then echo main; fi ;;
                     exec)
                         if [ "$2" = main ]; then echo 0
@@ -1099,12 +1099,13 @@ public sealed class RemoteScriptContractTests
                 esac
                 return 0
             }
-            for fault in sessions null unknown broker inuse lookup foreign marker success; do
-                STATUS=zero; BROKER_BUSY=no; IN_USE=no; LABELS_OK=yes; PS_FAIL=no
+            for fault in sessions null unknown broker inuse stopped lookup foreign marker success; do
+                STATUS=zero; BROKER_BUSY=no; IN_USE=no; STOPPED_ONLY=no; LABELS_OK=yes; PS_FAIL=no
                 case "$fault" in
                     sessions|null|unknown) STATUS="$fault" ;;
                     broker) BROKER_BUSY=yes ;;
                     inuse) IN_USE=yes ;;
+                    stopped) STOPPED_ONLY=yes ;;
                     lookup) PS_FAIL=yes ;;
                     foreign) LABELS_OK=no ;;
                     marker) printf 'ready\n' > "$C849_READY" ;;
@@ -1123,7 +1124,7 @@ public sealed class RemoteScriptContractTests
         foreach (var (fault, diagnosis) in new[] {
             ("sessions", "CacheConsumersBusy"), ("null", "CacheConsumersBusy"),
             ("unknown", "CacheConsumersBusy"), ("broker", "CacheBuildSlotsBusy"),
-            ("inuse", "CacheConsumersBusy"), ("lookup", "CacheConsumerUnknown"),
+            ("inuse", "CacheConsumersBusy"), ("stopped", "CacheResetInUse"), ("lookup", "CacheConsumerUnknown"),
             ("foreign", "CacheVolumeForeign"),
             ("marker", "CacheSeedAlreadyReady") })
             reset.ShouldContain(fault + " verdict=reset-result=false:" + diagnosis);
@@ -1187,12 +1188,47 @@ public sealed class RemoteScriptContractTests
             require_lane() { :; }
             write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
             c849_prepare() { :; }; c849_image() { echo image; }
-            c849_optional_donor() { :; }; c849_require_ready() { :; }
+            c849_optional_donor() { :; }; c849_no_temp_containers() { :; }; c849_require_ready() { :; }
             docker() { echo unsafe-docker; return 1; }
             ( c849_seed )
             """);
         ready.ShouldContain("seed-result=true:");
         ready.ShouldNotContain("unsafe-docker");
+        var wrapper = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            export ANTIPHON_OPERATOR_TOKEN_FILE="$root/operator-token"
+            printf 'synthetic-test-token' > "$ANTIPHON_OPERATOR_TOKEN_FILE"
+            export C727_TEST_HTTP_STUB="$repo/scripts/fixtures/c727-fake-http.ps1"
+            export C727_TEST_VERIFY_STUB="$repo/scripts/fixtures/c727-fake-verify.ps1"
+            export C727_TEST_WAIT_MS=100 C727_TEST_POLL_MS=5
+            export C727_TEST_STATE="$root/state.json" C727_TEST_TRACE="$root/trace.jsonl"
+            sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            for container in false true; do
+                printf '{"scenario":"retired","sha":"%s","tempDeployed":false,"oldDeployed":false,"oldDraining":false,"tempDraining":true,"tempRetiredAt":"2026-09-27T10:00:00Z","tempContainer":%s,"tempOffline":true,"faultRunner":"","faultField":"","faultKind":"","faultValue":null,"failVerify":""}\n' "$sha" "$container" > "$C727_TEST_STATE"
+                : > "$C727_TEST_TRACE"
+                pwsh -NoProfile -File "$repo/scripts/deploy-server2.ps1" -Rolling -Sha "$sha" -Phase deploy-temp > "$root/out" 2>&1
+                printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$?" "$(jq -r 'select(.kind=="case") | .name' "$C727_TEST_TRACE" | paste -sd, -)"
+            done
+            """);
+        wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
+        wrapper.ShouldContain("retired-container=true exit=2 cases=runner-cache-seed");
+        var noContainer = LinuxShell(Block(Remote(), "c849_no_temp_containers") + "\n" + """
+            TEMP_PROJECT=antiphon-runner-temp
+            write_result() { printf 'host-refusal=%s\n' "$2"; exit "$3"; }
+            docker() {
+                [ "$1" = ps ] || return 1
+                [ "$TEMP_CONTAINER" = yes ] && printf 'leftover-container\n'
+                return 0
+            }
+            TEMP_CONTAINER=no
+            ( c849_no_temp_containers ); printf 'host-empty=%s\n' "$?"
+            TEMP_CONTAINER=yes
+            ( c849_no_temp_containers ); printf 'host-present=%s\n' "$?"
+            """);
+        noContainer.ShouldContain("host-empty=0");
+        noContainer.ShouldContain("host-refusal=CacheTempContainerExists");
+        noContainer.ShouldContain("host-present=2");
     }
 
     [Test]

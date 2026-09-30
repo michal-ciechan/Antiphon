@@ -8,7 +8,8 @@ if ($Case -eq 'verify-runner-caches' -and $request.runnerId -notin @('server2', 
 $entry = [ordered]@{ kind = 'case'; name = $Case; runnerId = $request.runnerId; sourceSha = $request.sourceSha }
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($entry | ConvertTo-Json -Compress)
 if ($Case -eq 'verify-runner-caches' -and $state.failVerify -eq $request.runnerId) { exit 1 }
-if ($Case -eq 'deploy-temp-runner') { $state.tempDeployed = $true; $state.tempRetiredAt = $null }
+if ($Case -eq 'runner-cache-seed' -and $state.tempRetiredAt -and $state.tempContainer -and $state.tempOffline) { exit 1 }
+if ($Case -eq 'deploy-temp-runner') { $state.tempDeployed = $true; $state.tempRetiredAt = $null; $state.tempOffline = $false; $state.tempContainer = $true }
 elseif ($Case -eq 'deploy-parent') { $state.oldDeployed = $true }
 elseif ($Case -notin @('runner-cache-seed', 'verify-runner-caches', 'retire-temp-runner')) { exit 2 }
 $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C727_TEST_STATE
