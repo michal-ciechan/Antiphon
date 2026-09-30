@@ -33,6 +33,8 @@ public static class ReportMerger
             StartedAt = ordered[0].StartedAt,
             EndedAt = latest.EndedAt,
             WallSeconds = (latest.EndedAt - ordered[0].StartedAt).TotalSeconds,
+            MaxConcurrentRows = ordered.Max(run => run.MaxConcurrentRows),
+            MaxConcurrentBuilds = ordered.Max(run => run.MaxConcurrentBuilds),
             ExitCode = ExitCodes.FromRowStates(byId.Values.Select(item => item.Row.ExitCode)),
             Unlisted = latest.Unlisted,
             Evidence = latest.Evidence,

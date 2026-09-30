@@ -127,7 +127,6 @@ public sealed class RunScheduler
                     {
                         var buildSpec = request.Manifest.Builds.First(build => build.Id == nextBuild.Build);
                         buildTask = BuildOneAsync(request, buildSpec, buildStates[buildSpec.Id], session, total.Token);
-                        request.State.MaxConcurrentBuilds = Math.Max(request.State.MaxConcurrentBuilds, 1);
                         Publish(request);
                     }
                 }
@@ -272,6 +271,9 @@ public sealed class RunScheduler
     {
         progress.State = "building";
         progress.StartedAt = DateTimeOffset.UtcNow;
+        request.State.MaxConcurrentBuilds = Math.Max(
+            request.State.MaxConcurrentBuilds,
+            request.State.Builds.Count(item => item.State == "building"));
         Publish(request);
         try
         {

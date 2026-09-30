@@ -23,7 +23,7 @@ public sealed class RunSchedulerTests
         var task = Schedule(driver, manifest, manifest.Checkpoints, 2);
         try
         {
-            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) == 1);
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) >= 1);
             await Task.Delay(100);
             driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
             first.TrySetResult();
@@ -139,10 +139,27 @@ public sealed class RunSchedulerTests
     [Test]
     public async Task unreferenced_builds_end_unused_and_state_records_one_concurrent_build()
     {
-        var driver = InstantDriver();
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = InstantDriver(driver =>
+        {
+            driver.When(request => CheckpointFixtures.IsBuild(request) && request.Arguments.Contains("--property:OutputPath=bin-a/"),
+                async (_, token) => { await first.Task.WaitAsync(token); return new DriverResult(0, "", ""); });
+            driver.When(CheckpointFixtures.IsBuild,
+                async (_, token) => { await second.Task.WaitAsync(token); return new DriverResult(0, "", ""); });
+        });
         var manifest = TwoBuildRows();
         manifest.Builds.Add(new BuildSpec { Id = "bin-unused", Project = "tests/Antiphon.Tests", OutputPath = "bin-unused/" });
-        var result = await Schedule(driver, manifest, manifest.Checkpoints, 2);
+        var task = Schedule(driver, manifest, manifest.Checkpoints, 2);
+        try
+        {
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) >= 1);
+            await Task.Delay(100);
+            first.TrySetResult();
+            await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsBuild) >= 2);
+        }
+        finally { first.TrySetResult(); second.TrySetResult(); }
+        var result = await task;
         result.State.Builds.Single(build => build.Id == "bin-unused").State.ShouldBe("unused");
         result.State.Builds.Count(build => build.State == "ok").ShouldBe(2);
         result.State.MaxConcurrentBuilds.ShouldBe(1);
