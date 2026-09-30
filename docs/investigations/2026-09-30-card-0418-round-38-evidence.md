@@ -79,6 +79,15 @@ real queue send in flight, cuts the dispatcher at the held tool, releases the
 tool, then requires queue completion and a native matching `UserPrompt` before
 the rebuilt server reconciles the task and sends its own second prompt.
 
+The third exact V-15 diagnostic on
+`9f23fd2cbab658fbec814765f26a5306cf6adb42` executed 1 / passed 0 /
+failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-045901-640e/`.
+The queued send reached the held converter before the cut. The next assertion
+was stale: it expected the dispatch-created session to remain `Starting` even
+though the direct runner and queue now correctly advanced it to `Running`.
+The cut assertion now distinguishes the running case.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
