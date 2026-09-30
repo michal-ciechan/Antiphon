@@ -2,8 +2,9 @@
 
 Plan task: `6bdbf52e-007f-4a03-99c9-ef5ad39df238`. Authoring baseline:
 `83ccea1a3483de5357ac7d6b9979c149bc910a55`. This is a test-only change.
-Next stage is TestDesign to check the seams, census procedure and controls below,
-then Code, ordinary Review, land, and post-land SourceLanding Mutation.
+TestDesign task: `f18c8069-92c8-4eed-a5c2-0cfa0315a8ea`, inspected at plan commit
+`8e487dd7f5f3c738b906124feb04e7d179d15177`. Next stage is Code, then ordinary
+Review, land, and post-land SourceLanding Mutation.
 
 ## Ground truth
 
@@ -129,9 +130,11 @@ current census and explicitly reconciles the historical 40 with current 47/59.
 
 | Slice | Concrete work and commit boundary | Checkpoints |
 |---|---|---|
-| S1: capture baseline | Commit the evidence-report scaffold and its exact source SHA, environment and measurement procedure, leaving every test body unchanged. Run the baseline target-method filter and full-assembly discovery; preserve outputs before editing tests. | CP-1, CP-2 |
-| S2: replace the two aliases | Edit the two methods in `tests/Antiphon.Tests/Application/AgentTaskLandSourceFreshnessTests.cs` as D-2/D-3; retain the main/negative methods and all attributes. Add only private arrangement helpers there if needed. | Commit together with S3, then CP-3..CP-5 |
-| S3: reconcile obligations and evidence | Amend the two old plan mappings; record before/after per-case timing, executed identities, full discovery census, historical-roster interpretation and pending PC variants in `docs/investigations/2026-09-30-card-0802-c488-alias-tests-verification.md`. Populate measured after results after checkpoint completion in an evidence-only commit. | CP-3..CP-5; no rebuild for evidence-only prose |
+| S1a: capture baseline executions | Commit the evidence-report scaffold and its exact source SHA, environment and measurement procedure, leaving every test body unchanged. Run the baseline target-method filter with `--keep-outputs`; preserve its report and output. | CP-1 |
+| S1b: capture baseline census | Commit CP-1's baseline result in the evidence report, with no code changes. Copy the tool's complete CP-1 `report.json` verbatim to `.antiphon/c802-before-producer.json`. Discover from that retained build, before editing tests. | CP-2 |
+| S2: replace the two aliases | Edit the two methods in `tests/Antiphon.Tests/Application/AgentTaskLandSourceFreshnessTests.cs` as D-2/D-3; retain the main/negative methods and all attributes. Add only private arrangement helpers there if needed. | Commit together with S3, then CP-3/4; CP-5 follows S4 |
+| S3: reconcile obligations and evidence | Commit with S2: amend the two old plan mappings; record baseline per-case timing, identities, census, historical-roster interpretation, exact Unit count/skip ledger and pending PC variants in `docs/investigations/2026-09-30-card-0802-c488-alias-tests-verification.md`. Run CP-3/4 with `--keep-outputs`. | CP-3, CP-4 |
+| S4: final census | Commit measured CP-3/4 results as evidence-only prose. Copy the complete group `report.json` verbatim to `.antiphon/c802-after-producer.json`. Discover from CP-3's retained build and compare with CP-2; then commit final census evidence. | CP-5; no rebuild for evidence-only prose |
 
 Expected Code writes are exactly the test class, the C488 plan, the C494 plan,
 and the new verification report. TestDesign may refine this plan itself.
@@ -152,6 +155,51 @@ Mutation later edits its own managed snapshot, separately from implementation.
 
 ## Verification design
 
+### Inspection and seam acceptance
+
+TestDesign read the live CARD-0802 description and task `6bdbf52e`'s full Result,
+the two alias bodies, retained main/negative bodies and real-verifier/report
+helpers, `LandingProtocolHarness` request/queue/context/verifier methods,
+`ControlledLandingGit` source observation/advance methods, `LandingSafetyHarness`
+registration/request/queue methods, `LandingGitFixture` initialization, independent
+clone, command tracing and disposal, and the existing real-source observation
+tests. Production inspection covered the Behind arm and committed checkpoints in
+`AgentTaskLandSourceResolver`, `LandOperationFactory.CreateAsync`'s source identity
+and input fields, and `LandingGit.ObserveSourceAsync`'s advertisement/fetch/pin
+confirmation. No shared fixture or production change is needed.
+
+| Boundary inspected | Required implementation/oracle | Coverage |
+|---|---|---|
+| Controlled Behind resolver, real queue and database | Start at A=SeedSha; `AdvanceRemoteSource()` adds child B to the model without moving local A. Queue E=B and the explicit cheap filter, assert `queued.Status == "queued"`, then `RunQueuedAsync() == Complete`. Read the request by returned RequestId in a new context. Assert `SourceRefusalReason` null **before** Resolved/B assertions, then `State=Completed`, Behind, LocalBefore=A, Remote/Candidate/Resolved/Expected=B. Join the operation by `ApprovalLandRequestId == queued.RequestId`; assert schema 3, Original/Reviewed/PreparationInput=B, SourceLocal=A, Landed and non-null verified SHA. | V-2/R-1; 802-PC-1 |
+| Controlled verifier and source protection | `Verifier.Calls == 1`; the single `(Worktree, Filter)` equals the operation's detached land path and saved request filter. RemoteTarget equals the verified SHA, RemoteSource remains B; clear both Commands and Trace immediately before execution. No merge/reset/rebase/stash command may have the task source directory as cwd. Cleanup may remove the local source branch at A. These model observations supplement the production DB verdict. | V-2/R-1; main real-Git coverage remains V-3 |
+| Independent real-Git object acquisition | Use a second `FixtureGit` for all arrangement and oracle reads; hooks remain unset. Detach Observer at A, commit a unique nonce and push B to the exact SourceRef. Before observation assert B != A, canonical SourceRef and source tracking ref at A, canonical and source HEAD at A, bare remote SourceRef=B, and canonical `cat-file -e B^{commit}` fails. Observer has no alternates/shared object store. | V-2/R-1; 802-PC-2a/2b |
+| Pin and content receipt | Call `fixture.Git.ObserveSourceAsync` once with a unique valid source-observed prefix. Assert Accepted, Reason null, SHA=B, fingerprint length 64, pin starts with prefix plus `/`. **Before checking the trace**, independently run `rev-parse --verify <pin>^{commit}`, `cat-file -e B^{commit}` and `show <pin>:nonce.txt`; assert success and exact B/nonce bytes. Recheck unchanged local refs/HEADs and remote B. Finally require exactly one canonical source fetch whose full argv is `fetch --no-tags --no-write-fetch-head <fixture.Remote> <SourceRef>:<returned pin>`. | V-2/R-1; 802-PC-2a/2b |
+| Retained real-verifier oracle | Main and C494 negative test bodies plus `ConfigureRealVerifier`, `RecordingRealVerifier` and `AssertFreshProbeReport` remain unchanged. One recorded land-verifier call plus the explicit independent target-verifier call are **two** real invocations; recorder.Count alone is not the total. Preserve the two fresh one-probe passing TRXs, B behavior/nonce, T content/ancestry, and the separate one-probe failing TRX/no-publication case. | V-3/R-2; inherited 494-PC-30/31/32 |
+| Discovery/importer | Read the pinned discovery probe, `scripts/lib/nightly-coverage.ps1` diagnostic parser, checkpoint table importer, command-row driver and TRX reader. Method OR operands retain suffix `*` because that is the documented pinned extractor syntax; exact three-name TRX equality prevents over-selection. | V-1, V-4, V-5 |
+
+The fresh-context request and operation checks are production outcomes, not
+assertions against values assigned by the test. The fetch test must not call
+`AssertRemoteSourceAsync()` after pushing B: that helper expects SeedSha and
+performs an extra fetch. Use the separate reader with explicit success assertions.
+Neither alias may install `ConfigureRealVerifier`, call any public test body,
+override the observation result, or use an already-local B. These constraints
+make the three controls below reach the intended assertions.
+
+### Delivery inventory and exclusions
+
+No asynchronous delivery path is added or changed. The existing request producer,
+`AgentTaskLandQueue` claim, persisted request/checkpoints and operation remain
+joined by RequestId/ApprovalLandRequestId in V-2. This proves the resolver's
+committed selection and completed protocol, not delivery to a session. There is
+no session recipient or transcript claim here; busy-recipient, enqueue-crash and
+receipt recovery qualification is unchanged and outside this test-only diff.
+
+Remote races, divergence, stale approval, schema-2 repair, endpoint/ref validation,
+publication fences and cleanup combinations retain their existing C488/C494
+methods and controls. CP-3 executes this entire class, including its argument
+rows and retained real-verifier negative case. Re-running other classes' unchanged
+PC batteries, full-assembly execution, native E2E and deployment are excluded.
+
 ### Lane and evidence
 
 The tests remain cross-platform Integration tests with the class-level
@@ -162,20 +210,31 @@ dispatch-eligible and a Linux global default. Resolve defaults again at dispatch
 do not pin a fleet host. Git, the pinned SDK, restored TUnit dependencies,
 Docker/Postgres and the normal build-slot broker must be available.
 
-Use the checkpoint tool, once per committed group:
+Use the checkpoint tool, once per committed group (finish each wait and commit
+its following evidence slice before launching the next command):
 
 ```text
-dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-30-card-0802-c488-alias-tests-plan.md --after S1
-dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-30-card-0802-c488-alias-tests-plan.md --after S2-S3
+dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-30-card-0802-c488-alias-tests-plan.md --after S1a --keep-outputs
+dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-30-card-0802-c488-alias-tests-plan.md --after S1b
+dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-30-card-0802-c488-alias-tests-plan.md --after S2-S3 --keep-outputs
+dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-09-30-card-0802-c488-alias-tests-plan.md --after S4
 dotnet run --project tools/Antiphon.Checkpoints -- wait <run-id> --max-wait 50s
 ```
 
-Continue `wait` on exit 75. All rows are Serial so the discovery-only commands
-run after their producer build and before the tool's successful-run output
-cleanup, and the before/after timing samples do not overlap another row here.
+Continue `wait` on exit 75. **Do not launch all five rows in a single run.**
+`RunScheduler` considers command rows ready immediately; `Serial` means exclusion,
+not an earlier-build dependency. TestDesign therefore split baseline execution
+and discovery into S1a/S1b, and added the evidence-only S4 census group. The
+producer group's `--keep-outputs` prevents successful-run cleanup; each census
+group can clean those manifest-owned outputs after exporting its evidence.
+These four runs contain exactly the original five rows and three builds. All
+rows remain Serial so the timing samples and builds within a group do not overlap.
 Every test-producing row owns one isolated build and one exact filter. CP-2/5
 are explicitly non-TUnit **discovery commands**, reuse their preceding output,
-and report no executed-test count. Their n/a build cells do not launch a build.
+and expect **zero test executions**, with `Min=n/a`. Their n/a build cells do not
+launch a build. Materialize the census driver below in S1a as ignored task-owned
+evidence at `.antiphon/c802-census.ps1`; record its SHA256 in the evidence report
+and use the identical bytes in CP-2/5. This adds no production or shared script.
 Use the same Linux `UseAppHost=false` setting as the checkpoint build.
 
 The tool obtains row build slots. Bootstrap builds/runs of the tool and any
@@ -192,29 +251,183 @@ production landing, deployment or stack restart belongs to this card.
 | V-1 | Each of the three historical exact methods executes once in the before selection; preserve its duration/outcome and fixture verifier cost. | CP-1 |
 | V-2 / R-1 | Behind=A/B assertions and persisted selection/operation fields; fetch absent-object-to-present-pin/content proof; neither alias enters a real verifier. | CP-3, specifically the two aliases |
 | V-3 / R-2 | The original main method still proves B behavior/nonce and T content/ancestry through two real verifier invocations and fresh one-probe TRXs; the distinct verifier-failure test still prevents publication. Remaining 55 class cases stay green. | CP-3, 59 expanded results total |
-| V-4 / R-3 | Default Unit lane, including metadata/classification contracts, remains green. Record actual expanded count; 1 is only a nonzero floor, not a claim about current suite size. | CP-4 |
+| V-4 / R-3 | Default Unit lane, including metadata/classification contracts: exactly U selected result rows, E=U-S executed, E passed, 0 failed, S explicitly accounted skips (definitions below). | CP-4 |
 | V-5 / R-4 | Full unfiltered assembly discovery multiset before/after is identical, including all three named cases exactly once and 59 expanded class cases; reconcile the frozen rosters without rewriting them. Discovery plus executed CP-1/3 results provides census and execution evidence separately. | CP-2, CP-5 and CP-1/3 |
 | V-6 | Before/after timing table for all three methods, plus combined time and verifier-invocation accounting. | CP-1 versus CP-3 |
 
-`--list-tests` is used only for a **full-assembly census**, with no filter: its
-known unscoped behavior is appropriate here. Preserve both raw command logs and
-a normalized sorted multiset of discovery identities, including argument rows.
-Strip only presentation/order noise; do not collapse argument rows into method
-names. Record full assembly total N before and N after, difference 0, and added/
-removed identities (both empty). N is measured, not copied from the frozen 7,038
-source-method inventory. Record this class's 47 source methods separately from
-its 59 expanded cases. Generated `[Test]` text inside the two miniature-source
-string literals is not an outer-assembly test declaration.
+The selected format is the pinned **TUnit 1.44.0 / MTP 2.2.2 diagnostic discovery**
+adapter already used by `scripts/lib/nightly-coverage.ps1`, exported as
+`antiphon-tunit-discovery-v1`. The [recorded nine-row feasibility probe](../../investigations/2026-09-11-card-0487-testdesign-discovery.md)
+demonstrates distinct UIDs for Arguments, MethodDataSource and inherited rows.
+Plain/Detailed list console output supplies only display names;
+`--list-tests --report-trx` is unsupported. Do not use either as a census format.
+No new full-assembly discovery or execution is claimed by TestDesign.
 
-If this runner's discovery output cannot identify expanded rows reliably,
-TestDesign must select its supported machine-readable discovery format before
-Code starts; do not invent counts from display text. Census-only exit zero does
-not prove execution. CP-1 and CP-3 must contain the named executed methods and
-nonzero fresh TRX counts. No unfiltered execution is authorized by a discovery
-row: the requested full-suite census is discovery, not a claim of a green full
-Linux assembly. The older admitted-Linux subset excludes this class and cannot
-substitute for CP-3. A separate full-assembly timing campaign would need its own
-budgeted manifest; its known unrelated platform failures are outside this card.
+CP-2/5 invoke unfiltered `--list-tests --diagnostic --no-ansi --no-progress`.
+The driver below refuses existing output, missing/ambiguous diagnostic logs,
+version drift, duplicate UIDs, missing identity fields, zero discovery and the
+wrong class/name counts. It stores the raw stdout/stderr/diagnostic, assembly
+hash, exported JSON and a sorted normalized multiset before checkpoint cleanup.
+Normalization retains the **entire UID** (including parameter signature and all
+data-row suffixes), assembly simple name, namespace, type, method, categories and
+exclusion bit. Only order, log envelope, display text and assembly hash are
+excluded from equality; the assembly hash is separately retained and may change.
+Do not strip numeric UID suffixes, paths/values inside UIDs, or deduplicate rows.
+The adapter's Signature field is empty for diagnostic text; raw UID and raw
+TestMethodIdentifierProperty records remain the argument-identity evidence.
+
+CP-5 requires byte equality of these sorted identity records and records N before
+and N after, delta 0, added=[] and removed=[]. N is measured, never copied from
+the frozen 7,038-method inventory. The class has 47 source methods / 59 expanded
+rows; generated `[Test]` text inside miniature-source string literals is not an
+outer declaration. Each of the three named methods has exactly one row.
+
+For CP-4, **U** is the number of CP-2 nodes whose Categories contains exactly
+`Unit`, excluding explicitly non-selected OptIn/Explicit identities (retain that
+separate exclusion ledger). **S** is the expanded count of documented existing
+skip identities for this host/settings, and **E=U-S** is the exact expected
+executed count. After CP-2 and before CP-4, Code freezes U, each expected skip and
+its source condition, S and E in the S2-S3 evidence commit. This is a census-bound
+count rule, not permission to accept any nonzero total: `Min=1` is only the
+tool's bootstrap floor. Require CP-4's joined TRX Class.Method multiplicities to
+equal the selected census after the explicit skip ledger, and record the numeric
+E/passed/failed/S alongside the checkpoint line. Existing examples include
+`TimeoutTests`' four Windows-only methods and `AgentRegistrySettingsTests`' npm
+shim case on Linux. An unexpected skip, unmatched row or count mismatch requires
+investigation and a documented manifest/evidence correction, not lowering E to
+the observed passing count. No new skip/category change is authorized.
+
+Census-only exit zero never proves execution. CP-1/3 require exactly 3/59 fresh
+executed TRX results and the exact named methods. No unfiltered execution is
+authorized by a discovery row. The frozen admitted-Linux subset excludes this
+class and cannot substitute for CP-3. A full-assembly timing campaign needs its
+own budgeted manifest.
+
+### Census driver (task-local evidence only)
+
+Save this block verbatim as `.antiphon/c802-census.ps1` before S1a's run. The
+checkpoint command supplies the phase; that phase selects its retained producer
+build and copied tool report. The current commit may differ only in Markdown
+evidence, and the summary records both source and census commits.
+A failed attempt keeps its evidence. Before rerunning the same row, archive its
+exact owned phase directory under an attempt-suffixed name and record the rerun;
+never delete a directory inferred merely from its age/name. Do not run this
+driver outside CP-2/5 or nest another slot wrapper inside those leased rows.
+
+```powershell
+param([Parameter(Mandatory)][ValidateSet('before','after')][string]$Phase)
+$ErrorActionPreference = 'Stop'
+$repo = (Get-Location).Path
+$project = 'tests/Antiphon.Tests'
+$output = 'bin-c802-' + $Phase + '/'
+$root = Join-Path $repo '.antiphon/c802-census'
+$dir = Join-Path $root $Phase
+if (Test-Path -LiteralPath $dir) { throw 'census phase evidence already exists' }
+[void](New-Item -ItemType Directory -Path $dir)
+. (Join-Path $repo 'scripts/lib/nightly-coverage.ps1')
+$producer = Get-Content -Raw (Join-Path $repo ('.antiphon/c802-' + $Phase + '-producer.json')) | ConvertFrom-Json
+$producerRowId = if ($Phase -eq 'before') { 'CP-1' } else { 'CP-3' }
+$expectedExecuted = if ($Phase -eq 'before') { 3 } else { 59 }
+$producerRows = @($producer.rows | Where-Object { $_.id -ceq $producerRowId })
+if ($producer.exitCode -ne 0 -or $producer.commit -notmatch '^[0-9a-f]{40,64}$' -or
+    $producerRows.Count -ne 1 -or $producerRows[0].executed -ne $expectedExecuted -or
+    $producerRows[0].passed -ne $expectedExecuted -or $producerRows[0].failed -ne 0 -or
+    $producerRows[0].skipped -ne 0) { throw 'missing successful producer report' }
+& git merge-base --is-ancestor $producer.commit HEAD
+if ($LASTEXITCODE -ne 0) { throw 'producer commit is not an ancestor' }
+$changed = @(& git diff --name-only $producer.commit HEAD)
+if ($LASTEXITCODE -ne 0 -or @($changed | Where-Object { $_ -cnotmatch '^docs/.+\.md$' }).Count) {
+    throw 'census commit differs from producer beyond documentation'
+}
+$assemblies = @(Get-ChildItem -LiteralPath (Join-Path $project $output) `
+    -Recurse -File -Filter Antiphon.Tests.dll)
+if ($assemblies.Count -ne 1) { throw 'expected one producer test assembly' }
+$assemblyHash = (Get-FileHash -LiteralPath $assemblies[0].FullName -Algorithm SHA256).Hash
+$sha = (& git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'cannot read source commit' }
+$diag = Join-Path $dir 'diag'
+$start = [System.Diagnostics.ProcessStartInfo]::new('dotnet')
+$start.WorkingDirectory = $repo
+$start.UseShellExecute = $false
+$start.RedirectStandardOutput = $true
+$start.RedirectStandardError = $true
+foreach ($arg in @('run', '--project', $project, '--no-build',
+    ('--property:OutputPath=' + $output), '--property:UseAppHost=false', '--',
+    '--list-tests', '--no-ansi', '--no-progress', '--diagnostic',
+    '--diagnostic-output-directory', $diag,
+    '--results-directory', (Join-Path $dir 'results'))) {
+    $start.ArgumentList.Add($arg)
+}
+$process = [System.Diagnostics.Process]::Start($start)
+try {
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    [IO.File]::WriteAllText((Join-Path $dir 'stdout.log'), $stdout.GetAwaiter().GetResult())
+    [IO.File]::WriteAllText((Join-Path $dir 'stderr.log'), $stderr.GetAwaiter().GetResult())
+    if ($process.ExitCode -ne 0) { throw ('discovery exit ' + $process.ExitCode) }
+} finally { $process.Dispose() }
+$logs = @(Get-ChildItem -LiteralPath $diag -Recurse -File -Filter '*.diag' |
+    Where-Object { [IO.File]::ReadAllText($_.FullName).Contains('DiscoveredTestNodeStateProperty') })
+if ($logs.Count -ne 1) { throw 'expected one discovery diagnostic log' }
+$nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $logs[0].FullName -Kind discovery).Nodes)
+if ($nodes.Count -eq 0) { throw 'empty census' }
+$discoveredRecords = @([IO.File]::ReadAllLines($logs[0].FullName) |
+    Where-Object { $_.Contains('DiscoveredTestNodeStateProperty') })
+if ($discoveredRecords.Count -ne $nodes.Count) { throw 'unparsed or duplicated discovered records' }
+$lines = [Collections.Generic.List[string]]::new()
+foreach ($node in $nodes) {
+    foreach ($field in @('Uid','Assembly','Namespace','Type','Method')) {
+        if ([string]::IsNullOrWhiteSpace([string]$node.$field)) { throw ('missing ' + $field) }
+    }
+    [string[]]$categories = @($node.Categories)
+    [Array]::Sort($categories, [StringComparer]::Ordinal)
+    $record = [ordered]@{ uid=$node.Uid; assembly=$node.Assembly;
+        namespace=$node.Namespace; type=$node.Type; method=$node.Method;
+        categories=$categories; excluded=[bool]$node.Excluded }
+    $lines.Add(($record | ConvertTo-Json -Depth 8 -Compress))
+}
+$lines.Sort([StringComparer]::Ordinal)
+$normalized = [string]::Join("`n", $lines) + "`n"
+[IO.File]::WriteAllText((Join-Path $dir 'identities.jsonl'), $normalized)
+$document = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash $assemblyHash
+$document | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $dir 'discovery.json') -Encoding utf8
+$class = @($nodes | Where-Object {
+    $_.Namespace -ceq 'Antiphon.Tests.Application' -and $_.Type -ceq 'AgentTaskLandSourceFreshnessTests'
+})
+if ($class.Count -ne 59 -or @($class.Method | Sort-Object -Unique).Count -ne 47) {
+    throw 'source class must have 47 methods / 59 expanded cases'
+}
+foreach ($method in @('C488_DetachedFollowUpPublishesReviewedFix',
+    'C488_BehindSelectsRemote', 'C488_DetachedFollowUpRequiresFetch')) {
+    if (@($class | Where-Object { $_.Method -ceq $method }).Count -ne 1) {
+        throw ('expected one discovered row for ' + $method)
+    }
+}
+$unit = @($nodes | Where-Object { $_.Categories -ccontains 'Unit' -and -not $_.Excluded })
+$summary = [ordered]@{ phase=$Phase; producerCommit=$producer.commit; censusCommit=$sha; assemblyHash=$assemblyHash;
+    discovered=$nodes.Count; classMethods=47; classCases=59; unitSelected=$unit.Count;
+    executed=0; parser='antiphon-tunit-discovery-v1'; tunit='1.44.0'; mtp='2.2.2' }
+if ($Phase -eq 'after') {
+    $before = [IO.File]::ReadAllText((Join-Path $root 'before/identities.jsonl'))
+    if (-not [string]::Equals($before, $normalized, [StringComparison]::Ordinal)) {
+        throw 'full assembly census differs; retain both files and report added/removed identities'
+    }
+    $summary['delta'] = 0
+    $summary['added'] = @()
+    $summary['removed'] = @()
+}
+$summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $dir 'summary.json') -Encoding utf8
+$summary | ConvertTo-Json -Depth 8 -Compress
+```
+
+This is an evidence producer, not a new TUnit test. Its literal 47/59 and
+three-name assertions can fail on discovery loss/duplication; the exported raw
+records, rather than these constants, establish the observed counts. A discovery
+format failure is a failed checkpoint requiring diagnosis, never permission to
+fall back to display-name counting or to execute the whole assembly.
+
+### Timing and execution evidence
 
 Collect duration from each outer `UnitTestResult`, joined by testId to
 `TestDefinitions/UnitTest/TestMethod` (not display-name guesses). The checkpoint
@@ -247,11 +460,37 @@ Build/setup/zero-test/timeout failures are not kills. No test assertion is
 mutated. Use the managed SourceLanding snapshot and external evidence/restoration
 root described in `docs/testing-and-build.md`.
 
+### Guard inventory
+
+| Guard whose detector changes | Independently bypassable invariant | Unique control |
+|---|---|---|
+| 802-G-1 (488 G-44) | Behind E=B is accepted using observed B rather than stale local A | 802-PC-1 |
+| 802-G-2a (488 G-31, freshness) | A successful observation reports fetched B rather than local A | 802-PC-2a |
+| 802-G-2b (488 G-31, acquisition) | Advertising B is insufficient: B's objects and returned pin exist locally | 802-PC-2b |
+
+Changed-coverage guards=3, mapped=3, missing=0, duplicate control maps=0.
+Other D-2/D-3 assertions corroborate these outcomes or retain existing safeguards;
+no production guard changes. The unchanged real-verifier guards stay mapped to
+494-PC-30/31/32 as below. Historical 488-PC-31 is a family cross-reference, not
+one mutation credited for both acquisition and freshness.
+
+### Executable mutation variants
+
 | Control | Production defect | Exact detector and required red |
 |---|---|---|
-| 802-PC-1 / 488-PC-44 | In `AgentTaskLandSourceResolver.ResolveAsync`, make the Behind arm compare E to local A instead of observed B. This compiles and models preferring stale local source; other guards remain intact. | `/*/*/AgentTaskLandSourceFreshnessTests/C488_BehindSelectsRemote`: expected successful Behind resolution is refused or operation absent; required Candidate/Resolved/Original/Reviewed=B assertions cannot all pass. The fetch-only test does not exercise this resolver. |
-| 802-PC-2a / 488-PC-31 | At the source observation return in `LandingGit.ObserveSourceAsync`, substitute a successful observation of canonical local source A for freshly fetched B. Keep the real fetch and its error handling intact. | `/*/*/AgentTaskLandSourceFreshnessTests/C488_DetachedFollowUpRequiresFetch`: observed SHA must equal independently pushed B, not A. Pin/content correlation also cannot agree. |
-| 802-PC-2b / 488-PC-31 | After validated advertisement and pin-name validation in `ObserveSourceAsync`, replace the fetch/resolve confirmation block with a successful return of advertised B and the generated pin, without fetching or creating it. Leave endpoint/ref parsing intact. | Same exact RequiresFetch filter: success/SHA alone may pass, but source fetch count, pin resolution and B object/content availability must fail. B's proven initial absence makes this a real missing-fetch detector. |
+| 802-PC-1 / 488-PC-44 | In **only the Behind arm** of `AgentTaskLandSourceResolver.ResolveAsync`, replace `if (expected != observed.Sha)` with `if (expected != local)`. Leave factory validation and all other resolver guards intact. | `/*/*/AgentTaskLandSourceFreshnessTests/C488_BehindSelectsRemote`: E=B != A reaches refusal; the fresh request's `SourceRefusalReason.ShouldBeNull()` fails with `reviewed_source_mismatch`. The queued result is otherwise Complete. No call to another test, real verifier or resolver mock can mask this. |
+| 802-PC-2a / 488-PC-31 | At the successful terminal return in `LandingGit.ObserveSourceAsync`, replace `return new(observed, pin, fingerprint, null);` with `return new(await CommitAsync(repository, sourceFullRef, ct), pin, fingerprint, null);`. Leave real fetch, pin validation and both endpoint checks intact. | `/*/*/AgentTaskLandSourceFreshnessTests/C488_DetachedFollowUpRequiresFetch`: Accepted still passes, then `observed.Sha.ShouldBe(b)` fails because the untouched canonical SourceRef resolves A. B was actually fetched/pinned, so this red isolates stale-SHA selection from acquisition. |
+| 802-PC-2b / 488-PC-31 | In `ObserveSourceAsync`, replace the block from `var fetch = await RunAsync(...)` through `if (observed != fields[0]) continue;` with `var observed = fields[0];`. Keep advertisement/OID checks, pin-name validation, the following endpoint-fingerprint check and terminal return unchanged. No fetch/update-ref is added elsewhere. | `/*/*/AgentTaskLandSourceFreshnessTests/C488_DetachedFollowUpRequiresFetch`: Accepted/SHA/prefix pass; the first independent `rev-parse --verify <pin>^{commit>` success assertion fails. B object/content availability and source-fetch count would also fail. Assert pin success before using its output or the trace; a `RequiredAsync` setup exception is not a kill. |
+
+Each variant has exactly **1 passed baseline, 1 intended failed outer test, 1
+passed restored test**, zero skips, across three separate exact-filter phases.
+Three variants therefore require **9 outer results: 6 passing and 3 intended
+failing**, not nine distinct methods. Each phase builds restored/mutant source
+into its own owned output; restoration refreshes timestamps and validates the
+restored production diff. There is no mutation of tests or test doubles. A
+survivor is a detection gap; a compile/setup/timeout/zero-count failure is invalid
+evidence and must be reported as such. These are source-validated compiling
+edits, not a claim that TestDesign executed the mutation battery.
 
 These are three independently reportable mutation variants across two claim
 families. Preserve historical IDs as cross-references, not a claim that old
@@ -282,24 +521,27 @@ C488/C494 full battery is claimed before measurement.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c802-before/` | before-three-claims | `/*/*/AgentTaskLandSourceFreshnessTests/(C488_DetachedFollowUpPublishesReviewedFix*)\|(C488_BehindSelectsRemote*)\|(C488_DetachedFollowUpRequiresFetch*)` | V-1, V-6 | exactly 3 executed, each named method once, 0 failed/skipped; capture all 3 durations | 3 | 15 | true |
-| CP-2 | S1 | n/a | before-full-census | `dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c802-before/ --property:UseAppHost=false -- --list-tests` | V-5 | exit 0; capture full discovery multiset N, 59 class cases, all 3 identities once; execution count n/a | n/a | 2 | true |
+| CP-1 | S1a | `tests/Antiphon.Tests -> bin-c802-before/` | before-three-claims | `/*/*/AgentTaskLandSourceFreshnessTests/(C488_DetachedFollowUpPublishesReviewedFix*)\|(C488_BehindSelectsRemote*)\|(C488_DetachedFollowUpRequiresFetch*)` | V-1, V-6 | exactly 3 executed, each named method once, 0 failed/skipped; capture all 3 durations | 3 | 15 | true |
+| CP-2 | S1b | n/a | before-full-census | `pwsh -NoProfile -File .antiphon/c802-census.ps1 -Phase before` | V-4, V-5 | exit 0; exactly 0 executed; diagnostic multiset N, 47/59 class methods/cases, all 3 identities once; export Unit population U | n/a | 2 | true |
 | CP-3 | S2-S3 | `tests/Antiphon.Tests -> bin-c802-after/` | after-source-class | `/*/*/AgentTaskLandSourceFreshnessTests/*` | V-2, V-3, V-6, R-1, R-2 | exactly 59 executed, 0 failed/skipped; all 3 identities once and their durations | 59 | 15 | true |
-| CP-4 | S2-S3 | `tests/Antiphon.Tests -> bin-c802-unit/` | unit-regression | `/*/*/*/*[Category=Unit]` | V-4, R-3 | all selected, 0 failed; report expanded actual count and every skip | 1 | 5 | true |
-| CP-5 | S2-S3 | n/a | after-full-census | `dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c802-after/ --property:UseAppHost=false -- --list-tests` | V-5, R-4 | exit 0; before/after full identity multisets equal, delta 0; 59 class cases and all 3 identities once; execution count n/a | n/a | 2 | true |
+| CP-4 | S2-S3 | `tests/Antiphon.Tests -> bin-c802-unit/` | unit-regression | `/*/*/*/*[Category=Unit]` | V-4, R-3 | exactly E=U-S executed/passed, 0 failed, S documented skips; U selected identities from CP-2, numeric U/S/E frozen before execution; no missing or extra result identities | 1 | 5 | true |
+| CP-5 | S4 | n/a | after-full-census | `pwsh -NoProfile -File .antiphon/c802-census.ps1 -Phase after` | V-5, R-4 | exit 0; exactly 0 executed; full normalized identity multisets equal, delta 0; 47/59 class methods/cases and all 3 identities once | n/a | 2 | true |
 
 ## Handoff and completion
 
-TestDesign confirms the discovery output format/count normalization and that
-each compiling mutant reaches the intended seam with independent detection.
+TestDesign confirms the existing fixture seams, pinned diagnostic discovery
+format, normalization and three independently reachable production defects by
+source inspection. Its static checks cover the five-row manifest, the embedded
+driver's PowerShell syntax and the 47-method/59-expanded-row source census.
 Retain this closed checkpoint list unless an identified defect requires a
-documented revision. Plan-stage builds/tests/mutations executed: **0**; source
-counts and historical evidence above are explicitly not new execution results.
+documented revision. Plan/TestDesign builds, test executions and mutations: **0**;
+source counts and historical discovery evidence are not new execution results.
 
 Code commits/pushes each slice group before running its rows and finishes with
 an evidence-only report commit. Report every CP with commit, build status,
 exact filter/command, counts, failures/skips, paths and reruns; include before/
-after timing and census tables. Any changed dependency or new class count is
+after timing and census tables, and CP-4's census-derived numeric expectation
+plus skip identities. Any changed dependency or new class count is
 reconciled by identity before changing a Min floor. Code returns `next: review`
 with all three PC variants pending. The caller records the post-land companion
 and commissions Mutation only after ordinary Review and confirmed publication.
