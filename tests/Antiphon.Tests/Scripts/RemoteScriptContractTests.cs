@@ -43,11 +43,17 @@ public sealed class RemoteScriptContractTests
         // host Codex home for uid 1654 -- a chown the host user mc cannot do. It refuses off the
         // host lane before any of its sudo lines.
         var codexHome = Block(text, "ensure_runner_codex_home");
+        var cacheLock = Block(text, "c849_lock");
+        var cacheEvidence = Block(text, "c849_evidence_dir");
+        var cacheSeed = Block(text, "c849_seed");
         foreach (var line in sudoLines)
             (EnsureDirsBody(text).Contains(line, StringComparison.Ordinal)
                 || containment.Contains(line, StringComparison.Ordinal)
                 || tempDeploy.Contains(line, StringComparison.Ordinal)
-                || codexHome.Contains(line, StringComparison.Ordinal))
+                || codexHome.Contains(line, StringComparison.Ordinal)
+                || cacheLock.Contains(line, StringComparison.Ordinal)
+                || cacheEvidence.Contains(line, StringComparison.Ordinal)
+                || cacheSeed.Contains(line, StringComparison.Ordinal))
                 .ShouldBeTrue("sudo outside a declared host-lane case or helper: " + line);
         EnsureDirsBody(text).ShouldContain("if [ \"$LANE\" = \"host\" ]; then");
         var codexCommands = Commands(codexHome);
@@ -913,7 +919,7 @@ public sealed class RemoteScriptContractTests
         ensure.ShouldNotContain(line => line.Contains("chown -R", StringComparison.Ordinal)
             && line.Contains("$SERVER2_ROOT", StringComparison.Ordinal), "a recursive chown over the server2 root");
         var reset = ensure.Single(line => line.Contains("-prune", StringComparison.Ordinal));
-        reset.ShouldBe("sudo -n find \"$SERVER2_ROOT\" -path \"$CODEX_HOME_PATH\" -prune -o -exec chown -h mc:mc {} +");
+        reset.ShouldBe("sudo -n find \"$SERVER2_ROOT\" \\( -path \"$CODEX_HOME_PATH\" -o -path \"$SERVER2_ROOT/cache\" \\) -prune -o -exec chown -h mc:mc {} +");
 
         var visit = reset.Replace("sudo -n ", "", StringComparison.Ordinal)
             .Replace("-exec chown -h mc:mc {} +", "-exec printf 'visit %s\\n' {} +", StringComparison.Ordinal);

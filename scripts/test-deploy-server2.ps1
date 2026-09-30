@@ -25,7 +25,7 @@ function Run-C727 {
     $sentinel = 'SENTINEL_C727_OPERATOR_TOKEN_1234567890'
     if ($TokenPresent) { Set-Content -LiteralPath $tokenPath -Value $sentinel -NoNewline }
     [ordered]@{
-        scenario = $Scenario; sha = $sha; tempDeployed = $false; oldDeployed = $false
+        scenario = $Scenario; sha = $sha; tempDeployed = ($Scenario -in @('busy', 'rerun')); oldDeployed = $false
         oldDraining = $false; tempDraining = ($Scenario -eq 'rerun')
     } | ConvertTo-Json -Compress | Set-Content -LiteralPath $statePath
     $psi = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
@@ -54,20 +54,25 @@ try {
     $t1 = Run-C727 -Scenario happy
     Assert-C727 ($t1.Exit -eq 0) 'T-1 exit'
     $names = @($t1.Trace | Where-Object { $_.kind -eq 'case' } | ForEach-Object name)
-    Assert-C727 (($names -join ',') -eq 'deploy-temp-runner,deploy-parent,retire-temp-runner') 'T-1 case order'
+    Assert-C727 (($names -join ',') -eq 'runner-cache-seed,deploy-temp-runner,verify-runner-caches,deploy-parent,verify-runner-caches,retire-temp-runner') 'T-1 case order'
     $posts = @($t1.Trace | Where-Object { $_.kind -eq 'http' -and $_.method -eq 'POST' })
-    Assert-C727 ($posts.Count -eq 3) 'T-1 post count'
-    Assert-C727 ($posts[0].runnerId -eq 'server2' -and $posts[0].suffix -eq '/drain' -and
-        $posts[0].body.redirectTo -eq 'server2-temp' -and $posts[0].body.retireWhenIdle -eq $false) 'T-1 old drain body'
-    Assert-C727 ($posts[1].runnerId -eq 'server2' -and $posts[1].suffix -eq '/drain/clear') 'T-1 clear order'
-    Assert-C727 ($posts[2].runnerId -eq 'server2-temp' -and $posts[2].suffix -eq '/drain' -and
-        $posts[2].body.redirectTo -eq 'server2' -and $posts[2].body.retireWhenIdle -eq $true) 'T-1 temp drain body'
+    Assert-C727 ($posts.Count -eq 5) 'T-1 post count'
+    Assert-C727 ($posts[0].runnerId -eq 'server2-temp' -and $posts[0].suffix -eq '/drain' -and
+        $posts[0].body.redirectTo -eq 'server2' -and $posts[0].body.retireWhenIdle -eq $true) 'T-1 temp hold body'
+    Assert-C727 ($posts[1].runnerId -eq 'server2-temp' -and $posts[1].suffix -eq '/drain/clear') 'T-1 temp clear order'
+    Assert-C727 ($posts[2].runnerId -eq 'server2' -and $posts[2].suffix -eq '/drain' -and
+        $posts[2].body.redirectTo -eq 'server2-temp' -and $posts[2].body.retireWhenIdle -eq $false) 'T-1 old drain body'
+    Assert-C727 ($posts[3].runnerId -eq 'server2' -and $posts[3].suffix -eq '/drain/clear') 'T-1 main clear order'
+    Assert-C727 ($posts[4].runnerId -eq 'server2-temp' -and $posts[4].suffix -eq '/drain' -and
+        $posts[4].body.redirectTo -eq 'server2' -and $posts[4].body.retireWhenIdle -eq $true) 'T-1 temp drain body'
     Write-Output 'PASS T-1 happy path and drain bodies'
 
     foreach ($scenario in @('missing', 'ineligible')) {
         $t2 = Run-C727 -Scenario $scenario -Phase deploy-temp
-        Assert-C727 ($t2.Exit -eq 2 -and $t2.Out.Contains('TempRunnerNotEligible')) "T-2 $scenario verdict"
-        Assert-C727 (@($t2.Trace | Where-Object { $_.kind -eq 'http' -and $_.method -eq 'POST' }).Count -eq 0) "T-2 $scenario no drain"
+        $diagnosis = if ($scenario -eq 'missing') { 'TempRunnerStatusMissing' } else { 'TempRunnerNotEligible' }
+        Assert-C727 ($t2.Exit -eq 2 -and $t2.Out.Contains($diagnosis)) "T-2 $scenario verdict"
+        Assert-C727 (@($t2.Trace | Where-Object { $_.kind -eq 'http' -and $_.method -eq 'POST' -and
+            $_.runnerId -eq 'server2' }).Count -eq 0) "T-2 $scenario no main drain"
     }
     Write-Output 'PASS T-2 missing and ineligible temp status'
 

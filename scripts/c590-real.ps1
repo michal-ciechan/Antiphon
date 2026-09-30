@@ -14,6 +14,13 @@ $script:C590LiveCases = @(
     'deploy-parent',
     'deploy-temp-runner',
     'retire-temp-runner',
+    'runner-cache-inventory',
+    'runner-cache-fixture',
+    'runner-cache-seed',
+    'verify-runner-caches',
+    'verify-runner-caches-retired',
+    'runner-cache-prune-preview',
+    'runner-cache-prune',
     'nested-residue',
     'persistent-restart',
     'server2-independent-handoff',
@@ -241,6 +248,24 @@ function Invoke-C590LiveCase {
     )
     $root = [string]$Manifest.evidenceRoot
     if (-not $root) { throw 'evidenceRoot is required' }
+    if ($Case -in @('runner-cache-inventory', 'runner-cache-fixture', 'runner-cache-seed',
+            'verify-runner-caches', 'verify-runner-caches-retired', 'runner-cache-prune-preview', 'runner-cache-prune')) {
+        $cacheNames = @($Manifest.PSObject.Properties.Name)
+        if ($cacheNames -notcontains 'sourceSha' -or [string]$Manifest.sourceSha -cnotmatch '^[0-9a-f]{40}$' -or
+            $cacheNames -notcontains 'runId' -or [string]$Manifest.runId -cnotmatch '^[a-z0-9]{1,64}$') {
+            throw 'CacheManifestInvalid'
+        }
+        $cacheRoot = [System.IO.Path]::GetFullPath((Join-Path (Get-C590RepoRoot) '.antiphon'))
+        $candidate = [System.IO.Path]::GetFullPath($root)
+        if (-not $candidate.StartsWith($cacheRoot + [System.IO.Path]::DirectorySeparatorChar,
+                [StringComparison]::OrdinalIgnoreCase)) { throw 'CacheEvidencePathInvalid' }
+        if ($cacheNames -contains 'runnerId' -and [string]$Manifest.runnerId -notin @('server2', 'server2-temp')) {
+            throw 'CacheRunnerInvalid'
+        }
+        if ($Case -eq 'verify-runner-caches' -and $cacheNames -notcontains 'runnerId') {
+            throw 'CacheRunnerInvalid'
+        }
+    }
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     $run = Get-C590RunId -Manifest $Manifest
     $sha = Get-C590Sha -Manifest $Manifest
@@ -271,6 +296,12 @@ function Invoke-C590LiveCase {
 
     $tokenCopied = $false
     $tempRetiredAt = ''
+    $runnerId = ''
+    if ($names -contains 'runnerId' -and $Manifest.runnerId) { $runnerId = [string]$Manifest.runnerId }
+    if ($Case -eq 'verify-runner-caches' -and $runnerId -notin @('server2', 'server2-temp')) {
+        throw 'runnerId rejected'
+    }
+    if ($runnerId -and $runnerId -notin @('server2', 'server2-temp')) { throw 'runnerId rejected' }
     if ($Case -eq 'retire-temp-runner') {
         if ($names -contains 'tempRetiredAt' -and $Manifest.tempRetiredAt) {
             # CARD-0780. ConvertFrom-Json returns ISO-8601 text as [datetime]; [string] gives a
@@ -327,6 +358,7 @@ function Invoke-C590LiveCase {
             "export C604_BRANCH='$c604Branch'"
             "export C604_SERVER_ORIGIN='$c604Origin'"
             "export C590_TEMP_RETIRED_AT='$tempRetiredAt'"
+            "export C590_RUNNER_ID='$runnerId'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         ) -join '; '
         $code = Invoke-C590Ssh $remote
