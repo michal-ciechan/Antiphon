@@ -106,6 +106,18 @@ The next exact-method diagnostic compares native and persisted prompt sequences,
 the queue's attempt baseline, and the shared prompt matcher. It will establish
 whether this is transcript ingestion, a floor mismatch, or a text-match issue.
 
+The sixth diagnostic on `3ffc388ea4e9dbb8287807451019d8c35b5ca111`
+executed 1 / passed 0 / failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-051224-4bbc/`.
+The native and stored transcripts contain the second prompt, the stored row's
+sequence 4 exceeds the queue baseline 3, and the shared matcher accepts its
+text. The fixture had no hosted event pump: its stored row appeared only during
+the queue's post-failure grace, after its verification window. The rebuilt
+fixture now runs production `AgentSessionRuntime.SyncTranscriptAsync` while its
+second `SendNowAsync` waits, representing the live transcript ingestion that
+Program normally supplies through `SessionRunnerEventPump`. The row still comes
+from the native runner transcript, not a test-written prompt.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
