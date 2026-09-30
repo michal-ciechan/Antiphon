@@ -1,10 +1,13 @@
 # CARD-0845: forward named parameters to PowerShell script targets
 
-Date: 2026-09-30. Stage: Plan; next: separate TestDesign.
-Source: `e833925894b5e3d6ffea4d51ee9671b73473a218`.
-CARD-0845 was read in full through `scripts/card.ps1 get CARD-0845`.
-This artifact changes no implementation. The verification design below is the
-proposed closed scope for TestDesign to confirm before Code.
+Date: 2026-09-30. Stage: TestDesign finalized; next: Code.
+Plan source: `e833925894b5e3d6ffea4d51ee9671b73473a218`.
+TestDesign inspected plan/source at `8a30f2b4edca1463d7574c6e68429015a7e09653`
+and re-read CARD-0845 in full through `scripts/card.ps1 get CARD-0845`
+(card `4446f88b-1da0-4146-bead-8c28706b7af7`, board
+`8988ca03-7414-47ad-b0b6-51556c701703`). This artifact changes no implementation.
+TestDesign performed source inspection and a static census only: no builds,
+tests, design probes or mutations. The verification design below is closed for Code.
 
 ## Outcome and collision boundary
 
@@ -172,10 +175,11 @@ arbitrary object/array parameters over a string CLI. Checkpoint's comma-delimite
 `-Expect` and `-MsBuildProperty` conventions remain unchanged. OutputPath is still
 the checkpoint driver's guarded `bin-name/` format, not a path-with-spaces test.
 
-**D-6: separate TestDesign.** Confirm the four new case bodies, exact PASS
-inventories, two modified broker tests and mutation sites below before Code.
-No user decision is needed to choose the child-process design. Return to Plan
-only for a demonstrated incompatibility that cannot fit this boundary.
+**D-6: separate TestDesign completed.** The fixture specifications, exact PASS
+inventories, two broker-test modifications and four observable mutation failures
+are fixed below. Runtime qualification remains Code's work. No user decision is
+needed to choose the child-process design. Return to Plan only for a demonstrated
+incompatibility that cannot fit this boundary.
 
 Rejected alternatives: a home-grown hashtable parser (another PowerShell binder),
 rejecting every `.ps1` target (unnecessarily removes a useful supported command
@@ -195,7 +199,7 @@ Commit and push each slice. Run the ordinary checkpoint group only after S1-S3
 are committed and the tree is clean. No test-only red checkpoint is commissioned;
 the reproduced baseline and the post-land method-scoped controls establish red
 capability. Code reports any extra run and its reason. No runtime test/build is
-required to commit this Plan-only artifact.
+required to commit this TestDesign-only artifact.
 
 ## Verification design
 
@@ -207,7 +211,7 @@ Read bodies: `scripts/{build-slot,test-build-slot,run-checkpoint}.ps1`,
 `BuildSlotTestHost`, `ProcessSpawnLimit`, broker `TryAcquire`, and the owner
 document's Build slots, Checkpoint manifest, Checkpoint runner and Mutation rules.
 
-The new harness cases use `Invoke-C589Wrapper -DisableCommandShim` with a real
+The fresh-process cases use `Invoke-C589Wrapper -DisableCommandShim` with a real
 temporary `.ps1`, the C589 slot shim and a dead `ANTIPHON_BUILD_SLOTS_URL` fallback.
 They do not run run-checkpoint, dotnet or a provider inside their target. Use
 literal `ProcessStartInfo.ArgumentList` in test launchers. Include the wrapper's
@@ -220,6 +224,30 @@ with independently supplied values. A missing payload produces a named assertion
 failure, not a fixture parser exception. Restore test seam variables in finally;
 bound and await every fixture child. Retain each assembly's
 `[ParallelLimiter<ProcessSpawnLimit>]`. No shared helper changes are necessary.
+
+The in-process cases need a **harness-local** caller launcher: start a temporary
+caller directly with `pwsh -NoProfile -NonInteractive -File <caller>`, not as the
+target of another build-slot wrapper. That caller invokes `& <wrapper> @tokens`,
+captures `$LASTEXITCODE` immediately and explicitly exits with it. Otherwise a
+normally completing caller can mask the wrapper's nonzero result. Its raw argv
+names the caller, so the wrapper exercises its `$args` entry path. Seed stale
+`$global:LASTEXITCODE` only in that disposable caller. Keep helpers in
+`scripts/test-build-slot.ps1`; do not edit `ScriptHarness` or the C589 fixtures.
+Use the existing result/wait shape and a 30-second deadline per C845 child,
+drain output and kill/await/dispose an owned tree on timeout. Preserve/restore
+the C589 seam environment around these cases, including any extra fixture
+variables, without changing the shared lease library.
+
+The slot shim already logs `SLOT POST label=... pid=... uri=...` and
+`SLOT DELETE <id>`; its granted ID is `$script:Lease`. Parse exactly one POST
+holder PID and require a positive integer before comparing it with the fixture
+PID. Require exactly one DELETE overall **and** that it names this granted ID.
+The real fixture appends its own `CMD <scenario>` to the same log; the disabled
+command shim cannot supply a body marker. For JSON cases emit one prefixed JSON
+line, catch parse failures, check required properties, then guard comparisons on
+that success. Always emit the full assertion inventory, even when the payload is
+missing. `Wait-C589Wrapper.Text` merges stdout and stderr, so distinct sentinels
+there prove both arrived, without claiming separate-stream attribution.
 
 ### Proves it works now
 
@@ -235,9 +263,107 @@ Internal scenario/PASS counts are not TUnit execution counts.
 | V-4 `C845_WrapperPreservesScriptPathsAndValues` | Put the script and caller working directory under a temporary path with spaces. Use named string values containing spaces, embedded quotes, an empty string, literal dollar/semicolon/subexpression text, wildcard/bracket filter text and a trailing backslash. Require target execution and exact JSON values; no interpolation side-effect marker. Include a relative target and named relative path, launched after Push-Location differs from Environment.CurrentDirectory, and an absolute script path. Require the fixture's cwd equals the caller's location. |
 
 Use small independent fixture files/subcases inside each method; no sleeps are
-needed for these four tests. Wire C845 discovery into the standalone harness and
-update its assertion-count floor. TestDesign fixes the exact named PASS inventory
-in the C# wrappers; do not copy the existing aggregate floor as an exact census.
+needed for these four tests. The following is the exact C845 PASS inventory.
+Each row expands the Cartesian product of its listed scenarios and suffixes;
+the name is `C845 <method without C845_> <scenario> <suffix>` with single spaces.
+For example, `C845 WrapperBindsNamedScriptParameters file-true binds typed values`.
+Pass every expanded name as a `requiredRows` entry and the stated count as
+`expectedRows` to `RunHarnessCaseAsync("test-build-slot.ps1", "C845", ...)`.
+Each predicate below is one `Assert-C487`, not an extra TUnit method.
+
+| Method stem | Exact scenario names | Exact assertion suffixes | PASS rows |
+|---|---|---|---:|
+| `WrapperBindsNamedScriptParameters` | `file-true`, `file-false`, `inprocess-true`, `inprocess-false` | `exits zero`; `payload parses`; `binds typed values`; `runs outside the lease holder` | 16 |
+| `WrapperPropagatesScriptExitCodes` | `exit0`, `exit7`, `exit23`, `normal23`, `parent37` | `propagates the process exit`; `preserves body and stream sentinels` | 10 |
+| `WrapperReleasesLeaseAfterScriptFailure` | `exit9`, `throw`, `binding`, `unresolved` | `returns the failure exit`; `observes the body boundary`; `releases the granted lease in order` | 12 |
+| `WrapperPreservesScriptPathsAndValues` | `absolute`, `pushed-relative` | `exits zero`; `payload parses`; `preserves literal values`; `uses caller location`; `resolves relative input`; `does not evaluate text` | 12 |
+
+Concrete fixture/expected-value rules:
+
+- **V-1 (16 rows):** declare `[string]$Name`, `[string]$Project`,
+  `[string]$OutputPath`, `[int]$MinExecuted`, `[switch]$Switch`, `[string]$Expect`
+  in that order. Send `-Expect A.One,B.Two -OutputPath bin-c845/ -MinExecuted 3
+  -Project 'project folder/app' -Name CP-1` followed by `-Switch` or the single
+  literal token `-Switch:$false`. This reordering makes the old positional splat
+  bind `bin-c845/` to the integer MinExecuted and fail before the body. Compare
+  every value with these independent inputs; JSON must contain numeric 3 and a
+  Boolean switch (emit `Switch.IsPresent`), not stringified stand-ins. All four
+  payloads must have a positive PID unequal to the logged holder PID; require
+  one POST and `POST,CMD,DELETE`, so the assertion also observes lease custody.
+  PID inequality proves a separate process; source inspection establishes direct
+  parentage, which the offline shim does not expose.
+- **V-2 (10 rows):** separate targets for explicit `exit 0`, `exit 7`, `exit 23`,
+  and normal completion after `$global:LASTEXITCODE = 23`. A fifth case uses a
+  normal target from a caller seeded with `$global:LASTEXITCODE = 37`. Expected
+  outer process exits are respectively 0, 7, 23, 0, 0, all without timeout.
+  Each target writes exactly one `CMD <scenario>`, a unique stdout sentinel via
+  `[Console]::Out.WriteLine` and a unique stderr sentinel via
+  `[Console]::Error.WriteLine` before completing. Avoid `Write-Error`, whose
+  behavior depends on error preferences. Require all three sentinels per case.
+- **V-3 (12 rows):** append `CMD exit9`/`CMD throw` immediately before `exit 9`
+  or a terminating `throw`. The binding target has `param([int]$Count)` and gets
+  `-Count not-an-integer`; its first body statement would append `CMD binding`.
+  The unresolved target is a unique nonexistent absolute `.ps1` path in the
+  owned fixture directory. Expected exits are 9, 1, 1 and nonzero, with no
+  timeout. Require one correct body marker for exit9/throw and no CMD marker
+  for binding/unresolved. Require exactly one POST and matching DELETE, with
+  exact `POST,CMD,DELETE` or `POST,DELETE` order respectively. Absence of a body
+  marker alone cannot pass a release assertion.
+- **V-4 (12 rows):** both fixture paths and working directories contain spaces.
+  Both subcases send distinct named string values for spaces, embedded single
+  and double quotes, empty text, literal dollar/semicolon/subexpression text,
+  wildcard/bracket text and a trailing backslash. Declare the empty string
+  parameter with `[AllowEmptyString()]`. Compare each JSON field case-sensitively
+  with the independently supplied token, including the empty string. Put a
+  unique side-effect-marker path inside the literal subexpression text and
+  require its absence after successful execution. Each fixture also receives
+  a relative input-file path and reads a unique prewritten sentinel from it;
+  assert both the unmodified path string and the sentinel. `absolute` uses a
+  full target path via the wrapper's fresh-process entry. `pushed-relative`
+  starts a disposable caller in a different directory, performs `Push-Location`
+  and invokes the wrapper with `./driver folder/target.ps1`. Record caller
+  location and `[Environment]::CurrentDirectory` before invocation and require
+  they differ; require the child cwd to equal the independently known pushed
+  directory and its relative input read to succeed. The fixture never evaluates
+  or joins argument text into code.
+
+### Static census and harness discovery
+
+At the inspected SHA, `BuildSlotScriptTests` has 13 `[Test]` methods and
+`BuildSlotEndToEndTests` has two; none has `[Arguments]` or a data source. Only
+the explicitly excluded SIGINT method has an OS skip. Renaming the C800 script
+case replaces one method, so it does not increase this census.
+
+| CP-1 existing method (post-rename name) | TUnit executions | Harness PASS rows |
+|---|---:|---:|
+| `C589_WrapperRunsUnderLease` | 1 | 7 |
+| `C589_WrapperMaxCpuCountRules` | 1 | 12 |
+| `C589_WrapperReleasesOnFailure` | 1 | 2 |
+| `C589_WrapperTimeout` | 1 | 3 |
+| `C589_WrapperUnreachableAtDeadline` | 1 | 4 |
+| `C589_WrapperUnreachable` | 1 | 4 |
+| `C589_WrapperAsciiOnly` | 1 | 5 |
+| `Wrapper_renews_a_renew_mode_grant_while_the_command_runs` | 1 | 2 |
+| `C800_WrapperPassesWildcardArgvLiterally` | 1 | 6 |
+| `C800_WrapperStartsUnitFilterWithinDeadline` | 1 | 3 |
+| `C800_WrapperForwardsScriptTokens` | 1 | 4 |
+| `C800_WrapperLaunchesNativeExecutableLiterally` | 1 | 3 |
+| Existing portable subtotal | 12 | 55 |
+| Four C845 methods above | 4 | 50 |
+| CP-1 total on either OS | **16** | **105** |
+
+The C589 harness subtotal is **39**, not the current aggregate floor's 35:
+MaxCpuCountRules has eleven loop rows plus its wrapper row, and AsciiOnly checks
+five files. Keep their existing per-case counts/required names. C800 contributes
+16 portable rows, plus three Linux-only interrupt rows outside CP-1. Add
+`Get-C487CaseFunctions -Prefix 'C845_'` to standalone discovery and change its
+floor to `39 + 16 + 50 + $(if ($IsLinux) { 3 } else { 0 })`: **105 on Windows,
+108 on Linux**. This fixes accounting inside the existing harness, not checkpoint
+tooling. The standalone harness is not an additional commissioned run.
+
+Together with the two unchanged-count broker methods below, ordinary execution
+is **16 + 2 = 18 tests per OS, 36 across both OSes**, with zero skips. These are
+static expectations for the future implementation, not executed results.
 
 **V-5: real broker composition, two existing executions.** In
 `BuildSlotEndToEndTests.Wrapper.Start`, replace the target's `pwsh ... -File hold`
@@ -252,6 +378,14 @@ assertions:
 - `A_wrapper_killed_mid_hold_is_reaped_and_the_waiter_is_granted`: kill only the
   test-owned wrapper tree, then the waiting wrapper runs and the dead holder's
   lease is absent. This proves reap behavior, not finally-after-hard-kill.
+
+The exact replacement tail is `hold, "-Seconds", holdSeconds.ToString(), "-File",
+marks, "-Name", label`, each a separate `ArgumentList` element. The fixture's
+existing declaration is Name/File/Seconds; keep it unchanged so this is named
+binding rather than coincidentally correct positional order. Keep the existing
+90-second bounds, process limiter and test-owned process-tree cleanup. The first
+method asserts zero occupancy after both normal completions; the hard-kill method
+asserts waiter completion and absence of the dead holder, not a finally receipt.
 
 ### Guards the regression
 
@@ -296,10 +430,10 @@ inherited boundaries, not newly qualified mutations.
 
 | Guard | Positive control and deliberate production fault | Exact method filter; intended red |
 |---|---|---|
-| G-1: named script binding and child isolation (D-1) | PC-1: replace only the new ExternalScript dispatch with the old `& $command[0] @rest` plus its old exit fallback. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperBindsNamedScriptParameters*`; named-values/exit-0 assertion fails on the binder error (and PID inequality fails if a subcase reaches the body). |
-| G-2: process exit propagation (D-2) | PC-2: keep the script child launch/await but assign `$code = 0` after it. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperPropagatesScriptExitCodes*`; the exit-7 and exit-23 comparisons fail. |
-| G-3: release after failure (D-3) | PC-3: guard the wrapper finally's `Exit-AntiphonBuildSlot` call with `$code -eq 0`. Keep child disposal and the offline slot shim unchanged. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperReleasesLeaseAfterScriptFailure*`; missing matching DELETE/order assertion fails while target exit assertions remain correct. |
-| G-4: literal script path and values (D-5) | PC-4: in the existing launcher, replace the ArgumentList population with `$psi.Arguments = $Arguments -join ' '`. Keep the harness launcher literal and the fixture file intact. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperPreservesScriptPathsAndValues*`; target-path-with-spaces execution or exact-value assertion fails. A target path split by this production mutation is the intended defect; the test harness and TUnit host must still complete. |
+| G-1: named script binding and child isolation (D-1) | PC-1: replace only the new ExternalScript dispatch with the old `& $command[0] @rest` plus its old exit fallback. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperBindsNamedScriptParameters*`; `FAIL C845 WrapperBindsNamedScriptParameters file-true exits zero` observes exit 1 from the MinExecuted binding error. `file-true binds typed values` also fails safely without JSON. |
+| G-2: process exit propagation (D-2) | PC-2: keep the script child launch/await but assign `$code = 0` after it, only in ExternalScript dispatch. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperPropagatesScriptExitCodes*`; `FAIL C845 WrapperPropagatesScriptExitCodes exit7 propagates the process exit` observes 0 instead of 7; the exit23 assertion also fails. Body/stream assertions stay green. |
+| G-3: release after failure (D-3) | PC-3: guard the wrapper finally's `Exit-AntiphonBuildSlot` call with `$code -eq 0`. Keep child disposal and the offline slot shim unchanged. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperReleasesLeaseAfterScriptFailure*`; `FAIL C845 WrapperReleasesLeaseAfterScriptFailure exit9 releases the granted lease in order` observes `POST,CMD` without the matching DELETE. The exit9 and body assertions stay green. |
+| G-4: literal script path and values (D-5) | PC-4: in the existing launcher, replace the ArgumentList population with `$psi.Arguments = $Arguments -join ' '`. Keep the harness launcher literal and the fixture file intact. | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/C845_WrapperPreservesScriptPathsAndValues*`; `FAIL C845 WrapperPreservesScriptPathsAndValues absolute exits zero` observes the spaced target path split before the body. Payload/value assertions also fail safely. The test harness and TUnit host must still complete. |
 
 Run each PC separately after confirmed land in SourceLanding Mutation. For every
 phase use its exact method filter, `-Expect BuildSlotScriptTests.<method>` and
@@ -308,6 +442,13 @@ Red: exactly 1 executed/failed, 0 passed/skipped, driver exit 1 with the named
 assertion. Restore exact source bytes, refresh timestamps and rebuild green:
 exactly 1 executed/passed, 0 failed/skipped, exit 0. A compiler error, missing TRX,
 zero selection, harness startup failure or timeout is not a PC red.
+
+`ScriptHarness` first asserts harness exit 0 and includes the full captured output
+in that failure. Therefore the intended red TRX may report that outer assertion;
+its diagnostic must contain the exact `FAIL C845 ...` line above. A target's
+binding error or split-path refusal is intended production behavior under PC-1
+or PC-4; an unhandled fixture parsing exception is not. These are statically
+validated mutation sites and expected observations, not executed PC evidence.
 
 Copy the unchanged checkpoint driver and its required library/helper files into
 the task's external evidence root before mutation, as the testing owner requires.
@@ -352,12 +493,19 @@ floor. Report CP-n lines with executed/passed/failed/skipped, commit, platform,
 TRX, slot state, elapsed time and reruns. Exit 4 is a slot timeout with no work
 admitted; never bypass it with NoSlot. Report any existing unleased fallback.
 
+The filters enumerate every selected method with the owner's parenthesized
+method-OR syntax. Static inspection of `PlanTableImporter.RosterTokens` confirms
+that these operands also become the tool's expected name tokens. The `Expect`
+cell's prose does not enforce exact counts or zero skips: compare the reported
+executed roster with the census above and both V-5 names. This requires no
+checkpoint-tool change and no discovery/test run during TestDesign.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c845-scripts/` | script-targets | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/(C589_*)\|(Wrapper_*)\|(C800_WrapperPassesWildcardArgvLiterally*)\|(C800_WrapperStartsUnitFilterWithinDeadline*)\|(C800_WrapperForwardsScriptTokens*)\|(C800_WrapperLaunchesNativeExecutableLiterally*)\|(C845_*)` | V-1, V-2, V-3, V-4, R-1 | exactly 16 passed: 4 new C845 + 12 existing portable methods; 0 failed/skipped on either OS | 16 | 9 | 12 | true |
-| CP-2 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c845-broker/` | script-broker | `/*/Antiphon.SessionRunner.Tests/BuildSlotEndToEndTests/*` | V-5 | both named existing methods, exactly 2 passed; 0 failed/skipped on either OS | 2 | 4 | 6 | true |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c845-scripts/` | script-targets | `/*/Antiphon.Tests.Scripts/BuildSlotScriptTests/(C589_WrapperRunsUnderLease*)\|(C589_WrapperMaxCpuCountRules*)\|(C589_WrapperReleasesOnFailure*)\|(C589_WrapperTimeout*)\|(C589_WrapperUnreachableAtDeadline*)\|(C589_WrapperUnreachable*)\|(C589_WrapperAsciiOnly*)\|(Wrapper_renews_a_renew_mode_grant_while_the_command_runs*)\|(C800_WrapperPassesWildcardArgvLiterally*)\|(C800_WrapperStartsUnitFilterWithinDeadline*)\|(C800_WrapperForwardsScriptTokens*)\|(C800_WrapperLaunchesNativeExecutableLiterally*)\|(C845_WrapperBindsNamedScriptParameters*)\|(C845_WrapperPropagatesScriptExitCodes*)\|(C845_WrapperReleasesLeaseAfterScriptFailure*)\|(C845_WrapperPreservesScriptPathsAndValues*)` | V-1, V-2, V-3, V-4, R-1 | exactly the 16 methods in the static census, all passed; 0 failed/skipped on either OS | 16 | 9 | 12 | true |
+| CP-2 | S1-S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c845-broker/` | script-broker | `/*/Antiphon.SessionRunner.Tests/BuildSlotEndToEndTests/(Two_wrappers_on_a_budget_of_one_run_one_after_the_other*)\|(A_wrapper_killed_mid_hold_is_reaped_and_the_waiter_is_granted*)` | V-5 | exactly the 2 named V-5 methods, both passed; 0 failed/skipped on either OS | 2 | 4 | 6 | true |
 
 ### Cost
 
@@ -377,6 +525,10 @@ OSes. There is no claimed build-count saving from reuse; the brief requires one
 isolated build per row. Avoiding full Unit/namespace runs bounds the ordinary work
 to the wrapper's behavior and real broker composition.
 
+Ordinary plus Mutation verification is **103-139 estimated minutes**, **16
+isolated builds / 48 TUnit executions**, before optional bootstrap, queue/restore
+time and authoring/Review. TestDesign adds no runtime verification spend.
+
 ## Acceptance and handoff
 
 The direct script branch binds named values and uses literal child argv; all
@@ -385,7 +537,15 @@ paths work on both OSes; existing portable wrapper behavior remains green; the
 real budget-one broker admits the waiting wrapper after completion/death. Both
 broken checkpoint recipes are corrected without modifying checkpoint source.
 
-TestDesign should validate the exact PASS inventories and mutation viability,
-confirm CP-1's renamed-method filter/count and CP-2 fixture wiring, then hand the
-same bounded plan to Code. Plan claims only source inspection and the four Linux
-design probes. Checkpoint and positive-control execution remain pending.
+TestDesign confirms the four fixture specifications against the actual wrapper,
+slot/command shims and assertion harness; the exact 16/2 checkpoint roster; the
+renamed method's four retained assertions; direct named V-5 wiring; and four
+distinct faults with named observable failures. It corrects the standalone
+floor's 35-versus-39 C589 accounting and pins 50 new PASS rows, without adding
+TUnit executions beyond the planned four. The build-slot-only boundary and
+direct self-leasing checkpoint recipes remain unchanged.
+
+Code implements S1-S3, commits/pushes each slice, then runs only CP-1 and CP-2
+on real Linux and Windows with the recorded exact rosters and clean source
+receipts. Ordinary verification and all post-land PCs remain pending. The four
+Linux probes above are historical Plan evidence, not TestDesign execution.
