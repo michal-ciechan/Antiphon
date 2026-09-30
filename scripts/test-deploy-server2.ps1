@@ -23,7 +23,8 @@ function Complete-Group {
     Write-Output "PASS T-$Number $Name"
 }
 function Run-C727 {
-    param([string]$Scenario, [string]$Phase = 'all', [hashtable]$Set = @{}, [bool]$TokenPresent = $true)
+    param([string]$Scenario, [string]$Phase = 'all', [hashtable]$Set = @{}, [bool]$TokenPresent = $true,
+        [string]$SavedDonor = '')
     $script:invocations++
     $dir = Join-Path $tempRoot ($Scenario + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -45,6 +46,10 @@ function Run-C727 {
     $psi.RedirectStandardError = $true
     foreach ($arg in @('-NoProfile', '-File', $driver, '-Rolling', '-Sha', $sha, '-Phase', $Phase, '-WaitIdleMinutes', '1')) {
         [void]$psi.ArgumentList.Add($arg)
+    }
+    if ($SavedDonor) {
+        [void]$psi.ArgumentList.Add('-SavedDonor')
+        [void]$psi.ArgumentList.Add($SavedDonor)
     }
     $psi.Environment['ANTIPHON_OPERATOR_TOKEN_FILE'] = $tokenPath
     $psi.Environment['C727_TEST_HTTP_STUB'] = $http
@@ -220,11 +225,24 @@ try {
     }
     Complete-Group 16 'conflicts/unavailable'
 
-    if ($script:groups -ne 16 -or $script:invocations -ne 46 -or $script:assertions -ne 149) {
+    $retired = @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $false; tempOffline = $true }
+    $saved = '/home/mc/runner-cache-donor/temp-runner-cache.tar'
+    $t = Run-C727 -Scenario 'retired-saved' -Phase deploy-temp -Set $retired -SavedDonor $saved
+    $seedCase = @(Cases $t | Where-Object name -eq 'runner-cache-seed')
+    Assert-C727 ($t.Exit -eq 0) 'T-17 saved phase succeeds'
+    Assert-C727 ($seedCase.Count -eq 1 -and $seedCase[0].savedDonor -ceq $saved) 'T-17 explicit source transported'
+    Assert-C727 (Has-Case $t 'deploy-temp-runner') 'T-17 deployment follows seed'
+    $t = Run-C727 -Scenario 'retired-no-source' -Phase deploy-temp -Set $retired
+    $seedCase = @(Cases $t | Where-Object name -eq 'runner-cache-seed')
+    Assert-C727 ($t.Exit -eq 0 -and $seedCase.Count -eq 1 -and -not $seedCase[0].savedDonor) 'T-17 source never guessed'
+    Assert-C727 (Has-Case $t 'deploy-temp-runner') 'T-17 marker reuse remains possible'
+    Complete-Group 17 'saved donor transport'
+
+    if ($script:groups -ne 17 -or $script:invocations -ne 48 -or $script:assertions -ne 154) {
         throw "Frozen roster mismatch groups=$script:groups invocations=$script:invocations assertions=$script:assertions"
     }
-    Write-Output 'C849_ROLLING groups=16 invocations=46 assertions=149 failures=0'
-    Write-Output 'V-32 assertions=149 failures=0'
+    Write-Output 'C849_ROLLING groups=17 invocations=48 assertions=154 failures=0'
+    Write-Output 'V-32 assertions=154 failures=0'
     exit 0
 }
 catch {

@@ -1600,12 +1600,124 @@ c849_validate_seed_tree() {
         || { printf 'Net9ReferenceDonorMissing\n'; return 2; }
 }
 
+# The source is an operator-selected host path. Accept only cache payload paths and
+# materialize ordinary files/directories; tarfile.extractall would also create links.
+c849_saved_copy() {
+    local source="$1" stage="$2" diagnosis
+    [ -n "$source" ] && [ "${source#/}" != "$source" ] && [ ! -L "$source" ] \
+        && [ "$(realpath -e -- "$source" 2>/dev/null)" = "$source" ] \
+        && { [ -f "$source" ] || [ -d "$source" ]; } \
+        || { printf 'CacheSavedDonorInvalid\n'; return 2; }
+    command -v python3 >/dev/null || { printf 'CacheSavedDonorToolMissing\n'; return 2; }
+    diagnosis="$(python3 - "$source" "$stage" <<'PY'
+import os, pathlib, shutil, stat, sys, tarfile
+
+source, stage = sys.argv[1:]
+roots = {"packages": "packages", "npm": "npm", ".nuget/packages": "packages",
+         ".npm/_cacache": "npm", "home/app/.nuget/packages": "packages",
+         "home/app/.npm/_cacache": "npm"}
+budgets = {"packages": 10 * 1024**3, "npm": 2 * 1024**3}
+sizes = {"packages": 0, "npm": 0}
+seen = set()
+
+def mapped(raw):
+    if not raw or raw.startswith("/") or "\\" in raw or "\x00" in raw:
+        raise ValueError("CacheDonorUnsafePath")
+    parts = raw.split("/")
+    while parts and parts[0] == ".":
+        parts.pop(0)
+    if not parts:
+        return None, None
+    if any(p in ("", ".", "..") for p in parts):
+        raise ValueError("CacheDonorUnsafePath")
+    name = "/".join(parts)
+    for prefix, target in sorted(roots.items(), key=lambda p: -len(p[0])):
+        if name == prefix or name.startswith(prefix + "/"):
+            rest = name[len(prefix):].lstrip("/")
+            return target, rest
+        if prefix.startswith(name + "/"):
+            return None, None  # a parent directory, such as .nuget
+    raise ValueError("CacheDonorUnsafePath")
+
+def write(raw, mode, size, reader=None):
+    target, rest = mapped(raw)
+    if target is None or not rest:
+        return
+    dest = pathlib.Path(stage, target, rest)
+    if str(dest) in seen:
+        raise ValueError("CacheDonorDuplicateEntry")
+    seen.add(str(dest))
+    if reader is None:
+        dest.mkdir(parents=True, exist_ok=True)
+        return
+    sizes[target] += size
+    if sizes[target] > budgets[target]:
+        raise ValueError("CacheBudgetExceeded")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "xb") as out, reader() as src:
+        shutil.copyfileobj(src, out)
+    os.chmod(dest, mode & 0o777)
+
+try:
+    if os.path.isdir(source):
+        # Scan source before writing a byte. A later tree check still detects any
+        # source change or unsafe entry that appears during the copy.
+        for base, dirs, files in os.walk(source, followlinks=False):
+            for name in dirs + files:
+                path = os.path.join(base, name)
+                info = os.lstat(path)
+                if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                    raise ValueError("CacheDonorUnsafeEntry")
+                target, rest = mapped(os.path.relpath(path, source).replace(os.sep, "/"))
+                if target and rest and stat.S_ISREG(info.st_mode):
+                    sizes[target] += info.st_size
+                    if sizes[target] > budgets[target]:
+                        raise ValueError("CacheBudgetExceeded")
+        if shutil.disk_usage(stage).free < 20 * 1024**3 + sum(sizes.values()):
+            raise ValueError("CacheDiskLow")
+        sizes = {"packages": 0, "npm": 0}
+        for base, dirs, files in os.walk(source, followlinks=False):
+            for name in dirs + files:
+                path = os.path.join(base, name)
+                info = os.lstat(path)
+                if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                    raise ValueError("CacheDonorUnsafeEntry")
+                rel = os.path.relpath(path, source).replace(os.sep, "/")
+                write(rel, info.st_mode, info.st_size,
+                      (lambda path=path: open(path, "rb")) if stat.S_ISREG(info.st_mode) else None)
+    else:
+        with tarfile.open(source, "r:*") as archive:
+            for member in archive:
+                if not (member.isdir() or member.isfile()):
+                    raise ValueError("CacheDonorUnsafeEntry")
+                target, rest = mapped(member.name.rstrip("/") if member.isdir() else member.name)
+                if target and rest and member.isfile():
+                    sizes[target] += member.size
+                    if sizes[target] > budgets[target]:
+                        raise ValueError("CacheBudgetExceeded")
+            if shutil.disk_usage(stage).free < 20 * 1024**3 + sum(sizes.values()):
+                raise ValueError("CacheDiskLow")
+            sizes = {"packages": 0, "npm": 0}
+            for member in archive:
+                if not (member.isdir() or member.isfile()):
+                    raise ValueError("CacheDonorUnsafeEntry")
+                write(member.name.rstrip("/") if member.isdir() else member.name,
+                      member.mode, member.size,
+                      (lambda member=member: archive.extractfile(member)) if member.isfile() else None)
+except (ValueError, OSError, tarfile.TarError) as error:
+    print(str(error) if isinstance(error, ValueError) else "CacheSavedDonorReadFailed")
+    sys.exit(2)
+PY
+)" || { printf '%s\n' "$diagnosis"; return 2; }
+}
+
 c849_seed() {
     require_lane host
     c849_prepare yes
-    local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i
+    local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i saved
     image="$(c849_image)"
     donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
+    saved="${C590_SAVED_DONOR:-}"
     if [ -f "$C849_READY" ]; then
         c849_require_ready
         if [ -n "$donor" ]; then
@@ -1618,29 +1730,49 @@ c849_seed() {
         printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
         write_result true '' 0
     fi
-    [ -n "$donor" ] || write_result false CacheSeedRequired 2
-    donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
-    c849_status_zero server2-temp || c849_seed_failure "$donor" CacheDonorNotIdleDrained
+    if [ -z "$donor" ] && [ -z "$saved" ]; then
+        write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
+    fi
+    if [ -n "$saved" ]; then
+        [ -z "$donor" ] || write_result false CacheDonorSourceConflict 2
+        c849_no_temp_containers
+        c849_prune_idle
+        donor_image="$(docker image inspect -f '{{.Id}}' "$image")" \
+            || write_result false CacheHelperImageMissing 2
+        [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false CacheHelperImageMissing 2
+    else
+        donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
+        c849_status_zero server2-temp || c849_seed_failure "$donor" CacheDonorNotIdleDrained
+    fi
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         c849_empty_volume "$name" "$image" || write_result false CacheUnmarkedContent 2
     done
     # A tracked session count alone cannot see a separate cache writer. Refuse a donor with
     # any app-uid restore/build/npm process after its drain has reached zero.
     local active ps_out
-    ps_out="$(docker exec "$donor" ps -eo uid,comm)" \
-        || write_result false CacheDonorConsumerUnknown 2
-    active="$(printf '%s\n' "$ps_out" | awk '$1==1654 && $2 ~ /^(dotnet|nuget|npm|node)$/ {n++} END {print n+0}')" \
-        || write_result false CacheDonorConsumerUnknown 2
-    [ "$active" = 0 ] || write_result false CacheDonorConsumerBusy 2
+    if [ -n "$donor" ]; then
+        ps_out="$(docker exec "$donor" ps -eo uid,comm)" \
+            || write_result false CacheDonorConsumerUnknown 2
+        active="$(printf '%s\n' "$ps_out" | awk '$1==1654 && $2 ~ /^(dotnet|nuget|npm|node)$/ {n++} END {print n+0}')" \
+            || write_result false CacheDonorConsumerUnknown 2
+        [ "$active" = 0 ] || write_result false CacheDonorConsumerBusy 2
+    fi
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
     stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
     mkdir -m 0700 "$stage/packages" "$stage/npm" || c849_seed_failure "$donor" CacheStageCreateFailed
-    c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
-    docker stop "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorStopFailed
-    docker cp "$donor:/home/app/.nuget/packages/." "$stage/packages" >/dev/null 2>&1 \
-        || c849_seed_failure "$donor" CacheDonorPackageCopyFailed
-    docker cp "$donor:/home/app/.npm/_cacache/." "$stage/npm" >/dev/null 2>&1 \
-        || c849_seed_failure "$donor" CacheDonorNpmCopyFailed
+    if [ -n "$saved" ]; then
+        local copy_diagnosis
+        copy_diagnosis="$(c849_saved_copy "$saved" "$stage")" \
+            || c849_seed_failure '' "$copy_diagnosis"
+        c849_prune_idle
+    else
+        c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
+        docker stop "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorStopFailed
+        docker cp "$donor:/home/app/.nuget/packages/." "$stage/packages" >/dev/null 2>&1 \
+            || c849_seed_failure "$donor" CacheDonorPackageCopyFailed
+        docker cp "$donor:/home/app/.npm/_cacache/." "$stage/npm" >/dev/null 2>&1 \
+            || c849_seed_failure "$donor" CacheDonorNpmCopyFailed
+    fi
     # Validate the stopped donor's staged copy before the first import. The same
     # function is exercised by the isolated fixture's malformed-tree controls.
     local tree_diagnosis
@@ -1684,27 +1816,31 @@ c849_seed() {
     recovery="$SERVER2_ROOT/cache/recovery-$RUN"
     [ ! -e "$recovery" ] || c849_seed_failure "$donor" CacheRecoveryExists
     mv "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
-    docker start "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorRestartFailed
-    [ "$(docker inspect -f '{{.Id}}' "$donor")" = "$donor" ] \
-        || c849_seed_failure "$donor" CacheDonorIdentityChanged
-    for i in $(seq 1 30); do
-        if c849_status_zero server2-temp reconnected; then break; fi
-        sleep 2
-    done
-    c849_status_zero server2-temp reconnected || c849_seed_failure "$donor" CacheDonorReconnectFailed
+    if [ -n "$donor" ]; then
+        docker start "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorRestartFailed
+        [ "$(docker inspect -f '{{.Id}}' "$donor")" = "$donor" ] \
+            || c849_seed_failure "$donor" CacheDonorIdentityChanged
+        for i in $(seq 1 30); do
+            if c849_status_zero server2-temp reconnected; then break; fi
+            sleep 2
+        done
+        c849_status_zero server2-temp reconnected || c849_seed_failure "$donor" CacheDonorReconnectFailed
+    else
+        c849_prune_idle
+    fi
     c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
         > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'donor=%s\nimage=%s\ntime=%s\npayload-sha256=%s\nreference-sha256=%s\npackage-bytes=%s\nnpm-bytes=%s\nrecovery=%s\n' \
-        "$donor" "$donor_image" "$now" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$C849_READY.tmp-$RUN"
+        "${donor:-saved}" "$donor_image" "$now" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$C849_READY.tmp-$RUN"
     mv "$C849_READY.tmp-$RUN" "$C849_READY"
     printf 'ready=true donor=%s payload-sha256=%s reference-sha256=%s package-bytes=%s npm-bytes=%s recovery=%s\n' \
-        "$donor" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$CASE_DIR/seed.txt"
+        "${donor:-saved}" "$payload_hash" "$reference_hash" "$package_bytes" "$npm_bytes" "$recovery" > "$CASE_DIR/seed.txt"
     write_result true '' 0
 }
 
 c849_require_ready() {
-    [ -s "$C849_READY" ] || write_result false CacheSeedRequired 2
+    [ -s "$C849_READY" ] || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
     local recovery
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
     case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
@@ -1883,24 +2019,29 @@ c849_prune_idle() {
     for runner in server2 server2-temp; do
         body="$(c849_status_body "$runner")" \
             || write_result false CacheStatusUnavailable 2
-        printf '%s' "$body" | jq -e '
-            .sessions != null and .runnerSessions != null and .queuedTasks != null and
-            .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
-            .draining == true and .acceptingNewWork == false' >/dev/null \
-            || write_result false CacheConsumersBusy 2
         project="$HOST_PROJECT"; [ "$runner" = server2-temp ] && project="$TEMP_PROJECT"
         container="$(docker ps -q --filter "label=com.docker.compose.project=$project" \
             --filter 'label=com.docker.compose.service=session-runner')" \
             || write_result false CacheConsumerUnknown 2
         if [ -z "$container" ]; then
+            [ "$runner" = server2-temp ] || write_result false CacheConsumerUnknown 2
             temp_ids="$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" \
                 || write_result false CacheConsumerUnknown 2
-            [ "$runner" = server2-temp ] \
-                && printf '%s' "$body" | jq -e '.retiredAt != null' >/dev/null \
+            printf '%s' "$body" | jq -e '
+                .retiredAt != null and .sessions == 0 and .queuedTasks == 0 and
+                (.runnerSessions == null or .runnerSessions == 0) and
+                .draining == true and .acceptingNewWork == false and
+                .dispatchEligible == false and .available == false and
+                .redirectTo == "server2" and .retireWhenIdle == true' >/dev/null \
                 && [ -z "$temp_ids" ] \
-                || write_result false CacheConsumerUnknown 2
+                || write_result false CacheConsumersBusy 2
             continue
         fi
+        printf '%s' "$body" | jq -e '
+            .sessions != null and .runnerSessions != null and .queuedTasks != null and
+            .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
+            .draining == true and .acceptingNewWork == false' >/dev/null \
+            || write_result false CacheConsumersBusy 2
         active="$(docker exec "$container" /bin/sh -c \
             "ps -eo uid,args | awk '\$1==1654 && \$0 !~ /Antiphon.SessionRunner/ {n++} END {print n+0}'")" \
             || write_result false CacheConsumerUnknown 2
