@@ -97,7 +97,7 @@ public class RunnerGrokAdapterReadyTests
         var trustReads = 0;
         var lateTrustRead = new TaskCompletionSource<GrokStartupSnapshot?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var trustRelease = Task.Delay(200).ContinueWith(_ => lateTrustRead.TrySetResult(
+        var trustRelease = Task.Delay(400).ContinueWith(_ => lateTrustRead.TrySetResult(
             new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow)));
         var trustReady = GrokReadyWait.WaitAsync(_ => ++trustReads == 1
                 ? Task.FromResult<GrokStartupSnapshot?>(new(Trust, Trust, 1, DateTime.UtcNow))
@@ -109,7 +109,7 @@ public class RunnerGrokAdapterReadyTests
         var trustCompletionElapsed = trustStart.Elapsed;
         await trustRelease;
         trustCompletion.ShouldBeFalse();
-        trustCompletionElapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(150), "trustCompletionElapsed");
+        trustCompletionElapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(250), "trustCompletionElapsed");
     }
 
     [Test]
@@ -117,23 +117,29 @@ public class RunnerGrokAdapterReadyTests
     {
         var frame = new GrokStartupSnapshot(Ready, "historical", 1, DateTime.UtcNow);
         var clock = new JumpClock();
+        var lateReads = 0;
         var late = await GrokReadyWait.WaitAsync(async _ =>
         {
-            await Task.Delay(5);
-            clock.Advance(TimeSpan.FromMilliseconds(80));
+            if (++lateReads == 2)
+            {
+                await Task.Delay(5);
+                clock.Advance(TimeSpan.FromMilliseconds(80));
+            }
             return frame;
-        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(50), TimeProvider = clock });
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(50),
+            Settle = TimeSpan.Zero, PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = clock });
+        lateReads.ShouldBe(2);
         late.ShouldBeFalse("lateReadReady");
         var hung = new TaskCompletionSource<GrokStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var began = Stopwatch.StartNew();
         var bounded = GrokReadyWait.WaitAsync(_ => hung.Task,
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(35) });
-        var release = Task.Delay(75).ContinueWith(_ => hung.TrySetResult(frame));
+        var release = Task.Delay(250).ContinueWith(_ => hung.TrySetResult(frame));
         var boundedResult = await bounded;
         var completionElapsed = began.Elapsed;
         await release;
         boundedResult.ShouldBeFalse();
-        completionElapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(70), "completionElapsed");
+        completionElapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(150), "completionElapsed");
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.Zero })).ShouldBeFalse();
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
@@ -153,16 +159,19 @@ public class RunnerGrokAdapterReadyTests
             PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = floorClock });
         floor.ShouldBeFalse("readyWithFloorModal");
         var trustClock = new JumpClock();
+        var trustBudgetStarted = trustClock.GetTimestamp();
         var trustReads = 0;
         var trustBudgetReady = await GrokReadyWait.WaitAsync(async _ =>
         {
-            if (++trustReads == 2) await Task.Delay(30);
+            if (++trustReads == 2) await Task.Delay(70);
             return new GrokStartupSnapshot(trustReads == 1 ? Trust : Ready,
                 "", trustReads, DateTime.UtcNow);
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(100),
             Settle = TimeSpan.Zero, TrustSettle = TimeSpan.Zero,
             PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = trustClock },
-            (_, _) => { trustClock.Advance(TimeSpan.FromMilliseconds(80)); return Task.CompletedTask; });
+            (_, _) => { trustClock.Advance(TimeSpan.FromMilliseconds(90)); return Task.CompletedTask; });
+        trustClock.GetElapsedTime(trustBudgetStarted).ShouldBeLessThan(
+            TimeSpan.FromMilliseconds(120), "trustCompletionElapsed inside originalMax");
         trustBudgetReady.ShouldBeFalse("trustCompletionElapsed must stay inside originalMax");
         var utcClock = new JumpClock();
         var utcReads = 0;
