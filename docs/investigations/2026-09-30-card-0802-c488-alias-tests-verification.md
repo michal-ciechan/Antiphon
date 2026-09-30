@@ -90,3 +90,31 @@ CARD-0802 focused cases exercise the ordinary PC-31/44 seams. Their
 compiling mutation variants and all other historical C488/C494 PCs remain
 pending post-land method-scoped SourceLanding Mutation; no nightly or
 ordinary green run will discharge them.
+
+## First after-group attempt
+
+At `3e0bd6950a6c6cc1d6c2985acc3e7b2bd70b1bbd`, the committed
+S2-S3 run `.antiphon/checkpoints/20260930-094832-2cee/` gave CP-3
+**59 executed, 59 passed, 0 failed, 0 skipped**, filter
+`/*/*/AgentTaskLandSourceFreshnessTests/*`. The main real-verifier case,
+the distinct negative case and both focused cases passed. Its fresh TRX is
+`rows/CP-3/run.trx`, with durations: main `18.0166181` s, Behind
+`0.5805915` s, RequiresFetch `0.2431845` s, negative verifier
+`8.5301682` s. The two aliases total `0.8237760` s, a **98.3%**
+reduction from CP-1's `47.8123335` s; the three C488 cases total
+`18.8403941` s, a **71.0%** reduction from `65.0230777` s. Their
+successful real-verifier invocation count is structurally 2 after versus
+6 before; the separate negative verifier invocation remains in both
+affected-class runs. CP-3 row wall was 220 s, with 60 s unleased slot wait.
+
+The same run's CP-4 selected 3,534 executed results and 33 skips, as
+frozen, but had 3,528 passed and **6 failed**. All failures are argument
+rows of `TestClassificationPolicyTests.C487_G065`, `C487_G066`,
+`C487_G067` and `C487_G069`: their nested probe builds an apphost and
+then searches for its executable. The process-wide `UseAppHost=false`
+needed for CP-3's real miniature verifier suppressed those probe apphosts.
+This is an environment collision between the two rows, not a changed
+assertion in CARD-0802. The full failed result and TRX are retained in
+that run. CP-4 will be rerun alone from a new committed evidence slice,
+without that process-wide variable; the checkpoint tool still applies its
+own Linux `UseAppHost=false` to the outer isolated build.
