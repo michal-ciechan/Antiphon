@@ -3,6 +3,9 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -12,6 +15,8 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     private int _claimed;
     private readonly string? _directory;
     private readonly string? _marker;
+    private readonly string? _leaseId;
+    private static readonly object ReclaimGate = new();
     public string Path { get; }
     public string Session { get; }
     public bool OwnsDirectory => _directory is not null;
@@ -27,20 +32,19 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
             return;
         }
 
-        var directory = $"/tmp/ah-{Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}";
+        lock (ReclaimGate) ReclaimDeadLeases();
+        _leaseId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        var directory = $"/tmp/ah-{_leaseId}";
         var path = System.IO.Path.Combine(directory, "s");
         if (Encoding.UTF8.GetByteCount(path) + 1 >= 104)
             throw new IOException($"Herdr test endpoint exceeds portable sun_path limit: {path}");
         // mkdir is exclusive at the OS boundary. A failed allocation never unlinks a foreign path.
-        var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        Directory.CreateDirectory(directory, mode);
-        if (Directory.GetFileSystemEntries(directory).Length != 0)
-            throw new IOException($"Herdr test endpoint was occupied: {directory}");
+        if (Mkdir(directory, 448) != 0)
+            throw new IOException($"Herdr test endpoint directory could not be reserved: {directory}");
         _directory = directory;
         _marker = System.IO.Path.Combine(directory, "owner");
-        using (var marker = new FileStream(_marker, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-        using (var writer = new StreamWriter(marker))
-            writer.WriteLine($"c801:{Environment.ProcessId}:{System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks}:{path}");
+        WriteMarker(new LeaseMarker(1, "c801", _leaseId, path, Environment.ProcessId,
+            Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(), 0, 0));
         File.SetUnixFileMode(_marker, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         Path = path;
     }
@@ -52,6 +56,82 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     }
 
     public void Release() => Volatile.Write(ref _claimed, 0);
+
+    public void RecordBoundSocket(NativeFileIdentity.Identity identity)
+    {
+        if (_marker is null || _leaseId is null) return;
+        WriteMarker(new LeaseMarker(1, "c801", _leaseId, Path, Environment.ProcessId,
+            Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(),
+            identity.Device, identity.Inode));
+    }
+
+    private void WriteMarker(LeaseMarker marker)
+    {
+        using var file = new FileStream(_marker!, File.Exists(_marker) ? FileMode.Truncate : FileMode.CreateNew,
+            FileAccess.Write, FileShare.None);
+        JsonSerializer.Serialize(file, marker);
+        file.Flush(flushToDisk: true);
+    }
+
+    private sealed record LeaseMarker(int Schema, string Fixture, string LeaseId, string SocketPath,
+        int OwnerPid, long OwnerStartTicks, string HostPidNamespace, ulong SocketDevice, ulong SocketInode);
+
+    private static string NamespaceIdentity()
+    {
+        try { return new FileInfo("/proc/self/ns/pid").LinkTarget ?? Environment.MachineName; }
+        catch { return Environment.MachineName; }
+    }
+
+    public static void ReclaimDeadLeases()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var candidates = Directory.EnumerateDirectories("/tmp", "ah-*").Take(64);
+        var inspected = 0;
+        foreach (var directory in candidates)
+        {
+            if (inspected >= 16) break;
+            if (!Regex.IsMatch(System.IO.Path.GetFileName(directory), "^ah-[0-9a-f]{32}$", RegexOptions.CultureInvariant)) continue;
+            inspected++;
+            var markerPath = System.IO.Path.Combine(directory, "owner");
+            var socketPath = System.IO.Path.Combine(directory, "s");
+            try
+            {
+                if (new DirectoryInfo(directory).LinkTarget is not null || new FileInfo(markerPath).LinkTarget is not null)
+                    continue;
+                using var locked = new FileStream(markerPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                var marker = JsonSerializer.Deserialize<LeaseMarker>(locked);
+                if (marker is null || marker.Schema != 1 || marker.Fixture != "c801"
+                    || marker.LeaseId != System.IO.Path.GetFileName(directory)[3..]
+                    || marker.SocketPath != socketPath || marker.OwnerPid <= 0
+                    || marker.HostPidNamespace != NamespaceIdentity()) continue;
+                if (Directory.GetFileSystemEntries(directory).OrderBy(x => x, StringComparer.Ordinal)
+                    .SequenceEqual(new[] { markerPath, socketPath }.OrderBy(x => x, StringComparer.Ordinal)) == false)
+                    continue;
+                if (!NativeFileIdentity.TryRead(socketPath, out var identity)
+                    || identity.Device != marker.SocketDevice || identity.Inode != marker.SocketInode)
+                    continue;
+                if (new FileInfo(socketPath).LinkTarget is not null) continue;
+                try
+                {
+                    using var owner = Process.GetProcessById(marker.OwnerPid);
+                    if (owner.StartTime.ToUniversalTime().Ticks == marker.OwnerStartTicks) continue;
+                }
+                catch (ArgumentException) { /* positively absent */ }
+                catch (InvalidOperationException) { /* exited */ }
+                catch { continue; }
+                // Recheck the path identities under the exclusive marker lock.
+                if (!NativeFileIdentity.TryRead(socketPath, out var still) || still != identity) continue;
+                File.Delete(socketPath);
+                locked.Dispose();
+                File.Delete(markerPath);
+                Directory.Delete(directory);
+            }
+            catch (Exception) { /* unknown or changed residue is preserved */ }
+        }
+    }
+
+    [DllImport("libc", EntryPoint = "mkdir", SetLastError = true)]
+    private static extern int Mkdir(string path, int mode);
 
     public ValueTask DisposeAsync()
     {
@@ -95,6 +175,7 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
                     _ownsSocketPath = true;
                     if (!NativeFileIdentity.TryRead(endpoint.Path, out _boundIdentity))
                         throw new IOException($"Cannot identify bound Herdr test socket: {endpoint.Path}");
+                    endpoint.RecordBoundSocket(_boundIdentity);
                     File.SetUnixFileMode(endpoint.Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
                     socket.Listen(4);
                     _socket = socket;

@@ -161,7 +161,7 @@ public class HerdrStatusPushTests
             var settings = new HerdrSettings
             {
                 Enabled = true,
-                Session = fake.Session,
+                Session = fake.Session, SocketPath = fake.EndpointPath,
                 StatusPush = new HerdrStatusPushSettings
                 {
                     Enabled = true,

@@ -317,7 +317,7 @@ public sealed class GrokRulesRunnerRefusalTests
             new HerdrClient(new HerdrSettings
             {
                 Enabled = true,
-                Session = fake.Session,
+                Session = fake.Session, SocketPath = fake.EndpointPath,
                 LaunchDetectTimeoutMs = 5_000,
             }),
             new PowershellProcessProbe());

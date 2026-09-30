@@ -345,7 +345,7 @@ public class HerdrLaunchShapeTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, LaunchDetectTimeoutMs = 2_000 }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath, LaunchDetectTimeoutMs = 2_000 }),
             new NamedProcessProbe("cmd"));
 
         var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
@@ -740,7 +740,7 @@ public class HerdrLaunchShapeTests
             new HerdrClient(new HerdrSettings
             {
                 Enabled = true,
-                Session = fake.Session,
+                Session = fake.Session, SocketPath = fake.EndpointPath,
                 LaunchDetectTimeoutMs = launchDetectTimeoutMs,
             }),
             new PowershellProcessProbe());

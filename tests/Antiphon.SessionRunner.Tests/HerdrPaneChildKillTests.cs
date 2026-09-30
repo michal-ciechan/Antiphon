@@ -17,7 +17,6 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrPaneChildKillTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
     [Test]
     public async Task Foreign_foreground_process_kills_our_child_by_pid_leaves_pane_open_and_returns_true()
@@ -31,7 +30,7 @@ public class HerdrPaneChildKillTests
             SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-kill-{Guid.NewGuid():N}"),
             PtyHostLingerHours = 0.02,
         };
-        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session });
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await fake.WaitUntilListeningAsync(cts.Token);
         await client.WorkspaceCreateAsync(settings.SessionLogPath, "card0186-kill", cts.Token);
@@ -114,7 +113,7 @@ public class HerdrPaneChildKillTests
             SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-kill-node-{Guid.NewGuid():N}"),
             PtyHostLingerHours = 0.02,
         };
-        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session });
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await fake.WaitUntilListeningAsync(cts.Token);
         await client.WorkspaceCreateAsync(settings.SessionLogPath, "card0497-kill-node", cts.Token);
@@ -192,7 +191,7 @@ public class HerdrPaneChildKillTests
             SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-kill-attach-{Guid.NewGuid():N}"),
             PtyHostLingerHours = 0.02,
         };
-        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session });
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await fake.WaitUntilListeningAsync(cts.Token);
         await client.WorkspaceCreateAsync(settings.SessionLogPath, "card0213-kill", cts.Token);
@@ -280,7 +279,7 @@ public class HerdrPaneChildKillTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new StubProbe(alive: true));
         var sessionId = Guid.NewGuid();
         await runtime.StartAsync(
@@ -326,7 +325,7 @@ public class HerdrPaneChildKillTests
             SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-kill-left-{Guid.NewGuid():N}"),
             PtyHostLingerHours = 0.02,
         };
-        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session });
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath });
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await fake.WaitUntilListeningAsync(cts.Token);
         await client.WorkspaceCreateAsync(settings.SessionLogPath, "card0224-left-open", cts.Token);
@@ -405,7 +404,7 @@ public class HerdrPaneChildKillTests
             await using var runtime = new SessionRunnerRuntime(
                 Options.Create(settings),
                 NullLogger<SessionRunnerRuntime>.Instance,
-                new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, LaunchDetectTimeoutMs = 2_000 }),
+                new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath, LaunchDetectTimeoutMs = 2_000 }),
                 new PowershellProcessProbe());
             var gate = fake.GateMethod("pane.send_text");
             var sessionId = Guid.NewGuid();
@@ -457,15 +456,7 @@ public class HerdrPaneChildKillTests
 
     private static Process StartDummy()
     {
-        var psi = new ProcessStartInfo(Cmd, "/d /q /k @echo off & prompt $G")
-        {
-            CreateNoWindow = true,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        return Process.Start(psi) ?? throw new InvalidOperationException("failed to start dummy");
+        return HerdrTestProcess.StartDummy();
     }
 
     private static Process StartNodeDummy(string node)

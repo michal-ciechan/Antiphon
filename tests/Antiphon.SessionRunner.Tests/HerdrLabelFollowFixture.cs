@@ -47,7 +47,7 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         string provenance = HerdrWorkspaceSelection.UniqueUntaggedLabel)
     {
         Settings = new() { SessionLogPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "antiphon-c462-" + Guid.NewGuid().ToString("N")) };
-        HerdrSettings = new() { Enabled = true, Session = Fake.Session };
+        HerdrSettings = new() { Enabled = true, Session = Fake.Session, SocketPath = Fake.EndpointPath };
         Client = new(HerdrSettings);
         Reader = new(Client);
         Workspace = Fake.SeedWorkspace("w1", "New workspace");

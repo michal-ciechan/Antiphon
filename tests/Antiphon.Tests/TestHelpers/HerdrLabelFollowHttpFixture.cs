@@ -66,7 +66,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         _store = await TestDbFixture.CreateIsolatedSchemaAsync();
         Workspace = Fake.SeedWorkspace("w1", "Old workspace"); Tab.Label = "Old";
         Fake.Start(); await Fake.WaitUntilListeningAsync();
-        Herdr = new(new HerdrSettings { Enabled = true, Session = Fake.Session });
+        Herdr = new(new HerdrSettings { Enabled = true, Session = Fake.Session, SocketPath = Fake.EndpointPath });
         await StartRunnerAsync();
         BuildHarness();
         var agent = await Harness.AgentService.CreateAsync(new("follow", Root, SessionBackend: SessionBackend.Herdr,
@@ -145,7 +145,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         var registry = new AgentRegistrySettings { DefaultDefinition = "claude", ClaudeReadyQuietPeriodMs = 150,
             ClaudeReadyMaxWaitMs = 5000, ClaudeReadyMinTotalWaitMs = 0, ClaudeInputProbeTimeoutMs = 3000,
             ClaudeInputProbePollIntervalMs = 50, ClaudeInputProbeClearTimeoutMs = 1000, ClaudeInputProbeRetypeIntervalMs = 2000,
-            ClaudeTrustPromptSettleMs = 200, Definitions = { ["claude"] = new() { Kind = "ClaudeCode", Exe = Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe") } } };
+            ClaudeTrustPromptSettleMs = 200, Definitions = { ["claude"] = new() { Kind = "ClaudeCode", Exe = Antiphon.TestSupport.TestAppHostPath.Require("fakeclaude", AppContext.BaseDirectory) } } };
         Harness = AgentControlServiceIntegrationTests.BuildHarness(Root, [], defaultKind: "ClaudeCode", connectionString: _store.ConnectionString,
             configureServices: s => {
                 s.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registry));

@@ -35,7 +35,7 @@ public sealed class GrokRulesFileLaunchTests
             var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
             var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") };
             await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
-                new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }), new PowershellProcessProbe());
+                new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }), new PowershellProcessProbe());
             var args = variant switch {
                 "cr" => new[] { "--rules", "private\rsentinel" },
                 "crlf" => ["--rules", "private\r\nsentinel"], "nul" => ["--rules", "private\0sentinel"],
@@ -82,7 +82,7 @@ public sealed class GrokRulesFileLaunchTests
             snapshots.Add((method, sidecar, path is not null && File.Exists(path) ? File.ReadAllBytes(path) : null));
         };
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }), new PowershellProcessProbe());
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }), new PowershellProcessProbe());
         try
         {
             var result = await runtime.StartAsync(request, CancellationToken.None);

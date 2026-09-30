@@ -21,23 +21,24 @@ public class RunnerStartupReadinessTests
         var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostDir = Path.Combine(root, "hosts") };
         var terminalId = RunnerStartupDiagnosticsTests.SeedTerminal(settings);
         var fake = new FakeHerdrServer(); var fakeDisposed = false; fake.Start(); await fake.WaitUntilListeningAsync();
-        using var dummy = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d /q /k")
-        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true })!;
+        using var dummy = HerdrTestProcess.StartDummy();
         var id = Guid.NewGuid();
         var sidecar = new HerdrPaneSidecar { SessionId = id, WorkspaceKey = "c420", WorkspaceId = "w420", TabId = "t420", PaneId = "p420",
             ChildPid = dummy.Id, ShellPid = 1, LaunchedAtUtc = dummy.StartTime.ToUniversalTime(), Cwd = root, UpdatedAtUtc = DateTime.UtcNow };
         sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(root, id));
         fake.Workspaces.Add(new FakeHerdrServer.WorkspaceState("w420", "seed", 1, "t420",
             [new FakeHerdrServer.TabState("t420", "w420", "1", 1, [new FakeHerdrServer.PaneState("p420", "t420", "w420", "term_seed", null, null, null, null, null)])], new Dictionary<string, string>()));
-        fake.SetPaneProcessInfo("p420", 1, (dummy.Id, "cmd.exe"));
+        fake.SetPaneProcessInfo("p420", 1, (dummy.Id, HerdrTestProcess.ShellName));
         var gate = fake.GateMethod("pane.read");
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
         new[] { 17202, 17203, 17204, 17205, 17280, 17281, 17282 }.ShouldNotContain(port);
-        var exe = Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.exe"); File.Exists(exe).ShouldBeTrue();
-        var info = new ProcessStartInfo(exe) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        var exe = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Antiphon.SessionRunner.exe" : "Antiphon.SessionRunner.dll"); File.Exists(exe).ShouldBeTrue();
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? exe : "dotnet") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        if (!OperatingSystem.IsWindows()) info.ArgumentList.Add(exe);
         foreach (var a in new[] { "--urls", $"http://127.0.0.1:{port}", "--SessionRunner:SessionLogPath", root,
             "--SessionRunner:PtyHostDir", settings.PtyHostDir!, "--Serilog:LogPath", Path.Combine(root, "logs"),
             "--SessionRunner:Herdr:Enabled", "true", "--SessionRunner:Herdr:Session", fake.Session,
+            "--SessionRunner:Herdr:SocketPath", fake.EndpointPath,
             "--SessionRunner:Herdr:RequestTimeoutMs", "20000", "--SessionRunner:CpuWatchdogEnabled", "false",
             "--SessionRunner:Herdr:StatusPush:Enabled", "false", "--SessionRunner:LivenessSweepIntervalMs", "60000" }) info.ArgumentList.Add(a);
         var output = new ConcurrentQueue<string>(); using var runner = new Process { StartInfo = info };

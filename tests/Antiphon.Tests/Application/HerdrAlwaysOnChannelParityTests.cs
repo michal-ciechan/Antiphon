@@ -17,6 +17,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -44,13 +45,13 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public partial class HerdrAlwaysOnChannelParityTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    private static string Cmd => HerdrTestProcess.ShellPath;
 
     private static string FakeClaudeExe =>
-        Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
+        TestAppHostPath.Require("fakeclaude", AppContext.BaseDirectory);
 
     private static string FakeGrokExe =>
-        Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe");
+        TestAppHostPath.Require("fakegrok", AppContext.BaseDirectory);
 
     [Test]
     [Arguments(SessionBackend.Herdr)]
@@ -375,10 +376,8 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Codex)]
     public async Task Herdr_launch_definition_starts_adopts_and_exits(AgentKind kind)
     {
-        if (kind == AgentKind.ClaudeCode && !File.Exists(FakeClaudeExe))
-            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
-        if (kind == AgentKind.Grok && !File.Exists(FakeGrokExe))
-            throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
+        if (kind == AgentKind.ClaudeCode) _ = FakeClaudeExe;
+        if (kind == AgentKind.Grok) _ = FakeGrokExe;
 
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-card0187-s2-{kind}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
@@ -729,6 +728,7 @@ public partial class HerdrAlwaysOnChannelParityTests
             {
                 Enabled = true,
                 Session = fake!.Session,
+                SocketPath = fake.EndpointPath,
                 LaunchDetectTimeoutMs = launchDetectTimeoutMs,
             }));
             runner = new DirectSessionRunnerClient(

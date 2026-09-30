@@ -576,7 +576,7 @@ public class HerdrNamedTabPlacementTests
             new HerdrClient(new HerdrSettings
             {
                 Enabled = true,
-                Session = fake.Session,
+                Session = fake.Session, SocketPath = fake.EndpointPath,
                 LaunchDetectTimeoutMs = launchDetectTimeoutMs,
             }),
             probe ?? new PowershellProcessProbe());

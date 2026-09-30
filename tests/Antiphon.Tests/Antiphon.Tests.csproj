@@ -183,4 +183,19 @@
     <Copy SourceFiles="$(_PtyHostNativeDir)Antiphon.PtyHost"
           DestinationFiles="$(TargetDir)Antiphon.PtyHost" SkipUnchangedFiles="true" />
   </Target>
+
+  <Target Name="CopyOwnedHerdrFakeAppHosts" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
+             Targets="Restore" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
+             Targets="Build" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(TargetDir)fake-native-claude/" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
+             Targets="Restore" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
+             Targets="Build" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(TargetDir)fake-native-grok/" />
+    <Copy SourceFiles="$(TargetDir)fake-native-claude/fakeclaude"
+          DestinationFiles="$(TargetDir)fakeclaude/fakeclaude" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)fake-native-grok/fakegrok"
+          DestinationFiles="$(TargetDir)fakegrok/fakegrok" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

@@ -6,6 +6,48 @@ namespace Antiphon.SessionRunner.Tests;
 /// <summary>Owned native Herdr wire peer. The child, rather than the test process, binds its endpoint.</summary>
 internal sealed class HerdrTestProcess : IAsyncDisposable
 {
+    private const string OwnedFixtureScript = """
+param([string]$AssemblyPath)
+$ErrorActionPreference = 'Stop'
+$assembly = [System.Reflection.Assembly]::LoadFrom($AssemblyPath)
+$endpointType = $assembly.GetType('Antiphon.SessionRunner.Tests.FakeHerdrEndpoint', $true)
+$transportType = $assembly.GetType('Antiphon.SessionRunner.Tests.FakeHerdrTransport', $true)
+$endpoint = [Activator]::CreateInstance($endpointType, [object[]]@($null))
+$transport = [Activator]::CreateInstance($transportType, [object[]]@($endpoint))
+$transport.Bind()
+[Console]::Out.WriteLine('READY ' + $endpoint.Path)
+while ($true) {
+    $stream = $transport.AcceptAsync([System.Threading.CancellationToken]::None, [Action]{ }).GetAwaiter().GetResult()
+    try {
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 1024, $true)
+        $writer = [System.IO.StreamWriter]::new($stream, [System.Text.UTF8Encoding]::new($false), 1024, $true)
+        $writer.AutoFlush = $true
+        $line = $reader.ReadLine()
+        if ($line) {
+            $request = $line | ConvertFrom-Json
+            $writer.WriteLine('{"id":"' + $request.id + '","result":{"type":"pong","version":"0.8.2","protocol":20}}')
+        }
+        $writer.Dispose(); $reader.Dispose()
+    } finally { $stream.Dispose() }
+}
+""";
+    public static string ShellPath => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/sh";
+    public static string ShellName => OperatingSystem.IsWindows() ? "cmd.exe" : "sh";
+    public static string[] InteractiveArgs => OperatingSystem.IsWindows()
+        ? ["/d", "/q", "/k", "@echo off & prompt $G"] : ["-i"];
+
+    public static Process StartDummy()
+    {
+        var start = new ProcessStartInfo(ShellPath)
+        {
+            CreateNoWindow = true, UseShellExecute = false,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        foreach (var arg in InteractiveArgs) start.ArgumentList.Add(arg);
+        return Process.Start(start) ?? throw new IOException("Owned shell child did not start.");
+    }
+
     private const string Script = """
 param([string]$Endpoint)
 $ErrorActionPreference = 'Stop'
@@ -55,18 +97,32 @@ if ($IsWindows) {
 
     private readonly string _scriptPath;
     public Process Process { get; }
+    public string? EndpointPath { get; }
     public string Identity => $"{Process.Id}:{Process.StartTime.ToUniversalTime().Ticks}";
 
-    private HerdrTestProcess(Process process, string scriptPath)
+    private HerdrTestProcess(Process process, string scriptPath, string? endpointPath = null)
     {
         Process = process;
         _scriptPath = scriptPath;
+        EndpointPath = endpointPath;
     }
 
     public static async Task<HerdrTestProcess> StartAsync(string endpoint, CancellationToken cancellationToken = default)
     {
+        return await StartScriptAsync(Script, endpoint, ownedFixture: false, cancellationToken);
+    }
+
+    public static async Task<HerdrTestProcess> StartOwnedFixtureAsync(string assemblyPath,
+        CancellationToken cancellationToken = default)
+    {
+        return await StartScriptAsync(OwnedFixtureScript, assemblyPath, ownedFixture: true, cancellationToken);
+    }
+
+    private static async Task<HerdrTestProcess> StartScriptAsync(string script, string argument,
+        bool ownedFixture, CancellationToken cancellationToken)
+    {
         var scriptPath = Path.Combine(Path.GetTempPath(), $"c801-peer-{Guid.NewGuid():N}.ps1");
-        await File.WriteAllTextAsync(scriptPath, Script, new UTF8Encoding(false), cancellationToken);
+        await File.WriteAllTextAsync(scriptPath, script, new UTF8Encoding(false), cancellationToken);
         var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh")
         {
             RedirectStandardOutput = true,
@@ -77,7 +133,7 @@ if ($IsWindows) {
         start.ArgumentList.Add("-NonInteractive");
         start.ArgumentList.Add("-File");
         start.ArgumentList.Add(scriptPath);
-        start.ArgumentList.Add(endpoint);
+        start.ArgumentList.Add(argument);
         Process? child = null;
         try
         {
@@ -85,9 +141,9 @@ if ($IsWindows) {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             startup.CancelAfter(TimeSpan.FromSeconds(15));
             var line = await child.StandardOutput.ReadLineAsync(startup.Token);
-            if (line != "READY")
-                throw new IOException($"Herdr peer child did not bind '{endpoint}': {line}; {await child.StandardError.ReadToEndAsync(startup.Token)}");
-            return new HerdrTestProcess(child, scriptPath);
+            if (line != "READY" && !(ownedFixture && line?.StartsWith("READY ", StringComparison.Ordinal) == true))
+                throw new IOException($"Herdr peer child did not bind '{argument}': {line}; {await child.StandardError.ReadToEndAsync(startup.Token)}");
+            return new HerdrTestProcess(child, scriptPath, ownedFixture ? line![6..] : argument);
         }
         catch
         {

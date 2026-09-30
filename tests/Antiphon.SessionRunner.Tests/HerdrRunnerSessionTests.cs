@@ -25,7 +25,7 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
@@ -63,7 +63,7 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
@@ -93,7 +93,7 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
@@ -139,7 +139,7 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
@@ -167,12 +167,12 @@ public class HerdrRunnerSessionTests
             NullLogger<SessionRunnerRuntime>.Instance);
 
         var sessionId = Guid.NewGuid();
-        var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var cmd = HerdrTestProcess.ShellPath;
         var dto = await runtime.StartAsync(
             new RunnerLaunchRequest(
                 sessionId,
                 cmd,
-                ["/d", "/q", "/k", "@echo off & prompt $G"],
+                HerdrTestProcess.InteractiveArgs,
                 new Dictionary<string, string>(),
                 Path.GetTempPath(),
                 Cols: 80,
@@ -211,7 +211,7 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
@@ -271,7 +271,7 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
