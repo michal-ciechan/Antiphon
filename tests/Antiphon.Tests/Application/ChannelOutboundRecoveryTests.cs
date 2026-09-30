@@ -678,7 +678,13 @@ public sealed class ChannelOutboundRecoveryTests
                 await nativeRunner.SendInputAsync(nativeSessionId,
                     $"{DelegationReportFormatter.TaskMarker(nativeTaskId)} Read the immutable request JSON at: {requestPath}",
                     CancellationToken.None);
-                await Task.Delay(100);
+                // FakeGrok prints Ready before its stdin reader begins. Wait until
+                // it consumes the body, or a fast Enter joins that same burst and
+                // is treated as pasted text instead of a submit.
+                using (var bodyWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                    while (!File.Exists(nativeInputShape))
+                        await Task.Delay(25, bodyWatchdog.Token);
+                await Task.Delay(50);
                 await nativeRunner.SendInputAsync(nativeSessionId,
                     OperatingSystem.IsWindows() ? "\r" : "\n", CancellationToken.None);
                 using var nativeWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(30));
