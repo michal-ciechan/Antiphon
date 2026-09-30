@@ -5,6 +5,8 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -21,10 +23,16 @@ public class RunnerGrokAdapterReadyTests
     [Test]
     public async Task Spinner_sequence_advance_does_not_prevent_positive_ready()
     {
-        var client = new ScriptedClient([Ready]);
-        await using var adapter = NewAdapter(client, max: 500, settle: 60);
+        using var document = GrokStartupFixture.Read();
+        var idle = GrokStartupFixture.Capture(document, "idle-");
+        var animated = idle.GetProperty("checkpoints").EnumerateArray()
+            .Where(x => x.GetProperty("expectedReason").GetString() == "Ready")
+            .Select(x => x.GetProperty("screen").GetString()!).ToArray();
+        var client = new ScriptedClient(animated, loop: true);
+        await using var adapter = NewAdapter(client, max: 400, settle: 60);
         await adapter.StartAsync(Spec(), CancellationToken.None);
-        (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
+        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+        ready.ShouldBeTrue("ready must survive every advancing spinner frame");
         client.SnapshotReads.ShouldBeGreaterThanOrEqualTo(2);
         client.BufferReads.ShouldBe(0);
         client.Writes.ShouldBeEmpty();
@@ -77,29 +85,70 @@ public class RunnerGrokAdapterReadyTests
         (await second.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
         second.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.ProviderSignInRequired);
         signin.Writes.ShouldBe(["y"]);
+        var trustStart = Stopwatch.StartNew();
+        var trustReads = 0;
+        var trustReady = GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(
+            ++trustReads == 1 ? new(Trust, Trust, 1, DateTime.UtcNow) : null),
+            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(250),
+                TrustSettle = TimeSpan.FromMilliseconds(40), PollInterval = TimeSpan.FromMilliseconds(5) },
+            (_, _) => Task.CompletedTask);
+        var trustCompletion = await trustReady;
+        trustCompletion.ShouldBeFalse();
+        trustStart.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(150), "trustCompletionElapsed");
     }
 
     [Test]
     public async Task One_deadline_covers_reads_trust_and_minimum_age()
     {
         var frame = new GrokStartupSnapshot(Ready, "historical", 1, DateTime.UtcNow);
+        var clock = new JumpClock();
         var late = await GrokReadyWait.WaitAsync(async _ =>
         {
-            await Task.Delay(100);
+            await Task.Delay(5);
+            clock.Advance(TimeSpan.FromMilliseconds(80));
             return frame;
-        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(30) });
-        late.ShouldBeFalse();
-        var hung = new TaskCompletionSource<GrokStartupSnapshot?>();
-        var began = DateTime.UtcNow;
-        (await GrokReadyWait.WaitAsync(_ => hung.Task,
-            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(30) })).ShouldBeFalse();
-        (DateTime.UtcNow - began).ShouldBeLessThan(TimeSpan.FromSeconds(1));
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(50), TimeProvider = clock });
+        late.ShouldBeFalse("lateReadReady");
+        var hung = new TaskCompletionSource<GrokStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var began = Stopwatch.StartNew();
+        var bounded = GrokReadyWait.WaitAsync(_ => hung.Task,
+            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(35) });
+        var release = Task.Delay(75).ContinueWith(_ => hung.TrySetResult(frame));
+        var boundedResult = await bounded;
+        await release;
+        boundedResult.ShouldBeFalse();
+        began.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(70), "completionElapsed");
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.Zero })).ShouldBeFalse();
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(70),
                 MinimumAgeRemaining = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(10),
                 Settle = TimeSpan.Zero })).ShouldBeFalse();
+        var floorClock = new JumpClock();
+        var floorReads = 0;
+        var floor = await GrokReadyWait.WaitAsync(_ =>
+        {
+            floorReads++;
+            if (floorReads == 3) floorClock.Advance(TimeSpan.FromMilliseconds(80));
+            return Task.FromResult<GrokStartupSnapshot?>(new(
+                floorReads < 3 ? Ready : SignIn, "", floorReads, DateTime.UtcNow));
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(150),
+            MinimumAgeRemaining = TimeSpan.FromMilliseconds(80), Settle = TimeSpan.Zero,
+            PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = floorClock });
+        floor.ShouldBeFalse("readyWithFloorModal");
+        var utcClock = new JumpClock();
+        var utcReads = 0;
+        var utcStarted = Stopwatch.StartNew();
+        var utcReady = await GrokReadyWait.WaitAsync(_ =>
+        {
+            if (++utcReads == 2) utcClock.AdvanceUtc(TimeSpan.FromMilliseconds(90));
+            return Task.FromResult<GrokStartupSnapshot?>(frame);
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(300),
+            Settle = TimeSpan.FromMilliseconds(80), PollInterval = TimeSpan.FromMilliseconds(5),
+            TimeProvider = utcClock });
+        (utcReady && utcStarted.Elapsed < TimeSpan.FromMilliseconds(75))
+            .ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
+        utcReady.ShouldBeTrue();
     }
 
     [Test]
@@ -109,6 +158,16 @@ public class RunnerGrokAdapterReadyTests
         (await GrokReadyWait.WaitAsync(_ => { reads++; return Task.FromResult<GrokStartupSnapshot?>(null); },
             new GrokReadyWaitOptions(), isExited: () => true)).ShouldBeFalse();
         reads.ShouldBe(0);
+        var exitReads = 0;
+        var exited = false;
+        var exitedReady = await GrokReadyWait.WaitAsync(_ =>
+        {
+            exitReads++;
+            if (exitReads == 2) exited = true;
+            return Task.FromResult<GrokStartupSnapshot?>(new(Ready, "", exitReads, DateTime.UtcNow));
+        }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(100), Settle = TimeSpan.Zero,
+            PollInterval = TimeSpan.FromMilliseconds(5) }, isExited: () => exited);
+        exitedReady.ShouldBeFalse("exitedReady");
         using var cancel = new CancellationTokenSource();
         cancel.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(() => GrokReadyWait.WaitAsync(
@@ -121,8 +180,11 @@ public class RunnerGrokAdapterReadyTests
         var root = Path.Combine(Path.GetTempPath(), "c778-v12-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var client = new ScriptedClient(["", "Starting session…"]);
-            await using var adapter = NewAdapter(client, max: 100, captureDirectory: root);
+            const string sentinel = "C778_PRIVATE_SCREEN_SENTINEL";
+            var logger = new TestLogger();
+            var client = new ScriptedClient(["", "Starting session… " + sentinel]);
+            await using var adapter = NewAdapter(client, max: 100, captureDirectory: root,
+                logger: logger);
             await adapter.StartAsync(Spec(), CancellationToken.None);
             (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
             var file = Directory.GetFiles(root, "grok-startup-*.txt").Single();
@@ -130,35 +192,50 @@ public class RunnerGrokAdapterReadyTests
             content.ShouldContain("outcome: Deadline");
             content.ShouldContain($"frameSequence: {client.SnapshotReads}");
             client.BufferReads.ShouldBe(0);
+            logger.Messages.ShouldHaveSingleItem();
+            string.Join("\n", logger.Messages).ShouldNotContain(sentinel, "log allowlist");
             var blockedPath = Path.Combine(root, "not-a-directory");
             File.WriteAllText(blockedPath, "sentinel");
             var bad = new ScriptedClient([""]);
-            await using var second = NewAdapter(bad, max: 50, captureDirectory: blockedPath);
+            await using var second = NewAdapter(bad, max: 50, captureDirectory: blockedPath,
+                logger: logger);
             await second.StartAsync(Spec(), CancellationToken.None);
             (await second.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+            logger.Messages.Count.ShouldBe(2);
+            string.Join("\n", logger.Messages).ShouldNotContain(sentinel, "log allowlist on write failure");
+            var failureReads = 0;
+            var snapshotFailureReady = await GrokReadyWait.WaitAsync(_ =>
+            {
+                if (++failureReads == 2) throw new IOException("snapshot failure sentinel");
+                return Task.FromResult<GrokStartupSnapshot?>(new(Ready, "", failureReads, DateTime.UtcNow));
+            }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(100),
+                Settle = TimeSpan.Zero, PollInterval = TimeSpan.FromMilliseconds(5) });
+            snapshotFailureReady.ShouldBeFalse("snapshotFailureReady");
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     private static RunnerGrokAdapter NewAdapter(ScriptedClient client, int max = 300,
-        int settle = 50, int trust = 150, string? captureDirectory = null) => new(client,
+        int settle = 50, int trust = 150, string? captureDirectory = null,
+        ILogger? logger = null) => new(client,
         Options.Create(new AgentRegistrySettings
         {
             GrokReadyMaxWaitMs = max, GrokReadyQuietPeriodMs = settle,
             GrokReadyMinTotalWaitMs = 0, GrokTrustPromptSettleMs = trust,
             GrokStartupCaptureDirectory = captureDirectory,
-        }));
+        }), logger: logger);
 
     private static AgentLaunchSpec Spec() => new("grok", AgentKind.Grok, "grok.exe", [],
         new Dictionary<string, string>(), "/tmp", 120, 30, SessionId: Guid.NewGuid());
 
-    private sealed class ScriptedClient(IReadOnlyList<string> screens, string? raw = null) : ISessionRunnerClient
+    private sealed class ScriptedClient(IReadOnlyList<string> screens, string? raw = null,
+        bool loop = false) : ISessionRunnerClient
     {
         private int _index;
         public int SnapshotReads { get; private set; }
         public int BufferReads { get; private set; }
         public List<string> Writes { get; } = [];
-        private string Screen => screens[Math.Min(_index, screens.Count - 1)];
+        private string Screen => screens[loop ? _index % screens.Count : Math.Min(_index, screens.Count - 1)];
         public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSessionDto(id, 12, DateTime.UtcNow.AddMinutes(-1), "Running", null,
                 AgentExitReason.Unknown, 0));
@@ -193,5 +270,32 @@ public class RunnerGrokAdapterReadyTests
         public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
         { await Task.CompletedTask; yield break; }
+    }
+
+    private sealed class JumpClock : TimeProvider
+    {
+        private long _timestampOffset;
+        private long _utcOffsetTicks;
+        public override long GetTimestamp() => Stopwatch.GetTimestamp() + Interlocked.Read(ref _timestampOffset);
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow +
+            TimeSpan.FromTicks(Interlocked.Read(ref _utcOffsetTicks));
+        public void Advance(TimeSpan amount) => Interlocked.Add(ref _timestampOffset,
+            (long)(amount.TotalSeconds * Stopwatch.Frequency));
+        public void AdvanceUtc(TimeSpan amount) => Interlocked.Add(ref _utcOffsetTicks, amount.Ticks);
+    }
+
+    private sealed class TestLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception) + exception?.Message);
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
     }
 }

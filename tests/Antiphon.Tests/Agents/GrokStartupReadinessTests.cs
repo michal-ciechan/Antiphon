@@ -72,17 +72,16 @@ public class GrokStartupReadinessTests
     public void Unknown_or_blocked_current_frames_never_become_ready()
     {
         using var document = GrokStartupFixture.Read();
-        foreach (var (prefix, expected) in new[]
+        foreach (var capture in document.RootElement.GetProperty("captures").EnumerateObject()
+            .Where(x => x.Value.TryGetProperty("checkpoints", out _)))
         {
-            ("startup-", "StartingSession"), ("idle-", "ComposerUnavailable")
-        })
-        {
-            var capture = GrokStartupFixture.Capture(document, prefix);
-            var found = capture.GetProperty("checkpoints").EnumerateArray()
-                .First(x => x.GetProperty("expectedReason").GetString() == expected);
-            var actual = GrokStartupScreen.Classify(found.GetProperty("screen").GetString());
-            actual.IsReady.ShouldBeFalse();
-            actual.Reason.ToString().ShouldBe(expected);
+            foreach (var frame in capture.Value.GetProperty("checkpoints").EnumerateArray())
+            {
+                var expected = frame.GetProperty("expectedReason").GetString();
+                var actual = GrokStartupScreen.Classify(frame.GetProperty("screen").GetString());
+                actual.IsReady.ShouldBe(expected == "Ready", $"{capture.Name} chunk {frame.GetProperty("afterChunk")}");
+                actual.Reason.ToString().ShouldBe(expected, $"{capture.Name} chunk {frame.GetProperty("afterChunk")}");
+            }
         }
         foreach (var synthetic in document.RootElement.GetProperty("synthetic").EnumerateArray())
         {
@@ -130,6 +129,16 @@ public class GrokStartupReadinessTests
         tracker.Observe(ready, TimeSpan.FromMilliseconds(2200)).ShouldBeFalse();
         tracker.Observe(ready, TimeSpan.FromMilliseconds(3199)).ShouldBeFalse();
         tracker.Observe(ready, TimeSpan.FromMilliseconds(3200)).ShouldBeTrue();
+        // A negative observation invalidates the first positive candidate even when the
+        // composer returns before the old candidate's settlement deadline.
+        var negative = new GrokReadyTracker(TimeSpan.FromMilliseconds(1000));
+        negative.Observe(ready, TimeSpan.Zero).ShouldBeFalse();
+        negative.Observe(new(false, GrokStartupReason.Unknown, "", false),
+            TimeSpan.FromMilliseconds(900)).ShouldBeFalse();
+        negative.Observe(ready, TimeSpan.FromMilliseconds(950)).ShouldBeFalse();
+        negative.Observe(ready, TimeSpan.FromMilliseconds(1000)).ShouldBeFalse(
+            "readyAfterNegativeBeforeThreshold");
+        negative.Observe(ready, TimeSpan.FromMilliseconds(1950)).ShouldBeTrue();
     }
 
     [Test]
