@@ -408,7 +408,7 @@ public sealed class CodexTranscriptNormalizer
         var trimmed = text.Trim();
         return trimmed.Length <= MaxApiErrorDiagnosticChars
             ? trimmed
-            : trimmed[..MaxApiErrorDiagnosticChars] + "…";
+            : trimmed[..(MaxApiErrorDiagnosticChars - 1)] + "…";
     }
 
     // ---------------------------------------------------------------------------------- plumbing
