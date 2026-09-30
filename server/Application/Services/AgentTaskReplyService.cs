@@ -1377,7 +1377,9 @@ public sealed class AgentTaskReplyService
             return;
         }
 
-        if (classification == ApiErrorClassification.Wall)
+        if (classification == ApiErrorClassification.Wall
+            && (string.Equals(stub.ErrorClass, "usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
+                || UsageLimitWallParser.IsQuotaRefusal(stub.ErrorText)))
         {
             var hold = recovery?.AppliedHoldId is Guid holdId
                 ? await db.ModelAvailabilityHolds.AsNoTracking()
