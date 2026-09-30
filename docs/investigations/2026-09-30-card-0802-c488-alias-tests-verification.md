@@ -4,7 +4,7 @@
 
 - Source SHA before test edits: `037b24a352a960a0ed35a10d171ea92f2814f4be`.
 - Environment: Linux x86_64 (`4.15.0-213-generic`), .NET SDK `10.0.401`, runner mirror `/work/worktrees/task-6dfe4f27`.
-- The task-owned census driver is `.antiphon/c802-census.ps1`, copied verbatim from the plan; SHA256 `8fd0ca720389f6959bd4a717b9db457b53196360dbab0830d1fe0bc8c7b3d7fe`.
+- The task-owned census driver is `.antiphon/c802-census.ps1`. Its initial plan-verbatim SHA256 was `8fd0ca720389f6959bd4a717b9db457b53196360dbab0830d1fe0bc8c7b3d7fe`. After the first CP-2 attempt exposed multiline diagnostic records, the driver gained a loss-checked line-folding adapter; its final SHA256 is `ea9e6240e537e74448d9d3f13a88f8324e58ecdd01e8dc37d40ca321815ab918`. CP-2 and CP-5 use these identical final bytes.
 - CP-1 builds `bin-c802-before/` and selects exactly the three named methods in the plan, preserving its fresh TRX and producer report. CP-2 discovers the unfiltered assembly from that retained output. Case durations will be read from outer `UnitTestResult` records joined by test ID to `TestDefinitions/UnitTest/TestMethod`.
 - Baseline card evidence of 187.870 s belongs only to `C488_DetachedFollowUpPublishesReviewedFix` in an earlier Linux full-suite run; it is not a measurement of either alias here.
 
@@ -35,3 +35,14 @@ Each identity invokes the main body, which calls the real landing verifier
 once and the independent target verifier once: 6 real invocations total.
 
 Pending CP-2 through CP-5.
+
+The first CP-2 attempt at `f3386cc04707d2628a3d1ba87c9535827c2d2915`
+is retained at `.antiphon/checkpoints/20260930-093158-f7a6/`, with its
+phase directory archived as `.antiphon/c802-census/before-attempt1/`. It
+failed before export because 13,118 raw lines contained the discovered-state
+marker while the nightly one-line parser returned 13,092 nodes. Inspection
+showed 28 records split across lines by embedded newline display arguments.
+The task-local adapter folds each such record, checks that no state marker was
+lost, then applies the same pinned strict parser. This changes census input
+framing only; raw diagnostics remain retained. The rerun uses the existing
+CP-1 producer output and performs no test execution.
