@@ -1529,6 +1529,13 @@ c849_optional_donor() {
     return 0
 }
 
+c849_no_temp_containers() {
+    local listed
+    listed="$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" \
+        || write_result false CacheDonorLookupFailed 2
+    [ -z "$listed" ] || write_result false CacheTempContainerExists 2
+}
+
 c849_empty_volume() {
     local name="$1" image="$2" listing
     listing="$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
@@ -1605,6 +1612,8 @@ c849_seed() {
             c849_status_zero server2-temp reconnected || write_result false CacheDonorNotReady 2
             c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
                 > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
+        else
+            c849_no_temp_containers
         fi
         printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
         write_result true '' 0

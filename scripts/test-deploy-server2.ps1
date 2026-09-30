@@ -34,7 +34,7 @@ function Run-C727 {
     if ($TokenPresent) { Set-Content -LiteralPath $tokenPath -Value $sentinel -NoNewline }
     $state = [ordered]@{
         scenario = $Scenario; sha = $sha; tempDeployed = $false; oldDeployed = $false
-        oldDraining = $false; tempDraining = $false; tempRetiredAt = $null
+        oldDraining = $false; tempDraining = $false; tempRetiredAt = $null; tempContainer = $true; tempOffline = $false
         faultRunner = ''; faultField = ''; faultKind = ''; faultValue = $null; failVerify = ''
     }
     foreach ($key in $Set.Keys) { $state[$key] = $Set[$key] }
@@ -124,13 +124,17 @@ try {
     Assert-C727 (@($p | Where-Object runnerId -eq 'server2').Count -eq 0) 'T-8 no main post'
     Complete-Group 8 'held fresh temp'
 
-    $t = Run-C727 -Scenario retired -Phase deploy-temp -Set @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z' }
+    $t = Run-C727 -Scenario retired -Phase deploy-temp -Set @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $false }
     $c = Cases $t; $p = Posts $t
     Assert-C727 ($t.Exit -eq 0) 'T-9 exit'
     Assert-C727 ((@($c | ForEach-Object name) -join ',') -eq 'runner-cache-seed,deploy-temp-runner,verify-runner-caches') 'T-9 seed/replacement/verify'
     Assert-C727 ($p.Count -eq 1 -and $p[0].suffix -eq '/drain/clear') 'T-9 one clear'
     Assert-C727 ([array]::IndexOf($t.Trace, $p[0]) -gt [array]::IndexOf($t.Trace, $c[2])) 'T-9 clear after verify'
     Assert-C727 (@($p | Where-Object runnerId -eq 'server2').Count -eq 0) 'T-9 main untouched'
+    $t = Run-C727 -Scenario retired-container-present -Phase deploy-temp -Set @{ tempDraining = $true; tempRetiredAt = '2026-09-27T10:00:00Z'; tempContainer = $true; tempOffline = $true }
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('HostCaseFailed runner-cache-seed')) 'T-9 leftover container refused'
+    Assert-C727 ((@((Cases $t) | ForEach-Object name) -join ',') -eq 'runner-cache-seed') 'T-9 no replacement after host refusal'
+    Assert-C727 ((Posts $t).Count -eq 0) 'T-9 hold retained after host refusal'
     Complete-Group 9 'retired temp reactivation'
 
     foreach ($variant in @('main', 'temp')) {
@@ -168,6 +172,10 @@ try {
             }
         }
     }
+    $t = Run-C727 -Scenario unknown-deploy-temp-runnerSessions-garbage -Phase deploy-temp -Set @{ faultRunner = 'server2-temp'; faultField = 'runnerSessions'; faultKind = 'value'; faultValue = 'garbage' }
+    Assert-C727 ($t.Exit -eq 2 -and $t.Out.Contains('RunnerCounterUnknown')) 'T-12 live garbage verdict'
+    Assert-C727 (-not (Has-Case $t 'runner-cache-seed') -and -not (Has-Case $t 'deploy-temp-runner')) 'T-12 live garbage no host'
+    Assert-C727 ((Posts $t).Count -eq 0) 'T-12 live garbage no post'
     Complete-Group 12 'unknown counters'
 
     foreach ($field in @('runnerSessions', 'queuedTasks')) {
@@ -212,11 +220,11 @@ try {
     }
     Complete-Group 16 'conflicts/unavailable'
 
-    if ($script:groups -ne 16 -or $script:invocations -ne 44 -or $script:assertions -ne 143) {
+    if ($script:groups -ne 16 -or $script:invocations -ne 46 -or $script:assertions -ne 149) {
         throw "Frozen roster mismatch groups=$script:groups invocations=$script:invocations assertions=$script:assertions"
     }
-    Write-Output 'C849_ROLLING groups=16 invocations=44 assertions=143 failures=0'
-    Write-Output 'V-32 assertions=143 failures=0'
+    Write-Output 'C849_ROLLING groups=16 invocations=46 assertions=149 failures=0'
+    Write-Output 'V-32 assertions=149 failures=0'
     exit 0
 }
 catch {

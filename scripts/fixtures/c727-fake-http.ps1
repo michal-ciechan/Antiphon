@@ -32,12 +32,13 @@ if ($RunnerId -eq 'server2-temp') {
         Write-Output '__404__'
         exit 0
     }
-    $accepting = $state.scenario -ne 'ineligible' -and -not $state.tempDraining
+    $offline = (-not $state.tempContainer) -or $state.tempOffline
+    $accepting = $state.scenario -ne 'ineligible' -and -not $state.tempDraining -and -not $offline
     $status = [ordered]@{
-        acceptingNewWork = $accepting; dispatchEligible = ($state.scenario -ne 'ineligible'); buildVersion = $(if ($state.tempDeployed) { $state.sha } else { 'old' })
+        available = (-not $offline); acceptingNewWork = $accepting; dispatchEligible = ($state.scenario -ne 'ineligible' -and -not $offline); buildVersion = $(if ($state.tempDeployed) { $state.sha } else { 'old' })
         draining = [bool]$state.tempDraining; redirectTo = $(if ($state.tempDraining) { 'server2' } else { $null })
         retireWhenIdle = [bool]$state.tempDraining; retiredAt = $state.tempRetiredAt
-        sessions = 0; runnerSessions = 0; queuedTasks = 0
+        sessions = 0; runnerSessions = $(if ($offline) { $null } else { 0 }); queuedTasks = 0
     }
     if ($state.faultRunner -eq $RunnerId -and $state.faultField) {
         if ($state.faultKind -eq 'omitted') { $status.Remove([string]$state.faultField) }

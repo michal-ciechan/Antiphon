@@ -74,6 +74,27 @@ function Assert-ZeroCounters {
     }
 }
 
+function Assert-TempSeedCounters {
+    param($Status)
+    if ($null -eq $Status) { throw 'RunnerStatusMissing server2-temp' }
+    # Retirement removes the live connection, so runnerSessions becomes null after
+    # compose down -v. Seed verifies on the host that the temp project is absent.
+    $retiredOffline = $Status.retiredAt -and $Status.draining -and
+        [string]$Status.redirectTo -eq 'server2' -and $Status.retireWhenIdle -eq $true -and
+        $Status.available -eq $false -and $Status.dispatchEligible -eq $false -and
+        $Status.acceptingNewWork -eq $false
+    foreach ($name in @('sessions', 'runnerSessions', 'queuedTasks')) {
+        $value = $Status.$name
+        if ($Status.PSObject.Properties.Name -notcontains $name -or $null -eq $value) {
+            if ($name -eq 'runnerSessions' -and $retiredOffline -and
+                $Status.PSObject.Properties.Name -contains $name) { continue }
+            throw "RunnerCounterUnknown server2-temp $name"
+        }
+        if ($value -isnot [int] -and $value -isnot [long]) { throw "RunnerCounterUnknown server2-temp $name" }
+        if ($value -ne 0) { throw "RunnerBusy server2-temp $name" }
+    }
+}
+
 function Wait-RunnerStatus {
     param([string]$RunnerId, [scriptblock]$Ready, [int]$Minutes, [string]$Diagnosis)
     $deadline = [datetime]::UtcNow.AddMinutes($Minutes)
@@ -112,13 +133,13 @@ function Invoke-Phase {
             $s = Get-RunnerStatus -RunnerId 'server2-temp'
             if ($null -eq $s) { throw 'TempRunnerStatusMissing' }
             if ([string]$s.buildVersion -ne $Sha) {
-                Assert-ZeroCounters -Status $s -RunnerId 'server2-temp'
+                Assert-TempSeedCounters -Status $s
                 if (-not $s.draining) {
                     [void](Invoke-RunnerRequest -Method POST -RunnerId 'server2-temp' -Suffix '/drain' -Body @{
                         reason = 'CARD-0849 cache migration'; redirectTo = 'server2'; retireWhenIdle = $true
                     })
                     $s = Get-RunnerStatus -RunnerId 'server2-temp'
-                    Assert-ZeroCounters -Status $s -RunnerId 'server2-temp'
+                    Assert-TempSeedCounters -Status $s
                 }
                 if (-not $s.draining -or [string]$s.redirectTo -ne 'server2' -or -not $s.retireWhenIdle) {
                     throw 'TempRunnerDrainConflict'
