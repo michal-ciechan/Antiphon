@@ -1384,7 +1384,20 @@ public sealed class ChannelOutboundRecoveryTests
         await queue.EnqueueAsync(sessionId, probeText, MessageSendMode.WhenIdle,
             CancellationToken.None, onCreated: id => probeId = id, deliverIfIdle: false);
         probeId.ShouldNotBe(Guid.Empty);
-        try { await queue.SendNowAsync(sessionId, probeId, CancellationToken.None); }
+        try
+        {
+            // Program normally runs SessionRunnerEventPump beside the queue. This
+            // rebuilt fixture has no hosted services, so drive its production
+            // transcript catch-up while the queue awaits the native prompt.
+            var send = queue.SendNowAsync(sessionId, probeId, CancellationToken.None);
+            using var ingestWatchdog = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            while (!send.IsCompleted)
+            {
+                await runtime.SyncTranscriptAsync(sessionId, ingestWatchdog.Token);
+                await Task.Delay(100, ingestWatchdog.Token);
+            }
+            await send;
+        }
         catch (Exception ex)
         {
             var observed = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
