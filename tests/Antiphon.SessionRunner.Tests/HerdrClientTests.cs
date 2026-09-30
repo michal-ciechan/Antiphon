@@ -432,7 +432,7 @@ public class HerdrClientTests
         fake.SubscriptionRecords.Count.ShouldBeGreaterThanOrEqualTo(1);
     }
 
-    private static async Task ServePingThenSubscribeErrorAsync(string pipeName)
+    private static async Task ServePingThenSubscribeErrorAsync(FakeHerdrEndpoint pipeName)
     {
         await ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
