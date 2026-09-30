@@ -35,7 +35,7 @@ public sealed class GrokRulesStoreFailureTests
         fake.Start();
         await fake.WaitUntilListeningAsync();
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }), new SystemProcessLivenessProbe());
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }), new SystemProcessLivenessProbe());
         var request = new RunnerLaunchRequest(id, "grok", [], new Dictionary<string,string>(), root, 120, 30,
             TranscriptFormat: TranscriptFormats.Grok, GrokRulesPayload: new("private body sentinel\r\nlast line", 1, Guid.NewGuid()),
             Backend: herdr ? SessionBackends.Herdr : null,

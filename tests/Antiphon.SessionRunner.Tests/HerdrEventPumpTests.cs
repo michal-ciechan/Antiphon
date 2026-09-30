@@ -23,11 +23,11 @@ public class HerdrEventPumpTests
         var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings { SessionLogPath = Path.GetTempPath() }),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }));
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
 
         var pump = new HerdrEventPumpService(
             runtime,
-            new HerdrClient(new HerdrSettings { Enabled = false, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = false, Session = fake.Session, SocketPath = fake.EndpointPath }),
             Options.Create(new HerdrSettings { Enabled = false }),
             NullLogger<HerdrEventPumpService>.Instance);
 
@@ -76,7 +76,7 @@ public class HerdrEventPumpTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
@@ -89,7 +89,7 @@ public class HerdrEventPumpTests
             CancellationToken.None);
         started.Status.ShouldBe("Running");
 
-        var herdrSettings = new HerdrSettings { Enabled = true, Session = fake.Session };
+        var herdrSettings = new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath };
         var pump = new HerdrEventPumpService(runtime, new HerdrClient(herdrSettings), Options.Create(herdrSettings),
             NullLogger<HerdrEventPumpService>.Instance);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));

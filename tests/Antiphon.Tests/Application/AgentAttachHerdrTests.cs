@@ -581,7 +581,7 @@ public class AgentAttachHerdrTests
             herdrClient: new HerdrClient(Options.Create(new HerdrSettings
             {
                 Enabled = true,
-                Session = fake.Session,
+                Session = fake.Session, SocketPath = fake.EndpointPath,
             })),
             processLiveness: new FakeHerdrPowershellProbe())
         {

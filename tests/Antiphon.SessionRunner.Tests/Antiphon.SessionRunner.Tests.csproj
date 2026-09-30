@@ -58,4 +58,13 @@
     <Content Include="Fixtures\grok-*.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <Target Name="CopyOwnedPtyHostAppHostForHerdr" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
+             Targets="Restore" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
+             Targets="Build" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(TargetDir)ptyhost-native/" />
+    <Copy SourceFiles="$(TargetDir)ptyhost-native/Antiphon.PtyHost"
+          DestinationFiles="$(TargetDir)Antiphon.PtyHost" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

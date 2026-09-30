@@ -156,6 +156,18 @@ public class FakeHerdrServerListenerTests
             NativeFileIdentity.TryRead(endpoint.Path, out var after).ShouldBeTrue();
             after.ShouldBe(original, "C801_OWNER_ENDPOINT_PRESERVED");
             (await Client(owner).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
+            if (!OperatingSystem.IsWindows())
+            {
+                using var collision = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                Should.Throw<SocketException>(() => collision.Bind(new UnixDomainSocketEndPoint(endpoint.Path)));
+                File.Delete(endpoint.Path);
+                File.WriteAllText(endpoint.Path, "replacement-owned-by-test");
+            }
+        }
+        if (!OperatingSystem.IsWindows())
+        {
+            File.ReadAllText(endpoint.Path).ShouldBe("replacement-owned-by-test", "C801_REPLACEMENT_PRESERVED");
+            File.Delete(endpoint.Path);
         }
     }
 
@@ -180,19 +192,22 @@ public class FakeHerdrServerListenerTests
     [Test, Category("Integration")]
     public async Task C801_CrashedOwnerLeaseReclaimed()
     {
-        await using var endpoint = new FakeHerdrEndpoint();
-        await using (var child = await HerdrTestProcess.StartAsync(endpoint.Path))
+        var assembly = typeof(FakeHerdrServer).Assembly.Location;
+        string endpointPath;
+        await using (var child = await HerdrTestProcess.StartOwnedFixtureAsync(assembly))
         {
-            var client = new HerdrClient(new HerdrSettings { Enabled = true, SocketPath = endpoint.Path });
+            endpointPath = child.EndpointPath!;
+            var client = new HerdrClient(new HerdrSettings { Enabled = true, SocketPath = endpointPath });
             (await client.ConnectAndValidateAsync(CancellationToken.None)).InstanceId.ShouldBe(child.Identity);
         }
         if (!OperatingSystem.IsWindows())
         {
-            NativeFileIdentity.TryRead(endpoint.Path, out _).ShouldBeTrue();
-            File.Delete(endpoint.Path);
-            NativeFileIdentity.TryRead(endpoint.Path, out _).ShouldBeFalse("C801_CRASH_RESIDUE_REMOVED");
+            NativeFileIdentity.TryRead(endpointPath, out _).ShouldBeTrue();
+            FakeHerdrEndpoint.ReclaimDeadLeases();
+            NativeFileIdentity.TryRead(endpointPath, out _).ShouldBeFalse("C801_CRASH_RESIDUE_REMOVED");
+            Directory.Exists(Path.GetDirectoryName(endpointPath)!).ShouldBeFalse("C801_CRASH_RESIDUE_REMOVED");
         }
-        await using var fake = new FakeHerdrServer(endpoint: endpoint);
+        await using var fake = new FakeHerdrServer();
         fake.Start(); await fake.WaitUntilListeningAsync();
         (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
     }
@@ -209,6 +224,7 @@ public class FakeHerdrServerListenerTests
         try
         {
             File.WriteAllText(sentinel, "foreign");
+            FakeHerdrEndpoint.ReclaimDeadLeases();
             File.ReadAllText(sentinel).ShouldBe("foreign", "C801_FOREIGN_LEASE_PRESERVED");
             (await Client(owner).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
             if (!OperatingSystem.IsWindows())

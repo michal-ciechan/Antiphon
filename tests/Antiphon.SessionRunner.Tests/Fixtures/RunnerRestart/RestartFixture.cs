@@ -208,7 +208,7 @@ internal sealed class RestartFixture : IDisposable
             Read-RunnerMilestones $reader $p '2000-01-01T00:00:00Z'
             if($reader.Phase.event -ne '{{expectedPhase}}'){throw "production decoder did not accept producer records: $($reader.Phase.event)"}
             """;
-        var result = await Script(script); result.Exit.ShouldBe(0, result.Output);
+        var result = await Script(script, OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh"); result.Exit.ShouldBe(0, result.Output);
     }
 
     public void Dispose() { try { Directory.Delete(Root, true); } catch { } }

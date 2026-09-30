@@ -18,7 +18,6 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrAttachTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
     [Test]
     public async Task Attach_binds_a_live_grok_by_argv_and_writes_an_attached_sidecar()
@@ -723,7 +722,7 @@ public class HerdrAttachTests
             logs is null
                 ? NullLogger<SessionRunnerRuntime>.Instance
                 : new ListLogger<SessionRunnerRuntime>(logs),
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             new PowershellProcessProbe());
 
     private static SessionRunnerSettings BuildSettings() => new()
@@ -769,15 +768,7 @@ public class HerdrAttachTests
 
     private static Process StartDummy()
     {
-        var psi = new ProcessStartInfo(Cmd, "/d /q /k @echo off & prompt $G")
-        {
-            CreateNoWindow = true,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        return Process.Start(psi) ?? throw new InvalidOperationException("failed to start dummy");
+        return HerdrTestProcess.StartDummy();
     }
 
     private static void KillBestEffort(Process process)

@@ -17,7 +17,6 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrAdoptionSweepTests
 {
-    private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
     [Test]
     public async Task R1_runner_restart_adopts_when_pane_lists_the_child()
@@ -441,7 +440,7 @@ public class HerdrAdoptionSweepTests
         var workspaceId = fake.Workspaces[0].WorkspaceId;
         fake.AddReplayPaneClosed(paneId, workspaceId);
 
-        var herdrSettings = new HerdrSettings { Enabled = true, Session = fake.Session };
+        var herdrSettings = new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath };
         var pump = new HerdrEventPumpService(
             runtime,
             new HerdrClient(herdrSettings),
@@ -844,7 +843,7 @@ public class HerdrAdoptionSweepTests
         new(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }),
             probe ?? new PowershellProcessProbe());
 
     private static SessionRunnerSettings BuildSettings() => new()
@@ -975,15 +974,7 @@ public class HerdrAdoptionSweepTests
 
     private static Process StartDummy()
     {
-        var psi = new ProcessStartInfo(Cmd, "/d /q /k @echo off & prompt $G")
-        {
-            CreateNoWindow = true,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        return Process.Start(psi) ?? throw new InvalidOperationException("failed to start dummy");
+        return HerdrTestProcess.StartDummy();
     }
 
     private static void KillBestEffort(Process process)

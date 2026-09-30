@@ -30,11 +30,11 @@ public sealed class GrokRulesAdoptionTests
         fake.Start();
         await fake.WaitUntilListeningAsync();
         SessionRunnerRuntime Runtime() => new(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
-            herdr ? new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }) : null,
+            herdr ? new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }) : null,
             herdr ? new AliveProbe() : new SystemProcessLivenessProbe());
         var payload = new GrokRulesPayload("early file-only sentinel\r\n" + new string('é', 8000) + "\ntail file-only sentinel", 1, Guid.NewGuid());
-        var request = new RunnerLaunchRequest(id, herdr ? "grok" : Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-            herdr ? [] : ["/d", "/q", "/k", "prompt $G"], new Dictionary<string,string> { ["GROK_HOME"] = Path.Combine(root, "isolated home") },
+        var request = new RunnerLaunchRequest(id, herdr ? "grok" : HerdrTestProcess.ShellPath,
+            herdr ? [] : HerdrTestProcess.InteractiveArgs, new Dictionary<string,string> { ["GROK_HOME"] = Path.Combine(root, "isolated home") },
             cwd, 120, 30, TranscriptFormat: TranscriptFormats.Grok, GrokRulesPayload: payload,
             Backend: herdr ? SessionBackends.Herdr : null,
             Herdr: herdr ? new HerdrLaunchOptions("card0395-" + id.ToString("N"), "rules", cwd, "rules", AgentKind: HerdrAgentKinds.Grok) : null);

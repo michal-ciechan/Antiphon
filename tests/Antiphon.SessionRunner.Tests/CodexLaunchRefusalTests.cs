@@ -10,6 +10,7 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CodexLaunchRefusalTests
 {
     [Test]
@@ -39,9 +40,15 @@ public sealed class CodexLaunchRefusalTests
             NullLogger<SessionRunnerRuntime>.Instance);
         var sessionId = Guid.NewGuid();
         var sentinel = "C0497-R2-" + Guid.NewGuid().ToString("N");
+        var portableExe = Path.Combine(layout.Root, "codex-native-test");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(portableExe, "#!/bin/sh\nprintf 'C0497-R2:%s\\n' \"$#\"\nwhile read line; do :; done\n");
+            File.SetUnixFileMode(portableExe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
         var request = new RunnerLaunchRequest(
             sessionId,
-            layout.ShimPath,
+            OperatingSystem.IsWindows() ? layout.ShimPath : portableExe,
             ["--no-alt-screen", "-c", "developer_instructions=" + sentinel + new string('X', 40_000)],
             new Dictionary<string, string>(),
             layout.Root,
@@ -50,15 +57,26 @@ public sealed class CodexLaunchRefusalTests
             TranscriptFormat: TranscriptFormats.Codex,
             CommandLineBudgetChars: 30_000);
 
-        var ex = await Should.ThrowAsync<CodexLaunchException>(() =>
-            runtime.StartAsync(request, CancellationToken.None));
-        ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
-        ex.Message.ShouldNotContain(sentinel);
-        runtime.List().ShouldBeEmpty();
-        runtime.StartCoreSessionRegistrations.ShouldBe(0);
-        await Should.ThrowAsync<KeyNotFoundException>(() => runtime.GetAsync(sessionId, CancellationToken.None));
-        File.Exists(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId)).ShouldBeFalse();
-        File.Exists(Path.Combine(settings.SessionLogPath, $"{sessionId:N}.ansi.log")).ShouldBeFalse();
+        if (OperatingSystem.IsWindows())
+        {
+            var ex = await Should.ThrowAsync<CodexLaunchException>(() =>
+                runtime.StartAsync(request, CancellationToken.None));
+            ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
+            ex.Message.ShouldNotContain(sentinel);
+            runtime.List().ShouldBeEmpty();
+            runtime.StartCoreSessionRegistrations.ShouldBe(0);
+            await Should.ThrowAsync<KeyNotFoundException>(() => runtime.GetAsync(sessionId, CancellationToken.None));
+            File.Exists(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId)).ShouldBeFalse();
+            File.Exists(Path.Combine(settings.SessionLogPath, $"{sessionId:N}.ansi.log")).ShouldBeFalse();
+        }
+        else
+        {
+            var started = await runtime.StartAsync(request, CancellationToken.None);
+            started.Status.ShouldBe("Running");
+            runtime.Get(sessionId).SessionId.ShouldBe(sessionId);
+            runtime.StartCoreSessionRegistrations.ShouldBe(1);
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        }
         DeleteLogRoot(settings.SessionLogPath);
     }
 
@@ -74,13 +92,13 @@ public sealed class CodexLaunchRefusalTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, LaunchDetectTimeoutMs = 5_000 }),
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath, LaunchDetectTimeoutMs = 5_000 }),
             new PowershellProcessProbe());
         var sessionId = Guid.NewGuid();
         var sentinel = "C0497-R2H-" + Guid.NewGuid().ToString("N");
         var request = new RunnerLaunchRequest(
             sessionId,
-            layout.ShimPath,
+            OperatingSystem.IsWindows() ? layout.ShimPath : HerdrTestProcess.ShellPath,
             ["--no-alt-screen", "-c", "developer_instructions=" + sentinel + new string('X', 40_000)],
             new Dictionary<string, string>(),
             settings.SessionLogPath,
@@ -96,17 +114,29 @@ public sealed class CodexLaunchRefusalTests
                 AgentKind: HerdrAgentKinds.Codex),
             CommandLineBudgetChars: 30_000);
 
-        var ex = await Should.ThrowAsync<CodexLaunchException>(() =>
-            runtime.StartAsync(request, CancellationToken.None));
-        ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
-        ex.Message.ShouldNotContain(sentinel);
-        fake.Requests.ShouldBeEmpty();
-        fake.LastLaunchScriptContent.ShouldBeNull();
-        runtime.List().ShouldBeEmpty();
-        runtime.StartCoreSessionRegistrations.ShouldBe(0);
-        File.Exists(HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
-        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
-        File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+        if (OperatingSystem.IsWindows())
+        {
+            var ex = await Should.ThrowAsync<CodexLaunchException>(() =>
+                runtime.StartAsync(request, CancellationToken.None));
+            ex.Code.ShouldBe(CodexLaunchProblemTypes.CommandLineTooLong);
+            ex.Message.ShouldNotContain(sentinel);
+            fake.Requests.ShouldBeEmpty();
+            fake.LastLaunchScriptContent.ShouldBeNull();
+            runtime.List().ShouldBeEmpty();
+            runtime.StartCoreSessionRegistrations.ShouldBe(0);
+            File.Exists(HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+            File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+            File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+        }
+        else
+        {
+            var started = await runtime.StartAsync(request, CancellationToken.None);
+            started.Status.ShouldBe("Running");
+            runtime.Get(sessionId).SessionId.ShouldBe(sessionId);
+            fake.LastLaunchScriptContent.ShouldContain(sentinel);
+            runtime.StartCoreSessionRegistrations.ShouldBe(1);
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        }
         DeleteLogRoot(settings.SessionLogPath);
     }
 
