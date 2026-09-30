@@ -249,6 +249,7 @@ public class DelegationReportFormatterTests
         brief.ShouldContain(task.WorktreeBaseSha);
         brief.ShouldContain("[antiphon-progress:" + task.Id.ToString("D"));
         brief.ShouldContain("never rebase");
+        brief.ShouldContain("Work left unpushed is invisible to the caller and is destroyed when the mirror is retired.");
         brief.ShouldContain("Assigned checkout: runner mirror " + task.RemoteWorktreePath);
         brief.Split("--- runner branch contract ---")[1].Split("\n\n")[0]
             .All(c => c < 128).ShouldBeTrue();

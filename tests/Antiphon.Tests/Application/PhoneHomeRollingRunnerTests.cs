@@ -10,12 +10,14 @@ using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.SessionRunner;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -30,6 +32,105 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed partial class PhoneHomeRollingRunnerTests
 {
+    [Test]
+    [Timeout(120_000)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Settlement_publishes_unpushed_mirror_through_operation_32_and_runner_dispatcher()
+    {
+        await using var rolling = await RollingWorld.StartAsync();
+        await using var git = await RunnerSettlementSyncTests.SyncWorld.CreateAsync();
+        var mirror = await CreatePublishMirrorAsync(git);
+        File.WriteAllText(Path.Combine(mirror, "publish.txt"), "runner work");
+        await git.RunAsync(mirror, "add", "publish.txt");
+        await git.RunAsync(mirror, "commit", "-m", "runner work");
+        var tip = await git.RunAsync(mirror, "rev-parse", "HEAD");
+        var dispatcher = PublishDispatcher(git);
+        rolling.PeerB.Reply = frame => frame.Operation == PhoneHomeOperation.WorkspacePublish
+            ? dispatcher.DispatchAsync(frame, CancellationToken.None).GetAwaiter().GetResult()
+            : null;
+        git.Task.RunnerId = RollingRunnerSettings.Server2Temp;
+        git.Task.RemoteWorktreePath = mirror;
+
+        var result = await PublishSync(git, rolling.RunnerDirectory).SyncAsync(git.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
+        result.MirrorPushed.ShouldBeTrue();
+        result.ConfirmedSha.ShouldBe(tip);
+        (await git.HeadAsync()).ShouldBe(tip);
+        (await git.RunAsync(git.Origin, "rev-parse", git.Branch)).ShouldBe(tip);
+        var request = rolling.PeerB.Incoming.Single(f => f.Operation == PhoneHomeOperation.WorkspacePublish)
+            .Payload!.Value.Deserialize<PhoneHomeWorkspacePublishRequest>(PhoneHomeFraming.Json)!;
+        request.Path.ShouldBe(mirror);
+        request.Branch.ShouldBe(git.Branch);
+        request.BaselineSha.ShouldBe(git.Baseline);
+        request.RemoteSha.ShouldBe(git.Baseline);
+        request.Publish.ShouldBeTrue();
+        rolling.PeerA.RequestCount(PhoneHomeOperation.WorkspacePublish).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Runner_without_publish_feature_never_receives_operation_32()
+    {
+        await using var rolling = await RollingWorld.StartAsync(new RollingOptions { PeerBWorkspacePublish = false });
+        await using var git = await RunnerSettlementSyncTests.SyncWorld.CreateAsync();
+        var mirror = await CreatePublishMirrorAsync(git);
+        File.WriteAllText(Path.Combine(mirror, "unpublished.txt"), "runner work");
+        await git.RunAsync(mirror, "add", "unpublished.txt");
+        await git.RunAsync(mirror, "commit", "-m", "runner work");
+        git.Task.RunnerId = RollingRunnerSettings.Server2Temp;
+        git.Task.RemoteWorktreePath = mirror;
+
+        var result = await PublishSync(git, rolling.RunnerDirectory).SyncAsync(git.Task, CancellationToken.None);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.NoPushedProgress);
+        rolling.PeerB.RequestCount(PhoneHomeOperation.WorkspacePublish).ShouldBe(0);
+        (await git.HeadAsync()).ShouldBe(git.Baseline);
+    }
+
+    private static async Task<string> CreatePublishMirrorAsync(RunnerSettlementSyncTests.SyncWorld git)
+    {
+        await git.EnsureRunnerAsync();
+        await git.RunAsync(git.Runner, "checkout", "-b", "runner-repository", "origin/master");
+        var mirror = Path.Combine(git.Root, "worktrees", RemoteWorkspaceService.MirrorName(git.TaskId));
+        Directory.CreateDirectory(Path.GetDirectoryName(mirror)!);
+        await git.RunAsync(git.Runner, "worktree", "add", mirror, git.Branch);
+        return mirror;
+    }
+
+    private static PhoneHomeCommandDispatcher PublishDispatcher(RunnerSettlementSyncTests.SyncWorld git) =>
+        new(new PublishRuntime(), new PhoneHomeSettings
+        {
+            AllowedCwd = git.Root,
+            RunnerRepository = git.Runner,
+            RunnerCloneSource = git.Origin,
+            CapacityStatePath = Path.Combine(git.Root, "runner-capacity"),
+        });
+
+    private static RemoteWorkspaceService PublishSync(
+        RunnerSettlementSyncTests.SyncWorld git, ISessionRunnerDirectory directory) =>
+        new(directory, git.Git, NullLogger<RemoteWorkspaceService>.Instance, git.Git, git.Leases,
+            mirrorPublisher: new PhoneHomeRunnerMirrorPublisher(directory));
+
+    private sealed class PublishRuntime : IPhoneHomeRuntimeSurface
+    {
+        public RunnerCapabilitiesDto Capabilities() => new("modern", "test", "test", false);
+        public string Health() => "Healthy";
+        public IReadOnlyList<RunnerSessionDto> List() => [];
+        public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
+        public RunnerSnapshotDto GetSnapshot(Guid sessionId) => throw new NotSupportedException();
+        public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) => throw new NotSupportedException();
+        public int OwnedSessionCount => 0;
+    }
+
     [Test]
     [Timeout(120_000)]
     public async Task Input_to_a_session_on_server2_reaches_server2_while_a_new_launch_goes_to_server2_temp()
@@ -204,7 +305,9 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 host.Capacity = peerBCapacity;
             var peerB = await host.ConnectPeerAsync(
                 runnerId: RollingRunnerSettings.Server2Temp, storeId: storeB, secret: secretB,
-                capabilities: workspaceCapabilities);
+                capabilities: options?.PeerBWorkspacePublish == false
+                    ? workspaceCapabilities with { Features = [RunnerCapabilityFeatures.WorkspaceRepositoryV1] }
+                    : workspaceCapabilities);
             host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2));
             host.Directory.MarkRecovered(await host.WaitLiveAsync(runnerId: RollingRunnerSettings.Server2Temp));
             var directory = options?.Directory?.Invoke(host) ?? (ISessionRunnerDirectory)host.Directory;

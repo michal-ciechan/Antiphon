@@ -222,7 +222,7 @@ public static class DelegationReportFormatter
             sb.AppendLine("If your brief asks you to rebase this branch, report blocked and say so.");
             sb.AppendLine($"Before your final message run `git ls-remote origin refs/heads/{task.WorktreeBranch}` "
                 + $"and include the line `[antiphon-progress:{task.Id:D} commit=<that sha>]`.");
-            sb.AppendLine("Unpublished work is retained in the runner mirror for recovery.").AppendLine();
+            sb.AppendLine("Work left unpushed is invisible to the caller and is destroyed when the mirror is retired.").AppendLine();
         }
 
         if (task.WorktreeBaseSource == WorktreeBaseSource.CardCurrent
