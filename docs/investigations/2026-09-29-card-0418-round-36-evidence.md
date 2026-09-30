@@ -91,6 +91,11 @@ correctly waited for the ending response's own text. The fixture now emits
 the same prompt id on the assistant chunk so the real normalizer can join the
 two records. Receipt:
 `.antiphon/checkpoints/r36/DIAG-V15-p-20260930-023404-f7a1`.
+DIAG-V15-q passed the dedicated running-converter row: one executed, one
+passed, zero failed. The independent runner's live converter crossed the held
+tool gate after dispatcher death; fresh transcript sync settled the original
+task and the pump published the sealed output. Receipt:
+`.antiphon/checkpoints/r36/DIAG-V15-q-20260930-023940-28ba/run.trx`.
 
 ## Remaining ordinary work
 
