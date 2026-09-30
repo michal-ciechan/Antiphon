@@ -201,7 +201,7 @@ public class ComplexityWallRerouteTests
             "You've reached your Opus 4.6 limit. Run /usage-credits to continue or switch models with /model.");
 
         await harness.Reply.OnTurnEndAsync(session2, CancellationToken.None);
-        await AssertQuotaBlockAsync(schema, harness, task, session2, 0, expectedBlocks: 2);
+        await AssertQuotaBlockAsync(schema, harness, task, session2, 1, expectedBlocks: 2);
     }
 
     [Test]

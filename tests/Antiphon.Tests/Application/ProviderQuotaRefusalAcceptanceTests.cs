@@ -28,6 +28,7 @@ public class ProviderQuotaRefusalAcceptanceTests
 
     private sealed class Scenario(IsolatedTestSchema schema, BridgeQueueHarness h, FakeTimeProvider clock, Guid taskId) : IAsyncDisposable
     {
+        public string ConnectionString => schema.ConnectionString;
         public BridgeQueueHarness H { get; } = h;
         public FakeTimeProvider Clock { get; } = clock;
         public Guid TaskId { get; } = taskId;
@@ -168,12 +169,6 @@ public class ProviderQuotaRefusalAcceptanceTests
                 events.Select(RunnerContractMapper.MapTranscript).ToList());
             await s.SettleAsync();
             await AssertBlockedAsync(s, Reset, HoldUntil);
-            await using (var db = s.Db())
-            {
-                var attention = await AttentionServiceTests.BuildService(s.H.Runner, db: db, timeProvider: s.Clock)
-                    .GetAsync(CancellationToken.None, includeProgressProbe: false);
-                attention.Items.ShouldContain(i => i.TaskId == s.TaskId && i.Kind == AttentionKind.BlockedQuestion);
-            }
             s.Clock.Advance(TimeSpan.FromDays(2));
             await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
             await using var verify = s.Db();
@@ -218,6 +213,11 @@ public class ProviderQuotaRefusalAcceptanceTests
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId
             && m.Origin == QueuedMessageOrigin.Supervision
             && m.Status != QueuedMessageStatus.Canceled)).ShouldBe(0);
+        var attention = await AttentionServiceTests.BuildService(s.H.Runner, db: db, timeProvider: s.Clock)
+            .GetAsync(CancellationToken.None, includeProgressProbe: false);
+        var item = attention.Items.Single(i => i.TaskId == s.TaskId && i.Kind == AttentionKind.BlockedQuestion);
+        item.Headline.ShouldContain("quota");
+        item.ConditionKey.ShouldBe($"quota-blocked:{s.TaskId:N}");
     }
 
     [Test]
@@ -246,6 +246,16 @@ public class ProviderQuotaRefusalAcceptanceTests
         await s.EmitAsync(UsageLimitWallParser.SessionLimitFixtureText, "rate_limit", 429, "Europe/London", IncidentAt);
         await s.SettleAsync();
         (await s.ReadAsync()).Task.Status.ShouldBe(AgentTaskStatus.Blocked);
+        var now = s.Clock.GetUtcNow().UtcDateTime;
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            s.ConnectionString, s.H.TempRoot, now);
+        var queued = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
+            s.ConnectionString, s.H.TempRoot, agentId, AgentModelLevel.Frontier,
+            "quota-held fable task", now);
+        var dispatcher = ModelAvailabilityDispatcherTests.CreateDispatcher(s.ConnectionString, s.Clock);
+        (await dispatcher.TickAsync(CancellationToken.None)).SkippedModelAvailability.ShouldBeGreaterThanOrEqualTo(1);
+        await using var verify = s.Db();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == queued.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
     }
 
     [Test]
@@ -426,11 +436,24 @@ public class ProviderQuotaRefusalAcceptanceTests
     }
 
     [Test]
-    public async Task Sweep_after_settlement_does_not_enqueue_retry()
+    public async Task Racing_sweep_and_settlement_do_not_enqueue_retry()
     {
         await using var s = await CreateAsync();
         await s.EmitAsync(Linux);
-        await s.SettleAsync();
+        await using (var db = s.Db())
+        {
+            db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, StubSequence = 2,
+                Classification = ApiErrorClassification.Unknown, ApiErrorClass = "usage_limit_exceeded",
+                DetectedAt = IncidentAt.UtcDateTime.AddMinutes(-1),
+                NextAttemptAt = IncidentAt.UtcDateTime.AddSeconds(-1),
+            });
+            await db.SaveChangesAsync();
+        }
+        await Task.WhenAll(
+            s.SettleAsync(),
+            s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None));
         s.Clock.Advance(TimeSpan.FromHours(2));
         await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
         await AssertBlockedAsync(s, Reset, HoldUntil);

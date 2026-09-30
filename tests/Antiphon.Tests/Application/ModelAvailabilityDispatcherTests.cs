@@ -97,13 +97,13 @@ public class ModelAvailabilityDispatcherTests
             .ShouldNotBeNull();
     }
 
-    private static AgentTaskDispatcher CreateDispatcher(string connectionString)
+    internal static AgentTaskDispatcher CreateDispatcher(string connectionString, TimeProvider? timeProvider = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(timeProvider ?? TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings
         {
             CapacityRecovery = new CapacityRecoverySettings { Enabled = false },
@@ -162,7 +162,8 @@ public class ModelAvailabilityDispatcherTests
     }
 
     internal static async Task<AgentTask> SeedQueuedTaskAsync(
-        string connectionString, string directory, Guid pinnedAgentId, AgentModelLevel level, string title)
+        string connectionString, string directory, Guid pinnedAgentId, AgentModelLevel level, string title,
+        DateTime? createdAt = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -179,7 +180,7 @@ public class ModelAvailabilityDispatcherTests
             Status = AgentTaskStatus.Queued,
             AgentId = pinnedAgentId,
             Ephemeral = false,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = createdAt ?? DateTime.UtcNow,
         };
         await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
@@ -188,11 +189,11 @@ public class ModelAvailabilityDispatcherTests
     }
 
     internal static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
-        string connectionString, string directory)
+        string connectionString, string directory, DateTime? at = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
-        var now = DateTime.UtcNow;
+        var now = at ?? DateTime.UtcNow;
         await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
