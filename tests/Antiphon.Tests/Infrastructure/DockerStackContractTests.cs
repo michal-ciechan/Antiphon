@@ -265,6 +265,9 @@ public sealed class DockerStackContractTests
     [Test]
     public void C849_Cache_volumes_are_external_narrow_and_nocopy()
     {
+        var image = Text("docker/session-runner-grok/Dockerfile");
+        image.ShouldContain("mkdir -p /home/app/.nuget /home/app/.npm");
+        image.ShouldContain("chown 1654:1654 /home/app /home/app/.nuget /home/app/.npm");
         var source = Text("docker-compose.server2-runner.yml").Replace("\r\n", "\n");
         ValidateC849Base(source).ShouldBeTrue();
         foreach (var (from, to) in new[]

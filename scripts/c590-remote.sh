@@ -1316,9 +1316,28 @@ c849_image() {
     local image="antiphon-server2/session-testing:${SHA:0:12}"
     if ! docker image inspect "$image" >/dev/null 2>&1; then
         case "$CASE" in
-            runner-cache-seed|runner-cache-inventory|runner-cache-fixture|runner-cache-prune-preview)
-                image="$(docker inspect -f '{{.Image}}' "$(c849_donor)")" \
-                    || write_result false CacheHelperImageMissing 2 ;;
+            runner-cache-seed|runner-cache-inventory|runner-cache-fixture|runner-cache-prune-preview|runner-cache-reset)
+                local donor marker_image
+                donor="$(c849_optional_donor)"
+                if [ -n "$donor" ]; then
+                    image="$(docker inspect -f '{{.Image}}' "$donor")" \
+                        || write_result false CacheHelperImageMissing 2
+                else
+                    marker_image="$(sed -n 's/^image=//p' "$C849_READY" 2>/dev/null | head -n 1)"
+                    if [[ ! "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+                        || ! docker image inspect "$marker_image" >/dev/null 2>&1; then
+                        local main
+                        main="$(compose_host ps -q session-runner)"
+                        [ -n "$main" ] || write_result false CacheHelperImageMissing 2
+                        [ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$main")" = "$HOST_PROJECT" ] \
+                            || write_result false CacheHelperImageMissing 2
+                        marker_image="$(docker inspect -f '{{.Image}}' "$main")"
+                        [[ "$marker_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+                            && docker image inspect "$marker_image" >/dev/null 2>&1 \
+                            || write_result false CacheHelperImageMissing 2
+                    fi
+                    image="$marker_image"
+                fi ;;
             *) write_result false CacheHelperImageMissing 2 ;;
         esac
     fi
@@ -1463,13 +1482,15 @@ c849_status_zero() {
     command -v jq >/dev/null || return 1
     body="$(c849_status_body "$runner")" || return 1
     printf '%s' "$body" | jq -e '
-      .sessions != null and .runnerSessions != null and .queuedTasks != null and
+      (.sessions | type) == "number" and (.runnerSessions | type) == "number" and
+      (.queuedTasks | type) == "number" and
       .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
       .draining == true and .acceptingNewWork == false and .redirectTo == "server2" and
-      .retireWhenIdle == true' >/dev/null
+      .retireWhenIdle == true' >/dev/null || return 1
     if [ "$phase" = reconnected ]; then
-        printf '%s' "$body" | jq -e '.dispatchEligible == true' >/dev/null
+        printf '%s' "$body" | jq -e '.dispatchEligible == true' >/dev/null || return 1
     fi
+    return 0
 }
 
 c849_donor() {
@@ -1489,6 +1510,16 @@ c849_donor() {
     docker inspect -f '{{.Id}}' "${ids[0]}"
 }
 
+c849_optional_donor() {
+    local -a ids
+    mapfile -t ids < <(docker ps -aq \
+        --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
+        --filter 'label=com.docker.compose.service=session-runner')
+    [ "${#ids[@]}" -le 1 ] || write_result false CacheDonorIdentityInvalid 2
+    if [ "${#ids[@]}" -eq 1 ]; then c849_donor; fi
+    return 0
+}
+
 c849_empty_volume() {
     local name="$1" image="$2"
     [ -z "$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
@@ -1498,7 +1529,11 @@ c849_empty_volume() {
 
 c849_seed_failure() {
     local donor="$1" diagnosis="$2"
-    if [ "$(docker inspect -f '{{.State.Running}}' "$donor" 2>/dev/null || true)" = false ]; then
+    if [ -n "${stage:-}" ] && [[ "$stage" == "$SERVER2_ROOT"/cache/stage-"$RUN"-* ]] \
+        && [ -d "$stage" ] && [ ! -L "$stage" ]; then
+        rm -rf -- "$stage"
+    fi
+    if [ -n "$donor" ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor" 2>/dev/null || true)" = false ]; then
         docker start "$donor" >/dev/null 2>&1 || true
     fi
     write_result false "$diagnosis" 2
@@ -1553,17 +1588,20 @@ c849_seed() {
     c849_prepare yes
     local image donor donor_image stage recovery helper payload_hash reference_hash package_bytes npm_bytes now i
     image="$(c849_image)"
-    donor="$(c849_donor)"
-    donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
+    donor="$(c849_optional_donor)"
     if [ -f "$C849_READY" ]; then
         c849_require_ready
-        c849_status_zero server2-temp reconnected || write_result false CacheDonorNotReady 2
-        c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
-            > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
+        if [ -n "$donor" ]; then
+            c849_status_zero server2-temp reconnected || write_result false CacheDonorNotReady 2
+            c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
+                > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
+        fi
         printf 'ready=true donor=%s\n' "$donor" > "$CASE_DIR/seed.txt"
         write_result true '' 0
     fi
-    c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
+    [ -n "$donor" ] || write_result false CacheSeedRequired 2
+    donor_image="$(docker inspect -f '{{.Image}}' "$donor")"
+    c849_status_zero server2-temp || c849_seed_failure "$donor" CacheDonorNotIdleDrained
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         c849_empty_volume "$name" "$image" || write_result false CacheUnmarkedContent 2
     done
@@ -1576,7 +1614,7 @@ c849_seed() {
     stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
     mkdir -m 0700 "$stage/packages" "$stage/npm"
     c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
-    docker stop "$donor" >/dev/null || write_result false CacheDonorStopFailed 2
+    docker stop "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorStopFailed
     docker cp "$donor:/home/app/.nuget/packages/." "$stage/packages" >/dev/null 2>&1 \
         || c849_seed_failure "$donor" CacheDonorPackageCopyFailed
     docker cp "$donor:/home/app/.npm/_cacache/." "$stage/npm" >/dev/null 2>&1 \
@@ -1624,14 +1662,14 @@ c849_seed() {
     recovery="$SERVER2_ROOT/cache/recovery-$RUN"
     [ ! -e "$recovery" ] || c849_seed_failure "$donor" CacheRecoveryExists
     mv "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
-    docker start "$donor" >/dev/null || write_result false CacheDonorRestartFailed 2
+    docker start "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorRestartFailed
     [ "$(docker inspect -f '{{.Id}}' "$donor")" = "$donor" ] \
-        || write_result false CacheDonorIdentityChanged 2
+        || c849_seed_failure "$donor" CacheDonorIdentityChanged
     for i in $(seq 1 30); do
         if c849_status_zero server2-temp reconnected; then break; fi
         sleep 2
     done
-    c849_status_zero server2-temp reconnected || write_result false CacheDonorReconnectFailed 2
+    c849_status_zero server2-temp reconnected || c849_seed_failure "$donor" CacheDonorReconnectFailed
     c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
         > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1855,6 +1893,39 @@ c849_prune_idle() {
     docker exec "$broker" curl -fsS --max-time 10 http://127.0.0.1:8080/build-slots \
         | jq -e '(.occupied | type) == "number" and .occupied == 0 and (.leases | type) == "array" and (.leases | length) == 0' >/dev/null \
         || write_result false CacheBuildSlotsBusy 2
+}
+
+c849_reset() {
+    require_lane host
+    c849_lock
+    [ ! -e "$C849_READY" ] || write_result false CacheSeedAlreadyReady 2
+    # A reset is only for an interrupted, unmarked seed. The common idle check
+    # proves both runners drained and the build broker empty under this lock.
+    c849_prune_idle
+    local image name role container
+    image="$(c849_image)"
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        case "$name" in
+            "$C849_PACKAGES") role=nuget-packages ;;
+            "$C849_SCRATCH") role=nuget-scratch ;;
+            "$C849_NPM") role=npm-content ;;
+        esac
+        c849_volume "$name" "$role" no "$image"
+        # Include stopped containers; Docker refuses volume removal for them too.
+        [ -z "$(docker ps -aq --filter "volume=$name")" ] \
+            || write_result false CacheResetInUse 2
+    done
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        [ -z "$(docker ps -aq --filter "volume=$name")" ] \
+            || write_result false CacheResetInUse 2
+        docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+            --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
+            -c 'set -eu; test ! -L /cache; test "$(stat -c %u:%g:%a /cache)" = 1654:1654:700; find /cache -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' >/dev/null \
+            || write_result false CacheResetFailed 2
+        c849_empty_volume "$name" "$image" || write_result false CacheResetFailed 2
+    done
+    printf 'reset=true volumes=3 marker=absent\n' > "$CASE_DIR/reset.txt"
+    write_result true '' 0
 }
 
 c849_prune_validate_tree() {
@@ -3236,9 +3307,9 @@ case_retire_temp_runner() {
     compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || write_result false TempComposeDownFailed 2
     local image
     image="$(c849_image)"
-    c849_volume "$C849_PACKAGES" nuget-packages no "$image"
-    c849_volume "$C849_SCRATCH" nuget-scratch no "$image"
-    c849_volume "$C849_NPM" npm-content no "$image"
+    c849_volume "$C849_PACKAGES" nuget-packages no "$image" || write_result false CacheVolumeMissing 2
+    c849_volume "$C849_SCRATCH" nuget-scratch no "$image" || write_result false CacheVolumeMissing 2
+    c849_volume "$C849_NPM" npm-content no "$image" || write_result false CacheVolumeMissing 2
     printf 'down retiredAt=%s\n' "$C590_TEMP_RETIRED_AT" > "$CASE_DIR/temp-down.txt"
     write_result true '' 0
 }
@@ -3451,7 +3522,7 @@ trap 'ec=$?; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "Un
 
 detect_lane > /dev/null
 case "$CASE" in
-    runner-cache-inventory|runner-cache-fixture|runner-cache-seed|verify-runner-caches|verify-runner-caches-retired|runner-cache-prune-preview|runner-cache-prune)
+    runner-cache-inventory|runner-cache-fixture|runner-cache-seed|runner-cache-reset|verify-runner-caches|verify-runner-caches-retired|runner-cache-prune-preview|runner-cache-prune)
         # The cache lane is host-only and must never invoke ensure_dirs: it recursively chowns
         # /work and the server2 root, which may contain live runner state and recovery data.
         if [ "$LANE" != host ]; then printf 'DIAGNOSIS=WrongLane\n'; exit 2; fi
@@ -3495,6 +3566,7 @@ case "$CASE" in
     deploy-temp-runner) case_deploy_temp_runner ;;
     retire-temp-runner) case_retire_temp_runner ;;
     runner-cache-seed) c849_seed ;;
+    runner-cache-reset) c849_reset ;;
     runner-cache-inventory) case_runner_cache_inventory ;;
     runner-cache-prune-preview) c849_preview ;;
     runner-cache-prune) c849_prune ;;

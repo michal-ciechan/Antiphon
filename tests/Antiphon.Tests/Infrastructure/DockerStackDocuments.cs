@@ -126,6 +126,7 @@ internal static class DockerStackDocuments
         var lines = block.Replace("\r\n", "\n").Split('\n');
         var values = new List<string>();
         var capture = false;
+        var itemIndent = -1;
         foreach (var raw in lines)
         {
             var trimmed = raw.Trim();
@@ -138,13 +139,19 @@ internal static class DockerStackDocuments
 
             if (trimmed.StartsWith("- ", StringComparison.Ordinal))
             {
-                values.Add(trimmed[2..].Trim().Trim('"'));
+                itemIndent = raw.Length - raw.TrimStart().Length;
+                var value = trimmed[2..].Trim().Trim('"');
+                if (!value.StartsWith("type:", StringComparison.Ordinal) &&
+                    !value.StartsWith("source:", StringComparison.Ordinal))
+                    values.Add(value);
                 continue;
             }
 
             // A YAML comment between items is not the end of the list.
             if (trimmed.Length == 0 || trimmed.StartsWith('#'))
                 continue;
+            if (itemIndent >= 0 && raw.Length - raw.TrimStart().Length > itemIndent)
+                continue; // fields of a long-form volume item
             break;
         }
 

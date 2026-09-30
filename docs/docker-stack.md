@@ -25,6 +25,8 @@ and delete as that uid. A foreign volume, unsafe root or unmarked content is a r
 The maintenance lock is `/home/mc/antiphon-server2/locks/cache-maintenance.lock`.
 These external volumes survive `docker compose down -v`; that command still removes the
 temp project's private work, state, dind and tmp volumes.
+The image creates `/home/app/.nuget` and `/home/app/.npm` for uid 1654 before Docker
+mounts their child cache volumes. This lets an offline restore create NuGet's home files.
 
 Before the first temp recreation, refresh both runner statuses and cache inventory. Wait
 for the already drained temp runner to reach fresh non-null zero `sessions`,
@@ -35,6 +37,25 @@ writable layer, checks complete net9 host/reference packages, and starts the sam
 container again under its drain after the disconnected apphost probe and recovery copy.
 Do not replace or retire that donor when Seed has refused or before its reconnect with
 fresh zero counters is recorded. No `/tmp` contents or NuGet scratch locks are copied.
+After temp retirement, an accepted ready marker and verified volume payload allow the
+next `deploy-temp` to reuse the caches without a donor container. If a donor container
+exists, Seed still requires its drained zero-counter status and reconnect receipt.
+
+An interrupted first Seed may leave imported content without a ready marker. For that
+specific state, drain both runners and wait for zero `sessions`, `runnerSessions` and
+`queuedTasks`; keep the broker idle and detach every container, including stopped
+containers, from all three cache volumes. From the trusted desktop checkout at the
+reviewed SHA, run exactly:
+
+```powershell
+pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Reset -Sha <landed-sha>
+```
+
+Reset holds the cache maintenance lock, validates all three volume names, labels,
+drivers, root owners and modes, rechecks that no container uses them, and clears only
+their contents. It refuses an accepted marker. Re-run `-Case Seed` after Reset. A
+failed Seed removes its temporary staging directory; retained recovery generations
+remain for operator inspection.
 
 The rolling sequence remains explicit: CP-3 Fixture and inventory, Seed, `deploy-temp`,
 `drain-old`, `redeploy-old`, CP-4 Both, `drain-temp`, `retire-temp`, then CP-5 Retired.
