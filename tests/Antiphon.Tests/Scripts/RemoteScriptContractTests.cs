@@ -1028,6 +1028,12 @@ public sealed class RemoteScriptContractTests
         foreach (var fault in new[] { "driver", "options", "owner", "schema", "role", "mode", "symlink", "file", "unmarked", "name" })
             output.ShouldContain(fault + " exit=2");
         output.ShouldContain("unmarked-preserved");
+        var lookup = LinuxShell(Block(Remote(), "c849_empty_volume") + "\n" + """
+            docker() { return 1; }
+            c849_empty_volume cache image
+            printf 'empty-on-docker-error=%s\n' "$?"
+            """);
+        lookup.ShouldContain("empty-on-docker-error=1");
     }
 
     [Test]
@@ -1076,6 +1082,7 @@ public sealed class RemoteScriptContractTests
                 local name
                 case "$1" in
                     ps)
+                        [ "$PS_FAIL" = yes ] && return 1
                         if [[ "$*" == *volume=* ]] && [ "$IN_USE" = yes ]; then echo consumer
                         elif [[ "$*" == *'project=main'* ]]; then echo main; fi ;;
                     exec)
@@ -1092,12 +1099,13 @@ public sealed class RemoteScriptContractTests
                 esac
                 return 0
             }
-            for fault in sessions null unknown broker inuse foreign marker success; do
-                STATUS=zero; BROKER_BUSY=no; IN_USE=no; LABELS_OK=yes
+            for fault in sessions null unknown broker inuse lookup foreign marker success; do
+                STATUS=zero; BROKER_BUSY=no; IN_USE=no; LABELS_OK=yes; PS_FAIL=no
                 case "$fault" in
                     sessions|null|unknown) STATUS="$fault" ;;
                     broker) BROKER_BUSY=yes ;;
                     inuse) IN_USE=yes ;;
+                    lookup) PS_FAIL=yes ;;
                     foreign) LABELS_OK=no ;;
                     marker) printf 'ready\n' > "$C849_READY" ;;
                 esac
@@ -1115,7 +1123,8 @@ public sealed class RemoteScriptContractTests
         foreach (var (fault, diagnosis) in new[] {
             ("sessions", "CacheConsumersBusy"), ("null", "CacheConsumersBusy"),
             ("unknown", "CacheConsumersBusy"), ("broker", "CacheBuildSlotsBusy"),
-            ("inuse", "CacheConsumersBusy"), ("foreign", "CacheVolumeForeign"),
+            ("inuse", "CacheConsumersBusy"), ("lookup", "CacheConsumerUnknown"),
+            ("foreign", "CacheVolumeForeign"),
             ("marker", "CacheSeedAlreadyReady") })
             reset.ShouldContain(fault + " verdict=reset-result=false:" + diagnosis);
         reset.ShouldContain("success verdict=reset-result=true:");
@@ -1241,6 +1250,26 @@ public sealed class RemoteScriptContractTests
         foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
             gate.ShouldContain(fault + " verdict=seed-result=false:CacheDonorNotIdleDrained");
         gate.ShouldNotContain("unsafe-stop");
+        var donorLookup = LinuxShell(Block(Remote(), "c849_optional_donor") + "\n" + """
+            TEMP_PROJECT=temp
+            write_result() { printf 'lookup-result=%s\n' "$2"; exit "$3"; }
+            docker() {
+                [ "$1" = ps ] || return 1
+                case "$LOOKUP" in
+                    error) return 1 ;;
+                    duplicate) printf 'one\ntwo\n' ;;
+                    absent) : ;;
+                esac
+            }
+            for LOOKUP in absent error duplicate; do
+                ( c849_optional_donor ) > "$LOOKUP.out" 2>&1
+                printf '%s code=%s verdict=%s\n' "$LOOKUP" "$?" "$(cat "$LOOKUP.out")"
+                rm -f "$LOOKUP.out"
+            done
+            """);
+        donorLookup.ShouldContain("absent code=0 verdict=");
+        donorLookup.ShouldContain("error code=2 verdict=lookup-result=CacheDonorLookupFailed");
+        donorLookup.ShouldContain("duplicate code=2 verdict=lookup-result=CacheDonorIdentityInvalid");
         var cleanup = LinuxShell("""
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
             SERVER2_ROOT="$root/server2"; RUN=red
