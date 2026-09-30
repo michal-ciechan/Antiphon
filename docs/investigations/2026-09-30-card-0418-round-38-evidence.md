@@ -97,6 +97,15 @@ checks. The rebuilt server's second `SendNowAsync` refused its prompt because
 no matching transcript record appeared in the verification window. The next
 diagnostic captures native kinds, prompt match, screen and byte shape there.
 
+The fifth diagnostic on `bc16de4266a3f96f736d48026757d740b36bb123`
+executed 1 / passed 0 / failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-050719-4731/`.
+The native transcript now contains two complete turns including a `UserPrompt`
+with the second probe text, but queue verification still refused that turn.
+The next exact-method diagnostic compares native and persisted prompt sequences,
+the queue's attempt baseline, and the shared prompt matcher. It will establish
+whether this is transcript ingestion, a floor mismatch, or a text-match issue.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
