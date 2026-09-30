@@ -248,6 +248,11 @@ public class CardSearchApiTests
         var wrongKind = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload.ToJsonString()))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
         await Assert422Async($"/api/cards/search?q=search-needle&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(wrongKind)}", "pageToken");
+        payload["Kind"] = "search";
+        payload["QueryHash"] = new string('0', 64);
+        var wrongQueryHash = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload.ToJsonString()))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        await Assert422Async($"/api/cards/search?q=search-needle&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(wrongQueryHash)}", "pageToken");
         using var client = _fixture.CreateClient();
         var list = await client.GetFromJsonAsync<CardListDto>($"/api/cards?boardId={board.Id}&limit=1", Json);
         await Assert422Async($"/api/cards/search?q=search-needle&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(list!.NextPageToken!)}", "pageToken");
