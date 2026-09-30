@@ -20,6 +20,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -1278,6 +1279,8 @@ public sealed class ChannelOutboundRecoveryTests
         services.AddSingleton(Options.Create(new DeliverablesSettings()));
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<AgentTaskReplyService>();
+        var replyLog = new ListLogger<AgentTaskReplyService>();
+        services.AddSingleton<ILogger<AgentTaskReplyService>>(replyLog);
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddSingleton<DeliverableBundleService>();
@@ -1311,13 +1314,20 @@ public sealed class ChannelOutboundRecoveryTests
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
             var marker = DelegationReportFormatter.TaskMarker(taskId);
             var token = DelegationReportFormatter.ReportToken(taskId, "done");
+            var warnings = string.Join(',', replyLog.Entries
+                .Where(entry => entry.Level >= LogLevel.Warning)
+                .Select(entry => entry.Exception is InvalidOperationException invalid
+                    && invalid.Message.StartsWith("No service for type", StringComparison.Ordinal)
+                    ? invalid.Message
+                    : entry.Exception?.GetType().Name ?? entry.Message));
             throw new InvalidOperationException("Native task reconciliation timed out: "
                 + $"status={task.Status}; nativeKinds={string.Join(',', nativeSnapshot.Entries.Select(e => e.Kind))}; "
                 + $"nativePromptMarker={nativeSnapshot.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt && e.Text?.Contains(marker) == true)}; "
                 + $"nativeReportToken={nativeSnapshot.Entries.Any(e => e.Kind == TranscriptKinds.AssistantText && e.Text?.Contains(token) == true)}; "
                 + $"storedKinds={string.Join(',', stored.Select(e => e.Kind))}; "
                 + $"storedPromptMarker={stored.Any(e => e.Kind == "UserPrompt" && e.Text?.Contains(marker) == true)}; "
-                + $"storedReportToken={stored.Any(e => e.Kind == "AssistantText" && e.Text?.Contains(token) == true)}");
+                + $"storedReportToken={stored.Any(e => e.Kind == "AssistantText" && e.Text?.Contains(token) == true)}; "
+                + $"settlementWarnings={warnings}");
         }
         var native = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
         native.Entries.ShouldContain(e => e.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt);
