@@ -24,6 +24,7 @@ public sealed class ReportModel
     public bool CleanedOutputs { get; set; }
     public List<string> OutputNames { get; set; } = [];
     public int MaxConcurrentRows { get; set; }
+    public int MaxConcurrentBuilds { get; set; }
 }
 
 public sealed class ReportHost

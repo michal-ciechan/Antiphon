@@ -8,6 +8,28 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class WaitCommandTests
 {
     [Test]
+    public void heartbeat_lists_a_queued_build_after_the_building_one()
+    {
+        var now = DateTimeOffset.Parse("2026-09-30T12:00:00Z");
+        var state = new RunState
+        {
+            RunId = "live",
+            StartedAt = now.AddMinutes(-1),
+            Builds =
+            [
+                new BuildProgress { Id = "bin-a", State = "building", StartedAt = now.AddSeconds(-30) },
+                new BuildProgress { Id = "bin-b", State = "pending" },
+                new BuildProgress { Id = "bin-c", State = "unused" },
+            ],
+        };
+        var beat = state.Heartbeat(now);
+        beat.ShouldContain("bin-a building");
+        beat.ShouldContain("bin-b queued");
+        beat.IndexOf("bin-a building", StringComparison.Ordinal).ShouldBeLessThan(beat.IndexOf("bin-b queued", StringComparison.Ordinal));
+        beat.ShouldNotContain("bin-c");
+    }
+
+    [Test]
     public async Task prints_a_heartbeat_per_interval()
     {
         var dir = Running(pid: 42);
