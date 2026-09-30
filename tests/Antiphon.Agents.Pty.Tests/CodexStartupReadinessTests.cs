@@ -204,6 +204,44 @@ public class CodexStartupReadinessTests
     }
 
     [Test]
+    public void V0158_footer_only_model_with_empty_composer_is_ready()
+    {
+        var screen = CodexStartupFixtures.V0158FooterOnlyReady;
+        screen.ShouldNotContain("model:");
+
+        var observation = CodexStartupScreen.Classify(screen);
+        observation.IsReady.ShouldBeTrue("the measured desktop composer was idle despite the missing model row");
+        observation.Reason.ShouldBe(CodexStartupReason.Ready);
+        observation.NormalizedRegion.ShouldContain("GPT-5.6-Luna low");
+    }
+
+    [Test]
+    public void Footer_only_fallback_does_not_repair_an_empty_or_loading_model_row()
+    {
+        var screen = CodexStartupFixtures.V0158FooterOnlyReady;
+        var emptyRow = screen.Replace("  permissions: YOLO mode", "  model:\n  permissions: YOLO mode", StringComparison.Ordinal);
+        var loadingRow = screen.Replace("  permissions: YOLO mode", "  model: loading\n  permissions: YOLO mode", StringComparison.Ordinal);
+        CodexStartupScreen.Classify(emptyRow).Reason.ShouldBe(CodexStartupReason.Unknown);
+        CodexStartupScreen.Classify(loadingRow).Reason.ShouldBe(CodexStartupReason.Loading);
+    }
+
+    [Test]
+    public void Footer_only_fallback_still_requires_the_exact_idle_composer()
+    {
+        var screen = CodexStartupFixtures.V0158FooterOnlyReady.Replace(
+            "› Ask Codex to do anything", "› Do something clever", StringComparison.Ordinal);
+        CodexStartupScreen.Classify(screen).IsReady.ShouldBeFalse();
+    }
+
+    [Test]
+    public void V0158_windows_sandbox_onboarding_is_a_named_blocker()
+    {
+        var observation = CodexStartupScreen.Classify(CodexStartupFixtures.V0158WindowsSandboxSetup);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.Sandbox);
+    }
+
+    [Test]
     [Arguments("sandbox setup")]
     [Arguments("input disabled")]
     public void Sandbox_setup_and_input_disabled_are_blockers(string phrase)

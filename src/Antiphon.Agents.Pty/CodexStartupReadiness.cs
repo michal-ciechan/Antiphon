@@ -87,7 +87,9 @@ public static class CodexStartupScreen
         if (!HasCodexBanner(lines))
             return CodexStartupObservation.NotReady(CodexStartupReason.Unknown, mcpVisible: mcpVisible);
 
-        if (!TryReadSelectedModel(lines, out var modelValue, out var loading))
+        var hasModelRow = TryReadSelectedModel(lines, out var modelValue, out var loading,
+            out var modelRowSeen);
+        if (!hasModelRow && modelRowSeen)
             return CodexStartupObservation.NotReady(CodexStartupReason.Unknown, mcpVisible: mcpVisible);
         if (loading)
             return CodexStartupObservation.NotReady(CodexStartupReason.Loading, mcpVisible: mcpVisible);
@@ -99,6 +101,8 @@ public static class CodexStartupScreen
             return CodexStartupObservation.NotReady(CodexStartupReason.Unknown, mcpVisible: mcpVisible);
 
         if (!IsModelEffortCwdFooter(footer))
+            return CodexStartupObservation.NotReady(CodexStartupReason.Unknown, mcpVisible: mcpVisible);
+        if (!hasModelRow && !TryReadFooterOnlyModel(footer, out modelValue))
             return CodexStartupObservation.NotReady(CodexStartupReason.Unknown, mcpVisible: mcpVisible);
 
         var region = NormalizeRegion(modelValue, composerLine, footer);
@@ -133,16 +137,19 @@ public static class CodexStartupScreen
         return false;
     }
 
-    private static bool TryReadSelectedModel(string[] lines, out string modelValue, out bool loading)
+    private static bool TryReadSelectedModel(
+        string[] lines, out string modelValue, out bool loading, out bool modelRowSeen)
     {
         modelValue = "";
         loading = false;
+        modelRowSeen = false;
         foreach (var line in lines)
         {
             var stripped = StripBox(line);
             var idx = stripped.IndexOf("model:", StringComparison.OrdinalIgnoreCase);
             if (idx < 0)
                 continue;
+            modelRowSeen = true;
 
             var rest = stripped[(idx + "model:".Length)..].Trim();
             var cut = rest.IndexOf("/model", StringComparison.OrdinalIgnoreCase);
@@ -163,6 +170,31 @@ public static class CodexStartupScreen
         }
 
         return false;
+    }
+
+    // Codex 0.158.0 can omit the old model: row entirely. Its current ready screen instead
+    // names the selected model and effort in the footer beneath the empty composer.
+    // This is a fallback only when no model: row was drawn; an empty/loading row is not repaired
+    // by borrowing the footer.
+    private static bool TryReadFooterOnlyModel(string footer, out string modelValue)
+    {
+        modelValue = "";
+        var dot = footer.IndexOf('·');
+        if (dot <= 0)
+            return false;
+
+        var parts = footer[..dot].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 || !parts[0].StartsWith("GPT-", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (parts[1] is not ("low" or "medium" or "high" or "xhigh" or "max" or "ultra" or "default"))
+            return false;
+
+        var cwd = footer[(dot + 1)..].Trim();
+        if (!(cwd.StartsWith('~') || cwd.StartsWith('/') || cwd.Contains('\\')))
+            return false;
+
+        modelValue = parts[0] + " " + parts[1];
+        return true;
     }
 
     private static bool IsLoadingModel(string value)
@@ -268,6 +300,7 @@ public static class CodexStartupScreen
 
     private static bool ContainsSandboxOrInputDisabled(string text) =>
         text.Contains("sandbox setup", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("Set up the Codex agent sandbox", StringComparison.OrdinalIgnoreCase)
         || text.Contains("input disabled", StringComparison.OrdinalIgnoreCase)
         || text.Contains("input is disabled", StringComparison.OrdinalIgnoreCase);
 

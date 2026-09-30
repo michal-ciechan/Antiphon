@@ -29,6 +29,11 @@ public static class CodexStartupFixtures
     public static string V0156UpdateModal => File.ReadAllText(Path.Combine(DirectoryPath, "v0156-update-modal.txt"));
     public static string V0158UpdateModal => File.ReadAllText(Path.Combine(DirectoryPath, "v0158-update-modal.txt"));
 
+    // CARD-0796 live desktop captures, with the scratch path replaced by C:\scratch\workspace.
+    // 0.158.0's ready footer has no separate model: row; the first-run sandbox chooser blocks it.
+    public static string V0158FooterOnlyReady => File.ReadAllText(Path.Combine(DirectoryPath, "v0158-footer-only-ready.txt"));
+    public static string V0158WindowsSandboxSetup => File.ReadAllText(Path.Combine(DirectoryPath, "v0158-windows-sandbox-setup.txt"));
+
     /// <summary>The 0.156.1 trust modal with the highlight moved from "Trust and continue" to "Quit".</summary>
     public static string V0156TrustPromptQuitHighlighted
     {
