@@ -226,6 +226,8 @@ public sealed class CardService : IScheduledCardActions
         string? pageToken = null,
         bool includeArchived = false)
     {
+        if (updatedSince is DateTime since)
+            updatedSince = since.Kind == DateTimeKind.Utc ? since : since.ToUniversalTime();
         var page = await ReadPageAsync("list", updatedSince, status, boardId, null,
             limit, pageToken, includeArchived, ct);
         return new CardListDto(page.Cards, page.Truncated, page.NextPageToken);

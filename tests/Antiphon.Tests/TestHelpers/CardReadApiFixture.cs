@@ -1,9 +1,12 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -12,9 +15,21 @@ public sealed class CardReadApiFixture : AntiphonWebAppFactory
 {
     private Guid _projectId;
     private int _sequence;
+    public CardSnapshotProbe Probe { get; } = new();
+
+    protected override void ApplyTestOverrides(IServiceCollection services)
+    {
+        services.AddDbContext<AppDbContext>(options => options.AddInterceptors(Probe));
+        services.Configure<CardsSettings>(settings =>
+        {
+            settings.MaxListResults = 500;
+            settings.SummaryPreviewChars = 200;
+        });
+    }
 
     public override async Task ResetAsync()
     {
+        Probe.Disarm();
         await base.ResetAsync();
         _sequence = 0;
         using var scope = Services.CreateScope();
@@ -30,6 +45,85 @@ public sealed class CardReadApiFixture : AntiphonWebAppFactory
         db.Projects.Add(project);
         await db.SaveChangesAsync();
         _projectId = project.Id;
+    }
+
+    public sealed class CardSnapshotProbe : DbCommandInterceptor
+    {
+        private Guid? _board;
+        private string? _readerContext;
+        private DbDataReader? _metadataReader;
+        private DbTransaction? _metadataTransaction;
+        private TaskCompletionSource<bool>? _gate;
+        private TaskCompletionSource<bool>? _release;
+        public bool MetadataClosedAtGate { get; private set; }
+        public bool SameTransaction { get; private set; }
+        public int GateHits { get; private set; }
+
+        public void Arm(Guid board)
+        {
+            Disarm();
+            _board = board;
+            _gate = NewSignal();
+            _release = NewSignal();
+            MetadataClosedAtGate = false;
+            SameTransaction = false;
+            GateHits = 0;
+        }
+
+        public Task WaitForPageAsync() => (_gate ?? throw new InvalidOperationException("Probe not armed"))
+            .Task.WaitAsync(TimeSpan.FromSeconds(15));
+
+        public void Release() => _release?.TrySetResult(true);
+
+        public void Disarm()
+        {
+            Release();
+            _board = null;
+            _readerContext = null;
+            _metadataReader = null;
+            _metadataTransaction = null;
+            _gate = null;
+            _release = null;
+        }
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            if (Scoped(command) && result.FieldCount == 2 &&
+                result.GetName(0) == "Id" && result.GetName(1) == "UpdatedAt")
+            {
+                _readerContext = eventData.Context?.ContextId.ToString();
+                _metadataReader = result;
+                _metadataTransaction = command.Transaction;
+            }
+            return new(result);
+        }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (_gate is not null && _readerContext is not null && Scoped(command) &&
+                _readerContext == eventData.Context?.ContextId.ToString() &&
+                command.CommandText.Contains("LIMIT", StringComparison.OrdinalIgnoreCase))
+            {
+                GateHits++;
+                MetadataClosedAtGate = _metadataReader?.IsClosed == true;
+                SameTransaction = _metadataTransaction is not null &&
+                    ReferenceEquals(_metadataTransaction, command.Transaction);
+                _gate.TrySetResult(true);
+                await (_release ?? throw new InvalidOperationException("Probe release missing"))
+                    .Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+            }
+            return result;
+        }
+
+        private bool Scoped(DbCommand command) => _board is Guid board &&
+            command.CommandText.Contains("Cards", StringComparison.Ordinal) &&
+            command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == board);
+
+        private static TaskCompletionSource<bool> NewSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     public async Task<BoardDetailDto> BoardAsync()
