@@ -480,7 +480,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 Task.FromResult(arguments[0] switch
                 {
                     "rev-parse" => new LandingGitResult(0, new string('1', 40), ""),
-                    "remote" => new LandingGitResult(0, RunnerWorkspaceService.DefaultCloneSource, ""),
+                    "remote" => new LandingGitResult(0,
+                        global::Antiphon.SessionRunner.RunnerWorkspaceService.DefaultCloneSource, ""),
                     "push" => new LandingGitResult(0, "", ""),
                     _ => throw new NotSupportedException(arguments[0]),
                 });
