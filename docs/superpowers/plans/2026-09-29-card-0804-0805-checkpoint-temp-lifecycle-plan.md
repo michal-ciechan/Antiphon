@@ -529,6 +529,9 @@ not the number of child assertions. A killed child is the V-9 orphan case, not V
   this repair adds two sweep tests, so it is 256: Linux 238 + 18, Windows 245 + 11. Review
   272701b6 found three more already on the branch (259: Windows 248 + 11, Linux 241 + 18) and its
   repair adds two census/roster guards, so it is 261: Windows 250 + 11, Linux 243 + 18. The
+  rebase onto master 7ceaa5db brings eleven cross-platform master cases (seven RunScheduler, one
+  ReportWriter, one Timeout, one Wait command, one BuildSlotClient null-renewal), so it is 272:
+  Windows 261 + 11, Linux 254 + 18. The
   number is no longer trusted as a literal: `Get-NamespaceCensus` in `scripts/lib/checkpoint-usage.ps1`
   carries it, `CheckpointTempUsageTests.namespace_census_matches_compiled_checkpoint_cases` fails
   when it differs from the compiled non-explicit checkpoint cases (argument rows expanded), and
@@ -750,8 +753,8 @@ is a completeness inventory, never execution proof. Join every eligible selected
 terminal TRX result, assert no missing/duplicate/wrong-SHA result, preserve all skips and require
 zero unexplained skips. A numeric floor alone does not establish full selection. The Unit/full
 floor of 1000 is the conservative existing checkpoint lane floor, not a fresh full-suite count;
-the compiled roster equality is the stricter acceptance gate. Namespace uses the 261 selected
-cases derived above (Linux 243 executed, Windows 250), verified against the compiled test list,
+the compiled roster equality is the stricter acceptance gate. Namespace uses the 272 selected
+cases derived above (Linux 254 executed, Windows 261), verified against the compiled test list,
 with the declared OS-skip set matched by name. The roster hook drops `[Explicit]` cases (55 on
 this source): TUnit lists them in the assembly context but never runs them under these
 wildcard filters, so keeping them made roster/TRX equality unreachable (Review 272701b6). Full must contain every eligible
@@ -883,8 +886,8 @@ is exact failing methods, not another full suite. No retries are silently labele
 | CP-6 | all | CP-4 | native-linux | `/*/Antiphon.Tests.Checkpoints/(CheckpointRecoveryLinuxTests*)\|(DetachedLauncherTests*)/*` | V-2, V-3, V-4, V-6 | Linux only; all 11 executions, 0 failed/skipped | 11 | 12 | true |
 | CP-7 | all | `tests/Antiphon.Tests -> bin-c804-windows/` | native-and-policy-windows | `/*/*/(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(CheckpointTempScopeTests*)\|(CheckpointToolSourceTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempRootSweepTests*)\|(CheckpointTempUsageTests*)\|(CheckpointTempLifecycleTests*)\|(CheckpointRecoveryWindowsTests*)\|(EvidenceFolderTests*)\|(TestClassificationGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-2, R-5 | Windows only; all 111 executions, 0 failed/skipped | 111 | 25 | true |
 | CP-8 | all | CP-4 | unit-linux | `/*/*/*/*[Category=Unit]` | R-3, R-5 | >= 1000 executed, 0 failed; complete Unit roster; declared OS skips accounted | 1000 | 8 | true |
-| CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 243 executed / 261 selected on Linux (250 / 261, 11 skips on Windows); 0 failed; skip set equals the declared OS skips by name | n/a | 6 | true |
-| CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 243 executed / 261 selected on Linux (250 / 261, 11 skips on Windows); 0 failed; skip set equals the declared OS skips by name | n/a | 6 | true |
+| CP-9 | all | n/a | namespace-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 1 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 measurement gates; child 254 executed / 272 selected on Linux (261 / 272, 11 skips on Windows); 0 failed; skip set equals the declared OS skips by name | n/a | 6 | true |
+| CP-10 | all | n/a | namespace-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Namespace -Pass 2 -OutputPath bin-c804-final/` | V-8, R-1, R-2, R-4 | exit 0; all 5 gates and pass delta; child 254 executed / 272 selected on Linux (261 / 272, 11 skips on Windows); 0 failed; skip set equals the declared OS skips by name | n/a | 6 | true |
 | CP-11 | all | n/a | full-usage-pass1 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 1 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only, after CP-7; exit 0; all 5 gates; child >=1000 executed including every eligible checkpoint case; full compiled non-explicit roster equality; 0 failed | n/a | 90 | true |
 | CP-12 | all | n/a | full-usage-pass2 | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Full -Pass 2 -OutputPath bin-c804-windows/` | V-8, R-4, R-5 | Windows only, after CP-11; exit 0; all 5 gates and pass delta; same full roster as pass1; child >=1000 executed; 0 failed | n/a | 90 | true |
 | CP-13 | all | n/a | owner-death-usage | `pwsh -NoProfile -File scripts/verify-checkpoint-temp-usage.ps1 -Phase Orphans -Pass 1 -OutputPath bin-c804-final/` | V-7, V-9 | exit 0; 18/18 named harness checks; eligible <=32 roots AND <=256 MiB then zero; 6 excluded fixtures intact | n/a | 8 | true |
