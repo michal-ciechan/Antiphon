@@ -774,6 +774,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
         public PhoneHomeRunnerSettings Configured { get; private set; } = null!;
         public int PeerBMirrorErrors { get; set; }
         public int PeerARemoveErrors { get; set; }
+        public string? PeerARemoveUnpublishedTip { get; set; }
 
         public async Task SetDefaultsAsync(string? globalRunner, params PutRunnerKindDefault[] kinds)
         {
