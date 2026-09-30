@@ -17,6 +17,10 @@ public partial class ShadowCopyStoreTests
         var source = Path.Combine(root, "source");
         Directory.CreateDirectory(source);
         File.WriteAllText(Path.Combine(source, "host.exe"), "exe-bytes-v1");
+        File.WriteAllText(Path.Combine(source, "Antiphon.PtyHost"), "linux-apphost");
+        File.WriteAllText(Path.Combine(source, "Antiphon.PtyHost.exe"), "windows-apphost");
+        File.WriteAllText(Path.Combine(source, "Antiphon.PtyHost.deps.json"),
+            """{"runtime":{"host.exe":{},"native.dll":{}}}""");
         Directory.CreateDirectory(Path.Combine(source, "runtimes", "win-x64"));
         File.WriteAllText(Path.Combine(source, "runtimes", "win-x64", "native.dll"), "native-bytes");
         return (root, source, new ShadowCopyStore(Path.Combine(root, "bin")));
@@ -69,6 +73,55 @@ public partial class ShadowCopyStoreTests
             Cleanup(root);
         }
         await Task.CompletedTask;
+    }
+
+    [Test]
+    [Arguments("Antiphon.PtyHost.deps.json")]
+    [Arguments("host-exe")]
+    public void Missing_runtime_payload_restages_in_a_new_version_dir(string missing)
+    {
+        var (root, source, store) = CreateFixture();
+        try
+        {
+            var first = store.EnsureCurrent(source);
+            var missingFile = missing == "host-exe" ? PtyHostLauncher.HostExeName : missing;
+            File.Delete(Path.Combine(first, missingFile));
+
+            var second = store.EnsureCurrent(source);
+
+            second.ShouldNotBe(first);
+            File.Exists(Path.Combine(second, missingFile)).ShouldBeTrue();
+            Directory.Exists(first).ShouldBeTrue("a damaged generation may still be referenced by a live host");
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+    }
+
+    [Test]
+    [Arguments("Antiphon.PtyHost.deps.json")]
+    [Arguments("host-exe")]
+    public void Launcher_rechecks_its_cached_shadow_dir_when_runtime_payload_disappears(string missing)
+    {
+        var (root, source, store) = CreateFixture();
+        try
+        {
+            var launcher = new PtyHostLauncher(store, source);
+            var first = launcher.CurrentShadowDir;
+            var missingFile = missing == "host-exe" ? PtyHostLauncher.HostExeName : missing;
+            File.Delete(Path.Combine(first, missingFile));
+
+            var second = launcher.CurrentShadowDir;
+
+            second.ShouldNotBe(first);
+            File.Exists(Path.Combine(second, missingFile)).ShouldBeTrue();
+            launcher.CurrentShadowDir.ShouldBe(second);
+        }
+        finally
+        {
+            Cleanup(root);
+        }
     }
 
     [Test]

@@ -27,7 +27,7 @@ public sealed class ShadowCopyStore(string binRoot)
 
     /// <summary>
     /// Ensures a shadow copy of <paramref name="sourceDir"/> exists and returns the directory.
-    /// Reuses an existing dir with the same content hash; otherwise copies under a fresh
+    /// Reuses an intact dir with the same content hash; otherwise copies under a fresh
     /// timestamped name. Copy is staged (<c>.copying</c> suffix) then renamed so a concurrent
     /// launcher never sees a half-copied dir.
     /// </summary>
@@ -40,32 +40,47 @@ public sealed class ShadowCopyStore(string binRoot)
         Directory.CreateDirectory(binRoot);
 
         var existing = Directory.EnumerateDirectories(binRoot, $"*-{sha8}")
-            .FirstOrDefault(d => !d.EndsWith(".copying", StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(HasRuntimePayload);
         if (existing is not null)
             return existing;
 
-        var dirName = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{sha8}";
-        var finalDir = Path.Combine(binRoot, dirName);
-        var stagingDir = finalDir + ".copying";
+        // A damaged generation can still be referenced by a live host. Leave it in place for
+        // normal cleanup and choose another timestamp, including when a same-second copy exists.
+        for (var offsetSeconds = 0; ; offsetSeconds++)
+        {
+            var finalDir = Path.Combine(binRoot, $"{DateTime.UtcNow.AddSeconds(offsetSeconds):yyyyMMdd-HHmmss}-{sha8}");
+            if (Directory.Exists(finalDir))
+            {
+                if (HasRuntimePayload(finalDir))
+                    return finalDir;
+                continue;
+            }
 
-        try
-        {
-            CopyRecursive(sourceDir, stagingDir);
-            Directory.Move(stagingDir, finalDir);
+            var stagingDir = finalDir + $".{Guid.NewGuid():N}.copying";
+            try
+            {
+                CopyRecursive(sourceDir, stagingDir);
+                Directory.Move(stagingDir, finalDir);
+                return finalDir;
+            }
+            catch (IOException) when (Directory.Exists(finalDir))
+            {
+                // Another launcher won the rename. Reuse it only if its payload is intact.
+                TryDeleteDirectory(stagingDir);
+                if (HasRuntimePayload(finalDir))
+                    return finalDir;
+            }
+            catch
+            {
+                TryDeleteDirectory(stagingDir);
+                throw;
+            }
         }
-        catch (IOException) when (Directory.Exists(finalDir))
-        {
-            // Concurrent launcher won the rename race; theirs is identical by construction.
-            TryDeleteDirectory(stagingDir);
-        }
-        catch
-        {
-            TryDeleteDirectory(stagingDir);
-            throw;
-        }
-
-        return finalDir;
     }
+
+    internal static bool HasRuntimePayload(string dir) =>
+        File.Exists(Path.Combine(dir, OperatingSystem.IsWindows() ? "Antiphon.PtyHost.exe" : "Antiphon.PtyHost"))
+        && File.Exists(Path.Combine(dir, "Antiphon.PtyHost.deps.json"));
 
     /// <summary>
     /// Deletes version dirs not in <paramref name="referencedDirs"/>, oldest first (the date

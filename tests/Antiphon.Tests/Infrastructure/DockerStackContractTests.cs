@@ -210,6 +210,7 @@ public sealed class DockerStackContractTests
     public void Server2_runner_has_nested_store_volume()
     {
         Destination(Server2Runner(), "dind-data").ShouldBe("/var/lib/docker");
+        Destination(Server2Runner(), "runner-tmp").ShouldBe("/tmp");
         Text("docker-compose.server2-runner.yml").Replace("\r\n", "\n")
             .Contains("\n  dind-data:", StringComparison.Ordinal).ShouldBeTrue("dind-data is a named volume");
     }
@@ -243,7 +244,7 @@ public sealed class DockerStackContractTests
                 && line.TrimEnd().EndsWith(':'))
             .Select(line => line.Trim().TrimEnd(':'))
             .ToList();
-        blocks.ShouldBe(["state-init", "session-runner", "build-slots", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data", "antiphon-build-slots"]);
+        blocks.ShouldBe(["state-init", "session-runner", "build-slots", "antiphon-deploy-key", "phone-home", "work", "runner-state", "dind-data", "runner-tmp", "antiphon-build-slots"]);
         DockerStackDocuments.Service(Text("docker-compose.server2-runner.yml"), "build-slots")
             .ShouldContain("profiles: [broker]");
     }
