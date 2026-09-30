@@ -78,6 +78,38 @@ public sealed partial class PhoneHomeRollingRunnerTests
         world.PeerB.Inputs.ShouldNotContain(frame => InputText(frame) == "x");
     }
 
+    [Test]
+    public async Task Retirement_mirror_remove_uses_confirmed_sha_and_keeps_unpublished_tip_as_residue()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        var baseline = new string('a', 40);
+        var confirmed = new string('b', 40);
+        var unpublished = new string('c', 40);
+        world.PeerARemoveUnpublishedTip = unpublished;
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            RunnerId = RollingRunnerSettings.Server2,
+            RemoteWorktreePath = "/work/worktrees/task-07790000",
+            WorktreeBaseSha = baseline,
+            CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new CompletionProgressEvidence(
+                1, CompletionProgressAssessment.ProgressObserved,
+                RemoteSync: new RemoteSyncEvidence(1, RemoteSettlementSyncState.Synchronized,
+                    ConfirmedSha: confirmed))),
+        };
+        using var scope = world.Harness.Provider.CreateScope();
+
+        var residue = await scope.ServiceProvider.GetRequiredService<RemoteWorkspaceService>()
+            .RemoveMirrorAsync(task, CancellationToken.None);
+
+        world.PeerA.Incoming.Single(frame => frame.Operation == PhoneHomeOperation.WorkspaceRemove)
+            .Payload!.Value.Deserialize<PhoneHomeWorkspaceRemoveRequest>(PhoneHomeFraming.Json)!
+            .PublishedSha.ShouldBe(confirmed);
+        residue.ShouldNotBeNull();
+        residue.ShouldContain(task.RemoteWorktreePath);
+        residue.ShouldContain(unpublished);
+    }
+
     private static string? InputText(PhoneHomeFrame frame)
     {
         if (frame.Payload is not { } payload || payload.ValueKind != JsonValueKind.Object)
@@ -346,6 +378,11 @@ public sealed partial class PhoneHomeRollingRunnerTests
 
                 if (frame.Operation == PhoneHomeOperation.WorkspaceRemove)
                 {
+                    if (ReferenceEquals(peer, PeerA) && PeerARemoveUnpublishedTip is { } tip)
+                        return new PhoneHomeFrame(
+                            PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                            ErrorCode: PhoneHomeProblemTypes.UnpublishedWork,
+                            ErrorDetail: "unpublished tip " + tip);
                     if (ReferenceEquals(peer, PeerA) && PeerARemoveErrors > 0)
                     {
                         PeerARemoveErrors--;
