@@ -13,7 +13,7 @@ public class HerdrClientTests
     [Test]
     public async Task Ping_uses_one_ndjson_request_and_validates_the_protocol()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("ping");
@@ -34,7 +34,7 @@ public class HerdrClientTests
     [Test]
     public async Task Request_returns_the_result_and_surfaces_a_herdr_error()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("pane.send_text");
@@ -53,7 +53,7 @@ public class HerdrClientTests
     [Test]
     public async Task Incompatible_protocol_is_a_loud_failure()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             await WriteLineAsync(writer,
@@ -94,7 +94,7 @@ public class HerdrClientTests
     [Test]
     public async Task Event_subscription_consumes_the_acknowledgement_then_yields_push_events()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServePingThenSubscriptionAsync(pipeName);
         var client = ClientFor(pipeName);
         var events = new List<HerdrEvent>();
@@ -124,7 +124,7 @@ public class HerdrClientTests
     {
         await using var fake = new FakeHerdrServer();
         fake.Start();
-        var client = ClientFor(fake.Session);
+        var client = ClientFor(fake.EndpointPath);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
         await fake.WaitUntilListeningAsync(cts.Token);
@@ -259,7 +259,7 @@ public class HerdrClientTests
     {
         await using var fake = new FakeHerdrServer();
         fake.Start();
-        var client = ClientFor(fake.Session);
+        var client = ClientFor(fake.EndpointPath);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         await fake.WaitUntilListeningAsync(cts.Token);
@@ -275,7 +275,7 @@ public class HerdrClientTests
     [Test]
     public async Task Workspace_create_without_tab_and_root_pane_is_a_protocol_failure()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("workspace.create");
@@ -294,7 +294,7 @@ public class HerdrClientTests
     public async Task Agent_rename_sends_target_and_allows_null_name()
     {
         JsonElement? captured = null;
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("agent.rename");
@@ -314,7 +314,7 @@ public class HerdrClientTests
     [Test]
     public async Task Agent_list_deserialises_nameless_K5_agents()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             request.GetProperty("method").GetString().ShouldBe("agent.list");
@@ -357,7 +357,7 @@ public class HerdrClientTests
     {
         // CARD-0162 E2: herdr returns error id "<requestId>:sub:1:probe" — must be HerdrApiException,
         // not HerdrProtocolException("mismatched request id").
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServePingThenSubscribeErrorAsync(pipeName);
         var client = ClientFor(pipeName);
 
@@ -377,7 +377,7 @@ public class HerdrClientTests
     [Test]
     public async Task Normal_request_still_requires_strict_id_equality()
     {
-        var pipeName = NewPipeName();
+        await using var pipeName = new FakeHerdrEndpoint();
         var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
             // Deliberately wrong id — strict path must still reject.
@@ -397,7 +397,7 @@ public class HerdrClientTests
         await using var fake = new FakeHerdrServer();
         fake.AddReplayPaneClosed("w2:p3", "w2");
         fake.Start();
-        var client = ClientFor(fake.Session);
+        var client = ClientFor(fake.EndpointPath);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         await fake.WaitUntilListeningAsync(cts.Token);
@@ -462,7 +462,7 @@ public class HerdrClientTests
         var w2 = fake.SeedWorkspace("w2", "two");
         fake.SeedTab(w1.WorkspaceId, "Orch");
         fake.SeedTab(w2.WorkspaceId, "Other");
-        var client = ClientFor(fake.Session);
+        var client = ClientFor(fake.EndpointPath);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await fake.WaitUntilListeningAsync(cts.Token);
         _ = await client.ConnectAndValidateAsync(cts.Token);
@@ -480,24 +480,23 @@ public class HerdrClientTests
         unknown.Code.ShouldBe("not_found");
     }
 
-    private static HerdrClient ClientFor(string pipeName) => new(new HerdrSettings
+    private static HerdrClient ClientFor(FakeHerdrEndpoint endpoint) => ClientFor(endpoint.Path);
+
+    private static HerdrClient ClientFor(string endpointPath) => new(new HerdrSettings
     {
         Enabled = true,
         ConnectTimeoutMs = 2_000,
-        // HERDR_SOCKET_PATH is deliberately avoided: tests can run concurrently without mutating
-        // process-wide environment. The session string is itself the fake Windows pipe name.
-        Session = pipeName
+        SocketPath = endpointPath
     });
 
-    private static string NewPipeName() => $"antiphon-herdr-test-{Guid.NewGuid():N}";
-
     private static async Task ServeOnceAsync(
-        string pipeName,
+        FakeHerdrEndpoint endpoint,
         Func<JsonElement, StreamWriter, CancellationToken, Task> handler)
     {
-        await using var pipe = NewServer(SocketPathForFakeSession(pipeName));
+        await using var listener = new FakeHerdrTransport(endpoint);
+        listener.Bind();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await pipe.WaitForConnectionAsync(cts.Token);
+        await using var pipe = await listener.AcceptAsync(cts.Token, () => { });
         using var reader = new StreamReader(pipe, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: false, leaveOpen: true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
         var line = await reader.ReadLineAsync(cts.Token);
@@ -506,7 +505,7 @@ public class HerdrClientTests
         await handler(request.RootElement, writer, cts.Token);
     }
 
-    private static async Task ServePingThenSubscriptionAsync(string pipeName)
+    private static async Task ServePingThenSubscriptionAsync(FakeHerdrEndpoint pipeName)
     {
         await ServeOnceAsync(pipeName, async (request, writer, ct) =>
         {
@@ -531,12 +530,6 @@ public class HerdrClientTests
                 ct);
         });
     }
-
-    private static NamedPipeServerStream NewServer(string pipeName) => new(
-        pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-
-    private static string SocketPathForFakeSession(string session) => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "herdr", "sessions", session, "herdr.sock");
 
     private static Task WriteLineAsync(StreamWriter writer, string text, CancellationToken ct) =>
         writer.WriteLineAsync(text.AsMemory(), ct);
