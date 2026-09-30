@@ -44,6 +44,21 @@ failure was a fixture write of null `StartedAt` from the direct runner DTO;
 the persisted session already owns its accepted generation, so the fixture now
 changes only `Status` to Running. The complete-marker change passed its case.
 
+The D-1 revert-and-run used a detached throwaway worktree at committed
+`76f73f8abdc3b75516aa3f88c0596488b0042341`. Its only source difference
+from the regression-test slice was restoring the old unconditional `Ready`
+assignment in `ResumeHeldAsync`. Exact filter
+`/*/*/ChannelOutboundDeadlineTests/Resume_held_before_conversion_preserves_work_or_annotates_expired_original`
+built in isolation and executed 2 / passed 0 / failed 2 / skipped 0. Both
+rows failed at the expected `Pending` versus `Ready` assertion; native TRX
+and log were copied to `.antiphon/checkpoints/r38/red-proof/`. The green
+CP-5 result above ran those same two cases on the fixed source.
+
+An extra exact V-15 running-method diagnostic is warranted before spending
+another full CP-6 run: the first two full runs each took about seven minutes
+and failed in the new native fixture setup. It gets an isolated build and
+granted slot, then CP-6 will be rerun as the plan row.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
