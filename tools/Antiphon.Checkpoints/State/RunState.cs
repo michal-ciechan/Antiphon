@@ -13,6 +13,7 @@ public sealed class RunState
     public int Nonce { get; set; }
     public string Marker { get; set; } = "";
     public int MaxConcurrentRows { get; set; }
+    public int MaxConcurrentBuilds { get; set; }
     public List<BuildProgress> Builds { get; set; } = [];
     public List<RowProgress> Rows { get; set; } = [];
 

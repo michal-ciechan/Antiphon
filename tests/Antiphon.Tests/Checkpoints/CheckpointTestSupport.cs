@@ -16,6 +16,8 @@ internal sealed class FakeDriver : IDriver
     private readonly List<(Func<DriverRequest, bool> Match, Func<DriverRequest, CancellationToken, Task<DriverResult>> Run)> _scripts = [];
 
     public List<DriverRequest> Calls { get; } = [];
+    public List<(DriverRequest Request, IReadOnlyList<DriverRequest> InFlight)> Starts { get; } = [];
+    private readonly List<DriverRequest> _active = [];
     public int KillCount { get; private set; }
     public bool LastKillEntireTree { get; private set; }
     public int InFlight { get; private set; }
@@ -29,6 +31,8 @@ internal sealed class FakeDriver : IDriver
         lock (Calls)
         {
             Calls.Add(request);
+            Starts.Add((request, _active.ToList()));
+            _active.Add(request);
             InFlight++;
             if (InFlight > MaxInFlight)
                 MaxInFlight = InFlight;
@@ -47,7 +51,10 @@ internal sealed class FakeDriver : IDriver
         finally
         {
             lock (Calls)
+            {
+                _active.Remove(request);
                 InFlight--;
+            }
         }
     }
 
@@ -61,6 +68,13 @@ internal sealed class FakeDriver : IDriver
     {
         lock (Calls)
             return Calls.Count(match);
+    }
+
+    public int MaxInFlightFor(Func<DriverRequest, bool> match)
+    {
+        lock (Calls)
+            return Starts.Where(start => match(start.Request))
+                .Select(start => 1 + start.InFlight.Count(match)).DefaultIfEmpty(0).Max();
     }
 }
 
