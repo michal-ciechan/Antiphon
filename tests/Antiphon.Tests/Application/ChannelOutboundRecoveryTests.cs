@@ -699,7 +699,9 @@ public sealed class ChannelOutboundRecoveryTests
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
+                var nativeInputShape = Path.Combine(root, "native-input-shape.txt");
                 var nativeEnv = spec.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
+                nativeEnv["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
                 // The launch queue ordinarily passes this dispatcher spec through
                 // AgentSessionService before the runner, adding Grok's durable
                 // conversation id. The direct test runner must perform that same
@@ -743,8 +745,22 @@ public sealed class ChannelOutboundRecoveryTests
                     (await nativeDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == nativeTaskId))
                         .Goal.ShouldContain(requestPath);
                     queuedBrief.Body.ShouldContain(DelegationReportFormatter.TaskMarker(nativeTaskId));
-                    await initialQueue
-                        .SendNowAsync(nativeSessionId, queuedBrief.Id, CancellationToken.None);
+                    try
+                    {
+                        await initialQueue.SendNowAsync(nativeSessionId, queuedBrief.Id,
+                            CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        var observed = await nativeRunner.GetTranscriptAsync(nativeSessionId,
+                            CancellationToken.None);
+                        var buffer = await nativeRunner.GetBufferAsync(nativeSessionId,
+                            CancellationToken.None);
+                        throw new InvalidOperationException("Queued native brief failed: "
+                            + $"inputShape={(File.Exists(nativeInputShape) ? await File.ReadAllTextAsync(nativeInputShape) : "absent")}; "
+                            + $"nativeKinds={string.Join(',', observed.Entries.Select(e => e.Kind))}; "
+                            + $"screenHasBrief={buffer.Buffer.Contains(queuedBrief.Body)}", ex);
+                    }
                     (await nativeRunner.GetTranscriptAsync(nativeSessionId, CancellationToken.None))
                         .Entries.ShouldContain(e => e.Kind == TranscriptKinds.UserPrompt
                             && e.Text != null && e.Text.Contains(queuedBrief.Body));

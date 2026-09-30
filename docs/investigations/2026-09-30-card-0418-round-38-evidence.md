@@ -59,6 +59,14 @@ another full CP-6 run: the first two full runs each took about seven minutes
 and failed in the new native fixture setup. It gets an isolated build and
 granted slot, then CP-6 will be rerun as the plan row.
 
+`DIAG-V15` on `d3db721a1b31f736c18efdb2220633bed6c03959` built cleanly,
+executed 1 / passed 0 / failed 1 / skipped 0 at
+`.antiphon/checkpoints/r38/DIAG-V15-20260930-044857-3001/`.
+The dispatcher brief was persisted through `QueueLaunchBriefAsync`, but
+`SendNowAsync` returned it to the queue because its Enter produced no output.
+The next exact-method diagnostic records the native stdin burst shape and
+transcript at that refusal; no LF-as-Enter mode has been restored.
+
 Final CP-1 through CP-13 outcome pending. V-25 remains pending because this
 task authorizes no live send. PC-1 through PC-30 remain pending for paused
 method-scoped SourceLanding Mutation.
