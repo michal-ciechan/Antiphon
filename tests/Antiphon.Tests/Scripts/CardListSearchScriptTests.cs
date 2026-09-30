@@ -289,15 +289,19 @@ public sealed class CardListSearchScriptTests
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
         }
-        using var changedTotal = new Stub();
-        changedTotal.Respond = (call, _) => call.Value("pageToken") is null
-            ? new(200, Page(0, 1, true, "next", 3)) : new(200, Page(1, 1, total: 2));
-        var changed = await RunAsync(changedTotal, "search", "needle", "-Json");
-        changedTotal.Calls.Select(c => c.Value("pageToken")).ToArray()
-            .ShouldBe(new string?[] { null, "next" });
-        changed.ExitCode.ShouldNotBe(0);
-        changed.Stdout.ShouldBeNullOrWhiteSpace();
-        changed.Stderr.ShouldContain("total changed");
+        foreach (var (firstTotal, secondTotal) in new[] { (2, 3), (3, 2) })
+        {
+            using var changedTotal = new Stub();
+            changedTotal.Respond = (call, _) => call.Value("pageToken") is null
+                ? new(200, Page(0, 1, true, "next", firstTotal))
+                : new(200, Page(1, 1, total: secondTotal));
+            var changed = await RunAsync(changedTotal, "search", "needle", "-Json");
+            changedTotal.Calls.Select(c => c.Value("pageToken")).ToArray()
+                .ShouldBe(new string?[] { null, "next" });
+            changed.ExitCode.ShouldNotBe(0);
+            changed.Stdout.ShouldBeNullOrWhiteSpace();
+            changed.Stderr.ShouldContain("total changed");
+        }
         using var within = new Stub();
         within.Respond = (_, _) => new(200, Page(0, 2, total: 2, duplicate: 1));
         var duplicate = await RunAsync(within, "search", "needle", "-Json");
