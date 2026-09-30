@@ -65,6 +65,31 @@ public sealed class RunnerTaskSettlementTests
         note.ShouldContain(world.Git.Baseline);
         note.ShouldContain("-StartRef");
     }
+
+    [Test]
+    public async Task Force_pushed_origin_tip_still_blocks_with_reviewed_source_recovery()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        await world.Git.EnsureRunnerAsync();
+        await world.Git.RunAsync(world.Git.Runner, "checkout", "--orphan", "force-root");
+        File.WriteAllText(Path.Combine(world.Git.Runner, "force.txt"), "unrelated root");
+        await world.Git.RunAsync(world.Git.Runner, "add", "force.txt");
+        await world.Git.RunAsync(world.Git.Runner, "commit", "-m", "force root");
+        var tip = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+        await world.Git.RunAsync(world.Git.Runner, "checkout", world.Git.Branch);
+        await world.Git.RunAsync(world.Git.Runner, "reset", "--hard", tip);
+        await world.Git.RunAsync(world.Git.Runner, "push", "--force", "origin", "HEAD:" + world.Git.FullRef);
+
+        await world.SettleAsync(RunnerSettlementWorld.Report("Pushed a rewritten branch."));
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.Diverged);
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldContain("-RecoverReviewedSource");
+        note.ShouldContain(tip);
+    }
+
     [Test]
     public async Task Runner_push_settles_success_without_claim()
     {
