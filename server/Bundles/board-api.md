@@ -1,5 +1,6 @@
 Working the Antiphon board. Use `scripts/card.ps1` — its header comment is the reference (verbs
-`list`, `search`, `get`, `history`, `new`, `edit`, `move`, `close`, `archive`, `unarchive`, `-Limits`); AGENTS.md
+`list`, `search`, `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`,
+`unarchive`, `diagnose`, `reorder`, `order`, `-Limits`); AGENTS.md
 "Working cards from a shell" has the human-facing synopsis. Do not hand-compose the HTTP yourself
 unless the script genuinely can't do it. These are the shapes that bite either way:
 
