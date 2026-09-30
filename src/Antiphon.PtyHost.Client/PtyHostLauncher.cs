@@ -17,13 +17,17 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
     private readonly object _gate = new();
     private string? _cachedShadowDir;
 
-    /// <summary>The shadow dir used for new launches (hashed once, cached per launcher).</summary>
+    /// <summary>The shadow dir used for new launches (cached while its runtime payload exists).</summary>
     public string CurrentShadowDir
     {
         get
         {
             lock (_gate)
+            {
+                if (_cachedShadowDir is not null && !ShadowCopyStore.HasRuntimePayload(_cachedShadowDir))
+                    _cachedShadowDir = null;
                 return _cachedShadowDir ??= store.EnsureCurrent(hostSourceDir);
+            }
         }
     }
 
@@ -50,9 +54,20 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         string? custodyBackend = null,
         CancellationToken ct = default)
     {
-        var exe = Path.Combine(CurrentShadowDir, HostExeName);
+        var shadowDir = CurrentShadowDir;
+        var exe = Path.Combine(shadowDir, HostExeName);
         if (!File.Exists(exe))
-            throw new FileNotFoundException($"pty-host exe missing from shadow copy: {exe}");
+        {
+            // The file may have disappeared after CurrentShadowDir checked the cached path.
+            lock (_gate)
+            {
+                _cachedShadowDir = null;
+                shadowDir = CurrentShadowDir;
+            }
+            exe = Path.Combine(shadowDir, HostExeName);
+            if (!File.Exists(exe))
+                throw new FileNotFoundException($"pty-host exe missing from shadow copy: {exe}");
+        }
 
         var psi = new ProcessStartInfo
         {
@@ -63,7 +78,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
             RedirectStandardError = true,
             // The intermediary's detached child inherits this CWD. In custody mode neither
             // host may keep the verification snapshot open through its current directory.
-            WorkingDirectory = custodyStoreRoot is null ? "" : CurrentShadowDir,
+            WorkingDirectory = custodyStoreRoot is null ? "" : shadowDir,
         };
         foreach (var arg in BuildHostArgs(
                      sessionId, manifestDir, hostLogFile, pipeName, launchTimeout, lingerTtl,
