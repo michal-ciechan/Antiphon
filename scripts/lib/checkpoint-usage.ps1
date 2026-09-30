@@ -104,6 +104,33 @@ function Get-Snapshot([string]$temp) {
     return [ordered]@{ roots = $roots; count = $roots.Count; allocatedBytes = $bytes }
 }
 
+# The Antiphon.Tests.Checkpoints census: every compiled non-explicit case, argument rows expanded.
+# CheckpointTempUsageTests checks selected and every skip name against the compiled test list, so
+# adding a checkpoint test fails that guard until this census moves with it. Each OS skips the
+# other OS's native cases; the skip set is matched by name against the actual roster.
+function Get-NamespaceCensus {
+    [ordered]@{
+        selected = 261
+        windowsSkips = @(
+            'Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*'
+            'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
+        )
+        linuxSkips = @(
+            'Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests.*'
+            'Antiphon.Tests.Checkpoints.TimeoutTests.windows_quick_row_finishes_beside_a_slow_row'
+            'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_arguments_round_trip_intact'
+            'Antiphon.Tests.Checkpoints.TimeoutTests.windows_chatty_row_drains_interleaved_stdout_and_stderr'
+            'Antiphon.Tests.Checkpoints.TimeoutTests.windows_row_timeout_kills_the_start_b_grandchild'
+        )
+    }
+}
+
+function Test-DeclaredOsSkip([string]$Name, $Census) {
+    $patterns = if ($IsWindows) { $Census.windowsSkips } else { $Census.linuxSkips }
+    foreach ($pattern in $patterns) { if ($Name -clike $pattern) { return $true } }
+    return $false
+}
+
 # The selection roster, TRX and root event stream of one pass, checked against each other.
 function Test-UsageEvidence([string]$Phase, [string]$RosterPath, [string]$TrxPath, [string]$EventsPath) {
     $errors = [collections.generic.List[string]]::new()
@@ -141,15 +168,25 @@ function Test-UsageEvidence([string]$Phase, [string]$RosterPath, [string]$TrxPat
     $actualNames = @($results | ForEach-Object { [string]$_.name } | Sort-Object)
     if (($expectedNames -join "`n") -cne ($actualNames -join "`n")) { $errors.Add('selected class/method multiset differs from TRX') }
     if ($failed.Count -ne 0) { $errors.Add("failed TRX tests=$($failed.Count)") }
+    $census = Get-NamespaceCensus
+    $checkpointSelected = @($selected | Where-Object { [string]$_.className -like 'Antiphon.Tests.Checkpoints.*' })
+    # The OS-skip set is derived from the real roster by declared name, never a count.
+    $declaredSkips = @($checkpointSelected | ForEach-Object { [string]$_.className + '.' + [string]$_.method } |
+        Where-Object { Test-DeclaredOsSkip $_ $census } | Sort-Object)
     if ($Phase -eq 'Namespace') {
-        $expectedExecuted = if ($IsWindows) { 245 } else { 238 }
-        $expectedSkipped = if ($IsWindows) { 11 } else { 18 }
-        if ($selected.Count -ne 256 -or $executed.Count -ne $expectedExecuted -or $skipped.Count -ne $expectedSkipped) {
-            $errors.Add("namespace census selected=$($selected.Count) executed=$($executed.Count) skipped=$($skipped.Count)")
+        if ($selected.Count -ne $census.selected -or $checkpointSelected.Count -ne $selected.Count) {
+            $errors.Add("namespace census selected=$($selected.Count) expected=$($census.selected) executed=$($executed.Count) skipped=$($skipped.Count)")
+        }
+        $skippedNames = @($skipped | ForEach-Object { [string]$_.name } | Sort-Object)
+        if (($skippedNames -join "`n") -cne ($declaredSkips -join "`n")) {
+            $errors.Add("namespace skips differ from declared OS skips declared=$($declaredSkips.Count) skipped=$($skipped.Count)")
         }
     } else {
         if ($executed.Count -lt 1000) { $errors.Add("full-suite executed=$($executed.Count) below 1000") }
-        $checkpointFloor = if ($IsWindows) { 245 } else { 238 }
+        if ($checkpointSelected.Count -ne $census.selected) {
+            $errors.Add("full roster checkpoint cases=$($checkpointSelected.Count) expected=$($census.selected)")
+        }
+        $checkpointFloor = $census.selected - $declaredSkips.Count
         if (@($executed | Where-Object { $_.name -like 'Antiphon.Tests.Checkpoints.*' }).Count -lt $checkpointFloor) {
             $errors.Add('full suite omitted checkpoint executions')
         }

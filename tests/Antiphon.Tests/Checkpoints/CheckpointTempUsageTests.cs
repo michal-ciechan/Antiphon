@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -78,21 +79,100 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
     public async Task namespace_census_uses_the_native_execution_roster()
     {
         var dir = TempDir();
-        var names = Enumerable.Range(0, 256).Select(i => $"N.C.case_{i}").ToArray();
-        var roster = UsageLibrary.WriteRoster(dir, names);
+        // The real compiled checkpoint cases, and this OS's declared skips resolved by the library.
+        var names = CompiledCheckpointNames();
+        var namesFile = Path.Combine(dir, "names.json");
+        await File.WriteAllTextAsync(namesFile, JsonSerializer.Serialize(names));
+        using var declared = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
+            $census = Get-NamespaceCensus
+            ConvertTo-Json -InputObject @(Get-Content -LiteralPath {{UsageLibrary.Quote(namesFile)}} -Raw | ConvertFrom-Json |
+                Where-Object { Test-DeclaredOsSkip $_ $census })
+            """);
+        var skips = declared.RootElement.EnumerateArray().Select(name => name.GetString()!).ToHashSet(StringComparer.Ordinal);
+        skips.ShouldNotBeEmpty();
         var events = UsageLibrary.WriteEvents(dir, complete: true);
-        var skipped = OperatingSystem.IsWindows() ? 11 : 18;
-        var trx = Path.Combine(dir, "namespace.trx");
-        CheckpointFixtures.WriteResults(trx, names.Select((name, i) =>
-            (name, i < skipped ? "NotExecuted" : "Passed")).ToArray());
+        var roster = UsageLibrary.WriteRoster(dir, names);
+        var native = Trx(dir, names, name => skips.Contains(name) ? "NotExecuted" : "Passed");
+        var skipRan = Trx(dir, names, _ => "Passed");
+        var extraSkip = names.First(name => !skips.Contains(name));
+        var unexplained = Trx(dir, names, name => skips.Contains(name) || name == extraSkip ? "NotExecuted" : "Passed");
+        var shortNames = names.Where(name => name != extraSkip).ToArray();
+        var shortRoster = UsageLibrary.WriteRoster(dir, shortNames);
+        var shortTrx = Trx(dir, shortNames, name => skips.Contains(name) ? "NotExecuted" : "Passed");
+        string Evidence(string rosterPath, string trx) =>
+            $"Test-UsageEvidence -Phase Namespace -RosterPath {UsageLibrary.Quote(rosterPath)} -TrxPath {UsageLibrary.Quote(trx)} -EventsPath {UsageLibrary.Quote(events)}";
         using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
-            @{ native = Test-UsageEvidence -Phase Namespace -RosterPath {{UsageLibrary.Quote(roster)}} -TrxPath {{UsageLibrary.Quote(trx)}} -EventsPath {{UsageLibrary.Quote(events)}} } | ConvertTo-Json -Depth 8
+            @{
+              native = {{Evidence(roster, native)}}
+              skipRan = {{Evidence(roster, skipRan)}}
+              unexplained = {{Evidence(roster, unexplained)}}
+              short = {{Evidence(shortRoster, shortTrx)}}
+            } | ConvertTo-Json -Depth 8
             """);
         var evidence = result.RootElement.GetProperty("native");
         UsageLibrary.Errors(result.RootElement, "native").ShouldBeEmpty();
-        evidence.GetProperty("selected").GetInt32().ShouldBe(256);
-        evidence.GetProperty("executed").GetInt32().ShouldBe(256 - skipped);
-        evidence.GetProperty("skipped").GetInt32().ShouldBe(skipped);
+        evidence.GetProperty("selected").GetInt32().ShouldBe(names.Length);
+        evidence.GetProperty("executed").GetInt32().ShouldBe(names.Length - skips.Count);
+        evidence.GetProperty("skipped").GetInt32().ShouldBe(skips.Count);
+        UsageLibrary.Errors(result.RootElement, "skipRan").ShouldContain(error => error.StartsWith("namespace skips differ", StringComparison.Ordinal));
+        UsageLibrary.Errors(result.RootElement, "unexplained").ShouldContain(error => error.StartsWith("namespace skips differ", StringComparison.Ordinal));
+        UsageLibrary.Errors(result.RootElement, "short").ShouldContain(error => error.StartsWith("namespace census selected=", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task namespace_census_matches_compiled_checkpoint_cases()
+    {
+        var dir = TempDir();
+        var names = CompiledCheckpointNames();
+        var namesFile = Path.Combine(dir, "names.json");
+        await File.WriteAllTextAsync(namesFile, JsonSerializer.Serialize(names));
+        using var result = await UsageLibrary.RunAsync(RegisterCheckpointChild, dir, $$"""
+            $census = Get-NamespaceCensus
+            $names = @(Get-Content -LiteralPath {{UsageLibrary.Quote(namesFile)}} -Raw | ConvertFrom-Json)
+            $unmatched = @(@($census.windowsSkips) + @($census.linuxSkips) | Where-Object {
+                $pattern = $_; @($names | Where-Object { $_ -clike $pattern }).Count -eq 0 })
+            @{ selected = $census.selected; unmatched = ($unmatched -join ',') } | ConvertTo-Json -Depth 4
+            """);
+        // Adding or removing a checkpoint case must move Get-NamespaceCensus with it.
+        result.RootElement.GetProperty("selected").GetInt32().ShouldBe(names.Length,
+            "scripts/lib/checkpoint-usage.ps1 Get-NamespaceCensus is stale against the compiled checkpoint cases");
+        result.RootElement.GetProperty("unmatched").GetString().ShouldBeEmpty("every declared OS skip must name a compiled checkpoint case");
+    }
+
+    [Test]
+    public void full_roster_excludes_explicit_cases()
+    {
+        var assembly = typeof(CheckpointTempUsageTests).Assembly;
+        var explicitClasses = assembly.GetTypes()
+            .Where(type => type.IsClass && !type.IsAbstract && type.IsDefined(typeof(ExplicitAttribute), inherit: true))
+            .Where(type => TestClassificationMetadata.GetTestMethods(type).Count > 0)
+            .ToArray();
+        explicitClasses.ShouldNotBeEmpty("this assembly carries [Explicit] cases the Full roster must drop");
+        var cases = explicitClasses
+            .SelectMany(type => TestClassificationMetadata.GetTestMethods(type).Select(method => (type, method.Name)))
+            .Select((test, i) => new CheckpointRoster.Case("explicit-" + i, test.type, test.Name, test.Name))
+            .Append(new CheckpointRoster.Case("ordinary", typeof(CheckpointTempUsageTests),
+                nameof(full_roster_excludes_explicit_cases), nameof(full_roster_excludes_explicit_cases)))
+            .ToArray();
+        cases.Length.ShouldBeGreaterThan(1);
+        var target = Path.Combine(TempDir(), "roster.json");
+        CheckpointRoster.Write(target, cases);
+        using var roster = JsonDocument.Parse(File.ReadAllText(target));
+        roster.RootElement.EnumerateArray().Select(test => test.GetProperty("id").GetString()).ShouldBe(["ordinary"]);
+        var compiled = CheckpointRoster.CompiledCases(assembly);
+        compiled.ShouldContain((typeof(CheckpointTempUsageTests).FullName!, nameof(full_roster_excludes_explicit_cases)));
+        compiled.ShouldNotContain(test => explicitClasses.Any(type => type.FullName == test.ClassName));
+    }
+
+    private static string[] CompiledCheckpointNames() =>
+        CheckpointRoster.CompiledCases(typeof(CheckpointTempUsageTests).Assembly, "Antiphon.Tests.Checkpoints")
+            .Select(test => test.ClassName + "." + test.Method).ToArray();
+
+    private static string Trx(string dir, IEnumerable<string> names, Func<string, string> outcome)
+    {
+        var path = Path.Combine(dir, "namespace-" + Guid.NewGuid().ToString("N") + ".trx");
+        CheckpointFixtures.WriteResults(path, names.Select(name => (name, outcome(name))).ToArray());
+        return path;
     }
 
     [Test]
