@@ -46,6 +46,8 @@ public sealed class RunState
                 : build.Seconds;
             parts.Add($"{build.Id} building {FormatDuration(seconds)}");
         }
+        foreach (var build in Builds.Where(b => b.State == "pending"))
+            parts.Add($"{build.Id} queued");
 
         if (parts.Count == 0)
             return "";

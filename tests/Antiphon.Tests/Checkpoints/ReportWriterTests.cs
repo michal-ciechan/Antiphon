@@ -9,6 +9,17 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class ReportWriterTests
 {
     [Test]
+    public void summary_line_and_json_carry_max_concurrent_builds()
+    {
+        var model = Sample();
+        model.MaxConcurrentBuilds = 1;
+        var summary = ReportWriter.Markdown(model).Split('\n').Single(line => line.StartsWith("wall:"));
+        summary.ShouldContain("builds: 1  max-concurrent-builds: 1");
+        using var doc = JsonDocument.Parse(ReportWriter.JsonText(model));
+        doc.RootElement.GetProperty("maxConcurrentBuilds").GetInt32().ShouldBe(1);
+    }
+
+    [Test]
     public void block_layout_matches_d10()
     {
         var text = ReportWriter.Markdown(Sample());

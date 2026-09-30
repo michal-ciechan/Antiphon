@@ -42,7 +42,7 @@ public static class ReportWriter
         var skipped = model.Rows.Count(row => row.State is "skipped");
         var red = model.Rows.Count - green - skipped;
         text.AppendLine(
-            $"wall: {Format(model.WallSeconds)}  sequential-equivalent: {Format(model.SequentialEquivalentSeconds)}  builds: {model.Builds.Count}  rows: {green} green {red} red {skipped} skipped");
+            $"wall: {Format(model.WallSeconds)}  sequential-equivalent: {Format(model.SequentialEquivalentSeconds)}  builds: {model.Builds.Count}  max-concurrent-builds: {model.MaxConcurrentBuilds}  rows: {green} green {red} red {skipped} skipped");
         if (model.OutputNames.Count == 0)
             text.AppendLine("outputs: none");
         else if (model.ExitCode == 0)
