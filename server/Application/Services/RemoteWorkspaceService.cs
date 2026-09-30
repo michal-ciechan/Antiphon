@@ -34,6 +34,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly ITaskProgressGit? _progressGit;
     private readonly IRepositoryMutationLease? _leases;
     private readonly IWorkspaceReservationJournal? _reservations;
+    private readonly IRunnerMirrorPublisher _mirrorPublisher;
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
@@ -42,7 +43,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         ITaskProgressGit? progressGit = null,
         IRepositoryMutationLease? leases = null,
         IWorkspaceReservationJournal? reservations = null,
-        IOptions<DelegationSettings>? settings = null)
+        IOptions<DelegationSettings>? settings = null,
+        IRunnerMirrorPublisher? mirrorPublisher = null)
     {
         _runners = runners;
         _git = git;
@@ -50,6 +52,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         _progressGit = progressGit;
         _leases = leases;
         _reservations = reservations;
+        _mirrorPublisher = mirrorPublisher ?? new PhoneHomeRunnerMirrorPublisher(runners);
         SyncBudget = TimeSpan.FromSeconds(
             settings?.Value.RunnerSyncBudgetSeconds ?? new DelegationSettings().RunnerSyncBudgetSeconds);
     }
@@ -265,11 +268,67 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
             o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
             ct, caller);
+
+        PhoneHomeWorkspacePublishResponse? mirror = null;
+        string? mirrorInspection = null;
+        if (reportedTips is null
+            && (observed.State is ProgressRemoteState.Missing or ProgressRemoteState.Present)
+            && (observed.State == ProgressRemoteState.Missing || observed.Sha == b))
+        {
+            try
+            {
+                mirror = await _mirrorPublisher.PublishAsync(task, b,
+                    observed.State == ProgressRemoteState.Missing ? null : observed.Sha, ct);
+                if (mirror is null)
+                    mirrorInspection = RemoteSettlementSyncReasons.MirrorUnavailable;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Runner mirror publish for task {Task} was unavailable ({Type})",
+                    task.Id, ex.GetType().Name);
+                mirrorInspection = RemoteSettlementSyncReasons.MirrorUnavailable;
+            }
+
+            if (mirror?.Relation is "diverged" or "behind")
+                return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.MirrorDiverged,
+                    fullRef, b, observed.Sha, l0, MirrorSha: mirror.Tip,
+                    MirrorRelation: mirror.Relation, MirrorDirty: mirror.Dirty,
+                    MirrorInspection: mirror.Refusal);
+            if (mirror?.Relation == "descends" && !mirror.Pushed)
+                return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.MirrorPublishFailed,
+                    fullRef, b, observed.Sha, l0, MirrorSha: mirror.Tip,
+                    MirrorRelation: mirror.Relation, MirrorDirty: mirror.Dirty,
+                    MirrorInspection: mirror.Refusal);
+            if (mirror?.Pushed == true)
+            {
+                var (afterPublish, spent) = await WhileLeaseBusyAsync(task.Id,
+                    () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
+                    o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
+                    ct, caller);
+                if (afterPublish.State != ProgressRemoteState.Present
+                    || !string.Equals(afterPublish.Sha, mirror.Tip, StringComparison.Ordinal))
+                    return new(RemoteSettlementSyncState.Unavailable,
+                        spent ? RemoteSettlementSyncReasons.LeaseBusy : RemoteSettlementSyncReasons.ChangedDuringValidation,
+                        fullRef, b, afterPublish.Sha, l0, MirrorSha: mirror.Tip,
+                        MirrorRelation: mirror.Relation, MirrorDirty: mirror.Dirty, MirrorPushed: true);
+                observed = afterPublish;
+            }
+        }
+
+        RemoteSettlementSyncResult WithMirror(RemoteSettlementSyncResult result) => result with
+        {
+            MirrorSha = mirror?.Tip,
+            MirrorRelation = mirror?.Relation,
+            MirrorDirty = mirror?.Dirty,
+            MirrorPushed = mirror?.Pushed == true,
+            MirrorInspection = mirrorInspection ?? mirror?.Refusal,
+        };
         switch (observed.State)
         {
             case ProgressRemoteState.Missing:
-                return Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.BranchNotPushed,
-                    fullRef, b, desktopBefore: l0, fingerprint: fingerprint);
+                return WithMirror(Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.BranchNotPushed,
+                    fullRef, b, desktopBefore: l0, fingerprint: fingerprint));
             case ProgressRemoteState.NotConfigured:
                 return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b);
             case ProgressRemoteState.Unavailable:
@@ -377,10 +436,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.PostconditionUnavailable,
                 fullRef, b, s, l, observationRef: pin, fingerprint: fingerprint);
 
-        return string.Equals(s, b, StringComparison.Ordinal)
+        return WithMirror(string.Equals(s, b, StringComparison.Ordinal)
             ? Outcome(RemoteSettlementSyncState.NoPushedProgress, RemoteSettlementSyncReasons.NoPushedProgress,
                 fullRef, b, s, l, s, pin, fingerprint)
-            : Outcome(RemoteSettlementSyncState.Synchronized, null, fullRef, b, s, l, s, pin, fingerprint);
+            : Outcome(RemoteSettlementSyncState.Synchronized, null, fullRef, b, s, l, s, pin, fingerprint));
     }
 
     /// <summary>
@@ -530,21 +589,27 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// is recorded as residue on the task for the operator's sweep, never deleted on a guess and
     /// never allowed to fail retirement of the canonical desktop worktree.
     /// </summary>
-    public async Task<string?> RemoveMirrorAsync(AgentTask task, CancellationToken ct)
+    public async Task<string?> RemoveMirrorAsync(AgentTask task, CancellationToken ct,
+        string? publishedSha = null)
     {
         if (string.IsNullOrWhiteSpace(task.RemoteWorktreePath) || string.IsNullOrWhiteSpace(task.RunnerId))
             return null;
         try
         {
+            var descriptor = await _runners.DescribeAsync(task.RunnerId, ct);
+            var guarded = descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspacePublishV1) == true;
+            publishedSha ??= TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)
+                ?.RemoteSync?.ConfirmedSha ?? task.WorktreeBaseSha;
             var response = await Remote(task.RunnerId).RemoveWorkspaceAsync(
-                new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath), ct);
+                new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath,
+                    PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct);
             return response.Removed ? null : response.Residue ?? task.RemoteWorktreePath;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(
                 ex, "Remote mirror {Path} for task {Task} could not be removed", task.RemoteWorktreePath, task.Id);
-            return task.RemoteWorktreePath;
+            return task.RemoteWorktreePath + " (" + ex.Message + ")";
         }
     }
 
