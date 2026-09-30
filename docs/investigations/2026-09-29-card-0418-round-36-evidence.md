@@ -8,14 +8,16 @@ Mutation; no ordinary or nightly run discharges a PC.
 
 ## V-15 running C-3
 
-The new C-3 row holds a real staged FakeGrok process inside the frozen conversion
-request, kills the separate dispatcher probe while that process is still running,
-then releases it. A fresh server-side `AgentSessionRuntime.SyncTranscriptAsync`
-reads the runner's native transcript and settles the existing linked task through
-the ordinary reply service. The probe only captures the dispatcher's immutable
-launch spec; the independent runner owns the live process. The row checks the
-retained session/task id, native marked turn, output bytes and manifest, one
-published payload, input/output hashes, correlation and attention. Receipts below.
+The new C-3 row held a staged FakeGrok process inside the frozen conversion
+request, killed the separate dispatcher probe while it was still running, then
+released it. A fresh `AgentSessionRuntime.SyncTranscriptAsync` read the runner's
+native transcript and settled the linked task. The probe captured the launch
+spec, but the test typed its own short prompt instead of delivering the queued
+dispatcher brief. On Linux it used FakeGrok's LF-as-Enter mode and replaced the
+shared test-output pty-host apphost with a shell launcher. The session row was
+still `Starting` at the cut, and the rebuilt server had no message queue, so a
+post-restart queue send was not checked. These receipts are Linux-only; the
+Windows branch never ran. Round 38 addresses those limits.
 
 ## Checkpoint receipts
 
@@ -103,8 +105,9 @@ V-17's owned, old correlation receives a late transcript confirmation without
 creating a second intent, an inbound-loss incident or an early reply stamp.
 After the conversion deadline, the pump publishes one annotated original
 fallback and settles that correlation; another TTL sweep stays silent. The
-attention test checks Pending/Converting/Ready/Publishing/Published/Failed/Held/
-PublishUncertain references and severity from fresh state. CP-5 and CP-7 pass.
+attention test checks Held, Failed and PublishUncertain references and severity
+from fresh state, plus absence of a Published row. It does not check the other
+four states. CP-5 and CP-7 pass for that stated coverage.
 
 V-18 exercises profile clear/remove, channel disable/unbind/rebind and a
 cross-project replacement on both pre-launch and post-worker states. Profile
@@ -159,7 +162,8 @@ section is blank or clipped. The test independently checked four pages,
 extracted sentinels and unchanged source hashes.
 
 The local ordinary V-1–V-24 matrix and its dependent R-1–R-13 oracles now have
-passing receipts, apart from the inherited CP-8 pair. R-14 and V-25 still
+passing test receipts, apart from the inherited CP-8 pair, subject to the
+V-15 and attention coverage limits corrected above. R-14 and V-25 still
 require the separately authorized actual Slack destination receipt and evidence
 accounting; local fake, native transcript and broker receipts do not fulfill
 that live gate. PC-1–PC-30 stay pending for method-scoped SourceLanding Mutation,

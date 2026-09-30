@@ -2,9 +2,14 @@
 
 This round continues [round 36](2026-09-29-card-0418-round-36-evidence.md)
 from `913300828ac13abef680298d8b64a0d89d66a656` without merging master.
-The card and plan were read before this audit. Round 36 closes the local V-15,
-V-17, V-18, and V-23 cases and their dependent R-2–R-13 oracles, with the
-inherited CP-8 `PinnedAgentKindTests.T1/T2` `codex_desktop_unqualified` failures.
+The card and plan were read before this audit. Round 36's green receipts for
+local V-15, V-17, V-18, V-23 and dependent R-2–R-13 have the coverage limits
+corrected in [round 36](2026-09-29-card-0418-round-36-evidence.md): the V-15
+running case typed its own prompt, used Linux-only LF-as-Enter and a shell
+launcher in place of the shared pty-host apphost, left the session `Starting`
+at the cut, and did not check a post-restart queue send. The attention test
+covers Held, Failed, PublishUncertain and Published-absent, not all eight states.
+The CP-8 `PinnedAgentKindTests.T1/T2` failures are inherited.
 V-24's isolated owned-host fixture passed in [round 14](2026-09-28-card-0418-round-14-evidence.md);
 it is a fake Slack receipt, not evidence for V-25.
 
@@ -109,8 +114,9 @@ evidence, not interchangeable with a green TRX.
 
 ## Remaining gates and disposition
 
-Local V-1–V-24 and R-1–R-13 have fresh passing ordinary evidence on this
-committed source, apart from the inherited CP-8 pair. R-14's **local** index
+Local V-1–V-24 and R-1–R-13 have fresh passing ordinary test receipts on this
+committed source, apart from the inherited CP-8 pair and subject to the V-15
+and attention coverage limits above. R-14's **local** index
 and synthetic missing/false-evidence guards are complete; its actual-destination
 component remains pending with V-25. The task did not authorize an actual
 mav-ref/mikeysbot-slack deployment or send, so there is no active-thread,
