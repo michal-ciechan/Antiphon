@@ -96,9 +96,15 @@ runs the plan's Checkpoints over `WorkspaceReservationLivenessTests` (Unit), `Wo
 `SessionGenerationExitTests` and `AgentAttachHerdrTests`
 (`docs/superpowers/plans/2026-09-24-card-0664-consumer-slot-release-plan.md`). New `C664_*` tests
 age a `Launch` row by writing `CreatedAt`; they never shorten `LaunchGraceMinutes` or switch the
-journal to a fake clock. `AgentAttachHerdrTests` does not run on Linux: on server2 (2026-09-25) its
-first test blocked forever in `StartFake()` waiting for `FakeHerdrServer` to listen, at ~0 CPU and
-before any test body ran. Leave it out of a Linux filter and run it on Windows.
+journal to a fake clock. CARD-0801 replaces the historical Linux fake-listener hang with a native
+Unix socket listener and a five-second, tokenless readiness deadline. Terminal bind/accept faults
+complete every readiness waiter; disposal settles pre-start waits. The exact execution closure is
+the eight server classes (110 results) and 24 SessionRunner classes (497 results) in
+[`2026-09-30-card-0801-cross-platform-fake-herdr-plan.md`](superpowers/plans/2026-09-30-card-0801-cross-platform-fake-herdr-plan.md).
+Run that plan's literal class filters on both Linux and Windows with zero skipped/failed results;
+`AgentAttachHerdrTests` belongs in the Linux filter. CP-1/CP-2 also cover the 24 focused listener
+and transport results and the linked classification guard. Use the plan's separate Windows W-1
+at the final Linux-tested SHA; a Linux pass does not prove the Windows named-pipe branch.
 
 ## Fast lane (CARD-0110 / CARD-0475 S5)
 
