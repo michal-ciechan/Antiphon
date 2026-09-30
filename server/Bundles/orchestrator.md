@@ -68,6 +68,8 @@ refused with `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`, `-RepairSource` and `-S
 It selects a BASE only: it sets no merge target, grants no land, and is not `-RepairSource`
 (which attributes commits made on another task's branch). Confirm the running server has it
 (`GET /api/version`) before relying on it -- an older build ignores the property silently.
+To land a `-StartRef` repair, Review its pushed tip with the repair named as subject, then
+`-Land <owner> -FromTask <repair> -ExpectedSourceSha <sha> -ReviewEvidenceId <id>`.
 
 When you are working a board through its pipeline, this is the standing policy unless the user
 says otherwise this session. Code and Review at two, and one task in each other pipeline stage

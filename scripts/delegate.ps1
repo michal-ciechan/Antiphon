@@ -673,6 +673,10 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Output ("platform: {0} on {1}; observed {2}" -f $s.requiredPlatform, $placed, $observed)
         }
         Write-Output "Delegate: $($s.status)"
+        if ($task.reviewEvidence) {
+            $e = $task.reviewEvidence
+            Write-Output "Review evidence: $($e.id); subject $($e.subjectTaskId); reviewed $($e.reviewedSourceSha); ref $($e.reviewedSourceRef); outcome $($e.outcome)"
+        }
         if ($task.sourceLandingOperationId) {
             Write-Output "Verification source: $($task.sourceLandingOperationId); commit $($task.sourceLandingSha)"
             if ($task.verificationCleanupResidue) { Write-Output "Verification residue: $($task.verificationCleanupResidue)" }
@@ -696,6 +700,8 @@ switch ($PSCmdlet.ParameterSetName) {
                 Write-Output "Recovery: $($r.recoveryMode); source task $($r.recoverySourceTaskId); ref $($r.recoverySourceFullRef); reviewed $($r.expectedSourceSha); owner status $($r.recoveryOwnerStatus)"
                 if ($r.supersedesRequestId) { Write-Output "Superseded land request: $($r.supersedesRequestId)" }
                 if ($r.recoveryOwnerRemoteAfterSha) { Write-Output "Recovery source now: $($r.recoveryOwnerRemoteAfterSha)" }
+                if ($r.recoveryPatchesContained -eq $true) { Write-Output 'Owner patches contained' }
+                if ($r.recoveryUncontainedPatches) { Write-Output "Uncontained owner patches: $($r.recoveryUncontainedPatches)" }
             }
             if ($r.localBeforeSha) { Write-Output "Local before resolution: $($r.localBeforeSha)" }
             if ($r.remoteSourceSha) { Write-Output "Observed remote source: $($r.remoteSourceSha)" }
@@ -722,6 +728,8 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Output "Publication: $($l.publication); operation $($l.operationId); approved $($l.reviewedSha); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
             if ($l.recoveryMode -and $l.recoveryMode -ne 'None') {
                 Write-Output "Recovery receipt: $($l.recoveryMode); source task $($l.recoverySourceTaskId); ref $($l.recoverySourceFullRef); reviewed $($l.reviewedSha); owner remote $($l.recoveryOwnerRemoteBeforeSha) -> $($l.recoveryOwnerRemoteAfterSha)"
+                if ($l.recoveryPatchesContained -eq $true) { Write-Output 'Owner patches contained' }
+                if ($l.recoveryUncontainedPatches) { Write-Output "Uncontained owner patches: $($l.recoveryUncontainedPatches)" }
             }
             if ($l.reason) { Write-Output "Landing reason: $($l.reason)" }
         } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }

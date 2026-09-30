@@ -10,6 +10,50 @@ namespace Antiphon.Tests.Application;
 public sealed class DelegateScriptAdoptTests
 {
     [Test]
+    public async Task C675_StatusPrintsReviewEvidenceOfAReviewTask()
+    {
+        var review = Guid.NewGuid();
+        var subject = Guid.NewGuid();
+        var evidence = Guid.NewGuid();
+        var sha = new string('d', 40);
+        await using var server = LandApiStub.Compatible(new string('a', 40),
+            taskStatusBody: JsonSerializer.Serialize(new
+            {
+                summary = new { id = review, status = "Succeeded", title = "review", kind = "Worker",
+                    role = "Review", modelLevel = "High" },
+                reviewEvidence = new { id = evidence, subjectTaskId = subject, reviewedSourceSha = sha,
+                    reviewedSourceRef = "refs/heads/repair", outcome = "Clean" },
+            }));
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Status", review.ToString());
+        result.ExitCode.ShouldBe(0, result.Output);
+        result.Output.ShouldContain($"Review evidence: {evidence}; subject {subject}; reviewed {sha}; ref refs/heads/repair; outcome Clean");
+    }
+
+    [Test]
+    public async Task C675_StatusPrintsUncontainedOwnerPatches()
+    {
+        var owner = Guid.NewGuid();
+        var one = new string('1', 40);
+        var two = new string('2', 40);
+        await using var server = LandApiStub.Compatible(new string('a', 40),
+            taskStatusBody: JsonSerializer.Serialize(new
+            {
+                summary = new { id = owner, status = "Failed", title = "owner", kind = "Worker",
+                    role = "Code", modelLevel = "High" },
+                landRequest = new { id = Guid.NewGuid(), state = "Completed", requestedAt = DateTime.UtcNow,
+                    attempt = 1, noProgressSeconds = 0, recoveryMode = "AdoptReviewedSource",
+                    recoveryUncontainedPatches = $"{one},{two}", recoveryPatchesContained = false,
+                    notifications = Array.Empty<object>() },
+                landing = new { publication = "Landed", operationId = Guid.NewGuid(), cleanup = "Complete",
+                    recoveryMode = "AdoptReviewedSource", recoveryUncontainedPatches = $"{one},{two}",
+                    recoveryPatchesContained = false },
+            }));
+        var result = await DelegateScriptRunner.RunAsync(server.Url, "-Status", owner.ToString());
+        result.ExitCode.ShouldBe(0, result.Output);
+        result.Output.ShouldContain($"Uncontained owner patches: {one},{two}");
+        result.Output.Split("Uncontained owner patches:").Length.ShouldBe(3);
+    }
+    [Test]
     public async Task C753_FromTaskResolvesSourceAndPostsReviewedRecoveryToV2()
     {
         var owner = Guid.NewGuid();

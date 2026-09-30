@@ -389,7 +389,10 @@ POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495)
                                              advertises exact `land-v2`. An old process has
                                              no v2 route (404/405, never redirected to `/land`).
                                              Body `{ expectedSourceSha, reviewEvidenceId?,
-                                             verify? }`. Fresh work requires a full
+                                             adoptFromTaskId?, recoverReviewedSource?, verify? }`.
+                                             `adoptFromTaskId` lands a reviewed source through
+                                             the original owner; `recoverReviewedSource` uses
+                                             the owner's own reviewed branch. Fresh work requires a full
                                              40/64-hex SHA (422 without it). Optional
                                              review evidence must match subject/SHA/ref/repo
                                              (409). Pending identity is immutable. 202
