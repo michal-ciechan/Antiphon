@@ -726,8 +726,7 @@ public sealed class ChannelOutboundRecoveryTests
                     .SingleAsync(t => t.OutboundDeliveryId == acceptedId)).Id;
                 var requestPath = Path.Combine(storeRoot, acceptedId.ToString("N"), "request.json");
                 await nativeDb.AgentSessions.Where(s => s.Id == nativeSessionId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running)
-                        .SetProperty(x => x.StartedAt, started.AcceptedStartedAt));
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SessionStatus.Running));
                 await using (var initialServer = BuildNativeRecoveryProvider(
                     isolated.ConnectionString, nativeRunner))
                 {
