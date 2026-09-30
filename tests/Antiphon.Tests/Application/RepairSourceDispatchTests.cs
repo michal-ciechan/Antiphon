@@ -46,9 +46,9 @@ public class RepairSourceDispatchTests
         after.LocalOwnerTip.ShouldBe(before.LocalOwnerTip);
         after.RemoteOwnerTip.ShouldBe(before.RemoteOwnerTip);
         after.OwnerHead.ShouldBe(before.OwnerHead);
-        world.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "fetch"
-            && a.Any(x => x.StartsWith("refs/heads/", StringComparison.Ordinal)
-                || x.StartsWith("refs/remotes/", StringComparison.Ordinal)));
+        world.Git.Trace.Any(a => a.Length > 0 && a[0] == "fetch"
+            && a.Any(x => x.Contains(":refs/heads/", StringComparison.Ordinal)
+                || x.Contains(":refs/remotes/", StringComparison.Ordinal))).ShouldBeFalse();
     }
 
     [Test]
@@ -71,9 +71,9 @@ public class RepairSourceDispatchTests
             .ShouldBe(baseSha);
         if (kind == "unreachable")
             (await world.Warnings()).ShouldContain(w => w.Detail.Contains("owner remote unobserved"));
-        world.Git.Trace.ShouldNotContain(a => a.Length > 0 && a[0] == "fetch"
-            && a.Any(x => x.StartsWith("refs/heads/", StringComparison.Ordinal)
-                || x.StartsWith("refs/remotes/", StringComparison.Ordinal)));
+        world.Git.Trace.Any(a => a.Length > 0 && a[0] == "fetch"
+            && a.Any(x => x.Contains(":refs/heads/", StringComparison.Ordinal)
+                || x.Contains(":refs/remotes/", StringComparison.Ordinal))).ShouldBeFalse();
     }
 
     private static async Task<string> RewriteOwnerFromMasterAsync(RepairSourceWorld world)
