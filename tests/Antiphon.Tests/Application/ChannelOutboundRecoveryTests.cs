@@ -831,7 +831,7 @@ public sealed class ChannelOutboundRecoveryTests
                     dispatched.DispatchedAt.ShouldNotBeNull();
                     (await verify.AgentSessions.AsNoTracking()
                         .SingleAsync(s => s.Id == dispatched.AgentSessionId)).Status
-                        .ShouldBe(SessionStatus.Starting);
+                        .ShouldBe(running ? SessionStatus.Running : SessionStatus.Starting);
                     (await verify.AgentTaskEvents.AsNoTracking().CountAsync(e =>
                         e.AgentTaskId == dispatched.Id && e.Type == AgentTaskEventType.Dispatched))
                         .ShouldBe(1);
