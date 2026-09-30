@@ -1612,7 +1612,7 @@ c849_seed() {
     fi
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
     stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
-    mkdir -m 0700 "$stage/packages" "$stage/npm"
+    mkdir -m 0700 "$stage/packages" "$stage/npm" || c849_seed_failure "$donor" CacheStageCreateFailed
     c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
     docker stop "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorStopFailed
     docker cp "$donor:/home/app/.nuget/packages/." "$stage/packages" >/dev/null 2>&1 \
