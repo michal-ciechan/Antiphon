@@ -152,8 +152,7 @@ if ($env:ANTIPHON_TASK_TOKEN) { $h['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK
 (Invoke-RestMethod "$api/api/agents" -Headers $h) |
     Select-Object name, status, @{n='session';e={$_.liveSession.id}}
 
-# a board's id from its name, then its cards (one bounded page; follow nextPageToken)
-$board = (Invoke-RestMethod "$api/api/boards" -Headers $h) | Where-Object name -eq 'Antiphon'
+# a board's complete card list (the script follows bounded pages)
 pwsh -NoProfile -File scripts/card.ps1 list -Board Antiphon -Json
 # duplicate check: search stored full fields, then inspect a candidate's full detail
 pwsh -NoProfile -File scripts/card.ps1 search '<distinctive phrase>' -Board Antiphon -All
