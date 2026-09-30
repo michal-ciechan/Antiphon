@@ -386,7 +386,7 @@ public class CardListPaginationApiTests
             db.AgentSessions.Add(new AgentSession
             {
                 Id = sessionId, CardId = cards[0].Id, DefinitionName = "synthetic-card-reader",
-                AgentKind = AgentKind.Raw, Status = SessionStatus.Exited, Cwd = "/tmp/card-read",
+                AgentKind = AgentKind.Raw, Status = SessionStatus.Stopped, Cwd = "/tmp/card-read",
                 Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now
             });
             await db.SaveChangesAsync();
