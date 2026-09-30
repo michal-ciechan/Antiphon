@@ -960,7 +960,7 @@ public sealed class RemoteScriptContractTests
         var remote = Remote();
         var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
         var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/verify-card0849-caches.ps1"));
-        foreach (var name in new[] { "runner-cache-inventory", "runner-cache-fixture", "runner-cache-seed",
+        foreach (var name in new[] { "runner-cache-inventory", "runner-cache-fixture", "runner-cache-seed", "runner-cache-reset",
                      "verify-runner-caches", "verify-runner-caches-retired", "runner-cache-prune-preview", "runner-cache-prune" })
         {
             bridge.ShouldContain("'" + name + "'");
@@ -1080,6 +1080,32 @@ public sealed class RemoteScriptContractTests
         Order(seed, "docker stop \"$donor\"", "docker cp \"$donor:/home/app/.nuget/packages/.\"").ShouldBeTrue();
         Order(seed, "c849_smoke \"$helper\" seed", "mv \"$stage\" \"$recovery\"").ShouldBeTrue();
         Order(seed, "docker start \"$donor\"", "mv \"$C849_READY.tmp-$RUN\" \"$C849_READY\"").ShouldBeTrue();
+        var status = LinuxShell(CacheStatusHarness() + """
+            for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
+                c849_status_zero server2-temp reconnected
+                printf '%s reconnect=%s\n' "$STATUS" "$?"
+            done
+            STATUS=zero
+            c849_status_zero server2-temp reconnected
+            printf 'zero reconnect=%s\n' "$?"
+            """);
+        foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
+            status.ShouldContain(fault + " reconnect=1");
+        status.ShouldContain("zero reconnect=0");
+        var ready = LinuxShell(CacheStatusHarness() + seed + """
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"; printf 'ready\n' > "$C849_READY"
+            RUN=red; LANE=host
+            require_lane() { :; }
+            write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            c849_prepare() { :; }; c849_image() { echo image; }
+            c849_optional_donor() { :; }; c849_require_ready() { :; }
+            docker() { echo unsafe-docker; return 1; }
+            ( c849_seed )
+            """);
+        ready.ShouldContain("seed-result=true:");
+        ready.ShouldNotContain("unsafe-docker");
     }
 
     [Test]
@@ -1112,6 +1138,30 @@ public sealed class RemoteScriptContractTests
             "hardlink code=2 diagnosis=CacheDonorUnsafeEntry", "special code=2 diagnosis=CacheDonorUnsafeEntry",
             "path code=2 diagnosis=CacheDonorUnsafePath", "sibling-preserved" })
             output.ShouldContain(expected);
+        var gate = LinuxShell(CacheStatusHarness() + Block(Remote(), "c849_seed") + """
+            c849_prepare() { :; }
+            c849_image() { echo image; }
+            c849_optional_donor() { echo donor; }
+            c849_empty_volume() { :; }
+            docker() { printf 'docker %s\n' "$*" >> "$root/docker-trace"; return 1; }
+            sudo() { shift; "$@"; }
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            C849_PACKAGES=packages; C849_SCRATCH=scratch; C849_NPM=npm
+            RUN=red; LANE=host
+            require_lane() { :; }
+            write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
+                : > "$root/docker-trace"
+                ( c849_seed ) > "$root/result" 2>&1
+                printf '%s verdict=%s\n' "$STATUS" "$(cat "$root/result")"
+                if grep -q '^docker stop' "$root/docker-trace"; then echo unsafe-stop; fi
+            done
+            """);
+        foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
+            gate.ShouldContain(fault + " verdict=seed-result=false:CacheDonorNotIdleDrained");
+        gate.ShouldNotContain("unsafe-stop");
     }
 
     [Test]
@@ -1130,6 +1180,32 @@ public sealed class RemoteScriptContractTests
         Order(retire, "c849_status_zero server2-temp", "compose_temp down -v").ShouldBeTrue();
         retire.ShouldContain("c849_require_ready");
         retire.ShouldContain("c849_budget_gate");
+        var output = LinuxShell(CacheStatusHarness() + retire + """
+            C590_TEMP_RETIRED_AT=2026-09-30T00:00:00Z
+            SERVER2_TEMP_ENV="$root/temp.env"; printf 'RUNNER_GROK_STORE_DIR=/x\n' > "$SERVER2_TEMP_ENV"
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            RUN=red; LANE=host
+            require_lane() { :; }
+            write_result() { printf 'retire-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            c849_prepare() { :; }; c849_require_ready() { :; }; c849_budget_gate() { :; }
+            c849_image() { echo image; }
+            c849_volume() { [ "$VOLUME_FAIL" != yes ]; }
+            compose_temp() { printf 'compose %s\n' "$*" >> "$root/trace"; }
+            for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
+                : > "$root/trace"
+                ( case_retire_temp_runner ) > "$root/result" 2>&1
+                printf '%s verdict=%s\n' "$STATUS" "$(cat "$root/result")"
+                if grep -q 'down -v' "$root/trace"; then echo unsafe-down; fi
+            done
+            STATUS=zero; VOLUME_FAIL=yes
+            ( case_retire_temp_runner ) > "$root/result" 2>&1
+            printf 'lost-volume verdict=%s\n' "$(cat "$root/result")"
+            """);
+        foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
+            output.ShouldContain(fault + " verdict=retire-result=false:TempRunnerNotIdle");
+        output.ShouldNotContain("unsafe-down");
+        output.ShouldContain("lost-volume verdict=retire-result=false:");
     }
 
     [Test]
@@ -1371,6 +1447,23 @@ public sealed class RemoteScriptContractTests
             """ + "\n" + string.Join('\n', new[] { "c849_image", "c849_empty_volume", "c849_volume", "c849_prepare" }
                 .Select(name => Block(text, name))) + "\n";
     }
+
+    private static string CacheStatusHarness() => Block(Remote(), "c849_status_zero") + """
+        root="$(mktemp -d)"
+        trap 'rm -rf "$root"' EXIT
+        STATUS=zero
+        c849_status_body() { printf '%s' "$STATUS"; }
+        jq() {
+            local opt="$1" expression="$2" input
+            input="$(cat)"
+            if [ "$opt" = -r ]; then echo 2026-09-30T00:00:00Z; return 0; fi
+            case "$input" in
+                zero) return 0 ;;
+                sessions|runnerSessions|queuedTasks|null|garbage|unknown) return 1 ;;
+            esac
+            return 1
+        }
+        """;
 
     private static string CodexHomeHarness(string text) =>
         string.Join('\n',

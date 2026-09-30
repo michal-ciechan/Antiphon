@@ -196,8 +196,8 @@ RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
  && chmod 0440 /etc/sudoers.d/antiphon-custody \
  && visudo -c \
  && chmod 0644 /etc/docker/daemon.json /etc/antiphon/ssh_config /etc/antiphon/github_known_hosts /etc/gitconfig \
- && mkdir -p /home/app \
- && chown 1654:1654 /home/app \
+ && mkdir -p /home/app/.nuget /home/app/.npm \
+ && chown 1654:1654 /home/app /home/app/.nuget /home/app/.npm \
  && docker --version \
  && docker compose version \
  && dockerd --version \

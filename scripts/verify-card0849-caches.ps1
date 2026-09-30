@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Inventory', 'Fixture', 'Seed', 'Both', 'Retired', 'PrunePreview', 'Prune')]
+    [ValidateSet('Inventory', 'Fixture', 'Seed', 'Reset', 'Both', 'Retired', 'PrunePreview', 'Prune')]
     [string]$Case,
     [string]$Sha = '',
     [string]$Preview = ''
@@ -43,6 +43,7 @@ $map = @{
     Inventory = 'runner-cache-inventory'
     Fixture = 'runner-cache-fixture'
     Seed = 'runner-cache-seed'
+    Reset = 'runner-cache-reset'
     Retired = 'verify-runner-caches-retired'
     PrunePreview = 'runner-cache-prune-preview'
     Prune = 'runner-cache-prune'
@@ -106,6 +107,10 @@ switch ($Case) {
     }
     'Seed' {
         $seed = Read-C849Receipt 0 'seed.txt'
+        if ($seed -match '(?m)^ready=true donor=\r?$') {
+            Write-Output 'C849_SEED donor=none ready=true recovery=retained'
+            break
+        }
         $status = Assert-C849Status (Read-C849Receipt 0 'status.json') $false $true
         if ($seed -notmatch '(?m)^ready=true donor=[0-9a-f]{64}(?:\r)?$' -and
             $seed -notmatch '(?m)^ready=true donor=[0-9a-f]{12,64} (?:.*)$') { throw 'C849 seed receipt invalid' }
@@ -113,6 +118,12 @@ switch ($Case) {
             $status.dispatchEligible -ne $true -or $status.retireWhenIdle -ne $true -or
             $status.redirectTo -ne 'server2') { throw 'C849 donor reconnect receipt invalid' }
         Write-Output 'C849_SEED donor=server2-temp ready=true smoke=passed recovery=retained'
+    }
+    'Reset' {
+        if ((Read-C849Receipt 0 'reset.txt').Trim() -cne 'reset=true volumes=3 marker=absent') {
+            throw 'C849 reset receipt invalid'
+        }
+        Write-Output 'C849_RESET volumes=3 marker=absent failures=0'
     }
     'Both' {
         $hashes = @()

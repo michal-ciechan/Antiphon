@@ -17,6 +17,7 @@ $script:C590LiveCases = @(
     'runner-cache-inventory',
     'runner-cache-fixture',
     'runner-cache-seed',
+    'runner-cache-reset',
     'verify-runner-caches',
     'verify-runner-caches-retired',
     'runner-cache-prune-preview',
@@ -248,7 +249,7 @@ function Invoke-C590LiveCase {
     )
     $root = [string]$Manifest.evidenceRoot
     if (-not $root) { throw 'evidenceRoot is required' }
-    if ($Case -in @('runner-cache-inventory', 'runner-cache-fixture', 'runner-cache-seed',
+    if ($Case -in @('runner-cache-inventory', 'runner-cache-fixture', 'runner-cache-seed', 'runner-cache-reset',
             'verify-runner-caches', 'verify-runner-caches-retired', 'runner-cache-prune-preview', 'runner-cache-prune')) {
         $cacheNames = @($Manifest.PSObject.Properties.Name)
         if ($cacheNames -notcontains 'sourceSha' -or [string]$Manifest.sourceSha -cnotmatch '^[0-9a-f]{40}$' -or
