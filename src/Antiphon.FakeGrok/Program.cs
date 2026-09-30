@@ -428,6 +428,10 @@ internal static class Program
 
         void ProcessBurst(byte[] burst)
         {
+            if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_INPUT_SHAPE_REPORT") is
+                { Length: > 0 } inputShapeReport)
+                File.AppendAllText(inputShapeReport,
+                    $"bytes={burst.Length} cr={burst.Count(b => b == 13)} lf={burst.Count(b => b == 10)} paste={Contains(burst, PasteStartBytes)}\n");
             if (clip is not null && !(inPaste || Contains(burst, PasteStartBytes)))
             {
                 burst = clip.Apply(burst, out var note);

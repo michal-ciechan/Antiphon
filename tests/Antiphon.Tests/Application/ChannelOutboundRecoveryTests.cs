@@ -478,7 +478,6 @@ public sealed class ChannelOutboundRecoveryTests
     [Arguments("admission-committed")]
     [Arguments("conversion-task-committed")]
     [Arguments("conversion-dispatched")]
-    [Arguments("conversion-running")]
     public async Task Process_death_preserves_ownership_at_each_boundary(string cut)
     {
         var root = Path.Combine(Path.GetTempPath(), "antiphon-outbound-admission-" + Guid.NewGuid().ToString("N"));
@@ -641,6 +640,8 @@ public sealed class ChannelOutboundRecoveryTests
                 var spec = launch.GetProperty("Spec").Deserialize<AgentLaunchSpec>()!;
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL_GATE"].ShouldBe(workerGate);
                 spec.Env["ANTIPHON_FAKE_OUTBOUND_TOOL"].ShouldBe("fixture:pdf");
+                var nativeInputShape = Path.Combine(root, "native-input-shape.txt");
+                spec.Env["ANTIPHON_FAKE_INPUT_SHAPE_REPORT"] = nativeInputShape;
                 if (!OperatingSystem.IsWindows())
                 {
                     // CP rows intentionally build with UseAppHost=false on Linux. The
@@ -696,7 +697,8 @@ public sealed class ChannelOutboundRecoveryTests
                         + $"transcriptKinds={string.Join(',', observed.Entries.Select(e => e.Kind))}; "
                         + $"screenHasTask={buffer.Buffer.Contains(DelegationReportFormatter.TaskMarker(nativeTaskId))}; "
                         + $"screenHasReady={buffer.Buffer.Contains("Fake Grok ready")}; "
-                        + $"screenHasToolFailure={buffer.Buffer.Contains("Outbound tool failed")}");
+                        + $"screenHasToolFailure={buffer.Buffer.Contains("Outbound tool failed")}; "
+                        + $"inputShape={(File.Exists(nativeInputShape) ? await File.ReadAllTextAsync(nativeInputShape) : "absent")}");
                 }
                 (await File.ReadAllTextAsync(workerGate + ".held"))
                     .ShouldBe(acceptedId.ToString("D"));
@@ -908,6 +910,10 @@ public sealed class ChannelOutboundRecoveryTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Test]
+    public Task Running_converter_reconciles_after_dispatcher_death() =>
+        Process_death_preserves_ownership_at_each_boundary("conversion-running");
 
     [Test]
     [Arguments("before-conversion-observation", ChannelOutboundDeliveryState.Published, 1)]
