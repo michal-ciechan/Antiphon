@@ -1360,6 +1360,9 @@ c849_volume() {
         -c 'test ! -L /cache && test -d /cache && stat -c %u:%g:%a /cache' 2>/dev/null)" \
         || write_result false CacheRootInvalid 2
     if [ "$stat_line" != 1654:1654:700 ]; then write_result false CacheRootOwnershipInvalid 2; fi
+    if [ "$fresh" = 0 ] && [ "$create" = yes ] && [ ! -s "$C849_READY" ]; then
+        c849_empty_volume "$name" "$image" || write_result false CacheUnmarkedContent 2
+    fi
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
         --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
         -c 'set -eu; p="/cache/.c849-probe-$1"; (umask 077; : > "$p"); mv "$p" "$p.moved"; rm "$p.moved"' sh "$RUN" >/dev/null \
@@ -1546,8 +1549,9 @@ c849_seed() {
         || c849_seed_failure "$donor" Net9ReferenceDonorMissing
     docker run --rm --network none --user 0:0 --entrypoint npm \
         --mount "type=bind,source=$stage/npm,target=/npm/_cacache" "$image" \
-        cache verify --cache /npm > "$CASE_DIR/npm-verify.txt" 2>&1 \
+        cache verify --cache /npm >/dev/null 2>&1 \
         || c849_seed_failure "$donor" NpmStagedIntegrityFailed
+    printf 'npm-integrity=passed\n' > "$CASE_DIR/npm-integrity.txt"
     payload_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
     reference_hash="$(sha256sum "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" | cut -d' ' -f1)"
     package_bytes="$(du -s -B1 "$stage/packages" | cut -f1)"
@@ -1704,6 +1708,25 @@ c849_preview() {
     write_result true '' 0
 }
 
+c849_budget_gate() {
+    local free_kb name role path mode bytes budget
+    : > "$CASE_DIR/cache-budget.txt"
+    c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 >> "$CASE_DIR/cache-budget.txt"
+    c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 >> "$CASE_DIR/cache-budget.txt"
+    c849_observe_volume "$C849_NPM" npm-content 2147483648 >> "$CASE_DIR/cache-budget.txt"
+    while read -r name role path mode bytes budget; do
+        if [ "$bytes" -gt "$budget" ]; then write_result false CacheBudgetExceeded 2; fi
+        if [ $((bytes * 5)) -ge $((budget * 4)) ]; then
+            printf 'WARN CacheBudget80 role=%s bytes=%s budget=%s\n' "$role" "$bytes" "$budget" \
+                >> "$CASE_DIR/cache-warnings.txt"
+        fi
+    done < "$CASE_DIR/cache-budget.txt"
+    free_kb="$(df -Pk "$(docker info -f '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
+    [[ "$free_kb" =~ ^[0-9]+$ ]] || write_result false CacheDiskUnavailable 2
+    [ "$free_kb" -ge 20971520 ] || write_result false CacheDiskLow 2
+    printf 'free-bytes=%s\n' "$((free_kb * 1024))" >> "$CASE_DIR/cache-budget.txt"
+}
+
 case_verify_runner_caches() {
     require_lane host
     case "${C590_RUNNER_ID:-}" in server2|server2-temp) ;; *) write_result false CacheRunnerInvalid 2 ;; esac
@@ -1811,6 +1834,7 @@ EOF
     build_server2_images
     c849_prepare yes
     c849_require_ready
+    c849_budget_gate
     ensure_build_slots_broker
 
     # CARD-0631 D-10: a fresh work volume gets its checkout before the runner exists.
@@ -1966,6 +1990,7 @@ case_deploy_temp_runner() {
     build_server2_images
     c849_prepare yes
     c849_require_ready
+    c849_budget_gate
     ensure_build_slots_broker
 
     cat > "$SERVER2_TEMP_ENV" <<EOF
@@ -2066,8 +2091,16 @@ case_retire_temp_runner() {
     require_lane host
     if [ -z "${C590_TEMP_RETIRED_AT:-}" ]; then write_result false TempRunnerNotRetired 2; fi
     c849_status_zero server2-temp || write_result false TempRunnerNotIdle 2
+    local live_retired_at
+    live_retired_at="$(curl -fsS --max-time 15 "${C604_SERVER_ORIGIN:?}/api/session-runners/server2-temp/status" \
+        | jq -r '.retiredAt // empty')" || write_result false TempRunnerStatusUnavailable 2
+    [ -n "$live_retired_at" ] || write_result false TempRunnerNotRetired 2
+    [ "$(date -u -d "$live_retired_at" +%s 2>/dev/null)" = \
+      "$(date -u -d "$C590_TEMP_RETIRED_AT" +%s 2>/dev/null)" ] \
+        || write_result false TempRunnerRetirementChanged 2
     c849_prepare no
     c849_require_ready
+    c849_budget_gate
     if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
     RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
     compose_temp down -v >> "$CASE_DIR/command.log" 2>&1 || write_result false TempComposeDownFailed 2
@@ -2334,6 +2367,8 @@ case "$CASE" in
     runner-cache-seed) c849_seed ;;
     runner-cache-inventory) case_runner_cache_inventory ;;
     runner-cache-prune-preview) c849_preview ;;
+    runner-cache-prune) write_result false CachePruneNotImplemented 2 ;;
+    runner-cache-fixture) write_result false CacheFixtureNotImplemented 2 ;;
     verify-runner-caches) case_verify_runner_caches ;;
     verify-runner-caches-retired) case_verify_runner_caches_retired ;;
     custody-containment) case_custody_containment ;;
