@@ -214,11 +214,31 @@ public class CardSearchApiTests
     [Test] public async Task Invalid_search_and_changed_search_tokens_are_rejected()
     {
         var board = await _fixture.BoardAsync();
-        await _fixture.CardsAsync(board.Id, 3, "search-needle");
+        var cards = await _fixture.CardsAsync(board.Id, 3, "search-needle");
         await Assert422Async("/api/cards/search", "q");
         await Assert422Async("/api/cards/search?q=%20%20", "q");
         await Assert422Async("/api/cards/search?q=" + new string('a', 501), "q");
         (await SearchAsync(new string('a', 500), board.Id)).Total.ShouldBe(0);
+        var escapedQuery = new string('&', 500);
+        await using (var db = _fixture.Writer())
+        {
+            var matchingIds = cards.Take(2).Select(c => c.Id).ToArray();
+            await db.Cards.Where(c => matchingIds.Contains(c.Id)).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.Description, escapedQuery));
+        }
+        var escapedFirst = await SearchAsync(escapedQuery, board.Id, limit: 1);
+        escapedFirst.Total.ShouldBe(2);
+        escapedFirst.Cards.Count.ShouldBe(1);
+        escapedFirst.Truncated.ShouldBeTrue();
+        escapedFirst.NextPageToken.ShouldNotBeNullOrWhiteSpace();
+        escapedFirst.NextPageToken!.Length.ShouldBeLessThanOrEqualTo(4096);
+        var escapedLast = await SearchAsync(escapedQuery, board.Id, limit: 1,
+            token: escapedFirst.NextPageToken);
+        escapedLast.Total.ShouldBe(2);
+        escapedLast.Cards.Count.ShouldBe(1);
+        escapedLast.Truncated.ShouldBeFalse();
+        escapedLast.NextPageToken.ShouldBeNull();
+        escapedFirst.Cards[0].Id.ShouldNotBe(escapedLast.Cards[0].Id);
         var token = (await SearchAsync("search-needle", board.Id, 1)).NextPageToken!;
         await Assert422Async($"/api/cards/search?q=other&boardId={board.Id}&limit=1&pageToken={Uri.EscapeDataString(token)}", "pageToken");
         var raw = token.Replace('-', '+').Replace('_', '/');

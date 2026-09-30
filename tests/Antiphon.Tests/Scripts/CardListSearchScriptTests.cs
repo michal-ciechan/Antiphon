@@ -184,7 +184,7 @@ public sealed class CardListSearchScriptTests
     [Test] public async Task Old_or_inconsistent_pagination_fails_without_results()
     {
         foreach (var broken in new[] { Page(0, 1, true), Page(0, 1, true, " "),
-            Page(0, 1, false, "unexpected"), Page(0, 0, true, "next") })
+            Page(0, 1, false, "unexpected") })
         {
             using var stub = new Stub();
             stub.Respond = (_, _) => new(200, broken);
@@ -192,6 +192,33 @@ public sealed class CardListSearchScriptTests
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
             run.Stderr.ShouldContain("enumeration");
+        }
+        foreach (var (search, emptyOnSecondPage) in new[]
+        {
+            (false, false), (false, true), (true, false), (true, true)
+        })
+        {
+            using var stub = new Stub();
+            var endpoint = search ? "/api/cards/search" : "/api/cards";
+            var total = search ? 2 : (int?)null;
+            stub.Respond = (_, request) => request switch
+            {
+                1 when emptyOnSecondPage => new(200, Page(0, 1, true, "A", total)),
+                1 => new(200, Page(0, 0, true, "A", search ? 1 : null)),
+                2 when emptyOnSecondPage => new(200, Page(1, 0, true, "B", total)),
+                2 => new(200, Page(0, 1, total: search ? 1 : null)),
+                _ => new(200, Page(1, 1, total: total))
+            };
+            var args = search ? new[] { "search", "needle", "-Json" } :
+                new[] { "list", "-Status", "Backlog", "-Json" };
+            var run = await RunAsync(stub, args);
+            stub.Calls.Select(c => (c.Path, Token: c.Value("pageToken"))).ToArray()
+                .ShouldBe(emptyOnSecondPage
+                    ? new[] { (endpoint, (string?)null), (endpoint, "A") }
+                    : new[] { (endpoint, (string?)null) });
+            run.ExitCode.ShouldNotBe(0);
+            run.Stdout.ShouldBeNullOrWhiteSpace();
+            run.Stderr.ShouldContain("empty continuing page");
         }
         foreach (var tokens in new[] { new[] { "A", "A" }, new[] { "A", "B", "A" } })
         {
@@ -217,6 +244,18 @@ public sealed class CardListSearchScriptTests
 
     [Test] public async Task Later_http_failure_and_changed_scope_do_not_emit_partial_json()
     {
+        using (var listFailure = new Stub())
+        {
+            listFailure.Respond = (call, _) => call.Value("pageToken") is null
+                ? new(200, Page(0, 1, true, "next"))
+                : new(500, "{\"detail\":\"server failed; restart enumeration\"}");
+            var listRun = await RunAsync(listFailure, "list", "-Status", "Backlog", "-Json");
+            listFailure.Calls.Select(c => (c.Path, Token: c.Value("pageToken"))).ToArray()
+                .ShouldBe(new[] { ("/api/cards", (string?)null), ("/api/cards", "next") });
+            listRun.ExitCode.ShouldNotBe(0);
+            listRun.Stdout.ShouldBeNullOrWhiteSpace();
+            listRun.Stderr.ShouldContain("restart enumeration");
+        }
         foreach (var status in new[] { 409, 500 })
         {
             using var stub = new Stub();
@@ -241,7 +280,7 @@ public sealed class CardListSearchScriptTests
     [Test] public async Task Duplicate_ids_and_inconsistent_totals_are_errors()
     {
         foreach (var second in new[] { Page(1, 1, total: 2, duplicate: 1),
-            Page(1, 1, total: 3), Page(1, 0, total: 2) })
+            Page(1, 0, total: 2) })
         {
             using var stub = new Stub();
             stub.Respond = (call, _) => call.Value("pageToken") is null
@@ -250,6 +289,15 @@ public sealed class CardListSearchScriptTests
             run.ExitCode.ShouldNotBe(0);
             run.Stdout.ShouldBeNullOrWhiteSpace();
         }
+        using var changedTotal = new Stub();
+        changedTotal.Respond = (call, _) => call.Value("pageToken") is null
+            ? new(200, Page(0, 1, true, "next", 3)) : new(200, Page(1, 1, total: 2));
+        var changed = await RunAsync(changedTotal, "search", "needle", "-Json");
+        changedTotal.Calls.Select(c => c.Value("pageToken")).ToArray()
+            .ShouldBe(new string?[] { null, "next" });
+        changed.ExitCode.ShouldNotBe(0);
+        changed.Stdout.ShouldBeNullOrWhiteSpace();
+        changed.Stderr.ShouldContain("total changed");
         using var within = new Stub();
         within.Respond = (_, _) => new(200, Page(0, 2, total: 2, duplicate: 1));
         var duplicate = await RunAsync(within, "search", "needle", "-Json");
