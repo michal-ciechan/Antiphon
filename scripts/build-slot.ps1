@@ -19,8 +19,10 @@
     Everything after `--` is the command, passed on verbatim: under `pwsh -File` the script reads
     its own raw command line, because the PowerShell binder would split -m:2 into -m and 2.
 
-    Native executables start with literal argv in the caller's working directory. PowerShell
-    scripts and Windows command shims keep the call operator. Offline seam (tests only):
+    Native executables and PowerShell scripts start with literal argv in the caller's working
+    directory. A .ps1 target runs in a child PowerShell 7 -File process, so its named parameters
+    bind by name and its process exit code is returned. Windows command shims keep the call
+    operator. Offline seam (tests only):
     C589_COMMAND_SHIM runs `pwsh -File <shim> <command...>` through the native launcher.
     Owner: docs/testing-and-build.md "Build slots (CARD-0589)". ASCII-only.
 #>
@@ -121,6 +123,10 @@ try {
         if ($resolved -and $resolved.CommandType -eq 'Application' -and
             (-not $IsWindows -or $resolved.Source -notmatch '\.(cmd|bat)$')) {
             $code = Start-AntiphonWrappedCommand -FileName $resolved.Source -Arguments $rest
+        } elseif ($resolved -and $resolved.CommandType -eq 'ExternalScript') {
+            $pwshBinary = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+            $scriptArgs = @('-NoProfile', '-NonInteractive', '-File', $resolved.Source) + $rest
+            $code = Start-AntiphonWrappedCommand -FileName $pwshBinary -Arguments $scriptArgs
         } else {
             & $command[0] @rest
             $code = $LASTEXITCODE
