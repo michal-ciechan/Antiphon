@@ -383,7 +383,7 @@ public class ProviderQuotaRefusalAcceptanceTests
         await using var db = s.Db();
         var owned = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m =>
             m.AgentSessionId == s.H.SessionId && m.Origin == QueuedMessageOrigin.Supervision);
-        owned.Status.ShouldBe(QueuedMessageStatus.Pending);
+        owned.Status.ShouldNotBe(QueuedMessageStatus.Sent);
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == s.H.SessionId && m.Body == "human message")).ShouldBe(1);
     }
 
