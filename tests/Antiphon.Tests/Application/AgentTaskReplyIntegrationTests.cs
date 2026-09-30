@@ -4379,10 +4379,11 @@ public partial class AgentTaskReplyIntegrationTests
             (await db.ApiErrorRecoveries.AnyAsync(r => r.AgentSessionId == sessionId
                 && r.StubSequence == sequence)).ShouldBeFalse();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
-            // These fixtures have no explicit model override; recovery falls back to the task tier.
-            session.EffectiveModelId.ShouldBeNull();
+            // The live model must be explicit: a task tier alone cannot identify the held model.
             var alias = ModelLevelAliases.For(session.AgentKind, task.ModelLevel);
             ModelAlias.Normalize(session.AgentKind, alias).ShouldBe(alias);
+            session.EffectiveModelId = alias;
+            await db.SaveChangesAsync();
             var holds = await db.ModelAvailabilityHolds.AsNoTracking()
                 .Where(h => h.Kind == session.AgentKind && h.ModelAlias == alias).ToListAsync();
             return new WallRecoveryFixture(task.Id, sessionId, sequence, session.AgentKind, alias,

@@ -523,6 +523,11 @@ public partial class AgentTaskReplyIntegrationTests
         using var workspace = new TempWorkspace();
         var dispatched = DateTime.UtcNow.AddMinutes(-20);
         var (task, sessionId) = await SeedGrokAsync(workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        await using (var modelDb = CreateContext())
+        {
+            await modelDb.AgentSessions.Where(s => s.Id == sessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "grok-4.7"));
+        }
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
         await SeedTurnAsync(sessionId, marker + "\n\nfirst attempt", "OLDER DONE REPORT");
         if (apiError)
