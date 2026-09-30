@@ -307,6 +307,9 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     internal static TimeSpan RequestTimeoutFor(PhoneHomeOperation operation) => operation switch
     {
         PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceRemove => TimeSpan.FromMinutes(5),
+        // The runner bounds the push child at 60 s; allow transport and the mutation queue room
+        // to return its receipt inside settlement's 120 s budget.
+        PhoneHomeOperation.WorkspacePublish => TimeSpan.FromSeconds(90),
         PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained => TimeSpan.FromMinutes(2),
         // Workspace mutation can occupy the runner's command lock for five minutes.
         // Keep the waiter until that lock can release and the persisted value is confirmed.
