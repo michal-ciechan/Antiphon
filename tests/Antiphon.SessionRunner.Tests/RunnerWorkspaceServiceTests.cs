@@ -65,16 +65,18 @@ public sealed class RunnerWorkspaceServiceTests
         using var scratch = Scratch.Create();
         var starts = new List<ProcessStartInfo>();
         var service = scratch.Service(scratch.Clone, starts);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
         foreach (var request in new[]
         {
             new PhoneHomeWorkspacePublishRequest(scratch.Clone, Scratch.Branch, scratch.Sha, null, true),
-            new PhoneHomeWorkspacePublishRequest(scratch.Work + "/worktrees/task-deadbeef", "master", scratch.Sha, null, true),
+            new PhoneHomeWorkspacePublishRequest(mirror, "master", scratch.Sha, null, true),
         })
         {
+            starts.Clear();
             var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.PublishAsync(request, CancellationToken.None));
             refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+            starts.ShouldBeEmpty();
         }
-        starts.ShouldBeEmpty();
     }
 
     [Test]

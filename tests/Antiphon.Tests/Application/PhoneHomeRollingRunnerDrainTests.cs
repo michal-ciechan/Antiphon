@@ -33,6 +33,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
         public TimeProvider? Clock { get; init; }
         public int? PeerACapacity { get; init; }
         public int? PeerBCapacity { get; init; }
+        public bool PeerBWorkspacePublish { get; init; } = true;
     }
 
     [Test]
