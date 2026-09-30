@@ -14,6 +14,107 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class RunnerWorkspaceServiceTests
 {
     [Test]
+    public async Task Publish_pushes_only_own_fast_forward_branch()
+    {
+        using var scratch = Scratch.Create();
+        var starts = new List<ProcessStartInfo>();
+        var service = scratch.Service(scratch.Clone, starts);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        File.WriteAllText(Path.Combine(mirror, "more.txt"), "more");
+        Scratch.Git(mirror, "add", "more.txt");
+        Scratch.Git(mirror, "commit", "-m", "more");
+        var tip = Scratch.Git(mirror, "rev-parse", "HEAD").Trim();
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, scratch.Sha, true), CancellationToken.None);
+        answer.Tip.ShouldBe(tip);
+        answer.Relation.ShouldBe("descends");
+        answer.Pushed.ShouldBeTrue();
+        Scratch.Git(scratch.Origin, "rev-parse", Scratch.Branch).Trim().ShouldBe(tip);
+        starts.Where(x => x.ArgumentList.FirstOrDefault() == "push").Single().ArgumentList
+            .ShouldBe(new[] { "push", "origin", "refs/heads/" + Scratch.Branch + ":refs/heads/" + Scratch.Branch });
+    }
+
+    [Test]
+    public async Task Publish_refuses_a_rebased_tip_without_pushing()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        Scratch.Git(mirror, "reset", "--hard", scratch.PublishedSha);
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, scratch.Sha, true), CancellationToken.None);
+        answer.Relation.ShouldBe("diverged");
+        answer.Pushed.ShouldBeFalse();
+        Scratch.Git(scratch.Origin, "rev-parse", Scratch.Branch).Trim().ShouldBe(scratch.Sha);
+    }
+
+    [Test]
+    public async Task Publish_equal_tip_is_not_pushed_and_reports_dirty_tree()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        File.WriteAllText(Path.Combine(mirror, "dirty.txt"), "dirty");
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, scratch.Sha, true), CancellationToken.None);
+        answer.Relation.ShouldBe("equal");
+        answer.Dirty.ShouldBeTrue();
+        answer.Pushed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Publish_refuses_foreign_path_and_branch_before_git()
+    {
+        using var scratch = Scratch.Create();
+        var starts = new List<ProcessStartInfo>();
+        var service = scratch.Service(scratch.Clone, starts);
+        foreach (var request in new[]
+        {
+            new PhoneHomeWorkspacePublishRequest(scratch.Clone, Scratch.Branch, scratch.Sha, null, true),
+            new PhoneHomeWorkspacePublishRequest(scratch.Work + "/worktrees/task-deadbeef", "master", scratch.Sha, null, true),
+        })
+        {
+            var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.PublishAsync(request, CancellationToken.None));
+            refused.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget);
+        }
+        starts.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Publish_refuses_detached_head()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        Scratch.Git(mirror, "checkout", "--detach");
+        var answer = await service.PublishAsync(new(mirror, Scratch.Branch, scratch.Sha, null, true), CancellationToken.None);
+        answer.Refusal.ShouldBe("not_on_branch");
+        answer.Pushed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Remove_refuses_committed_unpublished_tip_unless_forced()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        File.WriteAllText(Path.Combine(mirror, "more.txt"), "more");
+        Scratch.Git(mirror, "add", "more.txt");
+        Scratch.Git(mirror, "commit", "-m", "more");
+        var refused = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.RemoveAsync(
+            new(mirror, PublishedSha: scratch.Sha), CancellationToken.None));
+        refused.Code.ShouldBe(PhoneHomeProblemTypes.UnpublishedWork);
+        refused.Message.ShouldContain(Scratch.Git(mirror, "rev-parse", "HEAD").Trim());
+        Directory.Exists(mirror).ShouldBeTrue();
+        (await service.RemoveAsync(new(mirror, Force: true, PublishedSha: scratch.Sha), CancellationToken.None)).Removed.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Remove_allows_a_published_tip()
+    {
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var mirror = (await service.MirrorAsync(new(Scratch.Branch, scratch.Sha, "task-deadbeef"), CancellationToken.None)).Path;
+        (await service.RemoveAsync(new(mirror, PublishedSha: scratch.Sha), CancellationToken.None)).Removed.ShouldBeTrue();
+    }
+    [Test]
     public async Task Mirror_of_a_second_repository_clones_beside_the_primary_and_removes_through_its_own_checkout()
     {
         using var scratch = Scratch.Create();

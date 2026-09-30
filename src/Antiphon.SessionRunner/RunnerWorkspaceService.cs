@@ -247,6 +247,20 @@ public sealed partial class RunnerWorkspaceService
             if (status.Stdout.Trim().Length > 0)
                 throw new PhoneHomeAdmissionException(
                     PhoneHomeProblemTypes.UnsupportedTarget, "Mirror has uncommitted changes.", 409);
+            if (request.PublishedSha is { } published)
+            {
+                if (!ShaPattern.IsMatch(published))
+                    throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                        "Published sha must be 40 lowercase hex characters.", 409);
+                var tip = await GitAsync(path, ct, "rev-parse", "HEAD");
+                if (tip.ExitCode != 0 || !ShaPattern.IsMatch(tip.Stdout.Trim()))
+                    throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnpublishedWork,
+                        $"Mirror {path} tip could not be checked against published {published}.", 409);
+                var ancestor = await GitAsync(path, ct, "merge-base", "--is-ancestor", tip.Stdout.Trim(), published);
+                if (ancestor.ExitCode != 0)
+                    throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnpublishedWork,
+                        $"Mirror {path} has unpublished tip {tip.Stdout.Trim()} (published {published}).", 409);
+            }
         }
 
         var repository = await OwningRepositoryAsync(path, ct);
@@ -255,6 +269,73 @@ public sealed partial class RunnerWorkspaceService
             return new PhoneHomeWorkspaceRemoveResponse(false, path);
         await GitAsync(repository, ct, "worktree", "prune");
         return new PhoneHomeWorkspaceRemoveResponse(!Directory.Exists(path), Directory.Exists(path) ? path : null);
+    }
+
+    /// <summary>Publish only this mirror's own branch when its tip fast-forwards the dispatch base.</summary>
+    public async Task<PhoneHomeWorkspacePublishResponse> PublishAsync(
+        PhoneHomeWorkspacePublishRequest request, CancellationToken ct)
+    {
+        var path = request.Path ?? "";
+        var name = Path.GetFileName(path.TrimEnd('/', '\\'));
+        if (!IsUnderRoot(path) || !NamePattern.IsMatch(name)
+            || !string.Equals(request.Branch, "feat/card-task-" + name[5..], StringComparison.Ordinal)
+            || !ShaPattern.IsMatch(request.BaselineSha ?? "")
+            || (request.RemoteSha is not null && !ShaPattern.IsMatch(request.RemoteSha)))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                "Publish target must be this task's mirror, branch and full commit ids.", 409);
+        var resolved = TryResolveFinal(path);
+        var root = TryResolveFinal(_worktreeRoot);
+        if (resolved is null || root is null || !IsInside(resolved, root)
+            || !string.Equals(Path.GetDirectoryName(resolved), root, StringComparison.Ordinal)
+            || !Directory.Exists(resolved))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                "Publish target is not a runner mirror.", 409);
+        await OwningRepositoryAsync(path, ct);
+        var symbolic = await GitAsync(path, ct, "symbolic-ref", "-q", "HEAD");
+        if (symbolic.ExitCode != 0 || symbolic.Stdout.Trim() != "refs/heads/" + request.Branch)
+            return new(null, "unknown", null, false, false, "not_on_branch");
+        var gitDir = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-dir");
+        if (gitDir.ExitCode != 0)
+            return new(null, "unknown", null, false, false, "inspection_unavailable");
+        var directory = gitDir.Stdout.Trim();
+        if (Directory.Exists(Path.Combine(directory, "rebase-merge"))
+            || Directory.Exists(Path.Combine(directory, "rebase-apply"))
+            || File.Exists(Path.Combine(directory, "MERGE_HEAD"))
+            || File.Exists(Path.Combine(directory, "CHERRY_PICK_HEAD"))
+            || File.Exists(Path.Combine(directory, "REVERT_HEAD")))
+            return new(null, "unknown", null, false, false, "sequencer_active");
+
+        var head = await GitAsync(path, ct, "rev-parse", "HEAD");
+        var status = await GitAsync(path, ct, "status", "--porcelain");
+        if (head.ExitCode != 0 || !ShaPattern.IsMatch(head.Stdout.Trim()) || status.ExitCode != 0)
+            return new(null, "unknown", null, false, false, "inspection_unavailable");
+        var tip = head.Stdout.Trim();
+        var dirty = status.Stdout.Length > 0;
+        var baseAncestor = await GitAsync(path, ct, "merge-base", "--is-ancestor", request.BaselineSha, tip);
+        bool? descendsFromBaseline = baseAncestor.ExitCode switch { 0 => true, 1 => false, _ => null };
+        var remote = request.RemoteSha ?? request.BaselineSha;
+        string relation;
+        if (tip == remote) relation = "equal";
+        else if (descendsFromBaseline == false) relation = "diverged";
+        else
+        {
+            var forward = await GitAsync(path, ct, "merge-base", "--is-ancestor", remote, tip);
+            if (forward.ExitCode == 0) relation = "descends";
+            else if (forward.ExitCode != 1) relation = "unknown";
+            else
+            {
+                var reverse = await GitAsync(path, ct, "merge-base", "--is-ancestor", tip, remote);
+                relation = reverse.ExitCode switch { 0 => "behind", 1 => "diverged", _ => "unknown" };
+            }
+        }
+        if (!request.Publish || relation != "descends")
+            return new(tip, relation, descendsFromBaseline, dirty, false, null);
+        var push = await GitAsync(path, ct, "push", "origin",
+            "refs/heads/" + request.Branch + ":refs/heads/" + request.Branch);
+        // Git stderr can contain a credential-bearing remote URL; keep only a stable refusal.
+        return push.ExitCode == 0
+            ? new(tip, relation, descendsFromBaseline, dirty, true, null)
+            : new(tip, relation, descendsFromBaseline, dirty, false, "push_rejected");
     }
 
     private async Task<string> OwningRepositoryAsync(string path, CancellationToken ct)

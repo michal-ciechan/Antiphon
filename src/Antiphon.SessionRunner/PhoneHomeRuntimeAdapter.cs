@@ -13,6 +13,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
         RunnerCapabilityFeatures.CompactionContinuationStopV1,
         RunnerCapabilityFeatures.WorkspaceRepositoryV1,
+        RunnerCapabilityFeatures.WorkspacePublishV1,
     ];
     private readonly SessionRunnerRuntime _runtime;
     private readonly RunnerBuildDto _build;

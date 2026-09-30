@@ -140,6 +140,7 @@ public static class HerdrNativeSessionSources
 /// <summary>CARD-0213: extra capability tokens on <see cref="RunnerCapabilitiesDto.Features"/>.</summary>
 public static class RunnerCapabilityFeatures
 {
+    public const string WorkspacePublishV1 = "workspacePublishV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";
     public const string VerificationCustodyV1 = "verificationCustodyV1";
     public const string HerdrAttach = "herdr-attach";
