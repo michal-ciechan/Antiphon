@@ -1382,6 +1382,9 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("ApiErrorRecoveries");
             entity.HasKey(r => r.Id);
+            // PostgreSQL's system row version prevents a sweep repair from overwriting a
+            // settlement that just resolved this recovery as QuotaBlocked.
+            entity.Property<uint>("xmin").IsRowVersion();
             entity.Property(r => r.AgentSessionId).IsRequired();
             entity.Property(r => r.StubSequence).IsRequired();
             entity.Property(r => r.StubUuid).HasMaxLength(64);

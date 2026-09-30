@@ -198,6 +198,39 @@ public sealed class ApiErrorRecoveryService
                     "API-error adopt failed for session {SessionId} seq {Sequence}",
                     stub.AgentSessionId, stub.Sequence);
             }
+
+            // A failed turn-end settlement is logged and requests a sweep. Adoption alone
+            // cannot discharge a delegated quota refusal: the task still needs its Blocked
+            // transition. Revisit the normal settlement path even if adoption above failed.
+            if (ApiErrorClassifier.Classify(stub.ApiErrorClass, stub.ApiErrorStatus, stub.Text)
+                    == ApiErrorClassification.Wall
+                && (string.Equals(stub.ApiErrorClass, "usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
+                    || UsageLimitWallParser.IsQuotaRefusal(stub.Text)))
+            {
+                try
+                {
+                    await using var settleScope = _scopeFactory.CreateAsyncScope();
+                    var settleDb = settleScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    if (await settleDb.AgentTasks.AsNoTracking().AnyAsync(t =>
+                            t.AgentSessionId == stub.AgentSessionId
+                            && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct))
+                    {
+                        var reply = settleScope.ServiceProvider.GetService<AgentTaskReplyService>();
+                        if (reply is not null)
+                            await reply.OnTurnEndAsync(stub.AgentSessionId, ct);
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "API-error quota settlement sweep failed for session {SessionId} seq {Sequence}",
+                        stub.AgentSessionId, stub.Sequence);
+                }
+            }
         }
     }
 
@@ -433,6 +466,9 @@ public sealed class ApiErrorRecoveryService
         bool isNew = true,
         string? providerTimeZoneId = null)
     {
+        if (row.ResolvedReason == ApiErrorRecoveryReasons.QuotaBlocked)
+            return row;
+
         var evidenceAt = row.EvidenceAt ?? now;
         if (await IsWallSupersededAsync(db, sessionId, row.StubSequence, ct))
         {
@@ -471,11 +507,14 @@ public sealed class ApiErrorRecoveryService
         var session = await db.AgentSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
-        var openTaskId = await db.AgentTasks.AsNoTracking()
+        var owningTask = await db.AgentTasks.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
-                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
-            .Select(t => (Guid?)t.Id)
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working
+                    || (t.Status == AgentTaskStatus.Blocked
+                        && t.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)))
+            .Select(t => new { t.Id, t.Status })
             .FirstOrDefaultAsync(ct);
+        var openTaskId = owningTask?.Id;
 
         var hold = await availability.UpsertAutoDetectedAsync(
             kind,
@@ -497,7 +536,8 @@ public sealed class ApiErrorRecoveryService
         // A delegated quota refusal requires an operator choice. It never owns an automatic
         // capacity resume or a same-session retry; the task settlement writes Blocked.
         if (openTaskId is not null
-            && (string.Equals(row.ApiErrorClass, "usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
+            && (owningTask!.Status == AgentTaskStatus.Blocked
+                || string.Equals(row.ApiErrorClass, "usage_limit_exceeded", StringComparison.OrdinalIgnoreCase)
                 || UsageLimitWallParser.IsQuotaRefusal(errorText)))
         {
             if (_capacityRecovery is not null)

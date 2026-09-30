@@ -464,23 +464,69 @@ public class ProviderQuotaRefusalAcceptanceTests
     {
         await using var s = await CreateAsync();
         await s.EmitAsync(Linux);
-        await using (var db = s.Db())
-        {
-            db.ApiErrorRecoveries.Add(new ApiErrorRecovery
-            {
-                Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, StubSequence = 2,
-                Classification = ApiErrorClassification.Unknown, ApiErrorClass = "usage_limit_exceeded",
-                DetectedAt = IncidentAt.UtcDateTime.AddMinutes(-1),
-                NextAttemptAt = IncidentAt.UtcDateTime.AddSeconds(-1),
-            });
-            await db.SaveChangesAsync();
-        }
+        await SeedDueUnknownAsync(s);
         await Task.WhenAll(
             s.SettleAsync(),
             s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None));
         s.Clock.Advance(TimeSpan.FromHours(2));
         await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
         await AssertBlockedAsync(s, Reset, HoldUntil);
+    }
+
+    [Test]
+    public async Task Settlement_before_sweep_keeps_quota_recovery_resolved()
+    {
+        await using var s = await CreateAsync();
+        await s.EmitAsync(Linux);
+        await SeedDueUnknownAsync(s);
+        await s.SettleAsync();
+        await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
+        await AssertBlockedAsync(s, Reset, HoldUntil);
+    }
+
+    [Test]
+    public async Task Sweep_before_settlement_blocks_the_owned_task_once()
+    {
+        await using var s = await CreateAsync();
+        await s.EmitAsync(Linux);
+        await SeedDueUnknownAsync(s);
+        await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
+        await AssertBlockedAsync(s, Reset, HoldUntil);
+        await s.SettleAsync();
+        await AssertBlockedAsync(s, Reset, HoldUntil);
+    }
+
+    [Test]
+    public async Task Sweep_recovers_a_quota_turn_after_settlement_throws()
+    {
+        await using var s = await CreateAsync();
+        await s.EmitAsync(Linux);
+        await SeedDueUnknownAsync(s);
+        var reply = s.H.Provider.GetRequiredService<AgentTaskReplyService>();
+        reply.DelayAfterOpenTaskLoadedAsync = (_, _) => throw new InvalidOperationException("settlement fault");
+        try
+        {
+            await s.SettleAsync(); // The turn-end observer logs and requests a sweep.
+        }
+        finally
+        {
+            reply.DelayAfterOpenTaskLoadedAsync = null;
+        }
+        await s.H.Provider.GetRequiredService<ApiErrorRecoveryService>().SweepAsync(CancellationToken.None);
+        await AssertBlockedAsync(s, Reset, HoldUntil);
+    }
+
+    private static async Task SeedDueUnknownAsync(Scenario s)
+    {
+        await using var db = s.Db();
+        db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+        {
+            Id = Guid.NewGuid(), AgentSessionId = s.H.SessionId, StubSequence = 2,
+            Classification = ApiErrorClassification.Unknown, ApiErrorClass = "usage_limit_exceeded",
+            DetectedAt = IncidentAt.UtcDateTime.AddMinutes(-1),
+            NextAttemptAt = IncidentAt.UtcDateTime.AddSeconds(-1),
+        });
+        await db.SaveChangesAsync();
     }
 
     [Test]
