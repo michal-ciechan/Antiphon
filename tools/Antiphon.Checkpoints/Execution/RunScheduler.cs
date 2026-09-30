@@ -124,8 +124,8 @@ public sealed class RunScheduler
                         buildStates.TryGetValue(row.Build ?? "", out var progress) && progress.State == "pending");
                     if (nextBuild is not null)
                     {
-                        var spec = request.Manifest.Builds.First(build => build.Id == nextBuild.Build);
-                        buildTask = BuildOneAsync(request, spec, buildStates[spec.Id], session, total.Token);
+                        var buildSpec = request.Manifest.Builds.First(build => build.Id == nextBuild.Build);
+                        buildTask = BuildOneAsync(request, buildSpec, buildStates[buildSpec.Id], session, total.Token);
                         request.State.MaxConcurrentBuilds = Math.Max(request.State.MaxConcurrentBuilds, 1);
                         Publish(request);
                     }
