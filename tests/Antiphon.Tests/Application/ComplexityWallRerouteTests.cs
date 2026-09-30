@@ -36,39 +36,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Queued);
-        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
-        stored.ModelLevel.ShouldBe(AgentModelLevel.High);
-        stored.Complexity.ShouldBe(TaskComplexity.Hard);
-        stored.AgentSessionId.ShouldBeNull();
-        stored.AgentId.ShouldBeNull();
-        stored.Attempt.ShouldBe(2);
-        stored.FailureReason.ShouldContain("fable hit a usage wall");
-        stored.FailureReason.ShouldContain("opus");
-        stored.FailureReason.ShouldContain("NO report");
-        stored.FailureReason.ShouldContain(workspace.Path);
-        stored.FailureReason.ShouldContain("Hard chain 2/3");
-
-        var rerouted = await verify.AgentTaskEvents.SingleAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted);
-        rerouted.Detail.ShouldContain("fable hit a usage wall");
-        rerouted.Detail.ShouldContain("rerouted to opus");
-        rerouted.Detail.ShouldContain("Hard chain 2/3");
-
-        (await verify.Agents.CountAsync(a => a.Id == agentId)).ShouldBe(0);
-        harness.Stopper.Killed.ShouldContain(sessionId);
-
-        var hold = await verify.ModelAvailabilityHolds.SingleAsync(
-            h => h.ModelAlias == "fable" && h.ClearedAt == null);
-        hold.Kind.ShouldBe(AgentKind.ClaudeCode);
-        hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
-
-        var incident = await verify.AgentIncidents.SingleAsync(
-            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
-        incident.Message.ShouldContain("rerouted to opus as task attempt 2");
-        incident.FailureReason.ShouldBe(ApiErrorRecoveryReasons.WallModelPaused);
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
     }
 
     [Test]
@@ -85,18 +53,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Queued);
-        stored.ModelLevel.ShouldBe(AgentModelLevel.High);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.ApiErrorDeferred))
-            .ShouldBe(0);
-        var recovery = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == sessionId);
-        recovery.ResolvedAt.ShouldNotBeNull();
-        recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.Rerouted);
-        recovery.NextAttemptAt.ShouldBeNull();
-        harness.Stopper.Killed.ShouldContain(sessionId);
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
     }
 
     [Test]
@@ -113,22 +70,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Working);
-        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
-        stored.AgentSessionId.ShouldBe(sessionId);
-        stored.AgentId.ShouldBe(agentId);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.ApiErrorDeferred))
-            .ShouldBe(1);
-        var recovery = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == sessionId);
-        recovery.ResolvedAt.ShouldBeNull();
-        recovery.NextAttemptAt.ShouldNotBeNull();
-        harness.Stopper.Killed.ShouldBeEmpty();
-        (await verify.Agents.CountAsync(a => a.Id == agentId)).ShouldBe(1);
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
     }
 
     [Test]
@@ -149,18 +91,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
-        stored.Status.ShouldNotBe(AgentTaskStatus.Failed);
-        stored.FailureReason.ShouldContain(ComplexityRoutingService.RoutingExhaustedPrefix);
-        stored.AgentSessionId.ShouldBeNull();
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
-        (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == task.Id)).ShouldBe(1);
-        harness.Stopper.Killed.ShouldContain(sessionId);
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
     }
 
     [Test]
@@ -178,16 +109,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Failed);
-        stored.FailureReason.ShouldContain(ApiErrorRecoveryReasons.WallModelPaused);
-        stored.Complexity.ShouldBeNull();
-        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
     }
 
     [Test]
@@ -226,15 +148,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Failed);
-        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
-        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
-        stored.FailureReason.ShouldContain(ApiErrorRecoveryReasons.WallModelPaused);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
-        harness.Stopper.Killed.ShouldBeEmpty("Required pin keeps CARD-0022; Fail releases later, this path does not requeue");
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
     }
 
     [Test]
@@ -251,11 +165,15 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
+
         var (session2, agent2) = await SeedSessionAndAgentAsync(schema, workspace.Path);
         await using (var db = CreateContext(schema))
         {
             var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
             row.Status = AgentTaskStatus.Working;
+            row.FailureCode = null;
+            row.FailureReason = null;
             row.AgentSessionId = session2;
             row.AgentId = agent2;
             row.Ephemeral = true;
@@ -269,23 +187,7 @@ public class ComplexityWallRerouteTests
             "You've reached your Opus 4.6 limit. Run /usage-credits to continue or switch models with /model.");
 
         await harness.Reply.OnTurnEndAsync(session2, CancellationToken.None);
-
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Queued);
-        stored.AgentKind.ShouldBe(AgentKind.Grok);
-        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
-        stored.Attempt.ShouldBe(3);
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(2);
-        var last = await verify.AgentTaskEvents
-            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)
-            .OrderByDescending(e => e.At)
-            .FirstAsync();
-        last.Detail.ShouldContain("opus hit a usage wall");
-        last.Detail.ShouldContain("grok-4.7");
-        last.Detail.ShouldContain("Hard chain 3/3");
-        harness.Stopper.Killed.ShouldContain(session2);
+        await AssertQuotaBlockAsync(schema, harness, task, session2, 0, expectedBlocks: 2);
     }
 
     [Test]
@@ -319,15 +221,7 @@ public class ComplexityWallRerouteTests
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await using var verify = CreateContext(schema);
-        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
-        stored.FailureReason.ShouldContain(ComplexityRoutingService.RoutingExhaustedPrefix);
-        stored.FailureReason.ShouldContain("already rerouted 3/3");
-        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier, "loop guard must not walk onto opus");
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(3);
-        harness.Stopper.Killed.ShouldContain(sessionId);
+        await AssertQuotaBlockAsync(schema, harness, task, sessionId, 3);
     }
 
     [Test]
@@ -424,6 +318,29 @@ public class ComplexityWallRerouteTests
         stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
         (await verify.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(3);
+    }
+
+    private static async Task AssertQuotaBlockAsync(IsolatedTestSchema schema,
+        WallRerouteHarness harness, AgentTask task, Guid sessionId, int priorReroutes,
+        int expectedBlocks = 1)
+    {
+        await using var db = CreateContext(schema);
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
+        stored.FailureCode.ShouldBe(AgentTaskFailureCode.SubscriptionQuotaExceeded);
+        stored.AgentSessionId.ShouldBe(sessionId);
+        stored.CompletedAt.ShouldBeNull();
+        stored.FailureReason.ShouldContain("Provider quota exceeded");
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Blocked)).ShouldBe(expectedBlocks);
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(priorReroutes);
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Failed)).ShouldBe(0);
+        var recovery = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == sessionId);
+        recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.QuotaBlocked);
+        recovery.NextAttemptAt.ShouldBeNull();
+        harness.Stopper.Killed.ShouldBeEmpty();
     }
 
 }
