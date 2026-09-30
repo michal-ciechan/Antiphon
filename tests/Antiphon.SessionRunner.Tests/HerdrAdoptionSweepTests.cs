@@ -257,6 +257,7 @@ public class HerdrAdoptionSweepTests
     {
         var settings = BuildSettings();
         var sessionName = $"antiphon-herdr-pending-{Guid.NewGuid():N}";
+        await using var endpoint = new FakeHerdrEndpoint(sessionName);
         var sidecar = WriteSidecar(
             settings, paneId: "wP:p1", workspaceId: "wP", tabId: "wP:t1", childPid: 4243);
 
@@ -264,6 +265,7 @@ public class HerdrAdoptionSweepTests
         {
             Enabled = true,
             Session = sessionName,
+            SocketPath = endpoint.Path,
             ConnectTimeoutMs = 250,
         });
         await using var runtime = new SessionRunnerRuntime(
@@ -285,7 +287,7 @@ public class HerdrAdoptionSweepTests
             () => runtime.SendInputAsync(sidecar.SessionId, "hello", CancellationToken.None));
         sw.ElapsedMilliseconds.ShouldBeLessThan(500, "pending WriteAsync must not wait on _clientReady");
 
-        await using var fake = new FakeHerdrServer(sessionName);
+        await using var fake = new FakeHerdrServer(endpoint: endpoint);
         fake.Start();
         await fake.WaitUntilListeningAsync();
         SeedPane(fake, sidecar);
@@ -352,6 +354,7 @@ public class HerdrAdoptionSweepTests
     public async Task R9_herdr_restart_mid_session_input_throws_then_pump_bar_exits_on_empty_pane()
     {
         var sessionName = $"antiphon-herdr-r9-{Guid.NewGuid():N}";
+        await using var endpoint = new FakeHerdrEndpoint(sessionName);
         var settings = BuildSettings();
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
@@ -360,6 +363,7 @@ public class HerdrAdoptionSweepTests
             {
                 Enabled = true,
                 Session = sessionName,
+                SocketPath = endpoint.Path,
                 ConnectTimeoutMs = 250,
             }),
             processLiveness: new StubProbe(alive: false));
@@ -370,6 +374,7 @@ public class HerdrAdoptionSweepTests
         {
             Enabled = true,
             Session = sessionName,
+            SocketPath = endpoint.Path,
             ConnectTimeoutMs = 250,
             EventsReconnectMinSeconds = 1,
             EventsReconnectMaxSeconds = 2,
@@ -382,7 +387,7 @@ public class HerdrAdoptionSweepTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
         {
-            await using var fake = new FakeHerdrServer(sessionName);
+            await using var fake = new FakeHerdrServer(endpoint: endpoint);
             fake.Start();
             await fake.WaitUntilListeningAsync();
             await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
@@ -402,7 +407,7 @@ public class HerdrAdoptionSweepTests
         whileDown.Status.ShouldBe("Running", "R9 while down does not convert Running to Pending");
         whileDown.Pending.ShouldBeNull();
 
-        await using var fake2 = new FakeHerdrServer(sessionName);
+        await using var fake2 = new FakeHerdrServer(endpoint: endpoint);
         fake2.Start();
         await fake2.WaitUntilListeningAsync();
         SeedPane(fake2, sidecar!, listedPid: null);
