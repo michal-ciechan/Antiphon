@@ -1449,7 +1449,7 @@ c849_status_zero() {
     printf '%s' "$body" | jq -e '
       .sessions != null and .runnerSessions != null and .queuedTasks != null and
       .sessions == 0 and .runnerSessions == 0 and .queuedTasks == 0 and
-      .draining == true and .acceptingNewWork == false and .redirectTo == "server2" and
+      .draining == true and .dispatchEligible == true and .acceptingNewWork == false and .redirectTo == "server2" and
       .retireWhenIdle == true' >/dev/null
 }
 
@@ -1459,6 +1459,14 @@ c849_donor() {
         --filter "label=com.docker.compose.project=$TEMP_PROJECT" \
         --filter 'label=com.docker.compose.service=session-runner')
     if [ "${#ids[@]}" -ne 1 ]; then write_result false CacheDonorIdentityInvalid 2; fi
+    local service project image
+    service="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "${ids[0]}")"
+    project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "${ids[0]}")"
+    image="$(docker inspect -f '{{.Image}}' "${ids[0]}")"
+    if [ "$service" != session-runner ] || [ "$project" != "$TEMP_PROJECT" ] \
+        || [[ ! "$image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        write_result false CacheDonorIdentityInvalid 2
+    fi
     docker inspect -f '{{.Id}}' "${ids[0]}"
 }
 
@@ -1512,6 +1520,11 @@ c849_seed() {
         || [ -n "$(find "$stage" -type f -links +1 -print -quit)" ]; then
         c849_seed_failure "$donor" CacheDonorUnsafeEntry
     fi
+    # An unexpected mounted/path-shaped entry is never an import source. Docker cp
+    # gives us a host tree, so validate every name before mounting it in a helper.
+    if find "$stage" -mindepth 1 -print0 | xargs -0 -r -n 1 basename | grep -Eq '^\.{1,2}$|[[:cntrl:]]'; then
+        c849_seed_failure "$donor" CacheDonorUnsafePath
+    fi
     local package version
     for package in "$stage/packages"/*; do
         [ -d "$package" ] || c849_seed_failure "$donor" CacheDonorPackagesEmpty
@@ -1522,6 +1535,8 @@ c849_seed() {
     done
     [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" ] \
         || c849_seed_failure "$donor" AppHostDonorMissing
+    [ -s "$stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
+        || c849_seed_failure "$donor" AppHostDonorMetadataMissing
     [ -s "$stage/packages/microsoft.netcore.app.ref/9.0.20/.nupkg.metadata" ] \
         || c849_seed_failure "$donor" Net9ReferenceDonorMissing
     docker run --rm --network none --user 0:0 --entrypoint npm \
@@ -1559,6 +1574,8 @@ c849_seed() {
     [ ! -e "$recovery" ] || c849_seed_failure "$donor" CacheRecoveryExists
     mv "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
     docker start "$donor" >/dev/null || write_result false CacheDonorRestartFailed 2
+    [ "$(docker inspect -f '{{.Id}}' "$donor")" = "$donor" ] \
+        || write_result false CacheDonorIdentityChanged 2
     for i in $(seq 1 30); do
         if c849_status_zero server2-temp; then break; fi
         sleep 2
