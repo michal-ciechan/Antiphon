@@ -503,6 +503,23 @@ public sealed class ApiErrorRecoveryService
             if (_capacityRecovery is not null)
                 await _capacityRecovery.SupersedeTaskWaitsOnAsync(db, openTaskId.Value,
                     "subscription-quota-blocked", ct);
+            if (row.LastEnqueuedAt is { } lastEnqueued)
+            {
+                // The old Unknown ladder could have left a pending retry. Cancel only rows
+                // owned by this recovery episode; ambiguous rows stay visible for the queue gate.
+                var marker = DelegationReportFormatter.TaskMarker(openTaskId.Value);
+                var transientBody = $"{marker} {_settings.TransientPrompt}";
+                var wallBody = $"{marker} {_settings.WallPrompt}";
+                await db.SessionQueuedMessages
+                    .Where(m => m.AgentSessionId == sessionId
+                        && m.Status == QueuedMessageStatus.Pending
+                        && m.Origin == QueuedMessageOrigin.Supervision
+                        && (m.Body == transientBody || m.Body == wallBody)
+                        && m.CreatedAt >= row.DetectedAt.AddSeconds(-1)
+                        && m.CreatedAt <= lastEnqueued.AddSeconds(1))
+                    .ExecuteUpdateAsync(update => update.SetProperty(
+                        m => m.Status, QueuedMessageStatus.Canceled), ct);
+            }
             Resolve(row, now, ApiErrorRecoveryReasons.QuotaBlocked);
             return row;
         }

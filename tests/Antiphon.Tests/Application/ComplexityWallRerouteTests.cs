@@ -152,7 +152,7 @@ public class ComplexityWallRerouteTests
     }
 
     [Test]
-    public async Task Second_wall_on_the_rerouted_attempt_takes_the_next_candidate()
+    public async Task Explicit_requeue_then_second_wall_blocks_the_new_attempt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
@@ -166,6 +166,20 @@ public class ComplexityWallRerouteTests
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await AssertQuotaBlockAsync(schema, harness, task, sessionId, 0);
+
+        using (var scope = harness.CreateScope())
+        {
+            var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+            await tasks.RetryAsync(task.Id, CancellationToken.None);
+            await tasks.RerouteAsync(task.Id, AgentKind.ClaudeCode, AgentModelLevel.High, CancellationToken.None);
+        }
+        await using (var queuedDb = CreateContext(schema))
+        {
+            var queued = await queuedDb.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            queued.Status.ShouldBe(AgentTaskStatus.Queued);
+            queued.AgentSessionId.ShouldBeNull();
+            queued.ModelLevel.ShouldBe(AgentModelLevel.High);
+        }
 
         var (session2, agent2) = await SeedSessionAndAgentAsync(schema, workspace.Path);
         await using (var db = CreateContext(schema))
