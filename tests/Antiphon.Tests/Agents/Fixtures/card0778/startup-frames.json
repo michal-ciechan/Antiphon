@@ -2674,6 +2674,16 @@
    "expectedReason": "Ready"
   },
   {
+     "id": "syn-other-size-120x29",
+     "label": "synthetic",
+     "derivedFrom": "idle-20260930173209-21944bcbd833#40",
+     "perturbation": "the captured ready frame clipped to 120 columns by 29 rows; no input capability was measured at this size",
+     "cols": 120,
+     "rows": 29,
+     "screen": "\n  c778-probe ~/A/L/Antiphon/card0778-cwd-idle-20260930173209-21944bcbd833      - MCP (2/4) │ 2.3K / 500K │ [Dashboard]\n\n     Switched to grok-4.6\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ >                                                                                                                │\n  ╰────────────────────────────────────────────────────────────────────────────────────── grok-4.6 · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts",
+     "expectedReason": "Unknown"
+  },
+  {
    "id": "syn-trust-dialog",
    "label": "synthetic",
    "derivedFrom": "GrokTrustPromptDetector literals (no 1.0.41 trust dialog was reproduced)",

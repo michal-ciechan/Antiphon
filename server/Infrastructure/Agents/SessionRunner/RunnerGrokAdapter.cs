@@ -38,6 +38,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
     private readonly DeliveryVerificationSettings _verification;
     private readonly ILogger? _logger;
     private readonly GrokRulesSettings _rulesSettings;
+    private readonly TimeProvider _time;
     private long _promptStartSequence;
     private long _transcriptBaselineSequence;
     // CARD-0113: last successful GetTranscript LastSequence. Distinct from the per-turn floor
@@ -53,7 +54,8 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
         IOptions<AgentRegistrySettings> options,
         IOptions<SupervisionSettings>? supervisionSettings = null,
         ILogger? logger = null,
-        IOptions<GrokRulesSettings>? rulesSettings = null)
+        IOptions<GrokRulesSettings>? rulesSettings = null,
+        TimeProvider? time = null)
     {
         _client = client;
         _terminal = new RunnerTerminalSession(client);
@@ -61,6 +63,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
         _logger = logger;
         _rulesSettings = rulesSettings?.Value ?? new();
+        _time = time ?? TimeProvider.System;
     }
 
     public Task<int> Exited => _terminal.Exited;
@@ -172,49 +175,34 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quiet = await _terminal.WaitForQuietAfterVisibleAsync(
-            TimeSpan.FromMilliseconds(_settings.GrokReadyQuietPeriodMs),
-            TimeSpan.FromMilliseconds(_settings.GrokReadyMaxWaitMs),
+        var age = _time.GetUtcNow().UtcDateTime - _terminal.StartedAt;
+        var minimumRemaining = TimeSpan.FromMilliseconds(_settings.GrokReadyMinTotalWaitMs) - age;
+        if (minimumRemaining < TimeSpan.Zero) minimumRemaining = TimeSpan.Zero;
+        return await GrokReadyWait.WaitAsync(
+            async token =>
+            {
+                var snap = await _terminal.GetSnapshotAsync(token);
+                return new GrokStartupSnapshot(snap.RenderedScreen, snap.RawOutput,
+                    snap.LastSequence, _time.GetUtcNow().UtcDateTime);
+            },
+            new GrokReadyWaitOptions
+            {
+                MaxWait = TimeSpan.FromMilliseconds(_settings.GrokReadyMaxWaitMs),
+                Settle = TimeSpan.FromMilliseconds(_settings.GrokReadyQuietPeriodMs),
+                MinimumAgeRemaining = minimumRemaining,
+                TrustSettle = TimeSpan.FromMilliseconds(_settings.GrokTrustPromptSettleMs),
+                TimeProvider = _time,
+                OnSignIn = _ =>
+                {
+                    var home = GrokCredentialStore.ResolveGrokHome(_launchEnv);
+                    _launchBlock = new AgentLaunchBlock(AgentLaunchBlockKind.ProviderSignInRequired,
+                        GrokSignInPromptDetector.BlockReason(home), home);
+                },
+                OnFailure = StoreStartupCapture,
+            },
+            (input, token) => _terminal.WriteAsync(input, token),
+            () => _terminal.Exited.IsCompleted,
             ct);
-        if (!quiet)
-            return false;
-
-        // Sign-in gates trust (measured 1.0.13): an unauthenticated GROK_HOME parks on the
-        // OAuth device-approval / welcome screen and never paints the directory-trust dialog.
-        // Quiet-after-visible calls that READY and the brief is typed into a screen whose
-        // only bound key is ctrl+q (CARD-0324). Check first, type nothing.
-        var screen = await _terminal.SnapshotScreenAsync(ct);
-        if (GrokSignInPromptDetector.IsVisibleOnScreen(screen))
-        {
-            var grokHome = GrokCredentialStore.ResolveGrokHome(_launchEnv);
-            var reason = GrokSignInPromptDetector.BlockReason(grokHome);
-            _launchBlock = new AgentLaunchBlock(
-                AgentLaunchBlockKind.ProviderSignInRequired, reason, grokHome);
-            _logger?.LogError(
-                _launchEnv is null
-                    ? "Session {SessionId} opened on Grok's sign-in screen (GROK_HOME={GrokHome}, resolved from the process environment because no launch env is attached). Nothing was typed. Screen:\n{Screen}"
-                    : "Session {SessionId} opened on Grok's sign-in screen (GROK_HOME={GrokHome}). Nothing was typed. Screen:\n{Screen}",
-                _terminal.SessionId, grokHome, screen);
-            return false;
-        }
-
-        // Quiet is not usable. A first launch into a cwd Grok has never seen parks on
-        // "Do you trust the contents of this directory?" and makes no further output, so the
-        // wait above calls it ready and the brief is typed into the dialog (CARD-0315, three
-        // live -Worktree launches 2026-09-01). Answered AFTER quiet so the modal has finished
-        // rendering; y, not Enter — both options render bold.
-        if (!await ClearStartupTrustPromptAsync(ct))
-            return false;
-
-        var remaining = TimeSpan.FromMilliseconds(_settings.GrokReadyMinTotalWaitMs)
-            - (DateTime.UtcNow - _terminal.StartedAt);
-        if (remaining > TimeSpan.Zero)
-        {
-            try { await Task.Delay(remaining, ct); }
-            catch (OperationCanceledException) { return false; }
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -376,37 +364,26 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
             throw new InvalidOperationException("RunnerGrokAdapter not started.");
     }
 
-    private async Task<bool> ClearStartupTrustPromptAsync(CancellationToken ct)
+    private void StoreStartupCapture(GrokStartupReason outcome, GrokStartupReason lastScreenReason,
+        GrokStartupSnapshot? frame, TimeSpan elapsed, int positives, bool mcpSeen, bool signInSeen)
     {
-        var raw = await _terminal.SnapshotTextAsync(ct);
-        var screen = await _terminal.SnapshotScreenAsync(ct);
-        if (!GrokTrustPromptDetector.IsVisible(raw, screen))
-            return true;
-
-        await _terminal.WriteAsync(GrokTrustPromptDetector.AffirmativeKey, ct);
-
-        var settleMs = Math.Max(0, _settings.GrokTrustPromptSettleMs);
-        if (settleMs == 0)
-            return true;
-
-        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(settleMs);
-        while (DateTime.UtcNow < deadline)
+        try
         {
-            if (!GrokTrustPromptDetector.IsVisibleOnScreen(await _terminal.SnapshotScreenAsync(ct)))
-            {
-                _logger?.LogInformation(
-                    "Session {SessionId} opened on Grok's directory-trust dialog for an unseen working directory and it was answered; the session is usable.",
-                    _terminal.SessionId);
-                return true;
-            }
-
-            try { await Task.Delay(50, ct); }
-            catch (OperationCanceledException) { return false; }
+            var path = GrokStartupCaptureStore.Write(
+                GrokStartupCaptureStore.ResolveDirectory(_settings.GrokStartupCaptureDirectory),
+                _settings.GrokStartupCaptureKeep, _terminal.SessionId, outcome, lastScreenReason,
+                frame, elapsed, positives, mcpSeen, signInSeen, _time.GetUtcNow());
+            _logger?.LogWarning(
+                "Session {SessionId} Grok startup failed outcome={Outcome} screenReason={ScreenReason} elapsedMs={ElapsedMs} sequence={Sequence} frameAt={FrameAt} positives={PositiveObservations} mcpSeen={McpSeen} capture={CapturePath}",
+                _terminal.SessionId, outcome, lastScreenReason, (long)elapsed.TotalMilliseconds,
+                frame?.Sequence, frame?.CapturedAt, positives, mcpSeen, path);
         }
-
-        _logger?.LogError(
-            "Session {SessionId} is still blocked on Grok's directory-trust dialog after answering it. Nothing can be delivered to this session.",
-            _terminal.SessionId);
-        return false;
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            _logger?.LogWarning(
+                "Session {SessionId} Grok startup failed outcome={Outcome} screenReason={ScreenReason} elapsedMs={ElapsedMs} sequence={Sequence} positives={PositiveObservations} mcpSeen={McpSeen} captureWriteFailed=true",
+                _terminal.SessionId, outcome, lastScreenReason, (long)elapsed.TotalMilliseconds,
+                frame?.Sequence, positives, mcpSeen);
+        }
     }
 }
