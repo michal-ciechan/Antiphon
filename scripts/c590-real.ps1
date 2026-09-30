@@ -359,6 +359,9 @@ function Invoke-C590LiveCase {
 
         [void](Invoke-C590Ssh "mkdir -p /home/mc/antiphon-c590")
         & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c590-remote.sh') mc@server2:/home/mc/antiphon-c590/c590-remote.sh
+        if ($Case -eq 'runner-cache-seed') {
+            & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c849-import-saved-donor.ps1') mc@server2:/home/mc/antiphon-c590/c849-import-saved-donor.ps1
+        }
         $remote = @(
             "export C590_CASE='$Case'"
             "export C590_SHA='$sha'"

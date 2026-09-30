@@ -1603,112 +1603,17 @@ c849_validate_seed_tree() {
 # The source is an operator-selected host path. Accept only cache payload paths and
 # materialize ordinary files/directories; tarfile.extractall would also create links.
 c849_saved_copy() {
-    local source="$1" stage="$2" diagnosis
+    local source="$1" stage="$2" image="$3" diagnosis
     [ -n "$source" ] && [ "${source#/}" != "$source" ] && [ ! -L "$source" ] \
         && [ "$(realpath -e -- "$source" 2>/dev/null)" = "$source" ] \
         && { [ -f "$source" ] || [ -d "$source" ]; } \
         || { printf 'CacheSavedDonorInvalid\n'; return 2; }
-    command -v python3 >/dev/null || { printf 'CacheSavedDonorToolMissing\n'; return 2; }
-    diagnosis="$(python3 - "$source" "$stage" <<'PY'
-import os, pathlib, shutil, stat, sys, tarfile
-
-source, stage = sys.argv[1:]
-roots = {"packages": "packages", "npm": "npm", ".nuget/packages": "packages",
-         ".npm/_cacache": "npm", "home/app/.nuget/packages": "packages",
-         "home/app/.npm/_cacache": "npm"}
-budgets = {"packages": 10 * 1024**3, "npm": 2 * 1024**3}
-sizes = {"packages": 0, "npm": 0}
-seen = set()
-
-def mapped(raw):
-    if not raw or raw.startswith("/") or "\\" in raw or "\x00" in raw:
-        raise ValueError("CacheDonorUnsafePath")
-    parts = raw.split("/")
-    while parts and parts[0] == ".":
-        parts.pop(0)
-    if not parts:
-        return None, None
-    if any(p in ("", ".", "..") for p in parts):
-        raise ValueError("CacheDonorUnsafePath")
-    name = "/".join(parts)
-    for prefix, target in sorted(roots.items(), key=lambda p: -len(p[0])):
-        if name == prefix or name.startswith(prefix + "/"):
-            rest = name[len(prefix):].lstrip("/")
-            return target, rest
-        if prefix.startswith(name + "/"):
-            return None, None  # a parent directory, such as .nuget
-    raise ValueError("CacheDonorUnsafePath")
-
-def write(raw, mode, size, reader=None):
-    target, rest = mapped(raw)
-    if target is None or not rest:
-        return
-    dest = pathlib.Path(stage, target, rest)
-    if str(dest) in seen:
-        raise ValueError("CacheDonorDuplicateEntry")
-    seen.add(str(dest))
-    if reader is None:
-        dest.mkdir(parents=True, exist_ok=True)
-        return
-    sizes[target] += size
-    if sizes[target] > budgets[target]:
-        raise ValueError("CacheBudgetExceeded")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "xb") as out, reader() as src:
-        shutil.copyfileobj(src, out)
-    os.chmod(dest, mode & 0o777)
-
-try:
-    if os.path.isdir(source):
-        # Scan source before writing a byte. A later tree check still detects any
-        # source change or unsafe entry that appears during the copy.
-        for base, dirs, files in os.walk(source, followlinks=False):
-            for name in dirs + files:
-                path = os.path.join(base, name)
-                info = os.lstat(path)
-                if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
-                    raise ValueError("CacheDonorUnsafeEntry")
-                target, rest = mapped(os.path.relpath(path, source).replace(os.sep, "/"))
-                if target and rest and stat.S_ISREG(info.st_mode):
-                    sizes[target] += info.st_size
-                    if sizes[target] > budgets[target]:
-                        raise ValueError("CacheBudgetExceeded")
-        if shutil.disk_usage(stage).free < 20 * 1024**3 + sum(sizes.values()):
-            raise ValueError("CacheDiskLow")
-        sizes = {"packages": 0, "npm": 0}
-        for base, dirs, files in os.walk(source, followlinks=False):
-            for name in dirs + files:
-                path = os.path.join(base, name)
-                info = os.lstat(path)
-                if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
-                    raise ValueError("CacheDonorUnsafeEntry")
-                rel = os.path.relpath(path, source).replace(os.sep, "/")
-                write(rel, info.st_mode, info.st_size,
-                      (lambda path=path: open(path, "rb")) if stat.S_ISREG(info.st_mode) else None)
-    else:
-        with tarfile.open(source, "r:*") as archive:
-            for member in archive:
-                if not (member.isdir() or member.isfile()):
-                    raise ValueError("CacheDonorUnsafeEntry")
-                target, rest = mapped(member.name.rstrip("/") if member.isdir() else member.name)
-                if target and rest and member.isfile():
-                    sizes[target] += member.size
-                    if sizes[target] > budgets[target]:
-                        raise ValueError("CacheBudgetExceeded")
-            if shutil.disk_usage(stage).free < 20 * 1024**3 + sum(sizes.values()):
-                raise ValueError("CacheDiskLow")
-            sizes = {"packages": 0, "npm": 0}
-            for member in archive:
-                if not (member.isdir() or member.isfile()):
-                    raise ValueError("CacheDonorUnsafeEntry")
-                write(member.name.rstrip("/") if member.isdir() else member.name,
-                      member.mode, member.size,
-                      (lambda member=member: archive.extractfile(member)) if member.isfile() else None)
-except (ValueError, OSError, tarfile.TarError) as error:
-    print(str(error) if isinstance(error, ValueError) else "CacheSavedDonorReadFailed")
-    sys.exit(2)
-PY
-)" || { printf '%s\n' "$diagnosis"; return 2; }
+    diagnosis="$(docker run --rm --network none --user 0:0 --entrypoint pwsh \
+        --mount "type=bind,source=$source,target=/saved,readonly" \
+        --mount "type=bind,source=$stage,target=/stage" \
+        --mount "type=bind,source=$ROOT/c849-import-saved-donor.ps1,target=/import.ps1,readonly" \
+        "$image" -NoProfile -File /import.ps1 -Source /saved -Stage /stage)" \
+        || { printf '%s\n' "${diagnosis:-CacheSavedDonorReadFailed}"; return 2; }
 }
 
 c849_seed() {
@@ -1762,7 +1667,7 @@ c849_seed() {
     mkdir -m 0700 "$stage/packages" "$stage/npm" || c849_seed_failure "$donor" CacheStageCreateFailed
     if [ -n "$saved" ]; then
         local copy_diagnosis
-        copy_diagnosis="$(c849_saved_copy "$saved" "$stage")" \
+        copy_diagnosis="$(c849_saved_copy "$saved" "$stage" "$image")" \
             || c849_seed_failure '' "$copy_diagnosis"
         c849_prune_idle
     else
