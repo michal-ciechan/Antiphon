@@ -285,7 +285,7 @@ Codex tool-call ingestion are follow-up cards, not slices here.
   `PublishedSha`). Tests: `RunnerSettlementSyncTests` (SyncWorld gains a `LocalMirrorPublisher`
   that runs the runner's exact git sequence in `SyncWorld.Runner` and a feature-aware directory
   double), `RunnerTaskSettlementTests`, `RemoteWorktreeMirrorTests`, `RemoteWorkspacePreparerTests`
-  (unchanged behaviour), `PhoneHomeRollingRunnerDrainTests`.
+  (unchanged behaviour), `PhoneHomeRollingRunnerTests`.
 - **S3 — brief, script and docs.** `DelegationReportFormatter.cs` (branch contract block, mirror
   path in the assignment line); `scripts/delegate.ps1` (status line); `docs/orchestration-loop.md`,
   `docs/session-runtime-invariants.md`, `docs/ops-http.md`, `docs/agent-kinds.md` (Codex
@@ -348,7 +348,7 @@ table below.
   appears for a Worktree task with `RunnerId` and `RemoteWorktreePath`, names the mirror path,
   branch, base SHA and the task's claim line, and is ASCII; it is absent for desktop Worktree,
   Shared and ReadOnly tasks; the assignment line names the mirror before the desktop path.
-- **V-7** removal identity (`RemoteWorktreeMirrorTests`, `PhoneHomeRollingRunnerDrainTests`):
+- **V-7** removal identity (`RemoteWorktreeMirrorTests`, `PhoneHomeRollingRunnerTests`):
   retirement sends the confirmed S as `PublishedSha` and records residue naming T when the runner
   refuses `phone_home_unpublished_work`; drain rebind sends the dispatch SHA and still moves the
   task when the old mirror is refused.
@@ -370,7 +370,7 @@ table below.
 | CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c779r/` | runner-workspace | `/*/Antiphon.SessionRunner.Tests/(RunnerWorkspaceServiceTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)/*` | V-1, V-2, V-3 | all three classes, 0 failed | 70 | 14 |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c779/` | settlement-sync | `/*/Antiphon.Tests.Application/(RunnerSettlementSyncTests*)\|(RunnerCompletionProgressTests*)/*` | V-4, R-1 | both classes, 0 failed | 28 | 20 |
 | CP-3 | S1-S3 | CP-2 | settlement-e2e | `/*/Antiphon.Tests.Application/(RunnerTaskSettlementTests*)\|(RemoteWorktreeMirrorTests*)\|(RemoteWorkspacePreparerTests*)/*` | V-5, V-7, R-1, R-2 | all three classes, 0 failed | 36 | 15 |
-| CP-4 | S1-S3 | CP-2 | brief-drain-docs | `/*/Antiphon.Tests.Application/(DelegationReportFormatterTests*)\|(PhoneHomeRollingRunnerDrainTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-6, V-7, V-8 | all three classes, 0 failed; the drain class's 4 platform-explicit methods may skip | 80 | 12 |
+| CP-4 | S1-S3 | CP-2 | brief-drain-docs | `/*/Antiphon.Tests.Application/(DelegationReportFormatterTests*)\|(PhoneHomeRollingRunnerTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-6, V-7, V-8 | all three classes, 0 failed; the drain class's 4 platform-explicit methods may skip | 80 | 12 |
 
 `Min` values are floors on executed TUnit results: CP-1 has 64 methods today (22 + 42) plus the
 capability pin and at least 8 new methods; CP-2 has 24 (16 + 8) plus at least 6 new; CP-3 has 35
