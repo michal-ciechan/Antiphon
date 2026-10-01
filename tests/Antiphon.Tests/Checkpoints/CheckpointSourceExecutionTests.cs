@@ -387,12 +387,12 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             script.Output.ShouldContain("reason=" + scriptReason, Case.Sensitive, label + " script reason");
         }
         await RefusesAsync("report-heading-source", "report_source_ineligible", "source_ineligible",
-            report => report.Source.State = "dirty");
+            report => report.Source = Evidence(Observe(Sha, 0), "dirty", "notApplicable"));
         var wrongReportCommit = ValidReport();
         wrongReportCommit.Commit = OtherSha;
         ReportValidator.Validate(wrongReportCommit, Sha).ShouldBe("report_source_ineligible", "tool-report-commit");
         await RefusesAsync("row-source-ineligible", "row_source_disagreement", "row_source_ineligible",
-            report => report.Rows.Single().Source.State = "dirty");
+            report => report.Rows.Single().Source = Evidence(Observe(Sha, 0), "dirty", "notApplicable"));
         await RefusesAsync("row-receipt-missing", "row_receipt_missing", "receipt_disagreement",
             report => report.Rows.Single().Line = null);
         await RefusesAsync("row-receipt-source", "receipt_source_disagreement", "receipt_disagreement",
