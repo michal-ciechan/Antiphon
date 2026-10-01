@@ -119,7 +119,7 @@ describe('attentionVisuals', () => {
 
   it('links a host cleanup summary to its run', () => {
     const row = item({ kind: 'HostCleanupSummary', hostCleanupRunId: 'run-c826', severity: 'Warning' })
-    expect(targetOf(row)).toContain('run-c826')
+    expect(targetOf(row), 'C826.links a host cleanup summary to its run').toContain('run-c826')
     expect(ATTENTION_VISUALS[row.kind].label.length).toBeGreaterThan(0)
     expect(groupOf(row)).toBe('suspect')
   })
@@ -127,15 +127,15 @@ describe('attentionVisuals', () => {
   it('shows cleanup disk pressure at the reported severity', () => {
     const warning = item({ kind: 'HostCleanupDiskPressure', severity: 'Warning' })
     const critical = item({ kind: 'HostCleanupDiskPressure', severity: 'Critical' })
-    expect(homeBucketOf(warning)).toBe('review')
-    expect(homeBucketOf(critical)).toBe('blocked')
+    expect(homeBucketOf(warning), 'C826.shows cleanup disk pressure at the reported severity:warning').toBe('review')
+    expect(homeBucketOf(critical), 'C826.shows cleanup disk pressure at the reported severity:critical').toBe('blocked')
     expect(ATTENTION_VISUALS[warning.kind].color).toBe('danger')
   })
 
   it('keeps an expired cleanup hold visible for review', () => {
     const row = item({ kind: 'HostCleanupHoldExpired', severity: 'Warning',
       hostCleanupRunId: 'run-hold', hostCleanupHoldExpiryUtc: '2026-10-08T00:00:00Z', actions: [] })
-    expect(homeBucketOf(row)).toBe('review')
+    expect(homeBucketOf(row), 'C826.keeps an expired cleanup hold visible for review').toBe('review')
     expect(row.hostCleanupHoldExpiryUtc).toBe('2026-10-08T00:00:00Z')
     expect(row.actions).toEqual([])
   })
@@ -145,7 +145,9 @@ describe('attentionVisuals', () => {
       hostCleanupRunId: 'run-backlog', hostCleanupOwner: 'CARD-0692',
       hostCleanupRefusal: 'owner_unavailable' })
     expect(targetOf(row)).toContain('run-backlog')
-    expect(row.hostCleanupOwner).toBe('CARD-0692')
+    expect(targetOf(row), 'C826.shows sustained worktree backlog with its responsible owner')
+      .toContain('owner=CARD-0692')
+    expect(targetOf(row)).toContain('refusal=owner_unavailable')
     expect(row.hostCleanupRefusal).toBe('owner_unavailable')
     expect(ATTENTION_VISUALS[row.kind].label.toLowerCase()).toContain('backlog')
   })
