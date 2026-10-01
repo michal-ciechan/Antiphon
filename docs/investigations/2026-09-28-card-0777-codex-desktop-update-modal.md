@@ -50,6 +50,11 @@ At 2026-09-28 21:38Z, another process on this desktop ran `npm install --global 
 
 The CARD-0772 desktop Codex refusal is **unchanged**. Lifting it still needs a desktop launch demonstrated reaching `thread/start` with a positive ready screen and a matching `UserPrompt` on a stack running this fix.
 
+**Outcome, 2026-10-01:** The later [CARD-0796 desktop qualification](2026-09-30-card-0796-desktop-codex-qualification.md)
+records an operator-accepted Windows desktop run with positive readiness, native thread
+correlation, and a complete matching `UserPrompt`. CARD-0796 S3 restores desktop Codex task
+admission; the historical refusal statement above describes this investigation's state.
+
 ## Follow-up: active dismissal
 
 The readiness wait now sends one Escape when a live poll classifies the update picker as

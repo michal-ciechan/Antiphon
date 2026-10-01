@@ -642,8 +642,8 @@ public sealed class AgentTaskDispatcher
                 }
             }
 
-            // CARD-0772: refuse legacy desktop Codex here as well as unsupported remote kinds,
-            // before any claim, worktree, reused-session input or remote preparation.
+            // Refuse unsupported remote kinds before any claim, worktree, reused-session input
+            // or remote preparation. Desktop Codex is admitted after CARD-0796 qualification.
             if (!DefaultRunnerRoutingPolicy.IsHostKindAdmitted(task.RunnerId, task.AgentKind))
             {
                 await BlockRunnerKindAsync(task, DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(
