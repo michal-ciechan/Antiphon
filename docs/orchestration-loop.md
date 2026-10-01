@@ -372,7 +372,7 @@ is the `orchestrator` bundle; this section carries the reasons.
    stated as well.
 5. **Same source area as an in-flight Code task: defer, even with a free Code slot.** A Worktree
    task whose scope intersects a running one is warned, not held (CARD-0063, preserved detail
-   below), so nothing stops two Code tasks editing the same file and conflicting at merge. When a
+   below), so nothing stops multiple Code tasks editing the same file and conflicting at merge. When a
    card's plan names the same file or area as another card's in-flight Code task, hold its Code
    dispatch until that task lands, and say so on the card thread. CARD-0537's plan (2026-09-19)
    sequenced its first slice behind CARD-0535's Code task for exactly this reason; the deferral
