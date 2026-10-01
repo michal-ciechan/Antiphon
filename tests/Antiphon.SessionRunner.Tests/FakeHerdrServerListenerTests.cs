@@ -147,15 +147,20 @@ public class FakeHerdrServerListenerTests
         await using (var owner = new FakeHerdrServer(endpoint: endpoint))
         {
             owner.Start(); await owner.WaitUntilListeningAsync();
-            NativeFileIdentity.TryRead(endpoint.Path, out var original).ShouldBeTrue();
+            NativeFileIdentity.Identity original = default;
+            if (!OperatingSystem.IsWindows())
+                NativeFileIdentity.TryRead(endpoint.Path, out original).ShouldBeTrue();
             await using (var contender = new FakeHerdrServer(endpoint: endpoint))
             {
                 contender.Start();
                 (await ErrorWithinAsync(contender.LoopCompletion, "collision must terminate"))
                     .ShouldBeOfType<IOException>();
             }
-            NativeFileIdentity.TryRead(endpoint.Path, out var after).ShouldBeTrue();
-            after.ShouldBe(original, "C801_OWNER_ENDPOINT_PRESERVED");
+            if (!OperatingSystem.IsWindows())
+            {
+                NativeFileIdentity.TryRead(endpoint.Path, out var after).ShouldBeTrue();
+                after.ShouldBe(original, "C801_OWNER_ENDPOINT_PRESERVED");
+            }
             (await Client(owner).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
             if (!OperatingSystem.IsWindows())
             {
