@@ -404,8 +404,8 @@ census before any build; do not run --list-tests or test discovery for this stag
 | ReportWriterTests | 6 / 6 | 5 / 5 | 6 |
 | ReportMergerTests | 1 / 1 | 1 / 1 | 1 |
 | ProcessSpawnLimitTests | 3 / 3 | 3 / 3 | 3 |
-| Whole Checkpoints namespace (informational, not a new run) | 155 / 161 | 250 / 259 | 290 cases / 281 methods at Code HEAD plus the 18 new methods |
-| Whole Unit selection | 2459 / 3592 | historical execution totals are not used | 3679 cases / 2543 methods at Code HEAD plus 10 new Unit methods |
+| Whole Checkpoints namespace (informational, not a new run) | 155 / 161 | 250 / 259 | 293 cases / 284 methods after F1 (+3 methods/cases) |
+| Whole Unit selection | 2459 / 3592 | historical execution totals are not used | 3680 cases / 2544 methods after F1 (+1 Unit method/case) |
 
 **Code source re-census at assigned HEAD `6bf159cf6` (before execution):**
 the landed tree contains 263 Checkpoints methods / 272 expanded cases and
@@ -429,7 +429,7 @@ source census and reconcile exact names after S3 before launching checkpoints.
 R-1 is the first five classes: **45 methods / 51 cases** after additive landing.
 ExitCodeTests is its one seven-case method. R-2 is the next four classes:
 **13 methods / 13 cases**. R-3 is ProcessSpawnLimitTests: **3 / 3**. Including
-V-1..V-18, CP-1..CP-5 select **79 methods / 85 cases**, all passed, zero skips.
+V-1..V-18 and the three F1 additions, CP-1..CP-5 select **82 methods / 88 cases**, all passed, zero skips.
 This explicitly supersedes the original 79-case plan: +5 baseline regressions,
 +1 prerequisite null-renewal regression. Each row's exact class members must
 match the source census, not merely meet MinExecuted.
@@ -669,8 +669,8 @@ is `--treenode-filter '/*/Antiphon.Tests.Checkpoints/(BuildSlotClientTests*)|(Ru
 Parenthesize each OR operand in the class segment, not the whole path; never
 split full paths at pipes. Single-method controls use the formula above with
 no method wildcard, because each listed method is non-parameterized.
-The Code re-census above freezes **85 named executions**, plus **3679
-selected Unit cases** (3646 executions and 33 declared Linux skips). Unit overlaps
+The F1 source delta freezes **88 named executions**, plus **3680
+selected Unit cases** (3647 executions and 33 declared Linux skips). Unit overlaps
 named Unit members. Named rows require zero failures and zero skips. Reconcile
 the actual prerequisite landing before running; this is a closed selection, not
 an open-ended floor. Min is only the tool's mechanical lower-bound check; exact
@@ -678,12 +678,20 @@ roster/count/outcome equality in Expect is an additional acceptance requirement.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c833/` | slot-contract | `/*/Antiphon.Tests.Checkpoints/CheckpointSlotContractTests*/*` | V-1-V-10 | exactly 10 executed/passed, 0 failed/skipped | 10 | 12 | 18 | true |
-| CP-2 | all | CP-1 | slot-executor | `/*/Antiphon.Tests.Checkpoints/CheckpointSlotExecutorTests*/*` | V-11-V-18 | exactly 8 executed/passed, 0 failed/skipped | 8 | 4 | 5 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c833/` | slot-contract | `/*/Antiphon.Tests.Checkpoints/CheckpointSlotContractTests*/*` | V-1-V-10, F1 client wait | exactly 11 executed/passed, 0 failed/skipped | 11 | 12 | 18 | true |
+| CP-2 | all | CP-1 | slot-executor | `/*/Antiphon.Tests.Checkpoints/CheckpointSlotExecutorTests*/*` | V-11-V-18, F1 executor and fallback wait | exactly 10 executed/passed, 0 failed/skipped | 10 | 4 | 5 | true |
 | CP-3 | all | CP-1 | slot-regression | `/*/Antiphon.Tests.Checkpoints/(BuildSlotClientTests*)\|(RunSchedulerTests*)\|(RowRunnerTests*)\|(ExitCodeTests*)\|(BaselineComparerTests*)/*` | R-1 | exactly 51 executed/passed, 0 failed/skipped | 51 | 4 | 5 | true |
 | CP-4 | all | CP-1 | receipt-regression | `/*/Antiphon.Tests.Checkpoints/(CheckpointAppTests*)\|(CheckpointLineTests*)\|(ReportWriterTests*)\|(ReportMergerTests*)/*` | R-2 | exactly 13 executed/passed, 0 failed/skipped | 13 | 2 | 3 | true |
 | CP-5 | all | CP-1 | process-limit | `/*/Antiphon.Tests/ProcessSpawnLimitTests*/*` | R-3 | exactly 3 executed/passed, 0 failed/skipped | 3 | 1 | 1 | true |
-| CP-6 | all | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | R-4 | exact census: 3679 selected; Linux 3646 executed/passed, 33 named skips, 0 failed | 3646 | 12 | 15 | true |
+| CP-6 | all | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | R-4 | exact census: 3680 selected; Linux 3647 executed/passed, 33 named skips, 0 failed | 3647 | 12 | 15 | true |
+
+F1 adds `CheckpointSlotContractTests.busy_then_refused_acquire_carries_exact_wait`
+to CP-1 and `CheckpointSlotExecutorTests.executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge`
+plus `report_fallback_line_retains_nonzero_wait_when_result_has_no_line` to
+CP-2. A virtual 7-second busy interval precedes the refusal. The executor
+case checks state, report JSON, both dependent Markdown lines, and merged
+rows; the fallback case checks the separate `BuildReport` line formatter.
+Historical counts and results below remain measurements of the earlier SHA.
 
 ## Handoff and completion
 
