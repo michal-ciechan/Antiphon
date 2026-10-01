@@ -187,7 +187,9 @@ public sealed class TaskPlatformDispatchTests
                 result.Dispatched.ShouldBe(1, $"host={host ?? "<null>"} platform={platform} level={level} status={stored.Status} runner={stored.RunnerId} reason={stored.FailureReason} result={result} events={string.Join(";", held)}");
                 stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
             stored.AgentKind.ShouldBe(AgentKind.Codex);
-                stored.RunnerId.ShouldBe(host);
+                stored.RunnerId.ShouldBeNull("legacy desktop aliases are persisted as the canonical desktop binding");
+                stored.RemoteWorktreePath.ShouldBeNull();
+                held.ShouldNotContain(detail => detail.Contains("remote workspace preparation", StringComparison.OrdinalIgnoreCase));
                 stored.RequiredPlatform.ShouldBe(platform);
                 stored.ModelLevel.ShouldBe(level);
                 stored.AgentSessionId.ShouldNotBeNull();
