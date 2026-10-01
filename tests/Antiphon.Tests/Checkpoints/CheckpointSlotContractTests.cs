@@ -230,14 +230,14 @@ public sealed class CheckpointSlotContractTests
     [Test]
     public async Task renew_and_release_diagnostics_keep_status_and_body()
     {
-        var handler = new ScriptedHttpHandler();
-        handler.Enqueue(HttpStatusCode.OK, """{"leaseId":"L","maxCpuCount":6,"renewEverySeconds":1}""");
-        handler.Enqueue(HttpStatusCode.NotFound, """{"type":"build_slot_unknown","detail":"renew gone"}""");
-        handler.Enqueue(HttpStatusCode.NotFound, """{"type":"build_slot_unknown","detail":"release gone"}""");
-        var log = new List<string>();
-        var client = Client(handler, log: log.Add);
+        var handler = new RenewDiagnosticHandler();
+        var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var client = Client(handler, log: log.Enqueue);
         var lease = await client.AcquireAsync(Enabled, "diag", CancellationToken.None);
-        await Task.Delay(1200);
+        await handler.RenewObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var diagnosticDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (!log.Any(line => line.Contains("operation=renew status=404")) && DateTime.UtcNow < diagnosticDeadline)
+            await Task.Delay(10);
         await lease.DisposeAsync();
         log.ShouldContain(line => line.Contains("operation=renew status=404") && line.Contains("renew gone"));
         log.ShouldContain(line => line.Contains("operation=release status=404") && line.Contains("release gone"));
@@ -389,5 +389,28 @@ public sealed class CheckpointSlotContractTests
                 Content = new StringContent("""{"leaseId":"L-drain","maxCpuCount":6,"renewEverySeconds":1}"""),
             };
         }
+    }
+
+    private sealed class RenewDiagnosticHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource RenewObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/renew", StringComparison.Ordinal))
+            {
+                RenewObserved.TrySetResult();
+                return Task.FromResult(Reply(HttpStatusCode.NotFound,
+                    """{"type":"build_slot_unknown","detail":"renew gone"}"""));
+            }
+            if (request.Method == HttpMethod.Delete)
+                return Task.FromResult(Reply(HttpStatusCode.NotFound,
+                    """{"type":"build_slot_unknown","detail":"release gone"}"""));
+            return Task.FromResult(Reply(HttpStatusCode.OK,
+                """{"leaseId":"L","maxCpuCount":6,"renewEverySeconds":1}"""));
+        }
+
+        private static HttpResponseMessage Reply(HttpStatusCode status, string body) =>
+            new(status) { Content = new StringContent(body) };
     }
 }

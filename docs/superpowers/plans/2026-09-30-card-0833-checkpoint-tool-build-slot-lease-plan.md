@@ -797,6 +797,9 @@ unanswered grace; the first subsequent transport failure or 5xx starts its own
 bounded grace. V-11 parses the wire start with its UTC offset intact and checks
 both offset and UTC instant against the child process. V-17 captures direct-row
 output through `Runtime.Output`, avoiding process-wide console redirection.
+V-8 now waits for the scripted renewal observation and diagnostic instead of
+sleeping for a fixed 1.2 seconds; the second full Unit run exposed that timing
+dependency while CP-1 and the first Unit run passed V-8.
 These internal cases leave the checkpoint census unchanged: CP-1 10, CP-2 8,
 CP-3 51, CP-4 13, CP-5 3, and CP-6 3679 selected (3646 executed and 33
 declared Linux skips). The six rows must be rerun at this repair's committed SHA;
