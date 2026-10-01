@@ -48,11 +48,13 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         });
         h.Runtime.TryRemove(h.SessionId, out var old).ShouldBeTrue();
         if (old is not null) await old.DisposeAsync();
+        string cwd;
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
             var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
             session.AgentKind = AgentKind.Grok;
             session.Status = SessionStatus.Starting;
+            cwd = session.Cwd;
             await db.SaveChangesAsync();
         }
         const string nonce = "C778NATIVEWHOLE0778";
@@ -60,20 +62,17 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         var queued = await h.SeedPendingMessageAsync(body);
         var grokHome = Path.Combine(h.TempRoot, "grok-home");
         var fixture = Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "card0778", "startup-frames.json");
+        // The launch runs in the session row's Cwd and the runner tails Grok's updates.jsonl under
+        // that Cwd, so Grok's own --cwd must name the same directory or no prompt is ever recorded.
         var spec = new AgentLaunchSpec("fakegrok", AgentKind.Grok, FakeGrokExe,
-            ["--session-id", h.SessionId.ToString("D"), "--cwd", h.TempRoot],
+            ["--session-id", h.SessionId.ToString("D"), "--cwd", cwd],
             new Dictionary<string, string>
             {
                 ["GROK_HOME"] = grokHome,
                 ["ANTIPHON_FAKE_GROK_REPLAY_PATH"] = fixture,
-            }, h.TempRoot, 120, 30);
+            }, cwd, 120, 30);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var scope = h.Provider.CreateScope();
-        // A real standing launch runs with the runner->server transcript pump already live. The
-        // launch's own flush is transcript-confirmed; with nothing ingesting, the queue reads
-        // NoSubmitOutput and stops this generation, so the launch is correctly refused.
-        using var pump = new CancellationTokenSource();
-        var pumping = GrokDelegateEndToEndTests.PumpTranscriptAsync(h.Provider, h.SessionId, pump.Token);
         var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
             .LaunchInteractiveAsync(h.SessionId, h.AgentId, spec, null, false, null, deadline.Token);
         try
@@ -108,8 +107,6 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         {
             deadline.Cancel();
             try { await launch; } catch { }
-            pump.Cancel();
-            await pumping;
             try { await client.KillAsync(h.SessionId, CancellationToken.None); } catch { }
         }
     }
