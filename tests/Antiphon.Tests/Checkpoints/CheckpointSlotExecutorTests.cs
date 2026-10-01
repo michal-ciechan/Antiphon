@@ -372,11 +372,14 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         return manifest;
     }
 
+    private static SourceObservation FixtureSource() => new(new string('a', 40), 0, new string('1', 64),
+        DateTimeOffset.UtcNow, "known");
+
     private string NewRun(CheckpointManifest manifest) => CheckpointApp.CreateRun(manifest, new RunRequest
     {
         KeepOutputs = true, Parallel = 2, Commit = new string('a', 40), Branch = "test",
         OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
-    }, TempDir());
+    }, TempDir(), new CheckpointApp.Runtime { SourceCapture = _ => FixtureSource() });
 
     private static ReportModel ReadReport(string run) =>
         JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
@@ -397,6 +400,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         SlotStartTimeReader = startTimeReader,
         SlotClock = slotClock, SlotDelay = slotDelay,
         Output = output,
+        SourceCapture = _ => FixtureSource(),
     };
 
     private sealed class Owner : HttpMessageHandler
