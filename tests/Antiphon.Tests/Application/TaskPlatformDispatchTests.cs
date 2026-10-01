@@ -182,7 +182,9 @@ public sealed class TaskPlatformDispatchTests
                 var result = await world.Dispatcher.TickAsync(CancellationToken.None);
                 await using var read = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
                 var stored = await read.AgentTasks.SingleAsync(t => t.Id == taskId);
-                result.Dispatched.ShouldBe(1, $"host={host ?? "<null>"} platform={platform} level={level} status={stored.Status} reason={stored.FailureReason}");
+                var held = await read.AgentTaskEvents.Where(e => e.AgentTaskId == taskId)
+                    .Select(e => e.Detail).ToListAsync();
+                result.Dispatched.ShouldBe(1, $"host={host ?? "<null>"} platform={platform} level={level} status={stored.Status} runner={stored.RunnerId} reason={stored.FailureReason} result={result} events={string.Join(";", held)}");
                 stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason);
             stored.AgentKind.ShouldBe(AgentKind.Codex);
                 stored.RunnerId.ShouldBe(host);

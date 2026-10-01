@@ -55,8 +55,8 @@ public sealed class DefaultRunnerRerouteTests
             stored.ModelLevel.ShouldBe(before.ModelLevel);
             stored.Complexity.ShouldBe(before.Complexity);
             stored.RoutingPinId.ShouldBeNull("an explicit reroute ends chain governance");
-            stored.ExplicitAgentKind.ShouldBe(AgentKind.Codex);
-            stored.ExplicitModelLevel.ShouldBe(AgentModelLevel.Frontier);
+            stored.ExplicitAgentKind.ShouldBeNull("the explicit API ends chain governance without a new create pin");
+            stored.ExplicitModelLevel.ShouldBeNull();
             stored.RequiredPlatform.ShouldBe(before.RequiredPlatform);
             stored.RequirementSource.ShouldBe(before.RequirementSource);
             stored.RunnerDefaultsRevision.ShouldBe(before.RunnerDefaultsRevision);
@@ -76,15 +76,15 @@ public sealed class DefaultRunnerRerouteTests
             (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
         await SeedHoldAsync(schema, "fable");
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Queued,
-            runnerId: null);
+            runnerId: null, workspace: WorkspaceMode.Shared);
         var result = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
         result.BlockedRoutingExhausted.ShouldBe(0);
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        AssertDesktopCodexSelected(stored, pin.Id);
+        AssertDesktopCodexSelected(stored, pin.Id, dispatched: true);
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
             .ShouldBe(1);
-        (await verify.AgentSessions.CountAsync()).ShouldBe(0);
+        (await verify.AgentSessions.CountAsync(s => s.Id == stored.AgentSessionId)).ShouldBe(1);
     }
 
     [Test]
@@ -96,12 +96,12 @@ public sealed class DefaultRunnerRerouteTests
             (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
         await SeedHoldAsync(schema, "fable");
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Blocked,
-            runnerId: null);
+            runnerId: null, workspace: WorkspaceMode.Shared);
         var result = await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
         result.ResumedRoutingBlocked.ShouldBe(1);
         await using var verify = CreateContext(schema);
         var stored = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-        AssertDesktopCodexSelected(stored, pin.Id);
+        AssertDesktopCodexSelected(stored, pin.Id, dispatched: true);
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted))
             .ShouldBe(1);
     }
@@ -151,14 +151,17 @@ public sealed class DefaultRunnerRerouteTests
         }
     }
 
-    private static void AssertDesktopCodexSelected(AgentTask task, Guid pinId)
+    private static void AssertDesktopCodexSelected(AgentTask task, Guid pinId, bool dispatched = false)
     {
-        task.Status.ShouldBe(AgentTaskStatus.Queued);
-        task.FailureReason.ShouldBeNull();
+        task.Status.ShouldBe(dispatched ? AgentTaskStatus.Dispatched : AgentTaskStatus.Queued,
+            task.FailureReason);
+        if (task.FailureReason is { } reason)
+            reason.ShouldNotContain("codex_desktop_unqualified");
         task.AgentKind.ShouldBe(AgentKind.Codex);
         task.RunnerId.ShouldBeNull();
         task.RoutingPinId.ShouldBe(pinId);
-        task.AgentSessionId.ShouldBeNull();
+        if (dispatched) task.AgentSessionId.ShouldNotBeNull();
+        else task.AgentSessionId.ShouldBeNull();
     }
 
     [Test]
@@ -213,11 +216,11 @@ public sealed class DefaultRunnerRerouteTests
             (AgentKind.Codex, AgentModelLevel.Frontier), (AgentKind.Grok, AgentModelLevel.Frontier));
         await SeedHoldAsync(schema, "fable");
         var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Blocked,
-            parentSessionId: parent.SessionId, runnerId: null);
+            parentSessionId: parent.SessionId, runnerId: null, workspace: WorkspaceMode.Shared);
         for (var i = 0; i < 3; i++)
             await CreateDispatcher(schema, eligible: false).Dispatcher.TickAsync(CancellationToken.None);
         await using var read = CreateContext(schema);
-        AssertDesktopCodexSelected(await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId), pin.Id);
+        AssertDesktopCodexSelected(await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId), pin.Id, dispatched: true);
         (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0);
         (await read.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId)).ShouldBe(0);
         (await read.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(1);
@@ -292,8 +295,10 @@ public sealed class DefaultRunnerRerouteTests
             await using var parent = await BridgeQueueHarness.CreateAsync(new()
             { AlwaysOn = false, ConnectionString = schema.ConnectionString });
             using var workspace = new TempWorkspace();
-            var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+            var pin = await SeedPinAsync(schema, (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                (AgentKind.Codex, AgentModelLevel.Frontier));
             await SeedHoldAsync(schema, "fable");
+            await SeedHoldAsync(schema, "gpt-6-astra", AgentKind.Codex);
             var taskId = await SeedRemoteTaskAsync(schema, workspace.Path, pin.Id, AgentTaskStatus.Working,
                 sessionId: Guid.NewGuid(), parentSessionId: parent.SessionId, runnerId: null);
             var fault = new BlockNoteFault(cut, taskId, parent.SessionId);
@@ -675,13 +680,13 @@ public sealed class DefaultRunnerRerouteTests
         return pin;
     }
 
-    private static async Task SeedHoldAsync(IsolatedTestSchema schema, string alias)
+    private static async Task SeedHoldAsync(IsolatedTestSchema schema, string alias, AgentKind kind = AgentKind.ClaudeCode)
     {
         await using var db = CreateContext(schema);
         db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
         {
             Id = Guid.NewGuid(),
-            Kind = AgentKind.ClaudeCode,
+            Kind = kind,
             ModelAlias = alias,
             Source = ModelAvailabilitySource.Manual,
             HitAt = DateTime.UtcNow,
@@ -698,7 +703,8 @@ public sealed class DefaultRunnerRerouteTests
         AgentKind kind = AgentKind.ClaudeCode,
         Guid? sessionId = null,
         Guid? parentSessionId = null,
-        string? runnerId = Runner)
+        string? runnerId = Runner,
+        WorkspaceMode workspace = WorkspaceMode.Worktree)
     {
         var id = Guid.NewGuid();
         await using var db = CreateContext(schema);
@@ -712,7 +718,7 @@ public sealed class DefaultRunnerRerouteTests
             AgentKind = kind,
             ModelLevel = AgentModelLevel.Frontier,
             RoutingPinId = routingPinId,
-            Workspace = WorkspaceMode.Worktree,
+            Workspace = workspace,
             WorkingDirectory = directory,
             RunnerId = runnerId,
             Status = status,
