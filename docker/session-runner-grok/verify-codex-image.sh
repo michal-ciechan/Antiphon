@@ -61,6 +61,7 @@ case "$row" in
     result ok "codex-cli $CODEX_VERSION as uid 1654 home=$PROBE_HOME/codex"
     ;;
   layout)
+    command -v ps >/dev/null 2>&1 || result fail "ps required by codex managed app-server"
     [ "$(readlink -f /usr/local/bin/codex)" = "$VENDOR/bin/codex" ] || result fail "link=$(readlink -f /usr/local/bin/codex)"
     [ "$(command -v codex)" = /usr/local/bin/codex ] || result fail "PATH codex=$(command -v codex)"
     for f in bin/codex bin/codex-code-mode-host codex-path/rg codex-resources/bwrap; do
