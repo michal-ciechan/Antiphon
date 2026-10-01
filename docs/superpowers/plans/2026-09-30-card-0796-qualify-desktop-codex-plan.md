@@ -482,3 +482,72 @@ the real lane differs; do not convert minutes or internal assertions into execut
 | CP-6 | S3 | CP-1 | adapter-readiness | `/*/*/RunnerCodexAdapterReadyTests/*` | R-2 | all 12 listed executions, 0 failed/skipped | 12 | 2 | true |
 | CP-7 | S3 | CP-1 | server-unit | `/*/*/*/*[Category=Unit]` | R-4 | all discovered Unit executions, >= 1 executed, 0 failed; report every skip | 1 | 7 | true |
 | CP-8 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c796-pty/` | modal-and-ready | `/*/Antiphon.Agents.Pty.Tests/(CodexReadyWaitTests*)\|(CodexStartupReadinessTests*)\|(CodexReadyTrackerTests*)/*` | R-3 | all 54 listed executions, 0 failed/skipped | 54 | 5 | true |
+
+## S3 execution outcome (2026-10-01)
+
+The accepted S2 live desktop receipt remains [the qualification record](../../investigations/2026-09-30-card-0796-desktop-codex-qualification.md).
+The S3 production/test slice was pushed on `feat/card-task-5cbbdf8f`. The final
+placement-audit assertion commit is `9a6ed6a37ee4be3ca3957b3e28679b7ea2f57588`; no production source changed after
+`22ca8d59ebd3a9d2c6e04c7d9026f003e5377087`. Checkpoint rows used the Linux
+driver default `UseAppHost=false`, serial build slots, fresh TRX files, and the filters below.
+
+- CP-1: commit `9a6ed6a37ee4be3ca3957b3e28679b7ea2f57588`; build ok; filter `/*/Antiphon.Tests.Application/(TaskPlatformPlacementTests*)|(DefaultRunnerCreateTests*)/*`; executed 22, passed 22, failed 0, skipped 0; reruns 3. The first attempt escaped the Markdown pipe into TUnit and discovered zero; later runs covered source fixes and the final audit assertions.
+- CP-2: commit `3616ec5b1fd332a75e8d52d27b283c16b596291c`; build ok; filter `/*/*/TaskPlatformDispatchTests/*`; executed 11, passed 11, failed 0, skipped 0; reruns 6. Failures exposed an invalid synthetic Worktree identity, then a real queued legacy-alias claim path; both were repaired.
+- CP-3: commit `3616ec5b1fd332a75e8d52d27b283c16b596291c`; build reused; filter `/*/*/DefaultRunnerRerouteTests/*`; executed 16, passed 16, failed 0, skipped 0; reruns 2. The first failures were stale pin/failure-text oracles and synthetic Worktree / non-exhausted wall fixtures.
+- CP-4: commit `3616ec5b1fd332a75e8d52d27b283c16b596291c`; build reused; filter `/*/Antiphon.Tests.Application/(CodexDelegateDispatchTests*)|(PinnedAgentKindTests*)|(PinnedProfileLaunchSpecTests*)/*`; executed 29, passed 29, failed 0, skipped 0; reruns 0.
+- CP-5: commit `31d3154ded111f2a7620eadd617699aee950bd82`; build ok; filter `/*/Antiphon.Tests.Application/(CodexPhoneHomeCreateTests*)|(CardSpawnModelArgumentTests*)/*`; executed 21, passed 21, failed 0, skipped 0; reruns 2. The Linux fixture now uses an existing executable, and its Grok refusal asserts the Linux typed-source conflict while retaining the Windows unsafe-argv oracle.
+- CP-6: commit `3616ec5b1fd332a75e8d52d27b283c16b596291c`; build reused; filter `/*/*/RunnerCodexAdapterReadyTests/*`; executed 12, passed 12, failed 0, skipped 0; reruns 0.
+- CP-7: commit `31d3154ded111f2a7620eadd617699aee950bd82`; build reused; filter `/*/*/*/*[Category=Unit]`; executed 3654, passed 3654, failed 0, skipped 33 (3687 total); reruns 0. Every skip is listed below.
+- CP-8: commit `31d3154ded111f2a7620eadd617699aee950bd82`; separate Pty build ok; filter `/*/Antiphon.Agents.Pty.Tests/(CodexReadyWaitTests*)|(CodexStartupReadinessTests*)|(CodexReadyTrackerTests*)/*`; executed 54, passed 54, failed 0, skipped 0; reruns 0.
+
+CP-4 explicitly passed all six related-card methods: `CodexDelegateDispatchTests.dispatching_a_codex_task_writes_a_codex_session_and_a_codex_pool_row`, `a_codex_pool_reuse_of_unrelated_work_types_no_compact`, `the_dispatch_event_names_the_codex_model_the_task_actually_runs`; `PinnedAgentKindTests.T1_a_task_pinned_to_a_stopped_standing_Codex_agent_with_no_kind_stores_Codex`, `T2_an_explicit_kind_mismatch_is_refused_and_an_agreeing_kind_is_accepted`; and `PinnedProfileLaunchSpecTests.T8_model_rule_one_flag_from_ModelId_or_the_profile_kind_tier_alias`.
+
+### CP-7 skipped Unit cases
+
+All 33 are platform-gated Windows tests on this Linux runner. Each entry below is one skipped execution and its reported reason.
+
+| Skipped case | Reported reason |
+|---|---|
+| `The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine` | The npm shim layout is Windows-specific |
+| `Resolves_sibling_flavor_when_configured_one_is_gone` | Sibling executable flavors (.exe/.cmd/.bat) are resolved only on Windows |
+| `V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash` | Canonical pin cwd is a Windows drive-rooted path |
+| `Off_settings_path_round_trips_through_LaunchArgvGuard` | CommandLineToArgvW is Windows-only |
+| `reported_repository_paths_normalize_relative_and_absolute_windows_forms` | Drive-letter report paths resolve only against a Windows repo root |
+| `prefix_returns_matching_child_directories` | Drive-letter directory listing needs a Windows MockFileSystem |
+| `existing_path_reports_exists_true` | Drive-letter directory listing needs a Windows MockFileSystem |
+| `caches_within_ttl_and_refreshes_after` | Drive-letter directory listing needs a Windows MockFileSystem |
+| `trailing_slash_lists_children_of_that_directory` | Drive-letter directory listing needs a Windows MockFileSystem |
+| `partial_leaf_matches_substring_within_child_name` | Drive-letter directory listing needs a Windows MockFileSystem |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env_flag)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(braced_env)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_first)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(missing)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(equals)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(duplicate_second)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(env)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(alias)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(crlf)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(cr)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(nul)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `Unsafe_raw_rules_are_refused_server_side_before_runner_calls(lf)` | CARD-0382 Grok rules argv guard is Windows-only by design |
+| `A_runner_on_the_modern_backend_confirms_the_raised_ceilings` | no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect |
+| `A_silent_runner_leaves_this_processes_own_decision_standing` | no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect |
+| `A_runner_on_the_inbox_conhost_downgrades_a_modern_server` | no shipped conpty.dll: not Windows — there is no pseudoconsole to redirect |
+| `Phone_home_Claude_keeps_the_inbox_ceiling_for_its_own_kind` | ConPTY only on Windows |
+| `Phone_home_Grok_never_uses_local_modern_evidence` | ConPTY only on Windows |
+| `C721_HeldHandleDuringCleanupStaysRegisteredOrRecorded` | Sharing-mode locks are a Windows file-system behaviour. |
+| `C665_LockedFileMidDeleteResumesOnLaterPass` | Sharing-mode locks are a Windows file-system behaviour. |
+| `windows_row_arguments_round_trip_intact` | Windows row arguments are delivered by ProcessStartInfo.ArgumentList. |
+| `windows_chatty_row_drains_interleaved_stdout_and_stderr` | Windows row pipes must drain a large interleaved stdout and stderr. |
+| `windows_row_timeout_kills_the_start_b_grandchild` | The descendant sweep kills a start /b grandchild on Windows. |
+| `windows_quick_row_finishes_beside_a_slow_row` | Concurrent Windows row processes must not inherit each other's stdout pipes. |
+
+### S3 method-scoped positive controls
+
+In a detached scratch worktree at `31d3154ded111f2a7620eadd617699aee950bd82`, three independent temporary mutations were built together, then each exact method filter ran separately with a fresh TRX. Each produced one executed test, one intended assertion failure, and no skips:
+
+- PC-1: the restored desktop create conflict made `TaskPlatformPlacementTests.C796_Explicit_desktop_codex_is_admitted` throw before persisting the Queued row.
+- PC-2: the restored desktop pre-claim rejection made `TaskPlatformDispatchTests.C796_Legacy_desktop_codex_dispatches` Block with zero dispatches.
+- PC-3: the restored desktop compatibility rejection made `DefaultRunnerRerouteTests.C796_Explicit_desktop_codex_reroute_keeps_host` throw before selecting Codex.
+
+The scratch tracked diff was empty after restoration and the detached worktree was removed. The full eleven-control post-land Mutation battery remains pending. No live provider launch was run in S3.
