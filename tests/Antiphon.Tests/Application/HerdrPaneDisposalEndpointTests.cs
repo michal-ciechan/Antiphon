@@ -48,8 +48,9 @@ public sealed class HerdrPaneDisposalEndpointTests
         h.Runner.Fake.SetPaneProcessInfo(h.Runner.PaneId, 4242, [(4243, @"C:\secret-home\grok.exe", new[] { "--session-id", h.Runner.SessionId.ToString(), "--key", "secret-canary" }, @"C:\secret-home")]);
         var ws = h.Runner.Fake.Workspaces[0];
         ws.Label = @"C:\secret-home\workspace";
-        ws.Tabs[0].Label = "/secret-home/tab";
-        ws.Tabs[0].Panes[0].Label = @"\\host\secret-home\pane";
+        var tab = ws.Tabs.Single(t => t.Panes.Any(p => p.PaneId == h.Runner.PaneId));
+        tab.Label = "/secret-home/tab";
+        tab.Panes.Single(p => p.PaneId == h.Runner.PaneId).Label = @"\\host\secret-home\pane";
         var raw = await h.Runner.Backend.InspectAsync(h.Runner.PaneId, true, default);
         raw.Foreground![0].ExecutableName.ShouldBe("grok.exe");
         using var r = await h.Http.PostAsJsonAsync("/api/herdr/pane-disposals/preview", new HerdrPaneDisposalPreviewRequest(h.Runner.PaneId, h.Runner.SessionId));

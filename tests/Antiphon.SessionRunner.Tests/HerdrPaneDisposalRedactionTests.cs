@@ -158,6 +158,27 @@ public sealed class HerdrPaneDisposalRedactionTests
             }
             receipt.Outcome.ShouldBe("Closed");
         }
+        await using (var occupied = new Wire())
+        {
+            occupied.Fixture.Occupied(native: false);
+            occupied.Fixture.Backend.Transform = o => o with
+            {
+                Claims = [new(occupied.Fixture.SessionId, "antiphon-session-token", "attached", false,
+                    "grok", 4243, occupied.Fixture.Processes.Started.AddSeconds(1))]
+            };
+            await occupied.StartAsync();
+            var (post, get, disk, receipt) = await occupied.RoundTripAsync();
+            foreach (var p in new[] { post, get, disk })
+            {
+                p.Eligible.ShouldBeTrue("safe-evidence-preserved");
+                p.BackendVersion.ShouldBe("0.8.2");
+                p.Claims[0].Source.ShouldBe("antiphon-session-token");
+                p.Claims[0].Origin.ShouldBe("attached"); p.Claims[0].AgentKind.ShouldBe("grok");
+                p.Foreground![0].ExecutableName.ShouldBe("grok.exe");
+                p.PlannedTerminationPids.ShouldBe([4242, 4243]);
+            }
+            receipt.Outcome.ShouldBe("Closed"); occupied.Fixture.Backend.Closes.ShouldBe(1);
+        }
         await using var nullable = new Wire();
         nullable.Fixture.Fake.Workspaces[0].Tabs[0].Panes[0].Label = null;
         nullable.Fixture.Backend.Transform = o => o with
@@ -175,10 +196,21 @@ public sealed class HerdrPaneDisposalRedactionTests
         foreach (var unsafeLeaf in new[] { "", "C:", @"C:\secret-home\", "/secret-home/", "bad\0.exe" })
         {
             await using var w = new Wire();
-            w.Fixture.Backend.Transform = o => o with { Shell = o.Shell! with { ExecutableName = unsafeLeaf } };
+            w.Fixture.Backend.Transform = o =>
+            {
+                var shell = o.Shell! with { ExecutableName = unsafeLeaf };
+                var child = new HerdrPaneDisposalProcess(4243, unsafeLeaf, w.Fixture.Processes.Started.AddSeconds(1), 4242);
+                return o with { Shell = shell, Foreground = [child], Affected = [shell, child] };
+            };
             await w.StartAsync();
             var (post, get, disk, receipt) = await w.RoundTripAsync();
-            foreach (var p in new[] { post, get, disk }) p.Shell!.ExecutableName.ShouldBeNull("unsafe-leaf-null");
+            foreach (var p in new[] { post, get, disk })
+            {
+                p.Shell!.ExecutableName.ShouldBeNull("unsafe-leaf-null");
+                p.Foreground![0].ExecutableName.ShouldBeNull("unsafe-leaf-null");
+                p.AffectedProcesses![0].ExecutableName.ShouldBeNull("unsafe-leaf-null");
+                p.AffectedProcesses[1].ExecutableName.ShouldBeNull("unsafe-leaf-null");
+            }
             receipt.Outcome.ShouldBe("Refused");
         }
     }
@@ -193,6 +225,16 @@ public sealed class HerdrPaneDisposalRedactionTests
             post.Shell!.ExecutableName.ShouldBe("pwsh.exe");
             post.Eligible.ShouldBeFalse("raw-identity-still-refused");
             receipt.Outcome.ShouldBe("Refused"); w.Fixture.Backend.Closes.ShouldBe(0);
+        }
+        await using (var w = new Wire())
+        {
+            w.Fixture.Occupied(native: false);
+            w.Fixture.Backend.Transform = o => o with { Claims = [new(w.Fixture.SessionId,
+                @"folder\claim", @"folder\origin", false, "grok", 4243, w.Fixture.Processes.Started.AddSeconds(1))] };
+            await w.StartAsync(); var (post, _, _, receipt) = await w.RoundTripAsync();
+            post.Eligible.ShouldBeTrue("raw-claim-exact-positive");
+            post.Claims[0].Source.ShouldBe(Mask); post.Claims[0].Origin.ShouldBe(Mask);
+            receipt.Outcome.ShouldBe("Closed"); w.Fixture.Backend.Closes.ShouldBe(1);
         }
         await using (var w = new Wire())
         {
@@ -220,17 +262,31 @@ public sealed class HerdrPaneDisposalRedactionTests
     [Test]
     public async Task Structured_logs_omit_display_paths_and_reason()
     {
-        await using var w = new Wire(); w.SetLabels(@"C:\secret-home\repo");
-        var logger = new CaptureLogger();
-        // The service's internal injection seam records both formatted and structured log values.
-        var service = new HerdrPaneDisposalService(w.Fixture.Runtime, w.Fixture.Settings.SessionLogPath,
-            w.Fixture.Clock, w.Fixture.Backend, logger: logger);
-        w.ServiceOverride = service;
-        await w.StartAsync();
-        var (_, _, _, receipt) = await w.RoundTripAsync("reason-secret");
-        receipt.Outcome.ShouldBe("Closed");
-        string.Join("\n", logger.Values).ShouldNotContain("secret-home", Case.Sensitive, "disposal-log-payload-excluded");
-        string.Join("\n", logger.Values).ShouldNotContain("reason-secret", Case.Sensitive, "disposal-log-payload-excluded");
+        foreach (var phase in new[] { "closed", "inspect-error", "close-error" })
+        {
+            await using var w = new Wire(); w.SetLabels(@"C:\secret-home\repo");
+            var logger = new CaptureLogger();
+            // The service's internal injection seam records formatted, structured and exception data.
+            w.ServiceOverride = new HerdrPaneDisposalService(w.Fixture.Runtime, w.Fixture.Settings.SessionLogPath,
+                w.Fixture.Clock, w.Fixture.Backend, logger: logger);
+            if (phase == "inspect-error") w.Fixture.Backend.BeforeInspect = n =>
+                n == 2 ? Task.FromException(new IOException("exception-path-secret")) : Task.CompletedTask;
+            if (phase == "close-error") w.Fixture.Backend.BeforeClose = () =>
+                Task.FromException(new IOException("exception-path-secret"));
+            await w.StartAsync();
+            var (_, _, _, receipt) = await w.RoundTripAsync("reason-secret");
+            receipt.Outcome.ShouldBe(phase switch { "closed" => "Closed", "inspect-error" => "Refused", _ => "Unknown" });
+            receipt.Code.ShouldBe(phase switch
+            {
+                "closed" => "herdr_pane_closed",
+                "inspect-error" => HerdrProblemTypes.Unreachable,
+                _ => HerdrPaneDisposalCodes.Unknown
+            });
+            var log = string.Join("\n", logger.Values);
+            foreach (var canary in new[] { "secret-home", "reason-secret", "exception-path-secret" })
+                log.ShouldNotContain(canary, Case.Sensitive, "disposal-log-payload-excluded");
+            log.ShouldContain(receipt.OperationId.ToString(), Case.Insensitive);
+        }
     }
 
     private sealed class Wire : IAsyncDisposable
@@ -242,7 +298,9 @@ public sealed class HerdrPaneDisposalRedactionTests
         public void SetLabels(string? label)
         {
             var ws = Fixture.Fake.Workspaces[0]; ws.Label = label!;
-            ws.Tabs[0].Label = label!; ws.Tabs[0].Panes[0].Label = label;
+            var tab = ws.Tabs.Single(t => t.Panes.Any(p => p.PaneId == Fixture.PaneId));
+            tab.Label = label!;
+            tab.Panes.Single(p => p.PaneId == Fixture.PaneId).Label = label;
         }
         public async Task StartAsync()
         {

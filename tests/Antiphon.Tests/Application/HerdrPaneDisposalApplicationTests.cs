@@ -124,6 +124,7 @@ public sealed class HerdrPaneDisposalApplicationTests
         }
         h.Runner.Backend.Closes.ShouldBe(1);
         adapter.Started.ShouldBeTrue();
+        adapter.StartedSessionId.ShouldBe(f.B.Id);
         var after = await gate.WaitAsync(0);
         if (after) gate.Release();
         after.ShouldBeTrue("standing-lock-released");
