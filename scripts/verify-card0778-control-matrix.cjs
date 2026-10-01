@@ -121,21 +121,33 @@ function cleanup() {
     sourceMutated = false;
   }
 }
-for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
-  process.on(signal, () => {
-    cleanup();
-    process.exit(code);
-  });
+let stopping = false;
+async function stop(code) {
+  if (stopping) return;
+  stopping = true;
+  // Install close listeners before killing the children. Node must reap its
+  // burners before exiting, including when only Node receives SIGTERM.
+  const children = [active, ...burners].filter(Boolean);
+  const closed = children.map(child => new Promise(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null) resolve();
+    else child.once('close', resolve);
+  }));
+  cleanup();
+  await Promise.race([
+    Promise.all(closed),
+    new Promise(resolve => setTimeout(resolve, 10000))
+  ]);
+  process.exit(code);
 }
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]])
+  process.on(signal, () => { void stop(code); });
 process.on('uncaughtException', error => {
   console.error(error);
-  cleanup();
-  process.exit(1);
+  void stop(1);
 });
 process.on('unhandledRejection', error => {
   console.error(error);
-  cleanup();
-  process.exit(1);
+  void stop(1);
 });
 process.on('exit', cleanup);
 async function command(args, name) {
