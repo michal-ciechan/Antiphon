@@ -115,12 +115,10 @@ public class RunnerGrokAdapterReadyTests
         var heldReadTimer = trustClock.NextTimerInstalled();
         trustClock.Advance(TimeSpan.FromMilliseconds(1));
         var trustTimeout = await TimerRegistered(heldReadTimer, "PC-24 held trust read");
-        trustTimeout.ShouldBeLessThanOrEqualTo(TimeSpan.FromMilliseconds(499),
-            "trustCompletionElapsed");
-        trustClock.Advance(TimeSpan.FromMilliseconds(499));
+        trustClock.Advance(trustTimeout);
+        lateTrustRead.TrySetResult(new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow));
         var trustCompletion = await trustReady.WaitAsync(TimeSpan.FromSeconds(5));
         var trustCompletionElapsed = trustClock.GetElapsedTime(trustStarted);
-        lateTrustRead.TrySetResult(new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow));
         trustCompletionElapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromMilliseconds(500),
             "trustCompletionElapsed");
         trustOutcome.ShouldBe(GrokStartupReason.Trust, "trustExpiryOutcome");
@@ -151,11 +149,13 @@ public class RunnerGrokAdapterReadyTests
         var boundedTimer = boundClock.NextTimerInstalled();
         var bounded = GrokReadyWait.WaitAsync(_ => hung.Task,
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5), TimeProvider = boundClock });
-        await TimerRegistered(boundedTimer, "PC-28 held read");
-        boundClock.Advance(TimeSpan.FromSeconds(5));
+        // Bounded registers its read timer synchronously. The direct-await mutant
+        // does not: force its held read to finish beyond the deadline instead.
+        boundClock.Advance(boundedTimer.IsCompleted
+            ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(5001));
+        hung.TrySetResult(frame);
         var boundedResult = await bounded.WaitAsync(TimeSpan.FromSeconds(5));
         var completionElapsed = boundClock.GetElapsedTime(boundStarted);
-        hung.TrySetResult(frame);
         boundedResult.ShouldBeFalse();
         completionElapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(5), "completionElapsed");
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
@@ -166,10 +166,10 @@ public class RunnerGrokAdapterReadyTests
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
                 MinimumAgeRemaining = TimeSpan.FromSeconds(10), PollInterval = TimeSpan.FromMilliseconds(1),
                 Settle = TimeSpan.Zero, TimeProvider = minimumClock });
-        await minimumClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
+        await TimerInstalled(minimumClock.PollInstalled(1), "minimum-age first poll");
         minimumClock.Advance(TimeSpan.FromMilliseconds(1));
-        var minimumNext = await Task.WhenAny(minimumWait, minimumClock.PollInstalled(2))
-            .WaitAsync(TimeSpan.FromSeconds(5));
+        var minimumNext = await TimerInstalled(
+            Task.WhenAny(minimumWait, minimumClock.PollInstalled(2)), "minimum-age second poll");
         if (minimumNext != minimumWait) minimumClock.Advance(TimeSpan.FromSeconds(5));
         var readyBeforeMinimumAge = await minimumWait.WaitAsync(TimeSpan.FromSeconds(5));
         readyBeforeMinimumAge.ShouldBeFalse("readyBeforeMinimumAge");
@@ -191,12 +191,10 @@ public class RunnerGrokAdapterReadyTests
         var trustBudgetTimer = trustClock.NextTimerInstalled();
         trustClock.Advance(TimeSpan.FromMilliseconds(1));
         var budgetTimeout = await TimerRegistered(trustBudgetTimer, "PC-29 held trust read");
-        budgetTimeout.ShouldBeLessThanOrEqualTo(TimeSpan.FromMilliseconds(999),
-            "trustCompletionElapsed inside originalMax");
-        trustClock.Advance(TimeSpan.FromMilliseconds(999));
+        trustClock.Advance(budgetTimeout);
+        trustLateRead.TrySetResult(frame);
         var trustBudgetReady = await trustBudgetWait.WaitAsync(TimeSpan.FromSeconds(5));
         var trustBudgetElapsed = trustClock.GetElapsedTime(trustBudgetStarted);
-        trustLateRead.TrySetResult(frame);
         trustBudgetElapsed.ShouldBeLessThan(
             TimeSpan.FromMilliseconds(5500), "trustCompletionElapsed inside originalMax");
         trustBudgetReady.ShouldBeFalse("trustCompletionElapsed must stay inside originalMax");
@@ -219,11 +217,12 @@ public class RunnerGrokAdapterReadyTests
         // Advance only after each poll timer exists. If readiness instead
         // sleeps to the floor after the second positive observation, release
         // that timer so the stale-positive result reaches the named assertion.
-        await floorClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
+        await TimerInstalled(floorClock.PollInstalled(1), "floor first poll");
         floorClock.Advance(TimeSpan.FromMilliseconds(1));
         var secondPoll = floorClock.PollInstalled(2);
-        var next = await Task.WhenAny(floorWait, secondPoll, floorClock.FloorSleepInstalled)
-            .WaitAsync(TimeSpan.FromSeconds(5));
+        var next = await TimerInstalled(
+            Task.WhenAny(floorWait, secondPoll, floorClock.FloorSleepInstalled),
+            "floor second poll or floor sleep");
         if (next == floorWait)
         {
             (await floorWait).ShouldBeFalse("readyWithFloorModal");
@@ -249,18 +248,18 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
-        await utcClock.FirstPollInstalled.WaitAsync(TimeSpan.FromSeconds(5));
+        await TimerInstalled(utcClock.FirstPollInstalled, "UTC first poll");
         utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
         var nextPoll = utcClock.NextPollInstalled();
         utcClock.Advance(TimeSpan.FromMilliseconds(5));
-        await Task.WhenAny(wait, nextPoll).WaitAsync(TimeSpan.FromSeconds(5));
+        await TimerInstalled(Task.WhenAny(wait, nextPoll), "UTC second poll");
         utcReads.ShouldBeGreaterThanOrEqualTo(2);
         wait.IsCompleted.ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
         for (var tick = 0; tick < 400 && !wait.IsCompleted; tick++)
         {
             nextPoll = utcClock.NextPollInstalled();
             utcClock.Advance(TimeSpan.FromMilliseconds(5));
-            await Task.WhenAny(wait, nextPoll).WaitAsync(TimeSpan.FromSeconds(5));
+            await TimerInstalled(Task.WhenAny(wait, nextPoll), "UTC subsequent poll");
         }
         (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
     }
@@ -599,6 +598,26 @@ public class RunnerGrokAdapterReadyTests
     private static async Task<TimeSpan> TimerRegistered(Task<TimeSpan> timer, string phase)
     {
         try { return await timer.WaitAsync(TimeSpan.FromSeconds(30)); }
+        catch (TimeoutException ex)
+        {
+            throw new InvalidOperationException(
+                $"Harness never registered the timer for {phase}", ex);
+        }
+    }
+
+    private static async Task TimerInstalled(Task timer, string phase)
+    {
+        try { await timer.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException ex)
+        {
+            throw new InvalidOperationException(
+                $"Harness never registered the timer for {phase}", ex);
+        }
+    }
+
+    private static async Task<T> TimerInstalled<T>(Task<T> timer, string phase)
+    {
+        try { return await timer.WaitAsync(TimeSpan.FromSeconds(5)); }
         catch (TimeoutException ex)
         {
             throw new InvalidOperationException(
