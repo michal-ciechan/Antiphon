@@ -199,6 +199,7 @@ Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests
 Antiphon.Tests.Application.ReviewEvidenceSettlementTests
 # CARD-0807: real queue, recovery and complete caller receipt matrix.
 Antiphon.Tests.Application.ReviewEvidenceDeliveryTests
-# CARD-0835: source-bound executor reports and isolated Review/land migration/resume matrix.
+# CARD-0835: source-bound executor reports with process fixtures.
 Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests
+# CARD-0835: isolated Review/land migration and resume matrix.
 Antiphon.Tests.Application.CheckpointSourceApprovalTests

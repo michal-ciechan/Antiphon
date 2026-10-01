@@ -159,6 +159,9 @@ internal static class CheckpointFixtures
 {
     public static string RepoRoot => DockerStackDocuments.RepoRoot;
 
+    public static SourceObservation CleanSource() => new(new string('a', 40), 0, new string('1', 64),
+        DateTimeOffset.UtcNow, "known");
+
     public static string Fixture(string name) =>
         Path.Combine(RepoRoot, "tests", "Antiphon.Tests", "Checkpoints", "Fixtures", name);
 

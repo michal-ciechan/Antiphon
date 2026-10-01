@@ -41,7 +41,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             for (var i = 1; i <= 3; i++)
                 manifest.Checkpoints.Add(new CheckpointSpec { Id = $"CP-{i}", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
             var repo = TempDir();
-            var run = CheckpointApp.CreateRun(manifest, new RunRequest
+            var run = CreateFixtureRun(manifest, new RunRequest
             {
                 Slots = "off", KeepOutputs = true, Parallel = 2,
                 OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
@@ -109,10 +109,14 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 }],
     };
 
+    private static string CreateFixtureRun(CheckpointManifest manifest, RunRequest request, string repo) =>
+        CheckpointApp.CreateRun(manifest, request, repo,
+            new CheckpointApp.Runtime { SourceCapture = _ => CheckpointFixtures.CleanSource() });
+
     private string NewBoundRun(CheckpointManifest? manifest = null)
     {
         var repo = TempDir();
-        return CheckpointApp.CreateRun(manifest ?? CommandManifest(), new RunRequest
+        return CreateFixtureRun(manifest ?? CommandManifest(), new RunRequest
         {
             Slots = "off", KeepOutputs = true, OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
         }, repo);
@@ -123,6 +127,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
     {
         EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = delay ?? HoldDelay,
         Driver = driver ?? new FakeDriver(), Slots = slots ?? new FixedSlotClient("off"),
+        SourceCapture = _ => CheckpointFixtures.CleanSource(),
     };
 
     [Test]
@@ -135,6 +140,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             var launches = 0;
             var runtime = new CheckpointApp.Runtime
             {
+                SourceCapture = _ => CheckpointFixtures.CleanSource(),
                 EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = HoldDelay,
                 Launch = _ => { launches++; return 123; },
             };
@@ -204,7 +210,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             Expect = ["FlakyTests"], MinExecuted = 1, EstimatedMinutes = 1,
         });
         var repo = TempDir();
-        var retryRun = CheckpointApp.CreateRun(retryManifest, new RunRequest
+        var retryRun = CreateFixtureRun(retryManifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, KnownFlaky = [flaky],
             OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
@@ -424,6 +430,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         var handler = new OwnerHandler();
         var runtime = new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = _ => null, OwnerHandler = handler, Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
         };
         (await CheckpointApp.ExecuteAsync(unbound, CancellationToken.None, runtime)).ShouldBe(0);
@@ -437,6 +444,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         var starterHandler = new OwnerHandler();
         var starterRuntime = new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = starterHandler,
             Delay = HoldDelay, Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
             ToolDirectory = TinyToolDirectory(),
@@ -457,6 +465,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         File.WriteAllText(crashRequestPath, System.Text.Json.JsonSerializer.Serialize(crashRequest, CheckpointApp.Json));
         (await CheckpointApp.ExecuteAsync(crashRun, CancellationToken.None, new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = _ => null, Driver = crashing, Slots = new FixedSlotClient("off"),
         })).ShouldBe(ExitCodes.ExecutorCrashed);
     }
@@ -536,7 +545,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         var repo = TempDir();
-        var run = CheckpointApp.CreateRun(manifest, new RunRequest
+        var run = CreateFixtureRun(manifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, Parallel = 1,
             OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
@@ -547,6 +556,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         var sink = new OwnerLineSink();
         var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = clock.Delay, OwnerClock = clock.Now,
             Driver = driver, Slots = slots, LogSinkFactory = _ => sink,
         });
@@ -607,7 +617,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-2", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         var repo = TempDir();
-        var run = CheckpointApp.CreateRun(manifest, new RunRequest
+        var run = CreateFixtureRun(manifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, Parallel = 1,
             OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
@@ -618,6 +628,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         var sink = new OwnerLineSink();
         var execute = CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = clock.Delay, OwnerClock = clock.Now,
             OwnerUncertaintyBudget = TimeSpan.FromSeconds(6),
             Driver = driver, Slots = slots, LogSinkFactory = _ => sink,
@@ -659,6 +670,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         LaunchRequest? launch = null;
         var runtime = new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler,
             ToolDirectory = TinyToolDirectory(),
             Launch = request => { launch = request; return Environment.ProcessId; },
@@ -674,6 +686,7 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         request.OwnerTaskId.ShouldBe(TaskId.ToString());
         (await CheckpointApp.ExecuteAsync(started.RunDirectory, CancellationToken.None, new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = OwnerEnvironment(), OwnerHandler = handler, Delay = HoldDelay,
             Driver = new FakeDriver(), Slots = new FixedSlotClient("off"),
         })).ShouldBe(0);
@@ -735,14 +748,15 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             .Manifest!.Checkpoints.Single().EstimatedMinutes.ShouldBe(9);
         var manifest = new CheckpointManifest { Checkpoints = [windows] };
         var repo = TempDir();
-        var run = CheckpointApp.CreateRun(manifest, new RunRequest { Slots = "off", KeepOutputs = true }, repo);
+        var run = CreateFixtureRun(manifest, new RunRequest { Slots = "off", KeepOutputs = true }, repo);
         var runtime = new CheckpointApp.Runtime { EnvironmentLookup = _ => null, Driver = new FakeDriver(),
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             Slots = new FixedSlotClient("off"), Platform = new FakePlatform { IsWindows = true } };
         (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(0);
         var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
         (state.TotalTimeoutAt!.Value - state.StartedAt).TotalMinutes.ShouldBe(64);
 
-        var overridden = CheckpointApp.CreateRun(manifest, new RunRequest
+        var overridden = CreateFixtureRun(manifest, new RunRequest
         {
             Slots = "off", KeepOutputs = true, RowTimeoutMinutes = 7, TotalTimeoutMinutes = 11,
         }, repo);

@@ -319,6 +319,7 @@ do not add true to every historical `StageOutcome` or change parser defaults:
 | `AgentTaskReviewEvidenceTests` override/immutability seeds | Old approval explicitly true for the copy-prevention case; legacy null remains a separate case. CP-7/8 prove no inference and unchanged old coordinates. |
 | `TwoOwnerLandingWorld`, `AgentTaskLandingStateTests`, `AgentTaskLandRecoveryTests`, `AgentTaskLandApprovalRecoveryTests` operation SHA assignments | These are landing-operation identities, not Review `StageOutcome` approval seeds. Do not invent a source-clean field or retrofit historical approval. CP-12 preserves the two caller-SHA controls. |
 | `CheckpointLineTests`, `ReportWriterTests`, `ReportMergerTests`, `CheckpointAppTests`, `RowRunnerTests`, `RunSchedulerTests` | Use explicit known source/build bindings for normal fixtures and explicit unknown for legacy fixtures; plain non-Git temp directories must not silently stand for clean. CP-5 covers all six classes. |
+| `CheckpointTaskOwnershipTests`, `CheckpointExecutorLogTests` | Their legacy `TempDir` roots are not Git repositories. The supplemental Final Unit lane exposed their stale success fixtures; inject explicit stable source observations at both create and execute boundaries. Keep production unknown-source refusal. |
 
 The seed-only sites outside the roster above are compatibility edits, not added
 behavioral scope. Their common changed boundary is exercised by CP-7/8/9. If Code
@@ -605,7 +606,10 @@ CARD-0845 moves a wrapped `.ps1` target into a child process, so an outer build-
 wrapper would create a nested lease wait. The tool is tested in-process with fake
 slots, not used as the outer launcher. CARD-0818's wedged executor-log concurrency test and CARD-0828's
 owner-watch uncertainty pair are excluded: neither is needed for the source change.
-No Unit-lane or Checkpoints-namespace sweep is authorized. New terminal tests use
+The closed CP table has no Unit-lane or Checkpoints-namespace sweep. The Final Code
+brief separately authorizes one supplemental Unit lane; it found S4 fixture,
+bundle-size and Slow-category repairs. This adds no CP row or V/R execution
+and does not change the 198-per-OS census. New terminal tests use
 bounded gates with unconditional release/cancel/await cleanup instead of those
 flaky fixture clocks. A timeout is reported with identities, never retried into a
 silent green or called a successful PC.

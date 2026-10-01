@@ -47,6 +47,7 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
             var (run, runtime, sink) = NewRun();
             runtime = new CheckpointApp.Runtime
             {
+                SourceCapture = _ => CheckpointFixtures.CleanSource(),
                 EnvironmentLookup = _ => null,
                 Driver = runtime.Driver,
                 Slots = runtime.Slots,
@@ -95,6 +96,7 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
         });
         var liveRuntime = new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = _ => null, Driver = driver, Slots = new FixedSlotClient("off"),
         };
         var live = CheckpointApp.ExecuteAsync(liveRun, CancellationToken.None, liveRuntime);
@@ -123,10 +125,12 @@ public sealed class CheckpointExecutorLogTests : CheckpointTestBase
         var manifest = new CheckpointManifest();
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 });
         var request = new RunRequest { Slots = "off", KeepOutputs = true };
-        var run = CheckpointApp.CreateRun(manifest, request, repo);
+        var run = CheckpointApp.CreateRun(manifest, request, repo,
+            new CheckpointApp.Runtime { SourceCapture = _ => CheckpointFixtures.CleanSource() });
         var sink = new GatedSink();
         var runtime = new CheckpointApp.Runtime
         {
+            SourceCapture = _ => CheckpointFixtures.CleanSource(),
             EnvironmentLookup = _ => null,
             Driver = new FakeDriver(),
             Slots = new FixedSlotClient("off"),
