@@ -495,7 +495,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
             {
                 Id = evidence, Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
                 Source = StageOutcomeSource.Delegate, SubjectTaskId = h.Git.TaskId, StageTaskId = Guid.NewGuid(),
-                ReviewedSourceSha = h.Git.SourceHead, ReviewedSourceRef = h.Git.SourceRef,
+                ReviewedSourceSha = h.Git.SourceHead, ReviewedSourceClean = true,
+                ReviewedSourceRef = h.Git.SourceRef,
                 ReviewedRepositoryPath = h.Git.Repository, RecordedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync();

@@ -468,7 +468,8 @@ public sealed class AgentTaskLandAdoptionTests
         {
             Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Delegate, SubjectTaskId = subject.Id, StageTaskId = Guid.NewGuid(),
-            ReviewedSourceSha = sha, ReviewedSourceRef = "refs/heads/" + subject.WorktreeBranch,
+            ReviewedSourceSha = sha, ReviewedSourceClean = true,
+            ReviewedSourceRef = "refs/heads/" + subject.WorktreeBranch,
             ReviewedRepositoryPath = subject.RepoPath, CommissionedRound = VerificationRound.Final,
             OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
         };

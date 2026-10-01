@@ -177,6 +177,7 @@ public sealed class StartRefRepairAdoptionTests
             var evidence = new StageOutcome { Id = Guid.NewGuid(), Stage = OrchestrationStage.Review,
                 Outcome = StageOutcomeKind.Clean, Source = StageOutcomeSource.Delegate,
                 SubjectTaskId = subject.Id, StageTaskId = Guid.NewGuid(), ReviewedSourceSha = c.S,
+                ReviewedSourceClean = true,
                 ReviewedSourceRef = "refs/heads/" + subject.WorktreeBranch,
                 ReviewedRepositoryPath = subject.RepoPath,
                 CommissionedRound = reviewKind == "interim" ? VerificationRound.Interim : VerificationRound.Final,

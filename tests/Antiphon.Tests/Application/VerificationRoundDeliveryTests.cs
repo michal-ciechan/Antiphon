@@ -442,7 +442,8 @@ public sealed class VerificationRoundDeliveryTests
                 {
                     Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
                     Source = StageOutcomeSource.Delegate, SubjectTaskId = Land.Git.TaskId, StageTaskId = Guid.NewGuid(),
-                    ReviewedSourceSha = Sha, ReviewedSourceRef = Land.Git.SourceRef, ReviewedRepositoryPath = Land.Git.Repository,
+                    ReviewedSourceSha = Sha, ReviewedSourceClean = true,
+                    ReviewedSourceRef = Land.Git.SourceRef, ReviewedRepositoryPath = Land.Git.Repository,
                     VerificationProfileVersion = 1, CommissionedRound = VerificationRound.Final,
                     OrdinaryScopeCompleted = VerificationScope.Full, Detail = "c544 final full review", RecordedAt = DateTime.UtcNow,
                 };
