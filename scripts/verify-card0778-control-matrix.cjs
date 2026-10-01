@@ -58,7 +58,7 @@ const controls = {
   'PC-26': r(pty, `${readyClass}/${methods.floor}`, 'readyWithFloorModal', s =>
     once(s, `                if (tracker.Observe(observation, elapsed)\n                    && elapsed >= options.MinimumAgeRemaining)\n                {`,
       `                if (tracker.Observe(observation, elapsed))\n                {\n                    if (elapsed < options.MinimumAgeRemaining)\n                    {\n                        await Task.Delay(options.MinimumAgeRemaining - elapsed, time, ct);\n                        return true;\n                    }`)),
-  'PC-28': r(pty, `${readyClass}/${methods.deadline}`, 'completionElapsed', s =>
+  'PC-28': r(pty, `${readyClass}/${methods.deadline}`, 'Harness never registered the timer for PC-28 held read', s =>
     once(s, `                frame = await Bounded(snapshotAsync, remaining, time, ct);`,
       `                frame = await snapshotAsync(ct);`)),
   'PC-29': r(pty, `${readyClass}/${methods.deadline}`, 'trustCompletionElapsed inside originalMax', s =>
@@ -98,24 +98,75 @@ const original = fs.readFileSync(source);
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), `c778-${selected.toLowerCase()}-`));
 console.log(`SCRATCH ${scratch}`);
 fs.writeFileSync(path.join(scratch,'original.cs'),original);
-function command(args, name) {
-  const output = cp.spawnSync(args[0], args.slice(1), {cwd:root, encoding:'utf8', maxBuffer:64*1024*1024});
-  if (output.error) throw output.error;
-  const text = (output.stdout || '') + (output.stderr || '');
-  if (name) fs.writeFileSync(path.join(scratch,name),text);
-  return {code:output.status,text};
-}
-if (command(['git','diff','--exit-code']).code !== 0) throw Error('Tracked source dirty before mutation');
-const mutated = control.change(original.toString('utf8'));
-if (mutated === original.toString('utf8')) throw Error('Mutation did not change source');
-const rows = [];
-function runs(label, loaded, count) {
-  const burners=[];
+let active = null;
+let sourceMutated = false;
+const burners = new Set();
+function kill(child) {
+  if (!child || child.exitCode !== null) return;
   try {
-    if (loaded) for(let i=0;i<24;i++) burners.push(cp.spawn('yes',[],{stdio:'ignore'}));
+    if (process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM');
+    else child.kill('SIGTERM');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+}
+function cleanup() {
+  kill(active);
+  for (const burner of burners) kill(burner);
+  burners.clear();
+  if (sourceMutated) {
+    fs.writeFileSync(source, original);
+    const now = new Date();
+    fs.utimesSync(source, now, now);
+    sourceMutated = false;
+  }
+}
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.on(signal, () => {
+    cleanup();
+    process.exit(code);
+  });
+}
+process.on('uncaughtException', error => {
+  console.error(error);
+  cleanup();
+  process.exit(1);
+});
+process.on('unhandledRejection', error => {
+  console.error(error);
+  cleanup();
+  process.exit(1);
+});
+process.on('exit', cleanup);
+async function command(args, name) {
+  return new Promise((resolve, reject) => {
+    const child = cp.spawn(args[0], args.slice(1), {
+      cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32'
+    });
+    active = child;
+    const chunks = [];
+    for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => chunks.push(chunk));
+    child.on('error', reject);
+    child.on('close', code => {
+      if (active === child) active = null;
+      const output = Buffer.concat(chunks).toString('utf8');
+      if (name) fs.writeFileSync(path.join(scratch, name), output);
+      resolve({code, text: output});
+    });
+  });
+}
+const rows = [];
+async function runs(label, loaded, count) {
+  const localBurners = [];
+  try {
+    if (loaded) for(let i=0;i<24;i++) {
+      const burner = cp.spawn('yes', [], {stdio:'ignore'});
+      burners.add(burner);
+      localBurners.push(burner);
+    }
     for(let i=1;i<=count;i++) {
       const filter = `/*/*/${control.method.split('/')[0]}*/${control.method.split('/')[1]}`;
-      const result = command(['dotnet','exec','tests/Antiphon.Tests/bin-c778-control/Antiphon.Tests.dll',
+      const result = await command(['dotnet','exec','tests/Antiphon.Tests/bin-c778-control/Antiphon.Tests.dll',
         '--treenode-filter',filter],`${label}-${i}.log`);
       const named = result.text.includes(control.assertion);
       const status = result.code===2 && result.text.includes('failed: 1') && named ? 'red' :
@@ -123,23 +174,39 @@ function runs(label, loaded, count) {
       rows.push([selected,label,i,status,result.code,control.assertion,named,`${scratch}/${label}-${i}.log`]);
       console.log(`${selected} ${label} ${i}/${count} ${status} exit=${result.code} named=${named}`);
     }
-  } finally {for(const burner of burners) burner.kill();}
+  } finally {
+    for (const burner of localBurners) {
+      kill(burner);
+      burners.delete(burner);
+    }
+  }
 }
-try {
-  fs.writeFileSync(source,mutated);
-  const build=command(['dotnet','build','tests/Antiphon.Tests','--no-restore',
+async function main() {
+  if ((await command(['git','diff','--exit-code'])).code !== 0)
+    throw Error('Tracked source dirty before mutation');
+  const mutated = control.change(original.toString('utf8'));
+  if (mutated === original.toString('utf8')) throw Error('Mutation did not change source');
+  try {
+    sourceMutated = true;
+    fs.writeFileSync(source,mutated);
+    const build=await command(['dotnet','build','tests/Antiphon.Tests','--no-restore',
     '--property:OutputPath=bin-c778-control/','--property:UseAppHost=false','--nologo','-v:q'], 'build.log');
-  console.log(`BUILD ${selected} exit=${build.code} log=${scratch}/build.log`);
-  if(build.code!==0) throw Error('Mutant did not compile');
-  runs('idle',false,5);
-  runs('load24',true,3);
-} finally {
-  fs.writeFileSync(source,original);
-  const diff=command(['git','diff','--exit-code']);
-  if(diff.code!==0) throw Error('Tracked source restoration failed');
-  console.log('RESTORED git diff empty');
-  fs.writeFileSync(path.join(scratch,'matrix.csv'),
-    'pc,load,iteration,status,exit,assertion,named,log\n'+rows.map(x=>x.join(',')).join('\n')+'\n');
+    console.log(`BUILD ${selected} exit=${build.code} log=${scratch}/build.log`);
+    if(build.code!==0) throw Error('Mutant did not compile');
+    await runs('idle',false,5);
+    await runs('load24',true,3);
+  } finally {
+    cleanup();
+    const diff=await command(['git','diff','--exit-code']);
+    if(diff.code!==0) throw Error('Tracked source restoration failed');
+    console.log('RESTORED git diff empty');
+    fs.writeFileSync(path.join(scratch,'matrix.csv'),
+      'pc,load,iteration,status,exit,assertion,named,log\n'+rows.map(x=>x.join(',')).join('\n')+'\n');
+  }
+  if(rows.some(x=>x[3]!=='red')) throw Error(`Matrix contains non-red cells: ${scratch}/matrix.csv`);
+  console.log(`MATRIX ${selected} 8/8 named red ${scratch}/matrix.csv`);
 }
-if(rows.some(x=>x[3]!=='red')) throw Error(`Matrix contains non-red cells: ${scratch}/matrix.csv`);
-console.log(`MATRIX ${selected} 8/8 named red ${scratch}/matrix.csv`);
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
