@@ -68,6 +68,22 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Census candidates', color: 'warning', icon: TbSearch,
     hint: 'Candidates from the last successful local process census. Check the generation time and evidence.',
   },
+  HostCleanupSummary: {
+    label: 'Host cleanup', color: 'warning', icon: TbSearch,
+    hint: 'Open the daily host cleanup receipt to inspect scratch outcomes and inventory-only worktrees.',
+  },
+  HostCleanupDiskPressure: {
+    label: 'Disk pressure', color: 'danger', icon: TbAlertTriangle,
+    hint: 'A fresh host or runner sample crossed its configured storage budget. Pressure never widens cleanup authority.',
+  },
+  HostCleanupHoldExpired: {
+    label: 'Cleanup hold expired', color: 'warning', icon: TbClockExclamation,
+    hint: 'The hold remains active until an operator explicitly renews or disposes of it.',
+  },
+  WorktreeCleanupBacklog: {
+    label: 'Worktree backlog', color: 'warning', icon: TbGitCommit,
+    hint: 'Eligible worktrees remain inventory-only; the named existing owner decides retirement.',
+  },
   CardClosedWhileWorking: {
     label: 'Card closed', color: 'warning', icon: TbAlertTriangle,
     hint: 'The card closed or was archived while this task was still working. Cancel it, or reopen the card.',
@@ -414,6 +430,7 @@ export const SEVERITY_COLOR: Record<AlertSeverity, string> = {
  * view lives on the Orchestrator page at all.
  */
 export function targetOf(item: AttentionItemDto): string | null {
+  if (item.hostCleanupRunId) return `/attention?hostCleanupRun=${encodeURIComponent(item.hostCleanupRunId)}`
   if (item.cardId && item.boardId) return `/boards/${item.boardId}?card=${item.cardId}`
   if (item.taskId) return `/orchestrator?tab=delegations&task=${item.taskId}`
   // `?agent=` is how AgentsPage takes a selection — the incident drawer opens on the agent it names.

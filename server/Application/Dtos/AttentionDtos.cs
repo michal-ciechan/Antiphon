@@ -324,6 +324,18 @@ public enum AttentionKind
 
     /// <summary>An outbound agent reply is held, failed or has uncertain broker acceptance.</summary>
     ChannelOutboundDelivery = 51,
+
+    /// <summary>CARD-0826: latest complete or incomplete daily host cleanup receipt.</summary>
+    HostCleanupSummary = 52,
+
+    /// <summary>CARD-0826: fresh host or runner storage pressure observation.</summary>
+    HostCleanupDiskPressure = 53,
+
+    /// <summary>CARD-0826: an expired hold still requires explicit disposition.</summary>
+    HostCleanupHoldExpired = 54,
+
+    /// <summary>CARD-0826: eligible inventory-only worktrees sustained over complete daily reports.</summary>
+    WorktreeCleanupBacklog = 55,
 }
 
 /// <summary>
@@ -417,7 +429,11 @@ public sealed record AttentionItemDto(
     // CARD-0672 D-3: a DispatchHeld row's dominant hold class (lease, remoteprep, runner, cap, ...).
     string? HoldClass = null,
     // CARD-0691: the whole candidate class from the same snapshot as the five-example preview.
-    IReadOnlyList<ZombieCensusRow>? CensusCandidates = null);
+    IReadOnlyList<ZombieCensusRow>? CensusCandidates = null,
+    Guid? HostCleanupRunId = null,
+    string? HostCleanupOwner = null,
+    string? HostCleanupRefusal = null,
+    DateTime? HostCleanupHoldExpiryUtc = null);
 
 /// <param name="RunnerConsulted">
 /// Whether the session runner answered this sweep. False means the runner-derived condition
