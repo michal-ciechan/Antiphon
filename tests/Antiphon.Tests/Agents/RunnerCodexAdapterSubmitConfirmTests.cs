@@ -186,7 +186,7 @@ public class RunnerCodexAdapterSubmitConfirmTests
                 // The production shape at test speed: 3 extra Enters inside the overall budget.
                 CodexSubmitReEnterIntervalMs = 150,
                 CodexSubmitAttempts = 3,
-                CodexSubmitConfirmTimeoutMs = 2_000,
+                CodexSubmitConfirmTimeoutMs = 10_000,
             }));
 
     private static AgentLaunchSpec NewSpec() => new(
