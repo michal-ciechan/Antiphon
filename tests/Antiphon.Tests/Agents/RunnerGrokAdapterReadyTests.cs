@@ -518,6 +518,7 @@ public class RunnerGrokAdapterReadyTests
         private readonly Queue<TaskCompletionSource> _nextPolls = new();
         private readonly TaskCompletionSource _firstPoll =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _pollCount;
         private TimeSpan _utcOffset;
         public Task FirstPollInstalled => _firstPoll.Task;
         public override DateTimeOffset GetUtcNow() => _timer.GetUtcNow() + _utcOffset;
@@ -529,10 +530,14 @@ public class RunnerGrokAdapterReadyTests
             var timer = _timer.CreateTimer(callback, state, dueTime, period);
             if (dueTime == TimeSpan.FromMilliseconds(5))
             {
-                _firstPoll.TrySetResult();
-                TaskCompletionSource? next;
-                lock (_nextPolls) next = _nextPolls.Count > 0 ? _nextPolls.Dequeue() : null;
-                next?.TrySetResult();
+                if (Interlocked.Increment(ref _pollCount) == 1)
+                    _firstPoll.TrySetResult();
+                else
+                {
+                    TaskCompletionSource? next;
+                    lock (_nextPolls) next = _nextPolls.Count > 0 ? _nextPolls.Dequeue() : null;
+                    next?.TrySetResult();
+                }
             }
             return timer;
         }
