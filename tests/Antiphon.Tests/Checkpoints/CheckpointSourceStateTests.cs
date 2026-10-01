@@ -175,6 +175,10 @@ public sealed class CheckpointSourceStateTests
         unstable.DirtyFiles.ShouldBeNull();
         new SourceSnapshot((_, _) => throw new IOException("injected"))
             .Capture(repo.Root).ErrorCode.ShouldBe("file_io", "injected-read-failure");
+        new SourceSnapshot((directory, args) => args[0] == "ls-files"
+                ? throw new IOException("injected ls-files failure")
+                : Encoding.UTF8.GetBytes(GitFixture.Run("git", directory, args.ToArray())))
+            .Capture(repo.Root).CaptureStatus.ShouldBe("unknown", "failed-index-enumeration");
 
         var noHead = Path.Combine(Path.GetTempPath(), "c835-unborn-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(noHead);
@@ -241,6 +245,40 @@ public sealed class CheckpointSourceStateTests
         {
             repo.Git("worktree", "remove", "--force", linked);
         }
+    }
+
+    [Test]
+    public void assume_unchanged_edit_is_unknown_in_both_readers() => HiddenIndexEditIsUnknown("--assume-unchanged", "--no-assume-unchanged");
+
+    [Test]
+    public void skip_worktree_edit_is_unknown_in_both_readers() => HiddenIndexEditIsUnknown("--skip-worktree", "--no-skip-worktree");
+
+    private static void HiddenIndexEditIsUnknown(string setFlag, string clearFlag)
+    {
+        using var repo = new GitFixture();
+        var reader = new SourceSnapshot();
+        void BothReaders(string status, string? code)
+        {
+            var tool = reader.Capture(repo.Root);
+            tool.CaptureStatus.ShouldBe(status, setFlag + " tool");
+            tool.ErrorCode.ShouldBe(code, setFlag + " tool reason");
+            var source = Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
+            var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
+                repo.Root.Replace("'", "''") + "' | ConvertTo-Json -Compress";
+            using var json = JsonDocument.Parse(GitFixture.Run("pwsh", repo.Root, "-NoProfile", "-Command", command));
+            var script = json.RootElement;
+            script.GetProperty("captureStatus").GetString().ShouldBe(status, setFlag + " script");
+            script.GetProperty("errorCode").GetString().ShouldBe(code, setFlag + " script reason");
+        }
+
+        BothReaders("known", null); // Positive control for each reader.
+        repo.Git("update-index", setFlag, "seed.txt");
+        repo.Write("seed.txt", "hidden edit\n");
+        repo.Git("status", "--porcelain=v1", "--", "seed.txt").ShouldBeEmpty("git-hides-edit");
+        BothReaders("unknown", "indexed_path_hidden");
+        repo.Git("update-index", clearFlag, "seed.txt");
+        repo.Git("restore", "--worktree", "seed.txt");
+        BothReaders("known", null); // Clearing the flag restores certification.
     }
 
     private sealed class GitFixture : IDisposable

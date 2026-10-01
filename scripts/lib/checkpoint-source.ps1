@@ -43,6 +43,17 @@ function Get-CheckpointSourceOnce {
     $commit = $utf8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', 'HEAD'))).Trim()
     if ($commit -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw 'head_invalid' }
     [byte[]]$status = Get-CheckpointGitBytes $Repository @('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none')
+    # Porcelain and diff omit worktree edits hidden by index flags. Refuse to
+    # certify any such index until its working content has been verified.
+    [byte[]]$indexFlags = Get-CheckpointGitBytes $Repository @('ls-files', '-v', '-z')
+    $flagIndex = 0
+    while ($flagIndex -lt $indexFlags.Length) {
+        $flagEnd = [array]::IndexOf($indexFlags, [byte]0, $flagIndex)
+        if ($flagEnd -lt $flagIndex + 3 -or $indexFlags[$flagIndex + 1] -ne 32) { throw 'index_flags_invalid' }
+        $flag = [char]$indexFlags[$flagIndex]
+        if ($flag -ceq 'S' -or [char]::IsLower($flag)) { throw 'indexed_path_hidden' }
+        $flagIndex = $flagEnd + 1
+    }
     $untracked = [System.Collections.Generic.List[byte[]]]::new()
     $count = 0
     $index = 0

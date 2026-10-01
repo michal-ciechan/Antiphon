@@ -331,16 +331,42 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         ReportValidator.Validate(valid, Sha).ShouldBe("report_source_ineligible", "legacy-report-ineligible");
         await CheckScriptAsync(2, "script-tool-legacy-parity");
         valid.SchemaVersion = 2;
-        valid.Rows.Single().Source = Evidence(Observe(OtherSha, 0), "clean", "notApplicable");
-        ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "row-heading-disagreement");
-        await CheckScriptAsync(2, "script-tool-row-heading-parity");
-        valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
-        valid.Rows.Single().Line += " dirty=0";
-        ReportValidator.Validate(valid, Sha).ShouldBe("duplicate_receipt_token");
+        valid.Rows.Single().Source = Evidence(
+            new SourceObservation(Sha, 0, new string('f', 64), DateTimeOffset.UtcNow, "known"),
+            "clean", "notApplicable");
         valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
         {
             Name = "CP-1", Commit = Sha, Build = "n/a", Filter = "true", Command = true,
             ExitCode = 0, Source = valid.Rows.Single().Source,
+        });
+        ReportValidator.IsSourceEligible(valid.Rows.Single().Source, Sha).ShouldBeTrue("fingerprint-row-valid-alone");
+        ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "fingerprint-row-heading-disagreement");
+        await CheckScriptAsync(2, "script-fingerprint-row-heading-parity");
+        valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
+        valid.Rows.Single().Command = null;
+        valid.Rows.Single().Executed = 1;
+        valid.Rows.Single().Passed = 1;
+        valid.Source = Evidence(Observe(Sha, 0), "clean", "verified");
+        valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
+        {
+            Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
+            ExitCode = 0, Executed = "1", Passed = "1", Source = valid.Rows.Single().Source,
+        });
+        ReportValidator.IsSourceEligible(valid.Rows.Single().Source, Sha).ShouldBeTrue("build-row-valid-alone");
+        ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "build-row-heading-disagreement");
+        await CheckScriptAsync(2, "script-build-row-heading-parity");
+        valid.Rows.Single().Source.BuildSource = "verified";
+        valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
+        {
+            Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
+            ExitCode = 0, Executed = "1", Passed = "1", Source = valid.Rows.Single().Source,
+        });
+        valid.Rows.Single().Line += " dirty=0";
+        ReportValidator.Validate(valid, Sha).ShouldBe("duplicate_receipt_token");
+        valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
+        {
+            Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
+            ExitCode = 0, Executed = "1", Passed = "1", Source = valid.Rows.Single().Source,
         });
         valid.Rows.Single().ExitCode = ExitCodes.FailedTests;
         ReportValidator.Validate(valid, Sha).ShouldBe("row_failed");

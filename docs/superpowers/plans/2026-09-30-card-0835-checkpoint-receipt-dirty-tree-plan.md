@@ -4,7 +4,7 @@ Date: 2026-09-30. Plan baseline: `d7456a2352d15391f37eca8781c16db499a3759d`.
 Stage: TestDesign complete; next: Code. Documentation only; no build or test execution.
 Static audit baseline: `1edfc2a72abdd02d5613f5ff6297488dca9bdf02` (includes the
 plan landed at `45321eaf`). CARD-0835 Code recount at `8331a9cf`: the 12-row
-roster is amended to 198 planned executions per OS, including CARD-0833's 21
+roster is amended to 201 planned executions per OS, including CARD-0833's 21
 slot-path regressions. The 26 positive-control IDs and 35 independently applied
 defect variants are unchanged.
 
@@ -443,7 +443,7 @@ executions; internal alias calls do not add executions.
 
 | CP | Exact executed roster and count | Literal `-Expect` value |
 |---|---|---|
-| CP-1 | `CheckpointSourceStateTests`: 5 source tests + 1 Git-fixture cleanup regression | `CheckpointSourceStateTests` |
+| CP-1 | `CheckpointSourceStateTests`: 7 source tests + 1 Git-fixture cleanup regression = 8 | `CheckpointSourceStateTests` |
 | CP-2 | `RunCheckpointSourceScriptTests`: 5 new | `RunCheckpointSourceScriptTests` |
 | CP-3 | `RunCheckpointScriptTests`: 24 | `RunCheckpointScriptTests` |
 | CP-4 | `CheckpointSourceExecutionTests`: 6 new | `CheckpointSourceExecutionTests` |
@@ -456,7 +456,7 @@ executions; internal alias calls do not add executions.
 | CP-11 | `DelegateScriptLandApprovalTests`: 4 + 1 new; `CheckpointManifestDocumentationTests`: 7 = 12 | `DelegateScriptLandApprovalTests,CheckpointManifestDocumentationTests` |
 | CP-12 | `AgentTaskLandApprovalRecoveryTests.C488_OriginalApprovalNeverAdoptsHead` and `.C488_ChangedSourceNeedsNewApproval`: 1 each = 2 | `AgentTaskLandApprovalRecoveryTests.C488_OriginalApprovalNeverAdoptsHead,AgentTaskLandApprovalRecoveryTests.C488_ChangedSourceNeedsNewApproval` |
 
-Total after the Windows teardown refinement: **175 existing + 24 new = 199 per OS**, 398 for the two qualifications.
+Total after the Windows teardown refinement and hidden-index controls: **175 existing + 26 new = 201 per OS**, 402 for the two qualifications. The added CP-1 methods cover assume-unchanged and skip-worktree hidden edits in both readers; each also proves the clean positive control before and after clearing the flag.
 The base source recount agrees with every other planned class count: 24, 3, 6,
 1, 3, 13, 14, 19 expanded parser cases, 16, 11, 21 expanded request cases,
 10, 4 and 7 in roster order; CP-12 still selects its two exact methods.
@@ -610,7 +610,7 @@ owner-watch uncertainty pair are excluded: neither is needed for the source chan
 The closed CP table has no Unit-lane or Checkpoints-namespace sweep. The Final Code
 brief separately authorizes one supplemental Unit lane; it found S4 fixture,
 bundle-size and Slow-category repairs. This adds no CP row or V/R execution
-and does not change the 198-per-OS census. New terminal tests use
+and does not change the 201-per-OS census. New terminal tests use
 bounded gates with unconditional release/cancel/await cleanup instead of those
 flaky fixture clocks. A timeout is reported with identities, never retried into a
 silent green or called a successful PC.
@@ -646,7 +646,7 @@ results root per round and `-ExpectedSourceSha` on every ordinary row:
 
 ```powershell
 $sourceSha = (git rev-parse HEAD).Trim()
-pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c835/ -Filter '/*/*/CheckpointSourceStateTests/*' -MinExecuted 6 -Expect CheckpointSourceStateTests -ExpectedSourceSha $sourceSha -ResultsRoot .antiphon/c835-linux-r1
+pwsh -NoProfile -File scripts/run-checkpoint.ps1 -Name CP-1 -Project tests/Antiphon.Tests -OutputPath bin-c835/ -Filter '/*/*/CheckpointSourceStateTests/*' -MinExecuted 8 -Expect CheckpointSourceStateTests -ExpectedSourceSha $sourceSha -ResultsRoot .antiphon/c835-linux-r1
 ```
 
 Invoke the checkpoint driver directly as shown. It acquires and releases one lease
@@ -709,7 +709,7 @@ backslash. All expected failures/skips are zero on both platforms.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---:|---|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c835/` | source-git-parity | `/*/*/CheckpointSourceStateTests/*` | V-1-V-5 + Git-fixture cleanup | all 6 executed, 0 failed/skipped, real Linux/Windows Git | 6 | 12 | 18 | true | n/a |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c835/` | source-git-parity | `/*/*/CheckpointSourceStateTests/*` | V-1-V-5 + hidden-index controls + Git-fixture cleanup | all 8 executed, 0 failed/skipped, real Linux/Windows Git | 8 | 12 | 18 | true | n/a |
 | CP-2 | all | CP-1 | script-source | `/*/*/RunCheckpointSourceScriptTests/*` | V-6-V-10 | all 5 executed, 0 failed/skipped | 5 | 4 | 6 | true | n/a |
 | CP-3 | all | CP-1 | script-regression | `/*/*/RunCheckpointScriptTests/*` | R-1 | all 24 executed, 0 failed/skipped | 24 | 4 | 6 | true | n/a |
 | CP-4 | all | CP-1 | tool-source | `/*/*/CheckpointSourceExecutionTests/*` | V-11-V-16 | all 6 executed, 0 failed/skipped | 6 | 2 | 3 | true | n/a |
@@ -735,7 +735,7 @@ Static validation parsed the Markdown cells (including escaped pipes), matched
 class/method operands against source declarations plus the proposed V roster,
 expanded `[Arguments]`, checked disjoint selections and every Min, summed both
 time columns, and checked the bijection between guard and PC-variant IDs. Result:
-12 rows, 199 planned executions per OS, 60/92 estimated minutes, 35 unique mappings and
+12 rows, 201 planned executions per OS, 60/92 estimated minutes, 35 unique mappings and
 23/23 proposed methods covered. `git diff --check` also passed. These are static
 design checks, not measured TUnit results or evidence that the PCs have gone red.
 
