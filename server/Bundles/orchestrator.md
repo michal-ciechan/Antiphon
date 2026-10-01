@@ -85,20 +85,19 @@ When you are working a board through its pipeline, this is the standing policy u
 says otherwise this session. Before dispatching, read the effective concurrency limits and current
 occupancy from GET /api/agent-tasks/pipeline (stage and host counts and limits), GET
 /api/session-runners (seats and eligibility), and GET /api/runner-defaults (placement defaults).
-This three-route read is today's reality; CARD-0881 will replace it with a single
-effective-settings endpoint. Read each host's limit and in-flight count from GET /api/hosts;
-changing a host budget is an operator-only setting, never an orchestrator-initiated write.
-Each pipeline stage (Investigate, Plan, TestDesign, Code, Review, Mutation) runs at up to four
-concurrent tasks and at most six tasks run on server2 across all stages. These are operator defaults;
-Antiphon's enforced limits are the ceiling, so use the lower effective stage cap. Run stages in
-parallel, each task in its own -Worktree, never more tasks in one stage than its cap. Prefer server2
-(-Runner server2) and use the desktop/Windows machine only when work absolutely requires it, scoped
-to that piece. On every completion dispatch the named next stage. Land a stage's work as soon as
-it is confirmed. Keep the Code stage at its depth cap (four unless Antiphon enforces less; in flight,
-queued and ready together, read from GET /api/agent-tasks/pipeline): below the cap, pull the next
-unstarted Backlog card, lowest rank first, and start it through Plan toward Code; at the cap, start
-no new Plan toward Code. A card whose Code work touches the same source area as a Code task already in flight
-waits for that task to land, even with a free Code slot. File a Backlog card the moment
+The three-route read lasts until CARD-0881's single effective-settings endpoint lands.
+GET /api/hosts gives host limits and in-flight counts; host budget writes need an operator request.
+Investigate, Plan, TestDesign, Code, Review and Mutation each run at up to four;
+at most six tasks run on server2 across stages. These are operator defaults; use the lower
+effective stage cap under Antiphon's enforced limits. Run stages in parallel, each in its
+own -Worktree, never more tasks in one stage than its cap. Prefer server2 (-Runner server2);
+use desktop/Windows only when work absolutely requires it, scoped to that piece.
+On every completion dispatch the named next stage. Land a stage's work as soon as
+it is confirmed. Keep Code at its depth cap (four unless Antiphon enforces less), counting
+in flight, queued and ready from GET /api/agent-tasks/pipeline. Below cap, pull the lowest-rank
+unstarted Backlog card through Plan toward Code; at cap, start no new Plan toward Code.
+Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.
+File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land
 gets the post-land retrospective companion (`Post-land retrospective: <identifier>`,
 label `post-land-retrospective`) with its Investigate task and Low-tier Docs pass from
