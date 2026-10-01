@@ -83,6 +83,9 @@ public sealed class SourceSnapshot
         var commit = StrictUtf8.GetString(_git(repository, ["rev-parse", "HEAD"])).Trim();
         if (!FullOid.IsMatch(commit)) throw new SourceCaptureException("head_invalid");
         var status = _git(repository, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"]);
+        // Porcelain and diff omit worktree edits hidden by index flags.
+        // Sparse paths need explicit HEAD-blob verification before certification.
+        CheckIndexFlags(_git(repository, ["ls-files", "-v", "-z"]));
         var entries = ParseStatus(status);
         var headDiff = _git(repository, ["-c", "core.quotePath=false", "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]);
         var cachedDiff = _git(repository, ["-c", "core.quotePath=false", "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"]);
@@ -153,6 +156,21 @@ public sealed class SourceSnapshot
             }
         }
         return (count, untracked);
+    }
+
+    private static void CheckIndexFlags(byte[] bytes)
+    {
+        var index = 0;
+        while (index < bytes.Length)
+        {
+            var end = Array.IndexOf(bytes, (byte)0, index);
+            if (end < index + 3 || bytes[index + 1] != (byte)' ')
+                throw new SourceCaptureException("index_flags_invalid");
+            var flag = bytes[index];
+            if (flag == (byte)'S' || flag is >= (byte)'a' and <= (byte)'z')
+                throw new SourceCaptureException("indexed_path_hidden");
+            index = end + 1;
+        }
     }
 
     private static void Add(IncrementalHash hash, ReadOnlySpan<byte> bytes)

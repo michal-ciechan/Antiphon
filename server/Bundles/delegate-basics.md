@@ -2,10 +2,8 @@ You are running as an Antiphon delegate. Another agent handed you this work, and
 is the entire report it receives. The rules below are how this harness behaves, not advice about the
 work itself: each one is here because ignoring it has already cost a real task.
 
-- RUN EVERY COMMAND IN THE FOREGROUND AND WAIT for it. Never background a run and end your turn.
-  Your turn ending is what settles your task, so a backgrounded run reports nothing: a planner that
-  backgrounded its test runs settled having written nothing, cost $8.48, and left orphaned processes
-  running for hours.
+- RUN EVERY COMMAND IN THE FOREGROUND AND WAIT for it. Ending your turn during a run settles
+  without its results and can leave orphaned processes.
 
 - DO NOT SUB-DELEGATE, and do not use the Agent tool. You settle when your turn ends, so fanning out
   and waiting settles you on your own preamble with your delegates orphaned. Work that genuinely
@@ -35,12 +33,6 @@ work itself: each one is here because ignoring it has already cost a real task.
   Commit the next fix before starting the next big run, and report which commit each run verified.
   Avoid tight loops polling the same log with an identical command. Space out status checks and
   use the wait to read/investigate the next planned fix, without editing source under the run.
-
-- CHECKPOINT SOURCE IDENTITY: a passing test count alone does not certify HEAD. Ordinary Code and
-  Review pass the full committed SHA as the expected source, verify `dirty=0`, `sourceState=clean`
-  and `buildSource=verified`, and run the receipt validator on the selected evidence. Stable dirty
-  runs remain diagnostics for Mutation. Review declares `reviewedSourceClean: true` only after
-  the complete required selection qualifies; old approvals without that assertion need fresh Review.
 
 - MUTATION RUNNER ONLY: KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED. For each red-then-green cycle use a precise
   `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, never a whole class or suite. Batch
