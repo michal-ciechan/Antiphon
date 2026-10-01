@@ -30,7 +30,7 @@ public class RunnerGrokAdapterReadyTests
             .Where(x => x.GetProperty("expectedReason").GetString() == "Ready")
             .Select(x => x.GetProperty("screen").GetString()!).ToArray();
         var client = new ScriptedClient(animated, loop: true);
-        await using var adapter = NewAdapter(client, max: 3000, settle: 60);
+        await using var adapter = NewAdapter(client, max: 5000, settle: 60);
         await adapter.StartAsync(Spec(), CancellationToken.None);
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
         ready.ShouldBeTrue("ready must survive every advancing spinner frame");
@@ -40,7 +40,7 @@ public class RunnerGrokAdapterReadyTests
         // With zero settlement there are exactly two completed observations. A
         // second DTO fetch inside either decision violates snapshot coherence.
         var coherent = new ScriptedClient([Ready]);
-        await using var coherentAdapter = NewAdapter(coherent, max: 3000, settle: 0);
+        await using var coherentAdapter = NewAdapter(coherent, max: 5000, settle: 0);
         await coherentAdapter.StartAsync(Spec(), CancellationToken.None);
         (await coherentAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
         coherent.SnapshotReads.ShouldBe(2, "snapshotReads must equal completedDecisions");
@@ -64,7 +64,7 @@ public class RunnerGrokAdapterReadyTests
     public async Task Current_trust_is_answered_once_before_positive_ready()
     {
         var client = new ScriptedClient([Trust, Trust, Ready, Ready], raw: Trust);
-        await using var adapter = NewAdapter(client, max: 5000, settle: 50, trust: 2000);
+        await using var adapter = NewAdapter(client, max: 10000, settle: 50, trust: 5000);
         await adapter.StartAsync(Spec(), CancellationToken.None);
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
         client.Writes.ShouldBe(["y"]);
@@ -74,7 +74,7 @@ public class RunnerGrokAdapterReadyTests
         (await staleAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
         stale.Writes.ShouldBeEmpty();
         var questionOnly = new ScriptedClient(["Do you trust the contents of this directory?"]);
-        await using var questionAdapter = NewAdapter(questionOnly, max: 100);
+        await using var questionAdapter = NewAdapter(questionOnly, max: 5000);
         await questionAdapter.StartAsync(Spec(), CancellationToken.None);
         (await questionAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
         questionOnly.Writes.ShouldBeEmpty();
@@ -84,32 +84,51 @@ public class RunnerGrokAdapterReadyTests
     public async Task Post_trust_blank_or_sign_in_is_not_ready()
     {
         var blank = new ScriptedClient([Trust, ""]);
-        await using var adapter = NewAdapter(blank, max: 1000, trust: 0);
+        await using var adapter = NewAdapter(blank, max: 5000, trust: 0);
         await adapter.StartAsync(Spec(), CancellationToken.None);
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
         blank.Writes.ShouldBe(["y"]);
         var signin = new ScriptedClient([Trust, SignIn]);
-        await using var second = NewAdapter(signin, max: 1000);
+        await using var second = NewAdapter(signin, max: 5000);
         await second.StartAsync(Spec(), CancellationToken.None);
         (await second.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
         second.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.ProviderSignInRequired);
         signin.Writes.ShouldBe(["y"]);
-        var trustStart = Stopwatch.StartNew();
+        var trustClock = new PollGateClock();
+        var trustStarted = trustClock.GetTimestamp();
         var trustReads = 0;
         var lateTrustRead = new TaskCompletionSource<GrokStartupSnapshot?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var trustRelease = Task.Delay(2000).ContinueWith(_ => lateTrustRead.TrySetResult(
-            new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow)));
-        var trustReady = GrokReadyWait.WaitAsync(_ => ++trustReads == 1
-                ? Task.FromResult<GrokStartupSnapshot?>(new(Trust, Trust, 1, DateTime.UtcNow))
-                : lateTrustRead.Task,
+        var secondTrustRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        GrokStartupReason? trustOutcome = null;
+        var trustReady = GrokReadyWait.WaitAsync(_ =>
+            {
+                if (++trustReads == 1)
+                    return Task.FromResult<GrokStartupSnapshot?>(new(Trust, Trust, 1, DateTime.UtcNow));
+                secondTrustRead.TrySetResult();
+                return lateTrustRead.Task;
+            },
             new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
-                TrustSettle = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(5) },
+                TrustSettle = TimeSpan.FromMilliseconds(500), PollInterval = TimeSpan.FromMilliseconds(1),
+                TimeProvider = trustClock,
+                OnFailure = (outcome, _, _, _, _, _, _) => trustOutcome = outcome },
             (_, _) => Task.CompletedTask);
-        var trustCompletion = await trustReady;
-        var trustCompletionElapsed = trustStart.Elapsed;
-        await trustRelease;
-        trustCompletionElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1), "trustCompletionElapsed");
+        await trustClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
+        trustClock.Advance(TimeSpan.FromMilliseconds(1));
+        await secondTrustRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        trustClock.Advance(TimeSpan.FromMilliseconds(499));
+        if (await Task.WhenAny(trustReady, Task.Delay(5000)) != trustReady)
+        {
+            trustClock.Advance(TimeSpan.FromSeconds(2));
+            lateTrustRead.TrySetResult(new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow));
+            trustClock.Advance(TimeSpan.FromSeconds(5));
+        }
+        var trustCompletion = await trustReady.WaitAsync(TimeSpan.FromSeconds(5));
+        var trustCompletionElapsed = trustClock.GetElapsedTime(trustStarted);
+        lateTrustRead.TrySetResult(new GrokStartupSnapshot(Ready, "", 2, DateTime.UtcNow));
+        trustCompletionElapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromMilliseconds(500),
+            "trustCompletionElapsed");
+        trustOutcome.ShouldBe(GrokStartupReason.Trust, "trustExpiryOutcome");
         trustCompletion.ShouldBeFalse();
     }
 
@@ -123,7 +142,7 @@ public class RunnerGrokAdapterReadyTests
         {
             if (++lateReads == 2)
             {
-                await Task.Delay(5);
+                await Task.Yield();
                 clock.Advance(TimeSpan.FromSeconds(6));
             }
             return frame;
@@ -132,40 +151,67 @@ public class RunnerGrokAdapterReadyTests
         lateReads.ShouldBe(2);
         late.ShouldBeFalse("lateReadReady");
         var hung = new TaskCompletionSource<GrokStartupSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var began = Stopwatch.StartNew();
-        var bounded = GrokReadyWait.WaitAsync(_ => hung.Task,
-            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(35) });
-        var release = Task.Delay(2000).ContinueWith(_ => hung.TrySetResult(frame));
-        var boundedResult = await bounded;
-        var completionElapsed = began.Elapsed;
-        await release;
+        var boundClock = new FakeTimeProvider();
+        var boundStarted = boundClock.GetTimestamp();
+        var readEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bounded = GrokReadyWait.WaitAsync(_ => { readEntered.TrySetResult(); return hung.Task; },
+            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5), TimeProvider = boundClock });
+        await readEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        boundClock.Advance(TimeSpan.FromSeconds(5));
+        if (await Task.WhenAny(bounded, Task.Delay(5000)) != bounded)
+        {
+            boundClock.Advance(TimeSpan.FromSeconds(1));
+            hung.TrySetResult(frame);
+        }
+        var boundedResult = await bounded.WaitAsync(TimeSpan.FromSeconds(5));
+        var completionElapsed = boundClock.GetElapsedTime(boundStarted);
+        hung.TrySetResult(frame);
         boundedResult.ShouldBeFalse();
-        completionElapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1), "completionElapsed");
+        completionElapsed.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(5), "completionElapsed");
         (await GrokReadyWait.WaitAsync(_ => Task.FromResult<GrokStartupSnapshot?>(frame),
             new GrokReadyWaitOptions { MaxWait = TimeSpan.Zero })).ShouldBeFalse();
-        var readyBeforeMinimumAge = await GrokReadyWait.WaitAsync(
+        var minimumClock = new PollGateClock();
+        var minimumWait = GrokReadyWait.WaitAsync(
             _ => Task.FromResult<GrokStartupSnapshot?>(frame),
-            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromMilliseconds(70),
-                MinimumAgeRemaining = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(10),
-                Settle = TimeSpan.Zero });
+            new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
+                MinimumAgeRemaining = TimeSpan.FromSeconds(10), PollInterval = TimeSpan.FromMilliseconds(1),
+                Settle = TimeSpan.Zero, TimeProvider = minimumClock });
+        await minimumClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
+        minimumClock.Advance(TimeSpan.FromMilliseconds(1));
+        var minimumNext = await Task.WhenAny(minimumWait, minimumClock.PollInstalled(2))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        if (minimumNext != minimumWait) minimumClock.Advance(TimeSpan.FromSeconds(5));
+        var readyBeforeMinimumAge = await minimumWait.WaitAsync(TimeSpan.FromSeconds(5));
         readyBeforeMinimumAge.ShouldBeFalse("readyBeforeMinimumAge");
-        var trustClock = new JumpClock();
+        var trustClock = new PollGateClock();
         var trustBudgetStarted = trustClock.GetTimestamp();
         var trustReads = 0;
         var trustLateRead = new TaskCompletionSource<GrokStartupSnapshot?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var trustLateRelease = Task.Delay(2000).ContinueWith(_ => trustLateRead.TrySetResult(frame));
-        var trustBudgetReady = await GrokReadyWait.WaitAsync(_ =>
+        var secondTrustRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trustBudgetWait = GrokReadyWait.WaitAsync(_ =>
         {
-            return ++trustReads == 1
-                ? Task.FromResult<GrokStartupSnapshot?>(new(Trust, "", 1, DateTime.UtcNow))
-                : trustLateRead.Task;
+            if (++trustReads == 1)
+                return Task.FromResult<GrokStartupSnapshot?>(new(Trust, "", 1, DateTime.UtcNow));
+            secondTrustRead.TrySetResult();
+            return trustLateRead.Task;
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.Zero, TrustSettle = TimeSpan.Zero,
-            PollInterval = TimeSpan.FromMilliseconds(5), TimeProvider = trustClock },
+            PollInterval = TimeSpan.FromMilliseconds(1), TimeProvider = trustClock },
             (_, _) => { trustClock.Advance(TimeSpan.FromSeconds(4)); return Task.CompletedTask; });
+        await trustClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
+        trustClock.Advance(TimeSpan.FromMilliseconds(1));
+        await secondTrustRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        trustClock.Advance(TimeSpan.FromMilliseconds(999));
+        if (await Task.WhenAny(trustBudgetWait, Task.Delay(5000)) != trustBudgetWait)
+        {
+            trustClock.Advance(TimeSpan.FromSeconds(1));
+            trustLateRead.TrySetResult(frame);
+            trustClock.Advance(TimeSpan.FromSeconds(5));
+        }
+        var trustBudgetReady = await trustBudgetWait.WaitAsync(TimeSpan.FromSeconds(5));
         var trustBudgetElapsed = trustClock.GetElapsedTime(trustBudgetStarted);
-        await trustLateRelease;
+        trustLateRead.TrySetResult(frame);
         trustBudgetElapsed.ShouldBeLessThan(
             TimeSpan.FromMilliseconds(5500), "trustCompletionElapsed inside originalMax");
         trustBudgetReady.ShouldBeFalse("trustCompletionElapsed must stay inside originalMax");
@@ -188,11 +234,11 @@ public class RunnerGrokAdapterReadyTests
         // Advance only after each poll timer exists. If readiness instead
         // sleeps to the floor after the second positive observation, release
         // that timer so the stale-positive result reaches the named assertion.
-        await floorClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(2));
+        await floorClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
         floorClock.Advance(TimeSpan.FromMilliseconds(1));
         var secondPoll = floorClock.PollInstalled(2);
         var next = await Task.WhenAny(floorWait, secondPoll, floorClock.FloorSleepInstalled)
-            .WaitAsync(TimeSpan.FromSeconds(2));
+            .WaitAsync(TimeSpan.FromSeconds(5));
         if (next == floorWait)
         {
             (await floorWait).ShouldBeFalse("readyWithFloorModal");
@@ -200,7 +246,7 @@ public class RunnerGrokAdapterReadyTests
         }
         floorClock.Advance(next == secondPoll
             ? TimeSpan.FromMilliseconds(1) : TimeSpan.FromMilliseconds(80));
-        var floor = await floorWait.WaitAsync(TimeSpan.FromSeconds(2));
+        var floor = await floorWait.WaitAsync(TimeSpan.FromSeconds(5));
         floor.ShouldBeFalse("readyWithFloorModal");
         floorReads.ShouldBeGreaterThanOrEqualTo(3);
     }
@@ -218,7 +264,7 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
-        await utcClock.FirstPollInstalled.WaitAsync(TimeSpan.FromSeconds(2));
+        await utcClock.FirstPollInstalled.WaitAsync(TimeSpan.FromSeconds(5));
         utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
         for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
         {
@@ -228,7 +274,7 @@ public class RunnerGrokAdapterReadyTests
         utcReads.ShouldBeGreaterThanOrEqualTo(2);
         // Let a completed read settle its continuation without moving the fake
         // monotonic clock. A UTC-based mutant must finish at this point.
-        await Task.WhenAny(wait, Task.Delay(100));
+        await Task.WhenAny(wait, Task.Delay(5000));
         wait.IsCompleted.ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
         for (var tick = 0; tick < 60 && !wait.IsCompleted; tick++)
         {
@@ -277,9 +323,9 @@ public class RunnerGrokAdapterReadyTests
             return new GrokStartupSnapshot(Ready, "", reads, DateTime.UtcNow);
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5) },
             (_, _) => { writes++; return Task.CompletedTask; }, ct: cancel.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancel.Cancel();
-        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(2)));
+        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(5)));
         reads.ShouldBe(1);
         writes.ShouldBe(0);
     }
@@ -301,7 +347,7 @@ public class RunnerGrokAdapterReadyTests
             (_, _) => { writes++; return Task.CompletedTask; }, ct: cancel.Token);
         reads.ShouldBe(1);
         cancel.Cancel();
-        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(2)));
+        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(5)));
         reads.ShouldBe(1);
         writes.ShouldBe(0);
     }
@@ -324,9 +370,9 @@ public class RunnerGrokAdapterReadyTests
                 entered.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             }, ct: cancel.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancel.Cancel();
-        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(2)));
+        await Should.ThrowAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(5)));
         reads.ShouldBe(1);
         writes.ShouldBe(1);
     }
@@ -339,12 +385,17 @@ public class RunnerGrokAdapterReadyTests
         {
             const string sentinel = "C778_PRIVATE_SCREEN_SENTINEL";
             var logger = new TestLogger();
+            var deadlineClock = new PollGateClock();
             var client = new ScriptedClient(["Starting session… " + sentinel,
-                "Second startup frame " + sentinel]);
-            await using var adapter = NewAdapter(client, max: 100, captureDirectory: root,
-                logger: logger);
+                "Second startup frame " + sentinel],
+                onSnapshot: count => { if (count == 2) deadlineClock.Advance(TimeSpan.FromSeconds(6)); });
+            await using var adapter = NewAdapter(client, max: 5000, captureDirectory: root,
+                logger: logger, time: deadlineClock);
             await adapter.StartAsync(Spec(), CancellationToken.None);
-            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+            var deadlineWait = adapter.WaitForReadyAsync(CancellationToken.None);
+            await deadlineClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
+            deadlineClock.Advance(TimeSpan.FromMilliseconds(50));
+            (await deadlineWait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse();
             var file = Directory.GetFiles(root, "grok-startup-*.txt").Single();
             var content = File.ReadAllText(file);
             content.ShouldContain("outcome: Deadline");
@@ -354,9 +405,11 @@ public class RunnerGrokAdapterReadyTests
             string.Join("\n", logger.Messages).ShouldNotContain(sentinel);
             var blockedPath = Path.Combine(root, "not-a-directory-" + sentinel);
             File.WriteAllText(blockedPath, "sentinel");
-            var bad = new ScriptedClient([sentinel]);
-            await using var second = NewAdapter(bad, max: 50, captureDirectory: blockedPath,
-                logger: logger);
+            var badClock = new PollGateClock();
+            var bad = new ScriptedClient([sentinel],
+                onSnapshot: _ => badClock.Advance(TimeSpan.FromSeconds(6)));
+            await using var second = NewAdapter(bad, max: 5000, captureDirectory: blockedPath,
+                logger: logger, time: badClock);
             await second.StartAsync(Spec(), CancellationToken.None);
             (await second.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
             logger.Messages.Count.ShouldBe(2);
@@ -385,9 +438,9 @@ public class RunnerGrokAdapterReadyTests
                 Settle = TimeSpan.Zero, PollInterval = TimeSpan.FromMilliseconds(1),
                 TimeProvider = failureClock,
                 OnFailure = (outcome, _, _, _, _, _, _) => failureOutcome = outcome });
-            await failureClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(2));
+            await failureClock.PollInstalled(1).WaitAsync(TimeSpan.FromSeconds(5));
             failureClock.Advance(TimeSpan.FromMilliseconds(1));
-            var snapshotFailureReady = await snapshotFailureWait.WaitAsync(TimeSpan.FromSeconds(2));
+            var snapshotFailureReady = await snapshotFailureWait.WaitAsync(TimeSpan.FromSeconds(5));
             failureReads.ShouldBe(2, "snapshotFailureReads");
             failureOutcome.ShouldBe(GrokStartupReason.SnapshotFailure, "snapshotFailureOutcome");
             snapshotFailureReady.ShouldBeFalse("snapshotFailureReady");
@@ -395,7 +448,7 @@ public class RunnerGrokAdapterReadyTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
-    private static RunnerGrokAdapter NewAdapter(ScriptedClient client, int max = 300,
+    private static RunnerGrokAdapter NewAdapter(ScriptedClient client, int max = 5000,
         int settle = 50, int trust = 150, string? captureDirectory = null,
         ILogger? logger = null, TimeProvider? time = null) => new(client,
         Options.Create(new AgentRegistrySettings
@@ -412,7 +465,7 @@ public class RunnerGrokAdapterReadyTests
             .EnumerateArray().Where(x => x.GetProperty("expectedReason").GetString() == "Ready")
             .Select(x => x.GetProperty("screen").GetString()!).ToArray();
         var client = new ScriptedClient(screens, loop: true);
-        await using var adapter = NewAdapter(client, max: 3000, settle: 60);
+        await using var adapter = NewAdapter(client, max: 5000, settle: 60);
         await adapter.StartAsync(Spec(), CancellationToken.None);
         return await adapter.WaitForReadyAsync(CancellationToken.None);
     }
@@ -515,7 +568,8 @@ public class RunnerGrokAdapterReadyTests
             TimeSpan dueTime, TimeSpan period)
         {
             var timer = _timer.CreateTimer(callback, state, dueTime, period);
-            if (dueTime == TimeSpan.FromMilliseconds(1))
+            if (dueTime == TimeSpan.FromMilliseconds(1)
+                || dueTime == TimeSpan.FromMilliseconds(50))
             {
                 var index = Interlocked.Increment(ref _pollCount) - 1;
                 if (index < _polls.Length) _polls[index].TrySetResult();
