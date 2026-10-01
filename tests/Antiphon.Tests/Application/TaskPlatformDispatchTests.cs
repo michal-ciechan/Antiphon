@@ -169,6 +169,12 @@ public sealed class TaskPlatformDispatchTests
             task.RunnerId = host;
             task.AgentKind = AgentKind.Codex;
             task.ModelLevel = level;
+            // This legacy row tests host admission, not Worktree source-baseline custody.
+            // A synthetic Worktree with no repository identity fails the latter before launch.
+            task.Workspace = WorkspaceMode.Shared;
+            task.WorktreePath = null;
+            task.WorktreeBranch = null;
+            task.Role = AgentTaskRole.Custom;
             await db.SaveChangesAsync();
             var world = CreateDispatcher(schema, new StableDesktopDirectory());
             try
