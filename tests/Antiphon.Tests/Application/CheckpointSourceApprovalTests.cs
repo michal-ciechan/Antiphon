@@ -143,6 +143,200 @@ public sealed class CheckpointSourceApprovalTests
                     .ShouldContain("review_evidence_source_not_clean", Case.Sensitive, label);
             }
         }
+
+        foreach (var mode in new[] { "self", "adoption" })
+        foreach (var timing in new[] { "admission", "resume" })
+        foreach (bool? assertion in new bool?[] { false, null, true })
+        {
+            var label = $"{mode} {timing} clean={assertion?.ToString() ?? "null"}";
+            await using var h = new LandingSafetyHarness();
+            await h.InitializeAsync();
+            var (reviewed, evidenceId, sourceId) = await SeedRecoveryAsync(h, mode,
+                timing == "admission" ? assertion : true);
+            Task<LandRequestResult> Request() => h.RequestAsync(expectedSourceSha: reviewed,
+                reviewEvidenceId: evidenceId, recoverReviewedSource: mode == "self",
+                adoptFromTaskId: sourceId);
+            var traceStart = h.Fixture.Git.Trace.Count;
+            if (timing == "admission" && assertion != true)
+            {
+                var error = await Should.ThrowAsync<ConflictException>(Request, label);
+                error.Code.ShouldBe("review_evidence_source_not_clean", label);
+                await using var db = h.CreateContext();
+                (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0, label);
+                h.Fixture.Git.Trace.Skip(traceStart).ShouldNotContain(a => a.Contains("update-ref") ||
+                    a.Contains("reset") || a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), label);
+                continue;
+            }
+
+            var accepted = await Request();
+            accepted.Status.ShouldBe("queued", label);
+            if (timing == "resume")
+            {
+                await using var db = h.CreateContext();
+                await db.StageOutcomes.Where(o => o.Id == evidenceId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.ReviewedSourceClean, assertion));
+                await h.RestartServicesAsync();
+            }
+            var remoteSource = (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
+                h.Fixture.SourceRef)).Trim();
+            var remoteTarget = (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
+                h.Fixture.TargetRef)).Trim();
+            h.Fixture.Git.Trace.Clear();
+            if (timing == "resume") await h.RunAsync();
+            else await h.RunQueuedAsync();
+            if (assertion == true)
+            {
+                var op = (await h.OperationAsync()).ShouldNotBeNull(label);
+                new AgentTaskLandingState().HasPublication(op).ShouldBeTrue(label);
+            }
+            else
+            {
+                (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
+                    h.Fixture.SourceRef)).Trim().ShouldBe(remoteSource, label);
+                (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse",
+                    h.Fixture.TargetRef)).Trim().ShouldBe(remoteTarget, label);
+                h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("update-ref") || a.Contains("reset") ||
+                    a.Contains("rebase") || a.Contains("merge") || a.Contains("push"), label);
+                await using var db = h.CreateContext();
+                var stored = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == accepted.RequestId);
+                stored.ReviewEvidenceId.ShouldBe(evidenceId, label);
+                stored.IsPending.ShouldBeFalse(label);
+                (await db.AgentTaskLandings.CountAsync()).ShouldBe(0, label);
+            }
+        }
+
+        foreach (var mode in new[] { "ordinary", "self", "adoption" })
+        foreach (bool? assertion in new bool?[] { false, null })
+        {
+            var label = $"published-cleanup {mode} clean={assertion?.ToString() ?? "null"}";
+            await using var h = new LandingSafetyHarness();
+            await h.InitializeAsync();
+            string reviewed;
+            Guid evidenceId;
+            Guid? sourceId;
+            if (mode == "ordinary")
+            {
+                reviewed = await h.AddSourceAsync();
+                sourceId = null;
+                await using var db = h.CreateContext();
+                var evidence = new StageOutcome
+                {
+                    Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+                    Source = StageOutcomeSource.Delegate, SubjectTaskId = h.Fixture.TaskId,
+                    StageTaskId = Guid.NewGuid(), ReviewedSourceSha = reviewed, ReviewedSourceClean = true,
+                    ReviewedSourceRef = h.Fixture.SourceRef, ReviewedRepositoryPath = h.Fixture.Repository,
+                    CommissionedRound = VerificationRound.Final, OrdinaryScopeCompleted = VerificationScope.Full,
+                    RecordedAt = DateTime.UtcNow,
+                };
+                db.StageOutcomes.Add(evidence);
+                await db.SaveChangesAsync();
+                evidenceId = evidence.Id;
+            }
+            else
+            {
+                (reviewed, evidenceId, sourceId) = await SeedRecoveryAsync(h, mode, true);
+            }
+            var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+            await File.WriteAllTextAsync(sentinel, "owned cleanup residue");
+            await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidenceId,
+                recoverReviewedSource: mode == "self", adoptFromTaskId: sourceId);
+            await h.RunQueuedAsync();
+            var published = (await h.OperationAsync()).ShouldNotBeNull(label);
+            new AgentTaskLandingState().HasPublication(published).ShouldBeTrue(label);
+            published.Cleanup.ShouldBe(LandCleanupStatus.Refused, label);
+            await using (var db = h.CreateContext())
+                await db.StageOutcomes.Where(o => o.Id == evidenceId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.ReviewedSourceClean, assertion));
+            var verifierCalls = h.Verifier.Calls;
+            h.Fixture.Git.Trace.Clear();
+            await h.RestartServicesAsync();
+            File.Delete(sentinel);
+            await h.RequestCleanupRetryAsync(published.Id);
+            await h.RunQueuedAsync();
+            var after = (await h.OperationAsync()).ShouldNotBeNull(label);
+            after.Id.ShouldBe(published.Id, label);
+            after.Cleanup.ShouldBe(LandCleanupStatus.Complete, label);
+            h.Verifier.Calls.ShouldBe(verifierCalls, label);
+            h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("merge") ||
+                a.Contains("push"), label);
+        }
+    }
+
+    private static async Task<(string Reviewed, Guid EvidenceId, Guid? SourceId)> SeedRecoveryAsync(
+        LandingSafetyHarness h, string mode, bool? clean)
+    {
+        var ownerHead = await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "push", "origin", h.Fixture.SourceRef);
+        var reviewed = ownerHead;
+        Guid? sourceId = null;
+        string sourceRef = h.Fixture.SourceRef;
+        string sourcePath = h.Fixture.Source;
+        if (mode == "adoption")
+        {
+            sourceId = Guid.NewGuid();
+            sourceRef = $"refs/heads/feat/card-task-{sourceId:N}";
+            sourcePath = Path.Combine(h.Fixture.Root, "trees", "reviewed-repair");
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "add", "-b", sourceRef[11..],
+                sourcePath, ownerHead);
+            await File.WriteAllTextAsync(Path.Combine(sourcePath, "repair.txt"), "reviewed repair\n");
+            await h.Fixture.RequiredAsync(sourcePath, "add", ".");
+            await h.Fixture.RequiredAsync(sourcePath, "commit", "-m", "reviewed repair");
+            reviewed = (await h.Fixture.RequiredAsync(sourcePath, "rev-parse", "HEAD")).Trim();
+            await h.Fixture.RequiredAsync(sourcePath, "push", "origin", sourceRef);
+        }
+        await using var db = h.CreateContext();
+        var owner = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+        owner.Status = AgentTaskStatus.Failed;
+        if (sourceId is Guid sid)
+        {
+            var now = DateTime.UtcNow;
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var columnId = Guid.NewGuid();
+            var cardId = Guid.NewGuid();
+            db.Projects.Add(new Project
+            {
+                Id = projectId, Name = "c835 recovery", LocalRepositoryPath = h.Fixture.Repository,
+                CreatedAt = now, UpdatedAt = now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId, ProjectId = projectId, Name = "c835 recovery", CreatedAt = now, UpdatedAt = now,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = columnId, BoardId = boardId, Name = "Ready", StateKey = "ready",
+                CreatedAt = now, UpdatedAt = now,
+            });
+            db.Cards.Add(new Card
+            {
+                Id = cardId, BoardId = boardId, BoardColumnId = columnId, Identifier = "CARD-0835",
+                Title = "source approval recovery", CreatedAt = now, UpdatedAt = now,
+            });
+            owner.ProjectId = projectId;
+            owner.CardId = cardId;
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = sid, RootTaskId = sid, Title = "reviewed repair", Goal = "repair", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree, WorkingDirectory = h.Fixture.Repository,
+                RepoPath = h.Fixture.Repository, WorktreePath = sourcePath, WorktreeBranch = sourceRef[11..],
+                WorktreeBaseSha = ownerHead, Status = AgentTaskStatus.Failed, CardId = cardId, ProjectId = projectId,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, CompletedAt = now,
+            });
+        }
+        await db.SaveChangesAsync();
+        var evidence = new StageOutcome
+        {
+            Id = Guid.NewGuid(), Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Delegate, SubjectTaskId = sourceId ?? owner.Id, StageTaskId = Guid.NewGuid(),
+            ReviewedSourceSha = reviewed, ReviewedSourceClean = clean, ReviewedSourceRef = sourceRef,
+            ReviewedRepositoryPath = h.Fixture.Repository, CommissionedRound = VerificationRound.Final,
+            OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
+        };
+        db.StageOutcomes.Add(evidence);
+        await db.SaveChangesAsync();
+        return (reviewed, evidence.Id, sourceId);
     }
 
     [Test]

@@ -26,23 +26,30 @@ public sealed class ReportMergerTests
         merged.MaxConcurrentRows.ShouldBe(3);
     }
 
-    private static ReportModel Run(string id, DateTimeOffset ended, int exit, string state) => new()
+    private static ReportModel Run(string id, DateTimeOffset ended, int exit, string state)
     {
-        RunId = id,
-        ManifestHash = "same",
-        EndedAt = ended,
-        StartedAt = ended.AddMinutes(-5),
-        Commit = new string('a', 40),
-        Rows =
-        [
-            new ReportRow
-            {
-                Id = "CP-1",
-                State = state,
-                ExitCode = exit,
-                Seconds = 10,
-                Line = "CHECKPOINT CP-1 commit=" + new string('a', 40) + " build=ok filter=/ executed=1 passed=1 failed=0 skipped=0 trx=/t slot=unavailable waited=0s",
-            },
-        ],
-    };
+        var observed = new SourceObservation(new string('a', 40), 0, new string('1', 64), ended,
+            "known");
+        SourceEvidence Source(string binding) => new()
+        {
+            Start = observed, End = observed, State = "clean", BuildSource = binding,
+        };
+        return new ReportModel
+        {
+            RunId = id,
+            ManifestHash = "same",
+            EndedAt = ended,
+            StartedAt = ended.AddMinutes(-5),
+            Commit = new string('a', 40),
+            Source = Source("verified"),
+            Rows =
+            [
+                new ReportRow
+                {
+                    Id = "CP-1", State = state, ExitCode = exit, Seconds = 10, Source = Source("verified"),
+                    Line = "CHECKPOINT CP-1 commit=" + new string('a', 40) + " build=ok filter=/ executed=1 passed=1 failed=0 skipped=0 trx=/t slot=unavailable waited=0s dirty=0 source=" + new string('a', 40) + " sourceState=clean buildSource=verified",
+                },
+            ],
+        };
+    }
 }
