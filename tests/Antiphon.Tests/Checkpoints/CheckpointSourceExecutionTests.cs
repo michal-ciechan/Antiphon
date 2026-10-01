@@ -329,7 +329,9 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         await CheckScriptAsync(0, "script-tool-valid-parity");
         valid.SchemaVersion = 1;
         ReportValidator.Validate(valid, Sha).ShouldBe("report_source_ineligible", "legacy-report-ineligible");
-        await CheckScriptAsync(2, "script-tool-legacy-parity");
+        var legacyScript = await ValidateWithScriptAsync(valid);
+        legacyScript.Output.ShouldContain("reason=legacy_report", Case.Sensitive, "script-tool-legacy-parity");
+        legacyScript.Exit.ShouldBe(2, "script-tool-legacy-parity");
         valid.SchemaVersion = 2;
         valid.Rows.Single().Source = Evidence(
             new SourceObservation(Sha, 0, new string('f', 64), DateTimeOffset.UtcNow, "known"),
@@ -341,7 +343,10 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         ReportValidator.IsSourceEligible(valid.Rows.Single().Source, Sha).ShouldBeTrue("fingerprint-row-valid-alone");
         ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "fingerprint-row-heading-disagreement");
-        await CheckScriptAsync(2, "script-fingerprint-row-heading-parity");
+        var fingerprintScript = await ValidateWithScriptAsync(valid);
+        fingerprintScript.Output.ShouldContain("reason=row_heading_disagreement", Case.Sensitive,
+            "script-fingerprint-row-heading-parity");
+        fingerprintScript.Exit.ShouldBe(2, "script-fingerprint-row-heading-parity");
         valid.Rows.Single().Source = Evidence(Observe(Sha, 0), "clean", "notApplicable");
         valid.Rows.Single().Command = null;
         valid.Rows.Single().Executed = 1;
@@ -356,7 +361,10 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         });
         ReportValidator.IsSourceEligible(valid.Rows.Single().Source, Sha).ShouldBeTrue("build-row-valid-alone");
         ReportValidator.Validate(valid, Sha).ShouldBe("row_source_disagreement", "build-row-heading-disagreement");
-        await CheckScriptAsync(2, "script-build-row-heading-parity");
+        var bindingScript = await ValidateWithScriptAsync(valid);
+        bindingScript.Output.ShouldContain("reason=row_heading_disagreement", Case.Sensitive,
+            "script-build-row-heading-parity");
+        bindingScript.Exit.ShouldBe(2, "script-build-row-heading-parity");
         valid.Rows.Single().Source.BuildSource = "verified";
         valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
         {
@@ -364,7 +372,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             ExitCode = 0, Executed = "1", Passed = "1", Source = valid.Rows.Single().Source,
         });
         valid.Rows.Single().Line += " dirty=0";
-        ReportValidator.Validate(valid, Sha).ShouldBe("duplicate_receipt_token");
+        ReportValidator.Validate(valid, Sha).ShouldBe("duplicate_receipt_token", "tool-duplicate-receipt-token");
         valid.Rows.Single().Line = CheckpointLine.Format(new CheckpointLineModel
         {
             Name = "CP-1", Commit = Sha, Build = "built", Filter = "true", Command = false,
@@ -404,6 +412,12 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var missingScript = await ValidateWithScriptAsync(missing, "CP-2");
         missingScript.Exit.ShouldBe(2, "script-selected-rows-missing: " + missingScript.Output);
         missingScript.Output.ShouldContain("reason=selected_rows_missing", Case.Sensitive, "script-selected-rows-missing");
+        var empty = ValidReport();
+        empty.Rows = [];
+        ReportValidator.Validate(empty, Sha).ShouldBe("selected_rows_missing", "tool-empty-rows-missing");
+        var emptyScript = await ValidateWithScriptAsync(empty);
+        emptyScript.Output.ShouldContain("reason=selected_rows_missing", Case.Sensitive, "script-empty-rows-missing");
+        emptyScript.Exit.ShouldBe(2, "script-empty-rows-missing");
 
         var counts = ValidReport();
         counts.Rows.Single().Command = null;
@@ -424,6 +438,38 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var countScript = await ValidateWithScriptAsync(counts);
         countScript.Exit.ShouldBe(2, "script-receipt-count-disagreement: " + countScript.Output);
         countScript.Output.ShouldContain("reason=receipt_counts", Case.Sensitive, "script-receipt-count-disagreement");
+
+        var badCounts = ValidReport();
+        badCounts.Rows.Single().Command = null;
+        badCounts.Rows.Single().Executed = 1;
+        badCounts.Rows.Single().Passed = 0;
+        badCounts.Rows.Single().Failed = 1;
+        ReportValidator.Validate(badCounts, Sha).ShouldBe("row_failed", "tool-tunit-failed-counts");
+        var badCountsScript = await ValidateWithScriptAsync(badCounts);
+        badCountsScript.Output.ShouldContain("reason=row_failed", Case.Sensitive, "script-tunit-failed-counts");
+        badCountsScript.Exit.ShouldBe(2, "script-tunit-failed-counts");
+
+        void SourceRefuses(string label, Action<SourceEvidence> change)
+        {
+            var evidence = Evidence(Observe(Sha, 0), "clean", "verified");
+            change(evidence);
+            ReportValidator.IsSourceEligible(evidence, Sha).ShouldBeFalse(label);
+        }
+        ReportValidator.IsSourceEligible(null, Sha).ShouldBeFalse("tool-null-source");
+        ReportValidator.IsSourceEligible(Evidence(Observe(Sha, 0), "clean", "verified"), "bad")
+            .ShouldBeFalse("tool-invalid-expected-sha");
+        SourceRefuses("tool-source-version", source => source.Version = 0);
+        SourceRefuses("tool-source-end-missing", source => source.End = null);
+        SourceRefuses("tool-source-state", source => source.State = "dirty");
+        SourceRefuses("tool-source-build-binding", source => source.BuildSource = "unknown");
+        SourceRefuses("tool-source-start-capture", source => source.Start = source.Start with { CaptureStatus = "unknown" });
+        SourceRefuses("tool-source-end-capture", source => source.End = source.End! with { CaptureStatus = "unknown" });
+        SourceRefuses("tool-source-start-commit", source => source.Start = source.Start with { Commit = OtherSha });
+        SourceRefuses("tool-source-end-commit", source => source.End = source.End! with { Commit = OtherSha });
+        SourceRefuses("tool-source-start-dirty", source => source.Start = source.Start with { DirtyFiles = 1 });
+        SourceRefuses("tool-source-end-dirty", source => source.End = source.End! with { DirtyFiles = 1 });
+        SourceRefuses("tool-source-fingerprint-shape", source => source.Start = source.Start with { Fingerprint = "bad" });
+        SourceRefuses("tool-source-fingerprint-match", source => source.End = source.End! with { Fingerprint = new string('f', 64) });
     }
 
     private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
