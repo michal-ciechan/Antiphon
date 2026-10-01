@@ -788,3 +788,17 @@ variants remain pending Mutation; these green rows and the earlier red proofs
 do not discharge them. Windows qualification should use source commit
 `03e7ae692ccb0fb908398fde449d4089c50088cc` (the production code is
 unchanged from the implementation SHA above).
+
+### Final Review repair (2026-10-01)
+
+V-6 and V-7 now include internal busy-before-transport, busy-before-503,
+continued transport and busy-reset sequences. A busy 409 resets acquisition's
+unanswered grace; the first subsequent transport failure or 5xx starts its own
+bounded grace. V-11 parses the wire start with its UTC offset intact and checks
+both offset and UTC instant against the child process. V-17 captures direct-row
+output through `Runtime.Output`, avoiding process-wide console redirection.
+These internal cases leave the checkpoint census unchanged: CP-1 10, CP-2 8,
+CP-3 51, CP-4 13, CP-5 3, and CP-6 3679 selected (3646 executed and 33
+declared Linux skips). The six rows must be rerun at this repair's committed SHA;
+the earlier results above apply to the earlier SHAs only. Windows qualification
+and all method-scoped SourceLanding mutation controls remain pending.

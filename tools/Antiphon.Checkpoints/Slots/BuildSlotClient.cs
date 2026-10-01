@@ -144,6 +144,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
         var lastPrinted = started - TimeSpan.FromMinutes(2);
         SlotDiagnostic? answered = null;
         SlotDiagnostic? last = null;
+        DateTimeOffset? unansweredStarted = null;
         ILeaseHolder? holder = null;
         try
         {
@@ -253,6 +254,10 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     last = Observe("acquire", (int)response.StatusCode, reason, body, elapsed, label);
                     if (response.StatusCode == HttpStatusCode.Conflict && reason is ("build_slot_busy" or "build_slot_memory_floor"))
                     {
+                        // A busy reply is a live broker answer. Transport grace starts afresh
+                        // only if a later request stops receiving an answer.
+                        unansweredStarted = null;
+                        answered = null;
                         if (SecondsSince(started) >= _wait)
                         {
                             _log?.Invoke($"BUILD SLOT timeout label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} after {(int)_wait.TotalSeconds}s reason={reason}");
@@ -271,6 +276,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     if ((int)response.StatusCode < 500)
                         return RefusedLease(last, elapsed, label);
                     answered = last;
+                    unansweredStarted ??= _clock();
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -280,10 +286,11 @@ public sealed class BuildSlotClient : IBuildSlotClient
                 {
                     last = SlotDiagnostic.Failure("acquire", "runner_unreachable", ex, Seconds(started), _sensitiveToken);
                     Note(last, label);
+                    unansweredStarted ??= _clock();
                 }
-                if (SecondsSince(started) >= _grace)
+                if (_clock() - unansweredStarted.Value >= _grace)
                     break;
-                await DelayGrace(started, cancellationToken).ConfigureAwait(false);
+                await DelayGrace(unansweredStarted.Value, cancellationToken).ConfigureAwait(false);
             }
             if (answered is not null)
                 return RefusedLease(answered, Seconds(started), label);

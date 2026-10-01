@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -72,7 +73,11 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
             using var body = JsonDocument.Parse(post.Body);
             var pid = body.RootElement.GetProperty("pid").GetInt32();
             holderStarts.TryGetValue(pid, out var expected).ShouldBeTrue("outbound-start-equals-holder: actual child PID");
-            body.RootElement.GetProperty("processStartUtc").GetDateTime().ShouldBe(expected,
+            var wireStart = DateTimeOffset.Parse(body.RootElement.GetProperty("processStartUtc").GetString()!,
+                CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+            wireStart.Offset.ShouldBe(TimeSpan.Zero, "outbound-start-equals-holder: UTC wire offset");
+            wireStart.UtcDateTime.Kind.ShouldBe(DateTimeKind.Utc);
+            wireStart.UtcDateTime.ShouldBe(expected,
                 TimeSpan.FromMilliseconds(1), "outbound-start-equals-holder: actual child start");
         }
         await using var holder = ProcessLeaseHolder.Start(Environment.ProcessId);
@@ -80,7 +85,10 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         await Task.Delay(10);
         holder.ProcessStartUtc.ShouldBe(first, "cached-holder-start: repeated reads must be identical");
         using var child = Process.GetProcessById(holder.Pid);
-        DateTime.Parse(first!).ShouldBe(child.StartTime.ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+        var captured = DateTimeOffset.Parse(first!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+        captured.Offset.ShouldBe(TimeSpan.Zero, "cached-holder-start: UTC wire offset");
+        captured.UtcDateTime.Kind.ShouldBe(DateTimeKind.Utc);
+        captured.UtcDateTime.ShouldBe(child.StartTime.ToUniversalTime(), TimeSpan.FromMilliseconds(1));
     }
 
     [Test]
@@ -239,18 +247,12 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         await using var host = await BuildSlotBrokerFixture.StartAsync();
         var recorder = (BuildSlotBrokerFixture.Recorder)host.Recording(omitStart: true);
         var driver = new FakeDriver();
-        var runtime = Runtime(recorder, driver);
-        var original = Console.Out;
         using var output = new StringWriter();
-        try
-        {
-            Console.SetOut(output);
-            var exit = await Antiphon.Checkpoints.Program.RunAsync(["row", "--repo-root", TempDir(), "--name", "CP-1",
+        var runtime = Runtime(recorder, driver, output: output);
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(["row", "--repo-root", TempDir(), "--name", "CP-1",
                 "--project", "tests/Antiphon.Tests", "--output-path", "bin-c833/",
                 "--filter", "/*/*/ExampleSurfaceTests/*"], runtime);
-            exit.ShouldBe(2);
-        }
-        finally { Console.SetOut(original); }
+        exit.ShouldBe(2);
         driver.Calls.ShouldBeEmpty("direct-driver-count: rejected row must not build or test");
         output.ToString().ShouldContain("slot=refused");
         output.ToString().ShouldContain("slot-reason=build_slot_invalid");
@@ -319,7 +321,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
 
     private static CheckpointApp.Runtime Runtime(HttpMessageHandler slots, FakeDriver driver, bool missingToken = false,
-        Func<Process, DateTime>? startTimeReader = null) => new()
+        Func<Process, DateTime>? startTimeReader = null, TextWriter? output = null) => new()
     {
         EnvironmentLookup = name => name switch
         {
@@ -331,6 +333,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         },
         OwnerHandler = new Owner(), SlotHandler = slots, Driver = driver,
         SlotStartTimeReader = startTimeReader,
+        Output = output,
     };
 
     private sealed class Owner : HttpMessageHandler

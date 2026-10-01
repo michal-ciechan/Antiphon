@@ -174,6 +174,24 @@ public sealed class CheckpointSlotContractTests
         var lease = await postClient.AcquireAsync(Enabled, "transport", CancellationToken.None);
         lease.State.ShouldBe("unleased");
         lease.SlotReason.ShouldBe("runner_unreachable");
+        var afterBusy = new ScriptedHttpHandler();
+        afterBusy.Enqueue(HttpStatusCode.Conflict, """{"type":"build_slot_busy","retryAfterMs":60000}""");
+        afterBusy.EnqueueThrow();
+        var (busyClient, busyElapsed) = Virtual(afterBusy);
+        var busyFallback = await busyClient.AcquireAsync(Enabled, "busy-transport", CancellationToken.None);
+        busyFallback.State.ShouldBe("unleased", "busy-then-transport: only a full unanswered grace permits fallback");
+        busyElapsed().ShouldBe(TimeSpan.FromSeconds(75));
+        afterBusy.Calls.Count.ShouldBeGreaterThan(2, "busy-then-transport: retry after the first error");
+
+        var reset = new ScriptedHttpHandler();
+        reset.Enqueue(HttpStatusCode.Conflict, """{"type":"build_slot_busy","retryAfterMs":10000}""");
+        reset.EnqueueThrow();
+        reset.Enqueue(HttpStatusCode.Conflict, """{"type":"build_slot_busy","retryAfterMs":10000}""");
+        reset.EnqueueThrow();
+        var (resetClient, resetElapsed) = Virtual(reset);
+        var resetFallback = await resetClient.AcquireAsync(Enabled, "busy-reset", CancellationToken.None);
+        resetFallback.State.ShouldBe("unleased");
+        resetElapsed().ShouldBe(TimeSpan.FromSeconds(40), "busy-answer-resets-grace: the second busy answer starts a fresh transport window");
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
         await Should.ThrowAsync<OperationCanceledException>(() =>
@@ -197,6 +215,16 @@ public sealed class CheckpointSlotContractTests
         var lease = await postClient.AcquireAsync(Enabled, "server", CancellationToken.None);
         lease.ExitCode.ShouldBe(2);
         lease.Diagnostic!.Status.ShouldBe(503);
+        var afterBusy = new ScriptedHttpHandler();
+        afterBusy.Enqueue(HttpStatusCode.Conflict, """{"type":"build_slot_busy","retryAfterMs":60000}""");
+        afterBusy.Enqueue(HttpStatusCode.ServiceUnavailable, """{"type":"overloaded","detail":"retry later"}""");
+        var (busyClient, busyElapsed) = Virtual(afterBusy);
+        var busyRefusal = await busyClient.AcquireAsync(Enabled, "busy-server", CancellationToken.None);
+        busyRefusal.ExitCode.ShouldBe(2, "busy-then-503: the answered error must refuse after its own grace");
+        busyRefusal.Diagnostic!.Status.ShouldBe(503);
+        busyRefusal.Diagnostic.Detail.ShouldContain("retry later");
+        busyElapsed().ShouldBe(TimeSpan.FromSeconds(75));
+        afterBusy.Calls.Count.ShouldBeGreaterThan(2, "busy-then-503: retry within the unanswered window");
     }
 
     [Test]

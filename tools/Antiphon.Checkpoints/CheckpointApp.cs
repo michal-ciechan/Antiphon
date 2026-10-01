@@ -33,6 +33,7 @@ public static class CheckpointApp
         public IProcessControl? ProcessControl { get; init; }
         public Func<string, IExecutorLogSink>? LogSinkFactory { get; init; }
         public Func<string, Task<int>>? Wait { get; init; }
+        public TextWriter? Output { get; init; }
     }
 
     public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? AppContext.BaseDirectory;
