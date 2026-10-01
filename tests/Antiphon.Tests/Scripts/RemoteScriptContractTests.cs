@@ -1359,6 +1359,7 @@ public sealed class RemoteScriptContractTests
             jq() { cat; }
             sudo() { mkdir -p "${@: -1}"; }
             docker() {
+                printf 'docker-call=%s\n' "$*" >> "$root/dockertrace"
                 case "$1:$2" in
                     image:inspect) printf 'sha256:%064d\n' 0 ;;
                     volume:inspect) echo "$root/state" ;;
@@ -1388,6 +1389,8 @@ public sealed class RemoteScriptContractTests
             write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
             ( c849_seed ) > "$root/result" 2>&1
             printf 'success=%s %s\n' "$?" "$(cat "$root/result")"
+            printf 'image-probe=%s\n' "$(docker image inspect -f '{{.Id}}' image)"
+            cat "$root/dockertrace"
             test -s "$C849_READY" && echo marker-written
             grep -q '^donor=saved$' "$C849_READY" && echo saved-identity
             test -s "$root/volumes/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" && echo payload-imported
