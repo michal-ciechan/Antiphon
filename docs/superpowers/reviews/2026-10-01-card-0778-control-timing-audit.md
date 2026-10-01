@@ -28,4 +28,4 @@ The [unmutated repetition matrix](2026-10-01-card-0778-baseline-repeat.csv) ran 
 
 The first PC-44 matrix exposed an earlier, circular assertion: it compared the captured sequence to the runner's read count after the mutant's forbidden extra read. That assertion was repaired to check the known last observed sequence (`2`), then the read count is asserted separately at `readsAfterFailureDecision`. The repaired PC-44 matrix is 8/8 named red.
 
-The CARD-0315 `RunnerGrokAdapterTrustPromptTests` fixture now uses a 10 s maximum and 3 s trust budget. Its former 200 ms trust budget could expire before a delayed snapshot under Unit-lane load.
+The CARD-0315 `RunnerGrokAdapterTrustPromptTests` and CARD-0324 `RunnerGrokAdapterSignInPromptTests` fixtures now use a 10 s maximum and 3 s trust budget. Both had a 200 ms trust budget that could expire before a delayed snapshot under Unit-lane load.
