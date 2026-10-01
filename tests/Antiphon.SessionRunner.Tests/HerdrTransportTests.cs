@@ -163,6 +163,30 @@ public class HerdrTransportTests
             .ShouldBe("/custom/tmp/herdr/herdr.sock");
     }
 
+    [Test]
+    [Arguments("/config", "/home/test", "/abs", null, "/abs/herdr.sock")]
+    [Arguments("/x/cfg//", "/home/test", "named", null, "/x/cfg//herdr/sessions/named/herdr.sock")]
+    [Arguments(null, "/x/home//", "named", null, "/x/home//.config/herdr/sessions/named/herdr.sock")]
+    [Arguments("/config", "/home/test", "named//", null, "/config/herdr/sessions/named//herdr.sock")]
+    [Arguments("/config///", "/home/test", "named", null, "/config///herdr/sessions/named/herdr.sock")]
+    [Arguments("/config//", "/home/test", "named", "/override//herdr.sock", "/config//herdr/sessions/named/herdr.sock")]
+    public void C801_UnixResolutionPreservesPosixCombineSemantics(
+        string? xdg, string? home, string session, string? socketOverride, string expected)
+    {
+        string? Get(string key) => key switch
+        {
+            "XDG_CONFIG_HOME" => xdg,
+            "HOME" => home,
+            _ => null
+        };
+        var settings = new HerdrSettings { Session = session };
+        var resolved = HerdrEndpointResolver.Resolve(settings, null, Get, _ => "/appdata", false);
+        resolved.ShouldBe(expected);
+        if (socketOverride is not null)
+            HerdrEndpointResolver.Resolve(settings, socketOverride, Get, _ => "/appdata", false)
+                .ShouldBe(socketOverride);
+    }
+
     [Test, Category("Integration")]
     public async Task C801_ConnectedPeerIdentity()
     {
