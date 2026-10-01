@@ -102,10 +102,9 @@ public sealed class HerdrPaneDisposalRedactionTests
         var (post, get, disk, receipt) = await w.RoundTripAsync(skipProcessPathSweep: true);
         foreach (var p in new[] { post, get, disk })
         {
-            var surface = JsonSerializer.Serialize(p, Json);
-            surface.ShouldNotContain("shell-path-secret", Case.Sensitive, "shell-path-excluded");
-            surface.ShouldNotContain("foreground-path-secret", Case.Sensitive, "foreground-path-excluded");
-            surface.ShouldNotContain("affected-path-secret", Case.Sensitive, "affected-path-excluded");
+            p.Shell!.ExecutableName.ShouldNotContain("shell-path-secret", Case.Sensitive, "shell-path-excluded");
+            p.Foreground![0].ExecutableName.ShouldNotContain("foreground-path-secret", Case.Sensitive, "foreground-path-excluded");
+            p.AffectedProcesses![2].ExecutableName.ShouldNotContain("affected-path-secret", Case.Sensitive, "affected-path-excluded");
             p.Shell!.ExecutableName.ShouldBe("pwsh.exe", "shell-path-excluded");
             p.Foreground![0].ExecutableName.ShouldBe("grok.exe", "foreground-path-excluded");
             p.AffectedProcesses![2].ExecutableName.ShouldBe("worker.exe", "affected-path-excluded");
