@@ -15,8 +15,8 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     private readonly string? _directory;
     private readonly string? _marker;
     private readonly string? _leaseId;
-    internal static Func<string, NativeFileIdentity.Identity?>? ReclaimIdentityOverride;
-    internal static Func<string, bool>? ReclaimLinkOverride;
+    internal static AsyncLocal<Func<string, NativeFileIdentity.Identity?>?> ReclaimIdentityOverride { get; } = new();
+    internal static AsyncLocal<Func<string, bool>?> ReclaimLinkOverride { get; } = new();
     private static readonly object ReclaimGate = new();
     public string Path { get; }
     public string Session { get; }
@@ -165,10 +165,10 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         catch { return null; }
     }
 
-    private static bool IsLink(string path) => ReclaimLinkOverride?.Invoke(path) ?? new FileInfo(path).LinkTarget is not null;
+    private static bool IsLink(string path) => ReclaimLinkOverride.Value?.Invoke(path) ?? new FileInfo(path).LinkTarget is not null;
     private static bool TryReclaimIdentity(string path, out NativeFileIdentity.Identity identity)
     {
-        if (ReclaimIdentityOverride is { } read)
+        if (ReclaimIdentityOverride.Value is { } read)
         {
             var result = read(path);
             identity = result ?? default;

@@ -285,8 +285,9 @@ public class FakeHerdrServerListenerTests
             using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             await socket.ConnectAsync(new UnixDomainSocketEndPoint(fake.EndpointPath));
         }
-        (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20,
-            "C801_EMPTY_CLIENT_IS_PER_CONNECTION");
+        var next = Client(fake).ConnectAndValidateAsync(CancellationToken.None);
+        (await ErrorWithinAsync(next, "C801_EMPTY_CLIENT_IS_PER_CONNECTION"))
+            .ShouldBeNull("C801_EMPTY_CLIENT_IS_PER_CONNECTION");
         fake.ConnectionFaults.ShouldContain(ex => ex is EndOfStreamException);
     }
 
@@ -314,8 +315,9 @@ public class FakeHerdrServerListenerTests
             var bytes = Encoding.UTF8.GetBytes("not-json\n");
             await stream.WriteAsync(bytes);
         }
-        (await Client(fake).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20,
-            "C801_BAD_JSON_IS_PER_CONNECTION");
+        var next = Client(fake).ConnectAndValidateAsync(CancellationToken.None);
+        (await ErrorWithinAsync(next, "C801_BAD_JSON_IS_PER_CONNECTION"))
+            .ShouldBeNull("C801_BAD_JSON_IS_PER_CONNECTION");
         fake.ConnectionFaults.ShouldContain(ex => ex is System.Text.Json.JsonException);
     }
 
@@ -358,6 +360,15 @@ public class FakeHerdrServerListenerTests
         var sentinel = Path.Combine(directory, "sentinel");
         try
         {
+            FakeHerdrEndpoint.ReclaimLinkOverride.Value = candidate => candidate == path ||
+                new FileInfo(candidate).LinkTarget is not null;
+            FakeHerdrEndpoint.ReclaimDeadLeases();
+            NativeFileIdentity.TryRead(path, out _).ShouldBeTrue("C801_RECLAIM_LINK_UNCERTAINTY_PRESERVED");
+            FakeHerdrEndpoint.ReclaimLinkOverride.Value = null;
+            FakeHerdrEndpoint.ReclaimIdentityOverride.Value = _ => null;
+            FakeHerdrEndpoint.ReclaimDeadLeases();
+            NativeFileIdentity.TryRead(path, out _).ShouldBeTrue("C801_RECLAIM_IDENTITY_UNCERTAINTY_PRESERVED");
+            FakeHerdrEndpoint.ReclaimIdentityOverride.Value = null;
             File.Delete(path);
             File.WriteAllText(path, "replacement");
             FakeHerdrEndpoint.ReclaimDeadLeases();
@@ -370,6 +381,8 @@ public class FakeHerdrServerListenerTests
         }
         finally
         {
+            FakeHerdrEndpoint.ReclaimLinkOverride.Value = null;
+            FakeHerdrEndpoint.ReclaimIdentityOverride.Value = null;
             File.Delete(path);
             File.Delete(sentinel);
             File.Delete(Path.Combine(directory, "owner"));
