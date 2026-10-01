@@ -142,7 +142,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var report = ReadReport(run);
         report.Rows.Count.ShouldBe(2);
         report.Rows.ShouldAllBe(row => row.State == "slot-refused" && row.ExitCode == 2
-            && row.Executed == 0 && row.SlotReason == "build_slot_invalid" && row.WaitedSeconds >= 0);
+            && row.Executed == 0 && row.SlotReason == "build_slot_invalid");
         var merged = ReportMerger.Merge([report]);
         merged.Rows.ShouldAllBe(row => row.SlotReason == "build_slot_invalid");
         File.ReadAllText(Path.Combine(run, "report.md")).ShouldContain("slot-reason=build_slot_invalid");
@@ -153,6 +153,67 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         var dependent = ReadReport(probeRun).Rows.Single();
         dependent.SlotReason.ShouldBe("probe_denied", "dependent-admission: probe refusal must reach dependent row");
         dependent.Executed.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge()
+    {
+        var slots = new ScriptedHttpHandler();
+        slots.Enqueue(HttpStatusCode.OK, """{"enabled":true,"budget":2,"maxCpuCount":6}""");
+        slots.Enqueue(HttpStatusCode.Conflict, """{"type":"build_slot_busy","retryAfterMs":7000}""");
+        slots.Enqueue(HttpStatusCode.BadRequest, """{"type":"build_slot_invalid","detail":"rejected after wait"}""");
+        var started = DateTimeOffset.UtcNow;
+        var now = started;
+        Task Delay(TimeSpan span, CancellationToken _) { now += span; return Task.CompletedTask; }
+        var driver = new FakeDriver();
+        var manifest = BuiltManifest(twoRows: true);
+        var run = NewRun(manifest);
+        var runtime = Runtime(slots, driver, slotClock: () => now, slotDelay: Delay);
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime)).ShouldBe(2);
+        driver.Calls.ShouldBeEmpty("busy-rejection-driver-count: refusal must precede all drivers");
+        slots.Calls.Count(call => call.Method == "POST").ShouldBe(2);
+        (now - started).ShouldBe(TimeSpan.FromSeconds(7));
+
+        var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"))!;
+        state.Builds.Single().WaitedSeconds.ShouldBe(7, "busy-rejection-build-state-wait");
+        state.Rows.ShouldAllBe(row => row.WaitedSeconds == 7, "busy-rejection-dependent-state-wait");
+        var report = ReadReport(run);
+        report.Builds.Single().WaitedSeconds.ShouldBe(7, "busy-rejection-build-report-wait");
+        report.Rows.ShouldAllBe(row => row.WaitedSeconds == 7, "busy-rejection-report-json-wait");
+        report.Rows.ShouldAllBe(row => row.Line!.Contains("waited=7s", StringComparison.Ordinal),
+            "busy-rejection-dependent-line-wait");
+        var markdown = File.ReadAllText(Path.Combine(run, "report.md"));
+        markdown.Split("\n").Count(line => line.Contains("waited=7s", StringComparison.Ordinal)).ShouldBe(2,
+            "busy-rejection-report-markdown-wait");
+        var merged = ReportMerger.Merge([report]);
+        merged.Rows.ShouldAllBe(row => row.WaitedSeconds == 7, "busy-rejection-merged-wait");
+        ReportWriter.Markdown(merged).Contains("waited=7s", StringComparison.Ordinal)
+            .ShouldBeTrue("busy-rejection-merged-markdown-wait");
+    }
+
+    [Test]
+    public void report_fallback_line_retains_nonzero_wait_when_result_has_no_line()
+    {
+        var manifest = CommandManifest();
+        var run = NewRun(manifest);
+        var request = JsonSerializer.Deserialize<RunRequest>(
+            File.ReadAllText(Path.Combine(run, "request.json")), CheckpointApp.Json)!;
+        var result = new SchedulerResult
+        {
+            ExitCode = 2,
+            Rows = [new RowRunResult
+            {
+                Id = "CP-1", State = "slot-refused", ExitCode = 2, Slot = "refused",
+                SlotReason = "build_slot_invalid", WaitedSeconds = 7,
+            }],
+        };
+        var report = CheckpointApp.BuildReport(run, TempDir(), request, manifest,
+            new RunState { RunId = Path.GetFileName(run) }, result);
+        report.Rows.Single().WaitedSeconds.ShouldBe(7, "fallback-report-json-wait");
+        report.Rows.Single().Line.Contains("waited=7s", StringComparison.Ordinal)
+            .ShouldBeTrue("fallback-report-line-wait");
+        ReportWriter.Markdown(report).Contains("waited=7s", StringComparison.Ordinal)
+            .ShouldBeTrue("fallback-report-markdown-wait");
     }
 
     [Test]
@@ -321,7 +382,8 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
 
     private static CheckpointApp.Runtime Runtime(HttpMessageHandler slots, FakeDriver driver, bool missingToken = false,
-        Func<Process, DateTime>? startTimeReader = null, TextWriter? output = null) => new()
+        Func<Process, DateTime>? startTimeReader = null, TextWriter? output = null,
+        Func<DateTimeOffset>? slotClock = null, Func<TimeSpan, CancellationToken, Task>? slotDelay = null) => new()
     {
         EnvironmentLookup = name => name switch
         {
@@ -333,6 +395,7 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
         },
         OwnerHandler = new Owner(), SlotHandler = slots, Driver = driver,
         SlotStartTimeReader = startTimeReader,
+        SlotClock = slotClock, SlotDelay = slotDelay,
         Output = output,
     };
 

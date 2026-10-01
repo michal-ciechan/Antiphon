@@ -87,6 +87,20 @@ public sealed class CheckpointSlotContractTests
     }
 
     [Test]
+    public async Task busy_then_refused_acquire_carries_exact_wait()
+    {
+        var handler = new ScriptedHttpHandler();
+        handler.Enqueue(HttpStatusCode.Conflict, """{"type":"build_slot_busy","retryAfterMs":7000}""");
+        handler.Enqueue(HttpStatusCode.BadRequest, """{"type":"build_slot_invalid","detail":"denied"}""");
+        var (client, elapsed) = Virtual(handler);
+        var lease = await client.AcquireAsync(Enabled, "busy-denied", CancellationToken.None);
+        lease.ExitCode.ShouldBe(2);
+        lease.WaitedSeconds.ShouldBe(7, "busy-refusal-client-wait");
+        elapsed().ShouldBe(TimeSpan.FromSeconds(7));
+        handler.Calls.Count.ShouldBe(2);
+    }
+
+    [Test]
     public async Task probe_400_refuses_without_delay()
     {
         var handler = new ScriptedHttpHandler();
