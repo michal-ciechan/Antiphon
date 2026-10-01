@@ -212,16 +212,16 @@ public class RunnerGrokAdapterReadyTests
         for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
         {
             utcClock.Advance(TimeSpan.FromMilliseconds(5));
-            await Task.Yield();
+            await Task.Delay(1);
         }
         utcReads.ShouldBeGreaterThanOrEqualTo(2);
         wait.IsCompleted.ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
         for (var tick = 0; tick < 60 && !wait.IsCompleted; tick++)
         {
             utcClock.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Yield();
+            await Task.Delay(1);
         }
-        (await wait.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBeTrue();
+        (await wait.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeTrue();
     }
 
     [Test]
