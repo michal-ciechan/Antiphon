@@ -375,6 +375,14 @@ public class FakeHerdrServerListenerTests
             NativeFileIdentity.TryRead(path, out _).ShouldBeTrue("C801_RECLAIM_IDENTITY_UNCERTAINTY_PRESERVED");
             FakeHerdrEndpoint.ReclaimIdentityOverride.Value = null;
             File.Delete(path);
+            using (var replacementSocket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified))
+            {
+                replacementSocket.Bind(new UnixDomainSocketEndPoint(path));
+                replacementSocket.Listen(1);
+                FakeHerdrEndpoint.ReclaimDeadLeases();
+                NativeFileIdentity.TryRead(path, out _).ShouldBeTrue("C801_CHANGED_SOCKET_PRESERVED");
+            }
+            File.Delete(path);
             File.WriteAllText(path, "replacement");
             FakeHerdrEndpoint.ReclaimDeadLeases();
             File.ReadAllText(path).ShouldBe("replacement", "C801_CHANGED_SOCKET_PRESERVED");
