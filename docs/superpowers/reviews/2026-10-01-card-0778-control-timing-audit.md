@@ -29,3 +29,13 @@ The [unmutated repetition matrix](2026-10-01-card-0778-baseline-repeat.csv) ran 
 The first PC-44 matrix exposed an earlier, circular assertion: it compared the captured sequence to the runner's read count after the mutant's forbidden extra read. That assertion was repaired to check the known last observed sequence (`2`), then the read count is asserted separately at `readsAfterFailureDecision`. The repaired PC-44 matrix is 8/8 named red.
 
 The CARD-0315 `RunnerGrokAdapterTrustPromptTests` and CARD-0324 `RunnerGrokAdapterSignInPromptTests` fixtures now use a 10 s maximum and 3 s trust budget. Both had a 200 ms trust budget that could expire before a delayed snapshot under Unit-lane load.
+
+## D-2 through D-4 final evidence
+
+The real trust budgets in the two legacy Grok fixtures and the sign-in arm of `Post_trust_blank_or_sign_in_is_not_ready` are now 3 s, with a 10 s enclosing maximum. The trust-only arm retains its 5 s trust budget. This corrects the earlier claim that every path in the post-trust test had a 5 s trust margin.
+
+The controlled-clock tests wait for the timer registered by the awaited operation before advancing fake time. The held-read tests assert the registered timeout and fail with a distinct harness error if no timer is installed; they have no real-time fallback. The UTC test distinguishes its initial poll from subsequent polls with an ordinal timer hook. A post-fix 30 idle and 30 loaded run of every method in the two audited classes completed 1,020/1,020. After the final UTC hook correction, that method passed another three idle and two runs under 24 CPU burners. The final PC-42 mutation failed on `readyAfterUtcJumpWithoutElapsed` in all five idle and three loaded cells. The attached matrix replaces PC-42's eight earlier rows with this final run; the other 16 controls had already passed all 128 cells on the prior implementation SHA shown per row.
+
+The matrix driver now awaits the child process and reaps its 24 burners on normal exit, SIGINT, SIGTERM, and uncaught exceptions. Signal probes observed SIGINT exit 130 with an empty tracked diff, and SIGTERM exit 143 with an empty tracked diff and zero remaining burners.
+
+One loaded Unit lane before the temporary Codex fixture edit had 3,550 passed, 2 failed, 33 skipped. Both failures were in the untouched `RunnerCodexAdapterSubmitConfirmTests` under 24 burners: `An_unconfirmed_submit_over_a_live_transcript_throws_prompt_delivery` and `A_blind_first_turn_with_the_body_still_standing_after_every_Enter_throws_composer_may_hold_body`. A temporary 10 s Codex fixture change was reverted in commit `7ec41f5eb`; its load sensitivity is tracked separately as CARD-0889. A normal Unit lane at the final SHA will establish the unloaded result.
