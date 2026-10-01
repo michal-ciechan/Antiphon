@@ -22,6 +22,10 @@ export type AttentionKind =
   | 'SessionStopStuck'
   | 'SessionUnowned'
   | 'ZombieCensusReport'
+  | 'HostCleanupSummary'
+  | 'HostCleanupDiskPressure'
+  | 'HostCleanupHoldExpired'
+  | 'WorktreeCleanupBacklog'
   /** A task is still open under a card that was closed or archived; it was not stopped (CARD-0738). */
   | 'CardClosedWhileWorking'
   | 'TaskInputUnreadable'
@@ -197,6 +201,11 @@ export type AttentionAction =
   | 'Continue'
 
 export interface AttentionItemDto {
+  /** CARD-0826: immutable receipt linked from cleanup attention, when present. */
+  hostCleanupRunId?: string | null
+  hostCleanupOwner?: string | null
+  hostCleanupRefusal?: string | null
+  hostCleanupHoldExpiryUtc?: string | null
   /** Full candidate class from the same dated snapshot as the census row's preview. */
   censusCandidates?: ZombieCensusCandidate[] | null
   conditionKey?: string | null

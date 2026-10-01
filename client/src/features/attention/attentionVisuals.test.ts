@@ -70,6 +70,10 @@ const ALL_KINDS: AttentionKind[] = [
   'SessionStopStuck',
   'SessionUnowned',
   'ZombieCensusReport',
+  'HostCleanupSummary',
+  'HostCleanupDiskPressure',
+  'HostCleanupHoldExpired',
+  'WorktreeCleanupBacklog',
   'CardClosedWhileWorking',
   'TaskInputUnreadable',
 ]
@@ -92,6 +96,7 @@ function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): A
 }
 
 describe('attentionVisuals', () => {
+<<<<<<< HEAD
   it('draws TaskInputUnreadable as a warning with a task target', () => {
     const visual = ATTENTION_VISUALS.TaskInputUnreadable
     expect(visual.label, 'unreadable-visual-label').toBe('Input unreadable')
@@ -111,6 +116,39 @@ describe('attentionVisuals', () => {
     expect(visual.color, 'runner-outage-color').toBe('danger')
     expect(homeBucketOf(item({ kind: 'RunnerUnavailable', severity: 'Error' })),
       'runner-outage-bucket').toBe('broken')
+=======
+  it('links a host cleanup summary to its run', () => {
+    const row = item({ kind: 'HostCleanupSummary', hostCleanupRunId: 'run-c826', severity: 'Warning' })
+    expect(targetOf(row)).toContain('run-c826')
+    expect(ATTENTION_VISUALS[row.kind].label.length).toBeGreaterThan(0)
+    expect(groupOf(row)).toBe('suspect')
+  })
+
+  it('shows cleanup disk pressure at the reported severity', () => {
+    const warning = item({ kind: 'HostCleanupDiskPressure', severity: 'Warning' })
+    const critical = item({ kind: 'HostCleanupDiskPressure', severity: 'Critical' })
+    expect(homeBucketOf(warning)).toBe('review')
+    expect(homeBucketOf(critical)).toBe('blocked')
+    expect(ATTENTION_VISUALS[warning.kind].color).toBe('danger')
+  })
+
+  it('keeps an expired cleanup hold visible for review', () => {
+    const row = item({ kind: 'HostCleanupHoldExpired', severity: 'Warning',
+      hostCleanupRunId: 'run-hold', hostCleanupHoldExpiryUtc: '2026-10-08T00:00:00Z', actions: [] })
+    expect(homeBucketOf(row)).toBe('review')
+    expect(row.hostCleanupHoldExpiryUtc).toBe('2026-10-08T00:00:00Z')
+    expect(row.actions).toEqual([])
+  })
+
+  it('shows sustained worktree backlog with its responsible owner', () => {
+    const row = item({ kind: 'WorktreeCleanupBacklog', severity: 'Warning',
+      hostCleanupRunId: 'run-backlog', hostCleanupOwner: 'CARD-0692',
+      hostCleanupRefusal: 'owner_unavailable' })
+    expect(targetOf(row)).toContain('run-backlog')
+    expect(row.hostCleanupOwner).toBe('CARD-0692')
+    expect(row.hostCleanupRefusal).toBe('owner_unavailable')
+    expect(ATTENTION_VISUALS[row.kind].label.toLowerCase()).toContain('backlog')
+>>>>>>> 5b4aae49 (CARD-0826 map host cleanup attention receipt kinds in client)
   })
 
   it.each([
