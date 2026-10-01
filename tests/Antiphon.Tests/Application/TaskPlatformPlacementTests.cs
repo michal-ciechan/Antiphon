@@ -45,6 +45,9 @@ public sealed class TaskPlatformPlacementTests
             saved.Task.RunnerId.ShouldBeNull();
             saved.Task.RequiredPlatform.ShouldBe(required);
             saved.Task.Workspace.ShouldBe(workspace);
+            saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.Explicit);
+            saved.Task.PlacementReason.ShouldBe(DefaultRunnerRoutingPolicy.ReasonLocalRequested);
+            saved.Created.ShouldContain("runner source=explicit-local");
             DefaultRunnerKit.Occurrences(saved.Created, "runner source=").ShouldBe(1);
         }
     }
@@ -68,6 +71,8 @@ public sealed class TaskPlatformPlacementTests
             saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
             saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
             saved.Task.RunnerId.ShouldBeNull();
+            saved.Task.RunnerSelectionSource.ShouldBeNull();
+            saved.Task.RunnerDefaultsRevision.ShouldBeNull();
         }
 
         var runtimeKit = DefaultRunnerKit.Create(schema.ConnectionString, "server2", allowedRunnerId: "server2");
@@ -80,26 +85,27 @@ public sealed class TaskPlatformPlacementTests
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, "server2",
             [new PutRunnerKindDefault(AgentKind.Codex, "desktop")], "Codex desktop preference", "Human"),
             null, CancellationToken.None);
-        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults, RunnerSelectionSource.KindDefault);
 
         snapshot = await defaults.GetAsync(CancellationToken.None);
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, "desktop", [],
             "Desktop global preference", "Human"), null, CancellationToken.None);
-        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults, RunnerSelectionSource.GlobalDefault);
 
         snapshot = await defaults.GetAsync(CancellationToken.None);
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, null, [],
             "No preference", "Human"), null, CancellationToken.None);
-        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults, null);
 
         directory.Rows["server2"] = Describe("server2", "linux", eligible: false);
         snapshot = await defaults.GetAsync(CancellationToken.None);
         await defaults.PutAsync(new PutRunnerDefaultsRequest(snapshot.Revision, "server2", [],
             "Unavailable remote falls back locally", "Human"), null, CancellationToken.None);
-        await AssertDefaultAdmissionAsync(runtimeKit, defaults);
+        await AssertDefaultAdmissionAsync(runtimeKit, defaults, RunnerSelectionSource.GlobalDefault);
     }
 
-    private static async Task AssertDefaultAdmissionAsync(DefaultRunnerKit kit, RunnerDefaultSettingsService defaults)
+    private static async Task AssertDefaultAdmissionAsync(DefaultRunnerKit kit, RunnerDefaultSettingsService defaults,
+        RunnerSelectionSource? expectedSource)
     {
         var before = await kit.TaskCountAsync();
         await using var db = kit.Context();
@@ -112,6 +118,9 @@ public sealed class TaskPlatformPlacementTests
         saved.Task.Status.ShouldBe(AgentTaskStatus.Queued);
         saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
         saved.Task.RunnerId.ShouldBeNull();
+        saved.Task.RunnerSelectionSource.ShouldBe(expectedSource);
+        saved.Task.RunnerDefaultsRevision.ShouldNotBeNull();
+        DefaultRunnerKit.Occurrences(saved.Created, "runner source=").ShouldBe(expectedSource is null ? 0 : 1);
     }
 
     [Test]
@@ -132,6 +141,9 @@ public sealed class TaskPlatformPlacementTests
         saved.Task.AgentKind.ShouldBe(AgentKind.Codex);
         saved.Task.RunnerId.ShouldBeNull();
         saved.Task.RequiredPlatform.ShouldBe(RequiredPlatform.Windows);
+        saved.Task.RunnerSelectionSource.ShouldBe(RunnerSelectionSource.Fallback);
+        saved.Task.PlacementReason.ShouldBe("platform_match");
+        saved.Created.ShouldContain("runner source=fallback");
     }
 
     [Test]
