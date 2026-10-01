@@ -374,7 +374,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         ReportValidator.Validate(valid, Sha).ShouldBe("row_failed", "tool-row-failed");
         var failedScript = await ValidateWithScriptAsync(valid);
         failedScript.Exit.ShouldBe(2, "script-tool-failed-verdict-parity: " + failedScript.Output);
-        failedScript.Output.ShouldContain("reason=row_failed", "script-tool-failed-verdict-parity");
+        failedScript.Output.ShouldContain("reason=row_failed", Case.Sensitive, "script-tool-failed-verdict-parity");
 
         async Task RefusesAsync(string label, string toolReason, string scriptReason,
             Action<ReportModel> change)
@@ -384,7 +384,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             ReportValidator.Validate(report, Sha).ShouldBe(toolReason, label + " tool");
             var script = await ValidateWithScriptAsync(report);
             script.Exit.ShouldBe(2, label + " script: " + script.Output);
-            script.Output.ShouldContain("reason=" + scriptReason, label + " script reason");
+            script.Output.ShouldContain("reason=" + scriptReason, Case.Sensitive, label + " script reason");
         }
         await RefusesAsync("report-heading-source", "report_source_ineligible", "source_ineligible",
             report => report.Source.State = "dirty");
@@ -403,7 +403,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         ReportValidator.Validate(missing, Sha, ["CP-2"]).ShouldBe("selected_rows_missing", "tool-selected-rows-missing");
         var missingScript = await ValidateWithScriptAsync(missing, "CP-2");
         missingScript.Exit.ShouldBe(2, "script-selected-rows-missing: " + missingScript.Output);
-        missingScript.Output.ShouldContain("reason=selected_rows_missing", "script-selected-rows-missing");
+        missingScript.Output.ShouldContain("reason=selected_rows_missing", Case.Sensitive, "script-selected-rows-missing");
 
         var counts = ValidReport();
         counts.Rows.Single().Command = null;
@@ -423,7 +423,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         ReportValidator.Validate(counts, Sha).ShouldBe("receipt_count_disagreement", "tool-receipt-count-disagreement");
         var countScript = await ValidateWithScriptAsync(counts);
         countScript.Exit.ShouldBe(2, "script-receipt-count-disagreement: " + countScript.Output);
-        countScript.Output.ShouldContain("reason=receipt_counts", "script-receipt-count-disagreement");
+        countScript.Output.ShouldContain("reason=receipt_counts", Case.Sensitive, "script-receipt-count-disagreement");
     }
 
     private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
