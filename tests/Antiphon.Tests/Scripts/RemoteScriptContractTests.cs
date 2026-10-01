@@ -49,14 +49,14 @@ public sealed class RemoteScriptContractTests
                 $repo = Split-Path -Parent (Split-Path -Parent $Front)
                 $sha = (& git -C $repo rev-parse HEAD).Trim()
                 $entries = @(Get-Content -Raw -LiteralPath $MapPath | ConvertFrom-Json)
-                $script:ownedEvidence = @()
+                $global:ownedEvidence = @()
                 function global:pwsh {
                     param([switch]$NoProfile, [string]$File, [string]$Case, [string]$Manifest)
-                    $script:seen += $Case
+                    $global:seen += $Case
                     $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
                     $evidence = Split-Path -Parent $m.evidenceRoot
-                    $script:ownedEvidence += $evidence
-                    if ($script:requested -ne 'Both') { throw 'C849_STUB_STOP' }
+                    $global:ownedEvidence += $evidence
+                    if ($global:requested -ne 'Both') { throw 'C849_STUB_STOP' }
                     $caseDir = Join-Path $m.evidenceRoot $Case
                     New-Item -ItemType Directory -Path $caseDir -Force | Out-Null
                     '{"accepted":true,"exit":0}' | Set-Content -LiteralPath (Join-Path $caseDir 'c590-result.json') -Encoding ascii
@@ -71,8 +71,8 @@ public sealed class RemoteScriptContractTests
                 }
                 try {
                     foreach ($entry in $entries) {
-                        $script:requested = $entry.Name
-                        $script:seen = @()
+                        $global:requested = $entry.Name
+                        $global:seen = @()
                         $arguments = @{ Case = $entry.Name; Sha = $sha }
                         if ($entry.Name -eq 'Prune') {
                             $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
@@ -85,21 +85,21 @@ public sealed class RemoteScriptContractTests
                         catch {
                             if ($_.Exception.Message -ne 'C849_STUB_STOP') { throw }
                         }
-                        if ($script:seen.Count -ne 1 -or $script:seen[0] -cne $entry.Remote) {
-                            throw "FAIL $($entry.Name) full remote case: expected $($entry.Remote), got $($script:seen -join ',')"
+                        if ($global:seen.Count -ne 1 -or $global:seen[0] -cne $entry.Remote) {
+                            throw "FAIL $($entry.Name) full remote case: expected $($entry.Remote), got $($global:seen -join ',')"
                         }
                         Write-Output "PASS $($entry.Name) full remote case"
                     }
-                    $script:requested = 'Both'
-                    $script:seen = @()
+                    $global:requested = 'Both'
+                    $global:seen = @()
                     & $Front -Case Both -Sha $sha | Out-Null
-                    if (($script:seen -join ',') -cne 'verify-runner-caches,verify-runner-caches') {
-                        throw "FAIL Both ordered remote cases: got $($script:seen -join ',')"
+                    if (($global:seen -join ',') -cne 'verify-runner-caches,verify-runner-caches') {
+                        throw "FAIL Both ordered remote cases: got $($global:seen -join ',')"
                     }
                     Write-Output 'PASS Both ordered remote cases'
                 }
                 finally {
-                    foreach ($path in ($script:ownedEvidence | Select-Object -Unique)) {
+                    foreach ($path in ($global:ownedEvidence | Select-Object -Unique)) {
                         if ((Split-Path -Leaf $path) -match '^c849-c849[0-9a-f]{16}$' -and
                             (Split-Path -Parent $path) -eq (Join-Path $repo '.antiphon')) {
                             Remove-Item -LiteralPath $path -Recurse -Force
