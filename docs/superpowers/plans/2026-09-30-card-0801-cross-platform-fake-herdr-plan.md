@@ -74,7 +74,7 @@ Static recount at the TestDesign source SHA used each actual class declaration (
 and all `[Test]`/`Arguments` attributes, including attributes on the method's own line. Server
 method counts in table order are 10, 9, 3, 11, 8, 13, 7, 8. Runner method/result counts below were
 independently reproduced. The linked `Antiphon.TestSupport.TestClassificationGuardTests` adds one
-result to CP-1/CP-2, outside the 497. The two focused classes add 24 at CP-1 and 33 at final
+result to CP-1/CP-2, outside the 497. The two focused classes add 24 at CP-1 and 39 at final
 CP-2 (including review repairs), also outside that census.
 
 ### Antiphon.Tests: eight classes, 69 methods, 110 results
@@ -445,7 +445,7 @@ branch. No rebase/amend/reset of this assigned branch; landing owns target integ
 | V-3 | Unique short endpoints, restrictive Unix permissions, collision refusal, parallel fake isolation, owned cleanup/rebind |
 | V-4 | Peer PID/start identity from the connected server; failed identity lookup keeps disposal unavailable |
 | V-5 | All eight Antiphon.Tests classes: Linux 94 executed, 16 skipped (CARD-0865/0866/0878); Windows 110 executed, 0 skipped; no failures |
-| V-6 | All 24 existing runner classes plus two transport classes and the classification guard: Linux 497 executed, 32 skipped (CARD-0863/0864/0871); Windows 529 executed, 0 skipped; no failures |
+| V-6 | All 24 existing runner classes plus two transport classes and the classification guard: Linux 505 executed, 32 skipped (CARD-0863/0864/0871); Windows 537 executed, 0 skipped; no failures |
 | R-1 | Existing 16 client tests, including raw protocol errors and subscription replay, remain green on Windows and Linux |
 | R-2 | Assembly-wide Unit-category smoke completes with fresh TRX; classification metadata remains valid |
 | R-3 | Real runner startup barrier and native PtyHost mixed rows retain physical process/output assertions on both OSes |
@@ -582,13 +582,13 @@ and DB evidence bounded and avoid cross-assembly resource contention. No unliste
 
 | Commission | Platform / SHA | Exact selection and receipt | Estimate |
 |---|---|---|---:|
-| W-1 (separate task, not a fifteenth checkpoint) | `-Platform Windows`, pinned to final Linux-tested Code SHA | Extract the same manifest with Windows estimates; run `--rows CP-2,CP-3,CP-4,CP-5,CP-6,CP-7,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14`. Fresh named-pipe, peer PID/start-time, listener/crash, native process, HTTP/script and Unit TRX. CP-2..CP-13 total 641 Windows results (497 existing runner + 33 new + 1 classification + 110 server), zero failed/skipped. CP-14 has its separate Unit floor. | 88 min |
+| W-1 (separate task, not a fifteenth checkpoint) | `-Platform Windows`, pinned to final Linux-tested Code SHA | Extract the same manifest with Windows estimates; run `--rows CP-2,CP-3,CP-4,CP-5,CP-6,CP-7,CP-8,CP-9,CP-10,CP-11,CP-12,CP-13,CP-14`. Fresh named-pipe, peer PID/start-time, listener/crash, native process, HTTP/script and Unit TRX. CP-2..CP-13 total 647 Windows results (497 existing runner + 39 new + 1 classification + 110 server), zero failed/skipped. CP-14 has its separate Unit floor. | 88 min |
 
 CP-1 is the intermediate Linux slice check; W-1 repeats those assertions through CP-2 at the
 final SHA, not another intermediate build. A Windows Code task that implements S1-S2 itself
 also runs CP-1 (10 minutes). No runner selection can substitute Linux for W-1. macOS implements
 the Unix transport with its own identity branch; when a host is available, CP-2 is the bounded
-native qualification (41 executed). Linux is not evidence that the macOS native call ran.
+native qualification (56 executed). Linux is not evidence that the macOS native call ran.
 Required merge evidence is Linux plus Windows; record macOS native qualification as pending.
 
 ### Acceptance boundary
@@ -639,7 +639,7 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
 | CP | After | Build | Group | Exact filter | Covers | Expected executed | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
 | CP-1 | S1-S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-core/` | initial-transport | manifest CP-1.filter | V-1, V-2, V-3, V-4, R-1 | Linux/Windows: 41 executed (12+12+16+1), 0 failed/skipped | 41 | 8 | 10 | true |
-| CP-2 | S1-S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-runner/` | final-transport | manifest CP-2.filter | V-1, V-2, V-3, V-4, V-6, R-1 | Linux/Windows: 50 executed (20+13+16+1), 0 failed/skipped | 50 | 8 | 10 | true |
+| CP-2 | S1-S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c801-runner/` | final-transport | manifest CP-2.filter | V-1, V-2, V-3, V-4, V-6, R-1 | Linux/Windows: 56 executed (20+19+16+1), 0 failed/skipped | 56 | 8 | 10 | true |
 | CP-3 | S1-S4 | CP-2 | runner-lifecycle | manifest CP-3.filter | V-6 | Linux/Windows: 82 executed (23+37+22), 0 failed/skipped | 82 | 8 | 10 | true |
 | CP-4 | S1-S4 | CP-2 | runner-placement-kill | manifest CP-4.filter | V-6, R-3 | Linux/Windows: 36 executed (23+6+7), 0 failed/skipped | 36 | 5 | 6 | true |
 | CP-5 | S1-S4 | CP-2 | runner-events-routes | manifest CP-5.filter | V-6 | Linux/Windows: 14 executed (5+4+5), 0 failed/skipped | 14 | 3 | 4 | true |
@@ -704,8 +704,8 @@ syntax subset of YAML accepted by `ManifestLoader`. Only this plan is tracked.
       "group": "final-transport",
       "filter": "/*/*/(FakeHerdrServerListenerTests*)|(HerdrTransportTests*)|(HerdrClientTests*)|(TestClassificationGuardTests*)/*",
       "expect": ["FakeHerdrServerListenerTests","HerdrTransportTests","HerdrClientTests","TestClassificationGuardTests"],
-      "expectText": "Linux/Windows: 50 executed (20+13+16+1), 0 failed/skipped",
-      "minExecuted": 50,
+      "expectText": "Linux/Windows: 56 executed (20+19+16+1), 0 failed/skipped",
+      "minExecuted": 56,
       "estimatedMinutes": 8,
       "estimatedMinutesWindows": 10,
       "serial": true
@@ -882,7 +882,7 @@ Static checks completed at the stated source baseline: all eight server and 24 r
 counts match the source census; all 14 manifest IDs are unique; all three isolated build paths
 exist as project directories and satisfy the output-name rule; build reuse stays within its
 slice group; every OR operand has its own parentheses and trailing wildcard; no filter contains
-a Markdown escape. CP-2..CP-13 cover 35 distinct classes and sum to 641 planned Windows results, including
+a Markdown escape. CP-2..CP-13 cover 35 distinct classes and sum to 647 planned Windows results, including
 the 33 new focused cases and one linked classification guard. The PowerShell extraction recipe
 was executed as a data-only check and reproduced the embedded manifest exactly on Linux.
 Time sums are 84 minutes Linux / 98 Windows including CP-1, and 76 / 88 for final CP-2..CP-14.
