@@ -51,7 +51,7 @@ public sealed class CodexRunnerImageContractTests
     {
         // The measured 0.160.0 control capture in the CARD-0904 investigation: one CUP per word.
         const string raw = "\u001b[8;3H\u001b[22mTrust\u001b[8;9Hthis\u001b[8;14Hfolder?\u001b[8;22HCodex";
-        StripVerifierCapture(raw).ShouldContain("Trust this folder", "0.160.0 trust control must be visible to the image row");
+        StripVerifierCapture(raw).ShouldContain("Trust this folder", customMessage: "0.160.0 trust control must be visible to the image row");
     }
 
     [Test]
