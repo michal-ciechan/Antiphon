@@ -46,8 +46,8 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "Docker Desktop is not running. Start it, wait for the tray icon, then re-run."
 }
 
-# ── Pre-flight: test Docker network creation ───────────────────────────────
-Write-Host "`n▶ Testing Docker network health..." -ForegroundColor Cyan
+# -- Pre-flight: test Docker network creation --
+Write-Host "`n> Testing Docker network health..." -ForegroundColor Cyan
 $dockerNetworkHealthy = $false
 $testNetName = "aspire-preflight-$(Get-Random)"
 $netJob = Start-Job { param($n) & docker network create $n 2>&1; $LASTEXITCODE } -ArgumentList $testNetName
@@ -66,11 +66,11 @@ if ($netCompleted -and $netCompleted.State -eq 'Completed') {
     Write-Host ""
 }
 
-# ── Pre-flight: ensure the always-on Postgres container is up ──────────────
+# -- Pre-flight: ensure the always-on Postgres container is up --
 # Postgres is an EXTERNAL standalone container (docker-compose.dev.yml, restart:
-# unless-stopped) — not Aspire-managed. The AppHost references it via
+# unless-stopped) - not Aspire-managed. The AppHost references it via
 # AddConnectionString. Bring it up here in case it isn't already (idempotent).
-Write-Host "`n▶ Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
+Write-Host "`n> Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
 docker compose -f "$root\docker-compose.dev.yml" up -d 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  WARNING: could not start Postgres via docker compose." -ForegroundColor Yellow
@@ -82,7 +82,7 @@ if ($LASTEXITCODE -ne 0) {
 # difference without disrupting their live pty-host pipes.
 & "$root\scripts\check-daemon-build.ps1"
 
-# ── Pre-flight: clean up old Aspire DCP temp state dirs ───────────────────
+# -- Pre-flight: clean up old Aspire DCP temp state dirs --
 $aspireDirs = Get-ChildItem 'C:\Users\lndco\AppData\Local\Temp' -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'aspire.*' -and $_.LastWriteTime -lt (Get-Date).AddHours(-2) }
 if ($aspireDirs) {
@@ -100,11 +100,11 @@ $worktreeDir = 'C:\Antiphon\worktrees'
 if (-not (Test-Path $worktreeDir)) { New-Item -ItemType Directory -Force $worktreeDir | Out-Null }
 
 if (-not $NoBuild) {
-    Write-Host "`n▶ Restoring AppHost dependencies..." -ForegroundColor Cyan
+    Write-Host "`n> Restoring AppHost dependencies..." -ForegroundColor Cyan
     dotnet restore $appHostDir
     if ($LASTEXITCODE -ne 0) { Write-Error "dotnet restore failed." }
 
-    Write-Host "`n▶ Installing client npm packages..." -ForegroundColor Cyan
+    Write-Host "`n> Installing client npm packages..." -ForegroundColor Cyan
     Push-Location "$root\client"
     npm install
     if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed." }
@@ -114,7 +114,7 @@ if (-not $NoBuild) {
 $logFile = "$root\logs\apphost.log"
 $pidFile = "$root\logs\apphost.pid"
 
-Write-Host "`n▶ Starting Aspire AppHost (background)..." -ForegroundColor Cyan
+Write-Host "`n> Starting Aspire AppHost (background)..." -ForegroundColor Cyan
 Write-Host "  OTLP    : http://localhost:17206" -ForegroundColor DarkGray
 Write-Host "  Log     : $logFile" -ForegroundColor DarkGray
 Write-Host ""
@@ -135,7 +135,7 @@ Write-Host "  AppHost PID : $($appHostProc.Id)" -ForegroundColor DarkGray
 Write-Host "  Waiting for dashboard URL in log (up to 90s)..." -ForegroundColor DarkGray
 Write-Host ""
 
-# Parse dashboard URL from log — Aspire prints:
+# Parse dashboard URL from log - Aspire prints:
 #   "Login to the dashboard at http://..." or "Now listening on: http://..."
 # The dashboard process writes its URL back into the AppHost log.
 $timeout = 90; $elapsed = 0; $dashboardUrl = $null
@@ -177,8 +177,8 @@ if ($dashboardUrl) {
     Write-Host "  Check log: Get-Content '$logFile' -Tail 30" -ForegroundColor DarkGray
 }
 
-# ── Post-launch: verify Postgres is up ─────────────────────────────────────
-Write-Host "`n▶ Checking Postgres..." -ForegroundColor Cyan
+# -- Post-launch: verify Postgres is up --
+Write-Host "`n> Checking Postgres..." -ForegroundColor Cyan
 $pgDeadline = (Get-Date).AddSeconds(45)
 $pgOK = $false
 while ((Get-Date) -lt $pgDeadline) {
