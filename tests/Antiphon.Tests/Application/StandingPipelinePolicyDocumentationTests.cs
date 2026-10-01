@@ -7,18 +7,12 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public sealed class StandingPipelinePolicyDocumentationTests
 {
-    private static readonly string[] Copies =
-    [
-        "AGENTS.md",
-        Path.Combine("docs", "orchestration-loop.md"),
-        Path.Combine("server", "Bundles", "orchestrator.md"),
-        Path.Combine(".claude", "skills", "antiphon-orchestrator", "SKILL.md"),
-    ];
-
     private static readonly string[] Phrases =
     [
         "never more tasks in one stage than its cap",
         "depth cap",
+        "up to four",
+        "at most six",
         "effective concurrency limits",
         "server2",
         "-IgnoreConcurrencyLimit",
@@ -31,14 +25,15 @@ public sealed class StandingPipelinePolicyDocumentationTests
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, Path.Combine(relative)));
 
     [Test]
-    public void the_policy_phrases_are_pinned_in_every_copy()
+    [Arguments("AGENTS.md")]
+    [Arguments("docs/orchestration-loop.md")]
+    [Arguments("server/Bundles/orchestrator.md")]
+    [Arguments(".claude/skills/antiphon-orchestrator/SKILL.md")]
+    public void the_policy_phrases_are_pinned_in_every_copy(string relative)
     {
-        foreach (var relative in Copies)
-        {
-            var text = Collapse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative)));
-            foreach (var phrase in Phrases)
-                text.ShouldContain(phrase, Case.Insensitive, relative);
-        }
+        var text = Collapse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative)));
+        foreach (var phrase in Phrases)
+            text.ShouldContain(phrase, Case.Insensitive, relative);
     }
 
     [Test]
