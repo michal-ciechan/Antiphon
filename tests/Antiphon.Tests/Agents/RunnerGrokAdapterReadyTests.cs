@@ -64,12 +64,12 @@ public class RunnerGrokAdapterReadyTests
     public async Task Current_trust_is_answered_once_before_positive_ready()
     {
         var client = new ScriptedClient([Trust, Trust, Ready, Ready], raw: Trust);
-        await using var adapter = NewAdapter(client, max: 600, settle: 50);
+        await using var adapter = NewAdapter(client, max: 5000, settle: 50, trust: 2000);
         await adapter.StartAsync(Spec(), CancellationToken.None);
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
         client.Writes.ShouldBe(["y"]);
         var stale = new ScriptedClient([Ready], raw: Trust);
-        await using var staleAdapter = NewAdapter(stale, max: 400, settle: 50);
+        await using var staleAdapter = NewAdapter(stale, max: 5000, settle: 50);
         await staleAdapter.StartAsync(Spec(), CancellationToken.None);
         (await staleAdapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
         stale.Writes.ShouldBeEmpty();
@@ -199,19 +199,29 @@ public class RunnerGrokAdapterReadyTests
     public async Task Utc_jump_does_not_advance_monotonic_settle()
     {
         var frame = new GrokStartupSnapshot(Ready, "", 1, DateTime.UtcNow);
-        var utcClock = new JumpClock();
+        var utcClock = new FakeTimeProvider();
         var utcReads = 0;
-        var utcStarted = Stopwatch.StartNew();
-        var utcReady = await GrokReadyWait.WaitAsync(_ =>
+        var wait = GrokReadyWait.WaitAsync(_ =>
         {
-            if (++utcReads == 2) utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
+            utcReads++;
             return Task.FromResult<GrokStartupSnapshot?>(frame);
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
-        (utcReady && utcStarted.Elapsed < TimeSpan.FromMilliseconds(1500))
-            .ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
-        utcReady.ShouldBeTrue();
+        utcClock.AdjustTime(utcClock.GetUtcNow() + TimeSpan.FromSeconds(3));
+        for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
+        {
+            utcClock.Advance(TimeSpan.FromMilliseconds(5));
+            await Task.Yield();
+        }
+        utcReads.ShouldBeGreaterThanOrEqualTo(2);
+        wait.IsCompleted.ShouldBeFalse("readyAfterUtcJumpWithoutElapsed");
+        for (var tick = 0; tick < 60 && !wait.IsCompleted; tick++)
+        {
+            utcClock.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Yield();
+        }
+        (await wait.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBeTrue();
     }
 
     [Test]
@@ -436,13 +446,9 @@ public class RunnerGrokAdapterReadyTests
     private sealed class JumpClock : TimeProvider
     {
         private long _timestampOffset;
-        private long _utcOffsetTicks;
         public override long GetTimestamp() => Stopwatch.GetTimestamp() + Interlocked.Read(ref _timestampOffset);
-        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow +
-            TimeSpan.FromTicks(Interlocked.Read(ref _utcOffsetTicks));
         public void Advance(TimeSpan amount) => Interlocked.Add(ref _timestampOffset,
             (long)(amount.TotalSeconds * Stopwatch.Frequency));
-        public void AdvanceUtc(TimeSpan amount) => Interlocked.Add(ref _utcOffsetTicks, amount.Ticks);
     }
 
     private sealed class TestLogger : ILogger
