@@ -199,7 +199,7 @@ public class RunnerGrokAdapterReadyTests
     public async Task Utc_jump_does_not_advance_monotonic_settle()
     {
         var frame = new GrokStartupSnapshot(Ready, "", 1, DateTime.UtcNow);
-        var utcClock = new FakeTimeProvider();
+        var utcClock = new UtcJumpClock();
         var utcReads = 0;
         var wait = GrokReadyWait.WaitAsync(_ =>
         {
@@ -208,9 +208,7 @@ public class RunnerGrokAdapterReadyTests
         }, new GrokReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(5),
             Settle = TimeSpan.FromSeconds(2), PollInterval = TimeSpan.FromMilliseconds(5),
             TimeProvider = utcClock });
-#pragma warning disable EXTEXP0004 // Test-only wall-clock jump; timers and monotonic time stay frozen.
-        utcClock.AdjustTime(utcClock.GetUtcNow() + TimeSpan.FromSeconds(3));
-#pragma warning restore EXTEXP0004
+        utcClock.AdvanceUtc(TimeSpan.FromSeconds(3));
         for (var tick = 0; tick < 100 && utcReads < 3 && !wait.IsCompleted; tick++)
         {
             utcClock.Advance(TimeSpan.FromMilliseconds(5));
@@ -451,6 +449,19 @@ public class RunnerGrokAdapterReadyTests
         public override long GetTimestamp() => Stopwatch.GetTimestamp() + Interlocked.Read(ref _timestampOffset);
         public void Advance(TimeSpan amount) => Interlocked.Add(ref _timestampOffset,
             (long)(amount.TotalSeconds * Stopwatch.Frequency));
+    }
+
+    private sealed class UtcJumpClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _timer = new();
+        private TimeSpan _utcOffset;
+        public override DateTimeOffset GetUtcNow() => _timer.GetUtcNow() + _utcOffset;
+        public override long GetTimestamp() => _timer.GetTimestamp();
+        public override long TimestampFrequency => _timer.TimestampFrequency;
+        public override ITimer CreateTimer(TimerCallback callback, object? state,
+            TimeSpan dueTime, TimeSpan period) => _timer.CreateTimer(callback, state, dueTime, period);
+        public void Advance(TimeSpan amount) => _timer.Advance(amount);
+        public void AdvanceUtc(TimeSpan amount) => _utcOffset += amount;
     }
 
     private sealed class TestLogger : ILogger
