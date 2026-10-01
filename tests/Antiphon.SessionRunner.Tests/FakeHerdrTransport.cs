@@ -15,6 +15,8 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     private readonly string? _directory;
     private readonly string? _marker;
     private readonly string? _leaseId;
+    internal static Func<string, NativeFileIdentity.Identity?>? ReclaimIdentityOverride;
+    internal static Func<string, bool>? ReclaimLinkOverride;
     private static readonly object ReclaimGate = new();
     public string Path { get; }
     public string Session { get; }
@@ -35,7 +37,7 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         _leaseId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         var directory = $"/tmp/ah-{_leaseId}";
         var path = System.IO.Path.Combine(directory, "s");
-        if (Encoding.UTF8.GetByteCount(path) + 1 >= 104)
+        if (Encoding.UTF8.GetByteCount(path) + 1 >= SocketPathLimit)
             throw new IOException($"Herdr test endpoint exceeds portable sun_path limit: {path}");
         // mkdir is exclusive at the OS boundary. A failed allocation never unlinks a foreign path.
         if (Mkdir(directory, 448) != 0)
@@ -44,8 +46,8 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
         _marker = System.IO.Path.Combine(directory, "owner");
         lock (ReclaimGate)
         {
-            WriteMarker(new LeaseMarker(1, "c801", _leaseId, path, Environment.ProcessId,
-                Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(), 0, 0, 0, 0, 0));
+            WriteMarker(new LeaseMarker(2, "c801", _leaseId, path, Environment.ProcessId,
+                OwnerStartIdentity(), NamespaceIdentity(), GetEuid(), 0, 0, 0, 0, 0));
             File.SetUnixFileMode(_marker, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
         Path = path;
@@ -63,8 +65,8 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     {
         if (_marker is null || _leaseId is null) return;
         lock (ReclaimGate)
-            WriteMarker(new LeaseMarker(1, "c801", _leaseId, Path, Environment.ProcessId,
-                Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks, NamespaceIdentity(),
+            WriteMarker(new LeaseMarker(2, "c801", _leaseId, Path, Environment.ProcessId,
+                OwnerStartIdentity(), NamespaceIdentity(), GetEuid(),
                 identity.Device, identity.Inode, identity.Mode, identity.ChangeSeconds, identity.ChangeNanoseconds));
     }
 
@@ -76,6 +78,7 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
             writer.Write(string.Join('\n', new[] {
                 marker.Schema.ToString(), marker.Fixture, marker.LeaseId, marker.SocketPath,
                 marker.OwnerPid.ToString(), marker.OwnerStartTicks.ToString(), marker.HostPidNamespace,
+                marker.OwnerUid.ToString(),
                 marker.SocketDevice.ToString(), marker.SocketInode.ToString(), marker.SocketMode.ToString(),
                 marker.SocketChangeSeconds.ToString(), marker.SocketChangeNanoseconds.ToString()
             }));
@@ -86,23 +89,76 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     {
         using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
         var fields = reader.ReadToEnd().Split('\n');
-        if (fields.Length != 12 || !int.TryParse(fields[0], out var schema)
+        if (fields.Length != 13 || !int.TryParse(fields[0], out var schema)
             || !int.TryParse(fields[4], out var pid) || !long.TryParse(fields[5], out var started)
-            || !ulong.TryParse(fields[7], out var device) || !ulong.TryParse(fields[8], out var inode)
-            || !uint.TryParse(fields[9], out var mode) || !long.TryParse(fields[10], out var seconds)
-            || !long.TryParse(fields[11], out var nanoseconds)) return null;
+            || !uint.TryParse(fields[7], out var uid)
+            || !ulong.TryParse(fields[8], out var device) || !ulong.TryParse(fields[9], out var inode)
+            || !uint.TryParse(fields[10], out var mode) || !long.TryParse(fields[11], out var seconds)
+            || !long.TryParse(fields[12], out var nanoseconds)) return null;
         return new LeaseMarker(schema, fields[1], fields[2], fields[3], pid, started,
-            fields[6], device, inode, mode, seconds, nanoseconds);
+            fields[6], uid, device, inode, mode, seconds, nanoseconds);
     }
 
     private sealed record LeaseMarker(int Schema, string Fixture, string LeaseId, string SocketPath,
-        int OwnerPid, long OwnerStartTicks, string HostPidNamespace, ulong SocketDevice, ulong SocketInode,
+        int OwnerPid, long OwnerStartTicks, string HostPidNamespace, uint OwnerUid, ulong SocketDevice, ulong SocketInode,
         uint SocketMode, long SocketChangeSeconds, long SocketChangeNanoseconds);
 
     private static string NamespaceIdentity()
     {
         try { return new FileInfo("/proc/self/ns/pid").LinkTarget ?? Environment.MachineName; }
         catch { return Environment.MachineName; }
+    }
+
+    internal static AsyncLocal<int?> SocketPathLimitOverride { get; } = new();
+    private static int SocketPathLimit => SocketPathLimitOverride.Value ?? 104;
+
+    private static long OwnerStartIdentity()
+    {
+        if (!OperatingSystem.IsLinux()) return Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+        return ReadProcStartTicks(Environment.ProcessId) ?? throw new IOException("Cannot identify fixture owner start time.");
+    }
+
+    // /proc/<pid>/stat field 2 is parenthesized and can contain spaces or ')' characters.
+    private static long? ReadProcStartTicks(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            var close = stat.LastIndexOf(") ", StringComparison.Ordinal);
+            if (close < 0 || !int.TryParse(stat.AsSpan(0, stat.IndexOf(' ')), out var parsedPid) || parsedPid != pid)
+                return null;
+            var fields = stat[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return fields.Length > 19 && long.TryParse(fields[19], out var ticks) && ticks > 0 ? ticks : null;
+        }
+        catch { return null; }
+    }
+
+    private static bool OwnerDefinitelyDead(LeaseMarker marker)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            var observed = ReadProcStartTicks(marker.OwnerPid);
+            if (observed.HasValue) return observed.Value != marker.OwnerStartTicks;
+            // Unreadable proc data is uncertainty. Only an absent PID confirms death.
+            try { using var process = Process.GetProcessById(marker.OwnerPid); return false; }
+            catch (ArgumentException) { return true; }
+            catch { return false; }
+        }
+        try { using var process = Process.GetProcessById(marker.OwnerPid); return process.StartTime.ToUniversalTime().Ticks != marker.OwnerStartTicks; }
+        catch (ArgumentException) { return true; }
+        catch { return false; }
+    }
+
+    private static bool IsLink(string path) => ReclaimLinkOverride?.Invoke(path) ?? new FileInfo(path).LinkTarget is not null;
+    private static bool TryReclaimIdentity(string path, out NativeFileIdentity.Identity identity)
+    {
+        if (ReclaimIdentityOverride is { } read)
+        {
+            var result = read(path);
+            identity = result ?? default;
+            return result.HasValue;
+        }
+        return NativeFileIdentity.TryRead(path, out identity);
     }
 
     public static void ReclaimDeadLeases()
@@ -124,34 +180,32 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
             var socketPath = System.IO.Path.Combine(directory, "s");
             try
             {
-                if (new DirectoryInfo(directory).LinkTarget is not null || new FileInfo(markerPath).LinkTarget is not null)
+                if (IsLink(directory) || IsLink(markerPath) || IsLink(socketPath))
                     continue;
+                if (!NativeFileIdentity.TryRead(directory, out var directoryIdentity)
+                    || (directoryIdentity.Mode & 0xF000) != 0x4000
+                    || (OperatingSystem.IsLinux() && directoryIdentity.Uid != GetEuid())) continue;
                 using var locked = new FileStream(markerPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
                 var marker = ReadMarker(locked);
-                if (marker is null || marker.Schema != 1 || marker.Fixture != "c801"
+                if (marker is null || marker.Schema != 2 || marker.Fixture != "c801"
                     || marker.LeaseId != System.IO.Path.GetFileName(directory)[3..]
                     || marker.SocketPath != socketPath || marker.OwnerPid <= 0
-                    || marker.HostPidNamespace != NamespaceIdentity()) continue;
+                    || marker.HostPidNamespace != NamespaceIdentity() || marker.OwnerUid != GetEuid()) continue;
                 if (Directory.GetFileSystemEntries(directory).OrderBy(x => x, StringComparer.Ordinal)
                     .SequenceEqual(new[] { markerPath, socketPath }.OrderBy(x => x, StringComparer.Ordinal)) == false)
                     continue;
-                if (!NativeFileIdentity.TryRead(socketPath, out var identity)
+                if (!TryReclaimIdentity(socketPath, out var identity)
                     || identity.Device != marker.SocketDevice || identity.Inode != marker.SocketInode
                     || identity.Mode != marker.SocketMode
+                    || (OperatingSystem.IsLinux() && identity.Uid != marker.OwnerUid)
+                    || (identity.Mode & 0xF000) != 0xC000
                     || identity.ChangeSeconds != marker.SocketChangeSeconds
                     || identity.ChangeNanoseconds != marker.SocketChangeNanoseconds)
                     continue;
-                if (new FileInfo(socketPath).LinkTarget is not null) continue;
-                try
-                {
-                    using var owner = Process.GetProcessById(marker.OwnerPid);
-                    if (owner.StartTime.ToUniversalTime().Ticks == marker.OwnerStartTicks) continue;
-                }
-                catch (ArgumentException) { /* positively absent */ }
-                catch (InvalidOperationException) { /* exited */ }
-                catch { continue; }
+                if (!OwnerDefinitelyDead(marker)) continue;
                 // Recheck the path identities under the exclusive marker lock.
-                if (!NativeFileIdentity.TryRead(socketPath, out var still) || still != identity) continue;
+                if (IsLink(socketPath) || !TryReclaimIdentity(socketPath, out var still) || still != identity
+                    || !NativeFileIdentity.TryRead(directory, out var stillDirectory) || stillDirectory != directoryIdentity) continue;
                 File.Delete(socketPath);
                 locked.Dispose();
                 File.Delete(markerPath);
@@ -164,16 +218,24 @@ internal sealed class FakeHerdrEndpoint : IAsyncDisposable
     [DllImport("libc", EntryPoint = "mkdir", SetLastError = true)]
     private static extern int Mkdir(string path, int mode);
 
+    [DllImport("libc", EntryPoint = "geteuid")]
+    private static extern uint GetEuid();
+
     public ValueTask DisposeAsync()
     {
         if (Volatile.Read(ref _claimed) != 0)
             throw new InvalidOperationException("Dispose the Herdr listener before its endpoint lease.");
         if (_directory is not null)
         {
-            if (NativeFileIdentity.TryRead(Path, out _))
-                throw new IOException($"Herdr test socket is still bound: {Path}");
-            if (_marker is not null) File.Delete(_marker);
-            Directory.Delete(_directory);
+            try
+            {
+                if (NativeFileIdentity.TryRead(Path, out _))
+                    throw new IOException($"Herdr test socket is still bound: {Path}");
+                if (_marker is not null) File.Delete(_marker);
+                Directory.Delete(_directory);
+            }
+            catch (IOException ex) { System.Diagnostics.Trace.TraceWarning($"Herdr endpoint cleanup failed: {ex}"); }
+            catch (UnauthorizedAccessException ex) { System.Diagnostics.Trace.TraceWarning($"Herdr endpoint cleanup failed: {ex}"); }
         }
         return ValueTask.CompletedTask;
     }
@@ -295,7 +357,7 @@ internal sealed class FakeHerdrTransport(FakeHerdrEndpoint endpoint) : IAsyncDis
 
 internal static class NativeFileIdentity
 {
-    internal readonly record struct Identity(ulong Device, ulong Inode, uint Mode, long ChangeSeconds, long ChangeNanoseconds);
+    internal readonly record struct Identity(ulong Device, ulong Inode, uint Mode, long ChangeSeconds, long ChangeNanoseconds, uint Uid = 0);
 
     internal static bool TryRead(string path, out Identity identity)
     {
@@ -311,8 +373,9 @@ internal static class NativeFileIdentity
             var mode = (uint)Marshal.ReadInt32(buffer, OperatingSystem.IsMacOS() ? 4 : 24);
             var changedSeconds = OperatingSystem.IsMacOS() ? 0 : Marshal.ReadInt64(buffer, 104);
             var changedNanoseconds = OperatingSystem.IsMacOS() ? 0 : Marshal.ReadInt64(buffer, 112);
+            var uid = OperatingSystem.IsLinux() ? (uint)Marshal.ReadInt32(buffer, 28) : 0;
             identity = new Identity(device, (ulong)Marshal.ReadInt64(buffer, 8), mode,
-                changedSeconds, changedNanoseconds);
+                changedSeconds, changedNanoseconds, uid);
             return true;
         }
         finally { Marshal.FreeHGlobal(buffer); }

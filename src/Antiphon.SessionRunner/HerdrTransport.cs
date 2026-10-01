@@ -13,6 +13,8 @@ internal sealed class HerdrConnection(Stream stream, string? instanceId) : IAsyn
 
 internal static class HerdrTransport
 {
+    // Test seam for an OS connect that remains pending; successful connections still use the native call.
+    internal static AsyncLocal<Func<CancellationToken, Task>?> PendingConnectOverride { get; } = new();
     internal static async Task<HerdrConnection> ConnectAsync(
         string endpoint, int timeoutMs, CancellationToken cancellationToken)
     {
@@ -36,7 +38,10 @@ internal static class HerdrTransport
         var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         try
         {
-            await socket.ConnectAsync(new UnixDomainSocketEndPoint(endpoint), timeout.Token);
+            if (PendingConnectOverride.Value is { } pending)
+                await pending(timeout.Token);
+            else
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(endpoint), timeout.Token);
             var identity = HerdrPeerIdentity.FromSocket(socket);
             return new HerdrConnection(new NetworkStream(socket, ownsSocket: true), identity);
         }

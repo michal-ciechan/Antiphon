@@ -71,8 +71,16 @@ public class HerdrTransportTests
     public async Task C801_ConnectDeadline()
     {
         await using var endpoint = new FakeHerdrEndpoint();
-        (await CaptureAsync(() => Client(endpoint.Path, timeout: 1).ConnectAndValidateAsync(CancellationToken.None)))
-            .ShouldBeOfType<HerdrBackendUnavailableException>().Message.ShouldContain(endpoint.Path);
+        if (!OperatingSystem.IsWindows())
+            HerdrTransport.PendingConnectOverride.Value = ct => Task.Delay(Timeout.Infinite, ct);
+        try
+        {
+            var attempt = CaptureAsync(() => Client(endpoint.Path, timeout: 20).ConnectAndValidateAsync(CancellationToken.None));
+            (await Task.WhenAny(attempt, Task.Delay(2000))).ShouldBe(attempt, "C801_CONNECT_DEADLINE_SETTLED");
+            (await attempt).ShouldBeOfType<HerdrBackendUnavailableException>()
+                .Message.ShouldContain(endpoint.Path);
+        }
+        finally { HerdrTransport.PendingConnectOverride.Value = null; }
     }
 
     [Test]
@@ -172,7 +180,7 @@ public class HerdrTransportTests
     {
         await using var fixture = new HerdrPaneDisposalFixture();
         await fixture.StartAsync();
-        HerdrPeerIdentity.ForceUnavailable.Value = true;
+        HerdrPeerIdentity.NativePidOverride.Value = _ => null;
         try
         {
             var refusal = await Should.ThrowAsync<HerdrLaunchException>(() =>
@@ -182,7 +190,7 @@ public class HerdrTransportTests
             fixture.Methods.Count(m => m == "pane.close").ShouldBe(0,
                 "C801_UNVERIFIED_PANE_NOT_CLOSED");
         }
-        finally { HerdrPeerIdentity.ForceUnavailable.Value = false; }
+        finally { HerdrPeerIdentity.NativePidOverride.Value = null; }
     }
 
     [Test]
