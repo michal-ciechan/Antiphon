@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -9,6 +11,8 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Antiphon.Tests.Agents;
 using Shouldly;
 using TUnit.Core;
 
@@ -63,24 +67,66 @@ public sealed class HerdrPaneDisposalApplicationTests
 
     [Test] public async Task C461_G049_Standing_execution_lock()
     {
-        if (OperatingSystem.IsLinux())
-            Skip.Test("CARD-0866: Linux disposal standing execution lock awaits repair.");
-        await using var f = new StandingRecoveryFixture(); await f.SeedAsync(); await using var db = f.Db();
+        var executable = Environment.ProcessPath;
+        executable.ShouldNotBeNullOrWhiteSpace();
+        Path.IsPathFullyQualified(executable).ShouldBeTrue(); File.Exists(executable).ShouldBeTrue();
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(services => services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
+            new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+            {
+                DefaultDefinition = "fake",
+                Definitions = { ["fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = executable } }
+            })), adapter);
+        await f.SeedAsync(); await using var db = f.Db();
         db.AgentSupervisionStates.Add(new() { AgentId = f.Agent.Id, Suspended = true }); await db.SaveChangesAsync();
         await using var h = new HerdrDisposalHttpFixture();
-        h.Ownership = new HerdrPaneDisposalOwnership(db, f.Harness.Provider.GetRequiredService<SessionMessageQueueService>(), f.Harness.LaunchQueue);
+        var queue = f.Harness.Provider.GetRequiredService<SessionMessageQueueService>();
+        var gate = queue.GetLock(f.B.Id);
+        h.Ownership = new HerdrPaneDisposalOwnership(db, queue, f.Harness.LaunchQueue);
         await h.StartAsync(); h.Runner.Backend.Transform = o => o with { Claims = [new(f.B.Id, "token", null, false)] };
         var p = await h.Runner.Service.PreviewAsync(new(h.Runner.PaneId, f.B.Id), default);
+        p.Eligible.ShouldBeTrue();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Runner.Backend.BeforeClose = async () => { entered.SetResult(); await release.Task; };
         var disposal = h.Http.PostAsJsonAsync("/api/herdr/pane-disposals", h.Runner.Request(p));
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var start = f.StartAsync(new());
-        try { await Task.Delay(100); start.IsCompleted.ShouldBeFalse(); f.Harness.LaunchQueue.Owns(f.B.Id).ShouldBeFalse(); }
-        finally { release.TrySetResult(); }
-        using var response = await disposal; response.EnsureSuccessStatusCode();
-        await start; await f.IdleAsync(); h.Runner.Backend.Closes.ShouldBe(1);
+        Task<Antiphon.Server.Application.Dtos.AgentDetailDto>? start = null;
+        try
+        {
+            var first = await Task.WhenAny(entered.Task, disposal).WaitAsync(TimeSpan.FromSeconds(10));
+            if (first == disposal) { using var early = await disposal; throw new Exception($"Disposal completed before close barrier: {early.StatusCode}"); }
+            var acquired = await gate.WaitAsync(0);
+            if (acquired) gate.Release();
+            acquired.ShouldBeFalse("standing-lock-held");
+            var preflight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Harness.Runner.ListOverride = _ =>
+            {
+                var free = gate.Wait(0);
+                if (free) gate.Release();
+                preflight.TrySetResult(free);
+                return Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+            };
+            start = f.StartAsync(new());
+            first = await Task.WhenAny(preflight.Task, start).WaitAsync(TimeSpan.FromSeconds(10));
+            if (first == start) await start; // surface an early fault instead of calling it a lock result
+            (await preflight.Task.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeFalse("standing-lock-held-at-preflight");
+            start.IsCompleted.ShouldBeFalse();
+            f.Harness.LaunchQueue.Owns(f.B.Id).ShouldBeFalse();
+            adapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+            using var response = await disposal.WaitAsync(TimeSpan.FromSeconds(15));
+            response.EnsureSuccessStatusCode();
+            if (start is not null) await start.WaitAsync(TimeSpan.FromSeconds(15));
+            await f.IdleAsync();
+        }
+        h.Runner.Backend.Closes.ShouldBe(1);
+        adapter.Started.ShouldBeTrue();
+        var after = await gate.WaitAsync(0);
+        if (after) gate.Release();
+        after.ShouldBeTrue("standing-lock-released");
     }
     [Test] public async Task C461_G050_No_transaction_over_rpc()
     {

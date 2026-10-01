@@ -89,7 +89,7 @@ internal sealed class HerdrPaneDisposalFixture : IAsyncDisposable
         {
             var shell = new HerdrPaneDisposalProcess(p.ShellPid ?? 0, "pwsh.exe", Started);
             var fg = p.ForegroundProcesses?.Select(f => new HerdrPaneDisposalProcess(f.Pid,
-                Path.GetFileName(f.Name), Started.AddSeconds(1), shell.Pid, HerdrDisposalIdentity.NativeIds(f.Argv))).ToArray();
+                f.Name[(f.Name.LastIndexOfAny(['/', '\\']) + 1)..], Started.AddSeconds(1), shell.Pid, HerdrDisposalIdentity.NativeIds(f.Argv))).ToArray();
             return new(shell, fg, new[] { shell }.Concat(fg ?? []).Concat(Background).ToArray(), Complete);
         }
         public bool? IsSameProcessAlive(HerdrPaneDisposalProcess p) => Alive;
