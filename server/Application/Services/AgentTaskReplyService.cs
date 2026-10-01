@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -849,7 +850,12 @@ public sealed class AgentTaskReplyService
         string? callerWarning = remoteBlockWarning;
         if (task.CompletionProgressEvidenceJson is not null
             && TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson) is { } progressEvidence
-            && TaskCompletionProgressService.ProgressWarning(progressEvidence) is { } progressWarning)
+            && (TaskCompletionProgressService.ProgressWarning(progressEvidence)
+                ?? (task.Role != AgentTaskRole.Code && task.Workspace == WorkspaceMode.Worktree
+                    ? TaskCompletionProgressService.NoPushedProgressWarning(progressEvidence,
+                        task.WorktreeBranch is null ? null : task.WorktreeBranch.StartsWith("refs/", StringComparison.Ordinal)
+                            ? task.WorktreeBranch : "refs/heads/" + task.WorktreeBranch)
+                    : null)) is { } progressWarning)
         {
             callerWarning = callerWarning is null ? progressWarning : $"{callerWarning}\n\n{progressWarning}";
             db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, progressWarning, now));
@@ -929,8 +935,11 @@ public sealed class AgentTaskReplyService
         // omits the final token and may itself contain a token-shaped line.
         var reviewEvidence = task.Role == AgentTaskRole.Review && task.Stage == OrchestrationStage.Review
             ? ReviewEvidence.TryParse(report) : default;
-        if (task.Stage is not null)
-            await RecordDelegateStageOutcomeAsync(services, db, task, report, reviewEvidence, now, ct);
+        if (task.Stage is not null
+            && await RecordDelegateStageOutcomeAsync(services, db, task, report, reviewEvidence, now, ct)
+                is { } consistencyWarning)
+            callerWarning = string.IsNullOrWhiteSpace(callerWarning)
+                ? consistencyWarning : callerWarning.Trim() + "\n\n" + consistencyWarning;
         if (task.Role == AgentTaskRole.Review && task.Status == AgentTaskStatus.Succeeded
             && reviewEvidence.Warning == ReviewEvidence.NotStandaloneWarning)
         {
@@ -4391,17 +4400,19 @@ public sealed class AgentTaskReplyService
     /// line is Unreported, never a guess. Worktree rows gain <c>commits=n</c> corroboration and
     /// stay Unreported if the line was absent.
     /// </summary>
-    private async Task RecordDelegateStageOutcomeAsync(
+    private async Task<string?> RecordDelegateStageOutcomeAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, string report,
         ReviewEvidence.Result reviewEvidence, DateTime now,
         CancellationToken ct)
     {
         if (task.Stage is not { } stage)
-            return;
+            return null;
 
         var already = await db.StageOutcomes.AnyAsync(o => o.StageTaskId == task.Id && o.Stage == stage, ct);
         if (already)
-            return;
+            return null;
+
+        var consistencyWarnings = new List<string>();
 
         var outcome = StageOutcomeKind.Unreported;
         var detail = string.Empty;
@@ -4473,6 +4484,20 @@ public sealed class AgentTaskReplyService
                         reviewedRepo = subject.RepoPath;
                         if (profiled)
                             completedScope = ReviewEvidence.CapToRound(evidence.Scope, task.VerificationRound!.Value);
+                        if (GitObjectId.IsFull(task.WorktreeBaseSha)
+                            && !string.Equals(task.WorktreeBaseSha, reviewedSha, StringComparison.OrdinalIgnoreCase))
+                            consistencyWarnings.Add($"review-evidence-warning=review_evidence_sha_not_review_base: "
+                                + $"This review's checkout was cut at {task.WorktreeBaseSha}; the block claims {reviewedSha}.");
+                        var progress = TaskProgressJson.TryReadEvidence(subject.CompletionProgressEvidenceJson);
+                        var tip = progress?.RemoteSync?.ConfirmedSha;
+                        if (!GitObjectId.IsFull(tip))
+                            tip = progress?.Sources?.FirstOrDefault(s => s.Origin == ProgressOrigin.Primary)?.VerifiedSha;
+                        if (GitObjectId.IsFull(tip)
+                            && !string.Equals(tip, reviewedSha, StringComparison.OrdinalIgnoreCase))
+                            consistencyWarnings.Add($"review-evidence-warning=review_evidence_subject_tip_mismatch: "
+                                + $"Subject {DelegationReportFormatter.Short(subject.Id)} on {reviewedRef} was at {tip} "
+                                + $"as confirmed at its settlement; the block claims {reviewedSha}. "
+                                + "If a different task's pushed branch was reviewed, commission a fresh same-card Review naming that task.");
                     }
                 }
             }
@@ -4506,6 +4531,9 @@ public sealed class AgentTaskReplyService
             CommissionedRound = profiled ? task.VerificationRound : null,
             OrdinaryScopeCompleted = completedScope,
         });
+        foreach (var warning in consistencyWarnings)
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
+        return consistencyWarnings.Count == 0 ? null : string.Join("\n\n", consistencyWarnings);
     }
 
     private static bool ReviewSubjectAuthorized(AgentTask review, AgentTask subject) =>

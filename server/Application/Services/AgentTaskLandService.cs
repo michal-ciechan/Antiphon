@@ -228,7 +228,10 @@ public sealed class AgentTaskLandService
                                 "adopt_source_foreign_repository");
                     }
                     source ??= task;
-                    await LandApproval.LoadRecoveryEvidenceAsync(_db, evidenceId.Value, expected!, source, ct);
+                    await LandApproval.LoadRecoveryEvidenceAsync(_db, evidenceId.Value, expected!, source, ct,
+                        recoveryMode == LandRecoveryMode.AdoptReviewedSource
+                            ? LandApproval.EvidenceIdentity.AdoptionSource
+                            : LandApproval.EvidenceIdentity.RecoveryOwner);
                 }
                 // CARD-0544 D-5: once any Interim work was admitted for this owner, no explicit-caller
                 // fallback remains. A cleanup-only retry after confirmed publication needs no new sweep.

@@ -81,6 +81,11 @@ public class AgentTaskLandApprovalRequestTests
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaC, ReviewEvidenceId: evidence.Id), CancellationToken.None));
         error.Code.ShouldBe("review_evidence_sha_mismatch");
+        error.Message.ShouldContain(evidence.Id.ToString("D"));
+        error.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
+        error.Message.ShouldContain(FullRef(task.WorktreeBranch));
+        error.Message.ShouldContain(ShaB);
+        error.Message.ShouldContain(ShaC);
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
     }
 
@@ -96,6 +101,13 @@ public class AgentTaskLandApprovalRequestTests
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id), CancellationToken.None));
         error.Code.ShouldBe("review_evidence_subject_mismatch");
+        error.Message.ShouldContain(evidence.Id.ToString("D"));
+        error.Message.ShouldContain(DelegationReportFormatter.Short(other.Id));
+        error.Message.ShouldContain(DelegationReportFormatter.Short(owner.Id));
+        error.Message.ShouldContain(FullRef(other.WorktreeBranch));
+        error.Message.ShouldContain(FullRef(owner.WorktreeBranch));
+        error.Message.ShouldContain("Land " + DelegationReportFormatter.Short(other.Id));
+        error.Message.ShouldContain("-FromTask " + DelegationReportFormatter.Short(other.Id));
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
     }
 
@@ -110,6 +122,46 @@ public class AgentTaskLandApprovalRequestTests
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id), CancellationToken.None));
         error.Code.ShouldBe("review_evidence_ref_mismatch");
+        error.Message.ShouldContain(evidence.Id.ToString("D"));
+        error.Message.ShouldContain("refs/heads/other");
+        error.Message.ShouldContain(FullRef(task.WorktreeBranch));
+        error.Message.ShouldContain(ShaB);
+    }
+
+    [Test]
+    public async Task C788_AdoptionSubjectMismatchNamesSourceAndFlag()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var owner = await SeedSucceededWorktreeAsync(db, Guid.NewGuid());
+        var source = await SeedSucceededWorktreeAsync(db, owner.CardId);
+        var evidence = await SeedReviewAsync(db, owner, ShaB);
+        var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id,
+                AdoptFromTaskId: source.Id), CancellationToken.None));
+        error.Code.ShouldBe("review_evidence_subject_mismatch");
+        error.Message.ShouldContain("required AdoptionSource subjectTaskId=" + DelegationReportFormatter.Short(source.Id));
+        error.Message.ShouldContain("-FromTask " + DelegationReportFormatter.Short(source.Id));
+        error.Message.ShouldContain(FullRef(source.WorktreeBranch));
+        error.Message.ShouldContain(FullRef(owner.WorktreeBranch));
+    }
+
+    [Test]
+    public async Task C788_OwnerMismatchNamesSiblingAndAdoptionShape()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var owner = await SeedSucceededWorktreeAsync(db, Guid.NewGuid());
+        var sibling = await SeedSucceededWorktreeAsync(db, owner.CardId);
+        var evidence = await SeedReviewAsync(db, sibling, ShaB);
+        var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: evidence.Id), CancellationToken.None));
+        error.Code.ShouldBe("review_evidence_subject_mismatch");
+        error.Message.ShouldContain("Land " + DelegationReportFormatter.Short(sibling.Id) + " directly");
+        error.Message.ShouldContain("-Land " + DelegationReportFormatter.Short(owner.Id));
+        error.Message.ShouldContain("-FromTask " + DelegationReportFormatter.Short(sibling.Id));
     }
 
     [Test]

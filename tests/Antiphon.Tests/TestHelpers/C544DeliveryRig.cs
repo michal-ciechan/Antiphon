@@ -111,13 +111,17 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
     /// <summary>A settled profile-v1 Review whose completion obligation targets the caller.</summary>
     public async Task<(Guid TaskId, string Report)> SettleReviewAsync(Antiphon.Server.Application.Dtos.CreateAgentTaskRequest? request = null,
         string scope = "Full", string next = "land", int padding = 0, AgentTask? root = null,
-        Func<Guid, string, string>? transformReport = null)
+        Func<Guid, string, string>? transformReport = null,
+        Func<C544World, Guid, Task>? beforeSettlement = null,
+        Guid? subjectId = null, string? reviewedSha = null)
     {
         var caller = root is null ? null : World.Caller() with { Task = root };
         var created = await World.CreateTaskAsync(request ?? World.FinalReview(), caller);
         var sessionId = await World.DispatchAsync(created.Id);
+        if (beforeSettlement is not null) await beforeSettlement(World, created.Id);
         // Padding goes into the body; the evidence, finding and next-stage markers stay in the tail.
-        var report = C544World.ReviewReport(created.Id, World.Owner.Id, World.OwnerSha, scope, found: false, next);
+        var report = C544World.ReviewReport(created.Id, subjectId ?? World.Owner.Id,
+            reviewedSha ?? World.OwnerSha, scope, found: false, next);
         if (padding > 0)
             report = report.Replace("Reviewed the owner.", "Reviewed the owner.\n\n" + string.Join("\n",
                 Enumerable.Range(0, padding).Select(i => $"evidence line {i:D4}: preserved review detail")));

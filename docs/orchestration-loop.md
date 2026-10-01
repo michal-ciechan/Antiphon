@@ -872,6 +872,13 @@ stall, not a delivery failure.
 
 ## 4. Checking on a delegate
 
+On completion, treat `review-evidence-warning=review_evidence_sha_not_review_base` and
+`review-evidence-warning=review_evidence_subject_tip_mismatch` as reasons to inspect the
+Review's checkout base, named subject and pushed tip before land. A `progress=none` warning
+means a non-Code Worktree task reported success without attributable pushed progress;
+inspect its branch before accepting a claimed artifact. The warning does not change the
+task's settlement status.
+
 A `ParkedMessage` attention row on a finished task now clears itself within roughly 10 minutes: the
 queue sweep discards the stale machine-origin message rather than retrying it. A parked row that
 remains is deliberately one whose content may still need a human decision (for example a UI/channel

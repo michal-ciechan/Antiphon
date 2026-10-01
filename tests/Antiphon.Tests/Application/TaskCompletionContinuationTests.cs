@@ -37,6 +37,40 @@ public class TaskCompletionContinuationTests
     private static readonly DateTime BeforeCapture = Captured.AddMinutes(-5);
     private static readonly DateTime Future = Now.AddMinutes(5);
 
+    [Test]
+    [Arguments("runner_no_pushed_progress")]
+    [Arguments("branch_not_pushed")]
+    [Arguments("no_movement")]
+    [Arguments("claim-warning-present")]
+    [Arguments("progress-observed")]
+    [Arguments("indeterminate")]
+    [Arguments("missing-coordinates")]
+    public void C788_NoPushedProgressWarningShape(string shape)
+    {
+        var assessment = shape switch
+        {
+            "progress-observed" => CompletionProgressAssessment.ProgressObserved,
+            "indeterminate" => CompletionProgressAssessment.Indeterminate,
+            _ => CompletionProgressAssessment.NoAttributedProgress,
+        };
+        var evidence = new CompletionProgressEvidence(1, assessment,
+            Reason: shape is "missing-coordinates" or "claim-warning-present" ? "no_movement" : shape,
+            ClaimWarning: shape == "claim-warning-present" ? "claim_not_for_this_task" : null,
+            RemoteSync: shape == "missing-coordinates" ? null
+                : new RemoteSyncEvidence(1, RemoteSettlementSyncState.Synchronized,
+                    ExpectedRef, ConfirmedSha: Bl));
+        var warning = TaskCompletionProgressService.NoPushedProgressWarning(evidence);
+        if (shape is "claim-warning-present" or "progress-observed" or "indeterminate")
+            warning.ShouldBeNull();
+        else
+        {
+            warning.ShouldNotBeNull();
+            warning.ShouldStartWith("progress=none; reason=");
+            warning.ShouldContain("ref=" + (shape == "missing-coordinates" ? "unknown" : ExpectedRef));
+            warning.ShouldContain("still at " + (shape == "missing-coordinates" ? "unknown" : Bl));
+        }
+    }
+
     // ---- V-4 -------------------------------------------------------------------------------
 
     [Test]
