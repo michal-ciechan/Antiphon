@@ -47,20 +47,22 @@ public sealed class RunCheckpointSourceScriptTests
         var control = await fixture.RunAsync(expectedSha: fixture.Head);
         control.Exit.ShouldBe(0, control.Output);
         var calls = fixture.Calls;
-        var wrong = await fixture.RunAsync(expectedSha: new string('f', 40));
+        var wrong = await fixture.RunAsync(expectedSha: new string('f', 40), useSlot: true);
         wrong.Exit.ShouldBe(2, wrong.Output);
         wrong.Line.ShouldContain("reason=source_mismatch", Case.Sensitive, "wrong-sha-no-driver");
         fixture.Calls.ShouldBe(calls, "wrong-sha-no-driver");
+        fixture.SlotCalls.ShouldBe(0, "wrong-sha-no-lease");
         var sha256 = await fixture.RunAsync(expectedSha: new string('a', 64));
         sha256.Exit.ShouldBe(2, sha256.Output);
         sha256.Line.ShouldContain("reason=source_mismatch", Case.Sensitive,
             "64-character-sha-is-valid-shape-but-not-the-head");
         fixture.Calls.ShouldBe(calls, "64-character-mismatch-no-driver");
         fixture.Write("tracked.txt", "dirty");
-        var dirty = await fixture.RunAsync(expectedSha: fixture.Head);
+        var dirty = await fixture.RunAsync(expectedSha: fixture.Head, useSlot: true);
         dirty.Exit.ShouldBe(2, dirty.Output);
         dirty.Line.ShouldContain("reason=source_dirty", Case.Sensitive, "dirty-no-driver");
         fixture.Calls.ShouldBe(calls, "dirty-no-driver");
+        fixture.SlotCalls.ShouldBe(0, "dirty-preflight-no-lease");
         var git = Path.Combine(fixture.Repo, ".git");
         var displaced = Path.Combine(fixture.External, "displaced-git");
         Directory.Move(git, displaced);
@@ -73,6 +75,16 @@ public sealed class RunCheckpointSourceScriptTests
             fixture.Calls.ShouldBe(calls, "unknown-no-driver");
         }
         finally { Directory.Move(displaced, git); }
+
+        using var slotFixture = new Fixture();
+        var slotDrift = await slotFixture.RunAsync(expectedSha: slotFixture.Head, useSlot: true,
+            slotDrift: true);
+        slotDrift.Exit.ShouldBe(2, slotDrift.Output);
+        slotFixture.SlotCalls.ShouldBe(1, "slot-edit-acquired-once");
+        slotFixture.Calls.ShouldBe(0, "slot-edit-no-driver");
+        slotDrift.Source.GetProperty("state").GetString().ShouldBe("changed");
+        slotDrift.Line.ShouldContain("reason=source_changed", Case.Sensitive,
+            "post-slot-observation-refuses-drift");
     }
 
     [Test]
@@ -136,6 +148,14 @@ public sealed class RunCheckpointSourceScriptTests
         var headDrift = await headDriftFixture.RunAsync(driftPhase: "head-run");
         headDrift.Exit.ShouldBe(2, headDrift.Output);
         headDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "head-movement");
+        using var restoreFixture = new Fixture();
+        restoreFixture.Write("tracked.txt", "dirty before driver");
+        var restored = await restoreFixture.RunAsync(driftPhase: "restore-run");
+        restored.Exit.ShouldBe(2, restored.Output);
+        restored.Source.GetProperty("start").GetProperty("dirtyFiles").GetInt32().ShouldBe(1);
+        restored.Source.GetProperty("end").GetProperty("dirtyFiles").GetInt32().ShouldBe(0);
+        restored.Source.GetProperty("state").GetString().ShouldBe("changed",
+            "dirty-to-clean-is-source-drift");
     }
 
     [Test]
@@ -153,6 +173,19 @@ public sealed class RunCheckpointSourceScriptTests
         var malformed = await fixture.RunAsync(trx: "c585-zero.trx");
         malformed.Exit.ShouldBe(3, malformed.Output);
         malformed.Source.GetProperty("executed").GetInt32().ShouldBe(0, "zero-count-persists");
+
+        File.Delete(fixture.Stamp);
+        Directory.CreateDirectory(fixture.Stamp);
+        File.WriteAllText(Path.Combine(fixture.Stamp, "block"), "keep the stamp directory nonempty");
+        var interrupted = await fixture.RunAsync();
+        interrupted.Exit.ShouldBe(2, interrupted.Output);
+        interrupted.Output.ShouldContain("driver interruption", Case.Sensitive);
+        interrupted.Source.GetProperty("end").ValueKind.ShouldBe(JsonValueKind.Null,
+            "handled-driver-interruption-has-no-observed-end");
+        interrupted.Source.GetProperty("state").GetString().ShouldBe("unknown");
+        interrupted.Line.ShouldContain("reason=source_unknown", Case.Sensitive);
+        (await fixture.ValidateAsync(interrupted.Evidence)).Exit.ShouldBe(2,
+            "handled-interruption-is-not-eligible-review-evidence");
     }
 
     [Test]
@@ -216,6 +249,8 @@ public sealed class RunCheckpointSourceScriptTests
         public string Stamp => Path.Combine(Repo, "sample", "bin-c835", "checkpoint-build-source.json");
         public int Calls => File.Exists(Path.Combine(External, "calls.txt"))
             ? File.ReadAllLines(Path.Combine(External, "calls.txt")).Length : 0;
+        public int SlotCalls => File.Exists(Path.Combine(External, "slot-calls.txt"))
+            ? File.ReadAllLines(Path.Combine(External, "slot-calls.txt")).Length : 0;
         private int _round;
         private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
 
@@ -244,6 +279,9 @@ public sealed class RunCheckpointSourceScriptTests
                 if ($env:C835_DRIFT -eq ('head-' + $phase)) {
                     git -C $env:C835_REPO commit --allow-empty -qm 'move head during driver'
                 }
+                if ($env:C835_DRIFT -eq ('restore-' + $phase)) {
+                    git -C $env:C835_REPO restore -- tracked.txt
+                }
                 if ($phase -eq 'build') { exit [int]$env:C835_BUILD_EXIT }
                 $result = ''
                 for ($i = 0; $i -lt $items.Count; $i++) {
@@ -251,6 +289,14 @@ public sealed class RunCheckpointSourceScriptTests
                 }
                 if ($env:C835_TRX -and $result) { Copy-Item -LiteralPath $env:C835_TRX -Destination (Join-Path $result 'run.trx') }
                 exit 0
+                """);
+            File.WriteAllText(Path.Combine(External, "slot-shim.ps1"), """
+                param([string]$Method, [string]$Uri, [string]$BodyJson)
+                Add-Content -LiteralPath $env:C835_SLOT_CALLS -Value $Method
+                if ($env:C835_SLOT_DRIFT -eq '1') {
+                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed while waiting for slot'
+                }
+                return @{ Status = 200; Body = '{"unlimited":true,"maxCpuCount":4}' }
                 """);
         }
 
@@ -262,7 +308,8 @@ public sealed class RunCheckpointSourceScriptTests
         }
 
         public async Task<Result> RunAsync(string? expectedSha = null, bool noBuild = false,
-            string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null)
+            string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null,
+            bool useSlot = false, bool slotDrift = false)
         {
             var round = ++_round;
             var resultRoot = Path.Combine(External, "results-" + round);
@@ -270,7 +317,8 @@ public sealed class RunCheckpointSourceScriptTests
                 Path.Combine(ProjectRoot, "scripts", "run-checkpoint.ps1"), "-Name", "CP-2",
                 "-Project", "sample", "-OutputPath", "bin-c835/", "-Filter", "/*/*/C585SampleTests/*",
                 "-ResultsRoot", resultRoot, "-MinExecuted", "1", "-DotnetShim",
-                Path.Combine(External, "shim.ps1"), "-NoSlot" };
+                Path.Combine(External, "shim.ps1") };
+            if (!useSlot) args.Add("-NoSlot");
             if (expectedSha is not null) args.AddRange(["-ExpectedSourceSha", expectedSha]);
             if (noBuild) args.Add("-NoBuild");
             var environment = new Dictionary<string, string?>
@@ -280,6 +328,9 @@ public sealed class RunCheckpointSourceScriptTests
                 ["C835_BUILD_EXIT"] = buildExit.ToString(),
                 ["C835_TRX"] = trx is null ? null : Path.Combine(ProjectRoot, "scripts", "fixtures", trx),
                 ["C835_DRIFT"] = driftPhase,
+                ["C835_SLOT_CALLS"] = Path.Combine(External, "slot-calls.txt"),
+                ["C835_SLOT_DRIFT"] = slotDrift ? "1" : null,
+                ["C589_SLOT_SHIM"] = Path.Combine(External, "slot-shim.ps1"),
                 ["C585_STAMP"] = "round-" + round,
                 ["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots",
             };
