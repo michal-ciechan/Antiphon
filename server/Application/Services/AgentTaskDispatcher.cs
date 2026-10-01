@@ -563,10 +563,14 @@ public sealed class AgentTaskDispatcher
             ct.ThrowIfCancellationRequested();
 
             // Old rows can retain the public desktop aliases. Use the canonical null binding
-            // before capacity, platform and preparation checks; the normal dispatch save
-            // persists it when this queued task is claimed.
+            // before capacity, platform and preparation checks. Persist it before the
+            // separate claim context reads the queued row.
             if (RunnerRequestIntent.IsDesktopAlias(task.RunnerId))
+            {
                 task.RunnerId = null;
+                // DispatchOneAsync opens a fresh claim context and must read the same binding.
+                await _db.SaveChangesAsync(ct);
+            }
 
             var runnerBound = !string.IsNullOrEmpty(task.RunnerId);
             if (!runnerBound
