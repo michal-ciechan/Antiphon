@@ -69,6 +69,11 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             }, h.TempRoot, 120, 30);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var scope = h.Provider.CreateScope();
+        // A real standing launch runs with the runner->server transcript pump already live. The
+        // launch's own flush is transcript-confirmed; with nothing ingesting, the queue reads
+        // NoSubmitOutput and stops this generation, so the launch is correctly refused.
+        using var pump = new CancellationTokenSource();
+        var pumping = GrokDelegateEndToEndTests.PumpTranscriptAsync(h.Provider, h.SessionId, pump.Token);
         var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
             .LaunchInteractiveAsync(h.SessionId, h.AgentId, spec, null, false, null, deadline.Token);
         try
@@ -103,6 +108,8 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         {
             deadline.Cancel();
             try { await launch; } catch { }
+            pump.Cancel();
+            await pumping;
             try { await client.KillAsync(h.SessionId, CancellationToken.None); } catch { }
         }
     }
