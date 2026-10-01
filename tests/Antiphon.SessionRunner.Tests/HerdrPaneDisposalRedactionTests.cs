@@ -18,6 +18,48 @@ public sealed class HerdrPaneDisposalRedactionTests
     private static readonly DateTimeOffset FixedNow = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+    private static void AssertV1Facts(HerdrPaneDisposalPreview p, Guid sessionId, string? instanceId, bool complete)
+    {
+        p.PreviewId.ShouldNotBe(Guid.Empty, "v1-preview-id");
+        p.ExpiresAtUtc.ShouldBe(FixedNow.AddMinutes(2), "v1-expiry");
+        p.PaneId.ShouldBe("w1:p2", "v1-pane-id");
+        p.ExpectedSessionId.ShouldBe(sessionId, "v1-expected-session-id");
+        p.ExpectedNativeSessionId.ShouldBeNull("v1-expected-native-id");
+        p.WorkspaceId.ShouldBe("w1", "v1-workspace-id");
+        p.TabId.ShouldBe("w1:t2", "v1-tab-id");
+        p.TerminalId.ShouldBe("term_000000000002", "v1-terminal-id");
+        p.BackendProtocol.ShouldBe(20, "v1-backend-protocol");
+        p.BackendInstanceId.ShouldBe(instanceId, "v1-backend-instance-id");
+        p.ShellPid.ShouldBe(4242, "v1-shell-pid");
+        p.Shell.ShouldNotBeNull("v1-shell-present");
+        p.Shell!.Pid.ShouldBe(4242, "v1-shell-record-pid");
+        p.Shell.ExecutableName.ShouldBe("pwsh.exe", "v1-shell-name");
+        p.Shell.StartedAtUtc.ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), "v1-shell-start");
+        p.Shell.ParentPid.ShouldBeNull("v1-shell-parent");
+        p.Shell.NativeSessionIds.ShouldBeNull("v1-shell-native-ids");
+        p.Foreground.ShouldBeEmpty("v1-foreground-empty");
+        p.AffectedProcesses.ShouldNotBeNull("v1-affected-present");
+        p.AffectedProcesses!.Count.ShouldBe(1, "v1-affected-count");
+        p.AffectedProcesses[0].Pid.ShouldBe(4242, "v1-affected-pid");
+        p.AffectedProcesses[0].ExecutableName.ShouldBe("pwsh.exe", "v1-affected-name");
+        p.AffectedProcesses[0].StartedAtUtc.ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), "v1-affected-start");
+        p.AffectedProcesses[0].ParentPid.ShouldBeNull("v1-affected-parent");
+        p.AffectedProcesses[0].NativeSessionIds.ShouldBeNull("v1-affected-native-ids");
+        p.Claims.Count.ShouldBe(1, "v1-claims-count");
+        p.Claims[0].SessionId.ShouldBe(sessionId, "v1-claim-session-id");
+        p.Claims[0].Live.ShouldBeFalse("v1-claim-live");
+        p.Claims[0].ChildPid.ShouldBeNull("v1-claim-child-pid");
+        p.Claims[0].ChildStartedAtUtc.ShouldBeNull("v1-claim-child-start");
+        p.WouldLeaveTabEmpty.ShouldBe(false, "v1-would-leave-tab-empty");
+        p.Eligible.ShouldBe(complete, "v1-eligible");
+        p.GuardAvailable.ShouldBeTrue("v1-guard-available");
+        p.ProcessInventoryComplete.ShouldBe(complete, "v1-inventory-complete");
+        p.Blockers.ShouldBe(complete ? Array.Empty<string>() : [HerdrPaneDisposalCodes.IdentityUnproven], "v1-blockers");
+        p.GuardMode.ShouldBe("antiphon-best-effort", "v1-guard-mode");
+        p.AtomicClose.ShouldBeFalse("v1-atomic-close");
+        p.PlannedTerminationPids.ShouldBe(complete ? [4242] : Array.Empty<int>(), "v1-planned-pids");
+    }
+
     [Test]
     [Arguments("windows")][Arguments("posix")][Arguments("windows-home-user")]
     [Arguments("posix-home-user")][Arguments("unc")][Arguments("long")]
@@ -55,7 +97,11 @@ public sealed class HerdrPaneDisposalRedactionTests
                 Backend = o.Backend with { Version = label }
             };
             await w.StartAsync();
+            var instanceId = (await w.Fixture.Client.ConnectAndValidateAsync(default)).InstanceId;
             var (post, get, disk, receipt) = await w.RoundTripAsync();
+            get.PreviewId.ShouldBe(post.PreviewId, "v1-get-preview-id");
+            disk.PreviewId.ShouldBe(post.PreviewId, "v1-disk-preview-id");
+            if (value.Contains("c866-user", StringComparison.Ordinal)) w.AssertCanaryAbsent("c866-user");
             foreach (var p in new[] { post, get, disk })
             {
                 p.WorkspaceLabel.ShouldBe(Mask, $"display-field-masked {caseKey} workspace");
@@ -65,12 +111,21 @@ public sealed class HerdrPaneDisposalRedactionTests
                 p.Claims[0].Source.ShouldBe(Mask, $"display-field-masked {caseKey} source");
                 p.Claims[0].Origin.ShouldBe(Mask, $"display-field-masked {caseKey} origin");
                 p.Claims[0].AgentKind.ShouldBe(Mask, $"display-field-masked {caseKey} kind");
-                p.PaneId.ShouldBe(w.Fixture.PaneId);
-                p.ExpectedSessionId.ShouldBe(w.Fixture.SessionId);
-                p.Shell!.Pid.ShouldBe(4242);
-                p.Eligible.ShouldBe(complete);
+                AssertV1Facts(p, w.Fixture.SessionId, instanceId, complete);
             }
             receipt.Outcome.ShouldBe(complete ? "Closed" : "Refused");
+            receipt.Code.ShouldBe(complete ? "herdr_pane_closed" : HerdrPaneDisposalCodes.IdentityUnproven,
+                "v1-receipt-code");
+            receipt.PreviewId.ShouldBe(post.PreviewId, "v1-receipt-preview-id");
+            receipt.PaneId.ShouldBe("w1:p2", "v1-receipt-pane-id");
+            receipt.TerminalId.ShouldBe("term_000000000002", "v1-receipt-terminal-id");
+            receipt.ExpectedSessionId.ShouldBe(w.Fixture.SessionId, "v1-receipt-session-id");
+            receipt.ExpectedNativeSessionId.ShouldBeNull("v1-receipt-native-id");
+            receipt.PaneLeftOpen.ShouldBe(complete ? false : null, "v1-receipt-pane-left-open");
+            receipt.CleanupPending.ShouldBeFalse("v1-receipt-cleanup-pending");
+            receipt.OperationId.ShouldNotBe(Guid.Empty, "v1-receipt-operation-id");
+            receipt.ReplacementPresent.ShouldBeNull("v1-receipt-replacement-present");
+            receipt.RecordedAtUtc.ShouldBe(FixedNow, "v1-receipt-recorded-at");
             w.Fixture.Backend.Closes.ShouldBe(complete ? 1 : 0);
         }
     }
@@ -152,7 +207,14 @@ public sealed class HerdrPaneDisposalRedactionTests
             var (post, get, disk, receipt) = await w.RoundTripAsync("reason-secret");
             foreach (var p in new[] { post, get, disk }) p.WorkspaceLabel.ShouldBe(Mask, "stored-preview-path-excluded");
             receipt.Outcome.ShouldBe(outcome);
+            receipt.Code.ShouldBe(outcome switch
+            {
+                "Closed" => "herdr_pane_closed",
+                "Refused" => HerdrPaneDisposalCodes.IdentityUnproven,
+                _ => HerdrPaneDisposalCodes.Unknown
+            }, "v3-receipt-code");
             receipt.PreviewId.ShouldBe(post.PreviewId);
+            disk.PreviewId.ShouldBe(post.PreviewId, "v3-disk-preview-id");
             var root = w.Fixture.Settings.SessionLogPath;
             var file = System.IO.Path.Combine(root, "herdr", "disposals", $"{receipt.OperationId:N}.json");
             var raw = await File.ReadAllTextAsync(file);
@@ -217,6 +279,8 @@ public sealed class HerdrPaneDisposalRedactionTests
         nullable.Fixture.Backend.Transform = o => o with
         {
             Claims = [new(nullable.Fixture.SessionId, "antiphon-session-token", null, false, null)],
+            Shell = o.Shell! with { ExecutableName = null },
+            Affected = [o.Shell! with { ExecutableName = null }],
             Foreground = null, Complete = false
         };
         await nullable.StartAsync();
@@ -225,6 +289,18 @@ public sealed class HerdrPaneDisposalRedactionTests
         {
             p.PaneLabel.ShouldBeNull(); p.Claims[0].Origin.ShouldBeNull(); p.Claims[0].AgentKind.ShouldBeNull();
             p.Foreground.ShouldBeNull();
+            p.Shell!.ExecutableName.ShouldBeNull("v4-null-process-name");
+            p.AffectedProcesses![0].ExecutableName.ShouldBeNull("v4-null-affected-name");
+        }
+        await using (var empty = new Wire())
+        {
+            empty.Fixture.Backend.Transform = o => o with { Foreground = [], Complete = false };
+            await empty.StartAsync();
+            var (post, get, disk, receipt) = await empty.RoundTripAsync();
+            foreach (var p in new[] { post, get, disk })
+                p.Foreground.ShouldBeEmpty("v4-empty-foreground-preserved");
+            receipt.Code.ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven, "v4-empty-foreground-code");
+            empty.Fixture.Backend.Closes.ShouldBe(0, "v4-empty-foreground-zero-closes");
         }
         foreach (var unsafeLeaf in new[] { "", "C:", @"C:\secret-home\", "/secret-home/", "bad\0.exe" })
         {
@@ -257,7 +333,10 @@ public sealed class HerdrPaneDisposalRedactionTests
             await w.StartAsync(); var (post, _, _, receipt) = await w.RoundTripAsync();
             post.Shell!.ExecutableName.ShouldBe("pwsh.exe");
             post.Eligible.ShouldBeFalse("raw-identity-still-refused");
-            receipt.Outcome.ShouldBe("Refused"); w.Fixture.Backend.Closes.ShouldBe(0);
+            post.Blockers.ShouldBe([HerdrPaneDisposalCodes.IdentityUnproven], "v5-raw-shell-blocker");
+            receipt.Outcome.ShouldBe("Refused");
+            receipt.Code.ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven, "v5-raw-shell-code");
+            w.Fixture.Backend.Closes.ShouldBe(0, "v5-raw-shell-zero-closes");
         }
         await using (var w = new Wire())
         {
@@ -276,7 +355,10 @@ public sealed class HerdrPaneDisposalRedactionTests
                 "folder/grok", 4243, w.Fixture.Processes.Started.AddSeconds(1))] };
             await w.StartAsync(); var (post, _, _, receipt) = await w.RoundTripAsync();
             post.Eligible.ShouldBeFalse("raw-claim-kind-not-normalized");
+            post.Blockers.ShouldBe([HerdrPaneDisposalCodes.IdentityUnproven], "v5-raw-claim-blocker");
             post.Claims[0].AgentKind.ShouldBe(Mask); receipt.Outcome.ShouldBe("Refused");
+            receipt.Code.ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven, "v5-raw-claim-code");
+            w.Fixture.Backend.Closes.ShouldBe(0, "v5-raw-claim-zero-closes");
         }
         await using (var w = new Wire())
         {
@@ -387,6 +469,14 @@ public sealed class HerdrPaneDisposalRedactionTests
             AssertNoPath(_getJson!, "stored-preview-path-excluded");
             AssertNoPath(_diskJson!, "durable-review-path-excluded");
         }
+        public void AssertCanaryAbsent(string canary)
+        {
+            AssertCanary(_postJson!, canary, "v1-post-canary-excluded");
+            AssertCanary(_getJson!, canary, "v1-get-canary-excluded");
+            AssertCanary(_diskJson!, canary, "v1-disk-canary-excluded");
+        }
+        private static void AssertCanary(string json, string canary, string label) =>
+            json.ShouldNotContain(canary, Case.Sensitive, label);
         private static void AssertNoPath(string json, string witness)
         {
             foreach (var canary in new[] { "secret-home", "c866-host", "private-share",
