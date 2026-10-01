@@ -308,7 +308,7 @@ Ordinary Code records its test-first red rounds and final green checkpoints. Aft
 
 | PC | Concrete production mutation | Named detecting test and expected assertion |
 |---|---|---|
-| PC-1 | Remove only the new Windows OS condition from the inbox pre-escape branch. | V-1 `UnixPtyArgvTests.Native_argv_is_verbatim` (9): `lf`/`crlf` and quote/empty/space rows reach complete capture and fail exact-array equality. `plain`/`cr`/`unicode` are comparison rows; do not demand every parameter red. Simple relative probe filename survives the mutant. |
+| PC-1 | Remove only the new Windows OS condition from the inbox pre-escape branch. | V-1 `UnixPtyArgvTests.Native_argv_is_verbatim` (9): `lf`/`crlf` and quote/empty/space rows reach complete capture and fail exact-array equality. `plain`/`unicode` are comparison rows; the `cr` row also carries other controls including LF; do not demand every parameter red. Simple relative probe filename survives the mutant. |
 | PC-2 | In `UnixPtyArgvGuard`, bypass only the executable scan. | V-2 `UnixPtyArgvTests.Nul_is_refused_before_native_spawn` (4): `exe` fails the first pure-validator expected-exception assertion before any native call. Other arguments stay guarded. |
 | PC-3 | In that validator, bypass only the argument loop. | Same named V-2 method (4): `first`, `middle`, `last` fail the pure expected-exception assertion, while `exe` remains green. |
 | PC-4 | Remove only the pre-containment validator call in `LaunchCoreAsync`. | V-10 `UnixPtyArgvTests.Original_nul_is_refused_before_containment_and_consumes_attempt` (1): Place increments then trips; the first assertion expects zero Place calls and sees one. The final guard never hides it and no child spawns. |
