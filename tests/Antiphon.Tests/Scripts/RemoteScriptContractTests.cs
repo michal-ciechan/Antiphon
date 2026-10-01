@@ -1349,6 +1349,9 @@ public sealed class RemoteScriptContractTests
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"
             C849_PACKAGES=packages; C849_SCRATCH=scratch; C849_NPM=npm
             RUN=red; LANE=host; TEMP_PROJECT=temp
+            mkdir -p "$tree/packages/incomplete/1.0"
+            printf 'unfinished\n' > "$tree/packages/incomplete/1.0/payload"
+            chmod 4755 "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
             tar -cf "$root/donor.tar" -C "$tree" .
             C590_SAVED_DONOR="$root/donor.tar"
             c849_prepare() { :; }; c849_image() { echo image; }
@@ -1366,6 +1369,8 @@ public sealed class RemoteScriptContractTests
                     ps:*) return 0 ;;
                     run:*)
                         if [[ "$*" == *'--entrypoint pwsh'* ]]; then
+                            local expected="$(id -u):$(id -g)"
+                            [[ "$*" == *"--user $expected"* ]] || { echo CacheImportOwnerInvalid; return 2; }
                             pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage"
                             return $?
                         fi
@@ -1378,7 +1383,13 @@ public sealed class RemoteScriptContractTests
                                     type=volume,source=*) target="${arg#*source=}"; target="${target%%,*}" ;;
                                 esac
                             done
-                            cp -a "$source/." "$root/volumes/$target/"; return 0
+                            cp -a "$source/." "$root/volumes/$target/"
+                            if [[ "$*" == *'chown -R 1654:1654 /cache'* ]]; then
+                                printf '1654\n' > "$root/volumes/$target/.owner"
+                            else
+                                printf '0\n' > "$root/volumes/$target/.owner"
+                            fi
+                            return 0
                         fi
                         if [[ "$*" == *'--entrypoint sleep'* ]]; then echo helper; return 0; fi
                         return 0 ;;
@@ -1394,7 +1405,19 @@ public sealed class RemoteScriptContractTests
             grep -q '^donor=saved$' "$C849_READY" && echo saved-identity
             test -s "$root/volumes/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" && echo payload-imported
             test -d "$SERVER2_ROOT/cache/recovery-$RUN" && echo recovery-retained
+            test "$(stat -c %u "$SERVER2_ROOT/cache/recovery-$RUN/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = "$(id -u)" && echo recovery-host-owned
+            test "$(stat -c %a "$SERVER2_ROOT/cache/recovery-$RUN/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost")" = 755 && echo unsafe-mode-masked
+            test ! -e "$SERVER2_ROOT/cache/recovery-$RUN/packages/incomplete/1.0" && echo incomplete-pruned
+            grep -q '^1654$' "$root/volumes/packages/.owner" && grep -q '^1654$' "$root/volumes/npm/.owner" && echo live-cache-owned-by-1654
             printf 'idle-count=%s smoke-count=%s\n' "$(grep -c '^idle$' "$root/trace")" "$(grep -c '^smoke$' "$root/trace")"
+            mv "$C849_READY" "$root/accepted-marker"
+            RUN=smoke
+            c849_smoke() { return 1; }
+            ( c849_seed ) > "$root/smoke-result" 2>&1
+            printf 'smoke-exit=%s diagnosis=%s\n' "$?" "$(cat "$root/smoke-result")"
+            test ! -e "$C849_READY" && echo smoke-no-ready-marker
+            if compgen -G "$SERVER2_ROOT/cache/stage-$RUN-*" > /dev/null; then echo smoke-stage-left; else echo smoke-stage-cleaned; fi
+            mv "$root/accepted-marker" "$C849_READY"
             mkdir -p "$root/directory-stage/packages" "$root/directory-stage/npm"
             C590_SAVED_DONOR="$tree"
             c849_saved_copy "$tree/" "$root/directory-stage" image
@@ -1423,7 +1446,9 @@ public sealed class RemoteScriptContractTests
             done
             """);
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
-            "payload-imported", "recovery-retained", "idle-count=3 smoke-count=1", "directory-imported",
+            "payload-imported", "recovery-retained", "recovery-host-owned", "unsafe-mode-masked",
+            "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1",
+            "smoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed", "smoke-no-ready-marker", "smoke-stage-cleaned", "directory-imported",
             "deploy-parent=seed-result=false:PastSeedGate", "deploy-temp=seed-result=false:PastSeedGate" })
             output.ShouldContain(expected);
     }
@@ -1474,18 +1499,26 @@ public sealed class RemoteScriptContractTests
             tar -cf "$root/good.tar" -C "$tree" .
             mkdir -p "$root/bad"; printf 'bad\n' > "$root/bad/escape"
             tar -cf "$root/traversal.tar" -C "$root/bad" --transform='s|escape|../escape|' escape
+            tar -cf "$root/nested-traversal.tar" -C "$root/bad" --transform='s|escape|packages/../../escape|' escape
             ln -s "$root/outside" "$tree/packages/link"
             tar -cf "$root/symlink.tar" -C "$tree" .
             rm "$tree/packages/link"
             rm "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost"
             tar -cf "$root/missing.tar" -C "$tree" .
-            for fault in traversal symlink missing; do
+            for fault in traversal nested-traversal symlink missing; do
                 stage="$root/stage-$fault"; mkdir -p "$stage/packages" "$stage/npm"
                 SOURCE="$root/$fault.tar" STAGE="$stage"
                 diagnosis="$(c849_saved_copy "$SOURCE" "$STAGE" image)"; code=$?
                 if [ "$code" = 0 ]; then diagnosis="$(c849_validate_seed_tree "$stage")"; code=$?; fi
                 printf '%s code=%s diagnosis=%s\n' "$fault" "$code" "$diagnosis"
             done
+            test ! -e "$root/escape" && echo nested-traversal-no-escape
+            mkfifo "$tree/packages/fifo"
+            mkdir -p "$root/fifo-stage/packages" "$root/fifo-stage/npm"
+            SOURCE="$tree" STAGE="$root/fifo-stage"
+            diagnosis="$(timeout 5s bash -c 'pwsh -NoProfile -File "$1/scripts/c849-import-saved-donor.ps1" -Source "$2" -Stage "$3"' _ "$repo" "$SOURCE" "$STAGE")"; code=$?
+            printf 'directory-fifo code=%s diagnosis=%s\n' "$code" "$diagnosis"
+            test ! -e "$root/fifo-stage/packages/fifo" && echo directory-fifo-not-copied
             for STATUS in main-zero main-busy main-unknown; do
                 ( c849_prune_idle ) > "$root/verdict" 2>&1
                 printf '%s code=%s verdict=%s\n' "$STATUS" "$?" "$(cat "$root/verdict")"
@@ -1504,6 +1537,10 @@ public sealed class RemoteScriptContractTests
             printf 'attachment-unknown code=%s verdict=%s\n' "$?" "$(cat "$root/verdict")"
             """);
         output.ShouldContain("traversal code=2 diagnosis=CacheDonorUnsafePath");
+        output.ShouldContain("nested-traversal code=2 diagnosis=CacheDonorUnsafePath");
+        output.ShouldContain("nested-traversal-no-escape");
+        output.ShouldContain("directory-fifo code=2 diagnosis=CacheDonorUnsafeEntry");
+        output.ShouldContain("directory-fifo-not-copied");
         output.ShouldContain("symlink code=2 diagnosis=CacheDonorUnsafeEntry");
         output.ShouldContain("missing code=2 diagnosis=AppHostDonorMissing");
         output.ShouldContain("main-busy code=2 verdict=refusal=CacheConsumersBusy");
@@ -1512,6 +1549,23 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("retired code=0 verdict=");
         output.ShouldContain("attached code=2 verdict=refusal=CacheConsumersBusy");
         output.ShouldContain("attachment-unknown code=2 verdict=refusal=CacheConsumerUnknown");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Saved_donor_rejects_declared_size_bomb_before_writing()
+    {
+        var output = LinuxShell("repo='" + DelegateScriptRunner.RepoRoot.Replace("'", "'\\''") + "'\n" + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            mkdir -p "$root/stage/packages" "$root/stage/npm"
+            truncate -s 12G "$root/bomb"
+            tar --sparse -cf "$root/bomb.tar" -C "$root" --transform='s|^bomb$|packages/bomb|' bomb
+            diagnosis="$(pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage")"; code=$?
+            printf 'size-bomb code=%s diagnosis=%s\n' "$code" "$diagnosis"
+            test ! -e "$root/stage/packages/bomb" && echo size-bomb-not-written
+            """);
+        output.ShouldContain("size-bomb code=2 diagnosis=CacheBudgetExceeded");
+        output.ShouldContain("size-bomb-not-written");
     }
 
     [Test]

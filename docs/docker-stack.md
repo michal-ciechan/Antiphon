@@ -57,6 +57,19 @@ reference packages, npm integrity and a leased uid-1654 apphost build before ret
 the recovery copy and publishing the ready marker. A rerun verifies that marker and its
 payload. The saved archive stays untouched.
 
+If the archive lives elsewhere on server2, replace the example `-SavedDonor` value
+with its actual absolute, canonical host path; the host user must be able to read it.
+Do not copy the archive into the checkout. A successful seed keeps a recovery tree of
+about 2.8 GB at the `recovery=` path in
+`/home/mc/antiphon-server2/cache/seed-accepted`. After the shared cache and rollback
+window are accepted, inspect that exact path and remove only that recovery directory
+with `rm -rf -- /home/mc/antiphon-server2/cache/recovery-<run-id>`. A refused seed
+normally removes its own `stage-<run-id>-<suffix>` directory; inspect the cache
+directory for any leftover stage from an interrupted run and remove only that exact
+stage path after confirming no Seed is running. Older root-owned stages may need a
+scoped `sudo chown -R mc:mc -- <exact-stage-path>` first. Keep the saved archive until
+the recovery copy is no longer needed.
+
 If the import refuses after copying into an unmarked volume, leave both drains held and
 use the Reset command below only after confirming all cache consumers are detached;
 then correct the source and repeat Seed. To roll back a completed import, drain both

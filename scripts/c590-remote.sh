@@ -1618,7 +1618,7 @@ c849_saved_copy() {
         && [ "$(realpath -e -- "$source" 2>/dev/null)" = "$source" ] \
         && { [ -f "$source" ] || [ -d "$source" ]; } \
         || { printf 'CacheSavedDonorInvalid\n'; return 2; }
-    diagnosis="$(docker run --rm --network none --user 0:0 --entrypoint pwsh \
+    diagnosis="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint pwsh \
         --mount "type=bind,source=$source,target=/saved,readonly" \
         --mount "type=bind,source=$stage,target=/stage" \
         --mount "type=bind,source=$ROOT/c849-import-saved-donor.ps1,target=/import.ps1,readonly" \

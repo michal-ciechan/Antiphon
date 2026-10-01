@@ -58,7 +58,8 @@ function Write-Entry($Mapped, [bool]$Directory, [System.IO.UnixFileMode]$Mode, $
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $target)) | Out-Null
     $out = [System.IO.File]::Open($target, [System.IO.FileMode]::CreateNew)
     try { $InputStream.CopyTo($out) } finally { $out.Dispose() }
-    [System.IO.File]::SetUnixFileMode($target, $Mode)
+    # Archive permission bits are untrusted. Never retain setuid, setgid or sticky bits.
+    [System.IO.File]::SetUnixFileMode($target, [System.IO.UnixFileMode]([int]$Mode -band 511))
 }
 
 function Read-Tar([bool]$Copy) {
@@ -92,6 +93,11 @@ function Read-Directory([bool]$Copy) {
             $attributes = [System.IO.File]::GetAttributes($path)
             if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'CacheDonorUnsafeEntry' }
             $directory = ($attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+            # FileInfo.Length and OpenRead can block forever on a FIFO. Check the Unix
+            # type before either pass touches it; the source bind is read-only here.
+            $kind = (& /usr/bin/stat -c '%F' -- $path)
+            if ($LASTEXITCODE -ne 0 -or $kind -notin @('regular file', 'directory') -or
+                $directory -ne ($kind -eq 'directory')) { throw 'CacheDonorUnsafeEntry' }
             if ($directory) { $pending.Push($path) }
             $relative = [System.IO.Path]::GetRelativePath($Source, $path).Replace('\', '/')
             if ($Copy) {
