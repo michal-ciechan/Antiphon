@@ -805,3 +805,42 @@ CP-3 51, CP-4 13, CP-5 3, and CP-6 3679 selected (3646 executed and 33
 declared Linux skips). The six rows must be rerun at this repair's committed SHA;
 the earlier results above apply to the earlier SHAs only. Windows qualification
 and all method-scoped SourceLanding mutation controls remain pending.
+
+#### Repair verification result
+
+All six rows below used the exact closed filters above and one `bin-c833/`
+build at committed source `3f72bf5c48d38a391b8620f5af6bf29c24b7aa14`.
+Each direct `scripts/run-checkpoint.ps1` call obtained a host grant with CPU 6;
+CP-2 through CP-6 reused the CP-1 build. TRX files are under
+`.antiphon/card0833-repair-final/` in the runner mirror.
+
+| Row | Executed | Passed | Failed | Skipped | Result |
+|---|---:|---:|---:|---:|---|
+| CP-1 | 10 | 10 | 0 | 0 | green |
+| CP-2 | 8 | 8 | 0 | 0 | green |
+| CP-3 | 51 | 51 | 0 | 0 | green |
+| CP-4 | 13 | 13 | 0 | 0 | green |
+| CP-5 | 3 | 3 | 0 | 0 | green |
+| CP-6 first | 3646 | 3645 | 1 | 33 | `ResilienceBudgetTests.Slow_first_attempt_consumes_the_same_budget` |
+| CP-6 exact rerun | 3646 | 3645 | 1 | 33 | same unrelated virtual-time assertion |
+
+V-11 separately passed 1/1 at that same SHA with `TZ=UTC`,
+`TZ=America/New_York`, and `TZ=Pacific/Kiritimati`. In a separate detached
+scratch worktree, each exact method run selected one test and zero skips:
+V-6 and V-7 failed with the pre-fix `BuildSlotClient` and passed restored;
+V-11 failed with `DateTime.SpecifyKind(started, Utc)` under New York time and
+passed restored; V-17 failed when `Program.Row` ignored `Runtime.Output` and
+passed restored; revised V-8 failed when renew diagnostics were dropped and
+passed restored. Each mutant and restoration was committed in scratch before
+its leased build/run. The scratch source and index were clean after each phase,
+and the final scratch source had no diff against the repair source commit.
+
+The unrelated CP-6 timing assertion remains red after the required exact-row
+rerun, so this repair does not claim a green Unit lane. V-13 still lacks its
+planned nonzero prior-busy-wait case and uses `WaitedSeconds >= 0`, which does
+not test retained wait evidence. Baseline fetch aborts on a failed fetch as it
+did at the pre-repair parent; the direct Row receipt reports the reason but
+does not print the broker status/detail, consistent with the plan's direct Row
+receipt scope. Windows holder start-time kind, process launch/exit custody,
+and output behavior require the separate Windows qualification task. All 48
+method-scoped SourceLanding mutation controls remain pending.
