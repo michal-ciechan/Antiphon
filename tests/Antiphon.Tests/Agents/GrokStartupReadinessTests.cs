@@ -153,7 +153,8 @@ public class GrokStartupReadinessTests
         tracker.Observe(ready, TimeSpan.Zero).ShouldBeFalse();
         tracker.Observe(ready, TimeSpan.FromMilliseconds(1000)).ShouldBeTrue();
         var zero = new GrokReadyTracker(TimeSpan.Zero);
-        zero.Observe(ready, TimeSpan.Zero).ShouldBeFalse();
+        var firstZeroSettleObservation = zero.Observe(ready, TimeSpan.Zero);
+        firstZeroSettleObservation.ShouldBeFalse("firstZeroSettleObservation");
         zero.Observe(ready, TimeSpan.Zero).ShouldBeTrue();
         (await RunnerGrokAdapterReadyTests.AnimatedAdapterReadyAsync()).ShouldBeTrue(
             "elapsed settlement must not wait for a quiet terminal sequence");
