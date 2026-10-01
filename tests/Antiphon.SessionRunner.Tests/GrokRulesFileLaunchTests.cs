@@ -33,7 +33,8 @@ public sealed class GrokRulesFileLaunchTests
             fake.Start();
             await fake.WaitUntilListeningAsync();
             var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
-            var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") };
+            var settings = new SessionRunnerSettings { SessionLogPath = root,
+                PtyHostSourceDir = OperatingSystem.IsWindows() ? Path.Combine(root, "missing-host") : null };
             await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
                 new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }), new PowershellProcessProbe());
             var args = variant switch {
@@ -48,13 +49,53 @@ public sealed class GrokRulesFileLaunchTests
                 Env = new Dictionary<string,string> { ["RULES"] = "private\nsentinel", ["FLAG"] = "--rules" },
                 Backend = herdr ? SessionBackends.Herdr : null,
                 Herdr = herdr ? new HerdrLaunchOptions("card0395-" + Guid.NewGuid().ToString("N"), "rules", root, "rules", AgentKind: HerdrAgentKinds.Grok) : null };
+            var argvCapture = Path.Combine(root, "native-argv");
+            if (!OperatingSystem.IsWindows() && !herdr)
+            {
+                var unixEnv = request.Env.ToDictionary(pair => pair.Key, pair => pair.Value);
+                unixEnv["ANTIPHON_TEST_ARGV"] = argvCapture;
+                request = request with { Exe = HerdrTestProcess.CreateOwnedUnixArgvChild(root), Env = unixEnv };
+            }
             try
             {
-                var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
-                fake.Requests.ShouldBeEmpty("raw refusal must precede every Herdr effect");
-                Directory.Exists(root).ShouldBeFalse("raw refusal must precede every host/store effect");
-                failure.ShouldBeOfType<GrokRulesLaunchException>().Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-                runtime.List().ShouldBeEmpty();
+                if (OperatingSystem.IsWindows())
+                {
+                    var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+                    fake.Requests.ShouldBeEmpty("raw refusal must precede every Herdr effect");
+                    Directory.Exists(root).ShouldBeFalse("raw refusal must precede every host/store effect");
+                    failure.ShouldBeOfType<GrokRulesLaunchException>().Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                    runtime.List().ShouldBeEmpty();
+                }
+                else if (variant == "nul" && !herdr)
+                {
+                    var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+                    failure.ShouldNotBeNull("a native process cannot receive an argv element containing NUL");
+                    runtime.List().ShouldBeEmpty();
+                    File.Exists(argvCapture).ShouldBeFalse();
+                }
+                else
+                {
+                    var started = await runtime.StartAsync(request, CancellationToken.None);
+                    started.Status.ShouldBe("Running");
+                    if (herdr)
+                    {
+                        fake.Requests.ShouldNotBeEmpty();
+                        var script = fake.LastLaunchScriptContent.ShouldNotBeNull();
+                        foreach (var arg in args)
+                        {
+                            var effective = arg switch { "$env:RULES" => request.Env["RULES"],
+                                "${env:RULES}" => request.Env["RULES"], "$env:FLAG" => request.Env["FLAG"], _ => arg };
+                            script.ShouldContain(effective);
+                        }
+                    }
+                    else
+                    {
+                        var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                        while (!File.Exists(argvCapture) && DateTime.UtcNow < until) await Task.Delay(20);
+                        File.Exists(argvCapture).ShouldBeTrue("owned native child must receive the argv");
+                        File.ReadAllText(argvCapture).Split('\0', StringSplitOptions.RemoveEmptyEntries).ShouldBe(args);
+                    }
+                }
             }
             finally
             {

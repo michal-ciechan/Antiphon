@@ -40,7 +40,8 @@ public class RunnerStartupReadinessTests
             "--SessionRunner:Herdr:Enabled", "true", "--SessionRunner:Herdr:Session", fake.Session,
             "--SessionRunner:Herdr:SocketPath", fake.EndpointPath,
             "--SessionRunner:Herdr:RequestTimeoutMs", "20000", "--SessionRunner:CpuWatchdogEnabled", "false",
-            "--SessionRunner:Herdr:StatusPush:Enabled", "false", "--SessionRunner:LivenessSweepIntervalMs", "60000" }) info.ArgumentList.Add(a);
+            "--SessionRunner:Herdr:StatusPush:Enabled", "false", "--SessionRunner:LivenessSweepIntervalMs", "60000",
+            "--PhoneHome:Enabled", "false" }) info.ArgumentList.Add(a);
         var output = new ConcurrentQueue<string>(); using var runner = new Process { StartInfo = info };
         runner.OutputDataReceived += (_, e) => { if (e.Data is { } line) output.Enqueue(line); };
         runner.ErrorDataReceived += (_, e) => { if (e.Data is { } line) output.Enqueue(line); };
@@ -87,8 +88,14 @@ public class RunnerStartupReadinessTests
             var names = new[] { "managed-entry", "runtime-resolution-start", "runtime-resolution-end", "claims-start", "claims-end", "herdr-start", "herdr-end", "pty-manifests-start", "pty-manifests-end", "adoption-sweep-end", "application-started" };
             var joined = string.Join('\n', output); var previous = -1;
             foreach (var name in names) { var index = joined.IndexOf('"' + name + '"', StringComparison.Ordinal); index.ShouldBeGreaterThan(previous, name); previous = index; }
+            var startupLine = output.First(l => l.Contains("ANTIPHON_STARTUP ") && l.Contains("\"managed-entry\""));
+            var startup = JsonDocument.Parse(startupLine[(startupLine.IndexOf("ANTIPHON_STARTUP ", StringComparison.Ordinal) + "ANTIPHON_STARTUP ".Length)..]);
+            startup.RootElement.GetProperty("producerPid").GetInt32().ShouldBe(runner.Id);
+            var producerStart = startup.RootElement.GetProperty("producerStartTimeUtc").GetDateTime().ToUniversalTime();
+            Math.Abs((producerStart - runner.StartTime.ToUniversalTime()).TotalSeconds).ShouldBeLessThan(2,
+                "the producer record must identify the launched runner process");
             using var decoder = new RestartFixture();
-            await decoder.DecodeCapturedMilestones(joined + "\n", runner.Id, runner.StartTime.ToUniversalTime().ToString("O"), "runner", "application-started");
+            await decoder.DecodeCapturedMilestones(joined + "\n", runner.Id, producerStart.ToString("O"), "runner", "application-started");
             succeeded = true;
         }
         finally

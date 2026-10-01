@@ -20,7 +20,7 @@ public sealed class GrokRulesAdoptionTests
     [Arguments(true, true)]
     public async Task Restart_recovers_only_a_verified_rules_receipt_and_retains_files_after_worktree_removal(bool herdr, bool corrupt)
     {
-        // cmd is an owned inert child for the host/adoption contract, not a provider or compliance canary.
+        // The owned child accepts the generated Grok argv and stays alive for adoption.
         var root = TestSessionLogRoot.Create("card0395-adoption");
         var cwd = Path.Combine(root, "disposable worktree");
         Directory.CreateDirectory(cwd);
@@ -33,8 +33,11 @@ public sealed class GrokRulesAdoptionTests
             herdr ? new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }) : null,
             herdr ? new AliveProbe() : new SystemProcessLivenessProbe());
         var payload = new GrokRulesPayload("early file-only sentinel\r\n" + new string('é', 8000) + "\ntail file-only sentinel", 1, Guid.NewGuid());
-        var request = new RunnerLaunchRequest(id, herdr ? "grok" : HerdrTestProcess.ShellPath,
-            herdr ? [] : HerdrTestProcess.InteractiveArgs, new Dictionary<string,string> { ["GROK_HOME"] = Path.Combine(root, "isolated home") },
+        var nativeExe = OperatingSystem.IsWindows() ? HerdrTestProcess.ShellPath : HerdrTestProcess.CreateOwnedUnixArgvChild(root);
+        var argvCapture = Path.Combine(root, "native-argv");
+        var request = new RunnerLaunchRequest(id, herdr ? "grok" : nativeExe,
+            herdr ? [] : OperatingSystem.IsWindows() ? HerdrTestProcess.InteractiveArgs : [],
+            new Dictionary<string,string> { ["GROK_HOME"] = Path.Combine(root, "isolated home"), ["ANTIPHON_TEST_ARGV"] = argvCapture },
             cwd, 120, 30, TranscriptFormat: TranscriptFormats.Grok, GrokRulesPayload: payload,
             Backend: herdr ? SessionBackends.Herdr : null,
             Herdr: herdr ? new HerdrLaunchOptions("card0395-" + id.ToString("N"), "rules", cwd, "rules", AgentKind: HerdrAgentKinds.Grok) : null);
@@ -44,6 +47,14 @@ public sealed class GrokRulesAdoptionTests
         try
         {
             started = await a.StartAsync(request, CancellationToken.None);
+            started.Status.ShouldBe("Running");
+            if (!herdr && !OperatingSystem.IsWindows())
+            {
+                var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (!File.Exists(argvCapture) && DateTime.UtcNow < until) await Task.Delay(20);
+                File.Exists(argvCapture).ShouldBeTrue("owned Unix child must receive the native argv");
+                File.ReadAllText(argvCapture).ShouldContain("--rules");
+            }
             var receipt = started.GrokRulesReceipt.ShouldNotBeNull();
             (await File.ReadAllBytesAsync(receipt.Path)).ShouldBe(Encoding.UTF8.GetBytes(payload.Content));
             var metadata = herdr ? HerdrPaneSidecar.PathFor(settings.SessionLogPath, id) : PtyHostManifest.PathFor(settings.PtyHostManifestDir, id);

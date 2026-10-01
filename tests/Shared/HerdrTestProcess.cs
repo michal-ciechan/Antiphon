@@ -37,6 +37,17 @@ while ($true) {
     public static string[] InteractiveArgs => OperatingSystem.IsWindows()
         ? ["/d", "/q", "/k", "@echo off & prompt $G"] : ["-i"];
 
+    public static string CreateOwnedUnixArgvChild(string root)
+    {
+        if (OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException();
+        Directory.CreateDirectory(root);
+        var path = System.IO.Path.Combine(root, "owned-argv-child.sh");
+        File.WriteAllText(path, "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$ANTIPHON_TEST_ARGV\"\nwhile :; do sleep 1; done\n");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
+
     public static Process StartDummy()
     {
         var start = new ProcessStartInfo(ShellPath)

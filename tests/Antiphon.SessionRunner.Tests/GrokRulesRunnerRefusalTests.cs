@@ -98,9 +98,11 @@ public sealed class GrokRulesRunnerRefusalTests
         };
         var request = new RunnerLaunchRequest(
             sessionId,
-            "pwsh.exe",
-            ["-NoProfile", "-File", @"C:\Users\x\.local\bin\gkp.ps1", "--project", "$env:X_LLM_PROJECT",
-                "--rules", "line one\nline two " + sentinel],
+            OperatingSystem.IsWindows() ? "pwsh.exe" : HerdrTestProcess.CreateOwnedUnixArgvChild(settings.SessionLogPath),
+            OperatingSystem.IsWindows()
+                ? ["-NoProfile", "-File", @"C:\Users\x\.local\bin\gkp.ps1", "--project", "$env:X_LLM_PROJECT",
+                    "--rules", "line one\nline two " + sentinel]
+                : ["--project", "$env:X_LLM_PROJECT", "--rules", "line one\nline two " + sentinel],
             env,
             settings.SessionLogPath,
             Cols: 120,
@@ -109,9 +111,24 @@ public sealed class GrokRulesRunnerRefusalTests
             TranscriptFormat: TranscriptFormats.Grok,
             Herdr: GrokHerdr(sessionId, settings.SessionLogPath));
 
-        var ex = await Should.ThrowAsync<GrokRulesLaunchException>(
-            () => runtime.StartAsync(request, CancellationToken.None));
-        AssertCommonRefusal(ex, runtime, fake, settings, sessionId, sentinel, GrokRulesArgvPolicy.ReasonLineBreak);
+        if (OperatingSystem.IsWindows())
+        {
+            var ex = await Should.ThrowAsync<GrokRulesLaunchException>(
+                () => runtime.StartAsync(request, CancellationToken.None));
+            AssertCommonRefusal(ex, runtime, fake, settings, sessionId, sentinel, GrokRulesArgvPolicy.ReasonLineBreak);
+        }
+        else
+        {
+            try
+            {
+                var started = await runtime.StartAsync(request, CancellationToken.None);
+                started.Status.ShouldBe("Running");
+                fake.Requests.ShouldNotBeEmpty();
+                fake.LastLaunchScriptContent.ShouldNotBeNull().ShouldContain("--rules");
+                fake.LastLaunchScriptContent.ShouldContain(sentinel);
+            }
+            finally { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None); }
+        }
         DeleteLogRoot(settings.SessionLogPath);
     }
 
@@ -126,23 +143,42 @@ public sealed class GrokRulesRunnerRefusalTests
         var sessionId = Guid.NewGuid();
         var request = new RunnerLaunchRequest(
             sessionId,
-            @"C:\tools\grok.exe",
+            OperatingSystem.IsWindows() ? @"C:\tools\grok.exe" : HerdrTestProcess.CreateOwnedUnixArgvChild(settings.SessionLogPath),
             ["--always-approve", "--rules", "line one\nline two " + sentinel],
-            new Dictionary<string, string>(),
+            OperatingSystem.IsWindows() ? new Dictionary<string, string>()
+                : new Dictionary<string, string> { ["ANTIPHON_TEST_ARGV"] = Path.Combine(settings.SessionLogPath, "native-argv") },
             settings.SessionLogPath,
             Cols: 120,
             Rows: 30,
             TranscriptFormat: TranscriptFormats.Grok);
 
-        var ex = await Should.ThrowAsync<GrokRulesLaunchException>(
-            () => runtime.StartAsync(request, CancellationToken.None));
-        ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-        ex.Message.ShouldContain(sessionId.ToString("D"));
-        ex.Message.ShouldContain("--rules");
-        ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
-        ex.Message.ShouldNotContain(sentinel);
-        runtime.List().ShouldBeEmpty();
-        await Should.ThrowAsync<KeyNotFoundException>(() => runtime.GetAsync(sessionId, CancellationToken.None));
+        if (OperatingSystem.IsWindows())
+        {
+            var ex = await Should.ThrowAsync<GrokRulesLaunchException>(
+                () => runtime.StartAsync(request, CancellationToken.None));
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            ex.Message.ShouldContain(sessionId.ToString("D"));
+            ex.Message.ShouldContain("--rules");
+            ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
+            ex.Message.ShouldNotContain(sentinel);
+            runtime.List().ShouldBeEmpty();
+            await Should.ThrowAsync<KeyNotFoundException>(() => runtime.GetAsync(sessionId, CancellationToken.None));
+        }
+        else
+        {
+            try
+            {
+                var started = await runtime.StartAsync(request, CancellationToken.None);
+                started.Status.ShouldBe("Running");
+                var capture = request.Env["ANTIPHON_TEST_ARGV"];
+                var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (!File.Exists(capture) && DateTime.UtcNow < until) await Task.Delay(20);
+                File.Exists(capture).ShouldBeTrue();
+                File.ReadAllText(capture).Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                    .ShouldBe(request.Args.ToArray());
+            }
+            finally { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None); }
+        }
         DeleteLogRoot(settings.SessionLogPath);
     }
 
@@ -239,9 +275,27 @@ public sealed class GrokRulesRunnerRefusalTests
         var sessionId = Guid.NewGuid();
         var request = GrokIdentityRequest(sessionId, settings.SessionLogPath, args, env);
 
-        var ex = await Should.ThrowAsync<GrokRulesLaunchException>(
-            () => runtime.StartAsync(request, CancellationToken.None));
-        AssertCommonRefusal(ex, runtime, fake, settings, sessionId, sentinel, reason, flag, extraMessage, envToken);
+        if (OperatingSystem.IsWindows())
+        {
+            var ex = await Should.ThrowAsync<GrokRulesLaunchException>(
+                () => runtime.StartAsync(request, CancellationToken.None));
+            AssertCommonRefusal(ex, runtime, fake, settings, sessionId, sentinel, reason, flag, extraMessage, envToken);
+        }
+        else
+        {
+            try
+            {
+                var started = await runtime.StartAsync(request, CancellationToken.None);
+                started.Status.ShouldBe("Running");
+                fake.Requests.ShouldNotBeEmpty();
+                var script = fake.LastLaunchScriptContent.ShouldNotBeNull();
+                script.ShouldContain(flag);
+                if (reason != GrokRulesArgvPolicy.ReasonMissingValue)
+                    script.ShouldContain(args.Contains("$env:RULES") ? "line one\nline two " + sentinel :
+                        args.Contains("$env:FLAG") ? "--rules" : args.Last());
+            }
+            finally { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None); }
+        }
         DeleteLogRoot(settings.SessionLogPath);
     }
 
@@ -292,7 +346,7 @@ public sealed class GrokRulesRunnerRefusalTests
         IReadOnlyDictionary<string, string>? env = null) =>
         new(
             sessionId,
-            @"C:\tools\grok.exe",
+            OperatingSystem.IsWindows() ? @"C:\tools\grok.exe" : HerdrTestProcess.CreateOwnedUnixArgvChild(cwd),
             args,
             env ?? new Dictionary<string, string>(),
             cwd,
