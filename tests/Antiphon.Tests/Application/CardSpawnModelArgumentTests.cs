@@ -272,9 +272,20 @@ public sealed class CardSpawnModelArgumentTests
             await db.SaveChangesAsync();
 
             ClearHarnessTracking(harness);
-            var ex = await Should.ThrowAsync<ConflictException>(() =>
-                harness.CardService.SpawnAsync(card.Id, new SpawnCardRequest(), CancellationToken.None));
-            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            if (OperatingSystem.IsWindows())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(() =>
+                    harness.CardService.SpawnAsync(card.Id, new SpawnCardRequest(), CancellationToken.None));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            }
+            else
+            {
+                // On Linux the Windows argv guard does not apply; the typed rules-source
+                // conflict still refuses before a session or runner input exists.
+                var ex = await Should.ThrowAsync<GrokRulesHttpException>(() =>
+                    harness.CardService.SpawnAsync(card.Id, new SpawnCardRequest(), CancellationToken.None));
+                ex.Code.ShouldBe("grok_rules_source_conflict");
+            }
             adapter.Started.ShouldBeFalse();
             (await db.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
         }
@@ -656,7 +667,8 @@ public sealed class CardSpawnModelArgumentTests
         var revision = new AgentTuiProfileRevision
         {
             Id = Guid.NewGuid(), ProfileId = profile.Id, RevisionNumber = 1,
-            Executable = Path.Combine(Environment.SystemDirectory, "cmd.exe"), ArgumentsJson = "[]",
+            Executable = OperatingSystem.IsWindows()
+                ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/sh", ArgumentsJson = "[]",
             DiscoveryArgumentsJson = "[]", VersionArgumentsJson = "[]", AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
             NonSecretEnvironmentJson = "{}", SecretEnvironmentNamesJson = "[]", ModelArgumentName = modelArgumentName,
             Guidance = "CARD-0193", CreatedAt = now
