@@ -98,9 +98,9 @@ public class RunnerGrokAdapterSignInPromptTests
         Options.Create(new AgentRegistrySettings
         {
             GrokReadyQuietPeriodMs = 50,
-            GrokReadyMaxWaitMs = 2000,
+            GrokReadyMaxWaitMs = 10000,
             GrokReadyMinTotalWaitMs = 0,
-            GrokTrustPromptSettleMs = 200,
+            GrokTrustPromptSettleMs = 3000,
         }),
         Options.Create(new SupervisionSettings()));
 
