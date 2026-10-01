@@ -85,6 +85,9 @@ When you are working a board through its pipeline, this is the standing policy u
 says otherwise this session. Before dispatching, read the effective concurrency limits and current
 occupancy from GET /api/agent-tasks/pipeline (stage and host counts and limits), GET
 /api/session-runners (seats and eligibility), and GET /api/runner-defaults (placement defaults).
+This three-route read is today's reality; CARD-0881 will replace it with a single
+effective-settings endpoint. Read each host's limit and in-flight count from GET /api/hosts;
+changing a host budget is an operator-only setting, never an orchestrator-initiated write.
 Each pipeline stage (Investigate, Plan, TestDesign, Code, Review, Mutation) runs at up to four
 concurrent tasks and at most six tasks run on server2 across all stages. These are operator defaults;
 Antiphon's enforced limits are the ceiling, so use the lower effective stage cap. Run stages in
