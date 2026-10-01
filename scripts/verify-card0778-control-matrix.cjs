@@ -101,17 +101,17 @@ fs.writeFileSync(path.join(scratch,'original.cs'),original);
 let active = null;
 let sourceMutated = false;
 const burners = new Set();
-function kill(child) {
+function kill(child, group = false) {
   if (!child || child.exitCode !== null) return;
   try {
-    if (process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM');
+    if (group && process.platform !== 'win32') process.kill(-child.pid, 'SIGTERM');
     else child.kill('SIGTERM');
   } catch (error) {
     if (error.code !== 'ESRCH') throw error;
   }
 }
 function cleanup() {
-  kill(active);
+  kill(active, true);
   for (const burner of burners) kill(burner);
   burners.clear();
   if (sourceMutated) {
