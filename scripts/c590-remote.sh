@@ -1536,6 +1536,15 @@ c849_no_temp_containers() {
     [ -z "$listed" ] || write_result false CacheTempContainerExists 2
 }
 
+c849_no_cache_attachments() {
+    local name attached
+    for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        attached="$(docker ps -aq --filter "volume=$name")" \
+            || write_result false CacheConsumerUnknown 2
+        [ -z "$attached" ] || write_result false CacheConsumersBusy 2
+    done
+}
+
 c849_empty_volume() {
     local name="$1" image="$2" listing
     listing="$(docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
@@ -1643,6 +1652,7 @@ c849_seed() {
         [ -z "$donor" ] || write_result false CacheDonorSourceConflict 2
         c849_no_temp_containers
         c849_prune_idle
+        c849_no_cache_attachments
         donor_image="$(docker image inspect -f '{{.Id}}' "$image")" \
             || write_result false CacheHelperImageMissing 2
         [[ "$donor_image" =~ ^sha256:[0-9a-f]{64}$ ]] || write_result false CacheHelperImageMissing 2
@@ -1671,6 +1681,7 @@ c849_seed() {
         copy_diagnosis="$(c849_saved_copy "$saved" "$stage" "$image")" \
             || c849_seed_failure '' "$copy_diagnosis"
         c849_prune_idle
+        c849_no_cache_attachments
     else
         c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
         docker stop "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorStopFailed
@@ -1694,6 +1705,7 @@ c849_seed() {
     package_bytes="$(du -s -B1 "$stage/packages" | cut -f1)"
     npm_bytes="$(du -s -B1 "$stage/npm" | cut -f1)"
     for item in "$C849_PACKAGES:packages" "$C849_NPM:npm"; do
+        if [ -n "$saved" ]; then c849_no_cache_attachments; fi
         name="${item%%:*}"; source="${item#*:}"
         docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
             --mount "type=bind,source=$stage/$source,target=/seed,readonly" \
@@ -1733,6 +1745,7 @@ c849_seed() {
         c849_status_zero server2-temp reconnected || c849_seed_failure "$donor" CacheDonorReconnectFailed
     else
         c849_prune_idle
+        c849_no_cache_attachments
     fi
     c849_status_body server2-temp | jq -c '{sessions,runnerSessions,queuedTasks,draining,retireWhenIdle,redirectTo,dispatchEligible,acceptingNewWork}' \
         > "$CASE_DIR/status.json" || write_result false CacheDonorReconnectReceiptMissing 2
