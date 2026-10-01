@@ -127,16 +127,18 @@ async function stop(code) {
   stopping = true;
   // Install close listeners before killing the children. Node must reap its
   // burners before exiting, including when only Node receives SIGTERM.
+  const burnerCount = burners.size;
   const children = [active, ...burners].filter(Boolean);
   const closed = children.map(child => new Promise(resolve => {
     if (child.exitCode !== null || child.signalCode !== null) resolve();
     else child.once('close', resolve);
   }));
   cleanup();
-  await Promise.race([
-    Promise.all(closed),
-    new Promise(resolve => setTimeout(resolve, 10000))
+  const reaped = await Promise.race([
+    Promise.all(closed).then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), 30000))
   ]);
+  console.log(`SIGNAL CLEANUP childrenReaped=${reaped} burners=${burnerCount}`);
   process.exit(code);
 }
 for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]])
@@ -151,6 +153,7 @@ process.on('unhandledRejection', error => {
 });
 process.on('exit', cleanup);
 async function command(args, name) {
+  if (stopping) throw Error('Matrix interrupted before command');
   return new Promise((resolve, reject) => {
     const child = cp.spawn(args[0], args.slice(1), {
       cwd: root, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32'
@@ -161,6 +164,7 @@ async function command(args, name) {
     child.on('error', reject);
     child.on('close', code => {
       if (active === child) active = null;
+      if (stopping) { reject(Error('Matrix interrupted during command')); return; }
       const output = Buffer.concat(chunks).toString('utf8');
       if (name) fs.writeFileSync(path.join(scratch, name), output);
       resolve({code, text: output});
@@ -219,6 +223,6 @@ async function main() {
   console.log(`MATRIX ${selected} 8/8 named red ${scratch}/matrix.csv`);
 }
 main().catch(error => {
-  console.error(error);
+  if (!stopping) console.error(error);
   process.exitCode = 1;
 });
